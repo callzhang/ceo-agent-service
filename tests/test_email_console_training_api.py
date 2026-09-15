@@ -103,6 +103,8 @@ def test_training_preview_marks_selected_sources_as_frozen_on_submission(tmp_pat
         "snapshot_digest": "提交时计算",
         "snapshot_version": "email-selected-training-snapshot-v1",
         "description_version": "selected-training-input-v1",
+        "training_ready": False,
+        "training_blockers": ["model input body is invalid"],
     }
 
 

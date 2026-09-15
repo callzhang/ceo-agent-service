@@ -17,14 +17,36 @@ type PreviewTraining = (
   signal: AbortSignal,
 ) => Promise<EmailTrainingPreview>;
 
+const DEFAULT_CATEGORY_MINIMUM_SAMPLES = 20;
+
 export function initialTrainingSelection(
   sources: EmailTrainingSource[],
   families: EmailModelFamilyCapability[],
 ): TrainingSelection {
   const supported = sources.filter((row) => row.supported !== false);
+  const trainableByCategory = new Map<string, number>();
+  supported.forEach((row) => {
+    const count = row.unique_trainable_count ?? row.sample_count;
+    trainableByCategory.set(
+      row.category,
+      (trainableByCategory.get(row.category) || 0) + count,
+    );
+  });
   return {
     sources: unique(supported.map((row) => row.source)),
-    categories: unique(supported.map((row) => row.category)),
+    // A category must meet the agreed cold-start floor before it is selected
+    // by default. Keep sparse data visible and selectable for deliberate
+    // experiments, while preventing a new training drawer from failing on
+    // categories that cannot yet support an independent evaluation.
+    categories: unique(
+      supported
+        .filter(
+          (row) =>
+            (trainableByCategory.get(row.category) || 0) >=
+            DEFAULT_CATEGORY_MINIMUM_SAMPLES,
+        )
+        .map((row) => row.category),
+    ),
     modelFamilies: unique(
       families
         .filter((row) => row.supported && row.configured)
@@ -114,6 +136,7 @@ export function TrainingSetup({
     valid &&
     preview !== null &&
     preview.unique_sample_count > 0 &&
+    preview.training_ready !== false &&
     previewKey === selectionKey &&
     !previewing &&
     !previewError;
@@ -133,7 +156,7 @@ export function TrainingSetup({
     <EmailDrawer title="新建训练" locked={busy} onClose={onClose}>
       <div className="email-drawer-content training-setup">
         <p className="muted">
-          选择来源、类别和模型家族。记录数不等于去重后的可训练数。
+          选择来源、类别和模型家族。记录数不等于去重后的可训练数；默认只勾选每类至少 20 封的类别。
         </p>
         <fieldset disabled={busy}>
           <legend>训练来源</legend>
@@ -237,6 +260,7 @@ function PreviewReadback({
     );
   if (!preview) return <p role="status">等待样本核对…</p>;
   const hasSamples = preview.unique_sample_count > 0;
+  const trainingReady = preview.training_ready !== false;
   return (
     <section className="training-preview" aria-label="本次训练样本">
       <strong>
@@ -244,6 +268,12 @@ function PreviewReadback({
       </strong>
       {!hasSamples && (
         <p role="status">当前选择没有样本，调整来源或类别。</p>
+      )}
+      {!trainingReady && (
+        <p role="status">
+          当前选择不能形成独立的训练、验证和测试集：
+          {(preview.training_blockers || []).join("、")}。请取消这些类别或补充邮件。
+        </p>
       )}
       <small>
         快照：{preview.snapshot_id} · {preview.snapshot_digest}
@@ -267,6 +297,7 @@ function SourceEvidence({ sources }: { sources: EmailTrainingSource[] }) {
               <th>来源</th>
               <th>类别</th>
               <th>记录数</th>
+              <th>去重后可训练数</th>
               <th>可选状态</th>
               <th>数据版本 / 摘要</th>
             </tr>
@@ -276,7 +307,8 @@ function SourceEvidence({ sources }: { sources: EmailTrainingSource[] }) {
               <tr key={row.source + row.category}>
                 <td>{sourceLabel(row.source)}</td>
                 <td>{row.category}</td>
-                <td>{row.sample_count}</td>
+                <td>{row.record_count ?? row.sample_count}</td>
+                <td>{row.unique_trainable_count ?? row.sample_count}</td>
                 <td>{row.supported === false ? "当前不可选" : "可选"}</td>
                 <td>
                   {String(

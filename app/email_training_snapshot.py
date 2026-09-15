@@ -603,6 +603,27 @@ def build_selected_training_snapshot(
     return snapshot
 
 
+def selected_training_snapshot_blockers(
+    snapshot: FolderTrainingSnapshot,
+    *,
+    categories: Sequence[str],
+) -> tuple[str, ...]:
+    """Describe missing independent split coverage before a model job starts."""
+
+    requested = frozenset(categories)
+    observed = {
+        (str(row.category_key), row.split)
+        for row in snapshot.observations
+        if row.category_key in requested
+    }
+    return tuple(
+        f"{category}:{split}"
+        for category in sorted(requested)
+        for split in ("train", "validation", "test")
+        if (category, split) not in observed
+    )
+
+
 def validate_folder_training_snapshot(
     snapshot: object, *, allow_legacy_manifest: bool = False
 ) -> None:
@@ -1123,7 +1144,12 @@ def _group_keys(candidates: Sequence[_Candidate]) -> dict[str, str]:
 
 
 def _body_has_content(item: _Candidate) -> bool:
-    payload = json.loads(item.normalized_model_input)
+    try:
+        payload = json.loads(item.normalized_model_input)
+    except json.JSONDecodeError as exc:
+        raise FolderTrainingSnapshotError("model input is not canonical JSON") from exc
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("body"), str):
+        raise FolderTrainingSnapshotError("model input body is invalid")
     return bool(payload["body"])
 
 

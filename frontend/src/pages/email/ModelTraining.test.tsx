@@ -15,6 +15,7 @@ vi.mock("../../api/console", async (importOriginal) => ({
 }));
 
 import { ModelTraining } from "./ModelTraining";
+import { initialTrainingSelection } from "./TrainingSetup";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -26,6 +27,16 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 beforeEach(() => vi.resetAllMocks());
+
+it("leaves categories below the cold-start floor out of the default training selection", () => {
+  const selection = initialTrainingSelection([
+    { source: "agent_auto_label", category: "work", sample_count: 20, unique_trainable_count: 20, provenance: {} },
+    { source: "agent_auto_label", category: "personal", sample_count: 2, unique_trainable_count: 2, provenance: {} },
+    { source: "agent_auto_label", category: "legal", sample_count: 19, unique_trainable_count: 19, provenance: {} },
+  ], []);
+  expect(selection.sources).toEqual(["agent_auto_label"]);
+  expect(selection.categories).toEqual(["work"]);
+});
 
 const learning = {
   runtime: {

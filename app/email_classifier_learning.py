@@ -11,7 +11,7 @@ import tempfile
 import uuid
 from hashlib import sha256
 
-from app.email_classifier_contracts import EmailCategory, EmailClassificationStatus
+from app.email_classifier_contracts import EmailCategory
 from app.email_classifier_model_families import validate_model_families
 from app.email_classifier_retrain import (
     AutoRetrainResult,

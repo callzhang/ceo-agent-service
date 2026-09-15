@@ -402,6 +402,8 @@ export interface EmailTrainingSource {
   source: string;
   category: string;
   sample_count: number;
+  record_count?: number;
+  unique_trainable_count?: number;
   supported?: boolean;
   provenance: Record<string, unknown>;
 }
@@ -716,6 +718,8 @@ export interface EmailTrainingPreview {
   snapshot_digest: string;
   snapshot_version: string;
   description_version: string;
+  training_ready?: boolean;
+  training_blockers?: string[];
 }
 
 export function previewEmailTraining(payload: {sources: string[]; categories: string[]}, signal?: AbortSignal) {

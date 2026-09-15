@@ -1446,7 +1446,14 @@ def register_email_routes(
             payload = EmailTrainingPreviewPayload.model_validate(body)
         except (TypeError, ValueError, json.JSONDecodeError, ValidationError):
             return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+        from datetime import datetime, timezone
+
         from app.email_classifier_learning import _selection_provenance
+        from app.email_training_snapshot import (
+            FolderTrainingSnapshotError,
+            build_selected_training_snapshot,
+            selected_training_snapshot_blockers,
+        )
 
         try:
             selection = _selection_provenance(
@@ -1460,6 +1467,22 @@ def register_email_routes(
         provenance = selection["provenance"]
         assert isinstance(provenance, list) and provenance
         snapshot = provenance[0]
+        blockers: tuple[str, ...] = ()
+        records = selection["selected_training_records"]
+        assert isinstance(records, list)
+        try:
+            preview_snapshot = build_selected_training_snapshot(
+                records,
+                snapshot_id="email-selected-training-preview",
+                description_version="selected-training-input-v1",
+                observed_at=datetime.now(timezone.utc),
+                seed=20260905,
+            )
+            blockers = selected_training_snapshot_blockers(
+                preview_snapshot, categories=payload.categories
+            )
+        except FolderTrainingSnapshotError as exc:
+            blockers = (str(exc),)
         return {
             "ok": True,
             "preview": {
@@ -1478,6 +1501,8 @@ def register_email_routes(
                     snapshot["description_version"]
                     or "selected-training-input-v1"
                 ),
+                "training_ready": not blockers,
+                "training_blockers": list(blockers),
             },
         }
 

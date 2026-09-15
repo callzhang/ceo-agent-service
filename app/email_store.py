@@ -12879,27 +12879,82 @@ class EmailStore:
         with self._connect() as db:
             rows = db.execute(
                 """
-                select id, account_id, stable_message_identity, thread_id,
-                       model_text, classification_source, category,
-                       confirmed_category, confirmed_at, updated_at
-                from email_classifications
-                where status='processed'
-                  and classification_source in ('agent', 'user')
-                  and trim(model_text) != ''
+                select classifications.id, classifications.account_id,
+                       classifications.stable_message_identity,
+                       classifications.thread_id, classifications.classification_source,
+                       classifications.category, classifications.confirmed_category,
+                       classifications.confirmed_at, classifications.updated_at,
+                       messages.sender, messages.recipients_json, messages.subject,
+                       messages.normalized_text, messages.attachment_metadata_json,
+                       messages.rfc_message_id, messages.in_reply_to,
+                       messages.references_json,
+                       exists(
+                         select 1 from email_actions as actions
+                         where actions.action_plan_id=classifications.current_action_plan_id
+                           and actions.action_type='flag_important'
+                       ) as important
+                from email_classifications as classifications
+                join email_messages as messages
+                  on messages.stable_message_identity=classifications.stable_message_identity
+                where classifications.status='processed'
+                  and classifications.classification_source in ('agent', 'user')
                   and (
-                    (classification_source='agent' and category is not null and category != '')
-                    or (classification_source='user' and confirmed_category is not null and confirmed_category != '')
+                    (classifications.classification_source='agent'
+                     and classifications.category is not null
+                     and classifications.category != '')
+                    or (classifications.classification_source='user'
+                        and classifications.confirmed_category is not null
+                        and classifications.confirmed_category != '')
                   )
-                order by id asc
+                order by classifications.id asc
                 """
             ).fetchall()
-        return [
-            {
+        from app.email_training_snapshot import canonical_model_input
+
+        def stored_address(value: object) -> dict[str, str]:
+            text = str(value or "").strip()
+            local, separator, domain = text.rpartition("@")
+            return (
+                {"name": "", "email": text}
+                if separator and local and domain
+                else {"name": text, "email": ""}
+            )
+
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                recipients = json.loads(str(row["recipients_json"]))
+                attachments = json.loads(str(row["attachment_metadata_json"]))
+                references = json.loads(str(row["references_json"]))
+            except json.JSONDecodeError as exc:
+                raise EmailPersistenceCorruption(
+                    "stored email training input JSON is corrupt"
+                ) from exc
+            if not all(isinstance(item, str) for item in recipients):
+                raise EmailPersistenceCorruption("stored email recipients are corrupt")
+            if not isinstance(attachments, list) or not isinstance(references, list):
+                raise EmailPersistenceCorruption("stored email training metadata is corrupt")
+            model_input = canonical_model_input(
+                {
+                    "sender": stored_address(row["sender"]),
+                    "to_recipients": [stored_address(item) for item in recipients],
+                    "cc_recipients": [],
+                    "subject": row["subject"],
+                    "body": row["normalized_text"],
+                    "headers": {
+                        "message-id": row["rfc_message_id"],
+                        "in-reply-to": row["in_reply_to"],
+                        "references": " ".join(str(item) for item in references),
+                    },
+                    "attachments": attachments,
+                }
+            )
+            result.append({
                 "classification_id": int(row["id"]),
                 "account_id": str(row["account_id"]),
                 "stable_message_identity": str(row["stable_message_identity"]),
                 "provider_thread_id": str(row["thread_id"]) if row["thread_id"] else None,
-                "normalized_model_input": str(row["model_text"]),
+                "normalized_model_input": model_input,
                 "source": (
                     "agent_auto_label"
                     if row["classification_source"] == "agent"
@@ -12910,12 +12965,12 @@ class EmailStore:
                     if row["classification_source"] == "agent"
                     else row["confirmed_category"]
                 ),
+                "important": bool(row["important"]),
                 "label_recorded_at": str(
                     row["confirmed_at"] or row["updated_at"]
                 ),
-            }
-            for row in rows
-        ]
+            })
+        return result
 
     def persist_training_snapshot(self, snapshot: object) -> dict[str, object]:
         """Atomically append one validated immutable training snapshot."""

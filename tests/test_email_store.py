@@ -5537,6 +5537,24 @@ def test_agent_correction_persists_its_durable_agent_result(tmp_path: Path):
     assert restored["classification_source"] == "agent"
     assert restored["agent_result"] == agent_result.model_dump(mode="json")
     assert restored["action_plan"] == corrected["action_plan"]
+    training_records = store.list_selected_training_records()
+    assert len(training_records) == 1
+    training_input = json.loads(training_records[0]["normalized_model_input"])
+    assert training_records[0]["source"] == "agent_auto_label"
+    assert training_records[0]["important"] is True
+    assert training_input["input_schema_version"] == "email-folder-model-input-v3"
+    assert training_input["subject"] == "Need a decision"
+    assert training_input["body"] == "__subject__need a decision"
+    assert training_input["attachments"] == [
+        {
+            "content_id": "",
+            "disposition": "",
+            "filename": "brief.pdf",
+            "inline": False,
+            "mime_type": "application/pdf",
+            "size_bytes": 1024,
+        }
+    ]
 
 
 def test_human_correction_clears_superseded_agent_result(tmp_path: Path):
