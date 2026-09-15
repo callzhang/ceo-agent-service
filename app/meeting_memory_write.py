@@ -1,6 +1,7 @@
 """Persist delivered DingTalk meeting-alignment conclusions to Memory."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -16,8 +17,11 @@ MEETING_MEMORY_TITLE_LIMIT = 80
 MEETING_MEMORY_START_STALL_SECONDS = 60
 
 
-def _meeting_memory_content_title(final_message: str) -> str:
-    """Return the first substantive conclusion line as the Memory entry title."""
+def _meeting_memory_content_title(final_message: str, decision_json: str = "") -> str:
+    """Return a compact title from structured meeting conclusions when available."""
+    structured_title = _structured_topic_title(decision_json)
+    if structured_title:
+        return structured_title[:MEETING_MEMORY_TITLE_LIMIT]
     for line in final_message.splitlines():
         candidate = line.strip()
         if not candidate or candidate.startswith("【") or candidate.endswith(("：", ":")):
@@ -41,6 +45,22 @@ def _meeting_memory_content_title(final_message: str) -> str:
     return "会议结论"
 
 
+def _structured_topic_title(decision_json: str) -> str | None:
+    try:
+        decision = json.loads(decision_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    topics = decision.get("topics") if isinstance(decision, dict) else None
+    if not isinstance(topics, list):
+        return None
+    conclusions = [
+        " ".join(str(topic.get("conclusion") or "").split())
+        for topic in topics
+        if isinstance(topic, dict) and str(topic.get("conclusion") or "").strip()
+    ]
+    return "；".join(conclusions) or None
+
+
 def meeting_memory_payload(job: Any) -> dict[str, str]:
     """Build the only Memory payload: the conclusion that was delivered."""
     if str(job.status) != "sent" or not str(job.final_message).strip():
@@ -48,7 +68,10 @@ def meeting_memory_payload(job: Any) -> dict[str, str]:
     meeting_id = str(job.meeting_id).strip()
     if not meeting_id:
         raise ValueError("meeting Memory payload requires meeting_id")
-    content_title = _meeting_memory_content_title(str(job.final_message))
+    content_title = _meeting_memory_content_title(
+        str(job.final_message),
+        str(getattr(job, "decision_json", "") or ""),
+    )
     return {
         "data": (
             f"{content_title}\n\n"

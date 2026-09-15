@@ -109,6 +109,34 @@ def test_meeting_memory_title_stops_after_the_first_conclusion_sentence() -> Non
     assert payload["source_description"] == "先完成客户验证"
 
 
+def test_meeting_memory_title_uses_structured_topic_conclusions_over_first_message_sentence() -> None:
+    job = _sent_job()
+    job.final_message = (
+        "【会议跟进】客户验证会\n\n"
+        "1. 先完成客户验证。\n\n"
+        "2. 再决定是否扩大投入。"
+    )
+    job.decision_json = json.dumps(
+        {
+            "topics": [
+                {
+                    "conclusion": "先用真实客户验证产品价值，再依据反馈决定投入与扩张节奏。",
+                },
+                {
+                    "conclusion": "验证结果必须进入下一轮经营决策。",
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    payload = meeting_memory_payload(job)
+
+    assert payload["source_description"] == (
+        "先用真实客户验证产品价值，再依据反馈决定投入与扩张节奏。；验证结果必须进入下一轮经营决策。"
+    )
+
+
 def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "store.sqlite3")
     job_id = _store_sent_job(store)
