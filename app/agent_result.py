@@ -4,9 +4,6 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-RUNTIME_CONFIRMATION_REQUIRED_CODE = "confirmation_required"
-
-
 def _strict_agent_error_json_schema(schema: dict[str, object]) -> None:
     properties = schema.get("properties")
     if not isinstance(properties, dict):
@@ -36,12 +33,7 @@ class AgentError(BaseModel):
     session_continuable: bool = False
 
 
-def requires_explicit_operator_confirmation(error: AgentError) -> bool:
-    """Return whether a runtime stopped before an externally visible action."""
-    return (
-        error.authorization_required
-        and error.code == RUNTIME_CONFIRMATION_REQUIRED_CODE
-    )
+
 class EffectKind(StrEnum):
     READ_ONLY = "read_only"
     EFFECTFUL = "effectful"

@@ -15,12 +15,7 @@ from app.agent_contracts import (
     ConsumerProposal,
     DecisionOption,
 )
-from app.agent_result import (
-    RUNTIME_CONFIRMATION_REQUIRED_CODE,
-    AgentError,
-    ResultParseError,
-    requires_explicit_operator_confirmation,
-)
+from app.agent_result import AgentError, ResultParseError
 from app.agent_turn_runner import AgentTurnRunResult
 from app.codex_capacity import is_codex_provider_recovery_code
 from app.config import principal_display_name
@@ -733,14 +728,6 @@ class AgentOrchestrator:
                     self._retry_feedback(run, runs_by_id=runs_by_id),
                 )
         error = _run_error(run)
-        if run.status == "failed" and _is_runtime_confirmation_required(error):
-            result = _runtime_confirmation_consumer_result(error)
-            return _consumer_terminal(
-                "needs_human",
-                run,
-                result,
-                feedback_cycles,
-            )
         if run.status == "failed" and error.authorization_required:
             if task.error == error.code:
                 feedback = self._retry_feedback(run, runs_by_id=runs_by_id)
@@ -847,14 +834,6 @@ class AgentOrchestrator:
                     None,
                 )
         error = _run_error(run)
-        if run.status == "failed" and _is_runtime_confirmation_required(error):
-            result = _runtime_confirmation_audit_result(run, error)
-            return _audit_terminal(
-                "needs_human",
-                run,
-                result,
-                feedback_cycles,
-            )
         if run.status == "failed" and error.authorization_required:
             if task.error == error.code:
                 return _NextAudit(
@@ -1391,11 +1370,17 @@ class AgentOrchestrator:
     @staticmethod
     def _deferred_result(state: _Deferred) -> OrchestrationResult:
         run = state.run
+        summary = state.detail or state.code
+        if state.code == "confirmation_required":
+            summary = (
+                "外部提供方拒绝执行：需要运行时确认；这不是业务决策，"
+                "未执行外部动作。"
+            )
         return OrchestrationResult(
             status="failed_retryable",
             final_run_id=run.id if run is not None else 0,
             final_role=run.role if run is not None else AgentRole.CONSUMER,
-            summary=state.detail or state.code,
+            summary=summary,
             error=AgentError(
                 code=state.code,
                 retryable=True,
@@ -1473,85 +1458,6 @@ def _operation_id(task: ReplyTask, revision: int) -> str:
 
 def _failure_status(error: AgentError) -> str:
     return "failed_retryable" if error.retryable else "failed_terminal"
-
-
-def _is_runtime_confirmation_required(error: AgentError) -> bool:
-    return requires_explicit_operator_confirmation(error)
-
-
-def _terminal_confirmation_error(error: AgentError) -> AgentError:
-    return error.model_copy(
-        update={
-            "code": RUNTIME_CONFIRMATION_REQUIRED_CODE,
-            "retryable": False,
-            "authorization_required": True,
-        }
-    )
-
-
-def _runtime_confirmation_consumer_result(error: AgentError) -> ConsumerAgentResult:
-    terminal_error = _terminal_confirmation_error(error)
-    return ConsumerAgentResult(
-        # The provider refused an external write until it receives an explicit
-        # confirmation.  This is a real operator boundary, not a service
-        # outage: close the attempt as needs_human with concrete choices and
-        # never treat it as a retryable technical failure.
-        outcome=ConsumerOutcome.NEEDS_HUMAN,
-        summary=terminal_error.code,
-        proposal=None,
-        decision_options=(
-            DecisionOption(
-                key="confirm_external_action",
-                label="确认执行外部操作",
-                instruction="确认按当前已审计方案执行这次外部操作。",
-                consequence="Agent 会执行一次外部操作并读取结果；不会重复执行其他动作。",
-            ),
-            DecisionOption(
-                key="stop_without_action",
-                label="停止当前事项",
-                instruction="不执行外部操作，保留当前审计记录并结束事项。",
-                consequence="不会发送消息、接受日程、创建待办或执行审批。",
-            ),
-        ),
-        error=terminal_error,
-        risk="high",
-        confidence=0.0,
-        rule_coverage=1.0,
-        information_completeness=1.0,
-    )
-
-
-def _runtime_confirmation_audit_result(
-    run: AgentRun,
-    error: AgentError,
-) -> AuditAgentResult:
-    terminal_error = _terminal_confirmation_error(error)
-    return AuditAgentResult(
-        outcome=AuditOutcome.NEEDS_HUMAN,
-        summary=terminal_error.code,
-        proposal_revision=run.proposal_revision,
-        feedback=None,
-        external_result=None,
-        decision_options=(
-            DecisionOption(
-                key="confirm_external_action",
-                label="确认执行外部操作",
-                instruction="确认按当前已审计方案执行这次外部操作。",
-                consequence="Agent 会执行一次外部操作并读取结果；不会重复执行其他动作。",
-            ),
-            DecisionOption(
-                key="stop_without_action",
-                label="停止当前事项",
-                instruction="不执行外部操作，保留当前审计记录并结束事项。",
-                consequence="不会发送消息、接受日程、创建待办或执行审批。",
-            ),
-        ),
-        risk="high",
-        confidence=0.0,
-        rule_coverage=1.0,
-        information_completeness=1.0,
-        error=terminal_error,
-    )
 
 
 def _run_error(run: AgentRun) -> AgentError:

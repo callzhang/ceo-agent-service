@@ -21,7 +21,6 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from app.agent_result import AgentError, requires_explicit_operator_confirmation
 from app.agent_runtime_contracts import (
     CredentialMode,
     RuntimeCapabilitySnapshot,
@@ -20606,28 +20605,14 @@ class AutoReplyStore:
                 or row["run_status"] not in {"completed", "failed"}
             ):
                 raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
-            failed_run_supports_human_confirmation = False
-            if task_status == "done" and row["run_status"] == "failed":
+            if (
+                task_status == "done"
+                and row["run_status"] == "failed"
+            ):
                 failed_run = db.execute(
                     "select structured_error_json from agent_runs where id=?",
                     (run_id,),
                 ).fetchone()
-                failed_run_supports_human_confirmation = (
-                    send_status == "needs_human"
-                    and self._has_human_decision_options(
-                        human_decision_options_json
-                    )
-                    and self._run_requires_explicit_confirmation(
-                        failed_run["structured_error_json"]
-                        if failed_run is not None
-                        else ""
-                    )
-                )
-            if (
-                task_status == "done"
-                and row["run_status"] == "failed"
-                and not failed_run_supports_human_confirmation
-            ):
                 if sent_reply_text:
                     raise ValueError(
                         "failed agent run cannot finalize a newly sent reply"
@@ -20818,54 +20803,6 @@ class AutoReplyStore:
         code = payload.get("code")
         return code.strip() if isinstance(code, str) and code.strip() else "agent_run_failed"
 
-    @staticmethod
-    def _run_requires_explicit_confirmation(structured_error_json: str) -> bool:
-        try:
-            payload = json.loads(structured_error_json)
-            error = AgentError.model_validate(payload)
-        except (TypeError, json.JSONDecodeError, ValueError):
-            return False
-        return requires_explicit_operator_confirmation(error)
-
-    @staticmethod
-    def _has_human_decision_options(options_json: str) -> bool:
-        try:
-            options = json.loads(options_json)
-        except (TypeError, json.JSONDecodeError):
-            return False
-        return bool(
-            isinstance(options, list)
-            and all(
-                isinstance(option, dict)
-                and isinstance(option.get("key"), str)
-                and option["key"].strip()
-                and isinstance(option.get("instruction"), str)
-                and option["instruction"].strip()
-                for option in options
-            )
-        )
-
-    @staticmethod
-    def _confirmation_required_options_json() -> str:
-        return json.dumps(
-            [
-                {
-                    "key": "confirm_external_action",
-                    "label": "确认执行外部操作",
-                    "instruction": "确认按当前已审计方案执行这次外部操作。",
-                    "consequence": "Agent 会执行一次外部操作并读取结果；不会重复执行其他动作。",
-                },
-                {
-                    "key": "stop_without_action",
-                    "label": "停止当前事项",
-                    "instruction": "不执行外部操作，保留当前审计记录并结束事项。",
-                    "consequence": "不会发送消息、接受日程、创建待办或执行审批。",
-                },
-            ],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-
     def reconcile_done_reply_tasks_with_failed_current_run(self) -> int:
         """Restore truthful current state when a failed final run was projected done.
 
@@ -20940,21 +20877,16 @@ class AutoReplyStore:
             return repaired
 
     def reconcile_failed_reply_tasks_with_confirmation_required_runs(self) -> int:
-        """Restore the human confirmation projection for legacy failed runs.
+        """Repair old confirmation projections as truthful technical failures.
 
-        Older workers correctly stopped before an externally visible action,
-        but their finalization guard then replaced that boundary with a failed
-        queue task. This creates a local ``needs_human`` Attempt and closes
-        the queue task; it never invokes or replays the reviewed action.
+        A provider-side confirmation refusal is not a business decision. It
+        must remain a failed run and must never be turned into generic human
+        choice buttons during service startup.
         """
-        options_json = self._confirmation_required_options_json()
         with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
-                select tasks.id, tasks.channel, tasks.conversation_id,
-                       tasks.conversation_title, tasks.trigger_message_id,
-                       tasks.trigger_sender, tasks.trigger_text,
-                       tasks.execution_generation, runs.id as run_id,
+                select tasks.id, tasks.execution_generation, runs.id as run_id,
                        runs.structured_error_json
                 from reply_tasks as tasks
                 join agent_runs as runs on runs.id=(
@@ -20971,45 +20903,37 @@ class AutoReplyStore:
             ).fetchall()
             reconciled = 0
             for row in rows:
-                if not self._run_requires_explicit_confirmation(
-                    str(row["structured_error_json"] or "")
+                try:
+                    payload = json.loads(str(row["structured_error_json"] or ""))
+                except (TypeError, json.JSONDecodeError):
+                    payload = {}
+                if not isinstance(payload, dict) or not (
+                    payload.get("authorization_required") is True
+                    and payload.get("code") == "confirmation_required"
                 ):
                     continue
-                summary = "The reviewed external action requires confirmation."
-                db.execute(
-                    """
-                    insert into reply_attempts (
-                        conversation_id, conversation_title, trigger_message_id,
-                        trigger_sender, trigger_text, action, sensitivity_kind,
-                        agent_run_id, codex_reason, audit_summary,
-                        human_decision_options_json, send_status, send_error,
-                        channel
-                    ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?,
-                              'needs_human', 'confirmation_required', ?)
-                    """,
-                    (
-                        row["conversation_id"],
-                        row["conversation_title"],
-                        row["trigger_message_id"],
-                        row["trigger_sender"],
-                        row["trigger_text"],
-                        row["run_id"],
-                        summary,
-                        summary,
-                        options_json,
-                        row["channel"],
-                    ),
-                )
                 cursor = db.execute(
                     """
+                    update reply_attempts
+                    set send_status='failed', send_error='confirmation_required',
+                        codex_reason='外部提供方拒绝执行：需要运行时确认；这不是业务决策，Agent 不会将其升级为 needs_human。',
+                        audit_summary='外部提供方拒绝执行：需要运行时确认；这不是业务决策，未执行外部动作。',
+                        human_decision_options_json='[]', updated_at=current_timestamp
+                    where agent_run_id=? and send_status='needs_human'
+                      and send_error='confirmation_required'
+                    """,
+                    (row["run_id"],),
+                )
+                reconciled += cursor.rowcount
+                db.execute(
+                    """
                     update reply_tasks
-                    set status='done', error='', available_at='', locked_at=null,
-                        updated_at=current_timestamp
-                    where id=? and status='failed' and execution_generation=?
+                    set status='failed', error='confirmation_required',
+                        available_at='', locked_at=null, updated_at=current_timestamp
+                    where id=? and execution_generation=? and status<>'failed'
                     """,
                     (row["id"], row["execution_generation"]),
                 )
-                reconciled += cursor.rowcount
             return reconciled
 
     def skip_failed_reply_tasks_superseded_by_terminal_business_object(self) -> int:

@@ -2704,7 +2704,7 @@ def test_authorization_wait_defers_without_consuming_feedback_cycle(store):
     assert len(audit.calls) == 1
 
 
-def test_runtime_confirmation_required_becomes_a_human_choice_for_audit(store):
+def test_runtime_confirmation_required_is_a_technical_failure_for_audit(store):
     task = _task(store)
     consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
     audit = ScriptedAudit(
@@ -2722,19 +2722,15 @@ def test_runtime_confirmation_required_becomes_a_human_choice_for_audit(store):
         AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
     )
 
-    assert result.status == "needs_human"
+    assert result.status == "failed_retryable"
     assert result.error.code == "confirmation_required"
-    assert result.error.retryable is False
-    assert result.audit_result is not None
-    assert result.audit_result.outcome is AuditOutcome.NEEDS_HUMAN
-    assert [option.key for option in result.audit_result.decision_options] == [
-        "confirm_external_action",
-        "stop_without_action",
-    ]
+    assert result.error.retryable is True
+    assert "不是业务决策" in result.summary
+    assert result.audit_result is None
     assert len(audit.calls) == 1
 
 
-def test_runtime_confirmation_required_becomes_a_human_choice_for_consumer(store):
+def test_runtime_confirmation_required_is_a_technical_failure_for_consumer(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -2754,15 +2750,10 @@ def test_runtime_confirmation_required_becomes_a_human_choice_for_consumer(store
         task,
     )
 
-    assert result.status == "needs_human"
+    assert result.status == "failed_retryable"
     assert result.error.code == "confirmation_required"
-    assert result.error.retryable is False
-    assert result.consumer_result is not None
-    assert result.consumer_result.outcome is ConsumerOutcome.NEEDS_HUMAN
-    assert [option.key for option in result.consumer_result.decision_options] == [
-        "confirm_external_action",
-        "stop_without_action",
-    ]
+    assert result.error.retryable is True
+    assert result.consumer_result is None
 
 
 def test_authorization_recovery_retries_audit_with_next_turn_attempt(store):

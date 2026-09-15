@@ -2510,7 +2510,7 @@ def test_finalize_orchestration_never_projects_failed_current_run_as_done(
     assert updated.error == "runtime_result_validation_failed"
 
 
-def test_finalize_orchestration_keeps_confirmation_boundary_as_needs_human(
+def test_finalize_orchestration_keeps_confirmation_boundary_as_failed(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2577,10 +2577,10 @@ def test_finalize_orchestration_keeps_confirmation_boundary_as_needs_human(
     attempt = store.get_reply_attempt(attempt_id)
 
     assert updated is not None
-    assert updated.status == "done"
-    assert updated.error == ""
+    assert updated.status == "failed"
+    assert updated.error == "confirmation_required"
     assert attempt is not None
-    assert attempt.send_status == "needs_human"
+    assert attempt.send_status == "failed"
     assert attempt.send_error == "confirmation_required"
 
 
@@ -2624,7 +2624,7 @@ def test_generic_store_skips_email_receipt_reconciliation_without_email_schema(
     assert store.reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts() == 0
 
 
-def test_reconcile_confirmation_required_run_as_human_decision(
+def test_reconcile_confirmation_required_run_stays_failed(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2656,7 +2656,7 @@ def test_reconcile_confirmation_required_run_as_human_decision(
         expected_execution_generation=task.execution_generation,
     )
 
-    assert store.reconcile_failed_reply_tasks_with_confirmation_required_runs() == 1
+    assert store.reconcile_failed_reply_tasks_with_confirmation_required_runs() == 0
 
     updated = store.get_reply_task(task.id)
     attempt = store.get_latest_reply_attempt_for_trigger(
@@ -2665,14 +2665,67 @@ def test_reconcile_confirmation_required_run_as_human_decision(
     )
 
     assert updated is not None
-    assert updated.status == "done"
-    assert updated.error == ""
-    assert attempt is not None
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "confirmation_required"
-    assert json.loads(attempt.human_decision_options_json)[0]["key"] == (
-        "confirm_external_action"
+    assert updated.status == "failed"
+    assert updated.error == "confirmation_required"
+    assert attempt is None
+
+
+def test_reconcile_repairs_existing_confirmation_projection_to_failed(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-existing-confirmation",
+        conversation_title="Management group",
+        single_chat=False,
+        trigger_message_id="msg-existing-confirmation",
+        trigger_create_time="2026-09-15 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please handle this",
     )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="audit"
+    ).run
+    store.fail_agent_run(
+        run.id,
+        {
+            "code": "confirmation_required",
+            "retryable": True,
+            "authorization_required": True,
+        },
+        owner="audit",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+        human_decision_options_json='[{"key":"confirm"}]',
+        channel=task.channel,
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set agent_run_id=?, send_error=? where id=?",
+            (run.id, "confirmation_required", attempt_id),
+        )
+    store.fail_reply_task(
+        task.id,
+        "confirmation_required",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    assert store.reconcile_failed_reply_tasks_with_confirmation_required_runs() == 1
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "confirmation_required"
+    assert attempt.human_decision_options_json == "[]"
+    assert "不是业务决策" in attempt.audit_summary
 
 
 def test_reconcile_preserves_done_task_with_recorded_message_delivery(

@@ -653,7 +653,7 @@ def test_quality_gate_reports_needs_human_projection_when_queue_task_is_done(tmp
     assert store.count_current_unresolved_problem_attempts() == 0
 
 
-def test_quality_gate_accepts_service_generated_confirmation_options(tmp_path):
+def test_quality_gate_rejects_service_generated_confirmation_options(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     attempt_id = _insert_needs_human_projection(
         store,
@@ -674,10 +674,8 @@ def test_quality_gate_accepts_service_generated_confirmation_options(tmp_path):
         )
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert ("reply_attempts", "needs_human", 1) in {
-        (item.source, item.code, item.count) for item in report.attention
-    }
-    assert not any(
+    assert not any(item.code == "needs_human" for item in report.attention)
+    assert any(
         item.code == "invalid_needs_human_result" for item in report.violations
     )
 
