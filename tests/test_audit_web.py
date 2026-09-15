@@ -2597,6 +2597,69 @@ def test_history_chart_projects_terminal_reply_task_as_done(
     assert series_names == {"Done"}
 
 
+def test_history_chart_projects_hidden_legacy_attempts_through_terminal_task(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-legacy-chart-projection",
+        conversation_title="Legacy chart projection",
+        single_chat=False,
+        trigger_message_id="msg-legacy-chart-projection",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Keep the original event time but project the terminal task.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    attempt_ids = [
+        store.record_reply_attempt(
+            conversation_id=task.conversation_id,
+            conversation_title=task.conversation_title,
+            trigger_message_id=task.trigger_message_id,
+            trigger_sender=task.trigger_sender,
+            trigger_text=task.trigger_text,
+            action="agent_run",
+            sensitivity_kind="general",
+            send_status="failed",
+        )
+        for _ in range(2)
+    ]
+    with store._connect() as db:
+        for generation, attempt_id in enumerate(attempt_ids):
+            run = db.execute(
+                """
+                insert into agent_runs (
+                    reply_task_id, execution_generation, role, operation_id, status
+                ) values (?, ?, 'consumer', ?, 'completed')
+                """,
+                (task.id, f"legacy-chart-generation-{generation}", f"legacy-{generation}"),
+            )
+            db.execute(
+                "update reply_attempts set agent_run_id=? where id=?",
+                (run.lastrowid, attempt_id),
+            )
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    projected_ids = {
+        item.source_id
+        for item in store.list_operation_logs(source_tables=("reply_attempts",))
+    }
+    payload = audit_web_module._history_chart_payload(store)
+    series_by_name = {series["name"]: series["data"] for series in payload["series"]}
+
+    # The older physical Attempt is intentionally absent from the canonical
+    # History projection, but it remains a historical fact in the chart's time
+    # range. Its lifecycle must follow the current terminal task, not its raw
+    # failed transport status.
+    assert attempt_ids[0] not in projected_ids
+    assert attempt_ids[1] in projected_ids
+    assert series_by_name.keys() == {"Done"}
+    assert sum(series_by_name["Done"]) == 2
+
+
 def test_history_chart_projects_replaced_failed_attempt_as_done(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     failed_id = store.record_reply_attempt(

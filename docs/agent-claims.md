@@ -29,6 +29,7 @@ reverts committed work they did not author.
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
 | codex-agent-health-metrics | app/store.py, app/audit_web.py, app/cli.py, frontend/src/api/console.ts, frontend/src/pages/StatusPage.tsx, tests/test_store.py, tests/test_audit_web.py, tests/test_cli.py, tests/test_console_status_response.py, frontend/src/api/console.test.ts, frontend/src/pages/StatusPage.test.tsx, README.md, CHANGELOG.md | Meeting Memory lease-backed health payload, degraded health gate, components and status UI | 2026-09-15 |
+| codex-history-chart-terminal-projection | app/audit_web.py, tests/test_audit_web.py, docs/architecture.md | Narrow chart-only fix: preserve raw Attempt event time while projecting hidden legacy duplicate attempts through the current Reply Task terminal state. Checked health claim's actual diff: no edit to `_history_chart_payload` or its tests. | 2026-09-15 |
 
 
 ## Recent overlaps worth knowing

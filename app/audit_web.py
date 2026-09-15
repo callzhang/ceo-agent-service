@@ -5239,10 +5239,10 @@ def _history_chart_payload(
                 attempt.trigger_message_id,
                 channel=attempt.channel,
             )
-            if task is not None and task.status == "pending":
-                event_label = "Pending"
-            elif task is not None and task.status == "processing":
-                event_label = "Running"
+            if task is not None:
+                task_label = _history_lifecycle_label(task.status)
+                if task_label != "Failed":
+                    event_label = task_label
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     recovered_meeting_run_ids = store.recovered_meeting_alignment_run_ids_since(
         since_utc
