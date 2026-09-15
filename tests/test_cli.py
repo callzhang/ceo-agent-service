@@ -6654,6 +6654,58 @@ def test_meeting_memory_write_loop_uses_its_own_workers_and_runtime_lease(
     assert calls[0]["lease_seconds"] == 3900
 
 
+def test_meeting_memory_write_loop_does_not_report_a_deferred_wave_as_healthy(
+    monkeypatch, tmp_path
+):
+    class StopLoop(Exception):
+        pass
+
+    calls: list[tuple[object, ...]] = []
+
+    class Store:
+        def set_service_health_component(self, component, **kwargs):
+            calls.append(("health", component, kwargs))
+
+        def resolve_unresolved_errors_by_kind(self, kind, *, resolution):
+            calls.append(("resolve", kind, resolution))
+
+        def record_error(self, *_args):
+            raise AssertionError("deferred Meeting Memory wave must not throw")
+
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: Store())
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_meeting_memory_writes",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            claimed=2, completed=0, retried=2, failed=0, lost_lease=0
+        ),
+    )
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_memory_write_loop(
+            WorkerSettings(db_path=tmp_path / "worker.sqlite3", workspace=tmp_path),
+            sleep=lambda _seconds: (_ for _ in ()).throw(StopLoop()),
+            network_ready=lambda: True,
+        )
+
+    assert calls == [
+        (
+            "health",
+            "meeting-memory-write",
+            {
+                "state": "degraded",
+                "status": "waiting",
+                "detail": "2 claimed Meeting Memory write(s) completed 0; retry 2, failed 0, lease lost 0",
+                "latest_tick_at": pytest.approx(calls[0][2]["latest_tick_at"]),
+            },
+        )
+    ]
+
+
 def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_path):
     calls = []
 

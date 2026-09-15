@@ -7930,6 +7930,147 @@ def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
+@pytest.mark.parametrize("successor_status", ("done", "skipped"))
+def test_reply_attempt_queue_hides_failed_history_when_its_task_has_a_terminal_successor(
+    tmp_path: Path,
+    successor_status: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / f"reply-attempt-{successor_status}.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id=f"cid-terminal-{successor_status}",
+        conversation_title="Terminal successor",
+        single_chat=False,
+        trigger_message_id=f"msg-terminal-{successor_status}",
+        trigger_create_time="2026-09-15 08:00:00",
+        trigger_sender="System",
+        trigger_text="This source is already settled.",
+        channel="email",
+        business_object_key=f"oa:terminal-{successor_status}:1",
+    )
+    attempt_id = store.record_reply_attempt(
+        channel="email",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="failed",
+        send_error="terminal_source_already_settled",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set status=? where id=?", (successor_status, task.id))
+
+    payload = build_worker_status_payload(store)
+    reply_attempt_queue = next(
+        queue for queue in payload["queues"] if queue["name"] == "Reply attempts"
+    )
+
+    assert reply_attempt_queue["failed"] == 0
+    assert reply_attempt_queue["counts"].get("recovered", 0) == 1
+
+
+def test_status_reports_lease_backed_meeting_memory_health_and_degrades_for_backlog(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {
+            "label": label,
+            "target": "gui/501/com.ceo-agent-service.main",
+            "ok": True,
+            "state": "running",
+            "detail": "running",
+            "pid": "123",
+            "runs": "1",
+            "initialized": "1",
+            "last_terminating_signal": "",
+            "returncode": 0,
+        },
+    )
+    monkeypatch.setattr(
+        audit_web_module,
+        "scan_hourly_quality",
+        lambda _path: SimpleNamespace(violations=(), checked_at="2026-09-15T12:00:00+00:00"),
+    )
+    store = AutoReplyStore(tmp_path / "meeting-memory-status.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
+            "values (1, 'overdue-memory', 'sent', 'summary')"
+        )
+        db.execute(
+            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
+            "values (2, 'ghost-memory', 'sent', 'summary')"
+        )
+        db.execute(
+            """
+            insert into meeting_memory_write_events (
+                id, meeting_job_id, execution_generation, payload_json, status,
+                available_at, created_at, updated_at
+            ) values (1, 1, 'due', '{}', 'pending',
+                      '2020-01-01T00:00:00+00:00',
+                      '2020-01-01T00:00:00+00:00', '2020-01-01T00:00:00+00:00')
+            """
+        )
+        db.execute(
+            """
+            insert into meeting_memory_write_events (
+                id, meeting_job_id, execution_generation, payload_json, status,
+                lease_owner, lease_expires_at, created_at, updated_at
+            ) values (2, 2, 'ghost', '{}', 'processing', 'event-owner',
+                      '2020-01-01T00:00:00+00:00',
+                      '2020-01-01T00:00:00+00:00', '2020-01-01T00:00:00+00:00')
+            """
+        )
+        db.execute(
+            """
+            insert into agent_runtime_attempts (
+                workload_kind, workload_key, attempt_number, route_name,
+                runtime_kind, credential_mode, model, status, lease_owner,
+                lease_expires_at
+            ) values ('memory', 'meeting_memory_write_event:2:ghost', 1,
+                      'codex_oauth', 'codex_cli', 'local_oauth', 'gpt-5.6-sol',
+                      'running', 'event-owner', '2030-01-01T00:00:00+00:00')
+            """
+        )
+
+    payload = build_worker_status_payload(store)
+
+    meeting_memory_health = payload["meeting_memory_health"]
+    assert {
+        key: value
+        for key, value in meeting_memory_health.items()
+        if key != "oldest_due_seconds"
+    } == {
+        "pending": 1,
+        "due": 1,
+        "delayed": 1,
+        "processing": 1,
+        "retryable": 0,
+        "failed": 0,
+        "oldest_due_at": "2020-01-01T00:00:00+00:00",
+        "completed_last_hour": 0,
+        "active_agents": 0,
+        "ghost_runtime_attempts": 1,
+        "delayed_after_seconds": 30 * 60,
+    }
+    assert meeting_memory_health["oldest_due_seconds"] > 30 * 60
+    assert {component["name"] for component in payload["components"]} >= {
+        "meeting-delivery",
+        "meeting-memory-write",
+    }
+    assert payload["system_health"]["state"] == "degraded"
+    assert "Meeting Memory" in payload["system_health"]["detail"]
+
+
 def test_attention_hides_historical_failed_task_when_business_object_is_done(
     tmp_path: Path,
 ):

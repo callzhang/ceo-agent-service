@@ -51,6 +51,16 @@ function emailHealthRows(items: StatusEmailHealthEntry[]) {
   ]);
 }
 
+function readableWait(seconds: number) {
+  if (seconds <= 0) return "暂无等待";
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours} 小时 ${remainder} 分钟` : `${hours} 小时`;
+}
+
 export function StatusPanel() {
   const [payload, setPayload] = useState<WorkerStatus | null>(null);
   const [snapshot, setSnapshot] = useState("");
@@ -73,7 +83,7 @@ export function StatusPanel() {
   if (state === "error" && !payload) return <section className="console-card page-state page-state-error" role="alert">{error}<button type="button" className="secondary-button" onClick={() => void load()}>重试</button></section>;
   if (!payload) return <section className="console-card page-state" role="status">正在加载…</section>;
 
-  const { service, system_health: systemHealth, summary, components, queues, dispatcher_queues: dispatcherQueues, connectors, email, wechat } = payload;
+  const { service, system_health: systemHealth, summary, components, queues, dispatcher_queues: dispatcherQueues, connectors, email, meeting_memory_health: meetingMemoryHealth, wechat } = payload;
   const connectorRows = Object.entries(connectors).map(([name, value]) => {
     return [name, <StatusBadge value={value.state} key="state" />, displayValue(value.reason_code || value.detail || "未提供")];
   });
@@ -120,6 +130,22 @@ export function StatusPanel() {
         <summary>Internal checks ({email.checks.length})</summary>
         <StatusTable headers={["Check", "Status", "Detail", "Updated"]} mobileLabels={["Check", "Status", "Detail", "Updated"]} rows={emailHealthRows(email.checks)} />
       </details>
+    </StatusSection>
+    <StatusSection title="会议结论同步">
+      <div className="status-metric-grid">
+        <StatusMetric label="最久等待" value={readableWait(meetingMemoryHealth.oldest_due_seconds)} detail={meetingMemoryHealth.oldest_due_at || "当前没有到期任务"} tone={meetingMemoryHealth.delayed ? "warning" : undefined} />
+        <StatusMetric label="近一小时完成" value={displayValue(meetingMemoryHealth.completed_last_hour)} detail="已写入会议结论" />
+        <StatusMetric label="真实活跃 Agent" value={displayValue(meetingMemoryHealth.active_agents)} detail="租约与执行记录一致" />
+        <StatusMetric label="幽灵运行记录" value={displayValue(meetingMemoryHealth.ghost_runtime_attempts)} detail="已失去有效队列租约的旧记录" tone={meetingMemoryHealth.ghost_runtime_attempts ? "bad" : "good"} />
+      </div>
+      <StatusTable headers={["待处理", "已到期", "超时", "处理中", "可重试", "失败"]} mobileLabels={["待处理", "已到期", "超时", "处理中", "可重试", "失败"]} rows={[[
+        displayValue(meetingMemoryHealth.pending),
+        displayValue(meetingMemoryHealth.due),
+        displayValue(meetingMemoryHealth.delayed),
+        displayValue(meetingMemoryHealth.processing),
+        displayValue(meetingMemoryHealth.retryable),
+        displayValue(meetingMemoryHealth.failed),
+      ]]} />
     </StatusSection>
     <StatusSection title="Queues">
       <StatusTable headers={["Queue", "Status counts", "Pending", "Processing", "Retryable", "Failed", "Updated", "Latest error"]} mobileLabels={["Queue", "Status counts", "Pending", "Processing", "Retryable", "Failed", "Updated", "Latest error"]} rows={queues.map((item) => [<><strong>{displayValue(item.name)}</strong><small className="table-subtitle">{displayValue(item.table)}</small></>, displayValue(item.counts), displayValue(item.pending), displayValue(item.processing), displayValue(item.retryable), displayValue(item.failed), displayValue(item.latest_updated_at), displayValue(item.latest_error || "-")])} />

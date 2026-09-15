@@ -17,6 +17,20 @@ function statusEnvelope() {
         accounts: [],
         checks: [],
       },
+      meeting_memory_health: {
+        pending: 0,
+        due: 0,
+        delayed: 0,
+        processing: 0,
+        retryable: 0,
+        failed: 0,
+        oldest_due_at: "",
+        oldest_due_seconds: 0,
+        completed_last_hour: 0,
+        active_agents: 0,
+        ghost_runtime_attempts: 0,
+        delayed_after_seconds: 1800,
+      },
       wechat: { reader: { status: "ready", enabled: true, error: "" }, sender: { status: "ready", enabled: true, error: "" }, preflight: { status: "on_send", error: "" }, account: { ready: true, account_id: "account" } },
       queues: [{ name: "Reply tasks", table: "reply_tasks", counts: {}, pending: 0, processing: 0, failed: 0, retryable: 0, latest_updated_at: "", latest_error: "" }],
       dispatcher_queues: [{ name: "scheduled", pending: 0, due: 0, oldest_available_at: null, running: 0, latest_error: "" }],
@@ -68,6 +82,7 @@ describe("console API helpers", () => {
 
   it.each([
     ["missing field", (payload: ReturnType<typeof statusEnvelope>) => { delete (payload.item.summary as Partial<typeof payload.item.summary>).failed; }],
+    ["missing Meeting Memory health", (payload: ReturnType<typeof statusEnvelope>) => { delete (payload.item as Partial<typeof payload.item>).meeting_memory_health; }],
     ["wrong nested type", (payload: ReturnType<typeof statusEnvelope>) => { (payload.item.dispatcher_queues[0] as { pending: unknown }).pending = "0"; }],
     ["extra nested field", (payload: ReturnType<typeof statusEnvelope>) => { Object.assign(payload.item.components[0], { unexpected: true }); }],
   ])("rejects a status response with %s", async (_label, mutate) => {

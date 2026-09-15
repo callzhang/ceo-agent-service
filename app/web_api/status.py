@@ -92,6 +92,21 @@ class EmailHealth(StrictStatusModel):
     checks: list[EmailHealthEntry]
 
 
+class MeetingMemoryHealth(StrictStatusModel):
+    pending: int
+    due: int
+    delayed: int
+    processing: int
+    retryable: int
+    failed: int
+    oldest_due_at: str
+    oldest_due_seconds: int
+    completed_last_hour: int
+    active_agents: int
+    ghost_runtime_attempts: int
+    delayed_after_seconds: int
+
+
 class WechatEndpointStatus(StrictStatusModel):
     enabled: bool
     status: str
@@ -167,6 +182,7 @@ class WorkerStatus(StrictStatusModel):
     components: list[ComponentStatus]
     connectors: dict[str, ConnectorStatus]
     email: EmailHealth
+    meeting_memory_health: MeetingMemoryHealth
     wechat: WechatStatus
     queues: list[QueueStatus]
     dispatcher_queues: list[DispatcherQueueStatus]

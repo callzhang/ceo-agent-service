@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- 2026-09-15: Status now reports Meeting-to-Memory queue health from the
+  durable event lease and matching runtime lease rather than a historical
+  runtime status. It shows pending/due/delayed/processing/retryable/failed,
+  oldest waiting time, hourly completions, active Agents and orphaned runtime
+  records; a delayed queue or orphaned record degrades system health. The
+  worker no longer reports a claimed wave that completed nothing as healthy.
+  Reply-attempt counts also treat a direct task that has subsequently reached
+  `done` or `skipped` as recovered rather than retaining the old physical
+  failure in Status.
+
 - Meeting-to-Memory writes now renew a live event lease while a routed Memory
   call is still running, using a separate short-lived SQLite connection. A
   renewal that loses ownership or reaches expiry makes the old worker stop

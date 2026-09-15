@@ -128,6 +128,7 @@ from app.developer_prompt import (
     write_configurable_prompt_variables,
     write_user_prompt_template,
 )
+
 from app.prompt import work_profile_instruction, write_work_profile
 from app.dingtalk_models import DingTalkMessage
 from app.wechat.models import WechatMessage
@@ -191,6 +192,10 @@ from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
+# A due Meeting Memory write has missed its service objective after 30 minutes.
+# The value is deliberately visible in the status contract so operations can
+# distinguish an ordinary queued item from an unhealthy backlog.
+MEETING_MEMORY_HEALTH_DELAY_SECONDS = 30 * 60
 # Web startup recovery and the worker share the same SQLite file. A two second
 # timeout caused intermittent startup failure while the worker held its write
 # transaction; use the store's normal timeout instead.
@@ -2155,6 +2160,9 @@ def build_worker_status_payload(
         dispatcher_queues = _dispatcher_queue_snapshots(store)
         attention_rows = _queue_attention_rows(store)
         email_health = _email_worker_health_snapshot(store)
+        meeting_memory_health = store.meeting_memory_health_snapshot(
+            delayed_after_seconds=MEETING_MEMORY_HEALTH_DELAY_SECONDS
+        )
     summary_queues = [
         queue for queue in queues if not queue.get("_summary_projection", False)
     ]
@@ -2174,6 +2182,7 @@ def build_worker_status_payload(
         # delays the queue/status snapshot used by /workers and /attention.
         "connectors": {},
         "email": email_health,
+        "meeting_memory_health": meeting_memory_health,
         "queues": queues,
         "dispatcher_queues": dispatcher_queues,
         "attention_rows": attention_rows,
@@ -2188,13 +2197,19 @@ def build_worker_status_payload(
         },
     }
     if include_system_health:
-        payload["system_health"] = _system_health_snapshot(store, service)
+        payload["system_health"] = _system_health_snapshot(
+            store,
+            service,
+            meeting_memory_health=meeting_memory_health,
+        )
     return payload
 
 
 def _system_health_snapshot(
     store: AutoReplyStore,
     service: Mapping[str, object],
+    *,
+    meeting_memory_health: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Project process liveness and repair-window health separately.
 
@@ -2208,6 +2223,23 @@ def _system_health_snapshot(
             "detail": "The main launchd service is not running normally.",
             "checked_at": "",
             "violations": 1,
+        }
+    meeting_memory_health = meeting_memory_health or store.meeting_memory_health_snapshot(
+        delayed_after_seconds=MEETING_MEMORY_HEALTH_DELAY_SECONDS
+    )
+    delayed = int(meeting_memory_health.get("delayed") or 0)
+    ghosts = int(meeting_memory_health.get("ghost_runtime_attempts") or 0)
+    if delayed or ghosts:
+        reasons: list[str] = []
+        if delayed:
+            reasons.append(f"{delayed} Meeting Memory write(s) delayed")
+        if ghosts:
+            reasons.append(f"{ghosts} stale Meeting Memory runtime record(s)")
+        return {
+            "state": "degraded",
+            "detail": "; ".join(reasons),
+            "checked_at": str(meeting_memory_health.get("oldest_due_at") or ""),
+            "violations": delayed + ghosts,
         }
     unhealthy_components = [
         component
@@ -2341,6 +2373,8 @@ def _service_component_snapshots(
         {"name": "agent-cron-dispatcher", "role": f"queue dispatch x{consumer_worker_count()}", "cadence": "internal"},
         {"name": "task-maintenance", "role": "error recovery and completion checks", "cadence": "internal"},
         {"name": "follow-up-delivery", "role": "scheduled follow-up delivery", "cadence": "internal"},
+        {"name": "meeting-delivery", "role": "meeting conclusion delivery", "cadence": "internal"},
+        {"name": "meeting-memory-write", "role": "meeting conclusion Memory write", "cadence": "internal"},
     ]
     return [
         {
@@ -2898,7 +2932,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                             where t.channel=a.channel
                               and t.conversation_id=a.conversation_id
                               and t.trigger_message_id=a.trigger_message_id
-                              and lower(t.status)='done'
+                          and lower(t.status) in ('done', 'skipped')
                         )
                         or exists (
                             select 1 from sent_replies sr
@@ -10299,6 +10333,20 @@ def create_audit_app(
                 "runtime_loops": [],
                 "accounts": [],
                 "checks": [],
+            },
+            "meeting_memory_health": {
+                "pending": 0,
+                "due": 0,
+                "delayed": 0,
+                "processing": 0,
+                "retryable": 0,
+                "failed": 0,
+                "oldest_due_at": "",
+                "oldest_due_seconds": 0,
+                "completed_last_hour": 0,
+                "active_agents": 0,
+                "ghost_runtime_attempts": 0,
+                "delayed_after_seconds": MEETING_MEMORY_HEALTH_DELAY_SECONDS,
             },
             "queues": [],
             "dispatcher_queues": [],

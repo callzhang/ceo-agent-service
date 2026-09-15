@@ -8341,6 +8341,119 @@ def test_service_health_components_hold_current_component_state(tmp_path: Path):
     assert store.list_service_health_components()[0]["state"] == "healthy"
 
 
+def test_meeting_memory_health_uses_matching_live_leases_not_runtime_status_alone(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "meeting-memory-health.sqlite3")
+    now = "2026-09-15T12:00:00+00:00"
+    with store._connect() as db:
+        db.execute(
+            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
+            "values (1, 'health-active', 'sent', 'summary')"
+        )
+        db.execute(
+            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
+            "values (2, 'health-ghost', 'sent', 'summary')"
+        )
+        db.execute(
+            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
+            "values (3, 'health-due', 'sent', 'summary')"
+        )
+        db.execute(
+            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
+            "values (4, 'health-retry', 'sent', 'summary')"
+        )
+        db.execute(
+            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
+            "values (5, 'health-failed', 'sent', 'summary')"
+        )
+        db.execute(
+            """
+            insert into meeting_memory_write_events (
+                id, meeting_job_id, execution_generation, payload_json, status,
+                lease_owner, lease_expires_at, created_at, updated_at
+            ) values (31, 1, 'active', '{}', 'processing', 'worker-active',
+                      '2026-09-15T12:20:00+00:00',
+                      '2026-09-15T11:55:00+00:00', '2026-09-15T11:55:00+00:00')
+            """
+        )
+        db.execute(
+            """
+            insert into meeting_memory_write_events (
+                id, meeting_job_id, execution_generation, payload_json, status,
+                lease_owner, lease_expires_at, created_at, updated_at
+            ) values (32, 2, 'ghost', '{}', 'processing', 'worker-ghost',
+                      '2026-09-15T11:59:00+00:00',
+                      '2026-09-15T11:55:00+00:00', '2026-09-15T11:55:00+00:00')
+            """
+        )
+        db.execute(
+            """
+            insert into meeting_memory_write_events (
+                id, meeting_job_id, execution_generation, payload_json, status,
+                available_at, created_at, updated_at
+            ) values (33, 3, 'due', '{}', 'pending',
+                      '2026-09-15T11:20:00+00:00',
+                      '2026-09-15T11:00:00+00:00', '2026-09-15T11:00:00+00:00')
+            """
+        )
+        db.execute(
+            """
+            insert into meeting_memory_write_events (
+                id, meeting_job_id, execution_generation, payload_json, status,
+                available_at, error, created_at, updated_at
+            ) values (34, 4, 'retry', '{}', 'pending',
+                      '2026-09-15T12:10:00+00:00', 'temporary route failure',
+                      '2026-09-15T11:55:00+00:00', '2026-09-15T11:55:00+00:00')
+            """
+        )
+        db.execute(
+            """
+            insert into meeting_memory_write_events (
+                id, meeting_job_id, execution_generation, payload_json, status,
+                error, created_at, updated_at
+            ) values (35, 5, 'failed', '{}', 'failed', 'permanent failure',
+                      '2026-09-15T11:55:00+00:00', '2026-09-15T11:55:00+00:00')
+            """
+        )
+        for event_id, generation, owner in (
+            (31, "active", "worker-active"),
+            (32, "ghost", "worker-ghost"),
+        ):
+            db.execute(
+                """
+                insert into agent_runtime_attempts (
+                    workload_kind, workload_key, attempt_number, route_name,
+                    runtime_kind, credential_mode, model, status, lease_owner,
+                    lease_expires_at, started_at, updated_at
+                ) values ('memory', ?, 1, 'codex_oauth', 'codex_cli',
+                          'local_oauth', 'gpt-5.6-sol', 'running', ?,
+                          '2026-09-15T12:20:00+00:00',
+                          '2026-09-15T11:55:00+00:00', '2026-09-15T11:55:00+00:00')
+                """,
+                (f"meeting_memory_write_event:{event_id}:{generation}", owner),
+            )
+
+    health = store.meeting_memory_health_snapshot(
+        now=now, delayed_after_seconds=30 * 60
+    )
+
+    assert health == {
+        "pending": 2,
+        "due": 1,
+        "delayed": 1,
+        "processing": 2,
+        "retryable": 1,
+        "failed": 1,
+        "oldest_due_at": "2026-09-15T11:20:00+00:00",
+        "oldest_due_seconds": 40 * 60,
+        "completed_last_hour": 0,
+        "active_agents": 1,
+        "ghost_runtime_attempts": 1,
+        "delayed_after_seconds": 30 * 60,
+    }
+
+
 def test_scheduler_health_keeps_recent_error_when_a_new_tick_succeeds(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_service_health_component(

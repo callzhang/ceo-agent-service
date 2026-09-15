@@ -14377,6 +14377,130 @@ class AutoReplyStore:
             ).fetchall()
         return [self._meeting_memory_write_event_from_row(row) for row in rows]
 
+    def meeting_memory_health_snapshot(
+        self,
+        *,
+        now: str | datetime | None = None,
+        delayed_after_seconds: int = 30 * 60,
+    ) -> dict[str, int | str]:
+        """Return a lease-backed health projection for Meeting Memory writes.
+
+        ``agent_runtime_attempts.status`` is not a liveness signal by itself:
+        a process can disappear while its historical row remains ``running``.
+        An active worker therefore needs both an unexpired event lease and an
+        unexpired runtime-attempt lease held by the same owner. A running
+        attempt without that matching event lease is reported as a ghost.
+        """
+        if delayed_after_seconds <= 0:
+            raise ValueError("meeting Memory delay threshold must be positive")
+        now_value, _ = _utc_store_time(now)
+        with self._connect() as db:
+            event_rows = db.execute(
+                """
+                select id, execution_generation, status, available_at, error,
+                       lease_owner, lease_expires_at, created_at, updated_at
+                from meeting_memory_write_events
+                order by id
+                """
+            ).fetchall()
+            runtime_rows = db.execute(
+                """
+                select workload_key, status, lease_owner, lease_expires_at
+                from agent_runtime_attempts
+                where workload_kind='memory'
+                  and workload_key like 'meeting_memory_write_event:%'
+                  and status in ('starting', 'running')
+                """
+            ).fetchall()
+
+        pending = due = delayed = processing = retryable = failed = 0
+        completed_last_hour = 0
+        oldest_due_at: datetime | None = None
+        oldest_due_text = ""
+        events_by_key: dict[str, sqlite3.Row] = {}
+        for row in event_rows:
+            status = str(row["status"])
+            event_key = (
+                f"meeting_memory_write_event:{row['id']}:"
+                f"{row['execution_generation']}"
+            )
+            events_by_key[event_key] = row
+            if status == "processing":
+                processing += 1
+            elif status == "failed":
+                failed += 1
+            elif status == "done":
+                completed_at = self._parse_stored_timestamp(row["updated_at"])
+                if completed_at is not None and completed_at >= now_value - timedelta(hours=1):
+                    completed_last_hour += 1
+            if status != "pending":
+                continue
+            pending += 1
+            if str(row["error"] or "").strip():
+                retryable += 1
+            due_text = str(row["available_at"] or "").strip() or str(
+                row["created_at"] or ""
+            ).strip()
+            due_at = self._parse_stored_timestamp(due_text)
+            if due_at is None or due_at > now_value:
+                continue
+            due += 1
+            if oldest_due_at is None or due_at < oldest_due_at:
+                oldest_due_at = due_at
+                oldest_due_text = due_text
+            if (now_value - due_at).total_seconds() >= delayed_after_seconds:
+                delayed += 1
+
+        active_agents = ghost_runtime_attempts = 0
+        for runtime in runtime_rows:
+            event = events_by_key.get(str(runtime["workload_key"]))
+            runtime_owner = str(runtime["lease_owner"] or "").strip()
+            runtime_expires_at = self._parse_stored_timestamp(
+                runtime["lease_expires_at"]
+            )
+            event_owner = str(event["lease_owner"] or "").strip() if event else ""
+            event_expires_at = (
+                self._parse_stored_timestamp(event["lease_expires_at"])
+                if event is not None
+                else None
+            )
+            event_is_live = bool(
+                event is not None
+                and event["status"] == "processing"
+                and event_owner
+                and event_expires_at is not None
+                and event_expires_at > now_value
+            )
+            runtime_is_live = bool(
+                runtime_owner
+                and runtime_expires_at is not None
+                and runtime_expires_at > now_value
+            )
+            if event_is_live and runtime_is_live and event_owner == runtime_owner:
+                active_agents += 1
+            else:
+                ghost_runtime_attempts += 1
+
+        oldest_due_seconds = (
+            max(0, int((now_value - oldest_due_at).total_seconds()))
+            if oldest_due_at is not None
+            else 0
+        )
+        return {
+            "pending": pending,
+            "due": due,
+            "delayed": delayed,
+            "processing": processing,
+            "retryable": retryable,
+            "failed": failed,
+            "oldest_due_at": oldest_due_text,
+            "oldest_due_seconds": oldest_due_seconds,
+            "completed_last_hour": completed_last_hour,
+            "active_agents": active_agents,
+            "ghost_runtime_attempts": ghost_runtime_attempts,
+            "delayed_after_seconds": delayed_after_seconds,
+        }
+
     def claim_due_meeting_memory_write_events(
         self,
         *,

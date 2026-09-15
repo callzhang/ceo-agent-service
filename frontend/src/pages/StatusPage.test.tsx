@@ -27,6 +27,20 @@ describe("StatusPage", () => {
         accounts: [{ scope: "account:dingtalk_primary", status: "ready", updated_at: "now" }],
         checks: [{ scope: "component:email-provider-actions", status: "degraded", error_code: "provider_action_failed", updated_at: "now" }],
       },
+      meeting_memory_health: {
+        pending: 5,
+        due: 3,
+        delayed: 1,
+        processing: 2,
+        retryable: 1,
+        failed: 0,
+        oldest_due_at: "2026-09-15T10:00:00Z",
+        oldest_due_seconds: 7200,
+        completed_last_hour: 4,
+        active_agents: 2,
+        ghost_runtime_attempts: 1,
+        delayed_after_seconds: 1800,
+      },
       wechat: { reader: { status: "ready", enabled: true, error: "" }, sender: { status: "ready", enabled: true, error: "" }, preflight: { status: "ready", error: "" }, account: { ready: true, account_id: "" } },
       queues: [{ name: "Reply tasks", table: "reply_tasks", counts: { done: 1 }, pending: 0, processing: 0, retryable: 0, failed: 0, latest_updated_at: "now", latest_error: "" }],
       dispatcher_queues: [
@@ -52,6 +66,11 @@ describe("StatusPage", () => {
     expect(screen.getByText("email-scan-actions")).toBeInTheDocument();
     expect(screen.getByText("dingtalk_primary")).toBeInTheDocument();
     expect(screen.getByText("email-provider-actions")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "会议结论同步" })).toBeInTheDocument();
+    expect(screen.getByText("最久等待")).toBeInTheDocument();
+    expect(screen.getByText("近一小时完成")).toBeInTheDocument();
+    expect(screen.getByText("真实活跃 Agent")).toBeInTheDocument();
+    expect(screen.getByText("幽灵运行记录")).toBeInTheDocument();
     expect(screen.getByText("Internal checks (1)").closest("details")).toHaveAttribute("open");
     expect(screen.getByRole("heading", { name: "Queues" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Dispatcher queues" })).toBeInTheDocument();

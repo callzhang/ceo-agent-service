@@ -3361,7 +3361,7 @@ def run_meeting_memory_write_loop(
     while True:
         if not settings.dry_run and network_ready():
             try:
-                process_meeting_memory_writes(
+                outcome = process_meeting_memory_writes(
                     store,
                     workspace=settings.workspace,
                     routed_execution=routed_execution,
@@ -3369,16 +3369,43 @@ def run_meeting_memory_write_loop(
                     concurrency=settings.meeting_memory_workers,
                     lease_seconds=lease_seconds,
                 )
-                store.set_service_health_component(
-                    "meeting-memory-write",
-                    state="healthy",
-                    status="running",
-                    latest_tick_at=datetime.now(timezone.utc).isoformat(),
+                no_completed_claims = bool(
+                    outcome is not None
+                    and outcome.claimed > 0
+                    and outcome.completed == 0
                 )
-                store.resolve_unresolved_errors_by_kind(
-                    "meeting_memory_write",
-                    resolution="recovered by later Memory write cycle",
+                has_terminal_worker_problem = bool(
+                    outcome is not None
+                    and (outcome.failed > 0 or outcome.lost_lease > 0)
                 )
+                if no_completed_claims or has_terminal_worker_problem:
+                    claimed = int(getattr(outcome, "claimed", 0))
+                    completed = int(getattr(outcome, "completed", 0))
+                    retried = int(getattr(outcome, "retried", 0))
+                    failed = int(getattr(outcome, "failed", 0))
+                    lost_lease = int(getattr(outcome, "lost_lease", 0))
+                    store.set_service_health_component(
+                        "meeting-memory-write",
+                        state="degraded",
+                        status="waiting" if no_completed_claims else "failed",
+                        detail=(
+                            f"{claimed} claimed Meeting Memory write(s) completed "
+                            f"{completed}; retry {retried}, failed {failed}, "
+                            f"lease lost {lost_lease}"
+                        ),
+                        latest_tick_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                else:
+                    store.set_service_health_component(
+                        "meeting-memory-write",
+                        state="healthy",
+                        status="running",
+                        latest_tick_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                    store.resolve_unresolved_errors_by_kind(
+                        "meeting_memory_write",
+                        resolution="recovered by later Memory write cycle",
+                    )
             except Exception as exc:
                 store.record_error("", "", "meeting_memory_write", str(exc))
         sleep(10)
