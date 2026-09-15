@@ -3401,6 +3401,8 @@ def run_meeting_memory_write_loop(
                         state="healthy",
                         status="running",
                         latest_tick_at=datetime.now(timezone.utc).isoformat(),
+                        latest_error="",
+                        latest_error_at="",
                     )
                     store.resolve_unresolved_errors_by_kind(
                         "meeting_memory_write",

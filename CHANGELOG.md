@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- 2026-09-15: A successful Meeting-to-Memory worker cycle now clears the
+  component's previous `latest_error` and error timestamp. The durable error
+  remains in History, but Status no longer presents an already-recovered
+  SQLite failure beside a newer healthy heartbeat.
+
 - 2026-09-15: A successful DWS conversation read now closes only the matching
   unresolved read incident for that conversation and reader type. Transient
   provider parameter failures therefore leave Attention after an actual

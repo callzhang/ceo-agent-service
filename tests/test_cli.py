@@ -6557,8 +6557,27 @@ def test_meeting_memory_write_loop_processes_sent_conclusions(
     calls = []
 
     class FakeStore:
-        def set_service_health_component(self, component, *, state, status, latest_tick_at):
-            calls.append(("health", component, state, status, latest_tick_at))
+        def set_service_health_component(
+            self,
+            component,
+            *,
+            state,
+            status,
+            latest_tick_at,
+            latest_error,
+            latest_error_at,
+        ):
+            calls.append(
+                (
+                    "health",
+                    component,
+                    state,
+                    status,
+                    latest_tick_at,
+                    latest_error,
+                    latest_error_at,
+                )
+            )
 
         def resolve_unresolved_errors_by_kind(self, kind, *, resolution):
             calls.append(("resolve", kind, resolution))
@@ -6608,6 +6627,7 @@ def test_meeting_memory_write_loop_processes_sent_conclusions(
         "running",
     )
     assert calls[2][4]
+    assert calls[2][5:] == ("", "")
 
 
 def test_meeting_memory_write_loop_uses_its_own_workers_and_runtime_lease(
