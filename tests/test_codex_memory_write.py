@@ -240,6 +240,25 @@ def test_memory_write_typed_failure_accepts_null_memory_id_from_connector_runtim
     assert caught.value.source_code == "400"
 
 
+def test_memory_write_typed_failure_normalizes_missing_provider_code() -> None:
+    raw = json.dumps(
+        {
+            "status": "failed",
+            "memory_id": None,
+            "retryable": True,
+            "source_code": None,
+            "detail": None,
+        }
+    )
+
+    with pytest.raises(CodexMemoryWriteFailed) as caught:
+        memory_result_from_typed_output(raw)
+
+    assert caught.value.retryable is True
+    assert caught.value.source_code == "memory_write_failed"
+    assert str(caught.value) == "memory write failed"
+
+
 def test_runtime_failure_is_explicit_and_preserves_runtime_code(tmp_path: Path) -> None:
     class FailedRoutedExecution:
         def execute(self, **_kwargs):

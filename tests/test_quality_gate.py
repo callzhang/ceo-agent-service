@@ -336,7 +336,7 @@ def test_quality_gate_excludes_explicitly_resolved_global_error(tmp_path):
     ]
 
 
-def test_quality_gate_excludes_open_global_service_error(tmp_path):
+def test_quality_gate_includes_open_global_service_error(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     store.record_error(None, None, "read_robot_direct_messages", "temporary DWS failure")
     with store._connect() as db:
@@ -347,7 +347,7 @@ def test_quality_gate_excludes_open_global_service_error(tmp_path):
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert not [
+    assert [
         issue
         for issue in report.violations
         if issue.source == "errors" and issue.code == "recent_error"

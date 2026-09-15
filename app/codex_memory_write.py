@@ -202,9 +202,11 @@ def execute_codex_memory_write(
 def memory_result_from_typed_output(raw: str) -> MemoryWriteResult:
     typed = parse_memory_write_typed_result(raw)
     if typed.status == "failed":
+        source_code = str(typed.source_code or "").strip()
+        detail = str(typed.detail or "").strip()
         raise CodexMemoryWriteFailed(
-            typed.detail.strip() or typed.source_code.strip() or "memory write failed",
-            source_code=typed.source_code.strip(),
+            detail or source_code or "memory write failed",
+            source_code=source_code or "memory_write_failed",
             retryable=typed.retryable,
         )
     return MemoryWriteResult(

@@ -3293,10 +3293,6 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        error_event.detail, error_event.created_at
                 from errors error_event
                 where coalesce(error_event.resolved_at, '') = ''
-                  and (
-                    coalesce(error_event.conversation_id, '') <> ''
-                    or coalesce(error_event.message_id, '') <> ''
-                  )
                   and error_event.kind <> 'codex_capacity_pause'
                   and not exists (
                     select 1

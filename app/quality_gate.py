@@ -903,10 +903,6 @@ def _check_recent_errors(
            from errors error_event
            where datetime(error_event.created_at) >= datetime(?)
              and coalesce(error_event.resolved_at, '') = ''
-             and (
-                coalesce(error_event.conversation_id, '') <> ''
-                or coalesce(error_event.message_id, '') <> ''
-             )
              and error_event.kind <> 'codex_capacity_pause'
              and not ({})
              and not exists (
