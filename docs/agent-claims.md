@@ -28,8 +28,6 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| Codex root | `app/agent_orchestrator.py`, `app/agent_result.py`, `app/cli.py`, `app/store.py`, `tests/test_store.py`, `CHANGELOG.md`, `docs/agent-claims.md` | Complete the confirmation-boundary repair; coordinate the meeting-Memory parent-state regression with the active queue-fix owner without editing its lease or worker changes. | 2026-09-15 |
-| Codex root | `tests/test_email_classifier_scan_model.py`, `tests/test_workbench_store.py` | Align stale test-only contracts with the current scanner helper and Workbench schema version. | 2026-09-15 |
 
 
 ## Recent overlaps worth knowing

@@ -3408,6 +3408,50 @@ def test_store_repairs_missing_required_table_despite_current_schema_version(
         ).fetchone() == (1,)
 
 
+def test_store_adds_legacy_workbench_lease_columns_before_recovery_index(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "legacy-workbench.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.executescript(
+            """
+            create table workbench_turns (
+                id text primary key,
+                task_id text not null,
+                client_request_id text not null unique,
+                task_sequence integer not null default 0,
+                user_text text not null,
+                status text not null,
+                stop_requested integer not null default 0,
+                final_text text not null default '',
+                error_code text not null default '',
+                error_detail text not null default '',
+                resume_context text not null default '',
+                execution_run_id text not null default '',
+                runtime_quiesced_run_id text not null default '',
+                started_at text not null default '',
+                completed_at text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp
+            );
+            """
+        )
+
+    AutoReplyStore(db_path)
+
+    with sqlite3.connect(db_path) as db:
+        columns = {
+            str(row[1]) for row in db.execute("pragma table_info(workbench_turns)")
+        }
+        recovery_index = db.execute(
+            "select 1 from sqlite_master "
+            "where type='index' and name='idx_workbench_turns_recovery'"
+        ).fetchone()
+
+    assert {"lease_owner", "lease_expires_at"} <= columns
+    assert recovery_index == (1,)
+
+
 def test_store_rechecks_schema_after_transient_database_lock(tmp_path, monkeypatch):
     db_path = tmp_path / "worker.sqlite3"
     AutoReplyStore(db_path)
@@ -9640,7 +9684,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-09-15.1"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-09-15.2"
     assert {
         "lease_owner",
         "lease_expires_at",

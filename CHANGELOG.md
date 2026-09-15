@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Fixed SQLite startup migration ordering for legacy Workbench turn tables: the
+  service now adds the lease fields before creating the recovery index that
+  uses them, so a stale local schema cannot fail service startup with a missing
+  `lease_expires_at` column.
+
 - 2026-09-15: Meeting-to-Memory writes now settle only while their worker lease
   is still live, claim work only when a bounded worker can start it, and derive
   lease duration from the configured runtime timeout plus a recovery margin.

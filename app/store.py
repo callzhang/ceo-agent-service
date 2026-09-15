@@ -170,7 +170,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-15.1"
+STORE_SCHEMA_VERSION = "2026-09-15.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -360,6 +360,10 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "lease_owner",
         "lease_expires_at",
         "started_at",
+    ),
+    "workbench_turns": (
+        "lease_owner",
+        "lease_expires_at",
     ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
@@ -3545,8 +3549,6 @@ class AutoReplyStore:
                     where status in ('queued', 'running', 'waiting_confirmation');
                 create index if not exists idx_workbench_turns_queue
                     on workbench_turns(status, created_at, id);
-                create index if not exists idx_workbench_turns_recovery
-                    on workbench_turns(status, lease_expires_at);
                 create table if not exists workbench_events (
                     id integer primary key autoincrement,
                     turn_id text not null,
@@ -3704,6 +3706,15 @@ class AutoReplyStore:
                 row["name"]
                 for row in db.execute("pragma table_info(workbench_turns)").fetchall()
             }
+            for column, definition in (
+                ("lease_owner", "text not null default ''"),
+                ("lease_expires_at", "text not null default ''"),
+            ):
+                if column not in workbench_turn_columns:
+                    db.execute(
+                        "alter table workbench_turns add column "
+                        f"{column} {definition}"
+                    )
             if "resume_context" not in workbench_turn_columns:
                 db.execute(
                     "alter table workbench_turns add column "
