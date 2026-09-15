@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
+from collections.abc import Sequence
 
 from app.email_classifier_training import (
     TrainingResult,
@@ -373,6 +374,11 @@ class TrainingSubprocessRun:
     training_selection: dict[str, object] | None = None
 
 
+def _launch_training_process(command: Sequence[str]) -> subprocess.Popen:
+    """Keep a training child alive across the web worker's restart boundary."""
+    return subprocess.Popen(command, start_new_session=True)
+
+
 class TrainingSubprocessController:
     """Launch one short-lived trainer without blocking the email scan loop."""
 
@@ -381,7 +387,7 @@ class TrainingSubprocessController:
         registry: EmailModelRegistry,
         *,
         store_path: str | Path | None = None,
-        launcher=subprocess.Popen,
+        launcher=_launch_training_process,
         pid_is_alive=None,
         stale_after_seconds: float = 300.0,
         launch_lease_seconds: float = 60.0,
