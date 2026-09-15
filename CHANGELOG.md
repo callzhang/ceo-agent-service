@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-09-15: A successful meeting-to-Memory worker cycle now refreshes its
+  system-health component immediately. Historical Memory write errors no
+  longer keep the service health card degraded after the worker has recovered.
+
 - 2026-09-15: Mutable WAL connections no longer retain SQLite memory-mapped
   pages. This prevents short-read I/O failures when long-lived workers overlap
   checkpoints or maintenance snapshots, while preserving the bounded read

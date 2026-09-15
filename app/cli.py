@@ -3331,6 +3331,12 @@ def run_meeting_memory_write_loop(
                     now=datetime.now().astimezone(),
                     limit=1,
                 )
+                store.set_service_health_component(
+                    "meeting-memory-write",
+                    state="healthy",
+                    status="running",
+                    latest_tick_at=datetime.now(timezone.utc).isoformat(),
+                )
                 store.resolve_unresolved_errors_by_kind(
                     "meeting_memory_write",
                     resolution="recovered by later Memory write cycle",

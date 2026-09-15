@@ -6554,6 +6554,9 @@ def test_meeting_memory_write_loop_processes_sent_conclusions(
     calls = []
 
     class FakeStore:
+        def set_service_health_component(self, component, *, state, status, latest_tick_at):
+            calls.append(("health", component, state, status, latest_tick_at))
+
         def resolve_unresolved_errors_by_kind(self, kind, *, resolution):
             calls.append(("resolve", kind, resolution))
 
@@ -6586,6 +6589,13 @@ def test_meeting_memory_write_loop_processes_sent_conclusions(
     assert calls[1][:4] == ("process", store, tmp_path, routed_execution)
     assert calls[1][4].utcoffset() is not None
     assert calls[1][5] == 1
+    assert calls[2][:4] == (
+        "health",
+        "meeting-memory-write",
+        "healthy",
+        "running",
+    )
+    assert calls[2][4]
 
 
 def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_path):
