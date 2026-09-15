@@ -7,12 +7,13 @@ import { EmailConfig } from "./email/EmailConfig";
 import { ModelTraining } from "./email/ModelTraining";
 import { errorMessage } from "./email/shared";
 import "./email/email.css";
-const tabs=[["list","邮件分类"],["config","邮件配置"],["learning","模型训练"]] as const;
+const tabs=[["pending","待确认"],["all","全部"],["unsubscribe","退订记录"],["config","分类配置"],["learning","模型训练"]] as const;
+const listStatus={pending:"pending_feedback",all:"all",unsubscribe:"unsubscribe"} as const;
 
 export function EmailPage() {
   const [params,setParams]=useSearchParams();
-  const requested=params.get("tab") || "list";
-  const tab=tabs.some(([key])=>key===requested)?requested:"list";
+  const requested=params.get("tab") || "pending";
+  const tab=tabs.some(([key])=>key===requested)?requested:"pending";
   const [configs,setConfigs]=useState<EmailCategoryConfig[]|null>(null);
   const [configError,setConfigError]=useState("");
   const [learning,setLearning]=useState<EmailLearningEvidence|null>(null);
@@ -48,13 +49,13 @@ export function EmailPage() {
     const next=event.key==="ArrowRight"?(index+1)%tabs.length:event.key==="ArrowLeft"?(index+tabs.length-1)%tabs.length:event.key==="Home"?0:event.key==="End"?tabs.length-1:null;
     if(next===null)return;event.preventDefault();selectTab(tabs[next][0]);refs.current[next]?.focus();
   }
-  return <ConsolePageLayout title="Email">
+  return <ConsolePageLayout title="Email" description="确认 Agent 的邮件分类、查看退订执行记录，并维护分类配置与分类模型。">
     <div className="settings-pill-row email-tabs" role="tablist" aria-label="邮件页面分区">{tabs.map(([key,label],index)=><button type="button" role="tab" id={"email-tab-"+key} aria-controls={"email-panel-"+key} key={key} disabled={busy} aria-selected={key===tab} tabIndex={key===tab?0:-1} ref={element=>{refs.current[index]=element;}} onClick={()=>selectTab(key)} onKeyDown={event=>keyDown(event,index)}>{label}{key==="learning"&&runtimeVerified&&learning?.runtime?.candidate_ready&&<span className="email-ready-dot" aria-label="候选模型已达标"/>}</button>)}</div>
     <div role="tabpanel" id={"email-panel-"+tab} aria-labelledby={"email-tab-"+tab}>
       {configError&&tab!=="learning"&&<p role="alert">邮件配置加载失败：{configError} <button onClick={()=>setRetry(value=>value+1)}>重新加载配置</button></p>}
       {tab==="config"?(configs?<EmailConfig configs={configs} onBusy={setBusy} onSaved={item=>setConfigs(previous=>[...(previous || []).filter(value=>value.category_key!==item.category_key),item])}/>:<p role="status">正在加载邮件配置…</p>)
         :tab==="learning"?<>{learningError&&<p role="alert">{learningError} <button onClick={()=>setRetry(value=>value+1)}>重新加载模型训练</button></p>}{learning?<ModelTraining learning={learning} configs={configs || []} reload={reload} runtimeVerified={runtimeVerified} onRuntimeUnverified={()=>setRuntimeVerified(false)} onBusy={setBusy}/>:!learningError&&<p role="status">正在加载模型训练…</p>}</>
-        :<EmailList configs={configs || []} onBusy={setBusy}/>}
+        :<EmailList status={listStatus[tab as keyof typeof listStatus]} configs={configs || []} onBusy={setBusy}/>}
     </div>
   </ConsolePageLayout>;
 }
