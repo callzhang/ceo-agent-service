@@ -3035,6 +3035,66 @@ def test_classification_worker_persists_certain_decision_and_direct_plan(tmp_pat
     assert classification["status"] == "processed"
 
 
+def test_classification_worker_persists_provider_readback_body_not_agent_redaction(
+    tmp_path,
+):
+    from app.email_classifier_agent import AgentClassificationResult
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    private_url = "https://example.com/unsubscribe?opaque=private"
+    task_input = EmailClassificationTaskInput.from_message(
+        {
+            "accountId": "account-1",
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": 82,
+            "messageId": "<mail-82@example.com>",
+            "threadId": "thread-82",
+            "providerUnread": True,
+            "from": {"email": "newsletter@example.com"},
+            "toRecipients": [{"email": "derek@example.com"}],
+            "subject": "Newsletter",
+            "date": "2026-09-08T08:00:00+00:00",
+            "textBody": f'<a href="{private_url}">Unsubscribe</a>',
+        },
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": {"core": "Business."}, "junk": {"core": "Unwanted."}},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+        unsubscribe_candidates=(private_url,),
+    )
+    email_store = EmailStore(tmp_path / "classification-provider-body.sqlite3")
+    adapter = EmailClassificationTaskAdapter(email_store)
+    adapter.ensure_task(task_input)
+    agent = SimpleNamespace(
+        classify=lambda _task, **_kwargs: AgentClassificationResult(
+            category="work", important=False, certainty="certain", confidence=0.96,
+            reason="Newsletter received.",
+        )
+    )
+
+    def provider_readback(task, payload):
+        message = _classification_provider_readback(task, payload)
+        return message | {
+            "textBody": "Provider-readable newsletter body.",
+            "markdownBody": "Provider-readable newsletter body.",
+        }
+
+    outcome = _module().run_email_classification_task_once(
+        adapter, agent, email_store, owner="email-worker:provider-body",
+        provider_readback=provider_readback,
+        action_task_producer=_forbid_action_task_production(),
+    )
+
+    with email_store._connect() as db:
+        normalized_text = db.execute(
+            "select normalized_text from email_messages"
+        ).fetchone()["normalized_text"]
+    assert normalized_text == "Provider-readable newsletter body."
+    assert "UNSUBSCRIBE_CANDIDATE" not in normalized_text
+    assert outcome["decision_status"] == "processed"
+
+
 def test_classification_worker_keeps_retryable_api_failure_pending(tmp_path):
     from app.email_agent_api import EmailClassifierApiError
     from app.email_task_adapter import EmailClassificationTaskAdapter

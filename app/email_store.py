@@ -12529,7 +12529,8 @@ class EmailStore:
                        action_plan_version, classification_id, account_id,
                        stable_message_identity, thread_identity, receipt_id,
                        evidence, result_text, observation_digest,
-                       result_text_truncated, result_text_digest, created_at
+                       result_text_truncated, result_text_digest, outcome,
+                       created_at, completed_at
                 from email_unsubscribe_receipts
                 where classification_id=?
                 order by created_at, action_identity
@@ -12714,10 +12715,13 @@ class EmailStore:
                     lineage["audit_run_ids"] if lineage is not None else []
                 ),
                 "status": "done",
+                "outcome": row["outcome"],
                 "receipt_id": row["receipt_id"],
                 "result_text": row["result_text"],
                 "evidence": row["evidence"],
                 "observation_digest": row["observation_digest"],
+                "created_at": row["created_at"],
+                "completed_at": row["completed_at"],
                 "steps": steps_by_action.get(action_identity, []),
                 "_sort_created_at": row["created_at"],
             }

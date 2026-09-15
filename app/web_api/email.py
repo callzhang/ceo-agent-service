@@ -757,6 +757,19 @@ class EmailTrainingSelectionPayload(BaseModel):
         return value
 
 
+class EmailTrainingPreviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    sources: list[str] = Field(min_length=1)
+    categories: list[str] = Field(min_length=1)
+
+    @field_validator("sources", "categories")
+    @classmethod
+    def validate_values(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() for item in value) or len(set(value)) != len(value):
+            raise ValueError("training selection values must be unique and non-blank")
+        return value
+
+
 class EmailRuntimeModePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     mode: Literal["agent_primary", "model_primary"]
@@ -1181,6 +1194,9 @@ def register_email_routes(
         item = email_store.get_classification(classification_id)
         if item is None:
             return error_response("not_found", "Email classification not found", 404)
+        unsubscribe_entry_available = (
+            email_store.get_email_unsubscribe_entry_url(classification_id) is not None
+        )
         provider_state_reader = getattr(
             email_store, "get_provider_classification_state", None
         )
@@ -1195,6 +1211,10 @@ def register_email_routes(
             "observability": email_store.list_email_classification_observability(
                 classification_id
             ),
+            "unsubscribe_entry": {
+                "available": unsubscribe_entry_available,
+                "reason": None if unsubscribe_entry_available else "entry_unavailable",
+            },
             "provider_classification": provider_state,
             "meta": meta(),
         }
@@ -1411,6 +1431,39 @@ def register_email_routes(
             },
             status_code=202 if payload is not None or run else 200,
         )
+
+    @app.post("/api/console/email/training/preview")
+    async def email_training_preview(request: Request):
+        raw_body = await request.body()
+        try:
+            body = json.loads(raw_body)
+            payload = EmailTrainingPreviewPayload.model_validate(body)
+        except (TypeError, ValueError, json.JSONDecodeError, ValidationError):
+            return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+        from app.email_classifier_learning import _selection_provenance
+
+        try:
+            selection = _selection_provenance(
+                require_store(),
+                sources=payload.sources,
+                categories=payload.categories,
+                allow_empty=True,
+            )
+        except ValueError:
+            return error_response("invalid_training_selection", "训练数据来源选择无效", 400)
+        provenance = selection["provenance"]
+        assert isinstance(provenance, list) and provenance
+        snapshot = provenance[0]
+        return {
+            "ok": True,
+            "preview": {
+                "unique_sample_count": len(selection["selected_message_identities"]),
+                "snapshot_id": snapshot["snapshot_id"],
+                "snapshot_digest": snapshot["snapshot_digest"],
+                "snapshot_version": snapshot["snapshot_version"],
+                "description_version": snapshot["description_version"],
+            },
+        }
 
     def _public_training_selection(selection: object) -> dict[str, object] | None:
         if not isinstance(selection, dict):

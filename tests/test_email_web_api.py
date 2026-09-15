@@ -33,7 +33,10 @@ from app.email_model_registry import (
     build_model_id,
 )
 from app.email_embedding_client import DEFAULT_EMBEDDING_MODEL_ID
+from app.email_html_text import visible_email_text
+from app.email_important import ImportantSignals
 from app.email_classifier_runtime import EmailClassifierRuntimeMode
+from app.email_training_snapshot import build_folder_training_snapshot
 from app.email_store import (
     EmailFolderBindingConflict,
     EmailStore,
@@ -873,6 +876,240 @@ def test_email_classification_list_all_unifies_statuses_with_persisted_body(
     assert {item["message_text"] for item in payload["items"]} == {"正文 101", "正文 102"}
 
 
+def test_email_classification_display_projects_residual_html_without_links(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "residual-html-display.sqlite3")
+    classification = EmailClassification.model_validate(
+        {
+            "classification_id": 71,
+            "stable_message_identity": "account-1:message-id:<display-71@example.com>",
+            "provider_locator": {
+                "account_id": "account-1", "folder": "INBOX",
+                "uidvalidity": 1, "uid": 71,
+                "rfc_message_id": "<display-71@example.com>", "thread_id": "display-71",
+            },
+            "category": EmailCategory.NOTIFICATION,
+            "confidence": 0.7,
+            "margin": 0.2,
+            "probabilities": {"notification": 0.7},
+            "model_id": "email-model-display-v1",
+            "config_version": "email-config-display-v1",
+            "status": EmailClassificationStatus.PENDING_FEEDBACK,
+            "classification_source": "model",
+            "action_plan": None,
+        }
+    )
+    store.persist_scan_result(
+        classification,
+        sender="newsletter@example.com",
+        subject="Display body",
+        normalized_text=(
+            "Content-Type: text/plain; charset=utf-8\n\n"
+            '<p>First paragraph</p><p>Second paragraph</p>'
+            '<a href="[UNSUBSCRIBE_CANDIDATE:1]">Unsubscribe</a>'
+        ),
+        preview="Display body",
+        model_text="display body",
+    )
+    app = FastAPI()
+    register_email_routes(app, lambda: store)
+
+    response = TestClient(app).get("/api/console/email/classifications/71")
+
+    assert response.status_code == 200
+    assert response.json()["item"]["message_text"] == (
+        "First paragraph\n\nSecond paragraph\n\nUnsubscribe"
+    )
+    assert "UNSUBSCRIBE_CANDIDATE" not in response.text
+    assert "href=" not in response.text
+
+
+def test_email_training_preview_returns_unique_frozen_selection_without_writes() -> None:
+    class PreviewStore:
+        writes: list[object] = []
+
+        def latest_training_snapshot_state(self):
+            return {
+                "snapshot_id": "snapshot-preview-1",
+                "snapshot_sha": "a" * 64,
+                "snapshot_version": "email-folder-snapshot.v1",
+                "description_version": "description-set-sha256:" + "b" * 64,
+            }
+
+        def get_training_snapshot(self, snapshot_id: str):
+            assert snapshot_id == "snapshot-preview-1"
+            return {
+                "observations": [
+                    {"stable_message_identity": "message-1", "category_key": "legal"},
+                    {"stable_message_identity": "message-2", "category_key": "legal"},
+                ]
+            }
+
+        def list_training_examples(self, *, include_inclusion: bool):
+            assert include_inclusion is True
+            return [{"message_id": "message-1"}]
+
+        def list_classifications(self, *, status, limit: int, offset: int):
+            assert status is EmailClassificationStatus.PROCESSED
+            assert (limit, offset) == (100_000, 0)
+            return ([{"stable_message_identity": "message-2", "classification_source": "agent"}], 1)
+
+    store = PreviewStore()
+    app = FastAPI()
+    register_email_routes(app, lambda: store)
+
+    response = TestClient(app).post(
+        "/api/console/email/training/preview",
+        json={
+            "sources": ["folder_snapshot", "user_feedback", "agent_auto_label"],
+            "categories": ["legal"],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "ok": True,
+        "preview": {
+            "unique_sample_count": 2,
+            "snapshot_id": "snapshot-preview-1",
+            "snapshot_digest": "a" * 64,
+            "snapshot_version": "email-folder-snapshot.v1",
+            "description_version": "description-set-sha256:" + "b" * 64,
+        },
+    }
+    assert store.writes == []
+
+
+def test_email_training_preview_allows_empty_valid_source_selection_without_mutation(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "preview-empty.sqlite3"
+    store = EmailStore(database)
+    snapshot = build_folder_training_snapshot(
+        [
+            {
+                "account_id": "account-preview",
+                "stable_message_identity": "account-preview:message-id:<preview@test>",
+                "provider_folder_id": "folder-legal",
+                "provider_folder_name": "Legal",
+                "folder_role": "category",
+                "bound_category_key": "legal",
+                "folder_binding_status": "active",
+                "processed_by_email_service": True,
+                "important_signals": ImportantSignals((), False),
+                "sender": {"name": "Sender", "email": "sender@example.test"},
+                "to_recipients": [],
+                "cc_recipients": [],
+                "subject": "Preview only",
+                "body": "Frozen source sample",
+                "headers": {"message-id": "<preview@test>"},
+                "attachments": [],
+                "provider_thread_id": "thread-preview",
+                "explicit_matter_group": None,
+                "source": "natural",
+                "received_at": "2026-09-07T12:00:00+00:00",
+            }
+        ],
+        snapshot_id="snapshot-preview-empty",
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc),
+        seed=17,
+    )
+    store.persist_training_snapshot(snapshot)
+    snapshot_state = store.latest_training_snapshot_state()
+    assert snapshot_state is not None
+    with sqlite3.connect(database) as connection:
+        before = tuple(connection.iterdump())
+    app = FastAPI()
+    register_email_routes(app, lambda: store)
+
+    response = TestClient(app).post(
+        "/api/console/email/training/preview",
+        json={"sources": ["user_feedback"], "categories": ["legal"]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["preview"] == {
+        "unique_sample_count": 0,
+        "snapshot_id": "snapshot-preview-empty",
+        "snapshot_digest": snapshot.snapshot_digest,
+        "snapshot_version": snapshot.snapshot_version,
+        "description_version": snapshot_state["description_version"],
+    }
+    with sqlite3.connect(database) as connection:
+        after = tuple(connection.iterdump())
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"sources": ["unknown"], "categories": ["legal"]},
+        {"sources": ["folder_snapshot"], "categories": ["unknown"]},
+        {"sources": ["folder_snapshot"], "categories": ["legal"]},
+        {"sources": ["folder_snapshot"], "categories": ["legal"], "model_families": ["embedding-mlp"]},
+    ],
+)
+def test_email_training_preview_rejects_invalid_selection_without_writes(body) -> None:
+    class MissingSnapshotStore:
+        writes: list[object] = []
+
+        def latest_training_snapshot_state(self):
+            return None
+
+    store = MissingSnapshotStore()
+    app = FastAPI()
+    register_email_routes(app, lambda: store)
+
+    response = TestClient(app).post("/api/console/email/training/preview", json=body)
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_training_selection"
+    assert store.writes == []
+
+
+def test_email_training_preview_rejects_malformed_body() -> None:
+    app = FastAPI()
+    register_email_routes(app, lambda: object())
+
+    response = TestClient(app).post(
+        "/api/console/email/training/preview",
+        content=b"{not-json",
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_training_selection"
+
+
+def test_display_text_removes_truncated_internal_unsubscribe_markup() -> None:
+    displayed = visible_email_text(
+        "OpenAI © 2015–2026 < a href=\"[UNSUBSCRIBE_CANDIDATE:1]\" "
+        "target=\"_blank\" style=\"display:inline-bloc"
+    )
+
+    assert displayed == "OpenAI © 2015–2026"
+
+
+def test_display_text_preserves_content_after_complete_internal_markup() -> None:
+    displayed = visible_email_text(
+        "Intro < a href=\"[UNSUBSCRIBE_CANDIDATE:1]\"> trailing real content"
+    )
+
+    assert displayed == (
+        "Intro < a href=\"[UNSUBSCRIBE_CANDIDATE:1]\"> trailing real content"
+    )
+
+
+def test_display_text_preserves_ordinary_angle_bracket_text() -> None:
+    displayed = visible_email_text(
+        "Reply to <support@example.com> before 10:00 < 12:00."
+    )
+
+    assert displayed == "Reply to <support@example.com> before 10:00 < 12:00."
+
+
 def test_email_classification_detail_projects_observability(tmp_path: Path) -> None:
     classification = {
         "id": 41,
@@ -909,6 +1146,10 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
                 "observed_at": "2026-09-08T08:00:00+00:00",
             }
 
+        def get_email_unsubscribe_entry_url(self, classification_id: int):
+            assert classification_id == 41
+            return None
+
     app = FastAPI()
     register_email_routes(app, lambda: DetailStore())
 
@@ -918,6 +1159,10 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
     payload = response.json()
     assert payload["ok"] is True
     assert payload["item"] == {**classification, "id": str(classification["id"])}
+    assert payload["unsubscribe_entry"] == {
+        "available": False,
+        "reason": "entry_unavailable",
+    }
     assert payload["observability"] == [
         {
             "kind": "unsubscribe",
@@ -2029,10 +2274,13 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
         "audit_run_ids": [fixture.audit.id],
         "attempt_ids": [fixture.attempt_id],
         "status": "done",
+        "outcome": "done",
         "receipt_id": "provider-receipt:observability-41",
         "result_text": "You have been unsubscribed",
         "evidence": "terminal-page:unsubscribed",
         "observation_digest": fixture.receipt["observation_digest"],
+        "created_at": fixture.receipt["created_at"],
+        "completed_at": "2026-09-02T08:00:02+00:00",
         "steps": [
             {
                 "sequence": 1,
@@ -2062,6 +2310,36 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
 
     _assert_no_audited_lineage(legacy_event)
     assert fixture.unrelated_run.id not in legacy_event["consumer_run_ids"]
+
+
+def test_email_detail_marks_terminal_no_reliable_entry_as_non_success(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    with sqlite3.connect(fixture.database) as db:
+        db.execute(
+            "update email_unsubscribe_receipts set outcome='skipped_no_reliable_entry', "
+            "entry_url='' where action_identity=?",
+            (fixture.action_identity,),
+        )
+
+    response = fixture.client.get(
+        f"/api/console/email/classifications/{fixture.classification_id}"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["unsubscribe_entry"] == {
+        "available": False,
+        "reason": "entry_unavailable",
+    }
+    event = payload["observability"][0]
+    assert event["status"] == "done"
+    assert event["outcome"] == "skipped_no_reliable_entry"
+    assert event["outcome"] != "done"
+    assert event["created_at"]
+    assert event["completed_at"] == "2026-09-02T08:00:02+00:00"
+    assert fixture.entry_url not in response.text
 
 
 def test_email_unsubscribe_entry_url_requires_explicit_verified_receipt(

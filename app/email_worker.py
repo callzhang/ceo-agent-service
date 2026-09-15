@@ -829,7 +829,7 @@ def run_email_classification_task_once(
                 )
             ),
             subject=str(message.get("subject") or ""),
-            normalized_text=str(message.get("text") or ""),
+            normalized_text=body_text,
             attachment_metadata=tuple(
                 EmailAttachmentMetadata.model_validate(item)
                 for item in message.get("attachments") or ()

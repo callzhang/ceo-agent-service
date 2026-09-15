@@ -68,6 +68,7 @@ def _selection_provenance(
     *,
     sources: list[str],
     categories: list[str],
+    allow_empty: bool = False,
 ) -> dict[str, object]:
     supported_sources = {
         "folder_snapshot",
@@ -157,7 +158,7 @@ def _selection_provenance(
     selected_identities = sorted(
         set().union(*selected_by_source.values()) if selected_by_source else set()
     )
-    if not selected_identities:
+    if not selected_identities and not allow_empty:
         raise ValueError("training selection has no frozen snapshot samples")
     return {
         "sources": sources,

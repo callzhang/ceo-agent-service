@@ -24,30 +24,50 @@ class _HTMLTextExtractor(html.parser.HTMLParser):
     )
     _NON_CONTENT_TAGS = frozenset({"head", "script", "style", "template"})
 
-    def __init__(self) -> None:
+    def __init__(self, *, preserve_blocks: bool = False) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self.non_content_depth = 0
+        self.preserve_blocks = preserve_blocks
+        self.saw_markup = False
+
+    def _block_separator(self) -> str:
+        return "\n\n" if self.preserve_blocks else " "
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        raw = self.get_starttag_text() or ""
+        if not _is_valid_html_tag_name(tag):
+            self.parts.append(raw)
+            return
+        self.saw_markup = True
         normalized_tag = tag.lower()
         if normalized_tag in self._NON_CONTENT_TAGS:
             self.non_content_depth += 1
         elif self.non_content_depth == 0 and normalized_tag in self._BLOCK_TAGS:
-            self.parts.append(" ")
+            self.parts.append(self._block_separator())
 
     def handle_endtag(self, tag: str) -> None:
+        if not _is_valid_html_tag_name(tag):
+            self.parts.append(f"</{tag}>")
+            return
+        self.saw_markup = True
         normalized_tag = tag.lower()
         if normalized_tag in self._NON_CONTENT_TAGS and self.non_content_depth:
             self.non_content_depth -= 1
         elif self.non_content_depth == 0 and normalized_tag in self._BLOCK_TAGS:
-            self.parts.append(" ")
+            self.parts.append(self._block_separator())
 
     def handle_data(self, data: str) -> None:
         if self.non_content_depth == 0:
             self.parts.append(data)
 
     def text(self) -> str:
+        if self.preserve_blocks:
+            return "\n\n".join(
+                " ".join(line.split())
+                for line in "".join(self.parts).splitlines()
+                if line.strip()
+            )
         return re.sub(r"\s+", " ", "".join(self.parts)).strip()
 
 
@@ -61,10 +81,39 @@ def html_to_text(value: str) -> str:
 
 
 def visible_email_text(value: str) -> str:
-    """Remove a leading stylesheet left by older HTML-to-text extraction."""
+    """Project legacy plain bodies without residual HTML implementation data."""
 
     end = _leading_stylesheet_end(value)
-    return value[end:].lstrip() if end else value
+    text = value[end:].lstrip() if end else value
+    text = _remove_truncated_internal_markup(text)
+    parser = _HTMLTextExtractor(preserve_blocks=True)
+    parser.feed(text)
+    parser.close()
+    return parser.text() if parser.saw_markup else text
+
+
+def _is_valid_html_tag_name(value: str) -> bool:
+    return bool(value) and value[0].isalpha() and all(
+        character.isalnum() or character == "-" for character in value
+    )
+
+
+def _remove_truncated_internal_markup(value: str) -> str:
+    """Drop an incomplete tag made by durable internal URL redaction only."""
+
+    opening = value.find("<")
+    while opening >= 0:
+        closing = value.find(">", opening + 1)
+        fragment = value[opening:] if closing < 0 else value[opening : closing + 1]
+        if (
+            closing < 0
+            and len(fragment) > 1
+            and fragment[1].isspace()
+            and "[UNSUBSCRIBE_CANDIDATE:" in fragment
+        ):
+            return value[:opening].rstrip()
+        opening = value.find("<", opening + 1)
+    return value
 
 
 def _leading_stylesheet_end(value: str) -> int:
