@@ -2536,6 +2536,60 @@ def test_reconcile_done_reply_tasks_with_failed_current_run(tmp_path: Path) -> N
     assert updated.error == "codex_process_failed"
 
 
+def test_reconcile_preserves_done_task_with_recorded_message_delivery(
+    tmp_path: Path,
+) -> None:
+    """A later audit failure cannot undo an already recorded provider send."""
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-reconcile-delivery",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-reconcile-delivery",
+        trigger_create_time="2026-09-14 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please handle this",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    ).run
+    store.complete_agent_run(consumer.id, {"outcome": "proposal"}, owner="consumer")
+    store.record_completed_agent_message_delivery(
+        agent_run_id=consumer.id,
+        external_action_key="recorded-delivery",
+        business_object_key=task.business_object_key,
+        action_identity="reply",
+        operation="message.send",
+        target_identifiers={"conversation_id": task.conversation_id},
+        conversation_id=task.conversation_id,
+        trigger_message_id=task.trigger_message_id,
+        reply_text="Already delivered.",
+        provider_result={"message_id": "provider-message-1"},
+    )
+    audit = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="audit"
+    ).run
+    store.fail_agent_run(audit.id, {"code": "audit_validation_failed"}, owner="audit")
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='done', error='' where id=?",
+            (task.id,),
+        )
+
+    assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "done"
+
+
 def test_complete_reply_task_never_hides_failed_current_run(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

@@ -20335,6 +20335,13 @@ class AutoReplyStore:
                     limit 1
                 )
                 where tasks.status='done' and runs.status='failed'
+                  and not exists (
+                      select 1
+                      from external_action_results as actions
+                      join sent_replies as replies
+                        on replies.external_action_key=actions.external_action_key
+                      where actions.business_object_key=tasks.business_object_key
+                  )
                 order by tasks.id
                 """
             ).fetchall()
