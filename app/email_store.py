@@ -12439,6 +12439,38 @@ class EmailStore:
             is not None
         )
 
+    def classified_stable_message_identities(
+        self, identities: Sequence[str]
+    ) -> frozenset[str]:
+        """Return known messages with bounded SQLite work for a folder batch."""
+
+        normalized = tuple(
+            sorted(
+                {
+                    identity.strip()
+                    for identity in identities
+                    if isinstance(identity, str) and identity.strip()
+                }
+            )
+        )
+        if not normalized:
+            return frozenset()
+        matches: set[str] = set()
+        # SQLite's bound-variable limit is installation-dependent.  Keep this
+        # lookup bounded even for the provider's full Junk and Trash folders.
+        chunk_size = 500
+        with self._connect() as db:
+            for start in range(0, len(normalized), chunk_size):
+                chunk = normalized[start : start + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = db.execute(
+                    "select stable_message_identity from email_classifications "
+                    f"where stable_message_identity in ({placeholders})",
+                    chunk,
+                ).fetchall()
+                matches.update(str(row["stable_message_identity"]) for row in rows)
+        return frozenset(matches)
+
     def get_email_unsubscribe_entry_url(self, classification_id: int) -> str | None:
         """Return one terminal unsubscribe entry URL after full lineage validation."""
 

@@ -47,6 +47,9 @@ class _Store:
     def has_stable_classification(self, _identity):
         return False
 
+    def classified_stable_message_identities(self, identities):
+        return frozenset()
+
     def record_current_provider_observations(
         self,
         observations,
@@ -124,6 +127,63 @@ def test_observer_uses_bounded_uid_watermark_and_resumes_after_restart(tmp_path)
     assert len(store.current_observation_calls) == 2
     assert store.current_observation_calls[-1][0] == second.observations
     assert store.current_observation_calls[-1][1] == ()
+
+
+def test_observer_batches_processed_identity_lookup_per_folder(tmp_path):
+    """Large folders must not open one SQLite connection per cached message."""
+
+    from app.email_training_observer import ProviderTrainingObservationJob
+
+    class Store(_Store):
+        def __init__(self):
+            super().__init__()
+            self.lookup_calls = []
+
+        def has_stable_classification(self, _identity):
+            raise AssertionError("observer must use one batched identity lookup")
+
+        def classified_stable_message_identities(self, identities):
+            self.lookup_calls.append(tuple(sorted(identities)))
+            return frozenset({"two"})
+
+    class Source:
+        def list_folders(self):
+            return (_folder(),)
+
+        def fetch_uid_membership(self, _folder, *, cursor_uidvalidity, uids):
+            return SimpleNamespace(
+                uidvalidity=cursor_uidvalidity,
+                existing_uids=frozenset(uids),
+                important_signals_by_uid={
+                    uid: ImportantSignals((), False) for uid in uids
+                },
+            )
+
+        def fetch_uid_batch(self, _folder, *, cursor_uidvalidity, last_seen_uid, limit):
+            assert cursor_uidvalidity is None
+            assert last_seen_uid == 0
+            assert limit == 10
+            return SimpleNamespace(
+                uidvalidity=10,
+                messages=(_message(1, "one"), _message(2, "two")),
+            )
+
+        def logout(self):
+            return None
+
+    store = Store()
+    result = ProviderTrainingObservationJob(
+        state_path=tmp_path / "observer.json",
+        source_factory=lambda _account: Source(),
+        email_store=store,
+        batch_size=10,
+    ).run_once(({"account_id": "account-1"},))
+
+    assert store.lookup_calls == [("one", "two")]
+    assert {
+        row["stable_message_identity"]: row["processed_by_email_service"]
+        for row in result.observations
+    } == {"one": False, "two": True}
 
 
 def test_production_training_scope_reads_inbox_bound_categories_and_system_junk(

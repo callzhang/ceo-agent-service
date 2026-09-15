@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-15: Folder-derived Email training observations now look up processed
+  message identities in bounded batches instead of opening SQLite once per
+  cached message. Large Junk and Trash folders remain eligible training
+  evidence without monopolizing the training scheduler before it can publish a
+  frozen snapshot.
+
 - 2026-09-15: Startup recovery now projects terminal email-unsubscribe receipts
   onto their failed reply tasks. Completed or already-complete operations become
   `done`; safe no-action outcomes become `skipped`; browser and provider

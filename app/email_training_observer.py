@@ -136,15 +136,23 @@ class ProviderTrainingObservationJob:
                             folder_id,
                             _new_folder_state(),
                         )
-                        _refresh_folder_truth(
-                            folder_state,
-                            account_id=account_id,
-                            folder=folder,
-                            role=role,
-                            binding=binding,
-                            email_store=self.email_store,
-                        )
                         key = f"{account_id}:{folder_id}"
+                        cached_identities = tuple(folder_state["observations"])
+                        classified_identities = (
+                            self.email_store.classified_stable_message_identities(
+                                cached_identities
+                            )
+                            if cached_identities
+                            else frozenset()
+                        )
+                        if cached_identities:
+                            _refresh_folder_truth(
+                                folder_state,
+                                folder=folder,
+                                role=role,
+                                binding=binding,
+                                classified_identities=classified_identities,
+                            )
                         if folder_state["status"] in {
                             "uidvalidity_unavailable",
                             "membership_unavailable",
@@ -249,7 +257,6 @@ class ProviderTrainingObservationJob:
                                 role=role,
                                 binding=binding,
                                 message=message,
-                                email_store=self.email_store,
                             )
                             folder_state["observations"][
                                 observation["stable_message_identity"]
@@ -261,6 +268,24 @@ class ProviderTrainingObservationJob:
                         folder_state["uidvalidity"] = uidvalidity
                         folder_state["highest_uid"] = highest_uid
                         folder_state["status"] = "ready"
+                        new_identities = tuple(
+                            str(message["stableMessageIdentity"])
+                            for message in messages
+                        )
+                        if new_identities:
+                            classified_identities = frozenset(
+                                classified_identities
+                                | self.email_store.classified_stable_message_identities(
+                                    new_identities
+                                )
+                            )
+                        _refresh_folder_truth(
+                            folder_state,
+                            folder=folder,
+                            role=role,
+                            binding=binding,
+                            classified_identities=classified_identities,
+                        )
                         if (
                             int(folder_state["reconcile_after_uid"]) == 0
                             and len(messages) < self.batch_size
@@ -561,7 +586,6 @@ def _provider_observation(
     role: FolderRole,
     binding: Mapping[str, object] | None,
     message: Mapping[str, object],
-    email_store: object,
 ) -> dict[str, object]:
     stable_identity = _required_text(
         message.get("stableMessageIdentity"), "stableMessageIdentity"
@@ -576,9 +600,7 @@ def _provider_observation(
         "folder_binding_status": (
             "unbound" if binding is None else binding["binding_status"]
         ),
-        "processed_by_email_service": email_store.has_stable_classification(
-            stable_identity
-        ),
+        "processed_by_email_service": False,
         "important_signals": message["importantSignals"],
         **provider_model_input_fields(message),
         "provider_thread_id": message.get("threadId"),
@@ -591,11 +613,10 @@ def _provider_observation(
 def _refresh_folder_truth(
     folder_state: dict[str, object],
     *,
-    account_id: str,
     folder: object,
     role: FolderRole,
     binding: Mapping[str, object] | None,
-    email_store: object,
+    classified_identities: frozenset[str],
 ) -> None:
     for cached in folder_state["observations"].values():
         encoded = cached["observation"]
@@ -608,8 +629,8 @@ def _refresh_folder_truth(
         encoded["folder_binding_status"] = (
             "unbound" if binding is None else binding["binding_status"]
         )
-        encoded["processed_by_email_service"] = email_store.has_stable_classification(
-            encoded["stable_message_identity"]
+        encoded["processed_by_email_service"] = (
+            encoded["stable_message_identity"] in classified_identities
         )
 
 
