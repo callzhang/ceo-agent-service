@@ -260,6 +260,7 @@ export interface EmailObservabilityEvent {
   audit_run_ids?: number[];
   attempt_ids?: number[];
   status: string;
+  outcome?: string;
   attempt_count?: number;
   provider_operation?: string;
   provider_result_id?: string;
@@ -281,6 +282,7 @@ export interface EmailClassificationDetail {
   ok: boolean;
   item: EmailClassificationItem;
   observability: EmailObservabilityEvent[];
+  unsubscribe_entry?: {available: boolean; reason: string | null};
   provider_classification?: EmailProviderClassification | null;
   meta: { snapshot_at: string };
 }
@@ -666,6 +668,7 @@ export function getEmailClassification(id: string, signal?: AbortSignal) {
       ok: payload.ok === true,
       item: mapEmailClassification(payload.item, true) as EmailClassificationDetailItem,
       observability: Array.isArray(payload.observability) ? payload.observability as EmailObservabilityEvent[] : [],
+      unsubscribe_entry: isRecord(payload.unsubscribe_entry) ? {available: payload.unsubscribe_entry.available === true, reason: typeof payload.unsubscribe_entry.reason === "string" ? payload.unsubscribe_entry.reason : null} : undefined,
       provider_classification: isRecord(payload.provider_classification) ? payload.provider_classification as unknown as EmailProviderClassification : null,
       meta: asRecord(payload.meta) as { snapshot_at: string },
     } satisfies EmailClassificationDetail;
@@ -704,6 +707,20 @@ export function confirmEmailClassification(
 
 export function listEmailConfigs(signal?: AbortSignal) {
   return request<{ items: EmailCategoryConfig[]; meta: { snapshot_at: string } }>("/api/console/email/config", { signal });
+}
+
+export interface EmailTrainingPreview {
+  unique_sample_count: number;
+  snapshot_id: string;
+  snapshot_digest: string;
+  snapshot_version: string;
+  description_version: string;
+}
+
+export function previewEmailTraining(payload: {sources: string[]; categories: string[]}, signal?: AbortSignal) {
+  return request<{ok: true; preview: EmailTrainingPreview}>("/api/console/email/training/preview", {
+    method: "POST", body: JSON.stringify(payload), signal,
+  }).then(result => result.preview);
 }
 
 export function listEmailAccounts(signal?: AbortSignal) {

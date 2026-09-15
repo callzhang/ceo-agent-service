@@ -1,5 +1,15 @@
 # Changelog
 
+- 2026-09-14: Email now uses an in-flow reading panel with compact mail rows,
+  original-text and processing tabs, persistent reader navigation, and editable
+  classifications for both pending and processed mail. Structured unsubscribe
+  outcomes distinguish success, skipped work and unknown results; verified
+  Attempt links remain visible when no valid entry URL is available.
+- 2026-09-14: Email model training now has a runtime overview, compact promotion
+  checks, version filters and separate setup/promotion panels. Training setup
+  previews the unique selected frozen dataset without starting a run. Historical
+  registry status is not presented as the current runtime primary model.
+
 - 2026-09-14: Attention now includes failed meeting-to-Memory deliveries as
   service errors. Pending and active Memory deliveries remain outside
   Attention, while each failed delivery identifies its delivered meeting and
