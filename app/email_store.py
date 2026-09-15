@@ -13898,6 +13898,7 @@ class EmailStore:
                     classification_source='user', config_version=?,
                     action_plan_json=?, current_action_plan_id=?,
                     legacy_processed_without_plan=0,
+                    agent_result_json='null',
                     confirmed_at=?, updated_at=?
                 where id=?
                   and status=?

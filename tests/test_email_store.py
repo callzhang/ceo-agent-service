@@ -5539,6 +5539,81 @@ def test_agent_correction_persists_its_durable_agent_result(tmp_path: Path):
     assert restored["action_plan"] == corrected["action_plan"]
 
 
+def test_human_correction_clears_superseded_agent_result(tmp_path: Path):
+    """A later manual decision must not be presented as an Agent decision."""
+
+    from app.email_classifier_agent import DurableAgentClassificationResult
+
+    database = tmp_path / "human-correction-clears-agent-result.sqlite3"
+    store = EmailStore(database)
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(store, classification)
+    assert classification.action_plan is not None
+    agent_result = DurableAgentClassificationResult(
+        category="notification",
+        important=False,
+        certainty="certain",
+        confidence=classification.action_plan.confidence,
+        reason="This is a service notification.",
+        unsubscribe_candidate_index=None,
+        unsubscribe_candidate_source=None,
+        unsubscribe_candidate_digest=None,
+        unsubscribe_candidate_reference=None,
+    )
+    agent_plan = EmailActionPlan.model_validate(
+        {
+            "action_plan_id": _action_plan_identity(
+                action_plan_version=2,
+                classification_id=classification.classification_id,
+                account_id=classification.action_plan.account_id,
+                category=EmailCategory.NOTIFICATION,
+                classification_source="agent",
+                confidence=classification.action_plan.confidence,
+                model_id="email-classifier-agent:v1",
+                config_version="email-agent-correction-v1",
+                actions=(EmailAction.MOVE,),
+                action_parameters={EmailAction.MOVE: {"target_folder": "通知"}},
+                created_at=classification.action_plan.created_at + timedelta(minutes=2),
+            ),
+            "action_plan_version": 2,
+            "classification_id": classification.classification_id,
+            "account_id": classification.action_plan.account_id,
+            "category": EmailCategory.NOTIFICATION,
+            "classification_source": "agent",
+            "confidence": classification.action_plan.confidence,
+            "model_id": "email-classifier-agent:v1",
+            "config_version": "email-agent-correction-v1",
+            "actions": (EmailAction.MOVE,),
+            "action_parameters": {EmailAction.MOVE: {"target_folder": "通知"}},
+            "created_at": classification.action_plan.created_at + timedelta(minutes=2),
+        }
+    )
+    agent_current = store.append_action_plan_version(
+        classification.classification_id,
+        agent_plan,
+        confirmed_category=EmailCategory.NOTIFICATION,
+        agent_result=agent_result,
+    )
+
+    application = store.apply_human_classification(
+        classification.classification_id,
+        EmailCategory.WORK,
+        feedback_request_id="manual-supersedes-agent",
+        expected_current_action_plan_id=agent_current["current_action_plan_id"],
+        created_at=classification.action_plan.created_at + timedelta(minutes=3),
+    )
+
+    assert application is not None
+    updated = store.get_classification(classification.classification_id)
+    assert updated is not None
+    assert updated["classification_source"] == "user"
+    assert updated["agent_result"] is None
+    reopened = EmailStore(database)
+    restored = reopened.get_classification(classification.classification_id)
+    assert restored is not None
+    assert restored["agent_result"] is None
+
+
 def test_agent_correction_rejects_missing_durable_agent_result(tmp_path: Path):
     store = EmailStore(tmp_path / "agent-correction-missing-result.sqlite3")
     classification = _classification(status=EmailClassificationStatus.PROCESSED)
