@@ -16567,6 +16567,60 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts(self) -> int:
+        """Project durable email unsubscribe receipts onto their failed tasks.
+
+        The direct unsubscribe operation persists one terminal receipt before
+        its worker finalizes the reply task.  A worker interruption after that
+        write used to leave the task failed even though the receipt already
+        says the operation completed or was safely skipped.  The receipt is
+        keyed by the immutable email action identity, which is also the task's
+        trigger id, so this reconciliation neither guesses nor replays an
+        external operation.
+        """
+        from app.email_unsubscribe import (
+            UnsubscribeOutcome,
+            disposition_for_unsubscribe_outcome,
+        )
+
+        outcomes_by_status: dict[str, list[str]] = {"done": [], "skipped": []}
+        for outcome in UnsubscribeOutcome:
+            status = disposition_for_unsubscribe_outcome(outcome).task_status
+            if status in outcomes_by_status:
+                outcomes_by_status[status].append(outcome.value)
+        done_outcomes = outcomes_by_status["done"]
+        skipped_outcomes = outcomes_by_status["skipped"]
+        terminal_outcomes = [*done_outcomes, *skipped_outcomes]
+        if not terminal_outcomes:
+            return 0
+        done_placeholders = ", ".join("?" for _ in done_outcomes)
+        terminal_placeholders = ", ".join("?" for _ in terminal_outcomes)
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                f"""
+                update reply_tasks as tasks
+                set status=case
+                        when receipts.outcome in ({done_placeholders}) then 'done'
+                        else 'skipped'
+                    end,
+                    error='', available_at='', locked_at=null,
+                    updated_at=current_timestamp
+                from email_unsubscribe_receipts as receipts
+                where tasks.id in (
+                    select current_tasks.id
+                    from reply_tasks as current_tasks
+                    join email_unsubscribe_receipts as current_receipts
+                      on current_receipts.action_identity=current_tasks.trigger_message_id
+                    where current_tasks.channel='email'
+                      and current_tasks.status='failed'
+                      and current_receipts.outcome in ({terminal_placeholders})
+                )
+                  and receipts.action_identity=tasks.trigger_message_id
+                """,
+                [*done_outcomes, *terminal_outcomes],
+            )
+            return cursor.rowcount
+
     def resolve_failed_reply_attempt_already_settled(
         self,
         attempt_id: int,

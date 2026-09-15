@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-15: Startup recovery now projects terminal email-unsubscribe receipts
+  onto their failed reply tasks. Completed or already-complete operations become
+  `done`; safe no-action outcomes become `skipped`; browser and provider
+  failures remain failed. Recovery is keyed by the immutable email action
+  identity and never reopens a browser or repeats an unsubscribe action.
+
 - 2026-09-15: Dispatcher queue `latest_error` now reports only errors attached
   to sources the Dispatcher can currently claim. Terminal source failures stay
   visible in Queue, Attention, and history without leaving an obsolete
