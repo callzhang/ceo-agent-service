@@ -71,7 +71,7 @@
 .email-search button { border:0; background:none; color:var(--ink-soft); padding:6px 10px; cursor:pointer; }
 .email-search:focus-within { outline:2px solid var(--accent); outline-offset:1px; }
 @media(max-width:600px) { .email-search { flex-basis:100%; } }
-.console-page:has(.email-tabs) { max-width: 1560px; width: 100%; padding: 18px 28px 28px; box-sizing: border-box; }
+.console-page:has(.email-tabs) { width: 100%; padding: 18px 28px 28px; box-sizing: border-box; }
 .console-page:has(.email-tabs) .console-page-header .eyebrow { display: none; }
 .console-page:has(.email-tabs) .console-page-header h1 { font-size: 28px; }
 .console-page:has(.email-tabs) .console-page-header { max-width: none; margin-bottom: 16px; }

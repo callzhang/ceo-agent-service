@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import workbenchStyles from "./styles.css?raw";
+import emailStyles from "./pages/email/email.css?raw";
 
 function mediumStyles() {
   const blocks = workbenchStyles.match(
@@ -41,6 +42,14 @@ describe("Tasks responsive layout contract", () => {
       expect(rule, selector).not.toContain("max-width: 1180px");
       expect(rule, selector).not.toContain("margin: 0 auto");
     }
+  });
+
+  it("does not reintroduce a page-width cap through the Email-specific shell", () => {
+    const rule = emailStyles.match(
+      /\.console-page:has\(\.email-tabs\)\s*\{([^}]*)\}/,
+    )?.[1];
+    expect(rule).toBeDefined();
+    expect(rule).not.toContain("max-width: 1560px");
   });
 
   it("keeps wide filters dense and introduces the medium breakpoint before mobile", () => {
