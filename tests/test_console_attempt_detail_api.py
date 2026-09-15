@@ -7,7 +7,11 @@ import pytest
 
 from app.audit_web import handle_rerun_attempt_post
 from app.store import AgentRole, AutoReplyStore
-from app.web_api.attempts import build_attempt_detail, _linked_consumer_run
+from app.web_api.attempts import (
+    _consumer_result_payload as build_consumer_result_payload,
+    _linked_consumer_run,
+    build_attempt_detail,
+)
 
 
 CONVERSATION = "email-thread:thread-digest"
@@ -36,6 +40,46 @@ def test_linked_consumer_run_falls_back_to_latest_consumer_sibling():
     old = type("Run", (), {"id": 1, "role": "consumer", "turn_attempt": 0, "proposal_revision": 0})()
     latest = type("Run", (), {"id": 2, "role": "consumer", "turn_attempt": 1, "proposal_revision": 0})()
     assert _linked_consumer_run(audit, [old, latest, audit]) is latest
+
+
+def test_consumer_result_prefers_current_generation_when_attempt_has_no_run_id():
+    old_failed = type(
+        "Run",
+        (),
+        {
+            "id": 99,
+            "role": "consumer",
+            "status": "failed",
+            "turn_attempt": 4,
+            "proposal_revision": 0,
+            "final_result_json": "",
+            "structured_error_json": '{"code":"service_restart_before_effect"}',
+        },
+    )()
+    current = type(
+        "Run",
+        (),
+        {
+            "id": 100,
+            "role": "consumer",
+            "status": "completed",
+            "turn_attempt": 0,
+            "proposal_revision": 0,
+            "final_result_json": json.dumps(
+                {
+                    "confidence": 0.97,
+                    "risk": "low",
+                }
+            ),
+            "structured_error_json": "",
+        },
+    )()
+
+    result = build_consumer_result_payload(None, [old_failed, current], [current], None)
+
+    assert result["confidence"] == "97%"
+    assert result["risk"] == "low"
+    assert result["error_reason"] == "Consumer 结果不符合当前契约"
 
 
 def test_attempt_detail_loads_task_runs_when_attempt_has_no_run_id(tmp_path: Path):
@@ -544,6 +588,36 @@ def test_attempt_detail_api_marks_unavailable_consumer_result_per_field(
     assert result["risk"] == "—"
     assert result["error_reason"] == expected_error
     assert "raw-malformed-marker" not in json.dumps(result)
+
+
+def test_attempt_detail_api_preserves_valid_metrics_from_partial_consumer_result(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="partial-api")
+    partial = _consumer_result_payload(confidence=0.97, risk="low")
+    partial.pop("information_completeness")
+    partial.pop("rule_coverage")
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update agent_runs set final_result_json=? where id=?",
+            (json.dumps(partial), consumer.id),
+        )
+    attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    assert item["consumer_result"] == {
+        "confidence": "97%",
+        "information_completeness": "—",
+        "rule_coverage": "—",
+        "risk": "low",
+        "error_reason": "Consumer 结果不符合当前契约",
+        "current_run": None,
+    }
 
 
 def test_attempt_detail_api_marks_completed_consumer_without_result_unavailable(

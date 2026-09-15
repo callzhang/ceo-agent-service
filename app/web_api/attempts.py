@@ -192,8 +192,15 @@ def _consumer_result_payload(
     generation activity is deliberately projected separately, so a rerun never
     substitutes unfinished values for the Attempt's existing result.
     """
-    consumer_run = _linked_consumer_run(terminal_run, agent_runs)
+    # A historical Attempt may not retain agent_run_id. In that case the
+    # complete run list can contain older generations with larger retry
+    # counters; prefer the task's current generation before falling back to
+    # the historical list, otherwise an old failed Consumer masks a newer
+    # completed result.
+    runs_for_link = current_agent_runs if terminal_run is None and current_agent_runs else agent_runs
+    consumer_run = _linked_consumer_run(terminal_run, runs_for_link)
     result = None
+    raw_result = ""
     if consumer_run is not None and str(getattr(consumer_run, "status", "") or "") != "failed":
         raw_result = str(getattr(consumer_run, "final_result_json", "") or "")
         if raw_result.strip():
@@ -205,12 +212,34 @@ def _consumer_result_payload(
                 result = None
 
     if result is None:
+        partial: dict[str, Any] = {}
+        parsed = _stored_json(raw_result, {})
+        if isinstance(parsed, dict):
+            partial = parsed
+        def metric(name: str, formatter: Any = str) -> str:
+            value = partial.get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                try:
+                    return formatter(value)
+                except (TypeError, ValueError):
+                    return "—"
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            return "—"
+
+        partial_error = (
+            "Consumer 结果不符合当前契约"
+            if partial and raw_result.strip()
+            else _consumer_error_reason(consumer_run)
+        )
         payload: dict[str, Any] = {
-            "confidence": "—",
-            "information_completeness": "—",
-            "rule_coverage": "—",
-            "risk": "—",
-            "error_reason": _consumer_error_reason(consumer_run),
+            "confidence": metric("confidence", lambda value: f"{value:.0%}"),
+            "information_completeness": metric(
+                "information_completeness", lambda value: f"{value:.0%}"
+            ),
+            "rule_coverage": metric("rule_coverage", lambda value: f"{value:.0%}"),
+            "risk": metric("risk"),
+            "error_reason": partial_error,
             "current_run": None,
         }
     else:
