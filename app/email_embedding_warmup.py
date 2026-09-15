@@ -98,14 +98,18 @@ def warm_frozen_training_embeddings(
     if not callable(embed):
         raise TypeError("embedding client must provide embed")
     entries = tuple(missing.values())
-    result = embed([text for _key, text in entries])
-    vectors = getattr(result, "vectors", None)
-    matrix = np.asarray(vectors, dtype=np.float32)
-    if matrix.shape != (len(entries), cache.dimension):
-        raise ValueError("embedding response does not match requested inputs")
-    for (key, _text), vector in zip(entries, matrix, strict=True):
-        cache.put(key, vector)
-    return EmbeddingWarmupResult(cache_hits=cache_hits, cache_writes=len(entries))
+    cache_writes = 0
+    for offset in range(0, len(entries), 8):
+        batch = entries[offset : offset + 8]
+        result = embed([text for _key, text in batch])
+        vectors = getattr(result, "vectors", None)
+        matrix = np.asarray(vectors, dtype=np.float32)
+        if matrix.shape != (len(batch), cache.dimension):
+            raise ValueError("embedding response does not match requested inputs")
+        for (key, _text), vector in zip(batch, matrix, strict=True):
+            cache.put(key, vector)
+            cache_writes += 1
+    return EmbeddingWarmupResult(cache_hits=cache_hits, cache_writes=cache_writes)
 
 
 def _required_text(value: object, name: str) -> str:
