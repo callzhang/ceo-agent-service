@@ -1455,6 +1455,34 @@ def _validated_agent_result_json(
     return result.model_dump_json()
 
 
+def _validated_agent_correction_result_json(
+    action_plan: EmailActionPlan,
+    agent_result: object | None,
+) -> str:
+    """Require the durable Agent decision that authorizes an Agent correction."""
+
+    if action_plan.classification_source != "agent":
+        if agent_result is not None:
+            raise ValueError("non-Agent correction cannot carry an Agent result")
+        return "null"
+    if agent_result is None:
+        raise ValueError("Agent correction requires its exact typed result")
+    from app.email_classifier_agent import DurableAgentClassificationResult
+
+    result = (
+        agent_result
+        if isinstance(agent_result, DurableAgentClassificationResult)
+        else DurableAgentClassificationResult.model_validate(agent_result)
+    )
+    if (
+        result.certainty != "certain"
+        or result.category != action_plan.category
+        or result.confidence != action_plan.confidence
+    ):
+        raise ValueError("Agent correction and ActionPlan diverge")
+    return result.model_dump_json()
+
+
 def _normalized_message_id(value: object) -> str:
     if value in (None, ""):
         return ""
@@ -13990,10 +14018,15 @@ class EmailStore:
         action_plan: EmailActionPlan,
         *,
         confirmed_category: EmailCategoryKey,
+        agent_result: object | None = None,
     ) -> dict[str, Any]:
         """Append a correction plan and atomically make it current."""
 
         confirmed_category_value = validate_email_category_key(confirmed_category)
+        agent_result_json = _validated_agent_correction_result_json(
+            action_plan,
+            agent_result,
+        )
         if action_plan.classification_id != classification_id:
             raise EmailActionPlanConflict("ActionPlan classification does not match")
         if action_plan.category != confirmed_category_value:
@@ -14033,6 +14066,7 @@ class EmailStore:
                         classification_source=?, confidence=?, model_id=?,
                         config_version=?, action_plan_json=?,
                         current_action_plan_id=?, legacy_processed_without_plan=0,
+                        agent_result_json=?,
                         confirmed_at=?, updated_at=?
                     where id=?
                     """,
@@ -14045,6 +14079,7 @@ class EmailStore:
                         action_plan.config_version,
                         action_plan.model_dump_json(),
                         action_plan.action_plan_id,
+                        agent_result_json,
                         now,
                         now,
                         classification_id,
