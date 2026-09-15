@@ -10,6 +10,7 @@ from app.meeting_memory_write import (
     meeting_memory_payload,
     process_meeting_memory_writes,
 )
+from app.agent_runtime_router import RoutedCodexExecutionError
 from app.store import AutoReplyStore
 
 
@@ -30,6 +31,11 @@ class _FakeRoutedExecution:
                 }
             )
         )
+
+
+class _ActiveMemoryRuntime:
+    def execute(self, **kwargs):
+        raise RoutedCodexExecutionError("runtime_attempt_active")
 
 
 def _sent_job() -> SimpleNamespace:
@@ -184,6 +190,31 @@ def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
     assert event["available_at"] == ""
     assert event["execution_generation"]
     assert event["execution_generation"] != original_generation
+
+
+def test_active_meeting_memory_runtime_defers_instead_of_failing(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    job_id = _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+
+    assert process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=_ActiveMemoryRuntime(),
+        now=datetime.fromisoformat("2026-09-14T10:00:00+08:00"),
+    ) == 1
+
+    with store._connect() as db:
+        event = db.execute(
+            "select status, attempts, error, available_at from meeting_memory_write_events "
+            "where meeting_job_id=?",
+            (job_id,),
+        ).fetchone()
+    assert event is not None
+    assert event["status"] == "pending"
+    assert event["attempts"] == 1
+    assert event["error"].startswith("runtime_attempt_active:")
+    assert event["available_at"]
 
 
 def test_failed_meeting_memory_write_can_be_closed_from_verified_memory_readback(

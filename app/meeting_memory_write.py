@@ -126,7 +126,7 @@ def _process_event(
             routed_execution=routed_execution,
         )
     except CodexMemoryWriteFailed as exc:
-        if exc.retryable:
+        if exc.retryable or exc.source_code == "runtime_attempt_active":
             delay = retry_delay_seconds(
                 MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS,
                 event.attempts,
