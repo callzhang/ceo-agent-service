@@ -10528,6 +10528,32 @@ def test_an_unanswered_question_is_never_retired_by_its_own_closed_task(tmp_path
     assert _projected(store, pending_question) == "needs_human"
 
 
+def test_skipped_task_retires_its_failed_attempt_from_current_problems(tmp_path):
+    store = store_module.AutoReplyStore(tmp_path / "skipped-current.sqlite3")
+    failed = _attempt(store, trigger="msg-skipped", status="failed")
+    store.ensure_reply_task(
+        channel="dingtalk",
+        conversation_id="cid-supersede",
+        conversation_title="Supersession",
+        single_chat=True,
+        trigger_message_id="msg-skipped",
+        trigger_create_time="2026-09-10T05:47:00+00:00",
+        trigger_sender="Sender",
+        trigger_text="trigger",
+        trigger_message_json="{}",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='skipped' where trigger_message_id=?",
+            ("msg-skipped",),
+        )
+
+    assert all(
+        attempt.id != failed
+        for attempt in store.list_current_unresolved_problem_attempts()
+    )
+
+
 def test_an_explicit_resolution_still_retires_any_status(tmp_path):
     store = store_module.AutoReplyStore(tmp_path / "explicit.sqlite3")
     blocked = _attempt(store, trigger="msg-blocked-resolved", status="blocked")
