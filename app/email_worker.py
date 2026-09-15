@@ -1681,9 +1681,7 @@ def _finalize_direct_email_unsubscribe_task(
         store.complete_reply_task(
             task.id, expected_execution_generation=task.execution_generation
         )
-    elif retryable and not str(getattr(task, "error", "") or "").startswith(
-        "email_unsubscribe_browser_"
-    ):
+    elif retryable and not str(getattr(task, "error", "") or "").strip():
         store.defer_reply_task(
             task.id,
             task_error,
