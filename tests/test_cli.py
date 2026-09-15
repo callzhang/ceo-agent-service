@@ -8550,6 +8550,24 @@ def test_repair_exhausted_work_item_is_retried_then_bounded():
     assert cli._should_retry_work_summary_input(ValueError("update_project requires project"), 1) is False
 
 
+def test_completion_check_policy_errors_are_skipped_not_retried():
+    from app.task_agent import TaskDecisionRepairExhausted
+
+    protected_fields = TaskDecisionRepairExhausted(
+        "task decision repair exhausted after 2 rounds: "
+        "completion checks cannot change protected project fields: facts"
+    )
+    no_transition = TaskDecisionRepairExhausted(
+        "task decision repair exhausted after 2 rounds: "
+        "completion check without a lifecycle transition must skip"
+    )
+
+    assert cli._should_skip_work_summary_input(str(protected_fields)) is True
+    assert cli._should_skip_work_summary_input(str(no_transition)) is True
+    assert cli._should_retry_work_summary_input(protected_fields, 1) is False
+    assert cli._should_retry_work_summary_input(no_transition, 1) is False
+
+
 def test_a_runtime_lease_conflict_is_retried_not_terminalized():
     """Two live work items died on "someone else is already running this".
 

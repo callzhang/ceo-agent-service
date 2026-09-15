@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-09-15: Completion-check validation that proposes protected project
+  changes or no lifecycle transition now ends as a policy skip. It no longer
+  consumes retry budget or creates a misleading task-agent service error.
+
 - 2026-09-15: A successful meeting-to-Memory worker cycle now refreshes its
   system-health component immediately. Historical Memory write errors no
   longer keep the service health card degraded after the worker has recovered.

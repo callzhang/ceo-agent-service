@@ -180,6 +180,13 @@ WORK_SUMMARY_DISCARDABLE_ERROR_MARKERS = (
         "does not belong to project",
     ),
 )
+# Completion checks are read-only. If bounded repair still proposes a
+# protected project mutation, or finds no lifecycle transition, the correct
+# terminal outcome is a policy skip rather than a retryable service failure.
+COMPLETION_CHECK_SKIP_ERROR_MARKERS = (
+    ("completion check without a lifecycle transition",),
+    ("completion checks cannot change protected project fields",),
+)
 
 LIVE_SEND_BLOCKERS = (
     "deterministic personnel/candidate permission gates",
@@ -1553,7 +1560,10 @@ def _process_claimed_work_summary_input(store, runner, work_input, *, dws=None) 
             store.mark_work_summary_input_skipped(work_input.id, error)
         else:
             store.mark_work_summary_input_failed(work_input.id, error)
-        if not capacity_exhausted or opened_capacity_pause:
+        if (
+            (not capacity_exhausted or opened_capacity_pause)
+            and not _should_skip_work_summary_input(error)
+        ):
             store.record_error(
                 "work_summary_input",
                 str(work_input.id),
@@ -1642,9 +1652,9 @@ def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> b
         return True
     if isinstance(error, TaskDecisionRepairExhausted):
         # The bounded repair rounds ended with a repairable rule unmet; the
-        # item is retried on a later pass with a fresh session rather than
-        # terminalized on a structural validation error.
-        return True
+        # item is retried on a later pass with a fresh session unless the
+        # completion-check rule itself defines a terminal policy skip.
+        return not _should_skip_work_summary_input(normalized_error)
     if _is_codex_provider_recovery_wait_reason(normalized_error):
         return True
     normalized = error_text.lower()
@@ -1684,7 +1694,10 @@ def _should_skip_work_summary_input(error: str) -> bool:
     normalized = error.lower()
     return any(
         all(marker in normalized for marker in markers)
-        for markers in WORK_SUMMARY_DISCARDABLE_ERROR_MARKERS
+        for markers in (
+            *WORK_SUMMARY_DISCARDABLE_ERROR_MARKERS,
+            *COMPLETION_CHECK_SKIP_ERROR_MARKERS,
+        )
     )
 
 
