@@ -128,7 +128,7 @@ def test_meeting_memory_title_stops_after_the_first_conclusion_sentence() -> Non
     assert payload["source_description"] == "先完成客户验证"
 
 
-def test_meeting_memory_title_uses_structured_topic_conclusions_over_first_message_sentence() -> None:
+def test_meeting_memory_title_uses_structured_topic_titles_over_conclusions() -> None:
     job = _sent_job()
     job.final_message = (
         "【会议跟进】客户验证会\n\n"
@@ -139,9 +139,11 @@ def test_meeting_memory_title_uses_structured_topic_conclusions_over_first_messa
         {
             "topics": [
                 {
+                    "title": "客户验证与投入节奏",
                     "conclusion": "先用真实客户验证产品价值，再依据反馈决定投入与扩张节奏。",
                 },
                 {
+                    "title": "验证结果进入经营决策",
                     "conclusion": "验证结果必须进入下一轮经营决策。",
                 },
             ]
@@ -151,9 +153,26 @@ def test_meeting_memory_title_uses_structured_topic_conclusions_over_first_messa
 
     payload = meeting_memory_payload(job)
 
-    assert payload["source_description"] == (
-        "先用真实客户验证产品价值，再依据反馈决定投入与扩张节奏。；验证结果必须进入下一轮经营决策。"
+    assert payload["source_description"] == "客户验证与投入节奏；验证结果进入经营决策"
+
+
+def test_meeting_memory_title_summarizes_reported_ingest_topics() -> None:
+    job = _sent_job()
+    job.final_message = "【会议跟进】Friday日会\n\nrecipe、定价和项目进展需要闭环。"
+    job.decision_json = json.dumps(
+        {
+            "topics": [
+                {"title": "recipe 卡点升级机制", "conclusion": "算法问题解不了就升级。"},
+                {"title": "定价讨论方法", "conclusion": "先做竞品调研再定价。"},
+                {"title": "项目进展同步机制", "conclusion": "每天同步进展与风险。"},
+            ]
+        },
+        ensure_ascii=False,
     )
+
+    payload = meeting_memory_payload(job)
+
+    assert payload["source_description"] == "recipe 卡点升级机制；定价讨论方法；项目进展同步机制"
 
 
 def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> None:

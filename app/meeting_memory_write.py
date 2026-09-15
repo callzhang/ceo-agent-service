@@ -28,7 +28,7 @@ MEETING_MEMORY_WRITE_RETRYABLE_RUNTIME_CODES = frozenset(
 
 
 def _meeting_memory_content_title(final_message: str, decision_json: str = "") -> str:
-    """Return a compact title from structured meeting conclusions when available."""
+    """Return a compact meeting summary from structured meeting topics when available."""
     structured_title = _structured_topic_title(decision_json)
     if structured_title:
         return structured_title[:MEETING_MEMORY_TITLE_LIMIT]
@@ -63,12 +63,12 @@ def _structured_topic_title(decision_json: str) -> str | None:
     topics = decision.get("topics") if isinstance(decision, dict) else None
     if not isinstance(topics, list):
         return None
-    conclusions = [
-        " ".join(str(topic.get("conclusion") or "").split())
+    titles = [
+        " ".join(str(topic.get("title") or "").split())
         for topic in topics
-        if isinstance(topic, dict) and str(topic.get("conclusion") or "").strip()
+        if isinstance(topic, dict) and str(topic.get("title") or "").strip()
     ]
-    return "；".join(conclusions) or None
+    return "；".join(titles) or None
 
 
 def meeting_memory_payload(job: Any) -> dict[str, str]:
