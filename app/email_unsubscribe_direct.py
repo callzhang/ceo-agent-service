@@ -529,38 +529,64 @@ class DirectEmailUnsubscribeOperation:
         A durable journal step is checked against `operations[sequence - 1]`
         of the effect it is bound to, where `sequence` counts every step this
         action has ever recorded. The audited lifecycle satisfied that by
-        making each continuation effect carry the whole accepted prefix; this
-        lifecycle accepts nothing up front, so the prefix is reconstructed
-        from the steps already on disk and this run's operations are appended
-        to it. Without that, a run that clicked one control wrote a step at
-        sequence 2 against an effect declaring one operation, and the
-        whole-table integrity check then failed every later call for every
-        action -- which is how seven requeued tasks died in a row.
+        making each continuation effect carry the whole accepted prefix; a
+        retry reuses the predecessor effect's exact operation mappings and
+        appends this run's operations. Without that, a run that clicked one
+        control wrote a step at sequence 2 against an effect declaring one
+        operation, and the whole-table integrity check then failed every
+        later call for every action.
         """
 
         from app.email_unsubscribe import UnsubscribeOperationKind
 
-        prefix: list[UnsubscribeOperation] = []
-        for step in self.email_store.list_email_unsubscribe_steps(
-            effect.action_identity
-        ):
-            try:
-                kind = UnsubscribeOperationKind(step["operation"])
-            except ValueError:
-                # A step this lifecycle never wrote and cannot name. Keep the
-                # position so later indexes stay aligned, and keep its own
-                # reference so the entry still points at something real.
-                kind = UnsubscribeOperationKind.RECONCILE_HANDOFF
-            prefix.append(
-                UnsubscribeOperation(
-                    operation_reference=_operation_reference(
-                        f"journaled:{step['sequence']}", step["reference"]
-                    ),
-                    kind=kind,
-                    target_reference=step["reference"],
-                )
+        if effect.previous_effect_digest:
+            previous = self.email_store.get_email_unsubscribe_effect(
+                effect.action_identity,
+                effect.previous_effect_digest,
             )
-        operations = (*prefix, *executed)
+            if previous is None:
+                raise ValueError("unsubscribe retry predecessor effect is missing")
+            prefix = [
+                UnsubscribeOperation.from_mapping(operation)
+                for operation in previous["operations"]
+            ]
+        else:
+            prefix = []
+            for step in self.email_store.list_email_unsubscribe_steps(
+                effect.action_identity
+            ):
+                try:
+                    kind = UnsubscribeOperationKind(step["operation"])
+                except ValueError:
+                    # A step this lifecycle never wrote and cannot name. Keep
+                    # the position so later indexes stay aligned, and keep its
+                    # own reference so the entry still points at something real.
+                    kind = UnsubscribeOperationKind.RECONCILE_HANDOFF
+                prefix.append(
+                    UnsubscribeOperation(
+                        operation_reference=_operation_reference(
+                            f"journaled:{step['sequence']}", step["reference"]
+                        ),
+                        kind=kind,
+                        target_reference=step["reference"],
+                    )
+                )
+        prefix_references = {operation.operation_reference for operation in prefix}
+        appended: list[UnsubscribeOperation] = []
+        for offset, operation in enumerate(executed, start=1):
+            if operation.operation_reference in prefix_references or any(
+                operation.operation_reference == item.operation_reference
+                for item in appended
+            ):
+                operation = replace(
+                    operation,
+                    operation_reference=_operation_reference(
+                        f"retry:{offset}:{operation.kind.value}",
+                        operation.target_reference,
+                    ),
+                )
+            appended.append(operation)
+        operations = (*prefix, *appended)
         if not operations:
             return effect
         return replace(effect, operations=operations)
