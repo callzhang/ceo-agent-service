@@ -16711,6 +16711,17 @@ class AutoReplyStore:
                 outcomes_by_status[status].append(outcome.value)
         return outcomes_by_status
 
+    @staticmethod
+    def _email_unsubscribe_receipts_table_exists(db: sqlite3.Connection) -> bool:
+        """Whether the independently initialized Email receipt ledger exists."""
+        return (
+            db.execute(
+                "select 1 from sqlite_master where type='table' and name=?",
+                ("email_unsubscribe_receipts",),
+            ).fetchone()
+            is not None
+        )
+
     def reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts(self) -> int:
         """Project durable email unsubscribe receipts onto their failed tasks.
 
@@ -16731,6 +16742,8 @@ class AutoReplyStore:
         done_placeholders = ", ".join("?" for _ in done_outcomes)
         terminal_placeholders = ", ".join("?" for _ in terminal_outcomes)
         with self._immediate_write_transaction() as db:
+            if not self._email_unsubscribe_receipts_table_exists(db):
+                return 0
             cursor = db.execute(
                 f"""
                 update reply_tasks as tasks
@@ -20546,6 +20559,19 @@ class AutoReplyStore:
             "?" for _ in terminal_unsubscribe_outcomes
         )
         with self._immediate_write_transaction() as db:
+            receipt_exclusion = ""
+            receipt_parameters: list[str] = []
+            if self._email_unsubscribe_receipts_table_exists(db):
+                receipt_exclusion = f"""
+                  and not exists (
+                      select 1
+                      from email_unsubscribe_receipts as receipts
+                      where tasks.channel='email'
+                        and receipts.action_identity=tasks.trigger_message_id
+                        and receipts.outcome in ({receipt_placeholders})
+                  )
+                """
+                receipt_parameters = terminal_unsubscribe_outcomes
             rows = db.execute(
                 f"""
                 select tasks.id, tasks.execution_generation, runs.structured_error_json
@@ -20566,16 +20592,10 @@ class AutoReplyStore:
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
                   )
-                  and not exists (
-                      select 1
-                      from email_unsubscribe_receipts as receipts
-                      where tasks.channel='email'
-                        and receipts.action_identity=tasks.trigger_message_id
-                        and receipts.outcome in ({receipt_placeholders})
-                  )
+                  {receipt_exclusion}
                 order by tasks.id
                 """,
-                terminal_unsubscribe_outcomes,
+                receipt_parameters,
             ).fetchall()
             repaired = 0
             for row in rows:

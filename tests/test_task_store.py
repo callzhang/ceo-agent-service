@@ -1871,7 +1871,7 @@ def test_operation_logs_project_recovered_meeting_failures(tmp_path: Path):
     assert failed == []
 
 
-def test_read_connections_use_bounded_cache_and_mmap(tmp_path: Path):
+def test_read_connections_use_bounded_cache_without_mmap_for_shared_wal(tmp_path: Path):
     store = _store(tmp_path)
 
     with store._connect() as db:
@@ -1879,7 +1879,7 @@ def test_read_connections_use_bounded_cache_and_mmap(tmp_path: Path):
         mmap_size = int(db.execute("pragma mmap_size").fetchone()[0])
 
     assert cache_size <= -32768
-    assert mmap_size >= 268435456
+    assert mmap_size == 0
 
 
 def test_history_page_cache_can_be_warmed_for_the_default_view(tmp_path: Path):
