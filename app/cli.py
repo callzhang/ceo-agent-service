@@ -938,6 +938,7 @@ def _create_service_worker(settings: WorkerSettings, runtime_refresher, runtime_
 def _service_command_registry(store: AutoReplyStore, reply_worker, settings: WorkerSettings):
     """Bind scheduled service commands to the same operations the CLI runs."""
     from app.agent_cron.commands import ServiceCommandRegistry
+    from app.email_scheduled_command import EmailMessageCheckOnceCommand
     from app.wechat.scheduled_command import WechatProduceOnceCommand
 
     # The minute-by-minute check and the hourly recovery are the same producer
@@ -971,6 +972,7 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
 
     return ServiceCommandRegistry(
         {
+            "email-message-check-once": EmailMessageCheckOnceCommand(settings),
             "produce-once": produce_once_command,
             "calendar-invites-once": calendar_invites_once_command,
             "recover-recent-messages": recover_recent_messages_command,

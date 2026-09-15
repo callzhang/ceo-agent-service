@@ -115,6 +115,7 @@ def test_scheduled_trigger_persists_consumer_prompt_and_skills(
         {
             name: (producer.run_once if name == "wechat-produce-once" else lambda: 0)
             for name in (
+                "email-message-check-once",
                 "produce-once",
                 "calendar-invites-once",
                 "recover-recent-messages",

@@ -145,6 +145,7 @@ def _options(
 
 FIXED_DISCOVERY_KEYS = frozenset(
     {
+        "email-message-check-v1",
         "dingtalk-meeting-check-v1",
         "dingtalk-oa-check-v1",
         "work-source-scan-daily-v1",
@@ -153,6 +154,10 @@ FIXED_DISCOVERY_KEYS = frozenset(
 
 
 READABLE_BUILTIN_COPY = {
+    "email-message-check-v1": (
+        "分类新邮件",
+        "发现已配置未分类入口中的新未读邮件后，由 Agent 按邮件分类规则判断业务类别和重要性；分类结果再由现有执行队列按邮箱策略处理。",
+    ),
     "dingtalk-message-check-v1": (
         "处理新的钉钉消息",
         "发现新的单聊或群聊 @ 消息后，由 Agent 读取最新上下文，决定回复、表态、澄清或不处理。",
@@ -306,7 +311,7 @@ def test_fixed_discovery_seeds_do_not_require_an_agent_runtime(
         task for task in tasks if task.migration_key in FIXED_DISCOVERY_KEYS
     )
 
-    assert len(producers) == 3
+    assert len(producers) == 4
     assert all(task.enabled for task in producers)
     assert all(task.command for task in producers)
     assert all(task.runtime_id == "" for task in producers)
@@ -339,7 +344,7 @@ def test_friday_only_still_enables_fixed_discovery_seeds(
         task for task in tasks if task.migration_key in FIXED_DISCOVERY_KEYS
     )
 
-    assert len(producers) == 3
+    assert len(producers) == 4
     assert all(task.enabled for task in producers)
     assert all(task.command for task in producers)
     assert all(task.runtime_id == "" for task in producers)
@@ -529,6 +534,34 @@ def test_seed_creates_dingtalk_message_check_every_minute(tmp_path: Path) -> Non
         "dingtalk-chat",
     ]
     assert task.runtime_options == {} and task.required_runtime_capabilities == ()
+    assert task.working_directory == ""
+
+
+def test_seed_creates_email_discovery_trigger_with_only_classifier_skill(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "email-message.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+
+    task = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "email-message-check-v1",
+    )
+
+    assert (task.name, task.description) == READABLE_BUILTIN_COPY[
+        "email-message-check-v1"
+    ]
+    assert task.command == "email-message-check-once"
+    assert task.cron_expression == "0 * * * * *"
+    assert task.timezone_name == "Asia/Shanghai"
+    assert task.enabled is True
+    assert "$ceo-email-classifier" in task.prompt
+    assert [ref.skill_name for ref in task.skill_refs] == ["ceo-email-classifier"]
+    assert task.runtime_id == ""
+    assert task.runtime_options == {}
+    assert task.required_runtime_capabilities == ()
     assert task.working_directory == ""
 
 
@@ -803,6 +836,7 @@ def test_every_fixed_discovery_check_is_a_service_command(
     )
 
     expected_commands = {
+        "email-message-check-v1": "email-message-check-once",
         "dingtalk-message-check-v1": "produce-once",
         "dingtalk-calendar-invite-check-v1": "calendar-invites-once",
         "dingtalk-message-recovery-v1": "recover-recent-messages",
@@ -812,6 +846,7 @@ def test_every_fixed_discovery_check_is_a_service_command(
         "work-source-scan-daily-v1": "scan-meeting-todos-once",
     }
     expected_skills = {
+        "email-message-check-v1": ["ceo-email-classifier"],
         "dingtalk-message-check-v1": [
             "ceo-message-triage",
             "dingtalk-chat",
@@ -1291,6 +1326,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         now=lambda: due_at,
         commands=ServiceCommandRegistry(
             {
+                "email-message-check-once": (
+                    lambda: produced.append("email-message-check-once") or "discovered=0"
+                ),
                 "produce-once": lambda: produced.append("produce-once") or "queued=0",
                 "calendar-invites-once": (
                     lambda: produced.append("calendar-invites-once") or "queued=0"
@@ -1331,6 +1369,7 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         consumer(envelope, guard)
     assert sorted(produced) == [
         "calendar-invites-once",
+        "email-message-check-once",
         "produce-once",
         "recover-recent-messages",
         "scan-meeting-todos-once",
@@ -1407,7 +1446,7 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
         store=store, options=options, working_directory=tmp_path, now=NOW
     )
 
-    assert len(tasks) == 9
+    assert len(tasks) == 10
     for task in tasks:
         assert task.command, task.migration_key
         assert task.enabled is True

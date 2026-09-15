@@ -1042,6 +1042,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
     )
     catalog = options.json()["service_command_options"]
     assert [entry["name"] for entry in catalog] == [
+        "email-message-check-once",
         "produce-once",
         "calendar-invites-once",
         "wechat-produce-once",
@@ -1053,6 +1054,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "recover-recent-messages",
     ]
     assert [entry["display_name"] for entry in catalog] == [
+        "读取新邮件",
         "读取新钉钉消息",
         "读取新日历邀请",
         "读取新微信消息",
@@ -1199,6 +1201,7 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
         payload = client.get("/api/console/scheduled-task-options").json()
 
     (
+        email,
         dingtalk,
         calendar_invites,
         wechat,
@@ -1211,6 +1214,10 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
     ) = payload[
         "service_command_options"
     ]
+    assert (email["name"], email["channel"]) == (
+        "email-message-check-once",
+        "email",
+    )
     assert (dingtalk["name"], dingtalk["channel"]) == ("produce-once", "dingtalk")
     assert (calendar_invites["name"], calendar_invites["channel"]) == (
         "calendar-invites-once",
@@ -1233,7 +1240,7 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
     )
     assert [
         entry["consumer_prompt_enabled"] for entry in payload["service_command_options"]
-    ] == [True, True, True, True, True, True, False, False, True]
+    ] == [True, True, True, True, True, True, True, False, False, True]
     assert all(
         "downstream" not in entry for entry in payload["service_command_options"]
     )

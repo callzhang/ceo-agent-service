@@ -17,6 +17,7 @@ from app.agent_context import (
     PriorReceipt,
     email_attachment_metadata_materials,
 )
+from app.agent_cron.commands import ServiceCommandConsumerContext
 from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
@@ -113,6 +114,7 @@ class EmailClassificationTaskInput:
     folder_targets: Mapping[str, str]
     config_version: str
     unsubscribe_candidates: tuple[Mapping[str, object], ...]
+    scheduled_consumer: Mapping[str, object] = field(default_factory=dict)
 
     @classmethod
     def from_message(
@@ -124,6 +126,7 @@ class EmailClassificationTaskInput:
         folder_targets: Mapping[str, str],
         config_version: str,
         unsubscribe_candidates: Sequence[object],
+        scheduled_consumer: Mapping[str, object] | None = None,
     ) -> "EmailClassificationTaskInput":
         locator = EmailProviderLocator.model_validate(
             {
@@ -208,6 +211,9 @@ class EmailClassificationTaskInput:
             )
             for index, candidate in enumerate(unsubscribe_candidates)
         )
+        consumer_context = ServiceCommandConsumerContext.from_payload(
+            dict(scheduled_consumer) if scheduled_consumer else None
+        )
         return cls(
             stable_message_identity=stable_identity,
             provider_locator=locator,
@@ -218,10 +224,13 @@ class EmailClassificationTaskInput:
             folder_targets=dict(folder_targets),
             config_version=config_version.strip(),
             unsubscribe_candidates=redacted_candidates,
+            scheduled_consumer=(
+                consumer_context.to_payload() if consumer_context is not None else {}
+            ),
         )
 
     def payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "stable_message_identity": self.stable_message_identity,
             "provider_locator": self.provider_locator.model_dump(mode="json"),
             "provider_unread": self.provider_unread,
@@ -232,6 +241,9 @@ class EmailClassificationTaskInput:
             "config_version": self.config_version,
             "unsubscribe_candidates": list(self.unsubscribe_candidates),
         }
+        if self.scheduled_consumer:
+            payload["scheduled_consumer"] = dict(self.scheduled_consumer)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -305,7 +317,14 @@ class EmailClassificationTaskAdapter:
                     (task_id,),
                 ).fetchone()
             elif row["input_json"] != input_json:
-                raise ValueError("stable classification task input changed")
+                existing_payload = json.loads(row["input_json"])
+                candidate_payload = json.loads(input_json)
+                if not isinstance(existing_payload, dict):
+                    raise ValueError("stable classification task input is invalid")
+                existing_payload.pop("scheduled_consumer", None)
+                candidate_payload.pop("scheduled_consumer", None)
+                if existing_payload != candidate_payload:
+                    raise ValueError("stable classification task input changed")
         assert row is not None
         return self._row(row)
 

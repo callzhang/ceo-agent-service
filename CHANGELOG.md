@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-15: New-email discovery is now a visible `分类新邮件` Agent Cron
+  task instead of a hidden Email Worker timer. Its service command performs one
+  deterministic account scan, then the existing internal classifier,
+  provider-action delivery, Email action consumer and training loops process
+  durable work. Classification inputs retain the producing Trigger id, the
+  editable additive prompt and only the exact `ceo-email-classifier` Skill;
+  rescanning the same stable email keeps the first immutable Trigger context.
+
 - 2026-09-15: History's time chart now classifies reply attempts through the
   same current-result projection as the History list. A failed attempt that a
   later terminal task or replacement attempt recovered no longer leaves a

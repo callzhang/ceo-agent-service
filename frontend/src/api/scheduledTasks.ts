@@ -116,7 +116,7 @@ interface OperationSkillOptionBase {
 
 export type OperationSkillOption = OperationSkillOptionBase & Availability;
 
-export type ServiceCommandChannel = "dingtalk" | "wechat" | "meeting" | "work_summary";
+export type ServiceCommandChannel = "dingtalk" | "email" | "wechat" | "meeting" | "work_summary";
 
 export interface ServiceCommandOption {
   name: string;
@@ -295,6 +295,7 @@ function validManagedSkill(value: unknown): value is ManagedSkillOption {
 
 function validChannel(value: unknown): value is ServiceCommandChannel {
   return value === "dingtalk"
+    || value === "email"
     || value === "wechat"
     || value === "meeting"
     || value === "work_summary";

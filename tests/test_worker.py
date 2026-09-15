@@ -2112,6 +2112,7 @@ def test_scheduled_service_trigger_persists_consumer_context_on_new_reply_task(
         {
             option: (produce if option == "produce-once" else lambda: "unused")
                 for option in (
+                    "email-message-check-once",
                     "produce-once",
                     "calendar-invites-once",
                     "recover-recent-messages",

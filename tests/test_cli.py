@@ -8435,6 +8435,7 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
     )
 
     assert set(registry._implementations) == {
+        "email-message-check-once",
         "produce-once",
         "calendar-invites-once",
         "recover-recent-messages",

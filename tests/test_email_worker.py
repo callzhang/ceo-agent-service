@@ -1592,7 +1592,8 @@ def test_historical_job_is_not_an_automatic_worker_component():
     )
 
     assert [name for name, _target in components] == [
-        "email-scan-actions",
+        "email-classifier-agent",
+        "email-provider-actions",
         "email-agent-consumer",
         "email-training",
     ]
@@ -4203,6 +4204,7 @@ def _dependencies(
         load_active_model=lambda: events.append("model") or model,
         scan_account=lambda account, active_model: None,
         run_direct_actions_once=lambda: None,
+        run_classification_once=lambda: None,
         email_store=SimpleNamespace(
             list_nonterminal_legacy_unsubscribe_task_attempts=lambda: ()
         ),
@@ -4237,12 +4239,12 @@ def test_email_worker_health_recorder_stamps_one_instance_on_every_record():
         task_store,
         instance_id="email-worker-instance-test",
     )
-    record_health("component:email-scan-actions", {"status": "ready"})
+    record_health("component:email-provider-actions", {"status": "ready"})
     record_health("account:account-1", {"status": "ready"})
 
     assert writes == [
         (
-            "email_worker_health:component:email-scan-actions",
+            "email_worker_health:component:email-provider-actions",
             {"instance_id": "email-worker-instance-test", "status": "ready"},
         ),
         (
@@ -4916,11 +4918,13 @@ def test_startup_loads_enabled_accounts_and_active_model_before_ready_and_thread
 
     assert events[:2] == ["accounts", "model"]
     assert output.getvalue().strip() == (
-        "email-worker starting accounts=1 components=3"
+        "email-worker starting accounts=1 components=4"
     )
     assert events[2:] == [
-        ("create", "ceo-agent-email-scan-actions", True),
-        ("start", "ceo-agent-email-scan-actions"),
+        ("create", "ceo-agent-email-classifier-agent", True),
+        ("start", "ceo-agent-email-classifier-agent"),
+        ("create", "ceo-agent-email-provider-actions", True),
+        ("start", "ceo-agent-email-provider-actions"),
         ("create", "ceo-agent-email-agent-consumer", True),
         ("start", "ceo-agent-email-agent-consumer"),
         ("create", "ceo-agent-email-training", True),
@@ -5150,7 +5154,7 @@ def test_pending_legacy_unsubscribe_is_failed_before_configuration_wait(
     )
 
 
-def test_email_worker_components_are_three_independent_daemon_threads():
+def test_email_worker_components_keep_discovery_outside_internal_daemon_threads():
     module = _module()
     events = []
 
@@ -5172,14 +5176,16 @@ def test_email_worker_components_are_three_independent_daemon_threads():
 
     created = [event for event in events if event[0] == "created"]
     assert [event[1] for event in created] == [
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-agent-consumer",
         "ceo-agent-email-training",
     ]
     assert all(event[2] is True for event in created)
-    assert len({id(event[3]) for event in created}) == 3
+    assert len({id(event[3]) for event in created}) == 4
     assert [event[1] for event in events if event[0] == "started"] == [
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-agent-consumer",
         "ceo-agent-email-training",
     ]
@@ -5196,32 +5202,76 @@ def test_email_worker_components_use_exact_independent_loop_functions():
     )
 
     assert tuple(name for name, _target in components) == (
-        "email-scan-actions",
+        "email-classifier-agent",
+        "email-provider-actions",
         "email-agent-consumer",
         "email-training",
     )
     assert tuple(target.func for _name, target in components) == (
-        module.run_scan_and_direct_actions_loop,
+        module.run_email_classification_consumer_loop,
+        module.run_email_provider_action_delivery_loop,
         module.run_email_agent_task_loop,
         module.run_training_scheduler_loop,
     )
-    assert components[0][1].keywords["provider_observation_complete"] is (
+    assert components[1][1].keywords["provider_observation_complete"] is (
         dependencies.publish_provider_observation_change
     )
+
+
+def test_single_pass_email_discovery_scans_accounts_without_running_consumers():
+    module = _module()
+    calls = []
+
+    result = module.run_email_discovery_once(
+        ({"account_id": "account-1"}, {"account_id": "account-2"}),
+        object(),
+        scan_account=lambda account, _model: (
+            calls.append(("scan", account["account_id"]))
+            or {"persisted_count": 1 if account["account_id"] == "account-1" else 0}
+        ),
+        record_health=lambda scope, payload: calls.append((scope, payload)),
+        provider_observation_complete=lambda: calls.append(("observation",)),
+    )
+
+    assert result == {"accounts": 2, "discovered": 1, "failures": 0}
+    assert [call for call in calls if call[0] == "scan"] == [
+        ("scan", "account-1"),
+        ("scan", "account-2"),
+    ]
+    assert ("observation",) in calls
+    assert all(call[0] not in {"classify", "deliver"} for call in calls)
+
+
+def test_internal_email_components_keep_consumers_running_without_discovery():
+    module = _module()
+    dependencies = _dependencies([])
+    dependencies.scan_account = lambda *_args: pytest.fail(
+        "disabled Cron must stop new email discovery"
+    )
+
+    components = module.email_worker_components(
+        dependencies,
+        accounts=({"account_id": "account-1"},),
+        active_model=object(),
+    )
+
+    functions = tuple(target.func for _name, target in components)
+    assert module.run_email_classification_consumer_loop in functions
+    assert module.run_email_provider_action_delivery_loop in functions
+    assert module.run_email_agent_task_loop in functions
+    assert module.run_training_scheduler_loop in functions
+    assert module.run_email_discovery_once not in functions
 
 
 def test_successful_provider_scan_completion_publishes_training_observation_event():
     module = _module()
     events = []
 
-    module.run_scan_and_direct_actions_loop(
+    module.run_email_discovery_once(
         ({"account_id": "account-1", "scan_interval_seconds": 60},),
         object(),
         scan_account=lambda _account, _model: {"persisted_count": 1},
-        run_direct_actions_once=lambda: None,
         provider_observation_complete=lambda: events.append("published"),
-        sleep=lambda _seconds: None,
-        max_cycles=1,
     )
 
     assert events == ["published"]
@@ -5230,12 +5280,8 @@ def test_successful_provider_scan_completion_publishes_training_observation_even
 def test_successful_classifier_cycle_replaces_stale_failure_health() -> None:
     health = []
 
-    _module().run_scan_and_direct_actions_loop(
-        ({"account_id": "account-1", "scan_interval_seconds": 60},),
-        object(),
-        scan_account=lambda _account, _model: {"persisted_count": 0},
-        run_direct_actions_once=lambda: None,
-        run_classification_once=lambda: None,
+    _module().run_email_classification_consumer_loop(
+        lambda: None,
         record_health=lambda scope, payload: health.append((scope, payload)),
         sleep=lambda _seconds: None,
         max_cycles=1,
@@ -5251,14 +5297,11 @@ def test_idle_scan_without_provider_or_action_change_does_not_request_observatio
     module = _module()
     events = []
 
-    module.run_scan_and_direct_actions_loop(
+    module.run_email_discovery_once(
         ({"account_id": "account-1", "scan_interval_seconds": 60},),
         object(),
         scan_account=lambda _account, _model: {"persisted_count": 0},
-        run_direct_actions_once=lambda: None,
         provider_observation_complete=lambda: events.append("requested"),
-        sleep=lambda _seconds: None,
-        max_cycles=1,
     )
 
     assert events == []
@@ -5270,17 +5313,14 @@ def test_production_folder_result_tuple_without_changes_does_not_request_observa
 
     events = []
 
-    module.run_scan_and_direct_actions_loop(
+    module.run_email_discovery_once(
         ({"account_id": "account-1", "scan_interval_seconds": 60},),
         object(),
         scan_account=lambda _account, _model: (
             EmailScanResult(3, 0, 0, 0),
             EmailScanResult(2, 0, 0, 0),
         ),
-        run_direct_actions_once=lambda: None,
         provider_observation_complete=lambda: events.append("requested"),
-        sleep=lambda _seconds: None,
-        max_cycles=1,
     )
 
     assert events == []
@@ -5292,17 +5332,14 @@ def test_production_folder_result_tuple_requests_once_when_any_folder_changes():
 
     events = []
 
-    module.run_scan_and_direct_actions_loop(
+    module.run_email_discovery_once(
         ({"account_id": "account-1", "scan_interval_seconds": 60},),
         object(),
         scan_account=lambda _account, _model: (
             EmailScanResult(3, 0, 0, 0),
             EmailScanResult(2, 1, 0, 0),
         ),
-        run_direct_actions_once=lambda: None,
         provider_observation_complete=lambda: events.append("requested"),
-        sleep=lambda _seconds: None,
-        max_cycles=1,
     )
 
     assert events == ["requested"]
@@ -5312,17 +5349,14 @@ def test_explicit_provider_folder_or_important_change_requests_observation():
     module = _module()
     events = []
 
-    module.run_scan_and_direct_actions_loop(
+    module.run_email_discovery_once(
         ({"account_id": "account-1", "scan_interval_seconds": 60},),
         object(),
         scan_account=lambda _account, _model: {
             "persisted_count": 0,
             "provider_changed": True,
         },
-        run_direct_actions_once=lambda: None,
         provider_observation_complete=lambda: events.append("requested"),
-        sleep=lambda _seconds: None,
-        max_cycles=1,
     )
 
     assert events == ["requested"]
@@ -5347,22 +5381,18 @@ def test_scan_failure_isolated_per_account_and_health_is_bounded_and_sanitized()
             raise RuntimeError(sensitive)
         return {"persisted_count": 2}
 
-    module.run_scan_and_direct_actions_loop(
+    module.run_email_discovery_once(
         accounts,
         object(),
         scan_account=scan_account,
-        run_direct_actions_once=lambda: None,
         record_health=lambda scope, payload: health.append((scope, payload)),
-        sleep=lambda _seconds: None,
-        max_cycles=1,
     )
 
     assert [account_id for account_id, _model in scanned] == ["broken", "healthy"]
     assert [scope for scope, _payload in health] == [
         "account:broken",
         "account:healthy",
-        "component:email-provider-actions",
-        "component:email-scan-actions",
+        "component:email-discovery",
     ]
     encoded = repr(health)
     assert len(encoded) < 2_000
@@ -5391,14 +5421,11 @@ def test_sanitized_scan_result_error_is_not_reported_as_ready():
         persisted_count=0,
     )
 
-    module.run_scan_and_direct_actions_loop(
+    module.run_email_discovery_once(
         ({"account_id": "account-1", "scan_interval_seconds": 60},),
         object(),
         scan_account=lambda _account, _model: scan_result,
-        run_direct_actions_once=lambda: None,
         record_health=lambda scope, payload: health.append((scope, payload)),
-        sleep=lambda _seconds: None,
-        max_cycles=1,
     )
 
     assert health[0] == (
@@ -5406,7 +5433,7 @@ def test_sanitized_scan_result_error_is_not_reported_as_ready():
         {"status": "failed", "error_code": "connection_failed"},
     )
     assert health[-1] == (
-        "component:email-scan-actions",
+        "component:email-discovery",
         {"status": "degraded", "failures": 1},
     )
 
@@ -6232,7 +6259,8 @@ def test_worker_startup_isolates_legacy_before_agent_claim_and_starts_components
         },
     ) in health
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-agent-consumer",
         "ceo-agent-email-training",
     }
@@ -6322,7 +6350,8 @@ def test_unfenced_legacy_blocks_agent_consumer_but_starts_scan_direct_and_traini
     assert unchanged is not None
     assert unchanged.status == "pending"
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-training",
     }
     assert (
@@ -6445,7 +6474,8 @@ def test_generation_replacement_after_inventory_is_not_failed_and_blocks_agent(
     assert replacement.status == "pending"
     assert terminalization_generations == ["inventoried-generation"]
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-training",
     }
     assert (
@@ -6555,7 +6585,8 @@ def test_processing_replacement_after_pending_inventory_is_unresolved_and_blocks
         (legacy.id, legacy.execution_generation, "pending")
     ]
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-training",
     }
 
@@ -6659,7 +6690,8 @@ def test_final_dependency_reconciliation_clears_bootstrap_unresolved_after_isola
         (legacy.id, legacy.execution_generation, "pending")
     ]
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-agent-consumer",
         "ceo-agent-email-training",
     }
@@ -6772,7 +6804,8 @@ def test_final_dependencies_without_authoritative_read_preserve_bootstrap_unreso
     assert current is not None
     assert current.status == "pending"
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-training",
     }
     assert (
@@ -6894,7 +6927,8 @@ def test_final_unknown_legacy_inventory_blocks_only_agent_consumer(
     )
 
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-training",
     }
     assert (
@@ -6994,7 +7028,8 @@ def test_final_authoritative_reconciliation_allows_agent_after_bootstrap_unknown
     )
 
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-agent-consumer",
         "ceo-agent-email-training",
     }
@@ -7078,7 +7113,8 @@ def test_final_authoritative_empty_overwrites_bootstrap_unknown_health(
     )
 
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-agent-consumer",
         "ceo-agent-email-training",
     }
@@ -7133,7 +7169,8 @@ def test_authoritative_empty_overwrites_previous_process_degraded_health(
     )
 
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-agent-consumer",
         "ceo-agent-email-training",
     }
@@ -7233,7 +7270,8 @@ def test_final_empty_inventory_clears_bootstrap_unresolved_after_safe_replacemen
         == "email_unsubscribe_audited_v2"
     )
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-agent-consumer",
         "ceo-agent-email-training",
     }
@@ -7372,7 +7410,8 @@ def test_safe_replacement_after_inventory_is_unchanged_and_does_not_block_agent(
         assert current.trigger_message_json == "{malformed"
         assert current.status == "pending"
     assert {event[1] for event in events if event[0] == "started"} == {
-        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-classifier-agent",
+        "ceo-agent-email-provider-actions",
         "ceo-agent-email-agent-consumer",
         "ceo-agent-email-training",
     }
@@ -7810,11 +7849,8 @@ def test_failed_direct_action_degrades_provider_component_health():
         },
     )()
 
-    module.run_scan_and_direct_actions_loop(
-        ({"account_id": "account-1", "scan_interval_seconds": 60},),
-        object(),
-        scan_account=lambda _account, _model: {"persisted_count": 1},
-        run_direct_actions_once=lambda: failed,
+    module.run_email_provider_action_delivery_loop(
+        lambda: failed,
         record_health=lambda scope, payload: health.append((scope, payload)),
         sleep=lambda _seconds: None,
         max_cycles=1,
@@ -7833,11 +7869,8 @@ def test_empty_direct_action_drain_marks_provider_component_ready():
     module = _module()
     health = []
 
-    module.run_scan_and_direct_actions_loop(
-        ({"account_id": "account-1", "scan_interval_seconds": 60},),
-        object(),
-        scan_account=lambda _account, _model: {"persisted_count": 0},
-        run_direct_actions_once=lambda: None,
+    module.run_email_provider_action_delivery_loop(
+        lambda: None,
         record_health=lambda scope, payload: health.append((scope, payload)),
         sleep=lambda _seconds: None,
         max_cycles=1,
@@ -7853,11 +7886,8 @@ def test_direct_action_drain_processes_multiple_actions_but_stops_at_count_bound
     module = _module()
     calls = []
 
-    module.run_scan_and_direct_actions_loop(
-        ({"account_id": "account-1", "scan_interval_seconds": 60},),
-        object(),
-        scan_account=lambda _account, _model: {"persisted_count": 0},
-        run_direct_actions_once=lambda: (
+    module.run_email_provider_action_delivery_loop(
+        lambda: (
             calls.append("action") or SimpleNamespace(status="done")
         ),
         sleep=lambda _seconds: None,
@@ -7880,11 +7910,8 @@ def test_provider_action_default_budget_handles_normal_imap_latency():
         clock[0] += 3.0
         return SimpleNamespace(status="done")
 
-    module.run_scan_and_direct_actions_loop(
-        ({"account_id": "account-1", "scan_interval_seconds": 60},),
-        object(),
-        scan_account=lambda _account, _model: {"persisted_count": 0},
-        run_direct_actions_once=run_direct_action,
+    module.run_email_provider_action_delivery_loop(
+        run_direct_action,
         sleep=lambda _seconds: None,
         max_cycles=1,
         direct_action_max_actions=3,
@@ -7898,11 +7925,8 @@ def test_direct_action_drain_stops_on_empty_queue_without_busy_loop():
     module = _module()
     calls = []
 
-    module.run_scan_and_direct_actions_loop(
-        ({"account_id": "account-1", "scan_interval_seconds": 60},),
-        object(),
-        scan_account=lambda _account, _model: {"persisted_count": 0},
-        run_direct_actions_once=lambda: calls.append("empty") or None,
+    module.run_email_provider_action_delivery_loop(
+        lambda: calls.append("empty") or None,
         sleep=lambda _seconds: None,
         max_cycles=1,
         direct_action_max_actions=100,
@@ -7918,11 +7942,8 @@ def test_direct_action_drain_stops_at_time_bound():
     calls = []
     clock = iter((0.0, 0.0, 0.6))
 
-    module.run_scan_and_direct_actions_loop(
-        ({"account_id": "account-1", "scan_interval_seconds": 60},),
-        object(),
-        scan_account=lambda _account, _model: {"persisted_count": 0},
-        run_direct_actions_once=lambda: (
+    module.run_email_provider_action_delivery_loop(
+        lambda: (
             calls.append("action") or SimpleNamespace(status="done")
         ),
         sleep=lambda _seconds: None,
@@ -7945,18 +7966,12 @@ def test_classifier_drain_has_independent_longer_budget_than_provider_actions():
         clock[0] += 3.0
         return SimpleNamespace(status="done")
 
-    module.run_scan_and_direct_actions_loop(
-        ({"account_id": "account-1", "scan_interval_seconds": 60},),
-        object(),
-        scan_account=lambda _account, _model: {"persisted_count": 0},
-        run_direct_actions_once=lambda: None,
-        run_classification_once=run_classification_once,
+    module.run_email_classification_consumer_loop(
+        run_classification_once,
         sleep=lambda _seconds: None,
         max_cycles=1,
         classification_max_actions=3,
         classification_time_budget_seconds=120.0,
-        direct_action_max_actions=100,
-        direct_action_time_budget_seconds=2.0,
         monotonic=lambda: clock[0],
     )
 
@@ -8211,14 +8226,15 @@ def test_startup_records_process_heartbeat_only_after_dependencies_are_ready():
             {
                 "status": "starting",
                 "accounts": 1,
-                "runtime_loops": 3,
+                "runtime_loops": 4,
                 "runtime_loop_scopes": [
-                    "component:email-scan-actions",
+                    "component:email-classifier-agent",
+                    "component:email-provider-actions",
                     "component:email-agent-consumer",
                     "component:email-training",
                 ],
                 "readiness_ready": 0,
-                "readiness_total": 2,
+                "readiness_total": 3,
             },
         ),
     ]
@@ -8228,17 +8244,24 @@ def test_readiness_barrier_reports_ready_only_after_all_component_heartbeats():
     module = _module()
     health = []
     barrier = module.EmailWorkerReadiness(
-        ("email-scan-actions", "email-agent-consumer", "email-training"),
+        (
+            "email-classifier-agent",
+            "email-provider-actions",
+            "email-agent-consumer",
+            "email-training",
+        ),
         record_health=lambda scope, payload: health.append((scope, payload)),
         accounts=1,
         runtime_loop_scopes=(
-            "component:email-scan-actions",
+            "component:email-classifier-agent",
+            "component:email-provider-actions",
             "component:email-agent-consumer",
             "component:email-training",
         ),
     )
 
-    barrier.mark_ready("email-scan-actions")
+    barrier.mark_ready("email-classifier-agent")
+    barrier.mark_ready("email-provider-actions")
     barrier.mark_ready("email-training")
     assert [scope for scope, _payload in health] == []
 
@@ -8249,9 +8272,54 @@ def test_readiness_barrier_reports_ready_only_after_all_component_heartbeats():
             {
                 "status": "ready",
                 "accounts": 1,
-                "runtime_loops": 3,
+                "runtime_loops": 4,
                 "runtime_loop_scopes": [
-                    "component:email-scan-actions",
+                    "component:email-classifier-agent",
+                    "component:email-provider-actions",
+                    "component:email-agent-consumer",
+                    "component:email-training",
+                ],
+                "readiness_ready": 4,
+                "readiness_total": 4,
+            },
+        )
+    ]
+
+
+def test_process_readiness_does_not_wait_for_training_maintenance():
+    module = _module()
+    health = []
+    barrier = module.EmailWorkerReadiness(
+        (
+            "email-classifier-agent",
+            "email-provider-actions",
+            "email-agent-consumer",
+        ),
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        accounts=1,
+        runtime_loop_scopes=(
+            "component:email-classifier-agent",
+            "component:email-provider-actions",
+            "component:email-agent-consumer",
+            "component:email-training",
+        ),
+    )
+
+    barrier.mark_ready("email-classifier-agent")
+    barrier.mark_ready("email-provider-actions")
+    assert health == []
+
+    barrier.mark_ready("email-agent-consumer")
+    assert health == [
+        (
+            "process:email-worker",
+            {
+                "status": "ready",
+                "accounts": 1,
+                "runtime_loops": 4,
+                "runtime_loop_scopes": [
+                    "component:email-classifier-agent",
+                    "component:email-provider-actions",
                     "component:email-agent-consumer",
                     "component:email-training",
                 ],
@@ -8262,65 +8330,38 @@ def test_readiness_barrier_reports_ready_only_after_all_component_heartbeats():
     ]
 
 
-def test_process_readiness_does_not_wait_for_training_maintenance():
-    module = _module()
-    health = []
-    barrier = module.EmailWorkerReadiness(
-        ("email-scan-actions", "email-agent-consumer"),
-        record_health=lambda scope, payload: health.append((scope, payload)),
-        accounts=1,
-        runtime_loop_scopes=(
-            "component:email-scan-actions",
-            "component:email-agent-consumer",
-            "component:email-training",
-        ),
-    )
-
-    barrier.mark_ready("email-scan-actions")
-    assert health == []
-
-    barrier.mark_ready("email-agent-consumer")
-    assert health == [
-        (
-            "process:email-worker",
-            {
-                "status": "ready",
-                "accounts": 1,
-                "runtime_loops": 3,
-                "runtime_loop_scopes": [
-                    "component:email-scan-actions",
-                    "component:email-agent-consumer",
-                    "component:email-training",
-                ],
-                "readiness_ready": 2,
-                "readiness_total": 2,
-            },
-        )
-    ]
-
-
 def test_process_readiness_callback_ignores_independent_training_component():
     module = _module()
     health = []
     barrier = module.EmailWorkerReadiness(
-        ("email-scan-actions", "email-agent-consumer"),
+        (
+            "email-classifier-agent",
+            "email-provider-actions",
+            "email-agent-consumer",
+        ),
         record_health=lambda scope, payload: health.append((scope, payload)),
         accounts=1,
         runtime_loop_scopes=(
-            "component:email-scan-actions",
+            "component:email-classifier-agent",
+            "component:email-provider-actions",
             "component:email-agent-consumer",
             "component:email-training",
         ),
     )
     mark_ready = module._process_component_ready_callback(
         barrier,
-        ("email-scan-actions", "email-agent-consumer"),
+        (
+            "email-classifier-agent",
+            "email-provider-actions",
+            "email-agent-consumer",
+        ),
     )
 
     mark_ready("email-training")
     assert health == []
 
-    mark_ready("email-scan-actions")
+    mark_ready("email-classifier-agent")
+    mark_ready("email-provider-actions")
     mark_ready("email-agent-consumer")
     assert health == [
         (
@@ -8328,14 +8369,15 @@ def test_process_readiness_callback_ignores_independent_training_component():
             {
                 "status": "ready",
                 "accounts": 1,
-                "runtime_loops": 3,
+                "runtime_loops": 4,
                 "runtime_loop_scopes": [
-                    "component:email-scan-actions",
+                    "component:email-classifier-agent",
+                    "component:email-provider-actions",
                     "component:email-agent-consumer",
                     "component:email-training",
                 ],
-                "readiness_ready": 2,
-                "readiness_total": 2,
+                "readiness_ready": 3,
+                "readiness_total": 3,
             },
         )
     ]

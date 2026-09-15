@@ -1243,20 +1243,100 @@ def _process_component_ready_callback(
     return mark_ready
 
 
-def run_scan_and_direct_actions_loop(
+def run_email_discovery_once(
     accounts: Sequence[Mapping[str, object]],
     active_model: object,
     *,
     scan_account: Callable[[Mapping[str, object], object], object],
-    run_direct_actions_once: Callable[[], object],
-    run_classification_once: Callable[[], object] | None = None,
     provider_observation_complete: Callable[[], object] | None = None,
+    record_health: Callable[[str, Mapping[str, object]], object] = _ignore_health,
+) -> dict[str, int]:
+    """Discover new provider messages exactly once; consumers run elsewhere."""
+    failures = 0
+    discovered = 0
+    provider_changed = False
+    for account in accounts:
+        account_id = _account_id(account)
+        try:
+            result = scan_account(account, active_model)
+        except Exception as exc:  # noqa: BLE001 - isolate provider accounts
+            failures += 1
+            record_health(f"account:{account_id}", _safe_health_error(exc))
+            continue
+        error_code = _scan_result_error_code(result)
+        if error_code:
+            failures += 1
+            record_health(
+                f"account:{account_id}",
+                {"status": "failed", "error_code": error_code},
+            )
+            continue
+        persisted_count, scan_changed = _scan_result_change_summary(result)
+        discovered += persisted_count
+        provider_changed = provider_changed or scan_changed
+        record_health(
+            f"account:{account_id}",
+            {"status": "ready", "persisted_count": persisted_count},
+        )
+    if failures == 0 and provider_changed and provider_observation_complete is not None:
+        try:
+            provider_observation_complete()
+        except Exception as exc:  # noqa: BLE001 - report this trigger failure
+            failures += 1
+            record_health("component:email-training-observation", _safe_health_error(exc))
+    record_health(
+        "component:email-discovery",
+        {"status": "ready" if failures == 0 else "degraded", "failures": failures},
+    )
+    return {
+        "accounts": len(accounts),
+        "discovered": discovered,
+        "failures": failures,
+    }
+
+
+def run_email_classification_consumer_loop(
+    run_classification_once: Callable[[], object],
+    *,
     record_health: Callable[[str, Mapping[str, object]], object] = _ignore_health,
     component_ready: Callable[[str], object] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     max_cycles: int | None = None,
     classification_max_actions: int = CLASSIFICATION_DRAIN_MAX_ACTIONS,
     classification_time_budget_seconds: float = CLASSIFICATION_DRAIN_MAX_SECONDS,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> None:
+    cycles = 0
+    while max_cycles is None or cycles < max_cycles:
+        try:
+            _drain_direct_actions(
+                run_classification_once,
+                max_actions=classification_max_actions,
+                time_budget_seconds=classification_time_budget_seconds,
+                monotonic=monotonic,
+            )
+        except Exception as exc:  # noqa: BLE001 - keep consumer polling alive
+            record_health("component:email-classifier-agent", _safe_health_error(exc))
+        else:
+            record_health(
+                "component:email-classifier-agent",
+                {"status": "ready", "failures": 0},
+            )
+            if component_ready is not None:
+                component_ready("email-classifier-agent")
+        cycles += 1
+        if max_cycles is None or cycles < max_cycles:
+            sleep(CONSUMER_POLL_INTERVAL_SECONDS)
+
+
+def run_email_provider_action_delivery_loop(
+    run_direct_actions_once: Callable[[], object],
+    *,
+    provider_observation_complete: Callable[[], object] | None = None,
+    record_health: Callable[[str, Mapping[str, object]], object] = _ignore_health,
+    component_ready: Callable[[str], object] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    max_cycles: int | None = None,
     direct_action_max_actions: int = DIRECT_ACTION_DRAIN_MAX_ACTIONS,
     direct_action_time_budget_seconds: float = DIRECT_ACTION_DRAIN_MAX_SECONDS,
     monotonic: Callable[[], float] = time.monotonic,
@@ -1264,50 +1344,7 @@ def run_scan_and_direct_actions_loop(
     cycles = 0
     while max_cycles is None or cycles < max_cycles:
         failures = 0
-        provider_changed = False
-        for account in accounts:
-            account_id = _account_id(account)
-            try:
-                result = scan_account(account, active_model)
-            except Exception as exc:  # noqa: BLE001 - isolate provider accounts
-                failures += 1
-                record_health(f"account:{account_id}", _safe_health_error(exc))
-                continue
-            error_code = _scan_result_error_code(result)
-            if error_code:
-                failures += 1
-                record_health(
-                    f"account:{account_id}",
-                    {"status": "failed", "error_code": error_code},
-                )
-                continue
-            persisted_count, scan_changed = _scan_result_change_summary(result)
-            provider_changed = provider_changed or scan_changed
-            record_health(
-                f"account:{account_id}",
-                {
-                    "status": "ready",
-                    "persisted_count": persisted_count,
-                },
-            )
-        if run_classification_once is not None:
-            try:
-                _drain_direct_actions(
-                    run_classification_once,
-                    max_actions=classification_max_actions,
-                    time_budget_seconds=classification_time_budget_seconds,
-                    monotonic=monotonic,
-                )
-            except Exception as exc:  # noqa: BLE001 - keep scan cadence alive
-                failures += 1
-                record_health(
-                    "component:email-classifier-agent", _safe_health_error(exc)
-                )
-            else:
-                record_health(
-                    "component:email-classifier-agent",
-                    {"status": "ready", "failures": 0},
-                )
+        direct_results: tuple[object, ...] = ()
         try:
             direct_results = _drain_direct_actions(
                 run_direct_actions_once,
@@ -1325,43 +1362,30 @@ def run_scan_and_direct_actions_loop(
                     {"status": "degraded", "error_code": "provider_action_failed"},
                 )
             else:
-                if direct_results:
-                    provider_changed = True
                 record_health(
                     "component:email-provider-actions",
                     {"status": "ready", "failures": 0},
                 )
-        except Exception as exc:  # noqa: BLE001 - keep the scan cadence alive
+        except Exception as exc:  # noqa: BLE001 - keep delivery polling alive
             failures += 1
             record_health("component:email-provider-actions", _safe_health_error(exc))
         if (
             failures == 0
-            and provider_changed
+            and direct_results
             and provider_observation_complete is not None
         ):
             try:
                 provider_observation_complete()
-            except Exception as exc:  # noqa: BLE001 - keep scan cadence alive
+            except Exception as exc:  # noqa: BLE001 - keep delivery polling alive
                 failures += 1
                 record_health(
                     "component:email-training-observation", _safe_health_error(exc)
                 )
-        record_health(
-            "component:email-scan-actions",
-            {"status": "ready" if failures == 0 else "degraded", "failures": failures},
-        )
         if failures == 0 and component_ready is not None:
-            component_ready("email-scan-actions")
+            component_ready("email-provider-actions")
         cycles += 1
         if max_cycles is None or cycles < max_cycles:
-            interval = min(
-                (
-                    int(account.get("scan_interval_seconds") or SCAN_INTERVAL_SECONDS)
-                    for account in accounts
-                ),
-                default=SCAN_INTERVAL_SECONDS,
-            )
-            sleep(max(interval, 1))
+            sleep(CONSUMER_POLL_INTERVAL_SECONDS)
 
 
 def _is_transient_email_provider_error(exc: BaseException) -> bool:
@@ -2299,18 +2323,22 @@ def email_worker_components(
     active_model: object,
     component_ready: Callable[[str], object] | None = None,
 ) -> tuple[tuple[str, partial], ...]:
+    del accounts, active_model
     return (
         (
-            "email-scan-actions",
+            "email-classifier-agent",
             partial(
-                run_scan_and_direct_actions_loop,
-                accounts,
-                active_model,
-                scan_account=dependencies.scan_account,
-                run_direct_actions_once=dependencies.run_direct_actions_once,
-                run_classification_once=getattr(
-                    dependencies, "run_classification_once", None
-                ),
+                run_email_classification_consumer_loop,
+                dependencies.run_classification_once,
+                record_health=dependencies.record_health,
+                component_ready=component_ready,
+            ),
+        ),
+        (
+            "email-provider-actions",
+            partial(
+                run_email_provider_action_delivery_loop,
+                dependencies.run_direct_actions_once,
                 record_health=dependencies.record_health,
                 component_ready=component_ready,
                 provider_observation_complete=getattr(
@@ -4214,8 +4242,8 @@ def run_email_unsubscribe(db_path: str | Path, task_id: int) -> dict[str, object
 
 def _validate_email_worker_dependencies(dependencies: object) -> None:
     callable_fields = (
-        "scan_account",
         "run_direct_actions_once",
+        "run_classification_once",
         "load_task_context",
         "finalize_task",
         "training_tick",
@@ -4446,7 +4474,8 @@ def run_email_worker(
         # take longer than the scan and consumer loops. It must not keep the
         # process-level status stuck at "starting".
         readiness_component_names = (
-            "email-scan-actions",
+            "email-classifier-agent",
+            "email-provider-actions",
             "email-agent-consumer",
         )
         component_names = tuple(

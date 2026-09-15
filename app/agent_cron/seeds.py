@@ -26,6 +26,8 @@ DINGTALK_OA_MIGRATION_KEY = "dingtalk-oa-check-v1"
 DINGTALK_OA_SERVICE_COMMAND = "scan-oa-approvals"
 MEETING_TODO_MIGRATION_KEY = "work-source-scan-daily-v1"
 MEETING_TODO_SERVICE_COMMAND = "scan-meeting-todos-once"
+EMAIL_MESSAGE_MIGRATION_KEY = "email-message-check-v1"
+EMAIL_MESSAGE_SERVICE_COMMAND = "email-message-check-once"
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,12 @@ class ScheduledTaskDefaultCopy:
 
 
 SCHEDULED_TASK_DEFAULT_COPY = {
+    EMAIL_MESSAGE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="分类新邮件",
+        description="发现已配置未分类入口中的新未读邮件后，由 Agent 按邮件分类规则判断业务类别和重要性；分类结果再由现有执行队列按邮箱策略处理。",
+        old_name="",
+        old_description="",
+    ),
     DINGTALK_MESSAGE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="处理新的钉钉消息",
         description="发现新的单聊或群聊 @ 消息后，由 Agent 读取最新上下文，决定回复、表态、澄清或不处理。",
@@ -154,6 +162,10 @@ MEETING_TODO_CONSUMER_PROMPT = (
     "$dingtalk-minutes 读取会议 Todo 的最新状态。负责人、截止时间和完成标准必须有"
     "明确证据，不因参会或发言推断负责人。"
 )
+EMAIL_MESSAGE_CONSUMER_PROMPT = (
+    "使用 $ceo-email-classifier 对 Trigger 发现的真实新邮件进行分类；"
+    "仅判断业务类别、重要性和置信度，不直接移动、标记、回复、退订或发送邮件。"
+)
 
 
 def _consumer_skill_refs(
@@ -209,6 +221,12 @@ def seed_scheduled_tasks(
     now: datetime | None = None,
 ) -> tuple[ScheduledTask, ...]:
     """Create repository-owned scheduled task defaults without overwriting edits."""
+    email = _seed_email_message_task(
+        store=store,
+        options=options,
+        working_directory=working_directory,
+        now=now,
+    )
     dingtalk_message = _seed_dingtalk_message_task(
         store=store,
         options=options,
@@ -266,6 +284,7 @@ def seed_scheduled_tasks(
     return tuple(
         _upgrade_default_copy(store, task, now=now)
         for task in (
+            email,
             dingtalk_message,
             dingtalk_calendar_invite,
             dingtalk_message_recovery,
@@ -276,6 +295,44 @@ def seed_scheduled_tasks(
             weekly_okr,
             minutes,
         )
+    )
+
+
+def _seed_email_message_task(
+    *,
+    store: AutoReplyStore,
+    options: ScheduledTaskOptionService,
+    working_directory: Path,
+    now: datetime | None,
+) -> ScheduledTask:
+    """Seed deterministic new-email discovery with its exact classifier Skill."""
+    del working_directory
+    skill_refs = _consumer_skill_refs(
+        options,
+        managed=("ceo-email-classifier",),
+    )
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key=EMAIL_MESSAGE_MIGRATION_KEY,
+        command=EMAIL_MESSAGE_SERVICE_COMMAND,
+        seed_enabled=True,
+        seed_description=_default_copy(EMAIL_MESSAGE_MIGRATION_KEY).description,
+        consumer_prompt=EMAIL_MESSAGE_CONSUMER_PROMPT,
+        consumer_skill_refs=skill_refs,
+        now=now,
+    )
+    if adopted is not None:
+        return adopted
+    return store.create_scheduled_task(
+        migration_key=EMAIL_MESSAGE_MIGRATION_KEY,
+        name=_default_copy(EMAIL_MESSAGE_MIGRATION_KEY).name,
+        description=_default_copy(EMAIL_MESSAGE_MIGRATION_KEY).description,
+        prompt=EMAIL_MESSAGE_CONSUMER_PROMPT,
+        command=EMAIL_MESSAGE_SERVICE_COMMAND,
+        cron_expression="0 * * * * *",
+        timezone_name="Asia/Shanghai",
+        skill_refs=skill_refs,
+        enabled=True,
+        now=now,
     )
 
 

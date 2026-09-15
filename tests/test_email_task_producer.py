@@ -1,6 +1,11 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from app.agent_cron.commands import (
+    SERVICE_COMMAND_OPTIONS,
+    ServiceCommandConsumerContext,
+    ServiceCommandRegistry,
+)
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -93,3 +98,46 @@ def test_classification_producer_enqueues_without_creating_generic_reply_task():
     assert task.status == "pending"
     assert task.channel == "email"
     assert len(calls) == 1
+
+
+def test_classification_producer_captures_the_current_cron_consumer_context():
+    calls = []
+    producer = object.__new__(EmailClassificationTaskProducer)
+    producer.adapter = SimpleNamespace(
+        ensure_task=lambda task_input: calls.append(task_input) or object()
+    )
+    context = ServiceCommandConsumerContext(
+        scheduled_task_id=10,
+        scheduled_task_run_id=101,
+        prompt="使用 $ceo-email-classifier 分类真实新邮件。",
+        skill_names=("ceo-email-classifier",),
+        skill_protocol="## Managed Skill: ceo-email-classifier\nSELECTED",
+    )
+
+    def produce():
+        return producer.produce(
+            {
+                "accountId": "account-1",
+                "folder": "INBOX",
+                "uidValidity": 42,
+                "uid": 7,
+                "messageId": "<message-7@example.com>",
+                "providerUnread": True,
+            },
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={
+                "work": {"core": "Business."},
+                "junk": {"core": "Unwanted."},
+            },
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+            unsubscribe_candidates=(),
+        )
+
+    implementations = {option.name: (lambda: "unused") for option in SERVICE_COMMAND_OPTIONS}
+    implementations["produce-once"] = produce
+    ServiceCommandRegistry(implementations).run(
+        "produce-once", consumer_context=context
+    )
+
+    assert calls[0].scheduled_consumer == context.to_payload()

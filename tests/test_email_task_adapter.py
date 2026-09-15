@@ -11,6 +11,7 @@ from urllib.parse import quote
 import pytest
 
 from app.agent_context import PriorReceipt
+from app.agent_cron.commands import ServiceCommandConsumerContext
 from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
@@ -233,6 +234,51 @@ def test_classification_task_adapter_persists_one_stable_task_across_reopen(
     ) == frozenset({41})
     assert "scope.pdf" in first.input_json
     assert "attachment content" not in first.input_json
+
+
+def test_duplicate_email_scan_keeps_first_trigger_context_without_conflict(
+    tmp_path: Path,
+) -> None:
+    store = _email_store(tmp_path)
+    first_context = ServiceCommandConsumerContext(
+        scheduled_task_id=10,
+        scheduled_task_run_id=101,
+        prompt="使用 $ceo-email-classifier 分类真实新邮件。",
+        skill_names=("ceo-email-classifier",),
+        skill_protocol="## Managed Skill: ceo-email-classifier\nFIRST REVISION",
+    )
+    later_context = replace(first_context, scheduled_task_run_id=102)
+    message = {
+        "accountId": "account-primary",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 141,
+        "messageId": "<mail-141@example.com>",
+        "providerUnread": True,
+    }
+
+    def task_input(context: ServiceCommandConsumerContext):
+        return EmailClassificationTaskInput.from_message(
+            message,
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={
+                "work": {"core": "Business."},
+                "junk": {"core": "Unwanted."},
+            },
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+            unsubscribe_candidates=(),
+            scheduled_consumer=context.to_payload(),
+        )
+
+    adapter = EmailClassificationTaskAdapter(store)
+    first = adapter.ensure_task(task_input(first_context))
+    duplicate = adapter.ensure_task(task_input(later_context))
+
+    assert duplicate.task_id == first.task_id
+    persisted = json.loads(duplicate.input_json)["scheduled_consumer"]
+    assert persisted["scheduled_task_run_id"] == 101
+    assert persisted["skill_names"] == ["ceo-email-classifier"]
 
 
 def test_classifier_queue_schema_is_owned_by_email_store_not_adapter(tmp_path: Path):

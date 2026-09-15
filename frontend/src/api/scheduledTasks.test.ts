@@ -239,8 +239,17 @@ describe("service command tasks", () => {
     expect(catalog[0].consumer_prompt_enabled).toBe(true);
   });
 
+  it("accepts an Email discovery command and preserves its channel", async () => {
+    const email = { name: "email-message-check-once", display_name: "读取新邮件", description: "读取新邮件并触发分类", channel: "email", consumer_prompt_enabled: true };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...validOptions, service_command_options: [email] }), { headers: { "Content-Type": "application/json" } })));
+
+    const catalog = (await getScheduledTaskOptions()).service_command_options;
+
+    expect(catalog[0].channel).toBe("email");
+  });
+
   it.each([
-    ["unknown channel", { channel: "email" }],
+    ["unknown channel", { channel: "mailbox" }],
     ["missing Consumer Prompt flag", { consumer_prompt_enabled: undefined }],
     ["non-boolean Consumer Prompt flag", { consumer_prompt_enabled: "yes" }],
   ])("rejects a service command with %s", async (_label, patch) => {

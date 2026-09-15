@@ -22,6 +22,7 @@ _SKILL_REFERENCE_PATTERN = re.compile(r"\$([A-Za-z0-9][A-Za-z0-9_-]*)")
 
 ServiceCommandChannel = Literal[
     "dingtalk",
+    "email",
     "wechat",
     "meeting",
     "work_summary",
@@ -113,6 +114,13 @@ def consumer_skill_names_from_prompt(prompt: str) -> tuple[str, ...]:
 
 
 SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
+    ServiceCommandOption(
+        name="email-message-check-once",
+        display_name="读取新邮件",
+        description="读取已配置未分类入口中的新未读邮件；发现后由 Agent 按邮件分类规则判断业务类别和重要性。",
+        channel="email",
+        consumer_prompt_enabled=True,
+    ),
     ServiceCommandOption(
         name="produce-once",
         display_name="读取新钉钉消息",

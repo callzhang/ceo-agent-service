@@ -127,6 +127,7 @@ def claim(adapter, source_id, owner, *, now=NOW):
 
 def commands(produce_once=lambda: "produce-once queued=0"):
     return ServiceCommandRegistry({
+        "email-message-check-once": lambda: "email-message-check-once discovered=0",
         "produce-once": produce_once,
         "calendar-invites-once": lambda: "calendar-invites-once queued=0",
         "recover-recent-messages": lambda: "recover-recent-messages queued=0",

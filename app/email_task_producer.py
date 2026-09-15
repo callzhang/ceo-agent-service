@@ -10,6 +10,7 @@ from app.email_classifier_contracts import (
     EmailAttachmentMetadata,
     EmailProviderLocator,
 )
+from app.agent_cron.commands import current_service_command_consumer_context
 from app.email_store import EmailStore
 from app.email_imap_readonly import (
     ephemeral_body_html,
@@ -48,6 +49,7 @@ class EmailClassificationTaskProducer:
         config_version: str,
         unsubscribe_candidates: Sequence[object],
     ) -> EmailClassificationTask:
+        scheduled_consumer = current_service_command_consumer_context()
         return self.adapter.ensure_task(
             EmailClassificationTaskInput.from_message(
                 message,
@@ -56,6 +58,11 @@ class EmailClassificationTaskProducer:
                 folder_targets=folder_targets,
                 config_version=config_version,
                 unsubscribe_candidates=unsubscribe_candidates,
+                scheduled_consumer=(
+                    scheduled_consumer.to_payload()
+                    if scheduled_consumer is not None
+                    else None
+                ),
             )
         )
 
