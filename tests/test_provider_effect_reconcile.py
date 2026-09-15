@@ -257,6 +257,21 @@ def test_failed_task_closes_once_its_delivery_is_in_the_ledger(tmp_path: Path) -
     assert reloaded.error == ""
 
 
+def test_startup_reconciliation_closes_all_failed_tasks_with_recorded_delivery(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task, consumer = _failed_task_with_completed_consumer(store)
+    _record(store, task, consumer)
+
+    assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
+
+    reloaded = store.get_reply_task(task.id)
+    assert reloaded is not None
+    assert reloaded.status == "done"
+    assert reloaded.error == ""
+
+
 def test_already_settled_task_closes_and_keeps_the_evidence(tmp_path: Path) -> None:
     """Nothing is left to do, and rerunning would repeat someone's decision."""
     store = AutoReplyStore(tmp_path / "worker.sqlite3")

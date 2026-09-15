@@ -16540,6 +16540,33 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def reconcile_failed_reply_tasks_with_recorded_deliveries(self) -> int:
+        """Close failed tasks whose completed provider action is in the ledger.
+
+        A process can fail after a provider has accepted the action.  The
+        external-action result and its History projection are both required to
+        prove that outcome.  Reprocessing such a task would duplicate a real
+        message, so the task's current lifecycle state is ``done`` even when a
+        subsequent Audit run failed to serialize its own result.
+        """
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks as tasks
+                set status='done', error='', available_at='', locked_at=null,
+                    updated_at=current_timestamp
+                where tasks.status='failed'
+                  and exists (
+                      select 1
+                      from external_action_results as actions
+                      join sent_replies as replies
+                        on replies.external_action_key=actions.external_action_key
+                      where actions.business_object_key=tasks.business_object_key
+                  )
+                """
+            )
+            return cursor.rowcount
+
     def resolve_failed_reply_attempt_already_settled(
         self,
         attempt_id: int,
