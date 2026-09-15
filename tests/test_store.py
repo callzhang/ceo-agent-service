@@ -9294,6 +9294,81 @@ def test_recover_stale_runtime_attempts_closes_terminal_parent_and_expired_lease
     ]
 
 
+def test_recover_unstarted_runtime_operation_attempts_releases_short_stale_claim(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "unstarted-runtime-attempt.sqlite3")
+    workload_key = "meeting_memory_write_event:51:generation-51"
+    _seed_runtime_operation_parent(store, "memory", workload_key)
+    claimed = store.claim_runtime_operation_attempt(
+        "memory",
+        workload_key,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="routed-codex-owner",
+        lease_seconds=1800,
+        now="2026-09-14T23:00:00+00:00",
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        claimed.id,
+        owner="routed-codex-owner",
+        lease_seconds=1800,
+        now="2026-09-14T23:00:00+00:00",
+    )
+
+    assert store.recover_unstarted_runtime_operation_attempts(
+        stale_after_seconds=60,
+        now="2026-09-14T23:01:01+00:00",
+    ) == 1
+
+    recovered = store.get_agent_runtime_attempt(claimed.id)
+    assert recovered is not None
+    assert recovered.status == "failed"
+    assert recovered.failure_code == "runtime_start_stalled"
+    assert recovered.lease_owner == ""
+    assert recovered.lease_expires_at == ""
+
+
+def test_recover_unstarted_runtime_operation_attempts_keeps_session_evidence(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "started-runtime-attempt.sqlite3")
+    workload_key = "meeting_memory_write_event:52:generation-52"
+    _seed_runtime_operation_parent(store, "memory", workload_key)
+    claimed = store.claim_runtime_operation_attempt(
+        "memory",
+        workload_key,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="routed-codex-owner",
+        lease_seconds=1800,
+        now="2026-09-14T23:00:00+00:00",
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        claimed.id,
+        owner="routed-codex-owner",
+        lease_seconds=1800,
+        now="2026-09-14T23:00:00+00:00",
+    )
+    store.set_agent_runtime_attempt_session(
+        claimed.id,
+        "session-52",
+        "codex_session:session-52",
+        owner="routed-codex-owner",
+        now="2026-09-14T23:00:01+00:00",
+    )
+
+    assert store.recover_unstarted_runtime_operation_attempts(
+        stale_after_seconds=60,
+        now="2026-09-14T23:01:01+00:00",
+    ) == 0
+    assert store.get_agent_runtime_attempt(claimed.id).status == "running"
+
+
 def test_recover_stale_runtime_attempts_immediately_closes_terminal_meeting_parent(
     tmp_path: Path,
 ):

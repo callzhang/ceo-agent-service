@@ -9988,6 +9988,41 @@ class AutoReplyStore:
                 + cursor.rowcount
             )
 
+    def recover_unstarted_runtime_operation_attempts(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: str | datetime | None = None,
+    ) -> int:
+        """Release a generalized runtime claim that never produced execution evidence.
+
+        A fresh runtime lease is intentionally longer than the short period in
+        which a local process must report its session.  When that report never
+        arrives, retaining the full lease turns a failed launch into a false
+        concurrent-execution conflict for the next queue pass.
+        """
+        if stale_after_seconds <= 0:
+            raise ValueError("stale_after_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
+            stale_before = (
+                now_value - timedelta(seconds=stale_after_seconds)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='failed', failure_class='process',
+                    failure_code='runtime_start_stalled', failover_permitted=1,
+                    lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
+                where agent_run_id is null
+                  and status in ('starting', 'running')
+                  and session_id=''
+                  and transcript_reference=''
+                  and updated_at<=?
+                """,
+                (now_text, now_text, stale_before),
+            )
+            return cursor.rowcount
+
     def set_agent_runtime_attempt_session(
         self,
         attempt_id: int,

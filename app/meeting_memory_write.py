@@ -13,6 +13,7 @@ from app.store import AutoReplyStore, MeetingMemoryWriteEvent
 MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS = 60.0
 MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS = 15 * 60
 MEETING_MEMORY_TITLE_LIMIT = 80
+MEETING_MEMORY_START_STALL_SECONDS = 60
 
 
 def _meeting_memory_content_title(final_message: str) -> str:
@@ -80,6 +81,10 @@ def process_meeting_memory_writes(
     """Write due delivered conclusions and preserve their terminal meeting state."""
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("meeting Memory processing time must include a timezone")
+    store.recover_unstarted_runtime_operation_attempts(
+        stale_after_seconds=MEETING_MEMORY_START_STALL_SECONDS,
+        now=now,
+    )
     enqueue_sent_meeting_memory_writes(store)
     processed = 0
     for event in store.list_due_meeting_memory_write_events(
