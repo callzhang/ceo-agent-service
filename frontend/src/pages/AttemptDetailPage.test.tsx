@@ -152,9 +152,9 @@ describe("AttemptDetailPage", () => {
     });
     renderPage();
 
-    const consumerHeading = await screen.findByRole("heading", { name: "Consumer 执行结果" });
-    expect(consumerHeading).toBeInTheDocument();
-    expect(consumerHeading.closest(".attempt-metadata-card")).toContainElement(screen.getByText("trigger message id"));
+    await screen.findByRole("heading", { name: "Attempt #8448" });
+    expect(screen.queryByRole("heading", { name: "Consumer 执行结果" })).not.toBeInTheDocument();
+    expect(screen.getByText("confidence").closest(".attempt-metadata-card")).toContainElement(screen.getByText("trigger message id"));
     expect(screen.getByText("confidence")).toBeInTheDocument();
     expect(screen.getByText("82%")).toBeInTheDocument();
     expect(screen.getByText("information_completeness")).toBeInTheDocument();
@@ -181,7 +181,8 @@ describe("AttemptDetailPage", () => {
     });
     renderPage();
 
-    expect(await screen.findByRole("heading", { name: "Consumer 执行结果" })).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Attempt #8448" });
+    expect(screen.queryByRole("heading", { name: "Consumer 执行结果" })).not.toBeInTheDocument();
     expect(screen.getByText("confidence")).toBeInTheDocument();
     expect(screen.getByText("information_completeness")).toBeInTheDocument();
     expect(screen.getByText("rule_coverage")).toBeInTheDocument();
@@ -208,7 +209,8 @@ describe("AttemptDetailPage", () => {
     });
     renderPage();
 
-    expect(await screen.findByRole("heading", { name: "Consumer 执行结果" })).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Attempt #8448" });
+    expect(screen.queryByRole("heading", { name: "Consumer 执行结果" })).not.toBeInTheDocument();
     expect(screen.getByText(`新 Consumer run #${id}`)).toBeInTheDocument();
     expect(screen.getByText(displayStatus)).toBeInTheDocument();
     expect(screen.getByText("82%")).toBeInTheDocument();
@@ -231,7 +233,8 @@ describe("AttemptDetailPage", () => {
     });
     renderPage();
 
-    expect(await screen.findByRole("heading", { name: "Consumer 执行结果" })).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Attempt #8448" });
+    expect(screen.queryByRole("heading", { name: "Consumer 执行结果" })).not.toBeInTheDocument();
     expect(screen.getByText("新 Consumer run")).toBeInTheDocument();
     expect(screen.getByText("等待中")).toBeInTheDocument();
     expect(screen.queryByText("#null")).not.toBeInTheDocument();

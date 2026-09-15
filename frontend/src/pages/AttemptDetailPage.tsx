@@ -22,7 +22,7 @@ function ConsumerResult({ result }: { result: AttemptConsumerResult }) {
     ? `新 Consumer run${currentRun.id === null ? "" : ` #${currentRun.id}`}`
     : "";
   const currentStatus = currentRun?.status === "running" ? "运行中" : "等待中";
-  return <><div className="attempt-metadata-group-label" role="heading" aria-level={3}>Consumer 执行结果</div>
+  return <>
     <div className="attempt-metadata-item"><span>confidence</span><strong>{result.confidence}</strong></div>
     <div className="attempt-metadata-item"><span>information_completeness</span><strong>{result.information_completeness}</strong></div>
     <div className="attempt-metadata-item"><span>rule_coverage</span><strong>{result.rule_coverage}</strong></div>

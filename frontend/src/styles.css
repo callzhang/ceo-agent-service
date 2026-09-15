@@ -1053,7 +1053,6 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-metadata-item { min-width: 0; padding: 12px; background: var(--surface); }
 .attempt-metadata-item span { display: block; margin-bottom: 5px; color: var(--ink-soft); font-size: .7rem; }
 .attempt-metadata-item strong { display: block; overflow-wrap: anywhere; font-size: .78rem; line-height: 1.45; }
-.attempt-metadata-group-label { grid-column: 1 / -1; padding: 10px 12px 8px; color: var(--ink-soft); background: var(--surface-muted); font-size: .72rem; font-weight: 800; letter-spacing: .01em; }
 .attempt-primary-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); gap: 16px; align-items: start; }
 .attempt-primary-grid > div { display: grid; gap: 16px; min-width: 0; }
 .attempt-detail-section { min-width: 0; }
