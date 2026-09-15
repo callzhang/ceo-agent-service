@@ -3254,14 +3254,6 @@ def run_meeting_consumer_loop(
                 deliver=not settings.dry_run,
                 embedding_client=embedding_client,
             )
-            if not settings.dry_run and max_tasks != 0:
-                process_meeting_memory_writes(
-                    store,
-                    workspace=settings.workspace,
-                    routed_execution=routed_execution,
-                    now=datetime.now().astimezone(),
-                    limit=1,
-                )
             consecutive_sqlite_lock_failures = 0
         except Exception as exc:
             if isinstance(exc, sqlite3.OperationalError) and (

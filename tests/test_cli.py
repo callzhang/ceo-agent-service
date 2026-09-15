@@ -6118,7 +6118,9 @@ def test_reply_loop_isolates_one_dws_failure_and_runs_next_iteration(
     ]
 
 
-def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
+def test_meeting_consumer_does_not_compete_with_dedicated_memory_writer(
+    monkeypatch, tmp_path
+):
     calls = []
 
     class StopLoop(Exception):
@@ -6173,8 +6175,8 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     monkeypatch.setattr(
         cli,
         "process_meeting_memory_writes",
-        lambda received_store, *, workspace, routed_execution, now, limit: calls.append(
-            ("write-meeting-memory", received_store, workspace, routed_execution, now, limit)
+        lambda *args, **kwargs: pytest.fail(
+            "only run_meeting_memory_write_loop may consume Memory events"
         ),
     )
 
@@ -6222,11 +6224,7 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     assert calls[5][4].utcoffset() is not None
     assert calls[5][5:7] == (4, True)
     assert calls[5][7] is not None
-    assert calls[6][:3] == ("write-meeting-memory", store, settings.workspace)
-    assert calls[6][3] is routed_execution
-    assert calls[6][4].utcoffset() is not None
-    assert calls[6][5] == 1
-    assert calls[7] == ("sleep", 10)
+    assert calls[6] == ("sleep", 10)
 
 
 def test_scan_meetings_once_command_writes_one_job_with_fixed_ten_minute_window(
