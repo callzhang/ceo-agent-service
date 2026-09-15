@@ -25444,7 +25444,7 @@ class AutoReplyStore:
                 update errors
                 set resolved_at=current_timestamp,
                     resolution=?
-                where kind=?
+                where replace(kind, '-', '_')=replace(?, '-', '_')
                   and coalesce(resolved_at, '')=''
                 """,
                 (normalized_resolution, normalized_kind),

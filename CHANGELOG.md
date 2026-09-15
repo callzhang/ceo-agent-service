@@ -5,6 +5,11 @@
   checkpoints or maintenance snapshots, while preserving the bounded read
   cache and normal WAL transactions.
 
+- 2026-09-15: Service-error recovery now matches component names across the
+  legacy hyphenated and current underscored forms, so a later healthy cycle
+  removes the obsolete error from Attention without changing the business
+  task's state.
+
 - 2026-09-14: Scheduled-task run history now resolves Agent Attempt lineage
   from the three supported Trigger payload locations instead of recursively
   expanding every JSON node. Unrelated nested identifiers are ignored, while

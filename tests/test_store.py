@@ -7886,6 +7886,7 @@ def test_resolve_unresolved_errors_by_kind_after_successful_service_cycle(tmp_pa
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("", "", "task_maintenance_weekly_okr_report", "session expired")
     store.record_error("", "", "task_maintenance_weekly_okr_report", "session expired")
+    store.record_error("", "", "meeting-memory-write", "disk I/O error")
     store.record_error("", "", "other_component", "still failing")
 
     assert store.resolve_unresolved_errors_by_kind(
@@ -7896,6 +7897,10 @@ def test_resolve_unresolved_errors_by_kind_after_successful_service_cycle(tmp_pa
     errors = store.list_errors()
     okr_errors = [item for item in errors if item.kind == "task_maintenance_weekly_okr_report"]
     assert all(item.resolved_at for item in okr_errors)
+    assert store.resolve_unresolved_errors_by_kind(
+        "meeting_memory_write",
+        resolution="recovered by a later Memory write cycle",
+    ) == 1
     assert next(item for item in errors if item.kind == "other_component").resolved_at == ""
 
 
