@@ -1623,6 +1623,51 @@ def _recover_stale_email_tasks(task_store: object) -> None:
             )
 
 
+def _recover_terminal_direct_unsubscribe_tasks(
+    task_store: object,
+    email_store: object,
+) -> int:
+    """Reproject terminal direct-unsubscribe receipts left behind by old runs.
+
+    A pre-direct-lifecycle browser timeout could mark the reply task failed
+    after the direct path had already recorded its terminal page receipt.  The
+    receipt is authoritative and does not need another browser visit.  Reopen
+    only effect-free task projection rows, then let the normal direct runner
+    convert the persisted receipt into the current task terminal state.
+    """
+    list_tasks = getattr(task_store, "list_reply_tasks", None)
+    retry_failed = getattr(task_store, "retry_failed_pre_agent_reply_task", None)
+    get_receipt = getattr(email_store, "get_email_unsubscribe_receipt", None)
+    if not all(callable(value) for value in (list_tasks, retry_failed, get_receipt)):
+        return 0
+    recovered = 0
+    try:
+        failed_tasks = list_tasks(("failed",), channel="email")
+    except Exception as exc:  # noqa: BLE001 - recovery must not stop the worker
+        _LOGGER.warning("could not list failed direct unsubscribe tasks: %s", exc)
+        return 0
+    for task in failed_tasks:
+        if not _is_direct_email_unsubscribe_task(task):
+            continue
+        try:
+            receipt = get_receipt(task.trigger_message_id)
+            if receipt is None:
+                continue
+            retry_failed(
+                task.id,
+                reason="email_unsubscribe_terminal_receipt_projection",
+            )
+        except Exception as exc:  # noqa: BLE001 - leave unrelated failures alone
+            _LOGGER.warning(
+                "could not reproject terminal unsubscribe task %s: %s",
+                task.id,
+                exc,
+            )
+        else:
+            recovered += 1
+    return recovered
+
+
 def _is_direct_email_unsubscribe_task(task: object) -> bool:
     """Whether this durable Email task executes without an Agent turn."""
 
@@ -1720,6 +1765,7 @@ def run_email_agent_task_loop(
             _recover_stale_email_tasks(task_store)
             if email_store is not None:
                 _recover_orphaned_unsubscribe_claims(email_store, task_store)
+                _recover_terminal_direct_unsubscribe_tasks(task_store, email_store)
             # Tasks run one at a time in this loop, so a large claim only
             # lengthens how long the tail stays locked and how many tasks a
             # restart orphans.

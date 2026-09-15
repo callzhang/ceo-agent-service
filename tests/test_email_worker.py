@@ -5787,6 +5787,48 @@ def test_unsubscribe_task_runs_directly_without_an_agent_turn():
     assert calls == [("run", 91), ("finalize", 91, "done")]
 
 
+def test_terminal_direct_unsubscribe_receipt_reopens_only_its_stale_projection():
+    module = _module()
+    direct = SimpleNamespace(
+        id=93,
+        channel="email",
+        trigger_message_id="email-action:terminal-receipt",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "lifecycle_version": "email_unsubscribe_audited_v2",
+                "action_type": "unsubscribe",
+            }
+        ),
+    )
+    unrelated = SimpleNamespace(
+        id=94,
+        channel="email",
+        trigger_message_id="email-action:ordinary-failure",
+        trigger_message_json="{}",
+    )
+    reopened = []
+
+    class TaskStore:
+        def list_reply_tasks(self, statuses, *, channel):
+            assert statuses == ("failed",)
+            assert channel == "email"
+            return [direct, unrelated]
+
+        def retry_failed_pre_agent_reply_task(self, task_id, *, reason):
+            reopened.append((task_id, reason))
+
+    class EmailStore:
+        def get_email_unsubscribe_receipt(self, action_identity):
+            assert action_identity == "email-action:terminal-receipt"
+            return {"outcome": "skipped_no_reliable_entry"}
+
+    assert module._recover_terminal_direct_unsubscribe_tasks(TaskStore(), EmailStore()) == 1
+    assert reopened == [
+        (93, "email_unsubscribe_terminal_receipt_projection")
+    ]
+
+
 def test_direct_unsubscribe_browser_timeout_does_not_loop_after_one_retry():
     module = _module()
     task = SimpleNamespace(
