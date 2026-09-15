@@ -283,6 +283,13 @@ describe("ScheduledTasksPage", () => {
     expect(api.listScheduledTaskRuns).toHaveBeenCalledWith(8, "", expect.any(AbortSignal));
   });
 
+  it("shows a one-line explanation instead of a visible page title", async () => {
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "定时任务" })).toHaveClass("sr-only");
+    expect(screen.getByText(/配置 Cron、Agent Skills 与执行 Runtime/)).toBeInTheDocument();
+    expect(screen.queryByText("AGENT CRON")).not.toBeInTheDocument();
+  });
+
   it("shows a compact master-detail with readable schedule and execution state", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "定时任务" })).toBeInTheDocument();

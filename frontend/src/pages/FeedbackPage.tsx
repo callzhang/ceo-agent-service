@@ -447,9 +447,9 @@ export function FeedbackPage() {
   };
 
   const listState = state === "loading" ? "loading" : state === "error" ? "error" : rows.length ? "ready" : "empty";
-  return <ConsolePageLayout title="用户反馈" actions={<><span className="feedback-pending-badge">待处理 {pendingCount}</span><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} /></>}>
+  return <ConsolePageLayout title="用户反馈" description="记录来自对话方的评分与处理结果。" actions={<><span className="feedback-pending-badge">待处理 {pendingCount}</span><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} /></>}>
     <section className="console-card feedback-workspace-card">
-      <div className="card-head feedback-card-head"><div><p className="feedback-card-title">用户反馈</p><p className="muted">记录来自对话方的评分与处理结果。</p></div><button className="secondary-button feedback-sync-button" type="button" disabled={syncing} onClick={() => void sync()}>{syncing ? "同步中…" : "同步最新反馈"}</button></div>
+      <div className="card-head feedback-card-head"><div><p className="feedback-card-title">用户反馈</p></div><button className="secondary-button feedback-sync-button" type="button" disabled={syncing} onClick={() => void sync()}>{syncing ? "同步中…" : "同步最新反馈"}</button></div>
       <FilterBar><div className="filter-bar-main"><SearchField id="feedback-search-input" label="搜索反馈" value={query} placeholder="搜索反馈内容或上下文" onChange={(value) => update("q", value)} onClear={() => update("q", "")} /><SelectField id="feedback-status" label="状态" value={status} options={[{ value: "", label: "全部状态" }, { value: "pending", label: "待处理" }, { value: "processing", label: "处理中" }, { value: "resolved", label: "已处理" }]} onChange={(value) => update("status", value)} /></div><div className="filter-bar-side"><SelectField id="feedback-page-size" label="每页" value={String(pageSize)} options={pageSizes.map((size) => ({ value: String(size), label: `${size} 条` }))} onChange={(value) => update("page_size", value)} /><span className="table-toolbar-total">共 {listState === "loading" ? "—" : totalCount} 条</span></div></FilterBar>
       {success && <div ref={successRef} className="feedback-success" role="status" aria-label="操作成功" tabIndex={-1}>{success}</div>}
       {error && <div className="page-state page-state-error" role="alert">{error}</div>}

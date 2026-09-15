@@ -664,7 +664,7 @@ export function ScheduledTasksPage() {
   if (loadState === "error") return <main className="console-page scheduled-tasks-page"><section className="console-card page-state page-state-error" role="alert"><p>{error}</p><button type="button" className="secondary-button" onClick={() => void load()}>重试加载</button></section></main>;
 
   return <main className="console-page scheduled-tasks-page">
-    <header className="console-page-header"><div><p className="eyebrow">AGENT CRON</p><h1>定时任务</h1><p className="muted">配置 Cron、Agent Skills 与执行 Runtime；服务命令任务由服务进程直接执行。Connector 只提供连接能力。</p></div><button type="button" className="primary-button" onClick={beginCreate}>新建任务</button></header>
+    <header className="console-page-header"><div><h1 className="sr-only">定时任务</h1><p className="muted">配置 Cron、Agent Skills 与执行 Runtime；服务命令任务由服务进程直接执行。Connector 只提供连接能力。</p></div><button type="button" className="primary-button" onClick={beginCreate}>新建任务</button></header>
     {message && <p className="scheduled-task-notice" role="status">{message}</p>}
     <div className="scheduled-task-workspace">
       <section className="scheduled-task-master" aria-label="定时任务列表">

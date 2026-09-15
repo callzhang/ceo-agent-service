@@ -287,6 +287,14 @@ describe("FeedbackPage", () => {
     refresh.resolve(page([], 1));
   });
 
+  it("shows a one-line explanation instead of a visible page title", async () => {
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+
+    expect(await screen.findByText("记录来自对话方的评分与处理结果。")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "用户反馈" })).toHaveClass("sr-only");
+    expect(screen.queryByText("CEO AGENT CONSOLE")).not.toBeInTheDocument();
+  });
+
   it("applies only the newest list response across sync and filter reloads", async () => {
     const user = userEvent.setup();
     const stale = deferred<ReturnType<typeof page>>();

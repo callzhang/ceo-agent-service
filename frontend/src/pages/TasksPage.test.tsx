@@ -26,6 +26,14 @@ describe("TasksPage", () => {
     expect(screen.getByText("5 个 TODO")).toBeInTheDocument();
   });
 
+  it("shows a one-line explanation instead of a visible page title", async () => {
+    render(<MemoryRouter><TasksPage /></MemoryRouter>);
+
+    expect(await screen.findByText("跟踪项目任务的状态、负责人与进度，以及任务维护已发出的 TODO 和跟进消息。")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Tasks" })).toHaveClass("sr-only");
+    expect(screen.queryByText("CEO AGENT CONSOLE")).not.toBeInTheDocument();
+  });
+
   it("keeps the legacy task workspace controls and sent TODO section", async () => {
     render(<MemoryRouter><TasksPage /></MemoryRouter>);
 
