@@ -52,6 +52,11 @@ class _InvalidMemoryResultRuntime:
         )
 
 
+class _UnexpectedMemoryRuntime:
+    def execute(self, **kwargs):
+        raise AttributeError("runtime output was missing source_code")
+
+
 def _sent_job() -> SimpleNamespace:
     return SimpleNamespace(
         id=7,
@@ -287,6 +292,34 @@ def test_invalid_memory_result_defers_instead_of_failing(
     assert event["status"] == "pending"
     assert event["attempts"] == 1
     assert event["error"].startswith(f"{failure_code}:")
+    assert event["available_at"]
+
+
+def test_unexpected_memory_runtime_error_defers_one_event(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    job_id = _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+
+    assert process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=_UnexpectedMemoryRuntime(),
+        now=datetime.fromisoformat("2026-09-14T10:00:00+08:00"),
+    ) == 1
+
+    with store._connect() as db:
+        event = db.execute(
+            "select status, attempts, error, available_at from meeting_memory_write_events "
+            "where meeting_job_id=?",
+            (job_id,),
+        ).fetchone()
+    assert event is not None
+    assert event["status"] == "pending"
+    assert event["attempts"] == 1
+    assert event["error"] == (
+        "meeting_memory_runtime_error: AttributeError: "
+        "runtime output was missing source_code"
+    )
     assert event["available_at"]
 
 

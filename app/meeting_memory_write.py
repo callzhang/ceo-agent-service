@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,9 @@ from app.agent_runtime_router import RoutedCodexExecution
 from app.codex_memory_write import CodexMemoryWriteFailed, execute_codex_memory_write
 from app.external_retry import retry_delay_seconds
 from app.store import AutoReplyStore, MeetingMemoryWriteEvent
+
+
+LOGGER = logging.getLogger(__name__)
 
 MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS = 60.0
 MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS = 15 * 60
@@ -177,6 +181,21 @@ def _process_event(
             )
     except (TypeError, ValueError) as exc:
         store.fail_meeting_memory_write_event(event.id, error=str(exc))
+    except Exception as exc:  # keep one malformed runtime result from stopping the queue
+        LOGGER.exception("meeting Memory write event %s crashed", event.id)
+        delay = retry_delay_seconds(
+            MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS,
+            event.attempts,
+            max_delay_seconds=MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS,
+        )
+        store.retry_meeting_memory_write_event(
+            event.id,
+            error=(
+                "meeting_memory_runtime_error: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+            available_at=(now + timedelta(seconds=delay)).isoformat(),
+        )
     else:
         store.complete_meeting_memory_write_event(
             event.id, memory_id=result.episode_uuid
