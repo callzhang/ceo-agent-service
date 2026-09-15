@@ -570,8 +570,11 @@ _SETTLED_DOCUMENT_JS = r"""
   // as "this page offers something", so the first 64 candidates answer it
   // without forcing layout over an unbounded link list.
   const settledControls = trustedDocumentQuery(
-    'a[href], button:not([type]), button[type=submit], input[type=submit]'
-  ).slice(0, 64).filter(node => settledVisible(node));
+    'a[href], button:not([type]), button[type=submit], input[type=submit], button[type=button], [role=button], [id=confirmOptOutURL]'
+  ).slice(0, 64).filter(node => settledVisible(node) && (
+    node.tagName.toLowerCase() !== 'button' || node.form ||
+    (trustedGetAttribute(node, 'type') || '').toLowerCase() !== 'submit'
+  ));
   const settledBody = document.body;
   return {
     textLength: settledBody
@@ -1358,6 +1361,7 @@ class _AuditedControlBinding:
     method: Literal["GET", "POST"]
     enctype: str
     successful_controls: tuple[tuple[str, str, str], ...] = field(repr=False)
+    click_selector: str = field(default="", repr=False)
     field_selector: str = field(default="", repr=False)
     submitter_selector: str = field(default="", repr=False)
     field_name: str = field(default="", repr=False)
@@ -1717,6 +1721,55 @@ class PlaywrightUnsubscribeBrowser:
             successful_controls=(),
         )
 
+    def _button_binding(
+        self,
+        snapshot: Mapping[str, object],
+    ) -> _AuditedControlBinding | None:
+        """Bind one visible, standalone, unsubscribe-labelled button exactly."""
+
+        label = str(snapshot.get("label") or "").strip()
+        selector = str(snapshot.get("selector") or "").strip()
+        intent = self._control_intent(label)
+        if (
+            intent is None
+            or not selector
+            or len(selector) > 2_048
+        ):
+            return None
+        page_identity = self._page_identity()
+        semantics: dict[str, object] = {
+            "enctype": "",
+            "form_association": "",
+            "intent": intent,
+            "kind": "button",
+            "method": "CLICK",
+            "page_identity": page_identity,
+            "resolved_target": page_identity,
+            "selector": selector,
+            "successful_controls": [],
+            "submitter": {
+                "name": "",
+                "tag": "button",
+                "target": "",
+                "type": "button",
+                "value": "",
+            },
+            "version": 1,
+        }
+        control = UnsubscribeDiscoveredControl(
+            reference=_audited_control_reference(semantics),
+            kind="button",
+            intent=intent,
+        )
+        return _AuditedControlBinding(
+            control=control,
+            target_url=page_identity,
+            method="GET",
+            enctype="",
+            successful_controls=(),
+            click_selector=selector,
+        )
+
     def _form_binding(
         self,
         snapshot: Mapping[str, object],
@@ -1952,6 +2005,36 @@ class PlaywrightUnsubscribeBrowser:
                 });
               }
 
+              const elementPath = node => {
+                if (!node || node.nodeType !== 1) return '';
+                const parts = [];
+                for (let current = node; current && current.nodeType === 1;
+                     current = current.parentElement) {
+                  const tag = current.tagName.toLowerCase();
+                  const siblings = current.parentElement
+                    ? Array.from(current.parentElement.children).filter(
+                        item => item.tagName === current.tagName
+                      )
+                    : [current];
+                  parts.unshift(tag + ':nth-of-type(' +
+                    (siblings.indexOf(current) + 1) + ')');
+                }
+                return parts.join(' > ');
+              };
+              const buttons = [];
+              for (const node of trustedDocumentQuery(
+                'button:not([type]), button[type=button], [role=button], [id=confirmOptOutURL]'
+              ).slice(0, 64)) {
+                if (!visible(node) || node.form) continue;
+                const selector = elementPath(node);
+                if (!selector) continue;
+                buttons.push({
+                  label: (reflectApply(htmlInnerText, node, []) ||
+                    trustedGetAttribute(node, 'aria-label') || '').trim(),
+                  selector
+                });
+              }
+
               const forms = [];
               const submitters = trustedDocumentQuery(
                 'button:not([type]), button[type=submit], input[type=submit]'
@@ -2062,7 +2145,7 @@ class PlaywrightUnsubscribeBrowser:
                   target
                 });
               }
-              return {blocked: false, forms, links};
+              return {blocked: false, buttons, forms, links};
             }
             """
         )
@@ -2083,6 +2166,15 @@ class PlaywrightUnsubscribeBrowser:
                     "trusted browser execution unavailable",
                 )
             binding = self._link_binding(item)
+            if binding is not None:
+                bindings.append(binding)
+        for item in snapshot.get("buttons", ()):
+            if not isinstance(item, Mapping):
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.TRUSTED_WORLD_UNAVAILABLE,
+                    "trusted browser execution unavailable",
+                )
+            binding = self._button_binding(item)
             if binding is not None:
                 bindings.append(binding)
         for item in snapshot.get("forms", ()):
@@ -2638,13 +2730,14 @@ class PlaywrightUnsubscribeBrowser:
             )
         expected_kind = {
             UnsubscribeOperationKind.SUBMIT_FORM: "form",
-            UnsubscribeOperationKind.CLICK_CONFIRMATION: "link",
+            UnsubscribeOperationKind.CLICK_CONFIRMATION: "button",
             UnsubscribeOperationKind.RECONCILE_HANDOFF: "credential_handoff",
         }.get(appended.kind)
         control = controls.get(appended.target_reference)
         allowed_kinds = {
             UnsubscribeOperationKind.SUBMIT_FORM: {"form", "email_otp"},
             UnsubscribeOperationKind.CLICK_CONFIRMATION: {
+                "button",
                 "link",
                 "captcha_handoff",
             },
@@ -2739,6 +2832,28 @@ class PlaywrightUnsubscribeBrowser:
                 wait_until="domcontentloaded",
                 timeout=self.timeout_ms,
             )
+            self._raise_if_blocked()
+            self._document_url = self._validate_navigation_target(
+                str(getattr(self.page, "url"))
+            )
+            return
+        if binding.control.kind == "button":
+            if not binding.click_selector:
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                    "accepted browser control is unavailable",
+                )
+            button = self.page.locator(binding.click_selector)
+            if button.count() != 1:
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                    "accepted browser control is unavailable",
+                )
+            try:
+                button.click(timeout=self.timeout_ms)
+            except Exception:
+                self._raise_if_blocked()
+                raise
             self._raise_if_blocked()
             self._document_url = self._validate_navigation_target(
                 str(getattr(self.page, "url"))
@@ -2999,7 +3114,8 @@ class PlaywrightUnsubscribeBrowser:
                         binding
                         for binding in self._ordinary_controls()
                         if binding.control.reference == operation.target_reference
-                        and binding.control.kind in {"link", "captcha_handoff"}
+                        and binding.control.kind
+                        in {"button", "link", "captcha_handoff"}
                     ),
                     None,
                 )

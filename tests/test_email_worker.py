@@ -5726,6 +5726,40 @@ def test_unsubscribe_task_uses_consumer_audit_orchestrator():
     assert calls[2] == ("finalize", task, "audited-result")
 
 
+def test_unsubscribe_task_runs_directly_without_an_agent_turn():
+    module = _module()
+    task = SimpleNamespace(
+        id=91,
+        channel="email",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "lifecycle_version": "email_unsubscribe_audited_v2",
+                "action_type": "unsubscribe",
+            }
+        ),
+    )
+    calls = []
+
+    class Store:
+        def claim_reply_tasks(self, _limit, *, channel):
+            assert channel == "email"
+            return [task]
+
+    module.run_email_agent_task_loop(
+        Store(),
+        SimpleNamespace(process=lambda *_args, **_kwargs: pytest.fail("unsubscribe must not create an Agent turn")),
+        load_task_context=lambda _task: pytest.fail("unsubscribe must not load Agent context"),
+        finalize_task=lambda *_args: pytest.fail("unsubscribe must not use Agent finalization"),
+        direct_unsubscribe_runner=lambda task_id: calls.append(("run", task_id)) or {"status": "done", "outcome": "done"},
+        finalize_direct_unsubscribe_task=lambda claimed, result: calls.append(("finalize", claimed.id, result["outcome"])),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert calls == [("run", 91), ("finalize", 91, "done")]
+
+
 def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     tmp_path, monkeypatch
 ):

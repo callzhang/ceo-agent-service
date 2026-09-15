@@ -205,6 +205,7 @@ class _FakeEmailStore:
             "result_text": "host='r.openai.com' control_count=0 modelled_controls=0",
             "receipt_id": "unsubscribe-receipt:5fd912d9:no_reliable_entry",
             "entry_reference": "unsubscribe-entry:870a914f",
+            "entry_url": "https://r.openai.com/asm/unsubscribe?token=private-token",
             "started_at": "2026-09-12T06:21:29+00:00",
             "completed_at": "2026-09-12T06:21:29+00:00",
         }
@@ -364,6 +365,10 @@ def test_email_attempt_carries_its_message_and_unsubscribe_receipt(tmp_path: Pat
     assert email["unsubscribe"]["outcome"] == "skipped_no_reliable_entry"
     assert email["unsubscribe"]["evidence"] == "page-not-operable"
     assert "r.openai.com" in email["unsubscribe"]["result_text"]
+    # The private entry is execution input, not receipt evidence.  It must
+    # never cross the Attempt API boundary, where clicking it would bypass the
+    # recorded skipped outcome and start a separate external operation.
+    assert "entry_url" not in email["unsubscribe"]
     assert email["unsubscribe"]["steps"] == [
         {"sequence": 1, "operation": "open_entry", "state": "skipped_no_reliable_entry"}
     ]

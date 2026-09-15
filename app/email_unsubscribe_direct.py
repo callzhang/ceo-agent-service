@@ -53,6 +53,7 @@ _OPERABLE_CONTROL_KINDS: dict[str, UnsubscribeOperationKind] = {
     "form": UnsubscribeOperationKind.SUBMIT_FORM,
     "email_otp": UnsubscribeOperationKind.SUBMIT_FORM,
     "link": UnsubscribeOperationKind.CLICK_CONFIRMATION,
+    "button": UnsubscribeOperationKind.CLICK_CONFIRMATION,
 }
 _HANDOFF_OUTCOMES: dict[str, UnsubscribeOutcome] = {
     "credential_handoff": UnsubscribeOutcome.SKIPPED_LOGIN_REQUIRED,

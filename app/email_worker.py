@@ -1067,6 +1067,8 @@ class EmailWorkerDependencies:
     run_historical_once: Callable[..., object] | None = None
     reconcile_action_tasks_once: Callable[[], object] | None = None
     reconcile_historical_operations_once: Callable[[], object] | None = None
+    direct_unsubscribe_runner: Callable[[int], Mapping[str, object]] | None = None
+    finalize_direct_unsubscribe_task: Callable[[object, Mapping[str, object]], object] | None = None
 
 
 @dataclass(frozen=True)
@@ -1597,6 +1599,79 @@ def _recover_stale_email_tasks(task_store: object) -> None:
             )
 
 
+def _is_direct_email_unsubscribe_task(task: object) -> bool:
+    """Whether this durable Email task executes without an Agent turn."""
+
+    if str(getattr(task, "channel", "") or "") != "email":
+        return False
+    try:
+        payload = json.loads(str(getattr(task, "trigger_message_json", "") or ""))
+    except json.JSONDecodeError:
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("schema") == "email_agent_action.v1"
+        and payload.get("lifecycle_version") == "email_unsubscribe_audited_v2"
+        and payload.get("action_type") == "unsubscribe"
+    )
+
+
+def _finalize_direct_email_unsubscribe_task(
+    store: object,
+    task: object,
+    result: Mapping[str, object],
+) -> None:
+    """Project a direct unsubscribe receipt onto its task without an Agent run."""
+
+    status = str(result.get("status") or "failed")
+    outcome = str(result.get("outcome") or "")
+    summary = str(result.get("summary") or outcome or "email_unsubscribe_failed")
+    error = result.get("error")
+    error_code = (
+        str(error.get("code") or "")
+        if isinstance(error, Mapping)
+        else ""
+    )
+    retryable = bool(error.get("retryable")) if isinstance(error, Mapping) else False
+    if status == "done":
+        send_status = "completed" if outcome == "done" else "skipped"
+        task_error = ""
+    else:
+        send_status = "failed"
+        task_error = error_code or outcome or "email_unsubscribe_failed"
+
+    store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="direct_unsubscribe",
+        sensitivity_kind="email",
+        codex_reason=summary,
+        audit_summary=summary,
+        send_status=send_status,
+        channel="email",
+    )
+    if status == "done":
+        store.complete_reply_task(
+            task.id, expected_execution_generation=task.execution_generation
+        )
+    elif retryable:
+        store.defer_reply_task(
+            task.id,
+            task_error,
+            expected_execution_generation=task.execution_generation,
+            available_at=_email_task_retry_available_at(task.attempts),
+        )
+    else:
+        store.fail_reply_task(
+            task.id,
+            task_error,
+            expected_execution_generation=task.execution_generation,
+        )
+
+
 def run_email_agent_task_loop(
     task_store: object,
     orchestrator: object,
@@ -1608,6 +1683,8 @@ def run_email_agent_task_loop(
     sleep: Callable[[float], None] = time.sleep,
     max_cycles: int | None = None,
     email_store: object | None = None,
+    direct_unsubscribe_runner: Callable[[int], Mapping[str, object]] | None = None,
+    finalize_direct_unsubscribe_task: Callable[[object, Mapping[str, object]], object] | None = None,
 ) -> None:
     from app.email_unsubscribe import UnsubscribeSelectionUnresolvable
 
@@ -1642,6 +1719,14 @@ def run_email_agent_task_loop(
                     last_error_type = type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH]
                 continue
             try:
+                if (
+                    _is_direct_email_unsubscribe_task(task)
+                    and direct_unsubscribe_runner is not None
+                    and finalize_direct_unsubscribe_task is not None
+                ):
+                    direct_result = direct_unsubscribe_runner(task.id)
+                    finalize_direct_unsubscribe_task(task, direct_result)
+                    continue
                 context = load_task_context(task)
                 from app.task_lifecycle import validate_audited_email_task
 
@@ -2247,6 +2332,12 @@ def email_worker_components(
                 # Audit run died; without it those claims block their action
                 # for good.
                 email_store=getattr(dependencies, "email_store", None),
+                direct_unsubscribe_runner=getattr(
+                    dependencies, "direct_unsubscribe_runner", None
+                ),
+                finalize_direct_unsubscribe_task=getattr(
+                    dependencies, "finalize_direct_unsubscribe_task", None
+                ),
             ),
         ),
         (
@@ -3768,6 +3859,12 @@ def build_email_worker_dependencies(
                     run_email_unsubscribe,
                     Path(settings.db_path),
                 ),
+            ),
+            direct_unsubscribe_runner=partial(
+                run_email_unsubscribe, Path(settings.db_path)
+            ),
+            finalize_direct_unsubscribe_task=partial(
+                _finalize_direct_email_unsubscribe_task, task_store
             ),
             training_tick=training_tick,
             record_health=record_health,

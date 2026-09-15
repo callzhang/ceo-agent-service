@@ -3104,6 +3104,13 @@ def _unsubscribe_form_snapshot(label: str = "Unsubscribe") -> dict[str, object]:
     }
 
 
+def _unsubscribe_button_snapshot(label: str = "Unsubscribe") -> dict[str, object]:
+    return {
+        "label": label,
+        "selector": "html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(1)",
+    }
+
+
 def _discovery_browser(
     *,
     control_snapshots: list[dict[str, object]],
@@ -3185,6 +3192,57 @@ def test_discover_current_page_reads_controls_after_the_page_renders() -> None:
     assert discovery.state is UnsubscribePageState.ACTION_REQUIRED
     assert [control.kind for control in discovery.controls] == ["form"]
     assert discovery.controls[0].intent == "unsubscribe"
+
+
+def test_discover_current_page_models_a_standalone_unsubscribe_button() -> None:
+    browser = _discovery_browser(
+        control_snapshots=[
+            {
+                "blocked": False,
+                "forms": [],
+                "links": [],
+                "buttons": [_unsubscribe_button_snapshot()],
+            }
+        ],
+        structures=[{"textLength": 24, "controlCount": 1}],
+        texts=["Manage your preferences"],
+    )
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert [control.kind for control in discovery.controls] == ["button"]
+    assert discovery.controls[0].intent == "unsubscribe"
+
+
+def test_confirmation_button_clicks_only_its_modelled_exact_selector() -> None:
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": 24, "controlCount": 1}],
+        texts=["Manage your preferences"],
+    )
+    binding = browser._button_binding(_unsubscribe_button_snapshot())
+    assert binding is not None
+    clicks: list[str] = []
+
+    class Button:
+        def count(self):
+            return 1
+
+        def click(self, **_kwargs):
+            clicks.append("click")
+
+    class Page:
+        url = "https://news.example.com/unsubscribe"
+
+        def locator(self, selector):
+            assert selector == _unsubscribe_button_snapshot()["selector"]
+            return Button()
+
+    browser.page = Page()
+
+    browser._execute_audited_control(binding)
+
+    assert clicks == ["click"]
 
 
 def test_a_stated_terminal_outcome_outranks_the_sites_own_sign_in_button() -> None:

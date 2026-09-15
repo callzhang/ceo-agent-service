@@ -148,7 +148,7 @@ def test_a_confirmation_button_is_operated_without_another_agent_turn() -> None:
     effect = _effect()
     browser = ScriptedBrowser(
         [
-            _action_required(_control("form", "unsubscribe", "control-confirm")),
+            _action_required(_control("button", "unsubscribe", "control-confirm")),
             _terminal(effect, UnsubscribePageState.DONE, "You are unsubscribed."),
         ]
     )
@@ -158,10 +158,10 @@ def test_a_confirmation_button_is_operated_without_another_agent_turn() -> None:
     assert result.outcome is UnsubscribeOutcome.DONE
     assert browser.calls == [
         ("open_entry", ENTRY.reference),
-        ("submit_form", "control-confirm"),
+        ("click_confirmation", "control-confirm"),
     ]
     # Both pages are in the journal, so the operation is reviewable end to end.
-    assert [step.operation for step in result.journal] == ["open_entry", "submit_form"]
+    assert [step.operation for step in result.journal] == ["open_entry", "click_confirmation"]
 
 
 def test_the_control_that_says_what_it_does_is_preferred() -> None:

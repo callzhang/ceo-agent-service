@@ -312,8 +312,8 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("page-not-operable")).toBeInTheDocument();
     expect(screen.getByText("host='r.openai.com' control_count=0")).toBeInTheDocument();
     expect(screen.getByText("open_entry")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "https://r.openai.com/asm/unsubscribe?token=private-token" })).toHaveAttribute("href", "https://r.openai.com/asm/unsubscribe?token=private-token");
-    expect(screen.getByText("退订入口（打开会真实执行退订）")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "https://r.openai.com/asm/unsubscribe?token=private-token" })).not.toBeInTheDocument();
+    expect(screen.queryByText("退订入口（打开会真实执行退订）")).not.toBeInTheDocument();
   });
 
   it("keeps the process visible for an Attempt whose transcripts are gone", async () => {
