@@ -2610,6 +2610,15 @@ def test_reconcile_done_reply_tasks_with_failed_current_run(tmp_path: Path) -> N
     assert updated.error == "codex_process_failed"
 
 
+def test_generic_store_skips_email_receipt_reconciliation_without_email_schema(
+    tmp_path: Path,
+) -> None:
+    """Core startup can run before the optional Email schema is initialized."""
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    assert store.reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts() == 0
+
+
 def test_reconcile_preserves_done_task_with_recorded_message_delivery(
     tmp_path: Path,
 ) -> None:
