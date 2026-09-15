@@ -16567,6 +16567,21 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    @staticmethod
+    def _email_unsubscribe_outcomes_by_task_status() -> dict[str, list[str]]:
+        """Derive task projections from the unsubscribe outcome contract."""
+        from app.email_unsubscribe import (
+            UnsubscribeOutcome,
+            disposition_for_unsubscribe_outcome,
+        )
+
+        outcomes_by_status: dict[str, list[str]] = {"done": [], "skipped": []}
+        for outcome in UnsubscribeOutcome:
+            status = disposition_for_unsubscribe_outcome(outcome).task_status
+            if status in outcomes_by_status:
+                outcomes_by_status[status].append(outcome.value)
+        return outcomes_by_status
+
     def reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts(self) -> int:
         """Project durable email unsubscribe receipts onto their failed tasks.
 
@@ -16578,16 +16593,7 @@ class AutoReplyStore:
         trigger id, so this reconciliation neither guesses nor replays an
         external operation.
         """
-        from app.email_unsubscribe import (
-            UnsubscribeOutcome,
-            disposition_for_unsubscribe_outcome,
-        )
-
-        outcomes_by_status: dict[str, list[str]] = {"done": [], "skipped": []}
-        for outcome in UnsubscribeOutcome:
-            status = disposition_for_unsubscribe_outcome(outcome).task_status
-            if status in outcomes_by_status:
-                outcomes_by_status[status].append(outcome.value)
+        outcomes_by_status = self._email_unsubscribe_outcomes_by_task_status()
         done_outcomes = outcomes_by_status["done"]
         skipped_outcomes = outcomes_by_status["skipped"]
         terminal_outcomes = [*done_outcomes, *skipped_outcomes]
@@ -20402,9 +20408,17 @@ class AutoReplyStore:
         result, so a stale ``reply_tasks.status='done'`` must not hide a failed
         run from Attention or History.
         """
+        unsubscribe_outcomes = self._email_unsubscribe_outcomes_by_task_status()
+        terminal_unsubscribe_outcomes = [
+            *unsubscribe_outcomes["done"],
+            *unsubscribe_outcomes["skipped"],
+        ]
+        receipt_placeholders = ", ".join(
+            "?" for _ in terminal_unsubscribe_outcomes
+        )
         with self._immediate_write_transaction() as db:
             rows = db.execute(
-                """
+                f"""
                 select tasks.id, tasks.execution_generation, runs.structured_error_json
                 from reply_tasks as tasks
                 join agent_runs as runs on runs.id=(
@@ -20423,8 +20437,16 @@ class AutoReplyStore:
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
                   )
+                  and not exists (
+                      select 1
+                      from email_unsubscribe_receipts as receipts
+                      where tasks.channel='email'
+                        and receipts.action_identity=tasks.trigger_message_id
+                        and receipts.outcome in ({receipt_placeholders})
+                  )
                 order by tasks.id
-                """
+                """,
+                terminal_unsubscribe_outcomes,
             ).fetchall()
             repaired = 0
             for row in rows:

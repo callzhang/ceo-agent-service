@@ -326,6 +326,60 @@ def test_terminal_email_unsubscribe_receipts_close_only_their_failed_tasks(
     assert failed.error == "worker_interrupted_after_terminal_receipt"
 
 
+def test_terminal_email_receipt_is_not_overridden_by_a_failed_final_run(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """
+            create table email_unsubscribe_receipts (
+                action_identity text primary key,
+                outcome text not null
+            )
+            """
+        )
+    action_identity = "email-action:receipt-wins"
+    assert store.enqueue_reply_task(
+        channel="email",
+        conversation_id="email-thread:receipt-wins",
+        conversation_title="Receipt wins",
+        single_chat=True,
+        trigger_message_id=action_identity,
+        trigger_create_time="2026-09-15 00:00:00",
+        trigger_sender="Email",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    task = store.claim_reply_tasks(limit=1, channel="email")[0]
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="unsubscribe_email",
+        owner="audit-worker",
+    ).run
+    store.fail_agent_run(audit.id, {"code": "worker_interrupted"}, owner="audit-worker")
+    store.fail_reply_task(
+        task.id,
+        "worker_interrupted_after_terminal_receipt",
+        expected_execution_generation=task.execution_generation,
+    )
+    with store._connect() as db:
+        db.execute(
+            "insert into email_unsubscribe_receipts (action_identity, outcome) values (?, ?)",
+            (action_identity, "done"),
+        )
+
+    assert store.reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts() == 1
+    assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
+    reloaded = store.get_reply_task(task.id)
+    assert reloaded is not None
+    assert reloaded.status == "done"
+
+
 def test_already_settled_task_closes_and_keeps_the_evidence(tmp_path: Path) -> None:
     """Nothing is left to do, and rerunning would repeat someone's decision."""
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
