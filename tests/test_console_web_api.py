@@ -862,6 +862,19 @@ def test_console_history_separates_email_unsubscribe_from_reply(tmp_path: Path):
         send_status="completed",
         channel="email",
     )
+    store.record_reply_attempt(
+        conversation_id="email-unsubscribe-history",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-unsubscribe-reviewed-message",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="reviewed_message_reply",
+        audit_summary="Reviewer feedback: use the fixed unsubscribe entry point.",
+        send_status="skipped",
+        channel="email",
+    )
 
     with _client(tmp_path) as client:
         unsubscribe = client.get("/api/console/history?object_type=email_unsubscribe")
@@ -869,9 +882,9 @@ def test_console_history_separates_email_unsubscribe_from_reply(tmp_path: Path):
 
     assert unsubscribe.status_code == 200
     unsubscribe_payload = unsubscribe.json()
-    assert unsubscribe_payload["meta"]["total"] == 1
-    assert unsubscribe_payload["items"][0]["type"] == "email_unsubscribe"
-    assert unsubscribe_payload["items"][0]["kind"] == "reply"
+    assert unsubscribe_payload["meta"]["total"] == 2
+    assert {item["type"] for item in unsubscribe_payload["items"]} == {"email_unsubscribe"}
+    assert {item["kind"] for item in unsubscribe_payload["items"]} == {"reply"}
 
     assert reply.status_code == 200
     reply_payload = reply.json()
