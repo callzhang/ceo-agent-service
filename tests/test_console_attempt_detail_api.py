@@ -7,7 +7,7 @@ import pytest
 
 from app.audit_web import handle_rerun_attempt_post
 from app.store import AgentRole, AutoReplyStore
-from app.web_api.attempts import build_attempt_detail
+from app.web_api.attempts import build_attempt_detail, _linked_consumer_run
 
 
 CONVERSATION = "email-thread:thread-digest"
@@ -29,6 +29,13 @@ AUDIT_EVENTS = [
         "output": '{"outcome": "skipped_no_reliable_entry"}',
     }
 ]
+
+
+def test_linked_consumer_run_falls_back_to_latest_consumer_sibling():
+    audit = type("Run", (), {"id": 3, "role": "audit", "parent_agent_run_id": None})()
+    old = type("Run", (), {"id": 1, "role": "consumer", "turn_attempt": 0, "proposal_revision": 0})()
+    latest = type("Run", (), {"id": 2, "role": "consumer", "turn_attempt": 1, "proposal_revision": 0})()
+    assert _linked_consumer_run(audit, [old, latest, audit]) is latest
 
 
 TRIGGER_PAYLOAD = {
@@ -550,7 +557,7 @@ def test_attempt_detail_api_marks_completed_consumer_without_result_unavailable(
     }
 
 
-def test_attempt_detail_api_marks_missing_linked_consumer_result_unavailable(
+def test_attempt_detail_api_recovers_consumer_when_audit_parent_link_is_missing(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -564,17 +571,11 @@ def test_attempt_detail_api_marks_missing_linked_consumer_result_unavailable(
     _, item = build_attempt_detail(store, attempt_id)
 
     assert item is not None
-    assert item["consumer_result"] == {
-        "confidence": "—",
-        "information_completeness": "—",
-        "rule_coverage": "—",
-        "risk": "—",
-        "error_reason": "未找到当前 Attempt 关联的 Consumer run",
-        "current_run": None,
-    }
+    assert item["consumer_result"]["confidence"] == "82%"
+    assert item["consumer_result"]["error_reason"] == ""
 
 
-def test_attempt_detail_api_rejects_audit_parent_that_is_not_a_consumer(
+def test_attempt_detail_api_recovers_consumer_when_audit_parent_is_invalid(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -588,14 +589,8 @@ def test_attempt_detail_api_rejects_audit_parent_that_is_not_a_consumer(
     _, item = build_attempt_detail(store, attempt_id)
 
     assert item is not None
-    assert item["consumer_result"] == {
-        "confidence": "—",
-        "information_completeness": "—",
-        "rule_coverage": "—",
-        "risk": "—",
-        "error_reason": "未找到当前 Attempt 关联的 Consumer run",
-        "current_run": None,
-    }
+    assert item["consumer_result"]["confidence"] == "82%"
+    assert item["consumer_result"]["error_reason"] == ""
 
 
 def test_attempt_detail_api_keeps_old_metrics_while_current_generation_is_pending_then_running(

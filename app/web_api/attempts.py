@@ -139,17 +139,27 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
 
 
 def _linked_consumer_run(terminal_run: Any, agent_runs: list[Any]) -> Any | None:
-    """Resolve only the Consumer run that produced this Attempt's terminal run."""
-    role = _run_role(terminal_run)
-    if role == "consumer":
+    """Resolve the current-generation Consumer for an Attempt's terminal run."""
+    if terminal_run is not None and _run_role(terminal_run) == "consumer":
         return terminal_run
-    if role != "audit":
+    parent_id = getattr(terminal_run, "parent_agent_run_id", None) if terminal_run else None
+    parent = next(
+        (run for run in agent_runs if getattr(run, "id", None) == parent_id),
+        None,
+    )
+    if _run_role(parent) == "consumer":
+        return parent
+    consumers = [run for run in agent_runs if _run_role(run) == "consumer"]
+    if not consumers:
         return None
-    parent_id = getattr(terminal_run, "parent_agent_run_id", None)
-    if parent_id is None:
-        return None
-    parent = next((run for run in agent_runs if getattr(run, "id", None) == parent_id), None)
-    return parent if _run_role(parent) == "consumer" else None
+    return max(
+        consumers,
+        key=lambda run: (
+            int(getattr(run, "turn_attempt", 0) or 0),
+            int(getattr(run, "proposal_revision", 0) or 0),
+            int(getattr(run, "id", 0) or 0),
+        ),
+    )
 
 
 def _consumer_error_reason(consumer_run: Any | None) -> str:
