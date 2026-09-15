@@ -3887,6 +3887,9 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
     reconciled_terminal_projections = (
         store.reconcile_done_reply_tasks_with_failed_current_run()
     )
+    skipped_superseded_tasks = (
+        store.skip_failed_reply_tasks_superseded_by_terminal_business_object()
+    )
     recovered_orphaned_agent_runs = (
         store.recover_orphaned_agent_runs_for_terminal_reply_tasks()
     )
@@ -3897,6 +3900,7 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
     )
     return (
         reconciled_terminal_projections
+        + skipped_superseded_tasks
         + len(recovered_tasks)
         + recovered_orphaned_agent_runs
     )

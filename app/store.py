@@ -20323,6 +20323,36 @@ class AutoReplyStore:
                 repaired += cursor.rowcount
             return repaired
 
+    def skip_failed_reply_tasks_superseded_by_terminal_business_object(self) -> int:
+        """Close an old failed task when its business object has a later terminal task.
+
+        OA scans can create a new trigger for the same process/task pair.  Once
+        the canonical business-object mapping points at a different terminal
+        task, retaining the earlier failed task as current attention is false:
+        the newer task is the current lifecycle owner.
+        """
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks as historical
+                set status='skipped',
+                    error='superseded_by_terminal_business_object_task',
+                    available_at='', locked_at=null, updated_at=current_timestamp
+                where historical.status='failed'
+                  and exists (
+                      select 1
+                      from business_object_tasks as current_mapping
+                      join reply_tasks as current_task
+                        on current_task.id=current_mapping.reply_task_id
+                      where current_mapping.business_object_key=
+                              historical.business_object_key
+                        and current_task.id<>historical.id
+                        and current_task.status in ('done', 'skipped', 'needs_human')
+                  )
+                """
+            )
+            return cursor.rowcount
+
     def finalize_reply_task_without_run(
         self,
         *,

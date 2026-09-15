@@ -2536,6 +2536,56 @@ def test_reconcile_done_reply_tasks_with_failed_current_run(tmp_path: Path) -> N
     assert updated.error == "codex_process_failed"
 
 
+def test_skip_failed_reply_task_superseded_by_terminal_business_object(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for conversation_id, message_id in (
+        ("approval-old-scan", "approval-old"),
+        ("approval-current-scan", "approval-current"),
+    ):
+        store.enqueue_reply_task(
+            conversation_id=conversation_id,
+            conversation_title="审批待办",
+            single_chat=True,
+            trigger_message_id=message_id,
+            trigger_create_time="2026-09-14 10:00:00",
+            trigger_sender="Derek OA",
+            trigger_text="审批事项",
+        )
+    claimed = store.claim_reply_tasks(limit=2)
+    old_task = next(task for task in claimed if task.trigger_message_id == "approval-old")
+    current_task = next(
+        task for task in claimed if task.trigger_message_id == "approval-current"
+    )
+    store.fail_reply_task(
+        old_task.id,
+        "codex_process_failed",
+        expected_execution_generation=old_task.execution_generation,
+    )
+    store.complete_reply_task(
+        current_task.id,
+        expected_execution_generation=current_task.execution_generation,
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set business_object_key='oa:process-1:task-1' "
+            "where id in (?, ?)",
+            (old_task.id, current_task.id),
+        )
+        db.execute(
+            "insert or replace into business_object_tasks "
+            "(business_object_key, reply_task_id) values ('oa:process-1:task-1', ?)",
+            (current_task.id,),
+        )
+
+    assert store.skip_failed_reply_tasks_superseded_by_terminal_business_object() == 1
+    updated = store.get_reply_task(old_task.id)
+    assert updated is not None
+    assert updated.status == "skipped"
+    assert updated.error == "superseded_by_terminal_business_object_task"
+
+
 def test_earliest_delivery_receipt_records_exact_configured_feedback_token(
     tmp_path: Path,
     monkeypatch,
