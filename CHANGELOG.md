@@ -1,5 +1,12 @@
 # Changelog
 
+- 2026-09-14: Scheduled-task run history now resolves Agent Attempt lineage
+  from the three supported Trigger payload locations instead of recursively
+  expanding every JSON node. Unrelated nested identifiers are ignored, while
+  the effective Trigger and its Attempt link remain unchanged. Producer shapes
+  are mutually exclusive; malformed mixed-shape payloads use fixed precedence
+  and cannot link one input to multiple Trigger runs.
+
 - 2026-09-14: SQLite connection setup now names extended failures and closes
   partially configured connections. Schema checks propagate I/O, corruption,
   invalid-database, and open failures instead of treating them as migrations.

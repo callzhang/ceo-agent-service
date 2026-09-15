@@ -617,6 +617,136 @@ def test_soft_delete_keeps_run_history(tmp_path: Path) -> None:
     assert store.list_scheduled_task_runs(task.id) == (run,)
 
 
+def _record_scheduled_lineage_attempt(
+    store: AutoReplyStore,
+    *,
+    suffix: str,
+    trigger_message_json: str,
+) -> int:
+    conversation_id = f"scheduled-lineage-{suffix}"
+    trigger_message_id = f"scheduled-message-{suffix}"
+    assert store.enqueue_reply_task(
+        channel="dingtalk",
+        conversation_id=conversation_id,
+        conversation_title="Scheduled lineage",
+        single_chat=True,
+        trigger_message_id=trigger_message_id,
+        trigger_create_time=NOW.isoformat(),
+        trigger_sender="Scheduler",
+        trigger_text="Scheduled input",
+        trigger_message_json=trigger_message_json,
+    )
+    return store.record_reply_attempt(
+        channel="dingtalk",
+        conversation_id=conversation_id,
+        conversation_title="Scheduled lineage",
+        trigger_message_id=trigger_message_id,
+        trigger_sender="Scheduler",
+        trigger_text="Scheduled input",
+        action="none",
+        sensitivity_kind="general",
+        send_status="skipped",
+    )
+
+
+def test_scheduled_run_attempt_lineage_reads_only_three_canonical_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "scheduled-lineage.sqlite3")
+    task = _create_task(store)
+    runs = tuple(
+        store.create_scheduled_task_run(
+            task.id,
+            trigger_kind="manual",
+            scheduled_for=NOW + timedelta(minutes=offset),
+            now=NOW + timedelta(minutes=offset),
+        )
+        for offset in range(3)
+    )
+    payloads = (
+        {"scheduled_consumer": {"scheduled_task_run_id": runs[0].id}},
+        {
+            "raw_payload": {
+                "scheduled_consumer": {"scheduled_task_run_id": runs[1].id}
+            }
+        },
+        {
+            "context": {
+                "trigger_raw_payload": {"scheduled_task_run_id": runs[2].id}
+            }
+        },
+    )
+    conflicting_attempt = _record_scheduled_lineage_attempt(
+        store,
+        suffix="conflicting-canonical-paths",
+        trigger_message_json=json.dumps(
+            {
+                "scheduled_consumer": {"scheduled_task_run_id": runs[0].id},
+                "context": {
+                    "trigger_raw_payload": {
+                        "scheduled_task_run_id": runs[2].id
+                    }
+                },
+            }
+        ),
+    )
+    canonical_attempts = tuple(
+        _record_scheduled_lineage_attempt(
+            store,
+            suffix=f"canonical-{index}",
+            trigger_message_json=json.dumps(payload),
+        )
+        for index, payload in enumerate(payloads)
+    )
+    _record_scheduled_lineage_attempt(
+        store,
+        suffix="unrelated-nesting",
+        trigger_message_json=json.dumps(
+            {"unrelated": {"scheduled_task_run_id": runs[0].id}}
+        ),
+    )
+    _record_scheduled_lineage_attempt(
+        store,
+        suffix="string-id",
+        trigger_message_json=json.dumps(
+            {"scheduled_consumer": {"scheduled_task_run_id": str(runs[1].id)}}
+        ),
+    )
+    _record_scheduled_lineage_attempt(
+        store,
+        suffix="malformed-json",
+        trigger_message_json="{not-json",
+    )
+
+    executed_sql: list[str] = []
+    original_open_connection = store._open_connection
+
+    def open_traced_connection() -> sqlite3.Connection:
+        connection = original_open_connection()
+        connection.set_trace_callback(executed_sql.append)
+        return connection
+
+    monkeypatch.setattr(store, "_open_connection", open_traced_connection)
+
+    assert store.list_scheduled_task_run_attempts(
+        tuple(run.id for run in runs)
+    ) == {
+        runs[0].id: (
+            (canonical_attempts[0], "skipped"),
+            (conflicting_attempt, "skipped"),
+        ),
+        runs[1].id: ((canonical_attempts[1], "skipped"),),
+        runs[2].id: ((canonical_attempts[2], "skipped"),),
+    }
+    assert store.latest_scheduled_task_run_with_attempt(task.id) == runs[2]
+    lineage_queries = tuple(
+        statement for statement in executed_sql if "reply_task_inputs" in statement
+    )
+    assert len(lineage_queries) == 2
+    assert all("json_tree" not in statement for statement in lineage_queries)
+
+
 def test_claim_link_and_finish_are_owner_guarded_atomic_transitions(
     tmp_path: Path,
 ) -> None:

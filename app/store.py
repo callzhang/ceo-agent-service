@@ -127,6 +127,23 @@ SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
+_SCHEDULED_TASK_RUN_ID_JSON_PATHS = (
+    "$.scheduled_consumer.scheduled_task_run_id",
+    "$.raw_payload.scheduled_consumer.scheduled_task_run_id",
+    "$.context.trigger_raw_payload.scheduled_task_run_id",
+)
+# Trigger producers emit exactly one of these shapes. Fixed precedence keeps a
+# malformed mixed-shape payload from linking one input to multiple Trigger runs.
+_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
+    "case when json_valid(inputs.trigger_message_json) then coalesce("
+    + ", ".join(
+        "case when json_type(inputs.trigger_message_json, "
+        f"'{path}')='integer' then json_extract(inputs.trigger_message_json, "
+        f"'{path}') end"
+        for path in _SCHEDULED_TASK_RUN_ID_JSON_PATHS
+    )
+    + ") end"
+)
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
@@ -6632,21 +6649,17 @@ class AutoReplyStore:
             rows = db.execute(
                 f"""
                 select distinct
-                       cast(lineage.value as integer) as scheduled_task_run_id,
+                       cast({_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL} as integer)
+                           as scheduled_task_run_id,
                        attempts.id as attempt_id,
                        attempts.send_status as attempt_status
                   from reply_task_inputs as inputs
-                  join json_tree(
-                      case when json_valid(inputs.trigger_message_json)
-                           then inputs.trigger_message_json else '{{}}' end
-                  ) as lineage
                   join reply_attempts as attempts
                     on attempts.channel=inputs.channel
                    and attempts.conversation_id=inputs.conversation_id
                    and attempts.trigger_message_id=inputs.trigger_message_id
-                 where lineage.key='scheduled_task_run_id'
-                   and lineage.type='integer'
-                   and cast(lineage.value as integer) in ({placeholders})
+                 where {_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL}
+                       in ({placeholders})
                  order by scheduled_task_run_id, attempt_id desc
                 """,
                 normalized_ids,
@@ -6670,22 +6683,18 @@ class AutoReplyStore:
             raise ValueError("scheduled task id must be a positive integer")
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select run.*
                   from reply_task_inputs as inputs
-                  join json_tree(
-                      case when json_valid(inputs.trigger_message_json)
-                           then inputs.trigger_message_json else '{}' end
-                  ) as lineage
                   join scheduled_task_runs as run
-                    on run.id=cast(lineage.value as integer)
+                    on run.id=cast(
+                        {_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL} as integer
+                    )
                   join reply_attempts as attempts
                     on attempts.channel=inputs.channel
                    and attempts.conversation_id=inputs.conversation_id
                    and attempts.trigger_message_id=inputs.trigger_message_id
-                 where lineage.key='scheduled_task_run_id'
-                   and lineage.type='integer'
-                   and run.scheduled_task_id=?
+                 where run.scheduled_task_id=?
                  order by inputs.id desc, attempts.id desc
                  limit 1
                 """,
