@@ -161,14 +161,6 @@ def process_meeting_memory_writes(
     )
     enqueue_sent_meeting_memory_writes(store)
     owner = f"meeting-memory-{uuid4().hex}"
-    events = store.claim_due_meeting_memory_write_events(
-        now=now.isoformat(),
-        limit=limit,
-        owner=owner,
-        lease_seconds=MEETING_MEMORY_WRITE_LEASE_SECONDS,
-    )
-    if not events:
-        return MeetingMemoryWriteOutcome()
 
     def process_claimed_event(event: MeetingMemoryWriteEvent) -> str:
         # SQLite connections must be confined to their worker thread. The
@@ -187,14 +179,31 @@ def process_meeting_memory_writes(
             owner=owner,
         )
 
-    worker_count = min(concurrency, len(events))
-    if worker_count == 1:
-        results = [process_claimed_event(event) for event in events]
-    else:
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            results = list(executor.map(process_claimed_event, events))
+    results: list[str] = []
+    claimed_count = 0
+    remaining = limit
+    while remaining > 0:
+        # Do not lease the next wave until all events in the current wave can
+        # begin. This keeps a slow single worker from parking the rest of a
+        # large batch in ``processing`` until their lease expires.
+        events = store.claim_due_meeting_memory_write_events(
+            now=now.isoformat(),
+            limit=min(concurrency, remaining),
+            owner=owner,
+            lease_seconds=MEETING_MEMORY_WRITE_LEASE_SECONDS,
+        )
+        if not events:
+            break
+        claimed_count += len(events)
+        remaining -= len(events)
+        worker_count = min(concurrency, len(events))
+        if worker_count == 1:
+            results.extend(process_claimed_event(event) for event in events)
+        else:
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                results.extend(executor.map(process_claimed_event, events))
     return MeetingMemoryWriteOutcome(
-        claimed=len(events),
+        claimed=claimed_count,
         completed=results.count("completed"),
         retried=results.count("retried"),
         failed=results.count("failed"),

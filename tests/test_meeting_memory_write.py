@@ -422,6 +422,53 @@ def test_meeting_memory_processing_uses_bounded_parallelism_and_returns_outcome(
     assert len(set(runtime.workload_keys)) == 3
 
 
+def test_meeting_memory_does_not_claim_a_later_wave_before_it_can_start(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    for index in range(3):
+        _store_sent_job(store, meeting_id=f"minutes-wave-{index}")
+
+    class _InspectingRuntime:
+        def __init__(self) -> None:
+            self.statuses_while_running: list[list[str]] = []
+
+        def execute(self, **kwargs):
+            with store._connect() as db:
+                self.statuses_while_running.append(
+                    [
+                        str(row["status"])
+                        for row in db.execute(
+                            "select status from meeting_memory_write_events order by id"
+                        )
+                    ]
+                )
+            return SimpleNamespace(
+                value=json.dumps(
+                    {
+                        "status": "success",
+                        "memory_id": f"memory-{kwargs['workload_key']}",
+                        "retryable": False,
+                        "source_code": "",
+                        "detail": "",
+                    }
+                )
+            )
+
+    runtime = _InspectingRuntime()
+    outcome = process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=runtime,
+        now=datetime.fromisoformat("2026-09-15T10:00:00+00:00"),
+        limit=3,
+        concurrency=1,
+    )
+
+    assert outcome.completed == 3
+    assert runtime.statuses_while_running[0] == ["processing", "pending", "pending"]
+
+
 def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
     tmp_path: Path,
 ) -> None:
