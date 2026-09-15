@@ -28,6 +28,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-unsubscribe-retry | app/email_store.py, app/email_unsubscribe_direct.py, tests/test_email_unsubscribe_direct.py, docs/email-unsubscribe-attempt-link.md | Explicitly retry `skipped_no_reliable_entry` receipts and promote successful reruns | 2026-09-15 |
 | codex-agent-health-metrics | app/store.py, app/audit_web.py, app/cli.py, frontend/src/api/console.ts, frontend/src/pages/StatusPage.tsx, tests/test_store.py, tests/test_audit_web.py, tests/test_cli.py, tests/test_console_status_response.py, frontend/src/api/console.test.ts, frontend/src/pages/StatusPage.test.tsx, README.md, CHANGELOG.md | Meeting Memory lease-backed health payload, degraded health gate, components and status UI | 2026-09-15 |
 
 

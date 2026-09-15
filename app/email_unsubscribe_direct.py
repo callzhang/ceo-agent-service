@@ -436,7 +436,11 @@ class DirectEmailUnsubscribeOperation:
             identity = _validate_task_identity(task, payload)
             action_identity = str(identity["action_identity"])
             existing = self.email_store.get_email_unsubscribe_receipt(action_identity)
-            if existing is not None:
+            retrying_unreliable_entry = bool(
+                existing is not None
+                and existing.get("outcome") == "skipped_no_reliable_entry"
+            )
+            if existing is not None and not retrying_unreliable_entry:
                 # Already done once. Unsubscribing twice is harmless but
                 # pointless, and the first receipt is the record.
                 return _persisted_receipt_result(existing)
@@ -480,6 +484,11 @@ class DirectEmailUnsubscribeOperation:
                 operations=(
                     opening_operation(entry, one_click_verified=one_click_verified),
                 ),
+                previous_effect_digest=(
+                    str(existing["effect_digest"])
+                    if retrying_unreliable_entry and existing is not None
+                    else ""
+                ),
             )
             executed: list[UnsubscribeOperation] = []
             result = self.run_effect(
@@ -488,7 +497,14 @@ class DirectEmailUnsubscribeOperation:
                 one_click_verified=one_click_verified,
                 executed=executed,
             )
-            if isinstance(result, UnsubscribeExecutionResult) and result.receipt:
+            if (
+                isinstance(result, UnsubscribeExecutionResult)
+                and result.receipt
+                and (
+                    not retrying_unreliable_entry
+                    or result.outcome is not UnsubscribeOutcome.SKIPPED_NO_RELIABLE_ENTRY
+                )
+            ):
                 # The effect that gets persisted is the one this run actually
                 # performed, not the single entry operation it started from.
                 self._persist(

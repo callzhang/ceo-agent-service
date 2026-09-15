@@ -16,3 +16,10 @@ Audit decisions.
 receipt is returned without opening the private entry again.  Attempt detail
 exposes the receipt and its redacted result text, but never re-exports a raw
 unsubscribe entry URL as a clickable link.
+
+An explicit retry of `skipped_no_reliable_entry` reopens the same ActionPlan
+entry. If the new run reaches a terminal result, the receipt becomes the
+current projection while the original Attempt and old effect remain in the
+history chain. If the page is still not operable, the original skip remains
+the current result. A `durable_context_entry_unavailable` result has no
+recoverable persisted entry and is not batch-retried.

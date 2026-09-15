@@ -11649,7 +11649,51 @@ class EmailStore:
                 persisted_receipt = self._email_unsubscribe_receipt_row(
                     existing_receipt
                 )
-                if any(
+                retrying_unreliable_entry = (
+                    persisted_receipt["outcome"] == "skipped_no_reliable_entry"
+                    and outcome != "skipped_no_reliable_entry"
+                )
+                if retrying_unreliable_entry:
+                    # An explicit retry may promote a page that the old
+                    # detector misclassified. Attempt rows remain immutable
+                    # history; this row is the current projection.
+                    db.execute(
+                        """
+                        update email_unsubscribe_receipts
+                           set effect_digest=?, action_plan_id=?,
+                               action_plan_version=?, classification_id=?,
+                               account_id=?, stable_message_identity=?,
+                               thread_identity=?, entry_reference=?,
+                               entry_url=?, outcome=?, receipt_id=?,
+                               evidence=?, result_text=?,
+                               observation_digest=?, result_text_truncated=?,
+                               result_text_digest=?, started_at=?,
+                               completed_at=?
+                         where action_identity=?
+                        """,
+                        (
+                            effect_digest,
+                            action_plan_id,
+                            action_plan_version,
+                            classification_id,
+                            account_id,
+                            stable_message_identity,
+                            thread_identity,
+                            entry_reference,
+                            entry_url,
+                            outcome,
+                            receipt_id,
+                            evidence,
+                            normalized_result_text,
+                            observation_digest,
+                            int(result_text_truncated),
+                            result_text_digest,
+                            started_at,
+                            completed_at,
+                            action_identity,
+                        ),
+                    )
+                elif any(
                     persisted_receipt[key] != value
                     for key, value in requested_receipt.items()
                 ):

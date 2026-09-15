@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -481,6 +482,55 @@ def test_a_second_call_returns_the_receipt_instead_of_unsubscribing_again(
     assert second["receipt_id"] == first["receipt_id"]
     # The browser was never opened a second time.
     assert len(browser.calls) == 1
+
+
+def test_an_explicit_retry_promotes_a_previous_unreliable_entry_skip(
+    tmp_path: Path,
+) -> None:
+    effect = _effect()
+    operation, task, email_store, browser = _operation(
+        tmp_path,
+        [
+            _action_required(
+                _control("confirmation_email", "confirm", "control-mail-me"),
+                text="Nothing operable yet.",
+            )
+        ],
+    )
+
+    first = operation.execute(task.id)
+    assert first["outcome"] == "skipped_no_reliable_entry"
+    old_receipt = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
+    assert old_receipt is not None
+
+    browser.observations.append(
+        _terminal(
+            replace(
+                effect,
+                previous_effect_digest=old_receipt["effect_digest"],
+            ),
+            UnsubscribePageState.DONE,
+            "You are unsubscribed.",
+        )
+    )
+    second = operation.execute(task.id)
+
+    assert second["outcome"] == "done"
+    current = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
+    assert current is not None
+    assert current["outcome"] == "done"
+    assert current["effect_digest"] != old_receipt["effect_digest"]
+    assert current["receipt_id"] != old_receipt["receipt_id"]
+    assert len(browser.calls) == 2
+    # The retry is linked to, rather than overwriting, the original effect.
+    with email_store._connect() as db:
+        row = db.execute(
+            "select previous_effect_digest from email_unsubscribe_effects "
+            "where action_identity=? and effect_digest=?",
+            (ACTION_IDENTITY, current["effect_digest"]),
+        ).fetchone()
+    assert row is not None
+    assert row["previous_effect_digest"] == old_receipt["effect_digest"]
 
 
 def test_a_claim_left_by_the_audited_lifecycle_no_longer_blocks_the_receipt(
