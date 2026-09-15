@@ -5787,6 +5787,47 @@ def test_unsubscribe_task_runs_directly_without_an_agent_turn():
     assert calls == [("run", 91), ("finalize", 91, "done")]
 
 
+def test_direct_unsubscribe_browser_timeout_does_not_loop_after_one_retry():
+    module = _module()
+    task = SimpleNamespace(
+        id=92,
+        execution_generation="generation-92",
+        channel="email",
+        error="email_unsubscribe_browser_timeout",
+        conversation_id="email-thread:92",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-action:timeout-92",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    calls = []
+
+    class Store:
+        def record_reply_attempt(self, **kwargs):
+            calls.append(("attempt", kwargs["send_status"]))
+
+        def fail_reply_task(self, task_id, error, **kwargs):
+            calls.append(("fail", task_id, error))
+
+        def defer_reply_task(self, *args, **kwargs):
+            calls.append(("defer", args, kwargs))
+
+    module._finalize_direct_email_unsubscribe_task(
+        Store(),
+        task,
+        {
+            "status": "failed",
+            "outcome": "failed_browser",
+            "error": {"code": "email_unsubscribe_browser_timeout", "retryable": True},
+        },
+    )
+
+    assert calls == [
+        ("attempt", "failed"),
+        ("fail", 92, "email_unsubscribe_browser_timeout"),
+    ]
+
+
 def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     tmp_path, monkeypatch
 ):
