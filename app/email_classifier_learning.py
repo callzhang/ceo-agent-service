@@ -54,7 +54,9 @@ def _selection_values(selection: dict[str, object], key: str) -> list[str]:
     value = selection.get(key)
     if not isinstance(value, list):
         raise ValueError(f"training selection {key} must be a list")
-    values = sorted({item.strip() for item in value if isinstance(item, str) and item.strip()})
+    values = sorted(
+        {item.strip() for item in value if isinstance(item, str) and item.strip()}
+    )
     if len(values) != len(value):
         raise ValueError(f"training selection {key} contains invalid values")
     return values
@@ -85,20 +87,24 @@ def _selection_provenance(
         else None
     )
     source_records: dict[str, list[dict[str, object]]] = {
-        "folder_snapshot": [], "agent_auto_label": [], "user_feedback": [],
+        "folder_snapshot": [],
+        "agent_auto_label": [],
+        "user_feedback": [],
     }
     if snapshot is not None and "folder_snapshot" in sources:
         for row in snapshot["observations"]:
             if row["category_key"] is None:
                 continue
-            source_records["folder_snapshot"].append({
-                "source": "folder_snapshot",
-                "account_id": row["account_id"],
-                "stable_message_identity": row["stable_message_identity"],
-                "provider_thread_id": row["provider_thread_id"],
-                "normalized_model_input": row["normalized_model_input"],
-                "category_key": row["category_key"],
-            })
+            source_records["folder_snapshot"].append(
+                {
+                    "source": "folder_snapshot",
+                    "account_id": row["account_id"],
+                    "stable_message_identity": row["stable_message_identity"],
+                    "provider_thread_id": row["provider_thread_id"],
+                    "normalized_model_input": row["normalized_model_input"],
+                    "category_key": row["category_key"],
+                }
+            )
     list_records = getattr(store, "list_selected_training_records", None)
     if callable(list_records):
         for row in list_records():
@@ -109,12 +115,16 @@ def _selection_provenance(
         # Kept only for narrow, legacy test doubles. Production EmailStore
         # always supplies redacted model input through the method above.
         for row in store.list_training_examples(include_inclusion=True):
-            source_records["user_feedback"].append({
-                "source": "user_feedback", "account_id": row.get("account_id", "legacy"),
-                "stable_message_identity": row["message_id"],
-                "normalized_model_input": row.get("model_text", "legacy"),
-                "category_key": row["label"], "provider_thread_id": None,
-            })
+            source_records["user_feedback"].append(
+                {
+                    "source": "user_feedback",
+                    "account_id": row.get("account_id", "legacy"),
+                    "stable_message_identity": row["message_id"],
+                    "normalized_model_input": row.get("model_text", "legacy"),
+                    "category_key": row["label"],
+                    "provider_thread_id": None,
+                }
+            )
     available = {
         str(row["category_key"])
         for source in sources
@@ -127,7 +137,8 @@ def _selection_provenance(
     selected_by_source: dict[str, list[dict[str, object]]] = {}
     for source in sources:
         selected_by_source[source] = [
-            row for row in source_records[source]
+            row
+            for row in source_records[source]
             if str(row.get("category_key") or "") in categories
             and str(row.get("stable_message_identity") or "")
             and str(row.get("normalized_model_input") or "").strip()
@@ -135,15 +146,17 @@ def _selection_provenance(
     provenance: list[dict[str, object]] = []
     for source in sources:
         for category in categories:
-            identities = sorted({
-                str(row["stable_message_identity"])
-                for row in selected_by_source[source]
-                if row["category_key"] == category
-            })
+            identities = sorted(
+                {
+                    str(row["stable_message_identity"])
+                    for row in selected_by_source[source]
+                    if row["category_key"] == category
+                }
+            )
             digest = sha256(
-                json.dumps(identities, ensure_ascii=False, separators=(",", ":")).encode(
-                    "utf-8"
-                )
+                json.dumps(
+                    identities, ensure_ascii=False, separators=(",", ":")
+                ).encode("utf-8")
             ).hexdigest()
             provenance.append(
                 {
@@ -153,7 +166,9 @@ def _selection_provenance(
                     "snapshot_id": state["snapshot_id"] if state else None,
                     "snapshot_digest": state["snapshot_sha"] if state else None,
                     "snapshot_version": state["snapshot_version"] if state else None,
-                    "description_version": state["description_version"] if state else None,
+                    "description_version": state["description_version"]
+                    if state
+                    else None,
                     "dataset_digest": digest,
                 }
             )
@@ -173,7 +188,9 @@ def _selection_provenance(
         # The run file is private durable execution evidence.  This list is
         # intentionally removed from the console response below.
         "selected_message_identities": sorted(selected_records),
-        "selected_training_records": [selected_records[key] for key in sorted(selected_records)],
+        "selected_training_records": [
+            selected_records[key] for key in sorted(selected_records)
+        ],
     }
 
 
@@ -295,9 +312,13 @@ class EmailClassifierLearningService:
             **canonical,
             "provenance": [
                 {
-                    key: value for key, value in row.items()
-                    if key not in {
-                        "snapshot_id", "snapshot_digest", "snapshot_version",
+                    key: value
+                    for key, value in row.items()
+                    if key
+                    not in {
+                        "snapshot_id",
+                        "snapshot_digest",
+                        "snapshot_version",
                         "description_version",
                     }
                 }
@@ -305,7 +326,10 @@ class EmailClassifierLearningService:
             ],
         }
         selection_json = json.dumps(
-            request_fingerprint, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            request_fingerprint,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
         )
         selection_digest = sha256(selection_json.encode("utf-8")).hexdigest()
         self.registry.root.mkdir(parents=True, exist_ok=True)
@@ -323,12 +347,16 @@ class EmailClassifierLearningService:
                     existing_run = self.controller._load_run(existing_run_id)
                 except (OSError, TypeError, ValueError, json.JSONDecodeError):
                     existing_run = None
-            return AutoRetrainResult(
-                RetrainDecision(False, "training_selection_deduplicated", 0),
-                state,
-                None,
-                existing_run,
-            )
+            if existing_run is None or existing_run.status not in {
+                "failed",
+                "rejected",
+            }:
+                return AutoRetrainResult(
+                    RetrainDecision(False, "training_selection_deduplicated", 0),
+                    state,
+                    None,
+                    existing_run,
+                )
         selected_snapshot = build_selected_training_snapshot(
             selected_records,
             snapshot_id=(
@@ -343,12 +371,14 @@ class EmailClassifierLearningService:
         stored_snapshot = self.store.persist_training_snapshot(selected_snapshot)
         for provenance in canonical["provenance"]:
             assert isinstance(provenance, dict)
-            provenance.update({
-                "snapshot_id": stored_snapshot["snapshot_id"],
-                "snapshot_digest": stored_snapshot["snapshot_digest"],
-                "snapshot_version": stored_snapshot["snapshot_version"],
-                "description_version": stored_snapshot["description_version"],
-            })
+            provenance.update(
+                {
+                    "snapshot_id": stored_snapshot["snapshot_id"],
+                    "snapshot_digest": stored_snapshot["snapshot_digest"],
+                    "snapshot_version": stored_snapshot["snapshot_version"],
+                    "description_version": stored_snapshot["description_version"],
+                }
+            )
         signal = SnapshotTrainingSignal(
             snapshot_sha=str(stored_snapshot["snapshot_digest"]),
             description_version=str(stored_snapshot["description_version"]),

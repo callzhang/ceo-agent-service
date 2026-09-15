@@ -233,8 +233,20 @@ def test_manual_folder_selection_is_bound_to_the_training_run(tmp_path: Path):
         "important_label_watermark": 2,
         "minimum_ready": True,
         "observations": [
-            {"stable_message_identity": "mail-1", "category_key": "work", "account_id": "account-a", "provider_thread_id": None, "normalized_model_input": '{"body":"mail one"}'},
-            {"stable_message_identity": "mail-2", "category_key": "legal", "account_id": "account-a", "provider_thread_id": None, "normalized_model_input": '{"body":"mail two"}'},
+            {
+                "stable_message_identity": "mail-1",
+                "category_key": "work",
+                "account_id": "account-a",
+                "provider_thread_id": None,
+                "normalized_model_input": '{"body":"mail one"}',
+            },
+            {
+                "stable_message_identity": "mail-2",
+                "category_key": "legal",
+                "account_id": "account-a",
+                "provider_thread_id": None,
+                "normalized_model_input": '{"body":"mail two"}',
+            },
         ],
     }
     store.latest_training_snapshot_state = lambda: snapshot
@@ -261,7 +273,11 @@ def test_manual_folder_selection_is_bound_to_the_training_run(tmp_path: Path):
     controller = Controller()
     service.controller = controller
     result = service.request_manual_training(
-        selection={"sources": ["folder_snapshot"], "categories": ["work"], "model_families": ["embedding-mlp"]}
+        selection={
+            "sources": ["folder_snapshot"],
+            "categories": ["work"],
+            "model_families": ["embedding-mlp"],
+        }
     )
 
     assert result.training_run is not None
@@ -270,12 +286,16 @@ def test_manual_folder_selection_is_bound_to_the_training_run(tmp_path: Path):
     assert result.training_run.training_selection["model_families"] == ["embedding-mlp"]
     assert controller.selection["provenance"][0]["sample_count"] == 1
     assert controller.selection["provenance"][0]["dataset_digest"]
-    payload = json.loads(next((tmp_path / "models").glob("training-request-*.json")).read_text())
+    payload = json.loads(
+        next((tmp_path / "models").glob("training-request-*.json")).read_text()
+    )
     assert payload["run_id"] == "selected-run"
     assert payload["execution"] == "staged_candidate_training"
 
 
-def test_manual_agent_and_user_selection_uses_selected_labels(tmp_path: Path, monkeypatch):
+def test_manual_agent_and_user_selection_uses_selected_labels(
+    tmp_path: Path, monkeypatch
+):
     service, store, _rows, _ = _service_with_pending(tmp_path)
     snapshot = {
         "snapshot_id": "email-folder-snapshot-20260912T000000.000000Z-bbbbbbbbbbbb",
@@ -283,18 +303,43 @@ def test_manual_agent_and_user_selection_uses_selected_labels(tmp_path: Path, mo
         "snapshot_version": "email-folder-training-snapshot-v1",
         "description_version": "description-set-sha256:" + "d" * 64,
         "input_schema_version": "email-folder-model-input-v3",
-        "folder_label_watermark": 2, "important_label_watermark": 0,
+        "folder_label_watermark": 2,
+        "important_label_watermark": 0,
         "minimum_ready": True,
         "observations": [
-            {"stable_message_identity": "mail-user", "category_key": "work", "account_id": "account-a", "provider_thread_id": None, "normalized_model_input": '{"body":"folder user"}'},
-            {"stable_message_identity": "mail-agent", "category_key": "legal", "account_id": "account-a", "provider_thread_id": None, "normalized_model_input": '{"body":"folder agent"}'},
+            {
+                "stable_message_identity": "mail-user",
+                "category_key": "work",
+                "account_id": "account-a",
+                "provider_thread_id": None,
+                "normalized_model_input": '{"body":"folder user"}',
+            },
+            {
+                "stable_message_identity": "mail-agent",
+                "category_key": "legal",
+                "account_id": "account-a",
+                "provider_thread_id": None,
+                "normalized_model_input": '{"body":"folder agent"}',
+            },
         ],
     }
     store.latest_training_snapshot_state = lambda: snapshot
     store.get_training_snapshot = lambda _snapshot_id: snapshot
     store.list_selected_training_records = lambda: [
-        {"source": "user_feedback", "stable_message_identity": "mail-user", "category_key": "legal", "account_id": "account-a", "normalized_model_input": '{"body":"user confirmation"}'},
-        {"source": "agent_auto_label", "stable_message_identity": "mail-agent", "category_key": "work", "account_id": "account-a", "normalized_model_input": '{"body":"agent label"}'},
+        {
+            "source": "user_feedback",
+            "stable_message_identity": "mail-user",
+            "category_key": "legal",
+            "account_id": "account-a",
+            "normalized_model_input": '{"body":"user confirmation"}',
+        },
+        {
+            "source": "agent_auto_label",
+            "stable_message_identity": "mail-agent",
+            "category_key": "work",
+            "account_id": "account-a",
+            "normalized_model_input": '{"body":"agent label"}',
+        },
     ]
     monkeypatch.setattr(
         "app.email_classifier_learning.build_selected_training_snapshot",
@@ -306,21 +351,31 @@ def test_manual_agent_and_user_selection_uses_selected_labels(tmp_path: Path, mo
         "snapshot_version": "email-selected-training-snapshot-v1",
         "description_version": "selected-training-input-v1",
     }
-    service.controller = type("Controller", (), {
-        "start": lambda self, **kwargs: TrainingSubprocessRun(
-            run_id="source-selected-run", status="running", pid=1,
-            started_at=kwargs["now"].isoformat(), updated_at=kwargs["now"].isoformat(),
-            snapshot_id=kwargs["snapshot_id"], snapshot_sha=kwargs["signal"].snapshot_sha,
-            description_version=kwargs["signal"].description_version,
-            training_selection=kwargs["training_selection"],
-        ),
-    })()
+    service.controller = type(
+        "Controller",
+        (),
+        {
+            "start": lambda self, **kwargs: TrainingSubprocessRun(
+                run_id="source-selected-run",
+                status="running",
+                pid=1,
+                started_at=kwargs["now"].isoformat(),
+                updated_at=kwargs["now"].isoformat(),
+                snapshot_id=kwargs["snapshot_id"],
+                snapshot_sha=kwargs["signal"].snapshot_sha,
+                description_version=kwargs["signal"].description_version,
+                training_selection=kwargs["training_selection"],
+            ),
+        },
+    )()
 
-    result = service.request_manual_training(selection={
-        "sources": ["agent_auto_label", "user_feedback"],
-        "categories": ["work", "legal"],
-        "model_families": ["embedding-mlp"],
-    })
+    result = service.request_manual_training(
+        selection={
+            "sources": ["agent_auto_label", "user_feedback"],
+            "categories": ["work", "legal"],
+            "model_families": ["embedding-mlp"],
+        }
+    )
 
     selection = result.training_run.training_selection
     assert selection["selected_message_identities"] == ["mail-agent", "mail-user"]
@@ -336,27 +391,49 @@ def test_manual_training_selection_is_idempotent_for_same_scope(tmp_path: Path):
     service, store, _rows, _ = _service_with_pending(tmp_path)
     snapshot = {
         "snapshot_id": "email-folder-snapshot-20260912T000000.000000Z-aaaaaaaaaaaa",
-        "snapshot_sha": "a" * 64, "snapshot_version": "email-folder-training-snapshot-v1",
+        "snapshot_sha": "a" * 64,
+        "snapshot_version": "email-folder-training-snapshot-v1",
         "description_version": "description-set-sha256:" + "b" * 64,
-        "input_schema_version": "email-folder-model-input-v2", "folder_label_watermark": 2,
-        "important_label_watermark": 2, "minimum_ready": True,
-        "observations": [{"stable_message_identity": "mail-1", "category_key": "work", "account_id": "account-a", "provider_thread_id": None, "normalized_model_input": '{"body":"mail one"}'}],
+        "input_schema_version": "email-folder-model-input-v2",
+        "folder_label_watermark": 2,
+        "important_label_watermark": 2,
+        "minimum_ready": True,
+        "observations": [
+            {
+                "stable_message_identity": "mail-1",
+                "category_key": "work",
+                "account_id": "account-a",
+                "provider_thread_id": None,
+                "normalized_model_input": '{"body":"mail one"}',
+            }
+        ],
     }
     store.latest_training_snapshot_state = lambda: snapshot
     store.get_training_snapshot = lambda _snapshot_id: snapshot
-    service.controller = type("Controller", (), {
-        "start": lambda self, **kwargs: TrainingSubprocessRun(
-            run_id="selected-run", status="running", pid=123,
-            started_at=kwargs["now"].isoformat(), updated_at=kwargs["now"].isoformat(),
-            snapshot_id=kwargs["snapshot_id"], snapshot_sha=kwargs["signal"].snapshot_sha,
-            description_version=kwargs["signal"].description_version,
-            training_selection=kwargs["training_selection"],
-        ),
-        "_load_run": lambda self, _run_id: TrainingSubprocessRun(
-            run_id="selected-run", status="running", pid=123,
-            started_at="2026-09-12T00:00:00+00:00", updated_at="2026-09-12T00:00:00+00:00",
-        ),
-    })()
+    service.controller = type(
+        "Controller",
+        (),
+        {
+            "start": lambda self, **kwargs: TrainingSubprocessRun(
+                run_id="selected-run",
+                status="running",
+                pid=123,
+                started_at=kwargs["now"].isoformat(),
+                updated_at=kwargs["now"].isoformat(),
+                snapshot_id=kwargs["snapshot_id"],
+                snapshot_sha=kwargs["signal"].snapshot_sha,
+                description_version=kwargs["signal"].description_version,
+                training_selection=kwargs["training_selection"],
+            ),
+            "_load_run": lambda self, _run_id: TrainingSubprocessRun(
+                run_id="selected-run",
+                status="running",
+                pid=123,
+                started_at="2026-09-12T00:00:00+00:00",
+                updated_at="2026-09-12T00:00:00+00:00",
+            ),
+        },
+    )()
     selection = {
         "sources": ["folder_snapshot"],
         "categories": ["work"],
@@ -364,6 +441,66 @@ def test_manual_training_selection_is_idempotent_for_same_scope(tmp_path: Path):
     service.request_manual_training(selection=selection)
     service.request_manual_training(selection=selection)
     assert len(list((tmp_path / "models").glob("training-request-*.json"))) == 1
+
+
+def test_manual_training_selection_retries_after_a_failed_run(tmp_path: Path):
+    service, store, _rows, _ = _service_with_pending(tmp_path)
+    snapshot = {
+        "snapshot_id": "email-folder-snapshot-20260912T000000.000000Z-aaaaaaaaaaaa",
+        "snapshot_sha": "a" * 64,
+        "snapshot_version": "email-folder-training-snapshot-v1",
+        "description_version": "description-set-sha256:" + "b" * 64,
+        "input_schema_version": "email-folder-model-input-v2",
+        "folder_label_watermark": 2,
+        "important_label_watermark": 2,
+        "minimum_ready": True,
+        "observations": [
+            {
+                "stable_message_identity": "mail-1",
+                "category_key": "work",
+                "account_id": "account-a",
+                "provider_thread_id": None,
+                "normalized_model_input": '{"body":"mail one"}',
+            }
+        ],
+    }
+    store.latest_training_snapshot_state = lambda: snapshot
+    store.get_training_snapshot = lambda _snapshot_id: snapshot
+    starts = []
+
+    class Controller:
+        def start(self, **kwargs):
+            starts.append(kwargs)
+            return TrainingSubprocessRun(
+                run_id=f"retry-{len(starts)}",
+                status="running",
+                pid=123,
+                started_at=kwargs["now"].isoformat(),
+                updated_at=kwargs["now"].isoformat(),
+                snapshot_id=kwargs["snapshot_id"],
+                snapshot_sha=kwargs["signal"].snapshot_sha,
+                description_version=kwargs["signal"].description_version,
+                training_selection=kwargs["training_selection"],
+            )
+
+        def _load_run(self, _run_id):
+            return TrainingSubprocessRun(
+                run_id="retry-1",
+                status="failed",
+                pid=123,
+                started_at="2026-09-12T00:00:00+00:00",
+                updated_at="2026-09-12T00:00:00+00:00",
+            )
+
+    service.controller = Controller()
+    selection = {"sources": ["folder_snapshot"], "categories": ["work"]}
+
+    service.request_manual_training(selection=selection)
+    retry = service.request_manual_training(selection=selection)
+
+    assert retry.decision.reason == "manual_selected"
+    assert len(starts) == 2
+    assert len(list((tmp_path / "models").glob("training-request-*.json"))) == 2
 
 
 def test_learning_service_corrects_processed_classification_through_pipeline(
