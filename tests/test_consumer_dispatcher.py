@@ -1778,7 +1778,7 @@ def test_dispatcher_claims_scheduled_source_only_when_worker_capacity_is_availab
     assert dispatcher.dispatch_available(NOW + timedelta(seconds=2), limit=2) == 1
 
 
-def test_scheduled_metrics_exclude_previous_execution_skip_from_latest_error(
+def test_scheduled_metrics_exclude_terminal_source_failures_from_latest_error(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
@@ -1806,7 +1806,111 @@ def test_scheduled_metrics_exclude_previous_execution_skip_from_latest_error(
 
     metrics = ScheduledTaskQueueAdapter(store).metrics(NOW + timedelta(minutes=2))
 
-    assert metrics.latest_error == "real scheduler failure"
+    assert metrics.pending == metrics.due == metrics.running == 0
+    assert metrics.latest_error == ""
+
+
+def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    scheduled = _scheduled_run(store)
+    _reply(store)
+    assert store.enqueue_reply_task(
+        conversation_id="scheduled-cid",
+        conversation_title="Scheduled task",
+        single_chat=False,
+        trigger_message_id="scheduled-message",
+        trigger_create_time=NOW.isoformat(),
+        trigger_sender="Derek",
+        trigger_text="Run the scheduled task.",
+        channel="scheduled",
+    )
+    meeting_id = _meeting(store)
+    work_summary_id = _work_summary(store)
+    okr_id = _okr_review(store)
+    todo_id = _todo_outbox(store)
+    with store._connect() as db:
+        now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
+        db.execute(
+            "update scheduled_task_runs set dispatch_status='failed', "
+            "skip_or_error_reason='terminal scheduled failure' where id=?",
+            (scheduled.id,),
+        )
+        db.execute(
+            "update reply_tasks set status='failed', error='terminal reply failure' "
+            "where channel='dingtalk'"
+        )
+        db.execute(
+            "update reply_tasks set status='failed', error='terminal scheduled execution failure' "
+            "where channel='scheduled'"
+        )
+        db.execute(
+            "update meeting_alignment_jobs set status='failed', error='terminal meeting failure' "
+            "where id=?",
+            (meeting_id,),
+        )
+        db.execute(
+            "update work_summary_inputs set status='failed', error='terminal work-summary failure' "
+            "where id=?",
+            (work_summary_id,),
+        )
+        db.execute(
+            "update okr_review_requests set status='failed', error='terminal OKR failure' "
+            "where id=?",
+            (okr_id,),
+        )
+        db.execute(
+            "update task_todo_sync_outbox set status='failed', attempt_count=3, "
+            "error='terminal todo failure' where id=?",
+            (todo_id,),
+        )
+        db.execute(
+            "insert into dispatcher_claim_leases "
+            "(adapter_name, source_id, owner, owner_pid, generation, "
+            "lease_expires_at, terminal_at, last_error, created_at, updated_at) "
+            "values ('reply', '1', '', 0, 1, '', ?, 'terminal lease failure', ?, ?)",
+            (now_text, now_text, now_text),
+        )
+
+    adapters = (
+        ScheduledTaskQueueAdapter(store),
+        ReplyQueueAdapter(store),
+        dispatcher_adapters.ScheduledExecutionQueueAdapter(store),
+        MeetingQueueAdapter(store),
+        WorkSummaryQueueAdapter(store),
+        OkrReviewQueueAdapter(store),
+        dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(store),
+    )
+
+    for adapter in adapters:
+        metrics = adapter.metrics(NOW)
+        assert metrics.pending == metrics.due == metrics.running == 0
+        assert metrics.latest_error == ""
+
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='pending', error='retryable reply failure' "
+            "where channel='dingtalk'"
+        )
+        db.execute(
+            "update reply_tasks set status='pending', error='retryable scheduled execution failure' "
+            "where channel='scheduled'"
+        )
+        db.execute(
+            "update dispatcher_claim_leases set terminal_at='', "
+            "last_error='retryable lease failure', updated_at=? "
+            "where adapter_name='reply' and source_id='1'",
+            (NOW.strftime("%Y-%m-%d %H:%M:%S"),),
+        )
+
+    assert ReplyQueueAdapter(store).metrics(NOW).latest_error == "retryable lease failure"
+    assert (
+        dispatcher_adapters.ScheduledExecutionQueueAdapter(store)
+        .metrics(NOW)
+        .latest_error
+        == "retryable scheduled execution failure"
+    )
 
 
 def test_scheduled_metrics_clear_latest_error_after_a_recovered_dispatch(

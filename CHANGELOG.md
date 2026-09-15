@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-09-15: Dispatcher queue `latest_error` now reports only errors attached
+  to sources the Dispatcher can currently claim. Terminal source failures stay
+  visible in Queue, Attention, and history without leaving an obsolete
+  Dispatcher-health error; reply and scheduled-execution errors remain
+  channel-scoped.
+
 - 2026-09-15: Completion-check validation that proposes protected project
   changes or no lifecycle transition now ends as a policy skip. It no longer
   consumes retry budget or creates a misleading task-agent service error.

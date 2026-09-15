@@ -10846,6 +10846,52 @@ def test_workers_routes_render_page_and_json(tmp_path: Path, monkeypatch):
     assert payload["summary"]["pending"] >= 1
 
 
+def test_workers_status_api_exposes_empty_error_for_empty_dispatcher_queue(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {
+            "label": label,
+            "ok": True,
+            "state": "running",
+            "detail": "running",
+            "pid": "12345",
+            "runs": "4",
+            "initialized": "1",
+        },
+    )
+    db_path = tmp_path / "worker.sqlite3"
+    client = TestClient(create_audit_app(db_path))
+
+    scheduled = None
+    for _ in range(20):
+        response = client.get("/api/workers/status")
+        assert response.status_code == 200
+        scheduled = next(
+            (
+                row
+                for row in response.json()["dispatcher_queues"]
+                if row["name"] == "scheduled"
+            ),
+            None,
+        )
+        if scheduled is not None:
+            break
+        time.sleep(0.01)
+
+    assert scheduled == {
+        "name": "scheduled",
+        "pending": 0,
+        "due": 0,
+        "oldest_available_at": None,
+        "running": 0,
+        "latest_error": "",
+    }
+
+
 def test_render_log_list_paginates(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("cid-1", "msg-1", "codex", "older error")
