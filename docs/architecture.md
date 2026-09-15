@@ -214,6 +214,11 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 但不得删除旧输入、run、session、tool event、provider 结果或错误事件。当前投影修正不能被解释为
 “历史从未失败过”。
 
+当一个旧 `needs_human` Attempt 的来源 `agent_run.reply_task_id` 与该业务对象的 current task
+不同，且 current task 已终态时，启动收口会把旧 Attempt 标为 `skipped`，并写入“新任务已接管”的
+resolution。它只修正过期的当前投影，不删除旧 run 或改变外部结果；同一 current task 上仍待选择的
+`needs_human` 不满足这个条件，必须继续保留。
+
 ### 外部动作身份、顺序与发送投影
 
 Consumer 为每个 ProposedAction 返回 `action_identity`。同一业务对象中，同一预期外部

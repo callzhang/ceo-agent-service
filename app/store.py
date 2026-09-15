@@ -20937,15 +20937,17 @@ class AutoReplyStore:
             return reconciled
 
     def skip_failed_reply_tasks_superseded_by_terminal_business_object(self) -> int:
-        """Close an old failed task when its business object has a later terminal task.
+        """Close obsolete local projections once another task owns the business object.
 
         OA scans can create a new trigger for the same process/task pair.  Once
         the canonical business-object mapping points at a different terminal
-        task, retaining the earlier failed task as current attention is false:
-        the newer task is the current lifecycle owner.
+        task, retaining the earlier failed task or human-decision Attempt as
+        current attention is false: the newer task is the current lifecycle
+        owner.  This never closes a decision belonging to that current task;
+        it only retires an Attempt whose own Agent run belongs to an older task.
         """
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
+            task_cursor = db.execute(
                 """
                 update reply_tasks as historical
                 set status='skipped',
@@ -20964,7 +20966,34 @@ class AutoReplyStore:
                   )
                 """
             )
-            return cursor.rowcount
+            attempt_cursor = db.execute(
+                """
+                update reply_attempts as historical_attempt
+                set send_status='skipped',
+                    send_error='',
+                    resolved_at=current_timestamp,
+                    resolution='同一业务对象已由新的终态任务接管；原人工决策不再有效。',
+                    updated_at=current_timestamp
+                where historical_attempt.send_status='needs_human'
+                  and trim(coalesce(historical_attempt.resolved_at, ''))=''
+                  and exists (
+                      select 1
+                      from agent_runs as source_run
+                      join reply_tasks as source_task
+                        on source_task.id=source_run.reply_task_id
+                      join business_object_tasks as current_mapping
+                        on current_mapping.business_object_key=
+                           source_task.business_object_key
+                      join reply_tasks as current_task
+                        on current_task.id=current_mapping.reply_task_id
+                      where source_run.id=historical_attempt.agent_run_id
+                        and source_run.status in ('completed', 'failed')
+                        and current_task.id<>source_task.id
+                        and current_task.status in ('done', 'skipped', 'needs_human')
+                  )
+                """
+            )
+            return task_cursor.rowcount + attempt_cursor.rowcount
 
     def reconcile_failed_reply_tasks_with_terminal_attempts(self) -> int:
         """Project the latest terminal trigger attempt onto an old failed task.

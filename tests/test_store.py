@@ -2864,6 +2864,102 @@ def test_skip_failed_reply_task_superseded_by_terminal_business_object(
 
 
 @pytest.mark.parametrize(
+    ("current_task_status", "expected_reconciled"),
+    (("done", 1), ("failed", 0)),
+)
+def test_skip_obsolete_needs_human_attempt_superseded_by_terminal_business_object(
+    tmp_path: Path,
+    current_task_status: str,
+    expected_reconciled: int,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for conversation_id, message_id in (
+        ("approval-old-human-scan", "approval-old-human"),
+        ("approval-current-human-scan", "approval-current-human"),
+    ):
+        store.enqueue_reply_task(
+            conversation_id=conversation_id,
+            conversation_title="审批待办",
+            single_chat=True,
+            trigger_message_id=message_id,
+            trigger_create_time="2026-09-14 10:00:00",
+            trigger_sender="Derek OA",
+            trigger_text="审批事项",
+        )
+    claimed = store.claim_reply_tasks(limit=2)
+    old_task = next(
+        task for task in claimed if task.trigger_message_id == "approval-old-human"
+    )
+    current_task = next(
+        task
+        for task in claimed
+        if task.trigger_message_id == "approval-current-human"
+    )
+    old_run = _claim_audit_run(
+        store, old_task.id, old_task.execution_generation, owner="audit"
+    ).run
+    store.complete_agent_run(old_run.id, {}, owner="audit")
+    attempt_id = store.record_reply_attempt(
+        conversation_id=old_task.conversation_id,
+        conversation_title=old_task.conversation_title,
+        trigger_message_id=old_task.trigger_message_id,
+        trigger_sender=old_task.trigger_sender,
+        trigger_text=old_task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+    )
+    if current_task_status == "done":
+        store.complete_reply_task(
+            current_task.id,
+            expected_execution_generation=current_task.execution_generation,
+        )
+    else:
+        store.fail_reply_task(
+            current_task.id,
+            "current_task_failed",
+            expected_execution_generation=current_task.execution_generation,
+        )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (old_run.id, attempt_id),
+        )
+        db.execute(
+            "update reply_tasks set business_object_key='oa:process-2:task-2' "
+            "where id in (?, ?)",
+            (old_task.id, current_task.id),
+        )
+        db.execute(
+            "insert or replace into business_object_tasks "
+            "(business_object_key, reply_task_id) values ('oa:process-2:task-2', ?)",
+            (current_task.id,),
+        )
+
+    assert (
+        store.skip_failed_reply_tasks_superseded_by_terminal_business_object()
+        == expected_reconciled
+    )
+    updated_attempt = store.get_reply_attempt(attempt_id)
+    assert updated_attempt is not None
+    expected_attempt_status = "skipped" if expected_reconciled else "needs_human"
+    assert updated_attempt.send_status == expected_attempt_status
+    assert updated_attempt.send_error == ""
+    with store._connect() as db:
+        closure = db.execute(
+            "select resolved_at, resolution from reply_attempts where id=?",
+            (attempt_id,),
+        ).fetchone()
+    assert closure is not None
+    if expected_reconciled:
+        assert closure["resolved_at"]
+        assert closure["resolution"] == "同一业务对象已由新的终态任务接管；原人工决策不再有效。"
+    else:
+        assert closure["resolved_at"] == ""
+        assert closure["resolution"] == ""
+
+
+@pytest.mark.parametrize(
     ("attempt_status", "expected_task_status"),
     (
         ("completed", "done"),
