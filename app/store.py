@@ -9,7 +9,7 @@ import threading
 import time
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from types import MappingProxyType
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -1378,6 +1378,15 @@ def _is_sqlite_lock_error(exc: sqlite3.OperationalError) -> bool:
     return "locked" in message or "busy" in message
 
 
+def _is_sqlite_missing_schema_error(exc: sqlite3.Error) -> bool:
+    if getattr(exc, "sqlite_errorcode", None) != sqlite3.SQLITE_ERROR:
+        return False
+    message = str(exc).casefold()
+    return message.startswith("no such table:") or message.startswith(
+        "no such column:"
+    )
+
+
 class AutoReplyStore:
     def __init__(
         self,
@@ -2034,10 +2043,10 @@ class AutoReplyStore:
                 return self._schema_manifest_is_current_in_connection(
                     db, include_run_snapshots=True
                 )
-        except sqlite3.OperationalError as exc:
-            if _is_sqlite_lock_error(exc):
-                raise
-            return False
+        except sqlite3.Error as exc:
+            if _is_sqlite_missing_schema_error(exc):
+                return False
+            raise
 
     def _schema_manifest_is_current_after_lock_retry(self) -> bool:
         for attempt in range(SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS):
@@ -2073,10 +2082,11 @@ class AutoReplyStore:
                         connection, include_run_snapshots=False
                     )
                 )
-        except sqlite3.OperationalError as exc:
-            if _is_sqlite_lock_error(exc):
-                raise
-            return False
+        except sqlite3.Error as exc:
+            if _is_sqlite_missing_schema_error(exc):
+                return False
+            _name_sqlite_extended_error(self.path, exc)
+            raise
         finally:
             connection.close()
 
@@ -2136,20 +2146,30 @@ class AutoReplyStore:
         raise RuntimeError("SQLite write transaction retry loop exhausted")
 
     def _open_connection(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(
-            self.path,
-            timeout=self.busy_timeout_seconds,
-        )
-        connection.execute(f"pragma busy_timeout = {self.busy_timeout_milliseconds}")
-        connection.execute("pragma synchronous = normal")
-        # History is a read-heavy UNION over a large, text-heavy database. A
-        # bounded per-connection cache plus mmap keeps cold scans off the
-        # filesystem path without allowing unbounded process memory growth.
-        connection.execute(f"pragma cache_size = {SQLITE_READ_CACHE_SIZE}")
-        connection.execute(f"pragma mmap_size = {SQLITE_MMAP_SIZE_BYTES}")
-        connection.execute("pragma foreign_keys = on")
-        connection.row_factory = sqlite3.Row
-        return connection
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(
+                self.path,
+                timeout=self.busy_timeout_seconds,
+            )
+            connection.execute(
+                f"pragma busy_timeout = {self.busy_timeout_milliseconds}"
+            )
+            connection.execute("pragma synchronous = normal")
+            # History is a read-heavy UNION over a large, text-heavy database. A
+            # bounded per-connection cache plus mmap keeps cold scans off the
+            # filesystem path without allowing unbounded process memory growth.
+            connection.execute(f"pragma cache_size = {SQLITE_READ_CACHE_SIZE}")
+            connection.execute(f"pragma mmap_size = {SQLITE_MMAP_SIZE_BYTES}")
+            connection.execute("pragma foreign_keys = on")
+            connection.row_factory = sqlite3.Row
+            return connection
+        except sqlite3.Error as error:
+            _name_sqlite_extended_error(self.path, error)
+            if connection is not None:
+                with suppress(sqlite3.Error):
+                    connection.close()
+            raise
 
     @contextmanager
     def read_snapshot(self) -> Iterator[None]:

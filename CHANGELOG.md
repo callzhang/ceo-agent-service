@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-09-14: SQLite connection setup now names extended failures and closes
+  partially configured connections. Schema checks propagate I/O, corruption,
+  invalid-database, and open failures instead of treating them as migrations.
+
 - 2026-09-14: Meeting-to-Memory writes now recognize the current Codex CLI
   `response_item` result shape and safely normalize a structured success
   diagnostic. A valid `success` receipt with a Memory ID can no longer be

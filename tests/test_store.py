@@ -5,6 +5,7 @@ import json
 import sqlite3
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
 from pathlib import Path
@@ -20,6 +21,30 @@ from app.store import (
     AgentRunLeaseLostError,
     AutoReplyStore,
 )
+
+
+def _sqlite_failure(
+    message: str,
+    *,
+    code: int,
+    name: str,
+    error_type: type[sqlite3.Error] = sqlite3.OperationalError,
+) -> sqlite3.Error:
+    error = error_type(message)
+    error.sqlite_errorcode = code
+    error.sqlite_errorname = name
+    return error
+
+
+def _store_without_initialization(path: Path) -> AutoReplyStore:
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    store.path = path
+    store.busy_timeout_seconds = store_module.SQLITE_BUSY_TIMEOUT_SECONDS
+    store.busy_timeout_milliseconds = store.busy_timeout_seconds * 1000
+    store._read_snapshot_connection = ContextVar(
+        f"test_read_snapshot_{id(store)}", default=None
+    )
+    return store
 
 
 def test_prepare_outbound_postfix_reuses_final_body_when_candidate_or_config_changes(
@@ -2980,6 +3005,146 @@ def test_store_rechecks_schema_after_transient_database_lock(tmp_path, monkeypat
     monkeypatch.setattr(AutoReplyStore, "_initialize", unexpected_initialize)
 
     AutoReplyStore(db_path)
+
+
+@pytest.mark.parametrize(
+    ("error_type", "error_code", "error_name", "message"),
+    [
+        (
+            sqlite3.OperationalError,
+            sqlite3.SQLITE_IOERR | (2 << 8),
+            "SQLITE_IOERR_SHORT_READ",
+            "disk I/O error",
+        ),
+        (
+            sqlite3.DatabaseError,
+            sqlite3.SQLITE_CORRUPT,
+            "SQLITE_CORRUPT",
+            "database disk image is malformed",
+        ),
+        (
+            sqlite3.DatabaseError,
+            sqlite3.SQLITE_NOTADB,
+            "SQLITE_NOTADB",
+            "file is not a database",
+        ),
+        (
+            sqlite3.OperationalError,
+            sqlite3.SQLITE_CANTOPEN,
+            "SQLITE_CANTOPEN",
+            "unable to open database file",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "schema_check_name",
+    ["_schema_is_current", "_schema_manifest_is_current"],
+)
+def test_schema_checks_propagate_non_schema_sqlite_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error_type: type[sqlite3.Error],
+    error_code: int,
+    error_name: str,
+    message: str,
+    schema_check_name: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / "schema-failure.sqlite3")
+    capsys.readouterr()
+    error = _sqlite_failure(
+        message,
+        code=error_code,
+        name=error_name,
+        error_type=error_type,
+    )
+
+    def fail_manifest_check(
+        _db: sqlite3.Connection,
+        *,
+        include_run_snapshots: bool,
+    ) -> bool:
+        del include_run_snapshots
+        raise error
+
+    monkeypatch.setattr(
+        store,
+        "_schema_manifest_is_current_in_connection",
+        fail_manifest_check,
+    )
+
+    with pytest.raises(sqlite3.Error) as raised:
+        getattr(store, schema_check_name)()
+
+    assert raised.value is error
+    assert capsys.readouterr().err.count(error_name) == 1
+
+
+def test_schema_io_error_does_not_start_initialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "schema-io-error.sqlite3"
+    AutoReplyStore(db_path)
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    error = _sqlite_failure(
+        "disk I/O error",
+        code=sqlite3.SQLITE_IOERR | (2 << 8),
+        name="SQLITE_IOERR_SHORT_READ",
+    )
+    initialize_calls = 0
+
+    def fail_schema_check(_self: AutoReplyStore) -> bool:
+        raise error
+
+    def count_initialize(_self: AutoReplyStore) -> None:
+        nonlocal initialize_calls
+        initialize_calls += 1
+
+    monkeypatch.setattr(AutoReplyStore, "_schema_is_current", fail_schema_check)
+    monkeypatch.setattr(AutoReplyStore, "_initialize", count_initialize)
+
+    with pytest.raises(sqlite3.Error) as raised:
+        AutoReplyStore(db_path)
+
+    assert raised.value is error
+    assert initialize_calls == 0
+
+
+def test_schema_check_treats_missing_service_state_as_uninitialized(
+    tmp_path: Path,
+) -> None:
+    store = _store_without_initialization(tmp_path / "uninitialized.sqlite3")
+
+    assert store._schema_is_current() is False
+
+
+def test_schema_manifest_treats_missing_column_as_incomplete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "incomplete-schema.sqlite3")
+    error = _sqlite_failure(
+        "no such column: round_number",
+        code=sqlite3.SQLITE_ERROR,
+        name="SQLITE_ERROR",
+    )
+
+    def fail_manifest_check(
+        _db: sqlite3.Connection,
+        *,
+        include_run_snapshots: bool,
+    ) -> bool:
+        del include_run_snapshots
+        raise error
+
+    monkeypatch.setattr(
+        store,
+        "_schema_manifest_is_current_in_connection",
+        fail_manifest_check,
+    )
+
+    assert store._schema_manifest_is_current() is False
 
 
 def test_store_migrates_existing_follow_up_drafts_without_nonconstant_defaults(
@@ -9732,6 +9897,123 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
             (task.id, "2026-09-11T06:00:00+00:00", stale),
         )
         assert store._scheduled_task_run_snapshots_are_current(db) is False
+
+
+def test_open_connection_names_and_reraises_connect_io_error_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = _store_without_initialization(tmp_path / "connect-io-error.sqlite3")
+    error = _sqlite_failure(
+        "disk I/O error",
+        code=sqlite3.SQLITE_IOERR | (2 << 8),
+        name="SQLITE_IOERR_SHORT_READ",
+    )
+
+    def fail_connect(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(store_module.sqlite3, "connect", fail_connect)
+
+    with pytest.raises(sqlite3.Error) as raised:
+        with store._connect():
+            pytest.fail("connection setup failure must not yield")
+
+    assert raised.value is error
+    captured = capsys.readouterr().err
+    assert captured.count("SQLITE_IOERR_SHORT_READ") == 1
+    assert str(store.path) in captured
+
+
+@pytest.mark.parametrize(
+    "failed_pragma",
+    [
+        "pragma busy_timeout = 30000",
+        "pragma synchronous = normal",
+        f"pragma cache_size = {store_module.SQLITE_READ_CACHE_SIZE}",
+        f"pragma mmap_size = {store_module.SQLITE_MMAP_SIZE_BYTES}",
+        "pragma foreign_keys = on",
+    ],
+)
+def test_open_connection_names_and_reraises_each_pragma_io_error_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failed_pragma: str,
+) -> None:
+    store = _store_without_initialization(tmp_path / "pragma-io-error.sqlite3")
+    error = _sqlite_failure(
+        "disk I/O error",
+        code=sqlite3.SQLITE_IOERR | (2 << 8),
+        name="SQLITE_IOERR_SHORT_READ",
+    )
+
+    class SetupConnection:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def execute(self, sql: str):
+            if sql == failed_pragma:
+                raise error
+            return self
+
+        def close(self) -> None:
+            self.closed = True
+
+    connection = SetupConnection()
+    monkeypatch.setattr(
+        store_module.sqlite3,
+        "connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    with pytest.raises(sqlite3.Error) as raised:
+        with store._connect():
+            pytest.fail("connection setup failure must not yield")
+
+    assert raised.value is error
+    assert connection.closed is True
+    captured = capsys.readouterr().err
+    assert captured.count("SQLITE_IOERR_SHORT_READ") == 1
+    assert str(store.path) in captured
+
+
+def test_open_connection_preserves_setup_error_when_close_also_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = _store_without_initialization(tmp_path / "setup-and-close-error.sqlite3")
+    setup_error = _sqlite_failure(
+        "disk I/O error",
+        code=sqlite3.SQLITE_IOERR | (2 << 8),
+        name="SQLITE_IOERR_SHORT_READ",
+    )
+    close_error = _sqlite_failure(
+        "cannot close",
+        code=sqlite3.SQLITE_IOERR,
+        name="SQLITE_IOERR",
+    )
+
+    class FailingConnection:
+        def execute(self, _sql: str):
+            raise setup_error
+
+        def close(self) -> None:
+            raise close_error
+
+    monkeypatch.setattr(
+        store_module.sqlite3,
+        "connect",
+        lambda *_args, **_kwargs: FailingConnection(),
+    )
+
+    with pytest.raises(sqlite3.Error) as raised:
+        store._open_connection()
+
+    assert raised.value is setup_error
+    assert capsys.readouterr().err.count("SQLITE_IOERR_SHORT_READ") == 1
 
 
 def test_sqlite_failures_name_their_extended_result_code(tmp_path: Path, capsys):
