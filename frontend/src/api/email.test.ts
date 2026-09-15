@@ -1,7 +1,15 @@
 import {afterEach,expect,it,vi} from "vitest";
-import {createEmailCategory,getEmailClassification,getEmailModelVersion,getEmailUnsubscribeEntryUrl,listEmailClassifications,requestEmailTraining,saveEmailConfig,saveEmailPromotionConfig,saveEmailRuntimeMode} from "./console";
+import {createEmailCategory,getEmailClassification,getEmailModelVersion,getEmailUnsubscribeEntryUrl,listEmailClassifications,previewEmailTraining,requestEmailTraining,saveEmailConfig,saveEmailPromotionConfig,saveEmailRuntimeMode} from "./console";
 afterEach(()=>vi.unstubAllGlobals());
 function reply(value:unknown){return new Response(JSON.stringify(value),{status:200});}
+it("previews the exact selection without submitting a training run",async()=>{
+  const preview={unique_sample_count:17,snapshot_id:"s1",snapshot_digest:"sha",snapshot_version:"v1",description_version:"d1"};
+  const controller=new AbortController(),fetch=vi.fn().mockResolvedValue(reply({ok:true,preview}));
+  vi.stubGlobal("fetch",fetch);
+  const selection={sources:["user_feedback","agent_auto_label"],categories:["work"]};
+  await expect(previewEmailTraining(selection,controller.signal)).resolves.toEqual(preview);
+  expect(fetch).toHaveBeenCalledExactlyOnceWith("/api/console/email/training/preview",expect.objectContaining({method:"POST",body:JSON.stringify(selection),signal:controller.signal}));
+});
 it("preserves nullable importance, provider truth, quoted text and large string IDs",async()=>{
   const id="8423079112545370123";
   const fetch=vi.fn().mockResolvedValueOnce(reply({items:[{id,important:null,classification_source:"agent",provider_classification:{state:"unobserved",category_key:null,important:null}}],meta:{total:1,page:1,page_size:50,has_more:false,next_cursor:"",snapshot_at:""}}))

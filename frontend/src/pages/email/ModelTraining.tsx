@@ -1,173 +1,1098 @@
-import { useEffect, useRef, useState } from "react";
-import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { getEmailModelVersion, requestEmailTraining, saveEmailPromotionConfig, saveEmailRuntimeMode, type EmailCategoryConfig, type EmailLearningEvidence, type EmailPromotionConfig, type EmailRuntime, type EmailStagedModel } from "../../api/console";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
+  getEmailModelVersion,
+  previewEmailTraining,
+  requestEmailTraining,
+  saveEmailRuntimeMode,
+  type EmailCategoryConfig,
+  type EmailLearningEvidence,
+  type EmailPromotionConfig,
+  type EmailRuntime,
+  type EmailStagedModel,
+} from "../../api/console";
 import { EmailDrawer } from "./EmailDrawer";
-import { checkLabel, checkValue, errorMessage, localTime, measured, modeLabel, reasonLabel, statusLabel } from "./shared";
+import { PromotionPanel, GateChecks } from "./PromotionPanel";
+import { TrainingSetup, useStableTrainingSelection } from "./TrainingSetup";
+import {
+  errorMessage,
+  localTime,
+  measured,
+  modeLabel,
+  reasonLabel,
+  statusLabel,
+} from "./shared";
 import { modelMetric, trendPoints, type TrendMetric } from "./modelTrend";
+import "./training.css";
 
 type RefreshLearning = () => Promise<EmailLearningEvidence | undefined>;
-export function ModelTraining({learning,configs,reload,runtimeVerified,onRuntimeUnverified,onBusy}: {learning:EmailLearningEvidence;configs:EmailCategoryConfig[];reload:RefreshLearning;runtimeVerified:boolean;onRuntimeUnverified:()=>void;onBusy:(busy:boolean)=>void}) {
-  const runtime=learning.runtime;
-  const [confirm,setConfirm]=useState<EmailRuntime|null>(null);
-  const [switchError,setSwitchError]=useState("");
-  const [switching,setSwitching]=useState(false);
-  const [thresholdBusy,setThresholdBusy]=useState(false);
-  const [selected,setSelected]=useState("");
-  const [legacy,setLegacyModel]=useState<EmailLearningEvidence["models"][number]|null>(null);
-  const [detail,setDetail]=useState<EmailStagedModel|null>(null);
-  const [detailError,setDetailError]=useState("");
-  const [retry,setRetry]=useState(0);
-  const [selectedSources,setSelectedSources]=useState<string[]>(()=>Array.from(new Set((learning.training_sources || []).filter(row=>row.supported!==false).map(row=>row.source))));
-  const [selectedCategories,setSelectedCategories]=useState<string[]>(()=>Array.from(new Set((learning.training_sources || []).filter(row=>row.supported!==false).map(row=>row.category))));
-  const [selectedModelFamilies,setSelectedModelFamilies]=useState<string[]>(()=>Array.from(new Set((learning.model_families || []).filter(row=>row.supported&&row.configured).map(row=>row.family))));
-  const [trainingRequest,setTrainingRequest]=useState("");
-  const [trainingBusy,setTrainingBusy]=useState(false);
-  const lock=useRef(false);
-  const requestId=useRef("");
-  const models=learning.staged_models || [];
-  const sourceRows=learning.training_sources || [];
-  const supportedRows=sourceRows.filter(row=>row.supported!==false);
-  const sourceKeys=Array.from(new Set(sourceRows.map(row=>row.source)));
-  const categoryKeys=Array.from(new Set(supportedRows.map(row=>row.category)));
-  const modelFamilies=learning.model_families || [];
-  useEffect(()=>{setSelectedSources(Array.from(new Set(supportedRows.map(row=>row.source))));setSelectedCategories(categoryKeys);setSelectedModelFamilies(modelFamilies.filter(row=>row.supported&&row.configured).map(row=>row.family));},[learning.training_sources,learning.model_families]);
-  async function startTraining(){
-    setTrainingBusy(true);setTrainingRequest("");onBusy(true);
-    try { const result=await requestEmailTraining({sources:selectedSources,categories:selectedCategories,model_families:selectedModelFamilies}); setTrainingRequest(result.learning.training_status?"训练已提交，正在生成 staged 候选模型。":"训练请求已提交。"); }
-    catch(reason){setTrainingRequest(errorMessage(reason));}
-    finally{setTrainingBusy(false);onBusy(false);}
+export function ModelTraining({
+  learning,
+  configs,
+  reload,
+  runtimeVerified,
+  onRuntimeUnverified,
+  onBusy,
+}: {
+  learning: EmailLearningEvidence;
+  configs: EmailCategoryConfig[];
+  reload: RefreshLearning;
+  runtimeVerified: boolean;
+  onRuntimeUnverified: () => void;
+  onBusy: (busy: boolean) => void;
+}) {
+  const runtime = learning.runtime;
+  const models = learning.staged_models || [];
+  const [confirm, setConfirm] = useState<EmailRuntime | null>(null);
+  const [switchError, setSwitchError] = useState("");
+  const [switching, setSwitching] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [promotionOpen, setPromotionOpen] = useState(false);
+  const [setupBusy, setSetupBusy] = useState(false);
+  const [trainingStatus, setTrainingStatus] = useState("");
+  const [selection, setSelection] = useStableTrainingSelection(
+    learning.training_sources || [],
+    learning.model_families || [],
+  );
+  const [selected, setSelected] = useState("");
+  const [legacy, setLegacy] = useState<
+    EmailLearningEvidence["models"][number] | null
+  >(null);
+  const [detail, setDetail] = useState<EmailStagedModel | null>(null);
+  const [detailError, setDetailError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const [familyFilter, setFamilyFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const lock = useRef(false);
+  const requestId = useRef("");
+  const poll = useRef<number | undefined>(undefined);
+  const candidate =
+    models.find((model) => model.model_id === runtime?.candidate_model_id) ||
+    null;
+  const allVersions = useMemo(
+    () => [
+      ...models.map((model) => ({ kind: "staged" as const, model })),
+      ...(learning.models || [])
+        .filter(
+          (model) => !models.some((item) => item.model_id === model.model_id),
+        )
+        .map((model) => ({ kind: "historical" as const, model })),
+    ],
+    [models, learning.models],
+  );
+  const families = Array.from(
+    new Set(allVersions.map((item) => item.model.model_family || "未提供")),
+  );
+  const statuses = Array.from(
+    new Set(allVersions.map((item) => item.model.status || "未提供")),
+  );
+  const visibleVersions = allVersions.filter(
+    (item) =>
+      (familyFilter === "all" ||
+        (item.model.model_family || "未提供") === familyFilter) &&
+      (statusFilter === "all" || item.model.status === statusFilter),
+  );
+  const trainingLock = useRef(false);
+  const polling = useRef(false);
+  function stopPolling() {
+    if (poll.current !== undefined) {
+      window.clearInterval(poll.current);
+      poll.current = undefined;
+    }
   }
-  useEffect(()=>{
-    setDetail(null);setDetailError("");
-    if(!selected)return;
-    const controller=new AbortController();
-    getEmailModelVersion(selected,controller.signal).then(result=>{if(!controller.signal.aborted)setDetail(result.model);}).catch(reason=>{if(!controller.signal.aborted)setDetailError(errorMessage(reason));});
-    return ()=>controller.abort();
-  },[selected,retry]);
-  async function switchMode(){
-    if(lock.current||!confirm)return;
-    lock.current=true;setSwitching(true);setSwitchError("");onBusy(true);
-    try{
-      const mode=confirm.mode==="model_primary"?"agent_primary":"model_primary";
-      const result=await saveEmailRuntimeMode({mode,model_id:mode==="model_primary"?confirm.candidate_model_id:null,request_id:requestId.current,expected_mode:confirm.mode,expected_model_id:confirm.active_model_id});
-      if(!result.ok)throw new Error("切换失败，请刷新后重试");
-      await reload();setConfirm(null);
-    }catch(reason){
-      const message=errorMessage(reason);
+  async function pollTraining(runId: string) {
+    if (polling.current) return;
+    polling.current = true;
+    try {
+      const current = await reload();
+      if (!current?.active_run_id || current.active_run_id !== runId)
+        stopPolling();
+    } catch (reason) {
+      setTrainingStatus(`训练状态读取失败：${errorMessage(reason)}`);
+      stopPolling();
+    } finally {
+      polling.current = false;
+    }
+  }
+  function beginPolling(runId: string) {
+    stopPolling();
+    void pollTraining(runId);
+    poll.current = window.setInterval(() => void pollTraining(runId), 5000);
+  }
+  useEffect(() => () => stopPolling(), []);
+  useEffect(() => {
+    setDetail(null);
+    setDetailError("");
+    if (!selected) return;
+    const controller = new AbortController();
+    getEmailModelVersion(selected, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) setDetail(result.model);
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted) setDetailError(errorMessage(reason));
+      });
+    return () => controller.abort();
+  }, [selected, retry]);
+  async function startTraining() {
+    if (trainingLock.current || switching) return;
+    trainingLock.current = true;
+    setSetupBusy(true);
+    onBusy(true);
+    setTrainingStatus("");
+    try {
+      const result = await requestEmailTraining({
+        sources: selection.sources,
+        categories: selection.categories,
+        model_families: selection.modelFamilies,
+      });
+      const runId = result.learning.training_run_id;
+      setTrainingStatus(
+        result.learning.training_status
+          ? `训练状态：${result.learning.training_status}`
+          : "训练请求已提交。",
+      );
+      await reload();
+      setSetupOpen(false);
+      if (runId) beginPolling(runId);
+    } catch (reason) {
+      setTrainingStatus(errorMessage(reason));
+    } finally {
+      trainingLock.current = false;
+      setSetupBusy(false);
+      onBusy(false);
+    }
+  }
+  async function switchMode() {
+    if (lock.current || !confirm) return;
+    lock.current = true;
+    setSwitching(true);
+    setSwitchError("");
+    onBusy(true);
+    try {
+      const mode =
+        confirm.mode === "model_primary" ? "agent_primary" : "model_primary";
+      const result = await saveEmailRuntimeMode({
+        mode,
+        model_id: mode === "model_primary" ? confirm.candidate_model_id : null,
+        request_id: requestId.current,
+        expected_mode: confirm.mode,
+        expected_model_id: confirm.active_model_id,
+      });
+      if (!result.ok) throw new Error("切换失败，请刷新后重试");
+      await reload();
+      setConfirm(null);
+    } catch (reason) {
+      const message = errorMessage(reason);
       onRuntimeUnverified();
       try {
-        const current=await reload();
-        if(!current)throw new Error("服务器读取已取消");
-        if(current.runtime.mode!==confirm.mode||current.runtime.active_model_id!==confirm.active_model_id)setConfirm(null);
-        setSwitchError(message+"；已重新读取服务器状态。");
-      }catch(readError){
+        const current = await reload();
+        if (!current) throw new Error("服务器读取已取消");
+        if (
+          current.runtime.mode !== confirm.mode ||
+          current.runtime.active_model_id !== confirm.active_model_id
+        )
+          setConfirm(null);
+        setSwitchError(message + "；已重新读取服务器状态。");
+      } catch (readError) {
         setConfirm(null);
-        setSwitchError(message+"；当前运行模式未确认："+errorMessage(readError));
+        setSwitchError(
+          message + "；当前运行模式未确认：" + errorMessage(readError),
+        );
       }
+    } finally {
+      lock.current = false;
+      setSwitching(false);
+      onBusy(false);
     }
-    finally{lock.current=false;setSwitching(false);onBusy(false);}
   }
   async function rereadMode() {
-    if(lock.current)return;
-    lock.current=true;setSwitching(true);onBusy(true);
-    try{await reload();setSwitchError("");}catch(reason){setSwitchError("当前运行模式未确认："+errorMessage(reason));}
-    finally{lock.current=false;setSwitching(false);onBusy(false);}
+    if (lock.current) return;
+    lock.current = true;
+    setSwitching(true);
+    onBusy(true);
+    try {
+      await reload();
+      setSwitchError("");
+    } catch (reason) {
+      setSwitchError("当前运行模式未确认：" + errorMessage(reason));
+    } finally {
+      lock.current = false;
+      setSwitching(false);
+      onBusy(false);
+    }
   }
-  return <section className="console-card email-training">
-    <header className="email-mode-header"><div><h2>{!runtimeVerified?"运行模式未确认":runtime?.mode==="model_primary"?"模型主分类":runtime?.candidate_ready?"已达标，等待用户切换":"Agent 主分类"}{runtimeVerified&&runtime?.candidate_ready&&<span className="email-ready-dot" aria-label="候选模型已达标"/>}</h2>
-      <p>{!runtimeVerified?"无法验证当前分类方式，请重新读取服务器状态。":runtime?.mode==="model_primary"?"新邮件由主模型分类；拒判、超时、不可用时由 Classifier Agent 处理。":"新邮件由 Classifier Agent 分类；模型仅进行阶段性训练和离线验证。"}</p>
-      {runtimeVerified&&<p>主模型：{runtime?.active_model_id || "无"} · 候选：{runtime?.candidate_model_id || "无"} · 待训练样本：{learning.pending_examples}</p>}</div>
-      {runtimeVerified?<label className="email-inline-label"><input role="switch" aria-label="主模型" aria-describedby="email-mode-help" type="checkbox" checked={runtime?.mode==="model_primary"} disabled={!runtime?.toggle_enabled||switching||thresholdBusy} onChange={()=>{requestId.current=crypto.randomUUID();setConfirm({...runtime});setSwitchError("");}}/>主模型</label>:<button className="compact-button" disabled={switching} onClick={()=>void rereadMode()}>重新读取运行模式</button>}
-    </header>
-    <p id="email-mode-help" className="muted">{!runtimeVerified?"当前状态未确认，已暂停显示模式开关。":runtime?.toggle_enabled?"切换需要确认，以服务器读取结果为准。":"服务器尚未允许切换；请查看下方晋升检查和完整性证据。"}</p>
-    {switchError&&<p role="alert">{switchError}</p>}
-    {confirm&&<EmailDrawer title="确认运行模式" locked={switching} onClose={()=>setConfirm(null)}><div className="email-drawer-content">
-      <p>{confirm.mode==="model_primary"?"恢复 Agent 主分类，模型回到影子模式。":"将候选模型 "+confirm.candidate_model_id+" 切换为新邮件的主分类模型。"}</p>
-      <button className="primary-button" disabled={switching} onClick={()=>void switchMode()}>{switching?"正在切换…":"确认切换"}</button>
-    </div></EmailDrawer>}
-    {learning.promotion_gate?<><ThresholdEditor key={learning.promotion_gate.config.config_version} config={learning.promotion_gate.config} reload={reload} disabled={switching} onBusy={value=>{setThresholdBusy(value);onBusy(value);}}/>
-      <h3>晋升检查 · {learning.promotion_gate.promotion_eligible?"已达标":"未达标"}</h3>
-      <div className="responsive-table-wrap"><table className="settings-table"><thead><tr><th>检查项</th><th>实际值</th><th>目标</th><th>结果 / 原因</th></tr></thead><tbody>{learning.promotion_gate.checks.map(check=><tr key={check.key}><td>{checkLabel(check.key,configs)}</td><td>{checkValue(check.key,check.actual)}</td><td>{check.operator} {checkValue(check.key,check.target)}</td><td>{check.passed?"通过":"未通过"} · <span>{reasonLabel(check.reason)}</span></td></tr>)}</tbody></table></div>
-      <details><summary>原始晋升检查证据</summary><pre>{JSON.stringify(learning.promotion_gate.checks,null,2)}</pre></details>
-    </>:<p role="alert">晋升配置暂不可用，请刷新重试。</p>}
-    {!!learning.registry_issues?.length&&<p role="alert">模型 Registry 完整性异常：{learning.registry_issues.map(issue=>issue.model_id+"（"+issue.integrity_error+"）").join("；")}</p>}
-    <ModelTrend models={models} config={learning.promotion_gate?.config}/>
-    <section aria-label="训练数据来源" className="email-training-sources"><h3>训练数据来源</h3><p className="muted">可执行来源默认全选。取消勾选只影响本次 staged 训练，不修改反馈记录或线上模型。</p>
-      <div className="email-source-columns"><fieldset><legend>来源</legend>{sourceKeys.map(source=>{const supported=sourceRows.filter(row=>row.source===source).every(row=>row.supported!==false);return <label key={source}><input type="checkbox" checked={selectedSources.includes(source)} disabled={!supported} onChange={event=>setSelectedSources(current=>event.target.checked?[...current,source]:current.filter(value=>value!==source))}/>{sourceLabel(source)}{!supported&&"（当前不可用）"}</label>})}</fieldset><fieldset><legend>类别</legend>{categoryKeys.map(category=><label key={category}><input type="checkbox" checked={selectedCategories.includes(category)} onChange={event=>setSelectedCategories(current=>event.target.checked?[...current,category]:current.filter(value=>value!==category))}/>{category}</label>)}</fieldset><fieldset><legend>模型家族</legend>{modelFamilies.map(row=><label key={row.family}><input type="checkbox" checked={selectedModelFamilies.includes(row.family)} disabled={!row.supported||!row.configured} onChange={event=>setSelectedModelFamilies(current=>event.target.checked?[...current,row.family]:current.filter(value=>value!==row.family))}/>{row.display_name}{(!row.supported||!row.configured)&&"（当前不可用）"}</label>)}</fieldset></div>
-      {sourceRows.length?<div className="responsive-table-wrap"><table className="settings-table" aria-label="训练数据来源明细"><thead><tr><th>来源</th><th>类别</th><th>样本数</th><th>数据版本 / 摘要</th></tr></thead><tbody>{sourceRows.map(row=><tr key={row.source+row.category}><td>{sourceLabel(row.source)}{row.supported===false?"（暂不支持）":""}</td><td>{row.category}</td><td>{row.sample_count}</td><td>{provenanceLabel(row.provenance)}</td></tr>)}</tbody></table></div>:<p>暂无可用训练数据来源。</p>}
-      <button className="primary-button" disabled={trainingBusy||!selectedSources.length||!selectedCategories.length||!selectedModelFamilies.length} onClick={()=>void startTraining()}>{trainingBusy?"正在记录训练请求…":"开始训练"}</button>{trainingRequest&&<p role="status">{trainingRequest}</p>}
+  return (
+    <section className="email-training training-shell">
+      <header className="training-runtime-banner">
+        <div className="training-runtime-copy">
+          <span className="training-mode-chip">
+            {runtime?.mode === "model_primary" ? "模型主分类" : "影子模式"}
+          </span>
+          <div>
+            <h2>
+              {!runtimeVerified
+                ? "运行模式未确认"
+                : runtime?.mode === "model_primary"
+                  ? "模型正在分类"
+                  : runtime?.candidate_ready
+                    ? "Agent 正在分类"
+                    : "Agent 正在分类"}
+              {runtimeVerified && runtime?.candidate_ready && (
+                <span className="email-ready-dot" aria-label="候选模型已达标" />
+              )}
+            </h2>
+            <p>
+              {!runtimeVerified
+                ? "无法验证当前分类方式，请重新读取服务器状态。"
+                : runtime?.mode === "model_primary"
+                  ? "新邮件由当前运行模型分类；拒判、超时和不可用仍由 Classifier Agent 处理。"
+                  : "模型用于阶段性训练与离线验证，当前新邮件仍由 Classifier Agent 分类。"}
+            </p>
+            <small>
+              运行主模型：
+              <span title={runtime?.active_model_id || "无"}>
+                {shortModelId(runtime?.active_model_id || "无")}
+              </span>
+              {" · 候选："}
+              <span title={runtime?.candidate_model_id || "无"}>
+                {shortModelId(runtime?.candidate_model_id || "无")}
+              </span>
+              {" · 已收集反馈："}
+              {learning.pending_examples}（不等于可用训练样本）
+            </small>
+          </div>
+        </div>
+        <div className="training-runtime-actions">
+          <div>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setPromotionOpen(true)}
+              disabled={!learning.promotion_gate || switching}
+            >
+              晋升设置
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setSetupOpen(true)}
+              disabled={switching}
+            >
+              新建训练
+            </button>
+          </div>
+          {runtimeVerified ? (
+            <label className="training-toggle">
+              <span>
+                {runtime?.candidate_ready ? "候选模型已达标" : "候选模型未达标"}
+              </span>
+              <input
+                role="switch"
+                aria-label="主模型"
+                aria-describedby="email-mode-help"
+                type="checkbox"
+                checked={runtime?.mode === "model_primary"}
+                disabled={!runtime?.toggle_enabled || switching}
+                onChange={() => {
+                  requestId.current = crypto.randomUUID();
+                  setConfirm({ ...runtime });
+                  setSwitchError("");
+                }}
+              />
+              <b>主模型</b>
+            </label>
+          ) : (
+            <button
+              className="compact-button"
+              disabled={switching}
+              onClick={() => void rereadMode()}
+            >
+              重新读取运行模式
+            </button>
+          )}
+        </div>
+      </header>
+      <p id="email-mode-help" className="muted training-mode-help">
+        {!runtimeVerified
+          ? "当前状态未确认，已暂停显示模式开关。"
+          : runtime?.toggle_enabled
+            ? "切换需要确认，以服务器读取结果为准。"
+            : "服务器尚未允许切换；请查看晋升检查和完整性证据。"}
+      </p>
+      {trainingStatus && (
+        <p className="training-request-status" role="status">
+          {trainingStatus}
+        </p>
+      )}
+      {switchError && <p role="alert">{switchError}</p>}
+      <section className="training-stats" aria-label="候选模型摘要">
+        <Stat
+          label="可用训练样本"
+          value="未统计"
+          note="去重后的可训练数尚未统计"
+        />
+        <Stat
+          label="候选 Macro F1"
+          value={measured(candidate?.metrics?.macro_f1)}
+          note={candidate ? `候选 ${candidate.model_id}` : "当前候选无评测"}
+        />
+        <Stat
+          label="候选 P95 延迟"
+          value={measured(candidate?.end_to_end_latency_ms?.p95, " ms")}
+          note={candidate ? "端到端实际测量" : "当前候选无延迟测量"}
+        />
+      </section>
+      <div className="training-middle">
+        <ModelTrend models={models} config={learning.promotion_gate?.config} />
+        <aside className="training-gate-summary">
+          <h3>
+            晋升检查{" "}
+            <span
+              className={
+                learning.promotion_gate?.promotion_eligible
+                  ? "status-pass"
+                  : "status-hold"
+              }
+            >
+              {learning.promotion_gate?.promotion_eligible
+                ? "已达标"
+                : "待处理"}
+            </span>
+          </h3>
+          {learning.promotion_gate ? (
+            <GateChecks
+              checks={learning.promotion_gate.checks}
+              configs={configs}
+              showHeading={false}
+              compact
+            />
+          ) : (
+            <p role="alert">晋升配置暂不可用，请刷新重试。</p>
+          )}
+          <button
+            type="button"
+            className="compact-button"
+            onClick={() => setPromotionOpen(true)}
+            disabled={!learning.promotion_gate}
+          >
+            查看与编辑门槛
+          </button>
+        </aside>
+      </div>
+      {!!learning.registry_issues?.length && (
+        <p role="alert">
+          模型 Registry 完整性异常：
+          {learning.registry_issues
+            .map(
+              (issue) => issue.model_id + "（" + issue.integrity_error + "）",
+            )
+            .join("；")}
+        </p>
+      )}
+      <section className="console-card training-versions">
+        <header>
+          <div>
+            <h3>模型版本</h3>
+            <p className="muted">
+              完整 ID 可追溯。历史登记为 active 不代表当前运行主模型。
+            </p>
+          </div>
+          <div className="training-filters">
+            <label>
+              家族{" "}
+              <select
+                aria-label="模型家族筛选"
+                value={familyFilter}
+                onChange={(event) => setFamilyFilter(event.target.value)}
+              >
+                <option value="all">全部家族</option>
+                {families.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              状态{" "}
+              <select
+                aria-label="模型状态筛选"
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+              >
+                <option value="all">全部状态</option>
+                {statuses.map((value) => (
+                  <option key={value} value={value}>
+                    {statusLabel(value)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </header>
+        {visibleVersions.length ? (
+          <div className="responsive-table-wrap">
+            <table
+              className="settings-table email-model-table"
+              aria-label="模型版本"
+            >
+              <thead>
+                <tr>
+                  <th>完整模型 ID</th>
+                  <th>家族</th>
+                  <th>状态</th>
+                  <th>训练时间</th>
+                  <th>样本数</th>
+                  <th>Macro F1</th>
+                  <th>P95</th>
+                  <th>详情</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleVersions.map((item) => (
+                  <tr key={item.model.model_id}>
+                    <td title={item.model.model_id}>
+                      {shortModelId(item.model.model_id)}
+                    </td>
+                    <td>{item.model.model_family || "未提供"}</td>
+                    <td>
+                      {item.kind === "historical"
+                        ? `历史版本 · ${item.model.status || "未提供"}`
+                        : `${statusLabel(item.model.status)}${runtime?.active_model_id === item.model.model_id ? " · 当前运行主模型" : ""}`}
+                    </td>
+                    <td>{localTime(item.model.trained_at)}</td>
+                    <td>
+                      {item.kind === "staged"
+                        ? (item.model.training?.sample_count ?? "未测量")
+                        : (item.model.sample_count ?? "未测量")}
+                    </td>
+                    <td>
+                      {measured(
+                        item.kind === "staged"
+                          ? item.model.metrics?.macro_f1
+                          : item.model.macro_f1,
+                      )}
+                    </td>
+                    <td>
+                      {measured(
+                        item.kind === "staged"
+                          ? item.model.end_to_end_latency_ms?.p95
+                          : item.model.prediction_latency_p95_ms,
+                        " ms",
+                      )}
+                    </td>
+                    <td>
+                      <button
+                        className="compact-button"
+                        aria-label={
+                          (item.kind === "historical" ? "历史证据 " : "查看 ") +
+                          item.model.model_id
+                        }
+                        onClick={() => {
+                          if (item.kind === "historical") {
+                            setSelected("");
+                            setLegacy(item.model);
+                          } else {
+                            setLegacy(null);
+                            setSelected(item.model.model_id);
+                          }
+                        }}
+                      >
+                        查看
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p>没有符合当前筛选条件的模型版本。</p>
+        )}
+        <details className="training-mode-history">
+          <summary>运行模式切换记录</summary>
+          {learning.mode_transitions?.length ? (
+            <div className="responsive-table-wrap">
+              <table className="settings-table" aria-label="运行模式切换记录">
+                <thead>
+                  <tr>
+                    <th>时间 / 操作者</th>
+                    <th>原模式</th>
+                    <th>目标模式</th>
+                    <th>模型变化</th>
+                    <th>结果</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {learning.mode_transitions.map((event, index) => (
+                    <tr key={String(event.request_id || index)}>
+                      <td>
+                        {localTime(
+                          typeof event.created_at === "string"
+                            ? event.created_at
+                            : null,
+                        )}{" "}
+                        ·{" "}
+                        {event.actor === "console-user"
+                          ? "控制台用户"
+                          : String(event.actor || "未提供")}
+                      </td>
+                      <td>{modeLabel(String(event.from_mode))}</td>
+                      <td>{modeLabel(String(event.to_mode))}</td>
+                      <td>
+                        {String(event.from_model_id || "无")} →{" "}
+                        {String(event.target_model_id || "无")}
+                      </td>
+                      <td>
+                        {statusLabel(String(event.status || ""))} ·{" "}
+                        {reasonLabel(String(event.reason || ""))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p>暂无切换记录。</p>
+          )}
+        </details>
+      </section>
+      <TrainingSetup
+        open={setupOpen}
+        sources={learning.training_sources || []}
+        families={learning.model_families || []}
+        selection={selection}
+        onSelectionChange={setSelection}
+        onClose={() => setSetupOpen(false)}
+        onSubmit={() => void startTraining()}
+        previewTraining={previewEmailTraining}
+        busy={setupBusy}
+        status={trainingStatus}
+      />
+      <PromotionPanel
+        open={promotionOpen}
+        gate={learning.promotion_gate}
+        configs={configs}
+        reload={reload}
+        disabled={switching}
+        onBusy={onBusy}
+        onClose={() => setPromotionOpen(false)}
+      />
+      {confirm && (
+        <EmailDrawer
+          title="确认运行模式"
+          locked={switching}
+          onClose={() => setConfirm(null)}
+        >
+          <div className="email-drawer-content">
+            <p>
+              {confirm.mode === "model_primary"
+                ? "恢复 Agent 主分类，模型回到影子模式。"
+                : "将候选模型 " +
+                  confirm.candidate_model_id +
+                  " 切换为新邮件的主分类模型。"}
+            </p>
+            <button
+              className="primary-button"
+              disabled={switching}
+              onClick={() => void switchMode()}
+            >
+              {switching ? "正在切换…" : "确认切换"}
+            </button>
+          </div>
+        </EmailDrawer>
+      )}
+      {selected && (
+        <EmailDrawer title="模型版本详情" onClose={() => setSelected("")}>
+          {detailError ? (
+            <p role="alert">
+              {detailError}{" "}
+              <button onClick={() => setRetry((value) => value + 1)}>
+                重试
+              </button>
+            </p>
+          ) : detail ? (
+            <ModelDetails model={detail} />
+          ) : (
+            <p role="status">正在加载模型证据…</p>
+          )}
+        </EmailDrawer>
+      )}
+      {legacy && (
+        <LegacyDetails model={legacy} onClose={() => setLegacy(null)} />
+      )}
     </section>
-    <h3>模型版本</h3>
-    {!models.length&&!learning.models?.length?<p>暂无训练版本。</p>:<div className="responsive-table-wrap"><table className="settings-table email-model-table" aria-label="模型版本"><thead><tr><th>完整模型名与版本</th><th>状态</th><th>训练时间</th><th>样本数</th><th>Macro F1</th><th>端到端 P95</th><th>完整性</th><th>详情</th></tr></thead><tbody>
-      {models.map(model=><tr key={model.model_id}><td>{model.model_id}</td><td>{statusLabel(model.status)}{runtime?.active_model_id===model.model_id?" · 主模型":""}</td><td>{localTime(model.trained_at)}</td><td>{model.training?.sample_count ?? (model.split_counts?model.split_counts.train+model.split_counts.validation+model.split_counts.test:"未测量")}</td><td>{measured(model.metrics?.macro_f1)}</td><td>{measured(model.end_to_end_latency_ms?.p95," ms")}</td><td>{integrityLabel(model.integrity_status,model.failure_reason)}</td><td><button className="compact-button" aria-label={"查看 "+model.model_id} onClick={()=>setSelected(model.model_id)}>查看</button></td></tr>)}
-      {learning.models?.filter(model=>!models.some(item=>item.model_id===model.model_id)).map(model=><tr key={model.model_id}><td>{model.model_id}</td><td>历史版本 · 登记状态：{model.status}</td><td>{localTime(model.trained_at)}</td><td>{model.sample_count}</td><td>{measured(model.macro_f1)}</td><td>{measured(model.prediction_latency_p95_ms," ms")}</td><td>{integrityLabel(model.integrity_status,model.integrity_error)}</td><td><button className="compact-button" aria-label={"历史证据 "+model.model_id} onClick={()=>{setSelected("");setDetail(null);setLegacy(model);}}>查看</button></td></tr>)}
-    </tbody></table></div>}
-    <h3>运行模式切换记录</h3>{learning.mode_transitions?.length?<><div className="responsive-table-wrap"><table className="settings-table" aria-label="运行模式切换记录"><thead><tr><th>时间 / 操作者</th><th>原模式</th><th>目标模式</th><th>模型变化</th><th>结果</th></tr></thead><tbody>{learning.mode_transitions.map((event,index)=><tr key={String(event.request_id || index)}><td>{localTime(typeof event.created_at==="string"?event.created_at:null)} · {event.actor==="console-user"?"控制台用户":String(event.actor || "未提供")}</td><td>{modeLabel(String(event.from_mode))}</td><td>{modeLabel(String(event.to_mode))}</td><td>{String(event.from_model_id || "无")} → {String(event.target_model_id || "无")}</td><td>{statusLabel(String(event.status || ""))} · {reasonLabel(String(event.reason || ""))}</td></tr>)}</tbody></table></div><details><summary>原始切换证据</summary><pre>{JSON.stringify(learning.mode_transitions,null,2)}</pre></details></>:<p>暂无切换记录。</p>}
-    {selected&&<EmailDrawer title="模型版本详情" onClose={()=>setSelected("")}>{detailError?<p role="alert">{detailError} <button onClick={()=>setRetry(value=>value+1)}>重试</button></p>:detail?<ModelDetails model={detail}/>:<p role="status">正在加载模型证据…</p>}</EmailDrawer>}
-    {legacy&&<EmailDrawer title="历史模型证据" onClose={()=>setLegacy(null)}><div className="email-drawer-content"><h3>{legacy.model_id}</h3><p>模型家族：{legacy.model_family || "未提供"} · 历史登记状态：{legacy.status}</p><p>Accuracy {measured(legacy.accuracy)} · Macro F1 {measured(legacy.macro_f1)} · P95 {measured(legacy.prediction_latency_p95_ms," ms")}</p><p>样本 {legacy.sample_count}（新增 {legacy.new_sample_count}）· 训练：{localTime(legacy.training_started_at)} → {localTime(legacy.training_finished_at)}</p><p className="muted">不代表当前新邮件的主模型。候选版本只有通过晋升检查并由用户切换后才会生效。</p><details><summary>原始模型证据</summary><pre>{JSON.stringify(legacy,null,2)}</pre></details></div></EmailDrawer>}
-  </section>;
-  function setLegacy(value:EmailLearningEvidence["models"][number]|null){setLegacyModel(value);}
+  );
 }
-
-function sourceLabel(value:string){return value==="agent_auto_label"?"Agent 自动标注":value==="user_feedback"?"用户反馈":value==="folder_snapshot"?"邮件文件夹快照":value;}
-function provenanceLabel(value:Record<string,unknown>){return String(value.snapshot_id || value.classification_source || "未提供");}
-
-const thresholdFields=[["macro_f1_min","Macro F1 最低值",0,1,"any"],["category_precision_min","每类别 Precision 最低值",0,1,"any"],["category_validation_samples_min","每类别独立验证样本数",1,undefined,1],["p95_latency_max_ms","端到端 P95 上限（ms）",0,undefined,"any"]] as const;
-function ThresholdEditor({config,reload,disabled,onBusy}: {config:EmailPromotionConfig;reload:RefreshLearning;disabled:boolean;onBusy:(busy:boolean)=>void}) {
-  const [values,setValues]=useState(Object.fromEntries(thresholdFields.map(([key])=>[key,String(config[key])])) as Record<typeof thresholdFields[number][0],string>);
-  const [busy,setBusy]=useState(false);const lock=useRef(false);const [error,setError]=useState("");
-  async function save(){
-    if(lock.current)return;
-    for(const [key,,min,max] of thresholdFields){const value=Number(values[key]);if(!values[key].trim()||!Number.isFinite(value)||value<=0||value<min||(max!==undefined&&value>max)||(key==="category_validation_samples_min"&&!Number.isInteger(value))){setError("请填写有效门槛；比例大于 0 且不超过 1，样本数为正整数，延迟为正数。");return;}}
-    lock.current=true;setBusy(true);onBusy(true);setError("");
-    try{
-      const result=await saveEmailPromotionConfig({macro_f1_min:Number(values.macro_f1_min),category_precision_min:Number(values.category_precision_min),category_validation_samples_min:Number(values.category_validation_samples_min),p95_latency_max_ms:Number(values.p95_latency_max_ms),expected_current_version:config.config_version});
-      if(!result.ok)throw new Error("门槛保存失败，请重试");await reload();
-    }catch(reason){setError(errorMessage(reason));}finally{lock.current=false;setBusy(false);onBusy(false);}
-  }
-  return <form onSubmit={event=>{event.preventDefault();void save();}}><h3>晋升门槛 <small>版本 {config.config_version}</small></h3><fieldset disabled={busy||disabled} className="email-threshold-fields">{thresholdFields.map(([key,label,min,max,step])=><label key={key}>{label}<input type="number" min={min} max={max} step={step} value={values[key]} onChange={event=>setValues(previous=>({...previous,[key]:event.target.value}))}/></label>)}</fieldset>{error&&<p role="alert">{error}</p>}<button className="compact-button" disabled={busy||disabled} type="submit">{busy?"正在保存…":"保存晋升门槛"}</button></form>;
+function Stat({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string;
+  note: string;
+}) {
+  return (
+    <article className="training-stat">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{note}</small>
+    </article>
+  );
 }
-
-function ModelTrend({models,config}: {models:EmailStagedModel[];config?:EmailPromotionConfig}) {
-  const [metric,setMetric]=useState<TrendMetric>("macro_f1");const [category,setCategory]=useState("");
-  const categories=Array.from(new Set(models.flatMap(model=>Object.keys(model.metrics?.categories || {}))));
-  const activeCategory=category || categories[0] || "";
-  const points=trendPoints([...models].sort((a,b)=>a.trained_at.localeCompare(b.trained_at)),metric,activeCategory);
-  const segments=Array.from(new Set(points.map(point=>point.segment)));
-  const data=points.map(point=>({name:point.model.model_id,["segment"+point.segment]:point.value,description:[point.model.model_id,localTime(point.model.trained_at),point.model.split_counts?JSON.stringify(point.model.split_counts):"样本数未测量",point.model.evaluation?.test_digest || "未提供",point.reason].join(" · ")}));
-  const latency=metric==="p50"||metric==="p95"||metric==="p99";
-  const target=metric==="macro_f1"?config?.macro_f1_min:metric==="precision"?config?.category_precision_min:metric==="p95"?config?.p95_latency_max_ms:undefined;
-  return <section aria-label="模型能力趋势"><h3>能力趋势 · 最近 10 个版本</h3><div className="email-list-toolbar">
-    <label>指标 <select value={metric} onChange={event=>setMetric(event.target.value as TrendMetric)}>{["macro_f1","accuracy","precision","recall","f1","p50","p95","p99"].map(key=><option key={key}>{key}</option>)}</select></label>
-    {["precision","recall","f1"].includes(metric)&&<label>类别 <select value={activeCategory} onChange={event=>setCategory(event.target.value)}>{categories.map(key=><option key={key}>{key}</option>)}</select></label>}
-  </div>
-  {points.filter(point=>point.value!==null).length<2?<p>暂无足够的可比较趋势数据，缺失指标为未测量。</p>:<div className="email-trend-chart"><ResponsiveContainer width="100%" height={240}><LineChart data={data} accessibilityLayer><XAxis dataKey="name" tickFormatter={name=>String(name).slice(-8)} interval="preserveStartEnd" tick={{fontSize:11}}/><YAxis domain={latency?[0,"auto"]:[0,1]}/><Tooltip labelFormatter={(_label,items)=>items[0]?.payload.description} formatter={value=>measured(value,latency?" ms":"%")}/>{target!==undefined&&<ReferenceLine y={target} stroke="var(--ink-soft)" strokeDasharray="4 4" label="晋升门槛"/>}{segments.map(segment=><Line key={segment} dataKey={"segment"+segment} name={metric} type="linear" stroke="var(--accent)" connectNulls={false} isAnimationActive={false}/>)}</LineChart></ResponsiveContainer></div>}
-  <p className="muted">只连接评测协议、测试集和类别集合一致的相邻版本；缺失数据和不可比较版本显示断点。</p>
-  <details><summary>趋势文字数据（键盘可读）</summary><table className="settings-table"><thead><tr><th>模型 / 训练时间 / 样本</th><th>指标</th><th>评测 / 断点原因</th></tr></thead><tbody>{points.map(point=><tr key={point.model.model_id}><td>{point.model.model_id} · {localTime(point.model.trained_at)} · {JSON.stringify(point.model.split_counts)}</td><td>{measured(modelMetric(point.model,metric,activeCategory),latency?" ms":"%")}</td><td>{point.model.evaluation?.test_digest || "未提供"} · {point.reason}</td></tr>)}</tbody></table></details>
-  </section>;
+function shortModelId(modelId: string) {
+  return modelId.length <= 26
+    ? modelId
+    : `${modelId.slice(0, 14)}…${modelId.slice(-8)}`;
 }
-function ModelDetails({model}: {model:EmailStagedModel}) {
-  return <div className="email-drawer-content"><h3>{model.model_id}</h3><p>状态：{statusLabel(model.status)} · 训练时间：{localTime(model.trained_at)}</p><p>Accuracy {measured(model.metrics?.accuracy)} · Macro F1 {measured(model.metrics?.macro_f1)}</p>
-    <section aria-label="训练记录"><h4>训练记录</h4><dl className="detail-definition-list">
-      <div><dt>开始时间</dt><dd>{localTime(model.training?.started_at)}</dd></div>
-      <div><dt>完成时间</dt><dd>{localTime(model.training?.completed_at)}</dd></div>
-      <div><dt>训练耗时</dt><dd>{measured(model.training?.duration_ms," ms")}</dd></div>
-      <div><dt>总样本 / 新增样本</dt><dd>{model.training?.sample_count ?? "未测量"} / {model.training?.new_sample_count ?? "未测量"}</dd></div>
-      <div><dt>分类样本</dt><dd>{model.training?.category_sample_count ?? "未测量"}</dd></div>
-      <div><dt>邮箱账户 / 事项组覆盖</dt><dd>{model.training?.account_count ?? "未测量"} / {model.training?.group_count ?? "未测量"}</dd></div>
-      <div><dt>训练 / 验证 / 测试样本</dt><dd>{model.split_counts?.train ?? "未测量"} / {model.split_counts?.validation ?? "未测量"} / {model.split_counts?.test ?? "未测量"}</dd></div>
-    </dl></section>
-    <section aria-label="模型版本与评测"><h4>模型版本与评测</h4><dl className="detail-definition-list">{[
-      ["模型家族",model.model_family || model.compatibility?.head_format],["Embedding 版本",model.compatibility?.embedding_revision_reference],["描述版本",model.compatibility?.description_version],["输入 Schema",model.compatibility?.input_schema_version],["训练数据版本",model.training_snapshot_id],["评测方法",model.evaluation?.protocol],["测试集摘要",model.evaluation?.test_digest],["Artifact SHA-256",model.artifact_sha256]
-    ].map(([label,value])=><div key={String(label)}><dt>{String(label)}</dt><dd>{value==null?"未提供":String(value)}</dd></div>)}</dl></section>
-    <section aria-label="训练参数"><h4>训练参数</h4><dl className="detail-definition-list">{[
-      ["随机种子",model.parameters?.random_seed],["求解器",model.parameters?.solver],["最大迭代次数",model.parameters?.max_iter],["正则化系数",model.parameters?.regularization_alpha],["隐藏层",model.parameters?.hidden_layer_sizes],["描述权重 α",model.parameters?.alpha],["模型权重 β",model.parameters?.beta]
-    ].map(([label,value])=><div key={String(label)}><dt>{String(label)}</dt><dd>{value==null?"未测量":Array.isArray(value)?value.join("、"):String(value)}</dd></div>)}</dl></section>
-    <h4>每类别指标</h4><div className="responsive-table-wrap"><table className="settings-table"><thead><tr><th>类别</th><th>Precision</th><th>Recall</th><th>F1</th><th>support</th><th>接受准确率</th><th>接受数量 / 独立事项组</th><th>阈值</th></tr></thead><tbody>{Object.entries(model.metrics?.categories || {}).map(([key,values])=><tr key={key}><td>{key}</td><td>{measured(values.precision)}</td><td>{measured(values.recall)}</td><td>{measured(values.f1)}</td><td>{values.support ?? "未测量"}</td><td>{measured(values.accepted_precision)}</td><td>{values.accepted_hits ?? "未测量"} / {values.independent_groups ?? "未测量"}</td><td>{measured(values.threshold)}</td></tr>)}</tbody></table></div>
-    <h4>important 独立输出头</h4>{["precision","recall","f1","accepted_precision"].map(key=><p key={key}>{key}：{measured(model.metrics?.important?.[key])}</p>)}
-    <h4>延迟</h4>{(["p50","p95","p99"] as const).map(key=><p key={key}>{key} · 端到端 {measured(model.end_to_end_latency_ms?.[key]," ms")} · 输出头 {measured(model.head_timing_percentiles_ms?.[key]," ms")}</p>)}
-    <p>首次调用 / 模型加载耗时：未测量（当前 API 未提供测量证据）</p>
-    <details><summary>原始版本、覆盖、评测与完整性证据</summary><pre>{JSON.stringify(model,null,2)}</pre></details>
-  </div>;
+function ModelTrend({
+  models,
+  config,
+}: {
+  models: EmailStagedModel[];
+  config?: EmailPromotionConfig;
+}) {
+  const [metric, setMetric] = useState<TrendMetric>("macro_f1");
+  const [category, setCategory] = useState("");
+  const categories = Array.from(
+    new Set(
+      models.flatMap((model) => Object.keys(model.metrics?.categories || {})),
+    ),
+  );
+  const activeCategory = category || categories[0] || "";
+  const points = trendPoints(
+    [...models].sort((a, b) => a.trained_at.localeCompare(b.trained_at)),
+    metric,
+    activeCategory,
+  );
+  const latency = ["p50", "p95", "p99"].includes(metric);
+  const target =
+    metric === "macro_f1"
+      ? config?.macro_f1_min
+      : metric === "precision"
+        ? config?.category_precision_min
+        : metric === "p95"
+          ? config?.p95_latency_max_ms
+          : undefined;
+  const data = points.map((point) => ({
+    name: point.model.model_id,
+    description: `${point.model.model_id} · ${localTime(point.model.trained_at)} · ${point.reason || point.model.evaluation?.test_digest || ""}`,
+    [`segment${point.segment}`]: point.value,
+  }));
+  const segments = Array.from(new Set(points.map((point) => point.segment)));
+  const segmentFamilies = new Map<number, string>();
+  points.forEach((point) => {
+    if (!segmentFamilies.has(point.segment)) {
+      segmentFamilies.set(point.segment, point.model.model_family || "未提供");
+    }
+  });
+  const trendFamilies = Array.from(new Set(segmentFamilies.values()));
+  const values = points
+    .map((point) => point.value)
+    .filter((value): value is number => value !== null);
+  const domain = values.length
+    ? latency
+      ? [Math.min(...values), Math.max(...values)]
+      : [Math.min(...values, 0), Math.max(...values, 1)]
+    : undefined;
+  return (
+    <section className="console-card training-trend" aria-label="模型能力趋势">
+      <header>
+        <div>
+          <h3>能力趋势</h3>
+          <p className="muted">仅连接家族、评测和类别一致的版本。</p>
+        </div>
+        <label>
+          指标{" "}
+          <select
+            value={metric}
+            onChange={(event) => setMetric(event.target.value as TrendMetric)}
+          >
+            {[
+              "macro_f1",
+              "accuracy",
+              "precision",
+              "recall",
+              "f1",
+              "p50",
+              "p95",
+              "p99",
+            ].map((key) => (
+              <option key={key} value={key}>
+                {key}
+              </option>
+            ))}
+          </select>
+        </label>
+      </header>
+      {["precision", "recall", "f1"].includes(metric) && (
+        <label>
+          类别{" "}
+          <select
+            value={activeCategory}
+            onChange={(event) => setCategory(event.target.value)}
+          >
+            {categories.map((key) => (
+              <option key={key}>{key}</option>
+            ))}
+          </select>
+        </label>
+      )}
+      {values.length ? (
+        <div className="email-trend-chart">
+          <ResponsiveContainer width="100%" height={250}>
+            <LineChart data={data} accessibilityLayer>
+              <XAxis
+                dataKey="name"
+                tickFormatter={(name) => String(name).slice(-10)}
+                interval="preserveStartEnd"
+                tick={{ fontSize: 11 }}
+              />
+              <YAxis domain={domain} />
+              <Tooltip
+                labelFormatter={(_label, items) =>
+                  items[0]?.payload.description
+                }
+                formatter={(value) => measured(value, latency ? " ms" : "%")}
+              />
+              {target !== undefined && (
+                <ReferenceLine
+                  y={target}
+                  stroke="var(--ink-soft)"
+                  strokeDasharray="4 4"
+                  label="晋升门槛"
+                />
+              )}
+              {segments.map((segment) => (
+                <Line
+                  key={segment}
+                  dataKey={`segment${segment}`}
+                  name={segmentFamilies.get(segment) || "未提供"}
+                  type="linear"
+                  stroke={familyColor(segmentFamilies.get(segment) || "未提供")}
+                  connectNulls={false}
+                  dot
+                  isAnimationActive={false}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <p>暂无可测量趋势数据。</p>
+      )}
+      {trendFamilies.length > 0 && (
+        <div className="training-trend-legend" aria-label="模型家族图例">
+          {trendFamilies.map((family) => (
+            <span key={family}>
+              <i style={{ background: familyColor(family) }} />
+              {family}
+            </span>
+          ))}
+        </div>
+      )}
+      <details>
+        <summary>趋势文字数据</summary>
+        <table className="settings-table">
+          <thead>
+            <tr>
+              <th>模型 ID</th>
+              <th>指标</th>
+              <th>评测 / 断点原因</th>
+            </tr>
+          </thead>
+          <tbody>
+            {points.map((point) => (
+              <tr key={point.model.model_id}>
+                <td>{point.model.model_id}</td>
+                <td>
+                  {measured(
+                    modelMetric(point.model, metric, activeCategory),
+                    latency ? " ms" : "%",
+                  )}
+                </td>
+                <td>
+                  {point.reason ||
+                    point.model.evaluation?.test_digest ||
+                    "未提供"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </section>
+  );
 }
-function integrityLabel(status:string|undefined,error:string|undefined) {return status==="verified"?"已验证":status==="corrupt"||error?"异常":"未提供";}
+function familyColor(family: string) {
+  const colors = ["#0f766e", "#4f46e5", "#c26b09", "#b42366", "#2f855a"];
+  let hash = 0;
+  for (const character of family)
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return colors[hash % colors.length];
+}
+function ModelDetails({ model }: { model: EmailStagedModel }) {
+  const [tab, setTab] = useState("effect");
+  return (
+    <div className="email-drawer-content">
+      <h3>{model.model_id}</h3>
+      <p>
+        状态：{statusLabel(model.status)} · 训练时间：
+        {localTime(model.trained_at)}
+      </p>
+      <div
+        role="tablist"
+        className="settings-pill-row"
+        aria-label="模型详情分区"
+      >
+        <button
+          role="tab"
+          aria-selected={tab === "effect"}
+          onClick={() => setTab("effect")}
+        >
+          效果
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "data"}
+          onClick={() => setTab("data")}
+        >
+          数据与参数
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "technical"}
+          onClick={() => setTab("technical")}
+        >
+          技术信息
+        </button>
+      </div>
+      {tab === "effect" && <EffectDetails model={model} />}{" "}
+      {tab === "data" && <DataDetails model={model} />}{" "}
+      {tab === "technical" && <TechnicalDetails model={model} />}
+      <details>
+        <summary>原始版本证据</summary>
+        <pre>{JSON.stringify(model, null, 2)}</pre>
+      </details>
+    </div>
+  );
+}
+function EffectDetails({ model }: { model: EmailStagedModel }) {
+  return (
+    <section aria-label="效果">
+      <p>
+        Accuracy {measured(model.metrics?.accuracy)} · Macro F1{" "}
+        {measured(model.metrics?.macro_f1)}
+      </p>
+      <CategoryMetrics model={model} />
+      <h4>important 独立输出头</h4>
+      {["precision", "recall", "f1", "accepted_precision"].map((key) => (
+        <p key={key}>
+          {key}：{measured(model.metrics?.important?.[key])}
+        </p>
+      ))}
+      <h4>延迟</h4>
+      {(["p50", "p95", "p99"] as const).map((key) => (
+        <p key={key}>
+          {key} · 端到端 {measured(model.end_to_end_latency_ms?.[key], " ms")} ·
+          输出头 {measured(model.head_timing_percentiles_ms?.[key], " ms")}
+        </p>
+      ))}
+      <p>首次调用 / 模型加载耗时：未测量（当前未提供测量证据）</p>
+    </section>
+  );
+}
+function DataDetails({ model }: { model: EmailStagedModel }) {
+  return (
+    <section aria-label="训练记录">
+      <h4>训练记录</h4>
+      <dl className="detail-definition-list">
+        <Detail
+          label="开始时间"
+          value={localTime(model.training?.started_at)}
+        />
+        <Detail
+          label="完成时间"
+          value={localTime(model.training?.completed_at)}
+        />
+        <Detail
+          label="训练耗时"
+          value={measured(model.training?.duration_ms, " ms")}
+        />
+        <Detail
+          label="总样本 / 新增样本"
+          value={`${model.training?.sample_count ?? "未测量"} / ${model.training?.new_sample_count ?? "未测量"}`}
+        />
+        <Detail
+          label="分类样本"
+          value={model.training?.category_sample_count ?? "未测量"}
+        />
+        <Detail
+          label="邮箱账户 / 事项组覆盖"
+          value={`${model.training?.account_count ?? "未测量"} / ${model.training?.group_count ?? "未测量"}`}
+        />
+        <Detail
+          label="训练 / 验证 / 测试样本"
+          value={`${model.split_counts?.train ?? "未测量"} / ${model.split_counts?.validation ?? "未测量"} / ${model.split_counts?.test ?? "未测量"}`}
+        />
+        <Detail
+          label="训练数据版本"
+          value={model.training_snapshot_id ?? "未提供"}
+        />
+      </dl>
+      <h4>训练参数</h4>
+      <dl className="detail-definition-list">
+        {[
+          ["随机种子", model.parameters?.random_seed],
+          ["求解器", model.parameters?.solver],
+          ["最大迭代次数", model.parameters?.max_iter],
+          ["正则化系数", model.parameters?.regularization_alpha],
+          ["隐藏层", model.parameters?.hidden_layer_sizes],
+          ["描述权重 α", model.parameters?.alpha],
+          ["模型权重 β", model.parameters?.beta],
+        ].map(([label, value]) => (
+          <Detail
+            key={String(label)}
+            label={String(label)}
+            value={
+              value == null
+                ? "未测量"
+                : Array.isArray(value)
+                  ? value.join("、")
+                  : value
+            }
+          />
+        ))}
+      </dl>
+    </section>
+  );
+}
+function TechnicalDetails({ model }: { model: EmailStagedModel }) {
+  return (
+    <section aria-label="技术信息">
+      <h4>模型版本与评测</h4>
+      <dl className="detail-definition-list">
+        <Detail label="完整模型 ID" value={model.model_id} />
+        <Detail
+          label="模型家族"
+          value={
+            model.model_family || model.compatibility?.head_format || "未提供"
+          }
+        />
+        <Detail
+          label="Embedding 版本"
+          value={model.compatibility?.embedding_revision_reference ?? "未提供"}
+        />
+        <Detail
+          label="描述版本"
+          value={model.compatibility?.description_version ?? "未提供"}
+        />
+        <Detail
+          label="输入 Schema"
+          value={model.compatibility?.input_schema_version ?? "未提供"}
+        />
+        <Detail
+          label="评测方法"
+          value={model.evaluation?.protocol ?? "未提供"}
+        />
+        <Detail
+          label="测试集摘要"
+          value={model.evaluation?.test_digest ?? "未提供"}
+        />
+        <Detail
+          label="Artifact SHA-256"
+          value={model.artifact_sha256 ?? "未提供"}
+        />
+      </dl>
+    </section>
+  );
+}
+function Detail({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{String(value)}</dd>
+    </div>
+  );
+}
+function CategoryMetrics({ model }: { model: EmailStagedModel }) {
+  return (
+    <div className="responsive-table-wrap">
+      <table className="settings-table">
+        <thead>
+          <tr>
+            <th>类别</th>
+            <th>Precision</th>
+            <th>Recall</th>
+            <th>F1</th>
+            <th>support</th>
+            <th>接受准确率</th>
+            <th>接受数量 / 独立事项组</th>
+            <th>阈值</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(model.metrics?.categories || {}).map(
+            ([key, value]) => (
+              <tr key={key}>
+                <td>{key}</td>
+                <td>{measured(value.precision)}</td>
+                <td>{measured(value.recall)}</td>
+                <td>{measured(value.f1)}</td>
+                <td>{value.support ?? "未测量"}</td>
+                <td>{measured(value.accepted_precision)}</td>
+                <td>
+                  {value.accepted_hits ?? "未测量"} /{" "}
+                  {value.independent_groups ?? "未测量"}
+                </td>
+                <td>{measured(value.threshold)}</td>
+              </tr>
+            ),
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+function LegacyDetails({
+  model,
+  onClose,
+}: {
+  model: EmailLearningEvidence["models"][number];
+  onClose: () => void;
+}) {
+  return (
+    <EmailDrawer title="历史模型证据" onClose={onClose}>
+      <div className="email-drawer-content">
+        <h3>{model.model_id}</h3>
+        <p>
+          模型家族：{model.model_family || "未提供"} · 历史登记状态：
+          {model.status}
+        </p>
+        <p>
+          Accuracy {measured(model.accuracy)} · Macro F1{" "}
+          {measured(model.macro_f1)} · P95{" "}
+          {measured(model.prediction_latency_p95_ms, " ms")}
+        </p>
+        <p className="muted">
+          历史登记状态不代表当前新邮件的主模型；当前运行状态只来自
+          runtime.active_model_id。
+        </p>
+        <details>
+          <summary>原始模型证据</summary>
+          <pre>{JSON.stringify(model, null, 2)}</pre>
+        </details>
+      </div>
+    </EmailDrawer>
+  );
+}

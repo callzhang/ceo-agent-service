@@ -10,6 +10,36 @@
 
 **Approved design:** `docs/superpowers/specs/2026-09-14-email-reading-training-ui-design.md`.
 
+## Execution record — 2026-09-14
+
+Implemented the reading workspace, action outcomes/entry availability, training
+overview and setup, exact selected-dataset preview, version details and trend
+comparability guards. This is not a claim that every design requirement is
+complete: important editing, a global eligible-count headline and durable
+per-family training stages remain gaps, documented in
+`docs/email-reading-training-ui.md`. Navigation remains fixed in the scrollable
+reader; the message header/body scroll to preserve space on narrow screens.
+
+Fresh verification on the feature worktree:
+
+- Full frontend: `npm test -- --run --maxWorkers=2`: 494 passed, 2 skipped.
+- Email API/worker/learning: 388 passed.
+- TypeScript + Vite production build, scoped Ruff and `git diff --check`: passed.
+- Read-only real-data previews at 1440×900, 1280×800, 768×900 and 600×900:
+  no horizontal overflow; title, tabs and training shell share the same left
+  edge; reader navigation, Attempt target, unavailable URL, ESC and return focus
+  verified. Screenshots retained privately under
+  `/Users/derek/Documents/memory/07_工具与运行记录/email-ui-20260914/`.
+- Selected mail `3203915087564382400` projects
+  `skipped_no_reliable_entry`, links to Attempt #9203 and hides the URL reveal
+  button when the shared server validator says unavailable.
+- No real training, mailbox actions, model promotion, main merge or service
+  restart were performed for this UI validation. The preview backend enforced
+  SQLite read-only connections and rejected mutation requests.
+
+The checklists below remain the complete target, including those unimplemented
+capabilities and release steps; this execution record does not waive them.
+
 ## 1. Confirm data contracts before presentation changes
 
 Files: `frontend/src/api/console.ts`, `app/web_api/email.py`, `app/email_store.py`, `tests/test_email_web_api.py`, `frontend/src/api/email.test.ts`.

@@ -18,6 +18,7 @@ from app.email_classifier_contracts import (
 from app.email_classifier_learning import (
     EmailClassifierLearningService,
     UnsupportedTrainingSelection,
+    _selection_provenance,
 )
 from app.email_classifier_retrain import (
     RetrainPolicy,
@@ -33,6 +34,36 @@ from app.email_store import EmailStore
 CURRENT_EMAIL_CATEGORIES = tuple(
     EmailCategory(category) for category in INITIAL_EMAIL_CATEGORY_KEYS
 )
+
+
+def test_selection_provenance_rejects_empty_selection_by_default() -> None:
+    class EmptySelectedSourceStore:
+        def latest_training_snapshot_state(self):
+            return {
+                "snapshot_id": "snapshot-empty",
+                "snapshot_sha": "a" * 64,
+                "snapshot_version": "email-folder-snapshot.v1",
+                "description_version": "description-v1",
+            }
+
+        def get_training_snapshot(self, snapshot_id: str):
+            assert snapshot_id == "snapshot-empty"
+            return {
+                "observations": [
+                    {"stable_message_identity": "message-1", "category_key": "legal"}
+                ]
+            }
+
+        def list_training_examples(self, *, include_inclusion: bool):
+            assert include_inclusion is True
+            return []
+
+    with pytest.raises(ValueError, match="has no frozen snapshot samples"):
+        _selection_provenance(
+            EmptySelectedSourceStore(),
+            sources=["user_feedback"],
+            categories=["legal"],
+        )
 
 
 def _classification(message_id: str, category: EmailCategory) -> EmailClassification:

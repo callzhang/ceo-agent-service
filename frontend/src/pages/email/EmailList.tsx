@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { confirmEmailClassification, getEmailClassification, listEmailClassifications, type EmailCategoryConfig, type EmailClassificationDetail, type EmailClassificationItem } from "../../api/console";
-import { EmailDrawer } from "./EmailDrawer";
-import { ObservabilityDetails, ProcessedClassificationEvidence } from "./Evidence";
+import { EmailReadingPanel } from "./EmailReadingPanel";
 import { configurableCategories, errorMessage, localTime, measured, sourceLabel, statusLabel } from "./shared";
 
 const filters=[["all","全部"],["pending_feedback","待确认"],["processed","已处理"],["unsubscribe","退订"]] as const;
@@ -17,6 +16,9 @@ export function EmailList({configs, onBusy}: {configs:EmailCategoryConfig[]; onB
   const rawSize=Number(params.get("page_size"));
   const pageSize=[20,50,100].includes(rawSize)?rawSize:50;
   const selected=params.get("selected") || "";
+  const query=params.get("q") || "";
+  const [searchText,setSearchText]=useState(query);
+  const [composing,setComposing]=useState(false);
   const [closed,setClosed]=useState("");
   const [rows,setRows]=useState<EmailClassificationItem[]>([]);
   const [total,setTotal]=useState(0);
@@ -29,31 +31,43 @@ export function EmailList({configs, onBusy}: {configs:EmailCategoryConfig[]; onB
   const [category,setCategory]=useState("");
   const [saveError,setSaveError]=useState("");
   const [saving,setSaving]=useState(false);
+  const [saved,setSaved]=useState(false);
+  const [expanded,setExpanded]=useState(false);
   const lock=useRef(false);
   const rowRefs=useRef(new Map<string,HTMLButtonElement>());
   const open=!!selected && closed!==selected;
   const options=[...configurableCategories(configs).filter(item=>item.enabled),{category_key:"junk",display_name:"垃圾（Trash）"}];
   const label=(key?:string|null)=>key ? (configs.find(item=>item.category_key===key)?.display_name || key) : "未分类（留在收件箱）";
+  useEffect(()=>{setSearchText(query);},[query]);
+  function applySearch(value:string) {
+    setParams(previous=>{const next=new URLSearchParams(previous);if(value.trim())next.set("q",value.trim());else next.delete("q");next.set("page","1");next.delete("selected");return next;},{replace:true});
+    setClosed("");setExpanded(false);
+  }
+  useEffect(()=>{
+    if(composing || saving || searchText.trim()===query.trim())return;
+    const timer=window.setTimeout(()=>applySearch(searchText),300);
+    return ()=>window.clearTimeout(timer);
+  },[searchText,query,composing,saving]);
   function navigate(nextPage:number,nextSize=pageSize,id?:string) {
     setParams(previous=>{const next=new URLSearchParams(previous);next.set("page",String(nextPage));next.set("page_size",String(nextSize));if(id)next.set("selected",id);else next.delete("selected");return next;});
     setClosed("");
   }
   useEffect(()=>{
     const controller=new AbortController();setLoading(true);setError("");
-    listEmailClassifications(filter,{page,page_size:pageSize},controller.signal).then(result=>{
+    listEmailClassifications(filter,{page,page_size:pageSize,...(query.trim()?{q:query.trim()}:{})},controller.signal).then(result=>{
       if(controller.signal.aborted)return;
       const last=Math.max(1,Math.ceil(result.meta.total/pageSize));
       if(page>last){navigate(last);return;}
       setRows(result.items);setTotal(result.meta.total);setLoading(false);
     }).catch(reason=>{if(!controller.signal.aborted){setError(errorMessage(reason));setLoading(false);}});
     return ()=>controller.abort();
-  },[filter,page,pageSize,revision]);
+  },[filter,page,pageSize,revision,query]);
   useEffect(()=>{
     setCategory("");setDetail(null);setDetailError("");setSaveError("");
     if(!open)return;
     const controller=new AbortController();
     getEmailClassification(selected,controller.signal).then(result=>{
-      if(!controller.signal.aborted)setDetail(result);
+      if(!controller.signal.aborted){setDetail(result);setCategory(result.item.category || "");}
     }).catch(reason=>{if(!controller.signal.aborted)setDetailError(errorMessage(reason));});
     return ()=>controller.abort();
   },[selected,open,detailRevision]);
@@ -65,9 +79,11 @@ export function EmailList({configs, onBusy}: {configs:EmailCategoryConfig[]; onB
       if(!result.ok)throw new Error(result.message || "保存失败，请重试");
       const index=rows.findIndex(item=>item.id===selected);
       const nextId=rows[index+1]?.id || rows[index-1]?.id;
-      setRows(previous=>previous.filter(item=>item.id!==selected));
-      setTotal(previous=>Math.max(0,previous-1));
-      navigate(nextId?page:Math.max(1,page-1),pageSize,nextId);
+      if (filter === "pending_feedback") {
+        navigate(nextId ? page : Math.max(1,page-1),pageSize,nextId);
+      } else {
+        setCategory("");setSaved(true);setDetailRevision(value=>value+1);
+      }
       setRevision(value=>value+1);
     } catch(reason){setSaveError(errorMessage(reason));}
     finally{lock.current=false;setSaving(false);onBusy(false);}
@@ -82,8 +98,14 @@ export function EmailList({configs, onBusy}: {configs:EmailCategoryConfig[]; onB
   }
   const categoryLabel=(key:string|null|undefined)=>key ? label(key) : "未分类（留在收件箱）";
   const filterLabel=filters.find(([key])=>key===filter)?.[1] || "全部";
-  return <section className="console-card email-dense-list" aria-label="邮件分类列表">
-    <div className="email-filter-row" role="group" aria-label="邮件筛选">{filters.map(([key,text])=><button type="button" key={key} aria-pressed={filter===key} disabled={saving} onClick={()=>selectFilter(key)}>{text}</button>)}</div>
+  function closeReading() { setClosed(selected);setExpanded(false);requestAnimationFrame(()=>rowRefs.current.get(selected)?.focus()); }
+  return <div className={`email-workspace${open ? " has-reading" : ""}${expanded ? " reading-expanded" : ""}`}>
+    <section className="console-card email-dense-list" aria-label="邮件分类列表">
+    <div className="email-list-controls"><div className="email-filter-row" role="group" aria-label="邮件筛选">{filters.map(([key,text])=><button type="button" key={key} aria-pressed={filter===key} disabled={saving} onClick={()=>selectFilter(key)}>{text}</button>)}</div>
+    <form className="email-search" role="search" onSubmit={event=>{event.preventDefault();if(!composing&&!saving)applySearch(searchText);}}>
+      <input type="search" aria-label="搜索邮件" placeholder="搜索发件人、主题、正文…" maxLength={500} value={searchText} disabled={saving} onChange={event=>setSearchText(event.target.value)} onCompositionStart={()=>setComposing(true)} onCompositionEnd={()=>setComposing(false)}/>
+      {searchText&&<button type="button" aria-label="清空搜索" disabled={saving} onClick={()=>{setSearchText("");applySearch("");}}>×</button>}
+    </form></div>
     <nav className="email-list-toolbar" aria-label="邮件分页"><span>第 {page} / {Math.max(1,Math.ceil(total/pageSize))} 页 · 共 {total} 封</span>
       <label>每页邮件数 <select aria-label="每页邮件数" value={pageSize} disabled={saving||loading} onChange={event=>navigate(1,Number(event.target.value))}>{[20,50,100].map(size=><option key={size}>{size}</option>)}</select></label>
       <button className="compact-button" disabled={saving||loading||page===1} onClick={()=>navigate(page-1)}>上一页</button>
@@ -92,9 +114,9 @@ export function EmailList({configs, onBusy}: {configs:EmailCategoryConfig[]; onB
     </nav>
     {filter==="unsubscribe"&&<p className="muted">显示已入队、处理中和已完成的退订任务；打开邮件可查看执行证据。</p>}
     {error&&<p role="alert">{error} <button onClick={()=>setRevision(value=>value+1)}>重试</button></p>}
-    {!loading&&!error&&!rows.length&&<p className="page-state">当前没有{filterLabel}邮件</p>}
+    {!loading&&!error&&!rows.length&&<p className="page-state">{query.trim()?"未找到匹配邮件":`当前没有${filterLabel}邮件`}</p>}
     <div className="email-row-list" aria-busy={loading}>
-      {rows.map(item=><button type="button" key={item.id} ref={element=>{if(element)rowRefs.current.set(item.id,element);else rowRefs.current.delete(item.id);}} aria-label={`打开邮件 ${item.subject || "无主题"}`} aria-pressed={selected===item.id} disabled={saving||loading} className="email-dense-row" onClick={()=>{navigate(page,pageSize,item.id);setClosed("");}}>
+      {rows.map(item=><button type="button" key={item.id} ref={element=>{if(element)rowRefs.current.set(item.id,element);else rowRefs.current.delete(item.id);}} aria-label={`打开邮件 ${item.subject || "无主题"}`} aria-pressed={selected===item.id} disabled={saving||loading} className="email-dense-row" onClick={()=>{navigate(page,pageSize,item.id);setClosed("");setSaved(false);}}>
         <span title={item.important==null?"重要状态未知":item.important?"重要 · Star / Flag":"未标记重要"} aria-label={item.important==null?"重要状态未知":item.important?"重要":"未标记重要"}>{item.important==null?"?":item.important?"★":"☆"}</span>
         <span className="email-row-sender" title={item.sender}>{item.sender || "未提供发件人"}</span>
         <span className="email-row-content"><span className="email-mobile-sender">{item.sender} · </span><strong>{item.subject || "无主题"}</strong><span className="email-row-original-text">{item.message_text || "未提供正文"}</span></span>
@@ -103,27 +125,10 @@ export function EmailList({configs, onBusy}: {configs:EmailCategoryConfig[]; onB
         <time title={localTime(item.received_at || item.updated_at)}>{localTime(item.received_at || item.updated_at)}</time>
       </button>)}
     </div>
-    {open&&<EmailDrawer title="邮件详情" locked={saving} returnFocus={()=>rowRefs.current.get(selected) || null} onClose={()=>setClosed(selected)}>
-      {detailError?<p role="alert">{detailError} <button onClick={()=>setDetailRevision(value=>value+1)}>重试正文</button></p>:!detail?<p role="status">正在加载邮件正文…</p>:<>
-        <div className="email-drawer-content"><h3>{detail.item.subject || "无主题"}</h3><p>发件人：{detail.item.sender}</p><p>收件人：{detail.item.recipients?.join("、") || "未提供"}</p><p>抄送：{detail.item.cc || "未提供"}</p><p>收件时间：{localTime(detail.item.received_at)}</p>
-        <section aria-label="邮件正文"><h3>邮件正文</h3><div className="email-body-text">{detail.item.message_text || "这封邮件没有已保存的正文，请查看原邮件后分类。"}</div>
-          {detail.item.quoted_text&&<details><summary>引用邮件</summary><div className="email-body-text">{detail.item.quoted_text}</div></details>}
-        </section>
-        {!!detail.item.attachment_metadata?.length&&<section aria-label="附件元数据"><h3>附件（仅元数据）</h3>{detail.item.attachment_metadata.map((file,index)=><p key={index}>{file.filename} · {file.mime_type} · {file.size_bytes} bytes</p>)}</section>}
-        <p>分类来源：{sourceLabel(detail.item.classification_source)} · 置信度：{measured(detail.item.confidence)} · 描述版本：{detail.item.description_version || "未提供"}</p>
-        <p>当前 ActionPlan：{detail.item.current_action_plan_id || "未生成"}</p>
-        <ProcessedClassificationEvidence row={detail.item}/>
-        {(detail.provider_classification || detail.item.provider_classification)&&<section aria-label="邮箱观察事实"><h3>邮箱观察事实</h3><p>已观察到的文件夹与 Star / Flag 状态：</p><pre>{JSON.stringify(detail.provider_classification || detail.item.provider_classification,null,2)}</pre></section>}
-        <section className="email-candidate-distribution" aria-label="候选分布"><h3>候选分布</h3><div className="email-probability-bar" aria-hidden="true">{Object.entries(detail.item.probabilities).sort(([,a],[,b])=>b-a).map(([key,value])=><span key={key} data-category={key} style={{flexGrow:Math.max(0,value)}} />)}</div><div className="email-probability-legend">{Object.entries(detail.item.probabilities).sort(([,a],[,b])=>b-a).map(([key,value])=><span key={key}><i data-category={key}/>{label(key)} {measured(value)}</span>)}</div><p className="muted">模型置信度：{measured(detail.item.confidence)} · 间隔：{measured(detail.item.margin)}</p></section>
-        <ObservabilityDetails events={detail.observability} classificationId={detail.item.id}/>
-        </div>
-        {filter!=="unsubscribe"&&(detail.item.status==="pending_feedback"||detail.item.status==="processed")&&<form aria-label="分类确认" className="email-drawer-footer" onSubmit={event=>{event.preventDefault();void save();}}>
-          <p>{detail.item.status==="pending_feedback"?"建议":"当前分类"}：{label(detail.item.category)} · {measured(detail.item.confidence)}，请选择类别后保存。</p>
-          <div className="settings-pill-row" role="group" aria-label="选择分类">{options.map(item=><button type="button" key={item.category_key} disabled={saving||loading} aria-pressed={category===item.category_key} onClick={()=>setCategory(item.category_key)}>{item.display_name}</button>)}</div>
-          {!options.length&&<p>暂无可用类别，请先检查邮件配置。</p>}{saveError&&<p role="alert">{saveError}</p>}
-          <button type="submit" className="primary-button" disabled={!category||saving||loading}>{saving?"正在保存…":"保存分类并继续"}</button>
-        </form>}
-      </>}
-    </EmailDrawer>}
-  </section>;
+    </section>
+    {open && <EmailReadingPanel key={selected} detail={detail} error={detailError} saving={saving} loading={loading} category={category} saveError={saveError} saved={saved} configs={configs} options={options} position={rows.findIndex(item=>item.id===selected)} count={rows.length} expanded={expanded}
+      onCategory={value=>{setCategory(value);setSaved(false);}} onSave={()=>void save()} onClose={closeReading} onRetry={()=>setDetailRevision(value=>value+1)} onExpand={()=>setExpanded(value=>!value)}
+      onPrevious={()=>{const index=rows.findIndex(item=>item.id===selected);if(index>0){navigate(page,pageSize,rows[index-1].id);setSaved(false);}}}
+      onNext={()=>{const index=rows.findIndex(item=>item.id===selected);if(index>=0&&index<rows.length-1){navigate(page,pageSize,rows[index+1].id);setSaved(false);}}}/>}
+  </div>;
 }
