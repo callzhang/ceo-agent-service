@@ -847,6 +847,37 @@ def test_console_history_includes_chart_snapshot(tmp_path: Path):
     assert len(month.json()["chart"]["labels"]) == 24 * 30
 
 
+def test_console_history_separates_email_unsubscribe_from_reply(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="email-unsubscribe-history",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-unsubscribe-message",
+        trigger_sender="sender@example.com",
+        trigger_text="unsubscribe",
+        action="direct_unsubscribe",
+        sensitivity_kind="email",
+        codex_reason="Unsubscribed from the sender.",
+        audit_summary="Unsubscribed from the sender.",
+        send_status="completed",
+        channel="email",
+    )
+
+    with _client(tmp_path) as client:
+        unsubscribe = client.get("/api/console/history?object_type=email_unsubscribe")
+        reply = client.get("/api/console/history?object_type=replay")
+
+    assert unsubscribe.status_code == 200
+    unsubscribe_payload = unsubscribe.json()
+    assert unsubscribe_payload["meta"]["total"] == 1
+    assert unsubscribe_payload["items"][0]["type"] == "email_unsubscribe"
+    assert unsubscribe_payload["items"][0]["kind"] == "reply"
+
+    assert reply.status_code == 200
+    reply_payload = reply.json()
+    assert not any(item["title"] == "Email unsubscribe" for item in reply_payload["items"])
+
+
 def test_console_history_chart_can_load_independently(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_reply_attempt(

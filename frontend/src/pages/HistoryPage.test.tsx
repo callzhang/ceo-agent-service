@@ -80,6 +80,22 @@ describe("HistoryPage", () => {
     expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ status: "processing" }), expect.anything());
   });
 
+  it("keeps email unsubscribe as its own history object filter", async () => {
+    const user = (await import("@testing-library/user-event")).default.setup();
+    render(<MemoryRouter><HistoryPage /></MemoryRouter>);
+
+    const objectFilter = await screen.findByRole("combobox", { name: "对象" });
+    expect(screen.getByRole("option", { name: "Reply" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Email unsubscribe" })).toBeInTheDocument();
+
+    await user.selectOptions(objectFilter, "email_unsubscribe");
+
+    expect(listHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ object_type: "email_unsubscribe" }),
+      expect.anything(),
+    );
+  });
+
   it("offers recovered history separately from current failures", async () => {
     const user = (await import("@testing-library/user-event")).default.setup();
     render(<MemoryRouter><HistoryPage /></MemoryRouter>);
