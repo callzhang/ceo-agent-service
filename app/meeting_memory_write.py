@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ MEETING_MEMORY_TITLE_LIMIT = 80
 MEETING_MEMORY_START_STALL_SECONDS = 60
 MEETING_MEMORY_WRITE_LEASE_SECONDS = 45 * 60
 MEETING_MEMORY_WRITE_LEASE_GRACE_SECONDS = 5 * 60
+MEETING_MEMORY_WRITE_LEASE_HEARTBEAT_MAX_SECONDS = 60.0
 # A result-validation failure terminates the individual runtime attempt, but
 # does not prove that the already-delivered meeting conclusion is invalid. A
 # new event generation can use the current result schema and route health.
@@ -164,6 +166,8 @@ def process_meeting_memory_writes(
     limit: int = 1,
     concurrency: int = 1,
     lease_seconds: int = MEETING_MEMORY_WRITE_LEASE_SECONDS,
+    lease_heartbeat_interval_seconds: float | None = None,
+    lease_renewer: Callable[[AutoReplyStore, int, str, datetime, int], bool] | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> MeetingMemoryWriteOutcome:
     """Claim and write due conclusions with bounded, lease-safe concurrency.
@@ -175,6 +179,13 @@ def process_meeting_memory_writes(
         raise ValueError("meeting Memory concurrency must be positive")
     if lease_seconds <= 0:
         raise ValueError("meeting Memory lease duration must be positive")
+    heartbeat_interval_seconds = (
+        _meeting_memory_lease_heartbeat_interval(lease_seconds)
+        if lease_heartbeat_interval_seconds is None
+        else lease_heartbeat_interval_seconds
+    )
+    if heartbeat_interval_seconds <= 0:
+        raise ValueError("meeting Memory lease heartbeat interval must be positive")
     tick_started_at = _meeting_memory_current_time(clock)
     store.supersede_obsolete_meeting_memory_runtime_attempts()
     store.recover_unstarted_runtime_operation_attempts(
@@ -198,6 +209,9 @@ def process_meeting_memory_writes(
             workspace=workspace,
             routed_execution=routed_execution,
             owner=owner,
+            lease_seconds=lease_seconds,
+            lease_heartbeat_interval_seconds=heartbeat_interval_seconds,
+            lease_renewer=lease_renewer,
             clock=clock,
         )
 
@@ -241,24 +255,48 @@ def _process_event(
     workspace: Path,
     routed_execution: RoutedCodexExecution,
     owner: str,
+    lease_seconds: int,
+    lease_heartbeat_interval_seconds: float,
+    lease_renewer: Callable[[AutoReplyStore, int, str, datetime, int], bool] | None,
     clock: Callable[[], datetime] | None,
 ) -> str:
+    heartbeat_store = AutoReplyStore(
+        store.path,
+        busy_timeout_seconds=store.busy_timeout_seconds,
+    )
+    heartbeat = _MeetingMemoryLeaseHeartbeat(
+        store=heartbeat_store,
+        event_id=event.id,
+        owner=owner,
+        lease_seconds=lease_seconds,
+        interval_seconds=lease_heartbeat_interval_seconds,
+        clock=clock,
+        renewer=lease_renewer,
+    )
+    heartbeat.start()
     try:
-        payload = meeting_memory_payload(store.get_meeting_alignment_job(event.meeting_job_id))
-        result = execute_codex_memory_write(
-            workspace=workspace,
-            store=store,
-            workload_key=(
-                f"meeting_memory_write_event:{event.id}:"
-                f"{event.execution_generation}"
-            ),
-            data=_required_payload_text(payload, "data"),
-            type=_payload_type(payload),
-            created_at=_required_payload_text(payload, "created_at"),
-            source_description=_required_payload_text(payload, "source_description"),
-            routed_execution=routed_execution,
-        )
+        try:
+            payload = meeting_memory_payload(
+                store.get_meeting_alignment_job(event.meeting_job_id)
+            )
+            result = execute_codex_memory_write(
+                workspace=workspace,
+                store=store,
+                workload_key=(
+                    f"meeting_memory_write_event:{event.id}:"
+                    f"{event.execution_generation}"
+                ),
+                data=_required_payload_text(payload, "data"),
+                type=_payload_type(payload),
+                created_at=_required_payload_text(payload, "created_at"),
+                source_description=_required_payload_text(payload, "source_description"),
+                routed_execution=routed_execution,
+            )
+        finally:
+            heartbeat.stop()
     except CodexMemoryWriteFailed as exc:
+        if heartbeat.lost_lease:
+            return "lost_lease"
         if (
             exc.retryable
             or exc.source_code == "runtime_attempt_active"
@@ -288,6 +326,8 @@ def _process_event(
             )
             return "failed" if settled else "lost_lease"
     except (TypeError, ValueError) as exc:
+        if heartbeat.lost_lease:
+            return "lost_lease"
         settled_at = _meeting_memory_current_time(clock)
         settled = store.fail_meeting_memory_write_event(
             event.id,
@@ -297,6 +337,8 @@ def _process_event(
         )
         return "failed" if settled else "lost_lease"
     except Exception as exc:  # keep one malformed runtime result from stopping the queue
+        if heartbeat.lost_lease:
+            return "lost_lease"
         LOGGER.exception("meeting Memory write event %s crashed", event.id)
         delay = retry_delay_seconds(
             MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS,
@@ -316,6 +358,8 @@ def _process_event(
         )
         return "retried" if settled else "lost_lease"
     else:
+        if heartbeat.lost_lease:
+            return "lost_lease"
         settled_at = _meeting_memory_current_time(clock)
         settled = store.complete_meeting_memory_write_event(
             event.id,
@@ -324,6 +368,89 @@ def _process_event(
             now=settled_at,
         )
         return "completed" if settled else "lost_lease"
+
+
+class _MeetingMemoryLeaseHeartbeat:
+    """Keep one in-flight event claim live without sharing SQLite connections."""
+
+    def __init__(
+        self,
+        *,
+        store: AutoReplyStore,
+        event_id: int,
+        owner: str,
+        lease_seconds: int,
+        interval_seconds: float,
+        clock: Callable[[], datetime] | None,
+        renewer: Callable[[AutoReplyStore, int, str, datetime, int], bool] | None,
+    ) -> None:
+        self._store = store
+        self._event_id = event_id
+        self._owner = owner
+        self._lease_seconds = lease_seconds
+        self._interval_seconds = interval_seconds
+        self._clock = clock
+        self._renewer = renewer or _renew_meeting_memory_write_event_lease
+        self._stop_requested = threading.Event()
+        self._lost_lease = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"meeting-memory-lease-{event_id}",
+            daemon=True,
+        )
+
+    @property
+    def lost_lease(self) -> bool:
+        return self._lost_lease.is_set()
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_requested.set()
+        self._thread.join()
+
+    def _run(self) -> None:
+        while not self._stop_requested.wait(self._interval_seconds):
+            try:
+                renewed = self._renewer(
+                    self._store,
+                    self._event_id,
+                    self._owner,
+                    _meeting_memory_current_time(self._clock),
+                    self._lease_seconds,
+                )
+            except Exception:
+                LOGGER.exception(
+                    "meeting Memory lease renewal crashed for event %s",
+                    self._event_id,
+                )
+                renewed = False
+            if not renewed:
+                self._lost_lease.set()
+                return
+
+
+def _meeting_memory_lease_heartbeat_interval(lease_seconds: int) -> float:
+    return min(
+        MEETING_MEMORY_WRITE_LEASE_HEARTBEAT_MAX_SECONDS,
+        lease_seconds / 3,
+    )
+
+
+def _renew_meeting_memory_write_event_lease(
+    store: AutoReplyStore,
+    event_id: int,
+    owner: str,
+    now: datetime,
+    lease_seconds: int,
+) -> bool:
+    return store.renew_meeting_memory_write_event_lease(
+        event_id,
+        lease_owner=owner,
+        now=now,
+        lease_seconds=lease_seconds,
+    )
 
 
 def _meeting_memory_current_time(

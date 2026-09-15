@@ -14454,6 +14454,33 @@ class AutoReplyStore:
             )
         return cursor.rowcount == 1
 
+    def renew_meeting_memory_write_event_lease(
+        self,
+        event_id: int,
+        *,
+        lease_owner: str,
+        now: datetime,
+        lease_seconds: int,
+    ) -> bool:
+        """Extend a live worker lease without allowing a stale owner to reclaim it."""
+        if not lease_owner.strip():
+            raise ValueError("meeting Memory lease owner is required")
+        if lease_seconds <= 0:
+            raise ValueError("meeting Memory lease duration must be positive")
+        renewal_time = _meeting_memory_settlement_time(now)
+        lease_expires_at = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update meeting_memory_write_events
+                set lease_expires_at=?, updated_at=current_timestamp
+                where id=? and status='processing' and lease_owner=?
+                  and datetime(lease_expires_at)>datetime(?)
+                """,
+                (lease_expires_at, event_id, lease_owner, renewal_time),
+            )
+        return cursor.rowcount == 1
+
     def retry_meeting_memory_write_event(
         self,
         event_id: int,

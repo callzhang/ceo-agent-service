@@ -414,6 +414,47 @@ def test_expired_meeting_memory_owner_cannot_settle_an_event(
     assert dict(row) == {"status": "processing", "lease_owner": "expired-worker"}
 
 
+def test_meeting_memory_lease_renewal_requires_the_live_current_owner(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    event = store.claim_due_meeting_memory_write_events(
+        now="2026-09-15T10:00:00+00:00",
+        limit=1,
+        owner="worker-a",
+        lease_seconds=30,
+    )[0]
+
+    assert not store.renew_meeting_memory_write_event_lease(
+        event.id,
+        lease_owner="worker-b",
+        now=datetime.fromisoformat("2026-09-15T10:00:10+00:00"),
+        lease_seconds=30,
+    )
+    assert store.renew_meeting_memory_write_event_lease(
+        event.id,
+        lease_owner="worker-a",
+        now=datetime.fromisoformat("2026-09-15T10:00:10+00:00"),
+        lease_seconds=30,
+    )
+    assert not store.renew_meeting_memory_write_event_lease(
+        event.id,
+        lease_owner="worker-a",
+        now=datetime.fromisoformat("2026-09-15T10:00:41+00:00"),
+        lease_seconds=30,
+    )
+    reclaimed = store.claim_due_meeting_memory_write_events(
+        now="2026-09-15T10:00:41+00:00",
+        limit=1,
+        owner="worker-b",
+        lease_seconds=30,
+    )
+
+    assert [claimed.id for claimed in reclaimed] == [event.id]
+
+
 def test_meeting_memory_lease_covers_configured_runtime_timeout() -> None:
     assert meeting_memory_write_lease_seconds(1200, 900) == 2700
     assert meeting_memory_write_lease_seconds(3600, 60) == 3900
@@ -469,6 +510,143 @@ def test_meeting_memory_processing_uses_the_configured_long_runtime_lease(
     assert outcome.completed == 1
     assert outcome.lost_lease == 0
     assert runtime.intruder_claim_count == 0
+
+
+def test_meeting_memory_lease_renewal_blocks_reclaim_during_a_long_write(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    current_time = datetime.fromisoformat("2026-09-15T10:00:00+00:00")
+    clock_lock = threading.Lock()
+    renewed = threading.Event()
+    renewal_results: list[bool] = []
+
+    def clock() -> datetime:
+        with clock_lock:
+            return current_time
+
+    def advance(seconds: int) -> None:
+        nonlocal current_time
+        with clock_lock:
+            current_time += timedelta(seconds=seconds)
+
+    def renewer(
+        heartbeat_store: AutoReplyStore,
+        event_id: int,
+        owner: str,
+        now: datetime,
+        lease_seconds: int,
+    ) -> bool:
+        renewed_lease = heartbeat_store.renew_meeting_memory_write_event_lease(
+            event_id,
+            lease_owner=owner,
+            now=now,
+            lease_seconds=lease_seconds,
+        )
+        renewal_results.append(renewed_lease)
+        renewed.set()
+        return renewed_lease
+
+    class _LongRunningRuntime:
+        def __init__(self) -> None:
+            self.intruder_claim_count = -1
+
+        def execute(self, **_kwargs):
+            advance(8)
+            assert renewed.wait(timeout=1)
+            advance(4)
+            self.intruder_claim_count = len(
+                store.claim_due_meeting_memory_write_events(
+                    now=clock().isoformat(),
+                    limit=1,
+                    owner="intruder",
+                    lease_seconds=10,
+                )
+            )
+            return SimpleNamespace(
+                value=json.dumps(
+                    {
+                        "status": "success",
+                        "memory_id": "renewed-memory",
+                        "retryable": False,
+                        "source_code": "",
+                        "detail": "",
+                    }
+                )
+            )
+
+    runtime = _LongRunningRuntime()
+    outcome = process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=runtime,
+        lease_seconds=10,
+        lease_heartbeat_interval_seconds=0.01,
+        lease_renewer=renewer,
+        clock=clock,
+    )
+
+    assert outcome.completed == 1
+    assert outcome.lost_lease == 0
+    assert runtime.intruder_claim_count == 0
+    assert renewal_results == [True]
+    time.sleep(0.03)
+    assert renewal_results == [True]
+    assert not any(
+        thread.name.startswith("meeting-memory-lease-")
+        for thread in threading.enumerate()
+    )
+
+
+def test_meeting_memory_worker_does_not_settle_after_lease_renewal_fails(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    renewal_failed = threading.Event()
+
+    def failed_renewer(
+        _heartbeat_store: AutoReplyStore,
+        _event_id: int,
+        _owner: str,
+        _now: datetime,
+        _lease_seconds: int,
+    ) -> bool:
+        renewal_failed.set()
+        return False
+
+    class _WaitForRenewalRuntime:
+        def execute(self, **_kwargs):
+            assert renewal_failed.wait(timeout=1)
+            return SimpleNamespace(
+                value=json.dumps(
+                    {
+                        "status": "success",
+                        "memory_id": "must-not-settle",
+                        "retryable": False,
+                        "source_code": "",
+                        "detail": "",
+                    }
+                )
+            )
+
+    outcome = process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=_WaitForRenewalRuntime(),
+        lease_seconds=30,
+        lease_heartbeat_interval_seconds=0.01,
+        lease_renewer=failed_renewer,
+    )
+
+    assert outcome.completed == 0
+    assert outcome.lost_lease == 1
+    with store._connect() as db:
+        row = db.execute(
+            "select status, memory_id from meeting_memory_write_events"
+        ).fetchone()
+    assert dict(row) == {"status": "processing", "memory_id": ""}
 
 
 def test_idle_meeting_memory_enqueue_does_not_mutate_rows_or_sequence(

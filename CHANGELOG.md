@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Meeting-to-Memory writes now renew a live event lease while a routed Memory
+  call is still running, using a separate short-lived SQLite connection. A
+  renewal that loses ownership or reaches expiry makes the old worker stop
+  without settling the event, so a reclaimed event cannot be overwritten after
+  failover or a long-running route.
+
 - Fixed SQLite startup migration ordering for legacy Workbench turn tables: the
   service now adds the lease fields before creating the recovery index that
   uses them, so a stale local schema cannot fail service startup with a missing
