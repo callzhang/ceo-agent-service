@@ -50,6 +50,8 @@ export interface ScheduledTaskRun {
   scheduled_task_id: number;
   trigger_kind: ScheduledTaskTriggerKind;
   scheduled_for: string;
+  first_scheduled_for: string;
+  occurrence_count: number;
   dispatch_status: ScheduledTaskDispatchStatus;
   skip_or_error_reason: string;
   execution_kind: string;
@@ -215,6 +217,8 @@ function validRun(value: unknown): value is ScheduledTaskRun {
     && positiveInteger(item.scheduled_task_id)
     && (item.trigger_kind === "scheduled" || item.trigger_kind === "manual")
     && typeof item.scheduled_for === "string"
+    && typeof item.first_scheduled_for === "string"
+    && positiveInteger(item.occurrence_count)
     && (item.dispatch_status === "pending" || item.dispatch_status === "dispatched" || item.dispatch_status === "skipped" || item.dispatch_status === "failed")
     && typeof item.skip_or_error_reason === "string" && typeof item.execution_kind === "string"
     && typeof item.execution_id === "string" && typeof item.created_at === "string"

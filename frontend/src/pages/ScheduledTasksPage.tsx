@@ -229,11 +229,11 @@ function coalescedRunHistory(runs: ScheduledTaskRun[], latestAttemptRun: Schedul
     const kind = runHistoryGroupKind(run);
     const previous = entries[entries.length - 1];
     if (kind && previous?.kind === kind) {
-      previous.count += 1;
+      previous.count += run.occurrence_count;
       previous.oldest = run;
       return entries;
     }
-    entries.push({ run, oldest: run, count: 1, kind, latestAttempt: latestAttemptRun?.id === run.id });
+    entries.push({ run, oldest: run, count: run.occurrence_count, kind, latestAttempt: latestAttemptRun?.id === run.id });
     return entries;
   }, []);
 }
@@ -244,7 +244,7 @@ function RunHistory({ runs, latestAttemptRun, hasMore, loading, onMore, commandO
     <div className="scheduled-task-section-heading"><h3 id="scheduled-task-history-title">运行记录</h3><span>{entries.length} 条</span></div>
     {entries.length === 0 ? <p className="scheduled-task-empty-copy">尚无运行记录。</p> : <ol>{entries.map((entry) => <li key={`${entry.kind || "run"}:${entry.run.id}`}>
       <div><strong>{entry.run.trigger_kind === "manual" ? "手动运行" : "定时触发"}</strong><span>{entry.kind ? "已合并" : entry.run.dispatch_status}</span>{entry.latestAttempt && <span className="scheduled-task-effective-trigger">最近一次触发 Agent</span>}</div>
-      <small>{entry.count > 1 ? `${timeLabel(entry.oldest.scheduled_for)} – ${timeLabel(entry.run.scheduled_for)}` : timeLabel(entry.run.scheduled_for)}</small>
+      <small>{entry.count > 1 ? `${timeLabel(entry.oldest.first_scheduled_for)} – ${timeLabel(entry.run.scheduled_for)}` : timeLabel(entry.run.scheduled_for)}</small>
       {entry.kind === "service_check" ? <span className="scheduled-task-attempt-links">{entry.count} 次检查未触发 Agent</span>
         : entry.kind === "previous_execution_active" ? <span className="scheduled-task-attempt-links">上一轮运行期间跳过 {entry.count} 个定时点</span>
           : <span className="scheduled-task-attempt-links"><span>Trigger #{entry.run.id}</span><span aria-hidden="true">→</span>{entry.run.attempts.length > 0 ? entry.run.attempts.map((attempt) => <Link key={attempt.id} to={`/attempts/${attempt.id}`} title={attempt.status}>Attempt #{attempt.id}</Link>) : <span>未产生 Attempt</span>}</span>}

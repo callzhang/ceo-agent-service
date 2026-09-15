@@ -170,7 +170,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-15.2"
+STORE_SCHEMA_VERSION = "2026-09-15.3"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -293,6 +293,8 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "execution_id",
         "lease_owner",
         "lease_expires_at",
+        "first_scheduled_for",
+        "occurrence_count",
     ),
     "dispatcher_claim_leases": (
         "terminal_at",
@@ -2342,6 +2344,9 @@ class AutoReplyStore:
                         'scheduled', 'manual'
                     )),
                     scheduled_for text not null,
+                    first_scheduled_for text not null,
+                    occurrence_count integer not null default 1
+                        check(occurrence_count > 0),
                     dispatch_status text not null default 'pending' check(
                         dispatch_status in (
                             'pending', 'dispatched', 'skipped', 'failed'
@@ -4676,6 +4681,26 @@ class AutoReplyStore:
                     "alter table scheduled_tasks add column "
                     "description text not null default ''"
                 )
+            scheduled_run_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(scheduled_task_runs)"
+                ).fetchall()
+            }
+            if "first_scheduled_for" not in scheduled_run_columns:
+                db.execute(
+                    "alter table scheduled_task_runs add column "
+                    "first_scheduled_for text not null default ''"
+                )
+            if "occurrence_count" not in scheduled_run_columns:
+                db.execute(
+                    "alter table scheduled_task_runs add column "
+                    "occurrence_count integer not null default 1"
+                )
+            db.execute(
+                "update scheduled_task_runs set first_scheduled_for=scheduled_for "
+                "where first_scheduled_for=''"
+            )
             db.execute(
                 "update scheduled_tasks set description=coalesce(nullif(trim(prompt), ''), name) "
                 "where trim(description)=''"
@@ -6090,6 +6115,7 @@ class AutoReplyStore:
     def _scheduled_task_run_columns() -> str:
         return (
             "id, event_id, scheduled_task_id, trigger_kind, scheduled_for, "
+            "first_scheduled_for, occurrence_count, "
             "dispatch_status, skip_or_error_reason, snapshot_json, "
             "execution_kind, execution_id, lease_owner, lease_expires_at, "
             "created_at, dispatched_at"
@@ -6114,6 +6140,11 @@ class AutoReplyStore:
             scheduled_for=parse_utc_datetime(
                 row["scheduled_for"], field="scheduled task run scheduled_for"
             ),
+            first_scheduled_for=parse_utc_datetime(
+                row["first_scheduled_for"],
+                field="scheduled task run first_scheduled_for",
+            ),
+            occurrence_count=int(row["occurrence_count"]),
             dispatch_status=str(row["dispatch_status"]),
             skip_or_error_reason=str(row["skip_or_error_reason"]),
             snapshot=snapshot,
@@ -6228,18 +6259,65 @@ class AutoReplyStore:
             snapshot_json = ScheduledTaskSnapshot.from_task(task).to_json()
             ScheduledTaskSnapshot.from_json(snapshot_json)
             dispatch_status = "skipped" if reason else "pending"
+            if reason == "scheduled_task_previous_execution_active":
+                duplicate = db.execute(
+                    f"select {self._scheduled_task_run_columns()} "
+                    "from scheduled_task_runs where scheduled_task_id=? "
+                    "and trigger_kind='scheduled' and scheduled_for=?",
+                    (task_id, scheduled_for_text),
+                ).fetchone()
+                if duplicate is not None:
+                    return ScheduledTaskRunCreateResult(
+                        ScheduledTaskRunCreateState.DUPLICATE,
+                        self._scheduled_task_run_from_row(duplicate),
+                    )
+                previous_skip = db.execute(
+                    "select id from scheduled_task_runs "
+                    "where scheduled_task_id=? and trigger_kind='scheduled' "
+                    "and dispatch_status='skipped' "
+                    "and skip_or_error_reason=? order by id desc limit 1",
+                    (task_id, reason),
+                ).fetchone()
+                latest = db.execute(
+                    "select id from scheduled_task_runs where scheduled_task_id=? "
+                    "order by id desc limit 1",
+                    (task_id,),
+                ).fetchone()
+                if (
+                    previous_skip is not None
+                    and latest is not None
+                    and int(previous_skip["id"]) == int(latest["id"])
+                ):
+                    db.execute(
+                        "update scheduled_task_runs set scheduled_for=?, "
+                        "occurrence_count=occurrence_count + 1, dispatched_at=? "
+                        "where id=?",
+                        (scheduled_for_text, now_text, int(previous_skip["id"])),
+                    )
+                    grouped = db.execute(
+                        f"select {self._scheduled_task_run_columns()} "
+                        "from scheduled_task_runs where id=?",
+                        (int(previous_skip["id"]),),
+                    ).fetchone()
+                    assert grouped is not None
+                    return ScheduledTaskRunCreateResult(
+                        ScheduledTaskRunCreateState.CREATED,
+                        self._scheduled_task_run_from_row(grouped),
+                    )
             try:
                 cursor = db.execute(
                     """
                     insert into scheduled_task_runs (
                         event_id, scheduled_task_id, trigger_kind, scheduled_for,
+                        first_scheduled_for, occurrence_count,
                         dispatch_status, skip_or_error_reason, snapshot_json,
                         created_at, dispatched_at
-                    ) values (?, ?, 'scheduled', ?, ?, ?, ?, ?, ?)
+                    ) values (?, ?, 'scheduled', ?, ?, 1, ?, ?, ?, ?, ?)
                     """,
                     (
                         event_id,
                         task_id,
+                        scheduled_for_text,
                         scheduled_for_text,
                         dispatch_status,
                         reason,
@@ -6323,14 +6401,16 @@ class AutoReplyStore:
                     """
                     insert into scheduled_task_runs (
                         event_id, scheduled_task_id, trigger_kind, scheduled_for,
+                        first_scheduled_for, occurrence_count,
                         dispatch_status, skip_or_error_reason, snapshot_json,
                         created_at, dispatched_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
                     """,
                     (
                         event_id,
                         task_id,
                         trigger_kind,
+                        scheduled_for_text,
                         scheduled_for_text,
                         dispatch_status,
                         reason,

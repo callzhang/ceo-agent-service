@@ -376,6 +376,8 @@ class ScheduledTaskRun:
     scheduled_task_id: int
     trigger_kind: str
     scheduled_for: datetime
+    first_scheduled_for: datetime
+    occurrence_count: int
     dispatch_status: str
     skip_or_error_reason: str
     snapshot: ScheduledTaskSnapshot

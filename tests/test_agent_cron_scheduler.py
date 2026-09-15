@@ -409,8 +409,12 @@ def test_active_previous_execution_skips_without_creating_business_execution(
 
     scheduler.tick(NOW + timedelta(minutes=2))
 
-    later = store.list_scheduled_task_runs(task.id)[-1]
+    runs = store.list_scheduled_task_runs(task.id)
+    assert len(runs) == 2
+    later = runs[-1]
     assert later.scheduled_for == NOW + timedelta(minutes=2)
+    assert later.first_scheduled_for == NOW + timedelta(minutes=1)
+    assert later.occurrence_count == 2
     assert later.dispatch_status == "skipped"
     assert later.skip_or_error_reason == PREVIOUS_EXECUTION_ACTIVE
 

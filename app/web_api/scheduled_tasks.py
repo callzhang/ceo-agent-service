@@ -166,6 +166,8 @@ def _run_payload(
         "scheduled_task_id": run.scheduled_task_id,
         "trigger_kind": run.trigger_kind,
         "scheduled_for": _utc_text(run.scheduled_for),
+        "first_scheduled_for": _utc_text(run.first_scheduled_for),
+        "occurrence_count": run.occurrence_count,
         "dispatch_status": run.dispatch_status,
         "skip_or_error_reason": run.skip_or_error_reason,
         "execution_kind": run.execution_kind,
