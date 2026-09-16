@@ -22,7 +22,7 @@ describe("StatusPage", () => {
         runtime_loops: [
           { scope: "component:email-scan-actions", status: "ready", updated_at: "now" },
           { scope: "component:email-agent-consumer", status: "ready", updated_at: "now" },
-          { scope: "component:email-training", status: "ready", updated_at: "now" },
+          { scope: "component:email-training", status: "degraded", error_code: "training_runtime_error", error_stage: "active_model_tick", updated_at: "now" },
         ],
         accounts: [{ scope: "account:dingtalk_primary", status: "ready", updated_at: "now" }],
         checks: [{ scope: "component:email-provider-actions", status: "degraded", error_code: "provider_action_failed", updated_at: "now" }],
@@ -66,6 +66,7 @@ describe("StatusPage", () => {
     expect(screen.getByText("email-scan-actions")).toBeInTheDocument();
     expect(screen.getByText("dingtalk_primary")).toBeInTheDocument();
     expect(screen.getByText("email-provider-actions")).toBeInTheDocument();
+    expect(screen.getByText("training_runtime_error · active_model_tick")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "会议结论同步" })).toBeInTheDocument();
     expect(screen.getByText("最久等待")).toBeInTheDocument();
     expect(screen.getByText("近一小时完成")).toBeInTheDocument();
