@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -653,6 +653,53 @@ describe("AttemptDetailPage", () => {
     expect(block.textContent).toContain("const result = {\n");
     expect(block.textContent).toContain('outcome: "no_action",\n');
     expect(block.textContent).not.toContain("\\n");
+  });
+
+  it("splits 调用记录 into 信息查询 and 动作 instead of one undifferentiated list", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        agent_sessions: [],
+        tool_uses: [
+          { title: "get_interview_context", tool: "get_interview_context", call_id: "call-1", relevance: "", source: "xiaoqing_interview", args: {}, format: "json", output: "{}" },
+          { title: "list_candidate_interviews", tool: "list_candidate_interviews", call_id: "call-2", relevance: "", source: "xiaoqing_interview", args: {}, format: "json", output: "{}" },
+          { title: "upload_interview_result", tool: "upload_interview_result", call_id: "call-3", relevance: "", source: "xiaoqing_interview", args: {}, format: "json", output: "{}" },
+        ],
+      },
+      meta: { snapshot_at: "2026-09-16T00:00:00Z" },
+    });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "处理历史" });
+    const queryGroup = screen.getByRole("heading", { name: "信息查询2" }).closest(".attempt-tool-use-group") as HTMLElement;
+    const actionGroup = screen.getByRole("heading", { name: "动作1" }).closest(".attempt-tool-use-group") as HTMLElement;
+    expect(within(queryGroup).getByText("get_interview_context")).toBeInTheDocument();
+    expect(within(queryGroup).getByText("list_candidate_interviews")).toBeInTheDocument();
+    expect(within(queryGroup).queryByText("upload_interview_result")).not.toBeInTheDocument();
+    expect(within(actionGroup).getByText("upload_interview_result")).toBeInTheDocument();
+  });
+
+  it("treats a recognized file view as 信息查询 and an unrecognized shell command as 动作", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        agent_sessions: [],
+        tool_uses: [
+          { title: `/bin/zsh -lc "sed -n '1,10p' a.md"`, tool: "command_execution", call_id: "call-read", relevance: "", source: "", args: { command: `/bin/zsh -lc "sed -n '1,10p' a.md"` }, format: "terminal", output: "content" },
+          { title: `/bin/zsh -lc "mkdir /tmp/x"`, tool: "command_execution", call_id: "call-mkdir", relevance: "", source: "", args: { command: `/bin/zsh -lc "mkdir /tmp/x"` }, format: "terminal", output: "" },
+        ],
+      },
+      meta: { snapshot_at: "2026-09-16T00:00:00Z" },
+    });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "处理历史" });
+    const queryGroup = screen.getByRole("heading", { name: "信息查询1" }).closest(".attempt-tool-use-group") as HTMLElement;
+    const actionGroup = screen.getByRole("heading", { name: "动作1" }).closest(".attempt-tool-use-group") as HTMLElement;
+    expect(within(queryGroup).getByText("a.md")).toBeInTheDocument();
+    // A shell command this console cannot read the shape of never gets
+    // called safe - it lands in 动作 rather than being assumed harmless.
+    expect(within(actionGroup).getAllByText(/mkdir \/tmp\/x/).length).toBeGreaterThan(0);
   });
 
   it("keeps every post-header section inside the main and sidebar columns", async () => {

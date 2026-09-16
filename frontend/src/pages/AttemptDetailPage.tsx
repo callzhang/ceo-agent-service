@@ -245,13 +245,42 @@ function prettyPrintPreservingNewlines(value: unknown, indent = 0): string {
   return `{\n${items.join(",\n")}\n${pad}}`;
 }
 
+// Tool names in every call this console has seen follow the same RPC verb
+// convention their own authors use - `get_x`/`list_x`/`user_get` versus
+// `upload_x`/`unsubscribe_x`/`send_x` - so splitting on that verb is reading
+// a name the tool's own author chose, not inventing a business rule. Nothing
+// here can know for certain a given MCP server's tool had no side effect;
+// a name this doesn't recognize (an eval/REPL tool, for one - it could do
+// anything) defaults to 动作 rather than being called safe. A recognized
+// file view (see parseFileReadCommand) is always 信息查询.
+const QUERY_VERBS = new Set(["get", "list", "search", "read", "find", "fetch", "check", "view", "query", "describe"]);
+const ACTION_VERBS = new Set(["upload", "create", "update", "delete", "remove", "send", "unsubscribe", "execute", "mark", "submit", "write", "set", "cancel", "confirm", "reject", "approve", "publish", "post", "run"]);
+
+function isQueryToolUse(use: AttemptToolUse, fileRead: FileReadSummary | null): boolean {
+  if (fileRead) return true;
+  if (use.tool === "command_execution") return false; // shell command we couldn't read structurally
+  const tokens = use.tool.toLowerCase().split(/[_.-]/).filter(Boolean);
+  if (tokens.some((token) => ACTION_VERBS.has(token))) return false;
+  return tokens.some((token) => QUERY_VERBS.has(token));
+}
+
+function ToolUseItem({ use, fileRead }: { use: AttemptToolUse; fileRead: FileReadSummary | null }) {
+  if (fileRead) return <p className="attempt-tool-use-read">读取 <code>{fileRead.path}</code>{fileRead.range !== "全文" && <span> 第 {fileRead.range} 行</span>}</p>;
+  return <article className="attempt-tool-use"><header><strong>{use.title || use.tool || "未命名调用"}</strong>{use.source && <small>{use.source}</small>}</header>{use.relevance && <p className="attempt-tool-use-relevance">{use.relevance}</p>}<dl><div><dt>参数</dt><dd><SummaryText value={formatToolPayload(use.args)} lines={4} /></dd></div><div><dt>结果</dt><dd><SummaryText value={formatToolPayload(use.output, { unwrapResult: true })} lines={6} /></dd></div></dl></article>;
+}
+
 function ToolUseList({ uses }: { uses: AttemptToolUse[] }) {
   if (!uses.length) return <p className="page-state">这一段没有留下可读的调用记录。</p>;
-  return <ol className="attempt-tool-use-list">{uses.map((use, index) => {
+  const queries: Array<{ use: AttemptToolUse; index: number; fileRead: FileReadSummary | null }> = [];
+  const actions: Array<{ use: AttemptToolUse; index: number; fileRead: FileReadSummary | null }> = [];
+  uses.forEach((use, index) => {
     const fileRead = use.tool === "command_execution" ? parseFileReadCommand(use.title || "") : null;
-    if (fileRead) return <li key={`${use.call_id}-${index}`}><p className="attempt-tool-use-read">读取 <code>{fileRead.path}</code>{fileRead.range !== "全文" && <span> 第 {fileRead.range} 行</span>}</p></li>;
-    return <li key={`${use.call_id}-${index}`}><article className="attempt-tool-use"><header><strong>{use.title || use.tool || "未命名调用"}</strong>{use.source && <small>{use.source}</small>}</header>{use.relevance && <p className="attempt-tool-use-relevance">{use.relevance}</p>}<dl><div><dt>参数</dt><dd><SummaryText value={formatToolPayload(use.args)} lines={4} /></dd></div><div><dt>结果</dt><dd><SummaryText value={formatToolPayload(use.output, { unwrapResult: true })} lines={6} /></dd></div></dl></article></li>;
-  })}</ol>;
+    (isQueryToolUse(use, fileRead) ? queries : actions).push({ use, index, fileRead });
+  });
+  return <>
+    {queries.length > 0 && <div className="attempt-tool-use-group"><h4>信息查询<span>{queries.length}</span></h4><ol className="attempt-tool-use-list">{queries.map(({ use, index, fileRead }) => <li key={`${use.call_id}-${index}`}><ToolUseItem use={use} fileRead={fileRead} /></li>)}</ol></div>}
+    {actions.length > 0 && <div className="attempt-tool-use-group"><h4>动作<span>{actions.length}</span></h4><ol className="attempt-tool-use-list">{actions.map(({ use, index, fileRead }) => <li key={`${use.call_id}-${index}`}><ToolUseItem use={use} fileRead={fileRead} /></li>)}</ol></div>}
+  </>;
 }
 
 type RuntimeBatch = {
@@ -284,7 +313,7 @@ function ProcessingPanel({ detail }: { detail: AttemptDetail }) {
     <div className="attempt-process-header"><div><h2>处理历史</h2><p>这里保留当前处理和历史重试；历史重试不会等同于重复发送。</p></div>{processCount > 0 && <span>{runtimeBatches.length || processCount} 个处理批次</span>}</div>
     {detail.runtime_attempts.length > 0 && <p className="attempt-process-count">{runtimeBatches.length} 个处理批次；{detail.runtime_attempts.length} 个内部运行记录；历史重试不会等同于重复发送。</p>}
     {detail.context_only_info && <div className="attempt-process-context"><span>上下文说明</span><SummaryText value={detail.context_only_info} lines={4} /></div>}
-    {recordedCalls.length > 0 && <div className="attempt-process-subsection"><h3>调用记录</h3><ToolUseList uses={recordedCalls} /></div>}
+    {recordedCalls.length > 0 && <div className="attempt-process-subsection"><ToolUseList uses={recordedCalls} /></div>}
     {runtimeBatches.length > 0 && <div className="attempt-process-subsection"><div className="attempt-process-batches">{runtimeBatches.map((batch, index) => {
       const latest = index === runtimeBatches.length - 1;
       const roles = [...new Set(batch.entries.map((entry) => entry.role === "audit" ? "审计" : entry.role === "consumer" ? "Consumer" : "系统"))].join(" + ");

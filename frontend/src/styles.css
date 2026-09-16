@@ -1142,6 +1142,10 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-tool-use dd { margin: 3px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .74rem; line-height: 1.45; }
 .attempt-tool-use-read { margin: 0; padding: 8px 13px; overflow-wrap: anywhere; color: var(--ink-soft); font-size: .78rem; }
 .attempt-tool-use-read code { color: var(--ink); font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .74rem; }
+.attempt-tool-use-group { margin-bottom: 14px; }
+.attempt-tool-use-group:last-child { margin-bottom: 0; }
+.attempt-tool-use-group h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; color: var(--ink-soft); font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+.attempt-tool-use-group h4 span { padding: 1px 6px; border-radius: 999px; background: var(--surface-muted); font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .68rem; font-weight: 700; text-transform: none; letter-spacing: 0; }
 .attempt-runtime-entry { padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
 .attempt-runtime-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .attempt-runtime-heading strong { overflow-wrap: anywhere; }
