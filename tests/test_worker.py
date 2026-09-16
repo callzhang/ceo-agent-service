@@ -17210,3 +17210,57 @@ def test_a_delivery_is_not_projected_from_a_claim_with_no_provider_receipt():
     assert DingTalkAutoReplyWorker._sent_reply_projection_from_result(
         task, result, _audit_run_with_receipt()
     ) is not None
+
+
+def test_a_send_identified_only_by_its_task_handle_still_reaches_the_ledger():
+    """`dws chat +dm` returns an openTaskId and nothing else.
+
+    Audit run 19678 really delivered and reported that handle, but the
+    projection looked for message-id spellings only, read a real delivery as
+    no delivery, and wrote no ledger row -- which is what lets the next
+    attempt send the same message to the same person a second time.
+    """
+    task = SimpleNamespace(
+        channel="dingtalk", conversation_id="cid-1",
+        business_object_key="message:dingtalk:cid-1:trigger-1",
+    )
+    audit_result = AuditAgentResult.model_validate({
+        "outcome": "executed", "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
+        "summary": "sent", "proposal_revision": 0, "feedback": None,
+        "external_result": {
+            "operation_id": "op-1",
+            "live_result_reference": {
+                "open_task_id": "ug+Jh+8XPcnS1FFI0wAyhKR/URa7bVoH7cclvy4tUao=",
+                "success": True,
+            },
+        },
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })
+    consumer_result = ConsumerAgentResult.model_validate({
+        "outcome": "proposal", "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0, "summary": "ask",
+        "proposal": {
+            "objective": "ask", "sourced_facts": [], "authored_judgment": "",
+            "actions": [{
+                "description": "ask", "action_identity": "clarify",
+                "capability": "dingtalk-chat", "operation": "send",
+                "target": {"open_dingtalk_id": "open-recipient"},
+                "payload": {"content": "「其它企业」具体是指哪些企业？"},
+            }],
+        },
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })
+    result = OrchestrationResult(
+        status="executed", final_run_id=19678, final_role=AgentRole.AUDIT,
+        summary="sent",
+        error=AgentError(code="", retryable=False, authorization_required=False),
+        feedback_cycles=1, consumer_result=consumer_result, audit_result=audit_result,
+    )
+
+    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
+        task, result, _audit_run_with_receipt("ug+Jh+8XPcnS1FFI0wAyhKR/URa7bVoH7cclvy4tUao=")
+    )
+
+    assert projection is not None
+    assert projection.reply_text == "「其它企业」具体是指哪些企业？"

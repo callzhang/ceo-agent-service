@@ -34,7 +34,7 @@ from app.channel_gate import (
     default_channel_gates,
     start_lark_auth_login,
 )
-from app.agent_effect_guard import provider_receipts
+from app.agent_effect_guard import PROVIDER_RECEIPT_FIELDS, provider_receipts
 from app.consumer_agent import ConsumerAgentRunner
 from app.dingtalk_send_evidence import DingTalkSendEvidenceDriver
 from app.external_action_identity import expected_external_action
@@ -2685,13 +2685,25 @@ class DingTalkAutoReplyWorker:
             or reference.get("send_status")
             or ""
         ).strip().lower()
+        # A send identity is whatever the provider handed back to identify the
+        # effect, which is the same set the evidence guard recognises as a
+        # receipt.  Keeping a second list here let the two halves disagree: a
+        # `dws chat +dm` returns only an `openTaskId`, so a real delivery was
+        # read as no delivery and left no ledger row -- and an unrecorded
+        # delivery is what makes the next attempt send the message again.
         stable_message_id = str(
             reference.get("sent_message_id")
             or reference.get("sentMessageId")
             or reference.get("message_id")
             or reference.get("messageId")
-            or reference.get("openMessageId")
-            or reference.get("open_message_id")
+            or next(
+                (
+                    reference[field]
+                    for field in PROVIDER_RECEIPT_FIELDS
+                    if isinstance(reference.get(field), str) and reference[field].strip()
+                ),
+                "",
+            )
             or ""
         ).strip()
         if send_status not in {"success", "sent"} and not stable_message_id:
