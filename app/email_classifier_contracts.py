@@ -45,6 +45,10 @@ RESERVED_EMAIL_CATEGORY_KEYS = frozenset(
 # on. It is never a configurable category: it has no folder action, and a
 # prediction of it hands the message to the Agent.
 MODEL_OTHERS_CATEGORY_KEY = "others"
+MODEL_OTHERS_CATEGORY_CORE_DESCRIPTION = (
+    "不属于本次训练所选类别的邮件。命中这一类时交由 Agent 分类。"
+)
+MODEL_OTHERS_CATEGORY_DESCRIPTION_VERSION = "others-complement-v1"
 LEGACY_EMAIL_CATEGORY_KEYS = frozenset({"important", "subscription", "billing"})
 _LEGACY_CATEGORY_CONTEXT_KEY = "allow_legacy_email_category_keys"
 

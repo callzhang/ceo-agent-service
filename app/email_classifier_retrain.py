@@ -25,6 +25,11 @@ from app.email_classifier_training import (
 from app.email_classifier_model_families import validate_model_families
 from app.email_embedding_cache import EmbeddingCache
 from app.email_embedding_client import EmailEmbeddingClient
+from app.email_classifier_contracts import (
+    MODEL_OTHERS_CATEGORY_CORE_DESCRIPTION,
+    MODEL_OTHERS_CATEGORY_DESCRIPTION_VERSION,
+    MODEL_OTHERS_CATEGORY_KEY,
+)
 from app.email_embedding_classifier import CategoryDescription
 from app.email_embedding_warmup import warm_frozen_training_embeddings
 from app.email_model_registry import (
@@ -982,13 +987,33 @@ def _run_training_job(
                 if row["enabled"]
             }
         if selected_categories is not None:
+            business = [
+                category
+                for category in selected_categories
+                if category != MODEL_OTHERS_CATEGORY_KEY
+            ]
             descriptions = {
                 category: descriptions[category]
-                for category in selected_categories
+                for category in business
                 if category in descriptions
             }
-            if set(descriptions) != set(selected_categories):
+            if set(descriptions) != set(business):
                 raise RuntimeError("training selection categories are unavailable")
+            if MODEL_OTHERS_CATEGORY_KEY in selected_categories:
+                # others has no configured description: it is the complement of
+                # the selected ones, so the model can place a message outside
+                # its scope. It is added after the description set is resolved
+                # so the configured set, and the digest the promotion gate
+                # compares, stay exactly what the console shows.
+                descriptions = {
+                    **descriptions,
+                    MODEL_OTHERS_CATEGORY_KEY: CategoryDescription(
+                        core=MODEL_OTHERS_CATEGORY_CORE_DESCRIPTION,
+                        include=(),
+                        exclude=(),
+                        version=MODEL_OTHERS_CATEGORY_DESCRIPTION_VERSION,
+                    ),
+                }
         from app.email_candidate_benchmark import benchmark_candidate
 
         model_ids: list[str] = []
