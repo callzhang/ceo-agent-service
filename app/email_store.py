@@ -1678,6 +1678,13 @@ def _exhausted_direct_action_is_service_transient(row: sqlite3.Row) -> bool:
         "provider_factory_failed:"
     ):
         return True
+    if (
+        provider_operation == "startup_recovery"
+        and error == "stale_processing_recovered"
+    ):
+        # A restart interrupted the claim before the provider answered, so this
+        # attempt learned nothing about the action and must not end it.
+        return True
     return (
         str(row["action_type"]) == EmailAction.TRASH.value
         and provider_operation == "READ"

@@ -10239,3 +10239,42 @@ def test_a_skipped_attempt_still_requires_a_receipt_and_no_error(tmp_path: Path)
             error="",
             finished_at="2026-09-16T07:27:36+00:00",
         )
+
+
+def test_exhausted_interrupted_claim_recovers_after_retry_ceiling(tmp_path: Path):
+    """A restart that interrupts the claim must not end the action."""
+    store = EmailStore(tmp_path / "exhausted-interrupted-claim.sqlite3")
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.MOVE,),
+            action_parameters={EmailAction.MOVE: {"target_folder": "Legal"}},
+        ),
+    )
+    claim_times = (
+        "2026-09-07T12:00:00+00:00",
+        "2026-09-07T12:01:00+00:00",
+        "2026-09-07T12:03:00+00:00",
+    )
+    for attempt_number, claimed_at in enumerate(claim_times, start=1):
+        move = store.claim_next_direct_action(claimed_at=claimed_at)
+        assert move is not None
+        assert move.attempt_number == attempt_number
+        store.recover_stale_processing_actions(
+            stale_before="2026-09-07T23:00:00+00:00",
+            recovered_at=claimed_at,
+        )
+
+    exhausted = _fetchall(
+        tmp_path / "exhausted-interrupted-claim.sqlite3",
+        "select status, attempt_count, error from email_actions",
+    )[0]
+    assert exhausted["status"] == "failed"
+    assert exhausted["error"] == "stale_processing_recovered"
+
+    retry = store.claim_next_direct_action(claimed_at="2026-09-08T12:00:00+00:00")
+
+    assert retry is not None
+    assert retry.action_type is EmailAction.MOVE
+    assert retry.attempt_number == 4
