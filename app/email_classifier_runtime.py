@@ -409,25 +409,30 @@ def micro_f1_from_categories(categories, enabled_category_keys):
     the predicted class and one false negative to the true one. Pooled precision
     and recall are therefore both correct messages over all messages, and micro
     F1 is that same share. Correct messages per class are recall x support.
+
+    Classes the evaluation never measured are left out rather than making the
+    whole score unmeasurable: a class with no evaluated mail is already reported
+    by its own coverage and precision checks, and reporting the score over the
+    mail that was evaluated is what the model detail shows.
     """
 
     if not isinstance(categories, Mapping):
         return None
-    rows = [
-        categories.get(key) if isinstance(categories.get(key), Mapping) else {}
-        for key in enabled_category_keys
-    ]
-    recalls = [_finite_evidence_number(row.get("recall")) for row in rows]
-    supports = [_finite_evidence_number(row.get("support")) for row in rows]
-    if not rows or any(value is None or not 0 <= value <= 1 for value in recalls):
+    measured = []
+    for key in enabled_category_keys:
+        row = categories.get(key)
+        row = row if isinstance(row, Mapping) else {}
+        recall = _finite_evidence_number(row.get("recall"))
+        support = _finite_evidence_number(row.get("support"))
+        if recall is None or not 0 <= recall <= 1:
+            continue
+        if type(support) is not int or support < 0:
+            continue
+        measured.append((recall, support))
+    evaluated = sum(support for _, support in measured)
+    if not measured or evaluated <= 0:
         return None
-    if any(type(value) is not int or value < 0 for value in supports):
-        return None
-    if sum(supports) <= 0:
-        return None
-    return sum(
-        recall * support for recall, support in zip(recalls, supports)
-    ) / sum(supports)
+    return sum(recall * support for recall, support in measured) / evaluated
 
 
 def assess_online_promotion_gate(

@@ -72,6 +72,24 @@ def test_micro_f1_weighs_each_class_by_its_evaluated_messages():
     assert (1. + .0) / 2 < .95
 
 
+def test_micro_f1_scores_the_classes_the_evaluation_measured():
+    """A class with no evaluated mail fails its own checks rather than making
+    the overall score unmeasurable."""
+
+    row = evidence()
+    row["compatibility"]["enabled_categories"] = ["work", "legal"]
+    result = assess(row, enabled_category_keys=("work", "legal"))
+    check = micro_check(result)
+    assert check["actual"] == pytest.approx(.97)
+    assert check["passed"] is True
+    coverage = next(
+        item for item in result["checks"]
+        if item["key"] == "category_validation_samples:legal"
+    )
+    assert coverage["actual"] is None
+    assert result["promotion_eligible"] is False
+
+
 def test_micro_f1_is_unmeasured_without_recall_for_every_class():
     row = evidence()
     del row["metrics"]["categories"]["work"]["recall"]
