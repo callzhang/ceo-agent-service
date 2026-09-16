@@ -3584,6 +3584,13 @@ def test_a_typographic_apostrophe_does_not_hide_a_confirmed_unsubscribe() -> Non
     )
     assert state_from_text("您不会再收到我们的邮件") is UnsubscribePageState.DONE
     assert (
+        state_from_text(
+            "Newsletter Unsubscribed Product Notifications Unsubscribed "
+            "Product Updates Unsubscribed Resubscribe"
+        )
+        is UnsubscribePageState.ALREADY_UNSUBSCRIBED
+    )
+    assert (
         state_from_text("Sign in to manage your preferences")
         is UnsubscribePageState.LOGIN_REQUIRED
     )
