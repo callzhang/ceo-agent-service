@@ -469,6 +469,66 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("2 个匹配")).toBeInTheDocument();
   });
 
+  it("collapses a plain file-view command to the one line that matters: which file, which lines", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        agent_sessions: [],
+        tool_uses: [
+          {
+            title: `/bin/zsh -lc "sed -n '1,240p' /Users/derek/.agents/skills/ceo-mail-review/SKILL.md"`,
+            tool: "command_execution",
+            call_id: "call-read",
+            relevance: "",
+            source: "command_execution · sed",
+            args: { command: `/bin/zsh -lc "sed -n '1,240p' /Users/derek/.agents/skills/ceo-mail-review/SKILL.md"` },
+            format: "terminal",
+            output: "--- name: ceo-mail-review\ndescription: ...\n(the entire 240-line skill file)",
+          },
+        ],
+      },
+      meta: { snapshot_at: "2026-08-29T10:01:00Z" },
+    });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "处理历史" });
+    expect(screen.getByText("/Users/derek/.agents/skills/ceo-mail-review/SKILL.md")).toBeInTheDocument();
+    expect(screen.getByText("第 1-240 行")).toBeInTheDocument();
+    // The point is not showing the wrapper command, the raw args, or the
+    // file content it read back.
+    expect(screen.queryByText(/bin\/zsh/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/entire 240-line skill file/)).not.toBeInTheDocument();
+  });
+
+  it("leaves a command that isn't a plain file view fully detailed", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        agent_sessions: [],
+        tool_uses: [
+          {
+            title: `/bin/zsh -lc "rg 岗位 file.md | head -5"`,
+            tool: "command_execution",
+            call_id: "call-search",
+            relevance: "",
+            source: "command_execution · rg",
+            args: { command: `/bin/zsh -lc "rg 岗位 file.md | head -5"` },
+            format: "terminal",
+            output: "3 处匹配",
+          },
+        ],
+      },
+      meta: { snapshot_at: "2026-08-29T10:01:00Z" },
+    });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "处理历史" });
+    // Piped into something else, so it did more than view a file - keep the
+    // full command/args/output rendering rather than guessing a summary.
+    expect(screen.getAllByText(/rg 岗位 file\.md \| head -5/).length).toBeGreaterThan(0);
+    expect(screen.getByText("3 处匹配")).toBeInTheDocument();
+  });
+
   it("keeps every post-header section inside the main and sidebar columns", async () => {
     renderPage();
 

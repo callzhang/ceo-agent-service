@@ -1140,6 +1140,8 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-tool-use dl { display: grid; gap: 8px; margin: 0; }
 .attempt-tool-use dt { color: var(--ink-soft); font-size: .68rem; }
 .attempt-tool-use dd { margin: 3px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .74rem; line-height: 1.45; }
+.attempt-tool-use-read { margin: 0; padding: 8px 13px; overflow-wrap: anywhere; color: var(--ink-soft); font-size: .78rem; }
+.attempt-tool-use-read code { color: var(--ink); font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .74rem; }
 .attempt-runtime-entry { padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
 .attempt-runtime-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .attempt-runtime-heading strong { overflow-wrap: anywhere; }

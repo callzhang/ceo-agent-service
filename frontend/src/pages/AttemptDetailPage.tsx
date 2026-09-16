@@ -121,9 +121,46 @@ function MetadataGrid({ rows, consumerResult }: { rows: AttemptMetadata[]; consu
   </section>;
 }
 
+type FileReadSummary = { path: string; range: string };
+
+// A command_execution call is a raw shell invocation, usually wrapped in
+// `/bin/zsh -lc "..."`. When that command only viewed a file (sed/cat/head/
+// tail, no pipe or redirection into something else), showing the wrapper,
+// the full JSON args and the entire file content back is exactly what
+// Derek asked to stop seeing: the one fact worth keeping is which file, and
+// which lines. Best-effort only - anything that does not match a known
+// read shape keeps the full command/args/output rendering below.
+function unwrapShellInvocation(command: string): string {
+  const wrapped = command.match(/^\/bin\/(?:zsh|bash|sh)\s+-\S*c\s+(["'])([\s\S]*)\1$/);
+  return wrapped ? wrapped[2] : command;
+}
+
+function parseFileReadCommand(command: string): FileReadSummary | null {
+  const inner = unwrapShellInvocation(command).trim();
+  if (/[|;&><]/.test(inner)) return null; // piped or redirected: not a plain read
+
+  let match = inner.match(/^sed\s+-n\s+(["'])(\d+)(?:,(\d+|\$))?p\1\s+(\S+)$/);
+  if (match) return { path: match[4], range: match[3] ? `${match[2]}-${match[3]}` : match[2] };
+
+  match = inner.match(/^cat\s+(\S+)$/);
+  if (match) return { path: match[1], range: "全文" };
+
+  match = inner.match(/^head\s+(?:-n\s*)?-?(\d+)\s+(\S+)$/);
+  if (match) return { path: match[2], range: `1-${match[1]}` };
+
+  match = inner.match(/^tail\s+(?:-n\s*)?-?(\d+)\s+(\S+)$/);
+  if (match) return { path: match[2], range: `末 ${match[1]} 行` };
+
+  return null;
+}
+
 function ToolUseList({ uses }: { uses: AttemptToolUse[] }) {
   if (!uses.length) return <p className="page-state">这一段没有留下可读的调用记录。</p>;
-  return <ol className="attempt-tool-use-list">{uses.map((use, index) => <li key={`${use.call_id}-${index}`}><article className="attempt-tool-use"><header><strong>{use.title || use.tool || "未命名调用"}</strong>{use.source && <small>{use.source}</small>}</header>{use.relevance && <p className="attempt-tool-use-relevance">{use.relevance}</p>}<dl><div><dt>参数</dt><dd><SummaryText value={displayValue(use.args)} lines={4} /></dd></div><div><dt>结果</dt><dd><SummaryText value={displayValue(use.output)} lines={6} /></dd></div></dl></article></li>)}</ol>;
+  return <ol className="attempt-tool-use-list">{uses.map((use, index) => {
+    const fileRead = use.tool === "command_execution" ? parseFileReadCommand(use.title || "") : null;
+    if (fileRead) return <li key={`${use.call_id}-${index}`}><p className="attempt-tool-use-read">读取 <code>{fileRead.path}</code>{fileRead.range !== "全文" && <span> 第 {fileRead.range} 行</span>}</p></li>;
+    return <li key={`${use.call_id}-${index}`}><article className="attempt-tool-use"><header><strong>{use.title || use.tool || "未命名调用"}</strong>{use.source && <small>{use.source}</small>}</header>{use.relevance && <p className="attempt-tool-use-relevance">{use.relevance}</p>}<dl><div><dt>参数</dt><dd><SummaryText value={displayValue(use.args)} lines={4} /></dd></div><div><dt>结果</dt><dd><SummaryText value={displayValue(use.output)} lines={6} /></dd></div></dl></article></li>;
+  })}</ol>;
 }
 
 type RuntimeBatch = {
