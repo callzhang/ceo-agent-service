@@ -584,6 +584,7 @@ it("lists a run that produced no model in the version table with its reason", as
 
   const row = (await screen.findByText("run-88")).closest("tr")!;
   expect(row).toHaveTextContent("训练失败");
-  expect(row).toHaveTextContent("未产出模型");
+  // A run has no model family: that column stays empty rather than inventing one.
+  expect(row).toHaveTextContent("—");
   expect(row).toHaveTextContent("training selection categories are unavailable");
 });

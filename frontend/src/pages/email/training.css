@@ -341,10 +341,13 @@
   }
 }
 .training-run-reason {
-  display: inline-block;
-  max-width: 320px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 420px;
   color: var(--danger, #b3261e);
   font-size: 12px;
   line-height: 1.45;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }

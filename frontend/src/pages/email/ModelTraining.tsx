@@ -104,7 +104,9 @@ export function ModelTraining({
         kind: "run" as const,
         model: {
           model_id: run.run_id,
-          model_family: "未产出模型",
+          // A run that produced nothing has no family and no model status of
+          // its own; its own status column says what happened to it.
+          model_family: "",
           status: run.status,
           trained_at: run.started_at,
         },
@@ -113,11 +115,14 @@ export function ModelTraining({
     ],
     [models, learning.models, learning.training_runs_without_model],
   );
+  // Runs carry no family and no model status, so they must not offer filter
+  // values that would only ever hide the models the filters exist for.
+  const modelVersions = allVersions.filter((item) => item.kind !== "run");
   const families = Array.from(
-    new Set(allVersions.map((item) => item.model.model_family || "未提供")),
+    new Set(modelVersions.map((item) => item.model.model_family || "未提供")),
   );
   const statuses = Array.from(
-    new Set(allVersions.map((item) => item.model.status || "未提供")),
+    new Set(modelVersions.map((item) => item.model.status || "未提供")),
   );
   const visibleVersions = allVersions.filter(
     (item) =>
@@ -517,7 +522,11 @@ export function ModelTraining({
                     <td title={item.model.model_id}>
                       {shortModelId(item.model.model_id)}
                     </td>
-                    <td>{item.model.model_family || "未提供"}</td>
+                    <td>
+                      {item.kind === "run"
+                        ? "—"
+                        : item.model.model_family || "未提供"}
+                    </td>
                     <td>
                       {item.kind === "run"
                         ? item.model.status === "failed"

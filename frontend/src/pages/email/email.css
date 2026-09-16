@@ -48,7 +48,17 @@
 .email-mode-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .email-training h3 { margin-top: 20px; }
 .email-training td, .email-training th { font-size: 13px; padding: 7px 10px; }
-.email-model-table td:first-child { max-width: 300px; overflow-wrap: anywhere; }
+/* .settings-table pins column 1 to 24% and column 2 to 34% under a fixed
+   layout, which starves this table's six remaining columns: the timestamp
+   broke over four lines and 历史版本 · candidate over three. */
+.settings-table.email-model-table { table-layout: auto; width: auto; min-width: 100%; }
+.settings-table.email-model-table th,
+.settings-table.email-model-table td { width: auto; padding: 8px 10px; white-space: nowrap; overflow-wrap: normal; vertical-align: middle; }
+/* The id is already shortened for display, so it needs no wrapping. */
+.settings-table.email-model-table td:first-child { max-width: none; white-space: nowrap; }
+/* The failure reason is prose in a numeric table: give it room, wrap on word
+   boundaries rather than mid-token, and cap the row height. */
+.settings-table.email-model-table td:last-child { white-space: normal; min-width: 300px; }
 @media (min-width: 721px) {
   /* The shared .settings-table pins column 1 to 24% and column 2 to 34%, which leaves
      this table's six remaining metric columns too narrow to keep a header on one line. */
