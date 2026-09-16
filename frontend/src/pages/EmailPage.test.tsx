@@ -461,3 +461,17 @@ it("will not submit a retired category an older model left on the mail",async()=
   await user.click(within(drawer).getByRole("button",{name:"保存修改"}));
   expect(api.confirmEmailClassification).toHaveBeenCalledExactlyOnceWith("1","work",expect.any(String),null);
 });
+it("drops a previous save error once a different category is chosen",async()=>{
+  const user=userEvent.setup();
+  api.getEmailClassification.mockResolvedValue({item:{...row("1"),category:"work",message_text:"正文"},observability:[]});
+  api.confirmEmailClassification.mockRejectedValueOnce(new Error("category important is retired and can no longer be confirmed; choose a current category"));
+  show("/email?tab=pending&selected=1");
+  const drawer=await screen.findByRole("region",{name:"邮件详情"});
+  await waitFor(()=>expect(within(drawer).getByRole("button",{name:"保存修改"})).toBeEnabled());
+  await user.click(within(drawer).getByRole("button",{name:"保存修改"}));
+  expect(await within(drawer).findByRole("alert")).toHaveTextContent("retired");
+  // Changing the category is the fix for that error, so it must stop being
+  // shown as the current state of the form.
+  await user.selectOptions(within(drawer).getByRole("combobox",{name:"选择分类"}),"junk");
+  expect(within(drawer).queryByRole("alert")).not.toBeInTheDocument();
+});

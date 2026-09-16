@@ -130,7 +130,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
     </div>
     </section>
     {open && <EmailReadingPanel key={selected} detail={detail} error={detailError} saving={saving} loading={loading} category={editableCategory} saveError={saveError} saved={saved} configs={configs} options={options} position={rows.findIndex(item=>item.id===selected)} count={rows.length} expanded={expanded}
-      onCategory={value=>{setCategory(value);setSaved(false);}} onSave={()=>void save()} onClose={closeReading} onRetry={()=>setDetailRevision(value=>value+1)} onExpand={()=>setExpanded(value=>!value)}
+      onCategory={value=>{setCategory(value);setSaved(false);setSaveError("");}} onSave={()=>void save()} onClose={closeReading} onRetry={()=>setDetailRevision(value=>value+1)} onExpand={()=>setExpanded(value=>!value)}
       onPrevious={()=>{const index=rows.findIndex(item=>item.id===selected);if(index>0){navigate(page,pageSize,rows[index-1].id);setSaved(false);}}}
       onNext={()=>{const index=rows.findIndex(item=>item.id===selected);if(index>=0&&index<rows.length-1){navigate(page,pageSize,rows[index+1].id);setSaved(false);}}}/>}
   </div>;
