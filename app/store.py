@@ -3343,7 +3343,8 @@ class AutoReplyStore:
                     operation text not null check(operation in ('create', 'complete')),
                     evidence_json text not null default '{}',
                     status text not null default 'queued'
-                        check(status in ('queued', 'running', 'completed', 'failed', 'unknown')),
+                        check(status in ('queued', 'running', 'completed',
+                                         'skipped', 'failed', 'unknown')),
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
                     receipt_json text not null default '{}',
@@ -4614,6 +4615,58 @@ class AutoReplyStore:
             ):
                 if column not in outbox_columns:
                     db.execute(f"alter table task_todo_sync_outbox add column {column} {definition}")
+            outbox_sql = db.execute(
+                "select sql from sqlite_master where type='table' "
+                "and name='task_todo_sync_outbox'"
+            ).fetchone()
+            if outbox_sql is not None and "'skipped'" not in str(outbox_sql["sql"]):
+                db.execute(
+                    """
+                    create table task_todo_sync_outbox_skipped_migration (
+                        id integer primary key autoincrement,
+                        operation_key text not null unique,
+                        work_todo_id integer not null,
+                        operation text not null check(operation in ('create', 'complete')),
+                        evidence_json text not null default '{}',
+                        status text not null default 'queued'
+                            check(status in ('queued', 'running', 'completed',
+                                             'skipped', 'failed', 'unknown')),
+                        lease_owner text not null default '',
+                        lease_expires_at text not null default '',
+                        receipt_json text not null default '{}',
+                        error text not null default '',
+                        attempt_count integer not null default 0,
+                        next_attempt_at text not null default '',
+                        created_at text not null default current_timestamp,
+                        updated_at text not null default current_timestamp,
+                        completed_at text not null default ''
+                    )
+                    """
+                )
+                db.execute(
+                    """
+                    insert into task_todo_sync_outbox_skipped_migration (
+                        id, operation_key, work_todo_id, operation, evidence_json,
+                        status, lease_owner, lease_expires_at, receipt_json, error,
+                        attempt_count, next_attempt_at, created_at, updated_at,
+                        completed_at
+                    )
+                    select id, operation_key, work_todo_id, operation, evidence_json,
+                           status, lease_owner, lease_expires_at, receipt_json, error,
+                           attempt_count, next_attempt_at, created_at, updated_at,
+                           completed_at
+                    from task_todo_sync_outbox
+                    """
+                )
+                db.execute("drop table task_todo_sync_outbox")
+                db.execute(
+                    "alter table task_todo_sync_outbox_skipped_migration "
+                    "rename to task_todo_sync_outbox"
+                )
+                db.execute(
+                    "create index if not exists idx_task_todo_sync_outbox_due "
+                    "on task_todo_sync_outbox(status, lease_expires_at, id)"
+                )
             org_user_profile_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(org_user_profiles)").fetchall()
@@ -23983,7 +24036,7 @@ class AutoReplyStore:
         error: str = "",
         _db: sqlite3.Connection | None = None,
     ) -> None:
-        if status not in {"completed", "failed", "unknown"}:
+        if status not in {"completed", "skipped", "failed", "unknown"}:
             raise ValueError("task todo sync terminal status is invalid")
         with self._optional_connection(_db) as db:
             changed = db.execute(

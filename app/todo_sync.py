@@ -628,17 +628,23 @@ def sync_completed_todo_to_dingtalk(
     work_todo_id: int,
     evidence: dict[str, Any],
     now: str,
-) -> bool:
+) -> str:
+    """Mark the mirrored DingTalk Todo done and report the outbox terminal status.
+
+    Returns ``completed`` once DingTalk accepted the change, ``skipped`` when the
+    Todo was never mirrored and there is nothing to mark done, and ``failed``
+    when a mirrored Todo could not be updated.
+    """
     del evidence
     link = store.get_active_work_todo_dingtalk_link(work_todo_id)
     if link is None:
-        return False
+        return "skipped"
     if not link.dingtalk_task_id.strip():
         store.update_work_todo_dingtalk_link(
             link.id,
             last_error="active DingTalk todo link has no task id",
         )
-        return False
+        return "failed"
     try:
         payload = dws.mark_todo_task_done(link.dingtalk_task_id, done=True)
         store.update_work_todo_dingtalk_link(
@@ -649,10 +655,10 @@ def sync_completed_todo_to_dingtalk(
             last_push_at=now,
             last_error="",
         )
-        return True
+        return "completed"
     except (DwsError, RuntimeError) as exc:
         store.update_work_todo_dingtalk_link(link.id, last_error=str(exc))
-        return False
+        return "failed"
 
 
 def dispatch_task_todo_sync_outbox(
@@ -742,21 +748,35 @@ def dispatch_claimed_task_todo_sync_outbox(
             link = maybe_create_dingtalk_todo(
                 store, dws, work_todo_id=item["work_todo_id"], now=now
             )
+            if link is None:
+                # The Todo does not qualify for a DingTalk mirror, so no provider
+                # call was made and there is no effect to retry.
+                persist_terminal(
+                    "skipped",
+                    error="dingtalk_todo_not_eligible_for_mirror",
+                )
+                return "skipped"
             receipt = {
-                "link_id": link.id if link is not None else 0,
-                "dingtalk_task_id": link.dingtalk_task_id if link is not None else "",
+                "link_id": link.id,
+                "dingtalk_task_id": link.dingtalk_task_id,
             }
-            delivered_now = link is not None and link.status != "failed"
+            outcome = "failed" if link.status == "failed" else "completed"
         else:
-            delivered_now = sync_completed_todo_to_dingtalk(
+            outcome = sync_completed_todo_to_dingtalk(
                 store,
                 dws,
                 work_todo_id=item["work_todo_id"],
                 evidence=json.loads(item["evidence_json"]),
                 now=now,
             )
-            receipt = {"delivered": delivered_now}
-        if not delivered_now:
+            if outcome == "skipped":
+                persist_terminal(
+                    "skipped",
+                    error="dingtalk_todo_not_mirrored",
+                )
+                return "skipped"
+            receipt = {"delivered": outcome == "completed"}
+        if outcome == "failed":
             persist_terminal(
                 "failed",
                 error="dingtalk_todo_effect_not_delivered",

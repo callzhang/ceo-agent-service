@@ -1107,14 +1107,14 @@ def test_internal_completion_marks_dingtalk_done(tmp_path):
         now="2026-06-27 12:00:00",
     )
 
-    assert synced is True
+    assert synced == "completed"
     assert dws.done_calls == [{"task_id": "dt-task-1", "done": True}]
     assert store.get_active_work_todo_dingtalk_link(todo_id) is None
     links = store.list_work_todo_dingtalk_links(statuses=("done",))
     assert links[0].last_push_at == "2026-06-27 12:00:00"
 
 
-def test_internal_completion_without_active_link_returns_false(tmp_path):
+def test_internal_completion_without_active_link_is_skipped(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)
     dws = FakeTodoDws()
@@ -1127,7 +1127,7 @@ def test_internal_completion_without_active_link_returns_false(tmp_path):
         now="2026-06-27 12:00:00",
     )
 
-    assert synced is False
+    assert synced == "skipped"
     assert dws.done_calls == []
 
 
@@ -1152,7 +1152,7 @@ def test_internal_completion_with_blank_task_id_sets_last_error(tmp_path):
         now="2026-06-27 12:00:00",
     )
 
-    assert synced is False
+    assert synced == "failed"
     assert dws.done_calls == []
     stored = store.get_work_todo_dingtalk_link(link_id)
     assert "no task id" in stored.last_error
@@ -1181,7 +1181,123 @@ def test_internal_completion_dws_failure_records_last_error(tmp_path):
         now="2026-06-27 12:00:00",
     )
 
-    assert synced is False
+    assert synced == "failed"
     stored = store.get_work_todo_dingtalk_link(link_id)
     assert stored.status == "active"
     assert "todo done failed" in stored.last_error
+
+
+def test_outbox_create_for_ineligible_todo_is_skipped_not_failed(tmp_path):
+    """A Todo that does not qualify for a mirror never reached DingTalk."""
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store, deadline_at="")
+    store.enqueue_task_todo_sync_outbox(
+        operation_key="task-agent:1:todo:1:create",
+        work_todo_id=todo_id,
+        operation="create",
+    )
+    dws = FakeTodoDws()
+
+    delivered = dispatch_task_todo_sync_outbox(
+        store, dws, owner="worker-1", now="2026-06-27 10:00:00"
+    )
+
+    assert delivered == 0
+    assert dws.created == []
+    assert store.list_task_todo_sync_outbox(statuses=("failed",)) == []
+    skipped = store.list_task_todo_sync_outbox(statuses=("skipped",))
+    assert len(skipped) == 1
+    assert skipped[0]["error"] == "dingtalk_todo_not_eligible_for_mirror"
+    assert skipped[0]["attempt_count"] == 1
+
+
+def test_outbox_complete_without_mirror_is_skipped_not_failed(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    store.enqueue_task_todo_sync_outbox(
+        operation_key="task-agent:1:todo:1:complete",
+        work_todo_id=todo_id,
+        operation="complete",
+        evidence_json=json.dumps({"source": "reply_attempt:1"}, ensure_ascii=False),
+    )
+    dws = FakeTodoDws()
+
+    delivered = dispatch_task_todo_sync_outbox(
+        store, dws, owner="worker-1", now="2026-06-27 10:00:00"
+    )
+
+    assert delivered == 0
+    assert dws.done_calls == []
+    assert store.list_task_todo_sync_outbox(statuses=("failed",)) == []
+    skipped = store.list_task_todo_sync_outbox(statuses=("skipped",))
+    assert len(skipped) == 1
+    assert skipped[0]["error"] == "dingtalk_todo_not_mirrored"
+
+
+def test_outbox_create_still_fails_when_dingtalk_rejects_the_create(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    store.enqueue_task_todo_sync_outbox(
+        operation_key="task-agent:1:todo:1:create",
+        work_todo_id=todo_id,
+        operation="create",
+    )
+    dws = FakeTodoDws()
+    dws.create_error = DwsError("todo create failed")
+
+    delivered = dispatch_task_todo_sync_outbox(
+        store, dws, owner="worker-1", now="2026-06-27 10:00:00"
+    )
+
+    assert delivered == 0
+    assert store.list_task_todo_sync_outbox(statuses=("skipped",)) == []
+    failed = store.list_task_todo_sync_outbox(statuses=("failed",))
+    assert len(failed) == 1
+    assert failed[0]["error"] == "dingtalk_todo_effect_not_delivered"
+
+
+def test_legacy_task_todo_outbox_gains_skipped_status_without_losing_rows(tmp_path):
+    store = _store(tmp_path)
+    with store._connect() as db:
+        db.execute("drop table task_todo_sync_outbox")
+        db.execute(
+            """
+            create table task_todo_sync_outbox (
+                id integer primary key autoincrement,
+                operation_key text not null unique,
+                work_todo_id integer not null,
+                operation text not null check(operation in ('create', 'complete')),
+                evidence_json text not null default '{}',
+                status text not null default 'queued'
+                    check(status in ('queued', 'running', 'completed', 'failed', 'unknown')),
+                lease_owner text not null default '', lease_expires_at text not null default '',
+                receipt_json text not null default '{}', error text not null default '',
+                attempt_count integer not null default 0, next_attempt_at text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                completed_at text not null default ''
+            )
+            """
+        )
+        db.execute(
+            "insert into task_todo_sync_outbox (operation_key, work_todo_id, operation, status) "
+            "values ('legacy-failed', 7, 'create', 'failed')"
+        )
+
+    store._initialize()
+    store._initialize()
+
+    rows = store.list_task_todo_sync_outbox()
+    assert [row["operation_key"] for row in rows] == ["legacy-failed"]
+    _, todo_id = _project_and_todo(store, deadline_at="")
+    store.enqueue_task_todo_sync_outbox(
+        operation_key="new-ineligible", work_todo_id=todo_id, operation="create"
+    )
+    dispatch_task_todo_sync_outbox(
+        store, FakeTodoDws(), owner="worker-1", now="2026-06-27 10:00:00"
+    )
+    skipped = {
+        row["operation_key"]
+        for row in store.list_task_todo_sync_outbox(statuses=("skipped",))
+    }
+    assert "new-ineligible" in skipped

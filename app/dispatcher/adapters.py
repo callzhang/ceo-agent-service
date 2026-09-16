@@ -1346,7 +1346,7 @@ class TaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
         reason: str = "",
     ) -> None:
         del reason
-        if status not in {"completed", "failed", "unknown"}:
+        if status not in {"completed", "skipped", "failed", "unknown"}:
             raise ValueError("task Todo outbox terminal status is invalid")
         with self.store._connect() as db:
             row = db.execute(
@@ -1373,7 +1373,7 @@ class TaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
         error: str = "",
     ) -> None:
         """Fence the source receipt and Dispatcher generation in one transaction."""
-        if status not in {"completed", "failed", "unknown"}:
+        if status not in {"completed", "skipped", "failed", "unknown"}:
             raise ValueError("task Todo outbox terminal status is invalid")
         now_text = _sqlite_time(now)
         with self.store._immediate_write_transaction() as db:

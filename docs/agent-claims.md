@@ -34,6 +34,7 @@ reverts committed work they did not author.
 | codex-session-history-docs | docs/architecture.md, docs/agent-claims.md | Document the user-visible meaning of unavailable Codex transcripts and related Attempt indexes | 2026-09-15 |
 | claude-delivery-receipt-gate | app/agent_effect_guard.py, app/dingtalk_send_evidence.py, app/audit_agent.py, app/worker.py, app/consumer_agent.py, app/email_unsubscribe_continuation.py, tests/test_agent_effect_guard.py, tests/test_dingtalk_send_evidence.py, tests/test_worker.py, tests/test_audit_agent.py, docs/runtime-mechanism.md, docs/agent-claims.md | Require a provider receipt before an Audit `executed` closes a DingTalk send; stop accepting the model's self-reported delivery | 2026-09-15 |
 | claude-retired-category-save | app/web_api/email.py, frontend/src/pages/email/EmailList.tsx, frontend/src/pages/email/EmailReadingPanel.tsx, frontend/src/pages/EmailPage.test.tsx, tests/test_email_web_api.py, docs/agent-claims.md | Stop the console offering a retired category as a saveable value, and refuse one at the API boundary instead of as a 500 | 2026-09-15 |
+| claude-todo-sync-skipped | app/todo_sync.py, app/store.py (task_todo_sync_outbox region only), app/dispatcher/adapters.py (TaskTodoSyncOutboxQueueAdapter only), tests/test_todo_sync.py, docs/agent-claims.md | Record a Todo that never qualified for a DingTalk mirror as `skipped` instead of a failed external delivery | 2026-09-16 |
 
 
 ## Recent overlaps worth knowing
