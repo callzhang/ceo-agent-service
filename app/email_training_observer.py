@@ -680,43 +680,121 @@ def _observe_classified_folder_uids(
         )[:50]
     )
     if not selected:
-        return
-    membership = membership_reader(
-        str(folder.display_name),
-        cursor_uidvalidity=uidvalidity,
-        uids=selected,
+        pass
+    else:
+        membership = membership_reader(
+            str(folder.display_name),
+            cursor_uidvalidity=uidvalidity,
+            uids=selected,
+        )
+        if int(getattr(membership, "uidvalidity", 0)) == uidvalidity:
+            existing = frozenset(getattr(membership, "existing_uids", ()))
+            signals_by_uid = getattr(membership, "important_signals_by_uid", {})
+            for uid in sorted(existing):
+                target = targets.get(uid)
+                signals = signals_by_uid.get(uid)
+                if not isinstance(target, Mapping):
+                    raise ValueError("classified provider target is invalid")
+                identity = target.get("stable_message_identity")
+                if not isinstance(identity, str) or not identity.strip():
+                    raise ValueError("classified provider identity is invalid")
+                if type(signals) is not ImportantSignals:
+                    raise TypeError("classified provider important signals are invalid")
+                observation = _provider_observation(
+                    account_id=account_id,
+                    folder=folder,
+                    role=role,
+                    binding=binding,
+                    message={
+                        "stableMessageIdentity": identity,
+                        "importantSignals": signals,
+                        "subject": target.get("subject") or "[provider flag observation]",
+                        "from": {"email": target.get("sender", "")},
+                    },
+                )
+                observation["source"] = "targeted"
+                folder_state["observations"][identity] = {
+                    "uid": uid,
+                    "observation": _encode_observation(observation),
+                }
+    _observe_classified_moved_to_junk_or_trash(
+        folder_state,
+        source=source,
+        email_store=email_store,
+        account_id=account_id,
+        folder=folder,
+        role=role,
+        binding=binding,
+        uidvalidity=uidvalidity,
     )
-    if int(getattr(membership, "uidvalidity", 0)) != uidvalidity:
+
+
+def _observe_classified_moved_to_junk_or_trash(
+    folder_state: dict[str, object],
+    *,
+    source: object,
+    email_store: object,
+    account_id: str,
+    folder: object,
+    role: FolderRole,
+    binding: Mapping[str, object] | None,
+    uidvalidity: int,
+) -> None:
+    """Find classified messages moved out of their original folder.
+
+    Junk/Trash are the only folders where an old classification locator is
+    expected to become stale as part of normal processing.  Verify the full
+    stable identity after a bounded UID fetch before publishing the new
+    provider state; a matching UID alone is never enough.
+    """
+
+    if role not in {FolderRole.JUNK, FolderRole.TRASH}:
         return
-    existing = frozenset(getattr(membership, "existing_uids", ()))
-    signals_by_uid = getattr(membership, "important_signals_by_uid", {})
-    for uid in sorted(existing):
-        target = targets.get(uid)
-        signals = signals_by_uid.get(uid)
+    target_reader = getattr(email_store, "classified_provider_targets", None)
+    message_reader = getattr(source, "fetch_uid_batch", None)
+    if not callable(target_reader) or not callable(message_reader):
+        return
+    cached_identities = set(folder_state["observations"])
+    for target in target_reader(account_id=account_id):
         if not isinstance(target, Mapping):
-            raise ValueError("classified provider target is invalid")
+            raise TypeError("classified provider target is invalid")
         identity = target.get("stable_message_identity")
-        if not isinstance(identity, str) or not identity.strip():
-            raise ValueError("classified provider identity is invalid")
-        if type(signals) is not ImportantSignals:
-            raise TypeError("classified provider important signals are invalid")
+        if not isinstance(identity, str) or not identity.strip() or identity in cached_identities:
+            continue
+        uid = target.get("uid")
+        if isinstance(uid, bool) or not isinstance(uid, int) or uid <= 0:
+            raise ValueError("classified provider target UID is invalid")
+        batch = message_reader(
+            str(folder.display_name),
+            cursor_uidvalidity=uidvalidity,
+            last_seen_uid=uid - 1,
+            limit=1,
+        )
+        if int(getattr(batch, "uidvalidity", 0)) != uidvalidity:
+            continue
+        message = next(
+            (
+                item
+                for item in tuple(getattr(batch, "messages", ()))
+                if item.get("uid") == uid
+                and item.get("stableMessageIdentity") == identity
+            ),
+            None,
+        )
+        if message is None:
+            continue
         observation = _provider_observation(
             account_id=account_id,
             folder=folder,
             role=role,
             binding=binding,
-            message={
-                "stableMessageIdentity": identity,
-                "importantSignals": signals,
-                "subject": target.get("subject") or "[provider flag observation]",
-                "from": {"email": target.get("sender", "")},
-            },
+            message=message,
         )
-        observation["source"] = "targeted"
         folder_state["observations"][identity] = {
             "uid": uid,
             "observation": _encode_observation(observation),
         }
+        cached_identities.add(identity)
 
 
 def _refresh_folder_truth(

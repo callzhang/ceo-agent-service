@@ -12763,6 +12763,45 @@ class EmailStore:
             for row in rows
         }
 
+    def classified_provider_targets(
+        self, *, account_id: str, uidvalidity: int | None = None
+    ) -> tuple[dict[str, str | int], ...]:
+        """Return bounded locator metadata for cross-folder provider lookup."""
+
+        with self._connect() as db:
+            if uidvalidity is None:
+                rows = db.execute(
+                    """
+                    select uid, folder, stable_message_identity, subject, sender
+                    from email_classifications
+                    where account_id=?
+                    order by updated_at desc, id desc
+                    limit 50
+                    """,
+                    (account_id,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    """
+                    select uid, folder, stable_message_identity, subject, sender
+                    from email_classifications
+                    where account_id=? and uidvalidity=?
+                    order by updated_at desc, id desc
+                    limit 50
+                    """,
+                    (account_id, uidvalidity),
+                ).fetchall()
+        return tuple(
+            {
+                "uid": int(row["uid"]),
+                "folder": str(row["folder"]),
+                "stable_message_identity": str(row["stable_message_identity"]),
+                "subject": str(row["subject"] or ""),
+                "sender": str(row["sender"] or ""),
+            }
+            for row in rows
+        )
+
     def list_email_classification_observability(
         self, classification_id: int
     ) -> list[dict[str, Any]]:

@@ -306,6 +306,61 @@ def test_targeted_flag_refresh_uses_known_classification_uids():
     ] == {"raw_signal_names": ["\\Flagged"], "provider_important": True}
 
 
+def test_targeted_flag_refresh_finds_classification_moved_to_trash():
+    from app.email_training_observer import _observe_classified_folder_uids
+
+    identity = "account-1:message-id:<moved@example.test>"
+    signals = ImportantSignals(("\\Flagged",), True)
+
+    class Store:
+        def classified_provider_uids(self, **_kwargs):
+            return {}
+
+        def classified_provider_targets(self, **_kwargs):
+            return (
+                {
+                    "uid": 901,
+                    "folder": "INBOX",
+                    "stable_message_identity": identity,
+                    "subject": "Moved",
+                    "sender": "sender@example.test",
+                },
+            )
+
+    class Source:
+        def fetch_uid_membership(self, _folder, **_kwargs):
+            raise AssertionError("moved lookup should verify identity by message")
+
+        def fetch_uid_batch(self, folder, **_kwargs):
+            assert folder == "Trash"
+            return SimpleNamespace(
+                uidvalidity=11,
+                messages=(
+                    {
+                        "uid": 901,
+                        "stableMessageIdentity": identity,
+                        "importantSignals": signals,
+                        "subject": "Moved",
+                        "from": {"email": "sender@example.test"},
+                    },
+                ),
+            )
+
+    folder_state = {"observations": {}}
+    _observe_classified_folder_uids(
+        folder_state,
+        source=Source(),
+        email_store=Store(),
+        account_id="account-1",
+        folder=_folder("Trash", role=FolderRole.TRASH),
+        role=FolderRole.TRASH,
+        binding=None,
+        uidvalidity=11,
+    )
+
+    assert folder_state["observations"][identity]["uid"] == 901
+
+
 def test_new_unbound_provider_folder_is_not_a_reverse_category_creation_signal(
     tmp_path,
 ):
