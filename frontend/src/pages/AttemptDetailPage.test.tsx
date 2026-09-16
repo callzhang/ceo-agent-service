@@ -529,6 +529,100 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("3 处匹配")).toBeInTheDocument();
   });
 
+  it("unwraps a double-encoded MCP tool result instead of showing raw \\n and \\\" escapes", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        agent_sessions: [],
+        tool_uses: [
+          {
+            title: "upload_interview_result",
+            tool: "upload_interview_result",
+            call_id: "call-upload",
+            relevance: "",
+            source: "hr_mcp · upload_interview_result",
+            args: { interview_id: "int-97c2d24b", feedback_summary: "技术强，售前弱" },
+            format: "json",
+            // What app/codex_history.py actually persists: a pre-stringified
+            // envelope whose "text" field is itself JSON-encoded again.
+            output: JSON.stringify({
+              content: [{ type: "text", text: JSON.stringify({ status: "error", error_code: "INVALID_INPUT", message: "review_basis 不能为空" }) }],
+            }, null, 2),
+          },
+        ],
+      },
+      meta: { snapshot_at: "2026-09-16T00:00:00Z" },
+    });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "处理历史" });
+    expect(screen.getByText(/"error_code": "INVALID_INPUT"/)).toBeInTheDocument();
+    expect(screen.getByText(/"message": "review_basis 不能为空"/)).toBeInTheDocument();
+    // The envelope wrapper and the escaped duplicate are gone, not just
+    // reformatted alongside the readable version.
+    expect(screen.queryByText(/"content":/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\\n/)).not.toBeInTheDocument();
+  });
+
+  it("prefers structured_content over re-parsing the text field when both are present", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        agent_sessions: [],
+        tool_uses: [
+          {
+            title: "get_interview_context",
+            tool: "get_interview_context",
+            call_id: "call-context",
+            relevance: "",
+            source: "hr_mcp · get_interview_context",
+            args: { interview_id: "int-97c2d24b" },
+            format: "json",
+            output: JSON.stringify({
+              // Deliberately a different shape from structured_content below -
+              // if the fix ever regresses to re-parsing this field instead,
+              // this marker (not the real one) is what would show up.
+              content: [{ type: "text", text: JSON.stringify({ candidate_name: "STALE-DO-NOT-SHOW" }) }],
+              structured_content: { status: "ok", candidate_name: "孙英双" },
+            }, null, 2),
+          },
+        ],
+      },
+      meta: { snapshot_at: "2026-09-16T00:00:00Z" },
+    });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "处理历史" });
+    expect(screen.getByText(/"candidate_name": "孙英双"/)).toBeInTheDocument();
+    expect(screen.queryByText(/STALE-DO-NOT-SHOW/)).not.toBeInTheDocument();
+  });
+
+  it("keeps plain-text output (not JSON at all) exactly as returned", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        agent_sessions: [],
+        tool_uses: [
+          {
+            title: `/bin/zsh -lc 'ls -la /Users/derek/.codex/skills/dingtalk-chat/'`,
+            tool: "command_execution",
+            call_id: "call-ls",
+            relevance: "",
+            source: "command_execution · ls",
+            args: { command: `/bin/zsh -lc 'ls -la /Users/derek/.codex/skills/dingtalk-chat/'` },
+            format: "terminal",
+            output: "ls: /Users/derek/.codex/skills/dingtalk-chat/: No such file or directory\n",
+          },
+        ],
+      },
+      meta: { snapshot_at: "2026-09-16T00:00:00Z" },
+    });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "处理历史" });
+    expect(screen.getByText(/No such file or directory/)).toBeInTheDocument();
+  });
+
   it("keeps every post-header section inside the main and sidebar columns", async () => {
     renderPage();
 

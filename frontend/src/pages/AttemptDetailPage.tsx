@@ -154,12 +154,70 @@ function parseFileReadCommand(command: string): FileReadSummary | null {
   return null;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// An MCP tool result is `{content: [{type: "text", text: "<json-or-plain>"}], ...}`
+// - the actual return value only ever reaches the page JSON-encoded a second
+// time, inside that text field. Some servers also attach `structured_content`
+// (or `structuredContent`), the same value already decoded once. Rendering
+// the envelope as-is is what turned "结果" into a wall of \n and \" escapes;
+// unwrapping it to the one value a person would actually want to read is the
+// whole fix.
+function unwrapToolResultEnvelope(value: unknown): unknown {
+  if (!isPlainObject(value)) return value;
+  const structured = value.structured_content ?? value.structuredContent;
+  if (structured !== undefined) return structured;
+  const content = value.content;
+  if (Array.isArray(content)) {
+    const texts = content
+      .filter((item): item is { text: string } => isPlainObject(item) && typeof item.text === "string")
+      .map((item) => item.text);
+    if (texts.length > 0) {
+      const joined = texts.join("\n");
+      try {
+        return JSON.parse(joined);
+      } catch {
+        return joined;
+      }
+    }
+  }
+  return value;
+}
+
+// Args/output arrive as either an already-parsed object (args, usually) or a
+// JSON string the backend pre-serialized with indentation baked in (output,
+// always - see app/codex_history.py). Either way the goal is the same: one
+// readable, indented value, or the original text untouched when it was never
+// JSON to begin with (plain command stdout, a truncated string cut mid-JSON).
+function formatToolPayload(raw: unknown, { unwrapResult = false }: { unwrapResult?: boolean } = {}): string {
+  let parsed = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return "未提供";
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return raw; // not JSON (plain text output, or truncated mid-string) - show as-is
+    }
+  }
+  if (unwrapResult) parsed = unwrapToolResultEnvelope(parsed);
+  if (typeof parsed === "string") return parsed || "未提供";
+  if (parsed === null || parsed === undefined) return "未提供";
+  try {
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return displayValue(parsed);
+  }
+}
+
 function ToolUseList({ uses }: { uses: AttemptToolUse[] }) {
   if (!uses.length) return <p className="page-state">这一段没有留下可读的调用记录。</p>;
   return <ol className="attempt-tool-use-list">{uses.map((use, index) => {
     const fileRead = use.tool === "command_execution" ? parseFileReadCommand(use.title || "") : null;
     if (fileRead) return <li key={`${use.call_id}-${index}`}><p className="attempt-tool-use-read">读取 <code>{fileRead.path}</code>{fileRead.range !== "全文" && <span> 第 {fileRead.range} 行</span>}</p></li>;
-    return <li key={`${use.call_id}-${index}`}><article className="attempt-tool-use"><header><strong>{use.title || use.tool || "未命名调用"}</strong>{use.source && <small>{use.source}</small>}</header>{use.relevance && <p className="attempt-tool-use-relevance">{use.relevance}</p>}<dl><div><dt>参数</dt><dd><SummaryText value={displayValue(use.args)} lines={4} /></dd></div><div><dt>结果</dt><dd><SummaryText value={displayValue(use.output)} lines={6} /></dd></div></dl></article></li>;
+    return <li key={`${use.call_id}-${index}`}><article className="attempt-tool-use"><header><strong>{use.title || use.tool || "未命名调用"}</strong>{use.source && <small>{use.source}</small>}</header>{use.relevance && <p className="attempt-tool-use-relevance">{use.relevance}</p>}<dl><div><dt>参数</dt><dd><SummaryText value={formatToolPayload(use.args)} lines={4} /></dd></div><div><dt>结果</dt><dd><SummaryText value={formatToolPayload(use.output, { unwrapResult: true })} lines={6} /></dd></div></dl></article></li>;
   })}</ol>;
 }
 
