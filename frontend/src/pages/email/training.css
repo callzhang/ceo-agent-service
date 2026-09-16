@@ -277,6 +277,19 @@
   gap: 7px;
   cursor: pointer;
 }
+/* .settings-table input is written for text fields (full width, 36px tall,
+   bordered). Left alone it stretches each checkbox and shifts its label. */
+.settings-table.training-category-table input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  accent-color: var(--accent);
+}
 .training-blocked {
   margin: 0 0 8px;
   color: var(--danger, #b3261e);
