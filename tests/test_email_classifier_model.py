@@ -209,7 +209,6 @@ def _stage_candidate(
         account_counts={"account-1": 90},
         validation_method="time-ordered-holdout",
         accuracy=0.99,
-        macro_f1=0.99,
         per_category_metrics={
             label: {
                 "precision": 0.99,

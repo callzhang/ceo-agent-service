@@ -343,7 +343,6 @@ def _stage_learning_evidence_model(
         account_counts={"account-a": 180},
         validation_method="time-ordered-holdout",
         accuracy=0.96,
-        macro_f1=0.955,
         per_category_metrics=metrics,
         prediction_latency_p50_ms=1.25,
         prediction_latency_p95_ms=3.5,

@@ -348,7 +348,6 @@ def _metadata(
         account_counts={"account-a": 3, "account-b": 1},
         validation_method="leave-one-out",
         accuracy=0.75,
-        macro_f1=0.73,
         per_category_metrics={
             "work": {
                 "precision": 0.8,
@@ -526,7 +525,7 @@ def test_registry_rejects_deserializable_artifact_with_reserved_legacy_classes(
 def test_list_models_returns_every_validated_record_newest_first(tmp_path: Path):
     registry = EmailModelRegistry(tmp_path / "registry")
     rejected = _stage(registry, tmp_path, suffix="-rejected")
-    registry.reject(rejected, reason="macro_f1_regressed")
+    registry.reject(rejected, reason="category_precision_regressed:work")
     failed = _stage(
         registry,
         tmp_path,
@@ -551,7 +550,7 @@ def test_list_models_returns_every_validated_record_newest_first(tmp_path: Path)
     assert [(record.status, record.status_reason) for record in records] == [
         ("candidate", "candidate_validation_pending"),
         ("failed", "artifact_reload_failed"),
-        ("rejected", "macro_f1_regressed"),
+        ("rejected", "category_precision_regressed:work"),
     ]
 
 

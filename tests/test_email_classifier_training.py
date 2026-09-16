@@ -862,7 +862,7 @@ def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
     registry = EmailModelRegistry(tmp_path / "registry")
     monkeypatch.setattr(
         "app.email_classifier_training._promotion_rejection",
-        lambda registry, metadata: "macro_f1_regressed",
+        lambda registry, metadata: "latency_p95_exceeded",
     )
 
     rejected = train_and_promote(
@@ -1352,7 +1352,7 @@ def test_frozen_snapshot_embedding_training_stages_metrics_without_activation(
         assert persisted["candidate_benchmark"]["status"] == "unmeasured"
     assert "private endpoint detail" not in json.dumps(persisted)
     assert persisted["metrics"]["accuracy"] == 1.0
-    assert persisted["metrics"]["macro_f1"] == 1.0
+    assert "macro_f1" not in persisted["metrics"]
     for category in ("work", "legal"):
         assert persisted["metrics"]["categories"][category]["support"] == 2
         assert persisted["metrics"]["categories"][category]["test_independent_groups"] == 2

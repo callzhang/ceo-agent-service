@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sklearn.metrics import accuracy_score
 
 from app.email_classifier_contracts import EmailCategory, validate_email_category_key
 from app.email_classifier_model import CpuTfidfLogisticClassifier
@@ -46,7 +46,6 @@ class ShadowCandidateResult:
     validation_sample_count: int
     excluded_validation_duplicates: int
     accuracy: float
-    macro_f1: float
     prediction_latency_p50_ms: float
     prediction_latency_p95_ms: float
 
@@ -99,13 +98,6 @@ def stage_snapshot_shadow_candidate(
     predictions = [classifier.predict(row["model_text"]) for row in validation]
     expected = [row["label"] for row in validation]
     accuracy = float(accuracy_score(expected, [item.label for item in predictions]))
-    _, _, f1s, _ = precision_recall_fscore_support(
-        expected,
-        [item.label for item in predictions],
-        labels=labels,
-        zero_division=0,
-    )
-    macro_f1 = float(sum(float(value) for value in f1s) / len(f1s))
     category_validation = evaluate_category_validation(
         expected,
         predictions,
@@ -141,7 +133,6 @@ def stage_snapshot_shadow_candidate(
             account_counts={account: len(training)},
             validation_method="time-ordered-shadow-holdout",
             accuracy=accuracy,
-            macro_f1=macro_f1,
             per_category_metrics={
                 label: {
                     "precision": category_validation[
@@ -200,7 +191,6 @@ def stage_snapshot_shadow_candidate(
         validation_sample_count=len(validation),
         excluded_validation_duplicates=excluded,
         accuracy=accuracy,
-        macro_f1=macro_f1,
         prediction_latency_p50_ms=p50,
         prediction_latency_p95_ms=p95,
     )

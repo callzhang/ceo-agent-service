@@ -374,7 +374,6 @@ class EmailModelMetadata:
     account_counts: Mapping[str, int]
     validation_method: str
     accuracy: float
-    macro_f1: float
     per_category_metrics: Mapping[str, Mapping[str, object]]
     prediction_latency_p50_ms: float
     prediction_latency_p95_ms: float
@@ -403,8 +402,7 @@ class EmailModelMetadata:
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} must be a non-negative integer")
-        for name, value in (("accuracy", self.accuracy), ("macro_f1", self.macro_f1)):
-            _unit_float(name, value)
+        _unit_float("accuracy", self.accuracy)
         for name, value in (
             ("prediction_latency_p50_ms", self.prediction_latency_p50_ms),
             ("prediction_latency_p95_ms", self.prediction_latency_p95_ms),
@@ -438,7 +436,6 @@ class EmailModelMetadata:
             "account_counts": dict(self.account_counts),
             "validation_method": self.validation_method,
             "accuracy": self.accuracy,
-            "macro_f1": self.macro_f1,
             "per_category_metrics": {
                 key: dict(value) for key, value in self.per_category_metrics.items()
             },
@@ -487,7 +484,6 @@ class EmailModelMetadata:
                     value["validation_method"], "validation_method"
                 ),
                 accuracy=_float(value["accuracy"], "accuracy"),
-                macro_f1=_float(value["macro_f1"], "macro_f1"),
                 per_category_metrics=_normalized_category_metrics(
                     value["per_category_metrics"], "per_category_metrics"
                 ),

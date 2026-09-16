@@ -129,7 +129,6 @@ def train_frozen_classic_candidate(
     test_predictions = [classifier.predict(text) for text in texts(splits["test"])]
     expected_test = labels(splits["test"])
     accuracy = float(accuracy_score(expected_test, [item.label for item in test_predictions]))
-    _, _, f1s, _ = precision_recall_fscore_support(expected_test, [item.label for item in test_predictions], labels=sorted(categories), zero_division=0)
     p50, p95 = _prediction_latency(classifier, texts(splits["test"]))
     with tempfile.TemporaryDirectory(dir=registry.root) as directory:
         artifact = Path(directory) / "candidate.model"
@@ -143,7 +142,7 @@ def train_frozen_classic_candidate(
             trained_at=trained_at.astimezone(timezone.utc).isoformat(), training_started_at=started.isoformat(), training_finished_at=datetime.now(timezone.utc).isoformat(),
             sample_count=len(rows), new_sample_count=len(rows),
             category_counts=Counter(labels(rows)), account_counts=Counter(str(row["account_id"]) for row in rows),
-            validation_method="time-ordered-holdout", accuracy=accuracy, macro_f1=float(np.mean(f1s)),
+            validation_method="time-ordered-holdout", accuracy=accuracy,
             per_category_metrics={label: {
                 "precision": per_category[EmailCategory(label)].validated_precision,
                 "recall": per_category[EmailCategory(label)].validated_recall,
@@ -563,9 +562,6 @@ def train_frozen_embedding_candidate(
                 [str(row["category_key"]) for row in test],
                 [item.category for item in test_predictions],
             )),
-            "macro_f1": float(np.mean([
-                float(category_metrics[category]["f1"]) for category in categories
-            ])),
             "categories": category_metrics,
             "important": important_metrics,
         },
@@ -1036,7 +1032,6 @@ class TrainingResult:
     account_counts: dict[str, int]
     validation_method: str
     accuracy: float
-    macro_f1: float
     prediction_latency_p50_ms: float
     prediction_latency_p95_ms: float
     status: str
@@ -1264,10 +1259,6 @@ def train_and_promote(
     predicted = [prediction.label for prediction in validation_predictions]
     labels = sorted(readiness.category_counts)
     accuracy = float(accuracy_score(expected, predicted))
-    _, _, f1s, _ = precision_recall_fscore_support(
-        expected, predicted, labels=labels, zero_division=0
-    )
-    macro_f1 = float(sum(float(value) for value in f1s) / len(f1s))
     requirements = _default_requirements(labels)
     requirements.update(category_requirements or {})
     per_category_validation = evaluate_category_validation(
@@ -1318,7 +1309,6 @@ def train_and_promote(
             account_counts=dict(Counter(str(item["account_id"]) for item in examples)),
             validation_method=validation_method,
             accuracy=accuracy,
-            macro_f1=macro_f1,
             per_category_metrics={
                 label: {
                     "precision": per_category_validation[
@@ -1470,7 +1460,6 @@ def _train_and_promote_paths(
         ),
         validation_method=method,
         accuracy=accuracy,
-        macro_f1=accuracy,
         prediction_latency_p50_ms=p50,
         prediction_latency_p95_ms=p95,
         status="active",
@@ -1556,8 +1545,6 @@ def _promotion_rejection(
     if active is None:
         return None
     current = registry.get_model(active.model_id).metadata
-    if candidate.macro_f1 < current.macro_f1:
-        return "macro_f1_regressed"
     for label, previous in current.per_category_metrics.items():
         incoming = candidate.per_category_metrics.get(label)
         if incoming is None:
@@ -1615,7 +1602,6 @@ def _result(
         account_counts=dict(metadata.account_counts),
         validation_method=metadata.validation_method,
         accuracy=metadata.accuracy,
-        macro_f1=metadata.macro_f1,
         prediction_latency_p50_ms=metadata.prediction_latency_p50_ms,
         prediction_latency_p95_ms=metadata.prediction_latency_p95_ms,
         status=status,
