@@ -67,6 +67,7 @@ class EmailHealthEntry(StrictStatusModel):
     error_code: str | None = None
     error_stage: str | None = None
     error_type: str | None = None
+    error_fields: str | None = None
     failures: int | None = None
     persisted_count: int | None = None
     task_count: int | None = None

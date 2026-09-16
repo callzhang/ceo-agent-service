@@ -1113,6 +1113,18 @@ def _training_health_error(exc: Exception) -> dict[str, object]:
     stage = getattr(exc, "ceo_training_stage", "")
     if stage:
         payload["error_stage"] = str(stage)[:MAX_HEALTH_TEXT_LENGTH]
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            fields = [
+                ".".join(str(part) for part in item.get("loc", ()))
+                for item in errors()
+                if isinstance(item, Mapping) and item.get("loc")
+            ]
+        except Exception:  # noqa: BLE001 - health projection must remain safe
+            fields = []
+        if fields:
+            payload["error_fields"] = ",".join(fields)[:MAX_HEALTH_TEXT_LENGTH]
     return payload
 
 

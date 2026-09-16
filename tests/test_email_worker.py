@@ -661,6 +661,16 @@ def test_training_health_error_includes_safe_failure_stage():
     }
 
 
+def test_training_health_error_exposes_validation_fields_without_message():
+    module = _module()
+    error = SimpleNamespace(
+        errors=lambda: [{"loc": ("active_run_id",), "msg": "private"}],
+        ceo_training_stage="active_model_tick",
+    )
+
+    assert module._training_health_error(error)["error_fields"] == "active_run_id"
+
+
 @pytest.mark.parametrize("conflict", ("model_id", "category", "important", "plan_version"))
 def test_model_accept_stable_readback_conflict_fails_closed_without_agent(
     tmp_path, conflict

@@ -30,7 +30,7 @@ function emailHealthName(scope: string) {
 }
 
 function emailHealthDetail(item: StatusEmailHealthEntry) {
-  if (item.error_code && item.error_stage && item.error_type) return `${item.error_code} · ${item.error_stage} · ${item.error_type}`;
+  if (item.error_code && item.error_stage && item.error_type && item.error_fields) return `${item.error_code} · ${item.error_stage} · ${item.error_type} · ${item.error_fields}`;
   if (item.error_code) return item.error_code;
   if (item.error_stage) return item.error_stage;
   const counts = [

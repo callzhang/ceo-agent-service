@@ -2889,6 +2889,11 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
             r"[A-Za-z0-9:_-]{1,160}", error_type
         ):
             entry["error_type"] = error_type
+        error_fields = payload.get("error_fields")
+        if isinstance(error_fields, str) and re.fullmatch(
+            r"[A-Za-z0-9:,_-]{1,160}", error_fields
+        ):
+            entry["error_fields"] = error_fields
         for field in safe_integer_fields:
             value = payload.get(field)
             if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
