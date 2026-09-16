@@ -134,7 +134,7 @@ describe("AttemptDetailPage", () => {
     expect(document.querySelector(".attempt-review-grid")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-side")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-main .attempt-review-block + .attempt-review-block")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "当前状态" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "当前状态" })).not.toBeInTheDocument();
     expect(screen.queryByText("session-8448")).not.toBeInTheDocument();
   });
 
@@ -191,7 +191,7 @@ describe("AttemptDetailPage", () => {
     expect(screen.queryByText("Original ambiguity summary:")).not.toBeInTheDocument();
     expect(screen.queryByText("Suggested response:")).not.toBeInTheDocument();
     expect(screen.queryByText("reviewed_message_reply")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "当前状态" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "当前状态" })).not.toBeInTheDocument();
   });
 
   it("shows the linked Consumer result group with its scores and risk", async () => {
@@ -210,7 +210,7 @@ describe("AttemptDetailPage", () => {
 
     await screen.findByRole("heading", { name: "Attempt #8448" });
     expect(screen.queryByRole("heading", { name: "Consumer 执行结果" })).not.toBeInTheDocument();
-    expect(screen.getByText("confidence").closest(".attempt-metadata-card")).toContainElement(screen.getByText("trigger message id"));
+    expect(screen.getByText("trigger message id").closest(".attempt-review-side")).toBeInTheDocument();
     expect(screen.getByText("confidence")).toBeInTheDocument();
     expect(screen.getByText("82%")).toBeInTheDocument();
     expect(screen.getByText("information_completeness")).toBeInTheDocument();
@@ -223,6 +223,15 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("75%").closest(".attempt-consumer-metric")).toHaveClass("attempt-consumer-metric-warning");
     expect(screen.getByText("100%").closest(".attempt-consumer-metric")).toHaveClass("attempt-consumer-metric-good");
     expect(screen.getByText("medium").closest(".attempt-consumer-metric")).toHaveClass("attempt-consumer-metric-warning");
+    const side = document.querySelector(".attempt-review-side");
+    expect(side).toContainElement(screen.getByText("confidence"));
+    expect(side).toContainElement(screen.getByText("medium"));
+    expect(document.querySelector(".attempt-detail-main .attempt-consumer-metrics-card")).not.toBeInTheDocument();
+    expect(side).toContainElement(screen.getByText("trigger message id"));
+    expect(side).toContainElement(screen.getByText("msg-1"));
+    expect(side).toContainElement(screen.getByText("action"));
+    expect(side).toContainElement(screen.getByText("reply"));
+    expect(document.querySelector(".attempt-detail-main .attempt-metadata-card")).not.toBeInTheDocument();
     expect(screen.queryByText("Consumer error")).not.toBeInTheDocument();
     expect(document.querySelectorAll(".attempt-metadata-grid")).toHaveLength(1);
   });
@@ -325,11 +334,28 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByRole("heading", { name: "处理历史" })).toBeInTheDocument();
   });
 
-  it("sends the Consumer execution page to that role's Agent record", async () => {
+  it("puts the Consumer execution page's Agent-record link in the page actions, not a separate card", async () => {
     renderPage("/attempts/8448/execution/consumer");
 
-    expect(await screen.findByRole("heading", { name: "调用记录" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "查看 处理过程 的 Agent 记录" })).toHaveAttribute("href", "/codex/session-consumer");
+    await screen.findByRole("heading", { name: "处理过程 · Consumer" });
+    // This used to be its own "调用记录" card whose entire content was this
+    // one link (or, once the session rotated off disk, one sentence saying
+    // so) - strictly less than what the Attempt page banner already offered
+    // one click earlier. It carries no record of its own.
+    expect(screen.queryByRole("heading", { name: "调用记录" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看 Agent 记录" })).toHaveAttribute("href", "/codex/session-consumer");
+  });
+
+  it("says the Agent record is gone inline instead of a dead card, when the session has rotated off disk", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: { ...detail, agent_sessions: [] },
+      meta: { snapshot_at: "2026-08-29T10:01:00Z" },
+    });
+    renderPage("/attempts/8448/execution/consumer");
+
+    await screen.findByRole("heading", { name: "处理过程 · Consumer" });
+    expect(screen.queryByRole("link", { name: "查看 Agent 记录" })).not.toBeInTheDocument();
+    expect(screen.getByText("本次执行的 Agent 记录已不在本机")).toBeInTheDocument();
   });
 
   it("shows the email an email Attempt acted on and the receipt it earned", async () => {

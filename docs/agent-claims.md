@@ -38,6 +38,34 @@ reverts committed work they did not author.
 
 ## Recent overlaps worth knowing
 
+- 2026-09-15, this Claude session: answered Derek's question "attempt页面的
+  调用记录是否有必要存在" by removing the `ExecutionDetail` (`/attempts/:id/
+  execution/:role`) sub-page's "调用记录" card. That card rendered no call
+  data of its own - only a link to the Codex session (`查看 {role} 的 Agent
+  记录`) or, when the session had rotated off disk, one sentence saying so -
+  and the same link is already one click earlier on the main Attempt page's
+  banner (`consumer_url`/`audit_url`/`agent_url`). The link now lives in the
+  sub-page's own header actions instead of a separate titled card; the
+  "session rotated off disk" sentence moved inline into the context row.
+  Kept: the main Attempt page's `ProcessingPanel` inline call list (real
+  tool name/args/output), which is the one genuinely load-bearing "调用记录"
+  - it is the sole surviving account once a session's Codex transcript
+  rotates off disk (confirmed happening in practice; see `e583f9e6` and the
+  `direct-unsubscribe-has-real-browser-e2e`-adjacent memory note), so it was
+  not touched.
+
+  This edit lands on the same three files `codex-attempt-detail-readable-
+  history`'s open claim covers (`app/web_api/attempts.py` untouched by me
+  this time, but `frontend/src/pages/AttemptDetailPage.tsx`,
+  `AttemptDetailPage.test.tsx` and this file, yes). Diff is small and
+  additive-in-spirit (one card removed, its link relocated, no other
+  behavior changed) - `git diff --stat` shows 17 lines changed in the
+  component, 38 in its test. I have no inbound channel from that Codex
+  session, same situation as the `attention-reconciliation` note above:
+  reconcile against `ExecutionDetail` in `frontend/src/pages/
+  AttemptDetailPage.tsx` before landing anything that also touches that
+  function.
+
 - 2026-09-16, Claude session `claude-micro-f1-gate` (`854a4abc`): **the live
   email schema is now v39 and the service was restarted.** The promotion gate
   measures micro F1, and `email_model_promotion_configs.macro_f1_min` is now

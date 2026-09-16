@@ -113,7 +113,12 @@ function ConsumerResult({ result }: { result: AttemptConsumerResult }) {
 }
 
 function MetadataGrid({ rows, consumerResult }: { rows: AttemptMetadata[]; consumerResult?: AttemptConsumerResult }) {
-  return <section className="console-card attempt-metadata-card"><div className="attempt-metadata-grid">{rows.map((row) => <div className="attempt-metadata-item" key={row.label}><span>{row.label}</span><strong>{row.value || "未记录"}</strong></div>)}{consumerResult && <ConsumerResult result={consumerResult} />}</div></section>;
+  return <section className="console-card attempt-metadata-card" aria-label="指标">
+    <div className="attempt-metadata-grid">
+      {rows.map((row) => <div className="attempt-metadata-item" key={row.label}><span>{row.label}</span><strong>{row.value || "未记录"}</strong></div>)}
+      {consumerResult && <ConsumerResult result={consumerResult} />}
+    </div>
+  </section>;
 }
 
 function ToolUseList({ uses }: { uses: AttemptToolUse[] }) {
@@ -207,7 +212,7 @@ function ExecutionDetail({ detail, role, snapshot }: { detail: AttemptDetail; ro
   const entries = detail.runtime_attempts.filter((entry) => entry.role === role);
   const session = detail.agent_sessions.find((item) => item.role === role);
 
-  return <ConsolePageLayout title={`${title} · ${roleLabel}`} actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to={`/attempts/${detail.id}`}>返回 Attempt</Link></>}>
+  return <ConsolePageLayout title={`${title} · ${roleLabel}`} actions={<>{session && <Link className="agent-log-button" to={session.url}>查看 Agent 记录</Link>}<SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to={`/attempts/${detail.id}`}>返回 Attempt</Link></>}>
     <section className="console-card execution-detail-overview">
       <div><p className="eyebrow">ATTEMPT #{detail.id}</p><h2>执行概览</h2><p>{explanation}</p></div>
       <StatusBadge value={detail.status.raw} />
@@ -215,10 +220,7 @@ function ExecutionDetail({ detail, role, snapshot }: { detail: AttemptDetail; ro
     <section className="console-card execution-detail-context">
       <span>{detail.conversation.label}：<strong>{detail.conversation.title || "未记录"}</strong></span>
       <span>触发人：<strong>{detail.conversation.trigger_sender || "未提供"}</strong></span>
-    </section>
-    <section className="console-card attempt-process-card" aria-label={`${roleLabel} 调用记录`}>
-      <div className="execution-detail-list-header"><div><h2>调用记录</h2><p>这一个角色调用的工具、参数和返回结果，连同它当时的推理与输出，都在这次执行的 Agent 记录里。</p></div>{session && <Link className="agent-log-button" to={session.url}>查看 {session.label} 的 Agent 记录</Link>}</div>
-      {!session && <p className="page-state">本次执行的 Agent 记录已不在本机。</p>}
+      {!session && <span className="muted">本次执行的 Agent 记录已不在本机</span>}
     </section>
     <section className="console-card execution-detail-list" aria-label={`${roleLabel} 执行记录`}>
       <div className="execution-detail-list-header"><div><h2>执行步骤</h2><p>每一条代表一轮处理或一次重试；它们不会自动等同于重复发送。</p></div><span>{entries.length} 个步骤</span></div>
@@ -322,8 +324,6 @@ export function AttemptDetailPage() {
       <section className="console-card compact-card attempt-conversation-banner" aria-label="主题与操作"><div className="attempt-conversation-left" data-testid="attempt-conversation-summary"><div className="attempt-conversation-title"><span>{detail.conversation.label}：</span><strong>{detail.conversation.title}</strong></div><div className="attempt-conversation-sub">触发人：{detail.conversation.trigger_sender || "未提供"}</div></div><div className="attempt-banner-actions" data-testid="attempt-conversation-actions">{detail.email?.classification_url && <Link className="agent-log-button" to={detail.email.classification_url}>打开这封邮件</Link>}{detail.actions.wechat_open_url && <button type="button" className="secondary-button" onClick={() => void runAction(detail.actions.wechat_open_url || "", "已打开微信消息")}>查看微信消息</button>}{detail.actions.delivery_action_url && <button type="button" className="primary-button" onClick={() => { if (window.confirm(detail.actions.delivery_action_label === "发送" ? "确认发送这条微信回复？" : "确认重新尝试发送这条微信回复？")) void runAction(detail.actions.delivery_action_url || "", `${detail.actions.delivery_action_label}已提交`); }}>{detail.actions.delivery_action_label}</button>}{detail.actions.consumer_url && <Link className="agent-log-button" to={detail.actions.consumer_url} title="查看 Agent 如何形成这次处理方案">查看处理过程</Link>}{detail.actions.audit_url && <Link className="agent-log-button" to={detail.actions.audit_url} title="查看 Agent 如何核验方案、边界和实际结果">查看审计过程</Link>}{detail.actions.agent_url && <Link className="agent-log-button" to={detail.actions.agent_url} title="查看关联的 Agent 会话">查看 Agent session</Link>}{detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认重新处理这条 Attempt？")) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>重新处理</button>}{detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}{!detail.agent_execution_record && <span className="muted">未记录 Agent 过程</span>}{detail.actions.terminal && <span className="disabled-action">无需操作</span>}{detail.actions.dingtalk_url && <a className="compact-button open-dingtalk-action" href={detail.actions.dingtalk_url} target="_blank" rel="noreferrer">{detail.oa.url ? "查看审批" : "查看钉钉消息"}</a>}</div></section>
       <div className="attempt-detail-layout attempt-review-grid">
         <div className="attempt-detail-main">
-          {((detail.status.attention.reason || ["sent", "skipped", "needs_human", "failed", "done", "completed"].includes(detail.status.raw.trim().toLowerCase()))) && <section className="console-card compact-card attempt-status-card"><h2>当前状态</h2><p><strong>事项：</strong>{detail.status.subject}</p><p><strong>当前状态：</strong>{detail.status.message}</p><p><strong>需要你决策：</strong>{detail.status.requires_decision ? "是" : "否"}</p>{detail.status.attention.reason && <dl className="attempt-attention-details"><div><dt>原因</dt><dd>{detail.status.attention.reason}</dd></div><div><dt>外部副作用</dt><dd>{detail.status.attention.external_effect}</dd></div>{detail.status.attention.retry_at && <div><dt>重试计划</dt><dd>{detail.status.attention.retry_at}</dd></div>}</dl>}</section>}
-          <MetadataGrid rows={[...detail.metadata, ...(detail.revision_count ? [{ label: "revisions", value: `${detail.revision_count} revisions` }] : [])]} consumerResult={detail.consumer_result} />
           <section className="console-card attempt-review-main"><div className="reply-meta" aria-label="处理状态">{detail.action_pills.map((pill) => <StatusBadge key={`${pill.label}-${pill.status}`} value={pill.status} />)}</div><ReviewBlock title={detail.trigger.title} value={detail.trigger.text} /><AuditExplanation detail={detail} /><ReviewBlock title={detail.generated_reply.title} value={detail.generated_reply.text} className="attempt-generated-reply" /></section>
           <EmailContext email={detail.email} />
           <References references={detail.references} />
@@ -336,6 +336,7 @@ export function AttemptDetailPage() {
         </div>
         <aside className="attempt-review-side" aria-label="反馈与人工处理">
           {detail.status.requires_decision && <section className="console-card attempt-decision-card"><h2>需要你的判断</h2><p>选择上方方案会创建一个新的处理修订，原始 Attempt 保留。若方案说明会产生外部动作，后续处理会按说明执行并回读。</p>{detail.decision_options.map((option, index) => <button className="attempt-decision-option" type="button" disabled={decisionSubmitting} key={option.instruction} onClick={() => { if (window.confirm(`确认选择“${option.label}”？`)) void runDecision(option.url, option.instruction); }}><strong>{index + 1}. {option.label}</strong><span>{option.consequence}</span></button>)}<label htmlFor="attempt-custom-decision">其他处理指令（默认仅本次）</label><label className="attempt-skill-toggle" htmlFor="attempt-skill-update"><input id="attempt-skill-update" type="checkbox" checked={skillUpdateRequested} onChange={(event) => setSkillUpdateRequested(event.target.checked)} /> 同时把这条反馈沉淀为 Skill 规则</label><textarea id="attempt-custom-decision" value={customDecision} placeholder="例如：采用方案二，并说明交付边界" onChange={(event) => setCustomDecision(event.target.value)} /><p className="attempt-decision-hint">请填写其他处理指令后提交；下方“反馈迭代”只保存反馈，不会执行处理。</p><button type="button" className="primary-button" disabled={!customDecision.trim() || decisionSubmitting} onClick={() => { if (window.confirm("确认提交这条人工处理指令？")) void runDecision(detail.decision_options[0]?.url || `/api/console/history/${detail.id}/human-decision`, customDecision.trim()); }}>{decisionSubmitting ? "提交中…" : "提交处理指令"}</button></section>}
+          <MetadataGrid rows={[...detail.metadata, ...(detail.revision_count ? [{ label: "revisions", value: `${detail.revision_count} revisions` }] : [])]} consumerResult={detail.consumer_result} />
           <FeedbackPanel detail={detail} onSaved={setMessage} />
           {message && <p className="attempt-action-message" role="status" aria-live="polite">{message}</p>}
         </aside>
