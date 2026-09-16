@@ -262,6 +262,50 @@ def test_production_training_scope_reads_inbox_bound_categories_and_system_junk(
     assert fetched == ["inbox", "work", "spam"]
 
 
+def test_inbox_name_is_relevant_when_provider_omits_inbox_special_use_flag():
+    from app.email_training_observer import provider_training_folder_is_relevant
+
+    inbox = _folder("INBOX", role=FolderRole.UNBOUND)
+
+    assert provider_training_folder_is_relevant(inbox, None) is True
+
+
+def test_targeted_flag_refresh_uses_known_classification_uids():
+    from app.email_training_observer import _observe_classified_folder_uids
+
+    identity = "account-1:message-id:<known@example.test>"
+    signals = ImportantSignals(("\\Flagged",), True)
+
+    class Store:
+        def classified_provider_uids(self, **_kwargs):
+            return {901: {"stable_message_identity": identity, "subject": "Known", "sender": "sender@example.test"}}
+
+    class Source:
+        def fetch_uid_membership(self, _folder, **_kwargs):
+            return SimpleNamespace(
+                uidvalidity=10,
+                existing_uids=frozenset({901}),
+                important_signals_by_uid={901: signals},
+            )
+
+    folder_state = {"observations": {}}
+    _observe_classified_folder_uids(
+        folder_state,
+        source=Source(),
+        email_store=Store(),
+        account_id="account-1",
+        folder=_folder("INBOX", role=FolderRole.UNBOUND),
+        role=FolderRole.UNBOUND,
+        binding=None,
+        uidvalidity=10,
+    )
+
+    assert folder_state["observations"][identity]["uid"] == 901
+    assert folder_state["observations"][identity]["observation"][
+        "important_signals"
+    ] == {"raw_signal_names": ["\\Flagged"], "provider_important": True}
+
+
 def test_new_unbound_provider_folder_is_not_a_reverse_category_creation_signal(
     tmp_path,
 ):

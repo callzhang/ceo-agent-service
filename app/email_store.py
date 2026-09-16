@@ -12740,6 +12740,29 @@ class EmailStore:
             ).fetchall()
         return frozenset(int(row["uid"]) for row in rows)
 
+    def classified_provider_uids(
+        self, *, account_id: str, folder: str, uidvalidity: int
+    ) -> dict[int, dict[str, str]]:
+        """Return known classification metadata keyed by provider UID."""
+
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select uid, stable_message_identity, subject, sender
+                from email_classifications
+                where account_id=? and folder=? and uidvalidity=?
+                """,
+                (account_id, folder, uidvalidity),
+            ).fetchall()
+        return {
+            int(row["uid"]): {
+                "stable_message_identity": str(row["stable_message_identity"]),
+                "subject": str(row["subject"] or ""),
+                "sender": str(row["sender"] or ""),
+            }
+            for row in rows
+        }
+
     def list_email_classification_observability(
         self, classification_id: int
     ) -> list[dict[str, Any]]:

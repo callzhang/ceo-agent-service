@@ -38,7 +38,9 @@ def provider_training_folder_is_relevant(
     provider's Junk/Trash folders can supply training labels.
     """
 
-    return binding is not None or getattr(folder, "role", None) in {
+    display_name = str(getattr(folder, "display_name", "")).strip().casefold()
+    provider_folder_id = str(getattr(folder, "provider_folder_id", "")).strip().casefold()
+    return binding is not None or display_name == "inbox" or provider_folder_id == "inbox" or getattr(folder, "role", None) in {
         FolderRole.INBOX,
         FolderRole.JUNK,
         FolderRole.TRASH,
@@ -300,6 +302,16 @@ class ProviderTrainingObservationJob:
                             role=role,
                             binding=binding,
                             classified_identities=classified_identities,
+                        )
+                        _observe_classified_folder_uids(
+                            folder_state,
+                            source=source,
+                            email_store=self.email_store,
+                            account_id=account_id,
+                            folder=folder,
+                            role=role,
+                            binding=binding,
+                            uidvalidity=uidvalidity,
                         )
                         if (
                             int(folder_state["reconcile_after_uid"]) == 0
@@ -623,6 +635,88 @@ def _provider_observation(
         "source": "natural",
         "received_at": message.get("date", ""),
     }
+
+
+def _observe_classified_folder_uids(
+    folder_state: dict[str, object],
+    *,
+    source: object,
+    email_store: object,
+    account_id: str,
+    folder: object,
+    role: FolderRole,
+    binding: Mapping[str, object] | None,
+    uidvalidity: int,
+) -> None:
+    """Refresh FLAGS for known classifications without waiting for the cursor.
+
+    The regular bounded UID cursor is retained for discovery and training.  A
+    classification can, however, point at a much newer UID than that cursor;
+    fetching FLAGS for those known UIDs makes the list/detail provider state
+    available promptly while remaining readonly and bounded.
+    """
+
+    target_reader = getattr(email_store, "classified_provider_uids", None)
+    membership_reader = getattr(source, "fetch_uid_membership", None)
+    if not callable(target_reader) or not callable(membership_reader):
+        return
+    targets = target_reader(
+        account_id=account_id,
+        folder=str(folder.display_name),
+        uidvalidity=uidvalidity,
+    )
+    if not isinstance(targets, Mapping):
+        raise TypeError("classified provider UIDs must be a mapping")
+    cached_uids = {
+        int(cached["uid"])
+        for cached in folder_state["observations"].values()
+        if isinstance(cached, Mapping) and int(cached.get("uid", 0)) > 0
+    }
+    selected = tuple(
+        sorted(
+            int(uid)
+            for uid in targets
+            if int(uid) > 0 and int(uid) not in cached_uids
+        )[:50]
+    )
+    if not selected:
+        return
+    membership = membership_reader(
+        str(folder.display_name),
+        cursor_uidvalidity=uidvalidity,
+        uids=selected,
+    )
+    if int(getattr(membership, "uidvalidity", 0)) != uidvalidity:
+        return
+    existing = frozenset(getattr(membership, "existing_uids", ()))
+    signals_by_uid = getattr(membership, "important_signals_by_uid", {})
+    for uid in sorted(existing):
+        target = targets.get(uid)
+        signals = signals_by_uid.get(uid)
+        if not isinstance(target, Mapping):
+            raise ValueError("classified provider target is invalid")
+        identity = target.get("stable_message_identity")
+        if not isinstance(identity, str) or not identity.strip():
+            raise ValueError("classified provider identity is invalid")
+        if type(signals) is not ImportantSignals:
+            raise TypeError("classified provider important signals are invalid")
+        observation = _provider_observation(
+            account_id=account_id,
+            folder=folder,
+            role=role,
+            binding=binding,
+            message={
+                "stableMessageIdentity": identity,
+                "importantSignals": signals,
+                "subject": target.get("subject") or "[provider flag observation]",
+                "from": {"email": target.get("sender", "")},
+            },
+        )
+        observation["source"] = "targeted"
+        folder_state["observations"][identity] = {
+            "uid": uid,
+            "observation": _encode_observation(observation),
+        }
 
 
 def _refresh_folder_truth(
