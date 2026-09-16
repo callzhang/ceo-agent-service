@@ -12,6 +12,7 @@ import pytest
 import app.managed_skills as managed_skills_module
 import app.store as store_module
 from app.business_skills import load_bundled_business_skills
+from app.agent_cron.models import ScheduledTaskSkillRef
 from app.email_classifier_agent import EmailClassifierAgent
 from app.managed_skills import (
     EMAIL_CLASSIFIER_SKILL_NAME,
@@ -148,6 +149,50 @@ def test_initial_import_creates_revisions_and_initial_config_for_service_owned_s
     assert classifier_revision in snapshot.revisions
     receipt = store.list_runtime_skill_load_receipts(snapshot.config_id)[-1]
     assert classifier_revision.sha256 in receipt.loaded_json
+
+
+def test_startup_stages_revision_referenced_by_enabled_scheduled_task(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "scheduled-revision.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "Test Skill")
+    repository_revision = store.create_managed_skill_revision(
+        skill.id, SKILL_V1, source=REPOSITORY_IMPORT_SOURCE
+    )
+    settings_revision = store.create_managed_skill_revision(
+        skill.id, SKILL_V2, source="settings", parent_revision_id=repository_revision.id
+    )
+    config = store.create_runtime_skill_config(
+        {skill.id: repository_revision.id}, expected_parent_id=None
+    )
+    store.record_runtime_skill_load(config.id, pid=8100, loaded={skill.id: repository_revision.sha256})
+    store.create_scheduled_task(
+        name="test scheduled task",
+        command="produce-once",
+        prompt="使用 $ceo-test 处理消息。",
+        cron_expression="0 * * * * *",
+        timezone_name="UTC",
+        skill_refs=(
+            ScheduledTaskSkillRef(
+                skill_source="managed",
+                skill_name=skill.name,
+                scheduled_task_id=0,
+                managed_skill_id=skill.id,
+                managed_revision_id=settings_revision.id,
+                position=0,
+            ),
+        ),
+    )
+
+    snapshot = resolve_pending_runtime_skills(store, pid=8101)
+
+    assert snapshot.config_id != config.id
+    assert next(
+        binding
+        for binding in store.list_runtime_skill_bindings(snapshot.config_id)
+        if binding.skill_id == skill.id
+    ).revision_id == settings_revision.id
+    assert settings_revision in snapshot.revisions
 
 
 def test_repository_import_is_idempotent_and_preserves_user_owned_name(

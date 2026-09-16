@@ -531,6 +531,7 @@ def resolve_pending_runtime_skills(
 ) -> RuntimeSkillSnapshot:
     """Resolve one immutable startup snapshot and persist its load receipt."""
     import_repository_managed_skills(store)
+    _reconcile_scheduled_task_skill_revisions(store)
     config = store.get_pending_or_active_runtime_skill_config()
     if config is None:
         return RuntimeSkillSnapshot(config_id=0, revisions=())
@@ -572,6 +573,78 @@ def resolve_pending_runtime_skills(
             },
         )
         return snapshot
+
+
+def _reconcile_scheduled_task_skill_revisions(store: "AutoReplyStore") -> None:
+    """Stage task-referenced managed revisions before the process snapshot loads.
+
+    Settings can update a task's immutable Skill reference independently from
+    the next-start runtime configuration.  Leaving those two facts divergent
+    makes every scheduled occurrence fail with ``managed_revision_not_loaded``.
+    The newest enabled task reference for each managed Skill is the only
+    revision that can represent the current scheduled workload; stage it in a
+    new immutable config and let the normal startup loader activate it.
+    """
+    current = store.get_pending_or_active_runtime_skill_config()
+    if current is None:
+        return
+
+    selected: dict[int, tuple[object, object]] = {}
+    for task in store.list_scheduled_tasks():
+        if not task.enabled or task.deleted_at is not None:
+            continue
+        for ref in task.skill_refs:
+            if ref.skill_source != "managed":
+                continue
+            if ref.managed_skill_id is None or ref.managed_revision_id is None:
+                continue
+            previous = selected.get(ref.managed_skill_id)
+            candidate_key = (task.updated_at, task.id)
+            if previous is None or candidate_key > previous[0]:
+                selected[ref.managed_skill_id] = (
+                    candidate_key,
+                    ref.managed_revision_id,
+                )
+
+    if not selected:
+        return
+    bindings = list(store.list_runtime_skill_bindings(current.id))
+    desired = {binding.skill_id: binding.revision_id for binding in bindings}
+    changed = False
+    for skill_id, (_key, revision_id) in selected.items():
+        if desired.get(skill_id) != revision_id:
+            desired[skill_id] = revision_id
+            changed = True
+    if not changed:
+        return
+
+    next_load_order = max((binding.load_order for binding in bindings), default=-1) + 1
+    config_bindings = [
+            {
+                "skill_id": binding.skill_id,
+                "revision_id": desired[binding.skill_id],
+                "enabled": binding.enabled,
+                "load_order": binding.load_order,
+                "purpose": binding.purpose,
+            }
+            for binding in bindings
+        ]
+    bound = {binding.skill_id for binding in bindings}
+    config_bindings.extend(
+        {
+            "skill_id": skill_id,
+            "revision_id": revision_id,
+            "enabled": True,
+            "load_order": next_load_order + index,
+            "purpose": "scheduled_task",
+        }
+        for index, (skill_id, (_key, revision_id)) in enumerate(selected.items())
+        if skill_id not in bound
+    )
+    store.create_runtime_skill_config(
+        config_bindings,
+        expected_parent_id=current.id,
+    )
 
 
 def runtime_skill_snapshot_for_process(
