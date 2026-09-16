@@ -818,6 +818,9 @@ class _EvidenceDriver:
         self.calls.append((task.id, audit_run_id))
         return self.evidence
 
+    def execution_evidence_requirement(self) -> str:
+        return "external_result: executed without a receipt from unsubscribe_email"
+
 
 def test_audited_email_executed_without_tool_evidence_is_an_invalid_result(setup):
     store, email_task, email_context, parent = _audited_email_setup(setup)

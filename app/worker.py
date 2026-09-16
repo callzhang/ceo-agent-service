@@ -34,7 +34,9 @@ from app.channel_gate import (
     default_channel_gates,
     start_lark_auth_login,
 )
+from app.agent_effect_guard import provider_receipts
 from app.consumer_agent import ConsumerAgentRunner
+from app.dingtalk_send_evidence import DingTalkSendEvidenceDriver
 from app.external_action_identity import expected_external_action
 from app.config import (
     agent_mention_aliases,
@@ -634,6 +636,7 @@ class DingTalkAutoReplyWorker:
                     else None
                 ),
                 dry_run=self.dry_run,
+                domain_continuation=DingTalkSendEvidenceDriver(self.store),
             ),
         )
         return self.agent_orchestrator
@@ -2059,7 +2062,9 @@ class DingTalkAutoReplyWorker:
                 consumer_result=consumer_result,
                 audit_result=audit_result,
             )
-            projection = self._sent_reply_projection_from_result(task, result)
+            projection = self._sent_reply_projection_from_result(
+                task, result, audit_run
+            )
             if projection is None:
                 continue
             self.store.record_completed_agent_message_delivery(
@@ -2543,12 +2548,12 @@ class DingTalkAutoReplyWorker:
             raise RuntimeError("orchestration final run was not persisted")
         if result.status not in {"failed_retryable", "failed_terminal"}:
             self.store.clear_codex_capacity_pause()
-        # Persist a DingTalk message projection only from the typed Audit
-        # result's structured delivery reference.  This does not inspect the
-        # command stream or re-audit the business action: it merely keeps the
-        # message visible in History when the provider already returned a
-        # successful provider result.
-        sent_reply = self._sent_reply_projection_from_result(task, result)
+        # Persist a DingTalk message projection only for a send the provider
+        # actually acknowledged.  The typed Audit result names the effect; the
+        # receipt in the run's own event stream is what establishes that one
+        # happened.  This still does not re-audit the business action: it keeps
+        # a delivered message visible in History.
+        sent_reply = self._sent_reply_projection_from_result(task, result, run)
         if sent_reply is not None:
             self.store.record_completed_agent_message_delivery(
                 agent_run_id=run.id,
@@ -2658,11 +2663,19 @@ class DingTalkAutoReplyWorker:
     def _sent_reply_projection_from_result(
         task: ReplyTask,
         result: OrchestrationResult,
+        audit_run: AgentRun,
     ) -> AgentMessageDeliveryProjection | None:
         if task.channel != "dingtalk" or result.status != "executed":
             return None
         audit_result = result.audit_result
         if audit_result is None or audit_result.external_result is None:
+            return None
+        # The ledger records what a provider did.  The reference below is
+        # written by the turn making the claim, and the delivery key in it was
+        # handed to that turn in its own prompt, so it is a label for the
+        # effect, never the proof that one happened.  That proof is the receipt
+        # the provider returned, which only the runtime could have recorded.
+        if not provider_receipts(audit_run.tool_events):
             return None
         reference = audit_result.external_result.live_result_reference
         send_status = str(

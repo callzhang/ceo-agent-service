@@ -694,7 +694,7 @@ def _prepare_outgoing_dingtalk_action(
     context: AgentTaskContext,
 ) -> ProposedAction:
     payload = action.payload
-    text_key = _structured_dingtalk_outgoing_text_key(action)
+    text_key = structured_dingtalk_outgoing_text_key(action)
     if text_key is None:
         return action
     reply_text = payload[text_key]
@@ -711,12 +711,15 @@ def _prepare_outgoing_dingtalk_action(
     return action.model_copy(update={"payload": prepared_payload})
 
 
-def _structured_dingtalk_outgoing_text_key(action: ProposedAction) -> str | None:
-    """Return the content field for a typed action Audit can execute as chat."""
-    if action.capability != "dingtalk-chat":
-        return None
-    payload = action.payload
-    text_key = next(
+def dingtalk_outgoing_text_key(payload: Mapping[str, object]) -> str | None:
+    """Return the field carrying the message body a chat action would send.
+
+    This answers "does this action carry outgoing message text", which is a
+    narrower question than where the message could be delivered.  Preparing a
+    body needs a resolvable target as well; deciding whether a turn claimed to
+    send one does not.
+    """
+    return next(
         (
             key
             for key in ("content", "text", "reply_text")
@@ -724,6 +727,18 @@ def _structured_dingtalk_outgoing_text_key(action: ProposedAction) -> str | None
         ),
         None,
     )
+
+
+def structured_dingtalk_outgoing_text_key(action: ProposedAction) -> str | None:
+    """Return the content field for a typed action Audit can execute as chat.
+
+    A body is prepared only when the action also names somewhere to send it,
+    so this stays narrower than `dingtalk_outgoing_text_key`.
+    """
+    if action.capability != "dingtalk-chat":
+        return None
+    payload = action.payload
+    text_key = dingtalk_outgoing_text_key(payload)
     if text_key is None:
         return None
     target = action.target

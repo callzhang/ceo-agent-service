@@ -29,37 +29,62 @@ PROVIDER_RECEIPT_FIELDS = (
 )
 
 
-def _receipts_in(value: Any, found: list[str]) -> None:
+# A provider answer nests: an MCP result wraps its payload in content entries
+# whose text is the provider's JSON re-encoded as a string, and the controlled
+# CLI wraps that again in its own envelope.  The receipt sits at the bottom, so
+# the walk decodes text it meets on the way down instead of stopping at it.
+_MAX_ANSWER_DEPTH = 8
+
+
+def _receipts_in(value: Any, found: list[str], depth: int = 0) -> None:
+    if depth > _MAX_ANSWER_DEPTH:
+        return
     if isinstance(value, dict):
         for key, item in value.items():
             if key in PROVIDER_RECEIPT_FIELDS and isinstance(item, str) and item.strip():
                 found.append(item.strip())
             else:
-                _receipts_in(item, found)
+                _receipts_in(item, found, depth + 1)
         return
     if isinstance(value, list):
         for item in value:
-            _receipts_in(item, found)
+            _receipts_in(item, found, depth + 1)
+        return
+    if isinstance(value, str) and "{" in value:
+        _receipts_in(_loads(value), found, depth + 1)
 
 
-def _command_output(event: Any) -> Any:
-    """The output of a command the turn actually executed, if this is one."""
+def _provider_answers(event: Any) -> list[Any]:
+    """Every provider answer this event carries, however the turn reached one.
+
+    A turn reaches a provider two ways: a shell command, and a call to the
+    controlled CLI exposed as an MCP tool.  Reading only the first left every
+    effect routed through the controlled path invisible -- which is the path
+    the runtime prefers, so the blind spot covered the well-behaved case.
+    """
     if not isinstance(event, dict):
-        return None
+        return []
     item = event.get("item")
     if not isinstance(item, dict):
-        return None
-    # Only a completed execution can carry a receipt; a started or failed one
-    # has no provider answer to read.
-    if item.get("type") != "command_execution":
-        return None
-    if item.get("exit_code") != 0:
-        return None
-    return item.get("output") or item.get("aggregated_output")
+        return []
+    item_type = item.get("type")
+    # Only a completed call can carry a receipt; a started or failed one has no
+    # provider answer to read.
+    if item_type == "command_execution":
+        if item.get("exit_code") != 0:
+            return []
+        output = item.get("output") or item.get("aggregated_output")
+        return [output] if output else []
+    if item_type == "mcp_tool_call":
+        if item.get("error"):
+            return []
+        result = item.get("result")
+        return [result] if result else []
+    return []
 
 
 def provider_receipts(tool_events: Any) -> tuple[str, ...]:
-    """Return the provider receipts a turn's executed commands came back with.
+    """Return the provider receipts a turn's executed calls came back with.
 
     A non-empty result means the turn reached a provider and the provider
     accepted the effect, whatever the turn then reported in its typed result.
@@ -68,13 +93,11 @@ def provider_receipts(tool_events: Any) -> tuple[str, ...]:
         return ()
     found: list[str] = []
     for event in tool_events:
-        output = _command_output(event)
-        if output is None:
-            continue
-        if isinstance(output, str):
-            _receipts_in(_loads(output), found)
-        else:
-            _receipts_in(output, found)
+        for answer in _provider_answers(event):
+            if isinstance(answer, str):
+                _receipts_in(_loads(answer), found)
+            else:
+                _receipts_in(answer, found)
     # Preserve first-seen order without repeating an id echoed by later events.
     ordered: list[str] = []
     for receipt in found:

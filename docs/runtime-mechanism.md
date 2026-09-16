@@ -233,8 +233,23 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
 钉钉消息 proposal 的 target 只接受服务 wire 字段：群聊 `conversation_id`，引用回复
 `conversation_id + message_id`，单聊使用稳定接收人 ID。Provider 的字段名只保留在 provider
 结果中。成功结果必须带 `action_identity` 和稳定 provider 消息 ID；运行时以该身份关联唯一 action，
-原子写入 provider 结果、消息投影和 observer。稳定 provider ID 已足以表示发送完成，不以
-read-back、命令登记或未知工具检查作为投影条件。
+原子写入 provider 结果、消息投影和 observer。
+
+typed result 里的这些字段命名一次外发，但不构成它发生过的证据：它们由做出该声称的同一轮写出，
+其中 `delivery_key` 和 `external_action_key` 本就是服务在 prompt 里交给它的，回显不证明任何事。
+证据是 provider 接受副作用时返回的回执（`openTaskId` / `openMessageId`），它只会出现在运行时
+记录的调用流 `agent_run_events` 里，由服务而非模型写入。
+
+因此，当被接受的 proposal 里存在一个携带外发正文的 `dingtalk-chat` 动作时，Audit 的 `executed`
+要求本轮调用流里至少有一个 provider 回执；没有则该 result 无效，模型在下一轮收到纠正，而不是
+让任务带着没有依据的成功收口。消息投影同样以该回执为前提。
+
+回执只回答“副作用是否发生”。至于 typed result 用哪个 ID 标记它，允许来自读回会话——真实发送后
+用 `+chat-messages` 认出自己那条消息是正常做法，要求上报 ID 必须等于回执会拦下已送达的消息，
+而重试等于再发一次。
+
+日程响应、审批、表情等动作的 provider 身份不是这个回执形状，它们维持既有约定，直到各自有可核验
+的回执为止。
 
 Agent 生成的钉钉候选正文在进入 Audit 前按 `execution_generation + proposal_revision` 持久化：
 同一 revision 的重试复用同一准备正文，反馈产生的下一 revision 则持久化修正后的正文，不能被
@@ -245,8 +260,9 @@ Agent 生成的钉钉候选正文在进入 Audit 前按 `execution_generation + 
 provider 字段名，修复过程先一次性迁移为当前 wire target，再使用与在线路径相同的动作键算法；
 重复运行不会新增第二条 provider 结果或消息记录。
 
-这里只管理稳定身份、动作顺序和 provider 成功事实。应用层不检查 Agent 使用的未知
-工具，不建立 read-only、unknown、reconciliation 或发送证据审核状态机。
+这里只管理稳定身份、动作顺序和 provider 成功事实。应用层不检查 Agent 使用了哪些工具，也不建立
+read-only、unknown 或 reconciliation 状态机：回执核验是对已记录调用流的一次读取，不是新的状态机，
+它只回答“这一轮是否拿到过 provider 回执”，不评判 Agent 选择了什么路径去拿。
 
 ## 用户反馈处理轮次
 

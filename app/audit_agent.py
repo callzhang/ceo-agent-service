@@ -43,6 +43,14 @@ class ExecutionEvidenceDriver(Protocol):
         self, task: ReplyTask, *, audit_run_id: int
     ) -> bool: ...
 
+    def execution_evidence_requirement(self) -> str:
+        """The correction the model gets when its executed result has no receipt.
+
+        Each domain names its own evidence, so the sentence travels with the
+        driver rather than being fixed at the one place that raises it.
+        """
+        ...
+
 
 class AuditAgentRunner:
     """Execute one ordinary Audit turn.
@@ -283,8 +291,7 @@ class AuditAgentRunner:
                 task, audit_run_id=run.id
             ):
                 raise ResultParseError(
-                    "external_result: executed without a receipt from "
-                    "unsubscribe_email"
+                    self.domain_continuation.execution_evidence_requirement()
                 )
             if result.external_result is None:
                 raise ResultParseError(

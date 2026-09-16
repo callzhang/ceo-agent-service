@@ -129,6 +129,9 @@ class EmailUnsubscribeContinuationDriver:
             snapshot.get("receipt"), dict
         )
 
+    def execution_evidence_requirement(self) -> str:
+        return "external_result: executed without a receipt from unsubscribe_email"
+
     def load_snapshot(self, task: ReplyTask) -> _EmailUnsubscribeSnapshot:
         """Load and validate one immutable read view for one derivation pass."""
 

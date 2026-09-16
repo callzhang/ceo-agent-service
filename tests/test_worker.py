@@ -393,6 +393,44 @@ class ScriptedAgentOrchestrator:
         return self.results.pop(0)
 
 
+def _record_send_receipt(store, run_id: int, receipt: str, *, owner: str) -> None:
+    """Record the provider answer that makes a completed run's send real."""
+    store.append_agent_run_event(
+        run_id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "id": f"call-{receipt}",
+                "exit_code": 0,
+                "output": json.dumps({"result": {"openTaskId": receipt}}),
+            },
+        },
+        owner=owner,
+    )
+
+
+def _audit_run_with_receipt(receipt: str = "openTask-1"):
+    """An Audit run whose recorded call stream shows the provider accepted a send."""
+    return SimpleNamespace(
+        tool_events=[
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "command_execution",
+                    "exit_code": 0,
+                    "output": json.dumps({"result": {"openTaskId": receipt}}),
+                },
+            }
+        ]
+    )
+
+
+def _audit_run_without_receipt():
+    """An Audit run that never reached a provider, whatever it then reported."""
+    return SimpleNamespace(tool_events=[])
+
+
 def test_sent_reply_projection_accepts_flat_send_receipt_and_proposal_text():
     task = SimpleNamespace(
         channel="dingtalk", conversation_id="cid-1",
@@ -466,7 +504,9 @@ def test_sent_reply_projection_accepts_flat_send_receipt_and_proposal_text():
         audit_result=audit_result,
     )
 
-    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(task, result)
+    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
+        task, result, _audit_run_with_receipt()
+    )
 
     assert projection is not None
     assert projection.reply_text == "来自 proposal 的回复"
@@ -546,7 +586,9 @@ def test_sent_reply_projection_accepts_stable_message_id_without_send_status():
         audit_result=audit_result,
     )
 
-    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(task, result)
+    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
+        task, result, _audit_run_with_receipt()
+    )
 
     assert projection is not None
     assert projection.reply_text == "来自 proposal 的群回复"
@@ -629,7 +671,9 @@ def test_sent_reply_projection_accepts_delivery_status_and_sent_message_id():
         audit_result=audit_result,
     )
 
-    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(task, result)
+    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
+        task, result, _audit_run_with_receipt()
+    )
 
     assert projection is not None
     assert projection.reply_text == "引用回复正文"
@@ -683,7 +727,9 @@ def test_sent_reply_projection_accepts_reply_action_text():
         feedback_cycles=0, consumer_result=consumer_result, audit_result=audit_result,
     )
 
-    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(task, result)
+    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
+        task, result, _audit_run_with_receipt()
+    )
 
     assert projection is not None
     assert projection.reply_text == "引用回复正文"
@@ -758,6 +804,7 @@ def test_completed_message_delivery_projection_repair_is_idempotent(tmp_path: Pa
             "error": {"code": "", "retryable": False, "authorization_required": False},
         }
     )
+    _record_send_receipt(store, audit.id, "openTask-repair-1", owner="audit")
     store.complete_agent_run(
         audit.id, audit_result.model_dump(mode="json"), owner="audit"
     )
@@ -787,6 +834,7 @@ def test_completed_message_delivery_projection_repair_is_idempotent(tmp_path: Pa
         role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0,
         parent_agent_run_id=newer_consumer.id, operation_id="audit-2", owner="audit",
     ).run
+    _record_send_receipt(store, newer_audit.id, "openTask-repair-2", owner="audit")
     store.complete_agent_run(
         newer_audit.id, audit_result.model_dump(mode="json"), owner="audit"
     )
@@ -877,6 +925,7 @@ def test_completed_delivery_projection_repair_recovers_single_action_identity(
             "error": {"code": "", "retryable": False, "authorization_required": False},
         }
     )
+    _record_send_receipt(store, audit.id, "openTask-repair-1", owner="audit")
     store.complete_agent_run(
         audit.id, audit_result.model_dump(mode="json"), owner="audit"
     )
@@ -16908,3 +16957,70 @@ def test_delivery_reconstruction_invents_no_risk_or_confidence():
 def test_delivery_reconstruction_passes_non_objects_through():
     assert worker_module._delivery_reconstruction_payload("[]") == "[]"
     assert worker_module._delivery_reconstruction_payload(None) is None
+
+
+def test_a_delivery_is_not_projected_from_a_claim_with_no_provider_receipt():
+    """Task 384224 reported the trigger's own id as the message it had sent.
+
+    Nothing in that run reached a provider, so the ledger must stay empty:
+    writing the row would record a send that never happened, and History would
+    then show the question as asked.
+    """
+    task = SimpleNamespace(
+        channel="dingtalk", conversation_id="cid-1",
+        business_object_key="message:dingtalk:cid-1:msg7ES1rcEHmu909qE3HjM8Tg==",
+    )
+    audit_result = AuditAgentResult.model_validate(
+        {
+            "outcome": "executed", "risk": "low", "confidence": 0.95,
+            "rule_coverage": 1.0, "information_completeness": 1.0,
+            "summary": "asked", "proposal_revision": 0, "feedback": None,
+            "external_result": {
+                "operation_id": "agent-task:384224:initial:proposal:0",
+                "live_result_reference": {
+                    "action_identity": "request_candidate_info",
+                    "delivered": True,
+                    "message_id": "msg7ES1rcEHmu909qE3HjM8Tg==",
+                },
+            },
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+        }
+    )
+    consumer_result = ConsumerAgentResult.model_validate(
+        {
+            "outcome": "proposal", "risk": "low", "confidence": 0.85,
+            "rule_coverage": 0.9, "information_completeness": 0.4,
+            "summary": "ask",
+            "proposal": {
+                "objective": "ask",
+                "actions": [
+                    {
+                        "description": "ask for the resume",
+                        "action_identity": "request_candidate_info",
+                        "capability": "dingtalk-chat",
+                        "operation": "send",
+                        "target": {"conversation_id": "cid-1"},
+                        "payload": {"content": "简历关键信息能否直接发我？"},
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "",
+            },
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+        }
+    )
+    result = OrchestrationResult(
+        status="executed", final_run_id=19557, final_role=AgentRole.AUDIT,
+        summary="asked",
+        error=AgentError(code="", retryable=False, authorization_required=False),
+        feedback_cycles=0, consumer_result=consumer_result, audit_result=audit_result,
+    )
+
+    assert DingTalkAutoReplyWorker._sent_reply_projection_from_result(
+        task, result, _audit_run_without_receipt()
+    ) is None
+
+    # The same claim, from a turn the provider actually answered, still projects.
+    assert DingTalkAutoReplyWorker._sent_reply_projection_from_result(
+        task, result, _audit_run_with_receipt()
+    ) is not None

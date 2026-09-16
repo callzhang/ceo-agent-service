@@ -110,3 +110,44 @@ def test_the_consumer_boundary_forbids_causing_external_effects() -> None:
     assert "let the next stage perform it" in boundary
     # The reason is stated so the rule generalises past the one command.
     assert "postfix" in boundary and "sends it a second time" in boundary
+
+
+def _mcp_call(result, *, error=None, tool: str = "execute_reviewed_write"):
+    """The shape the controlled CLI returns through the MCP tool channel."""
+    return {
+        "type": "item.completed",
+        "item": {
+            "type": "mcp_tool_call",
+            "server": "agent_cli",
+            "tool": tool,
+            "error": error,
+            "result": result,
+        },
+    }
+
+
+def test_an_effect_routed_through_the_controlled_cli_is_recognised() -> None:
+    """The shape run 8374 produced: a real send the guard used to miss entirely.
+
+    The reviewed CLI is the preferred path, and its answers arrive as MCP tool
+    results rather than shell output, so reading only `command_execution` made
+    the guard blind to exactly the well-behaved case.
+    """
+    provider = json.dumps(
+        {"cli": "dws", "operation": "chat +messages-send",
+         "result": {"openTaskId": "G2WsAf7pzHQoDBXm="}, "success": True},
+        ensure_ascii=False,
+    )
+    result = {"content": [{"type": "text", "text": provider}]}
+    assert provider_receipts([_mcp_call(result)]) == ("G2WsAf7pzHQoDBXm=",)
+
+
+def test_a_failed_tool_call_is_not_treated_as_an_effect() -> None:
+    result = {"content": [{"type": "text", "text": json.dumps({"openTaskId": "x"})}]}
+    assert provider_receipts([_mcp_call(result, error="refused")]) == ()
+
+
+def test_a_read_through_the_controlled_cli_reports_nothing() -> None:
+    listing = json.dumps({"messages": [{"messageId": "msg-read-1"}]}, ensure_ascii=False)
+    result = {"content": [{"type": "text", "text": listing}]}
+    assert provider_receipts([_mcp_call(result, tool="execute_reviewed_read")]) == ()
