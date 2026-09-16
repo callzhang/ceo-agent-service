@@ -1339,6 +1339,7 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
                 "instance_id": "current-instance",
                 "error_code": "provider_action_failed",
                 "error_stage": "reconcile_action_tasks",
+                "error_type": "RuntimeError",
                 "private_target": "INBOX/secret",
             }
         ),
@@ -1451,6 +1452,7 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
             "status": "degraded",
             "error_code": "provider_action_failed",
             "error_stage": "reconcile_action_tasks",
+            "error_type": "RuntimeError",
             "updated_at": email["checks"][0]["updated_at"],
         }
     ]

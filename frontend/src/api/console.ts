@@ -148,6 +148,7 @@ export interface StatusEmailHealthEntry {
   status: string;
   error_code?: string | null;
   error_stage?: string | null;
+  error_type?: string | null;
   failures?: number | null;
   persisted_count?: number | null;
   task_count?: number | null;
@@ -888,13 +889,13 @@ function connectorStatus(value: unknown): boolean {
 
 function emailHealth(value: unknown): boolean {
   const row = exactRecord(value, ["status", "updated_at", "process", "runtime_loops", "accounts", "checks"]);
-  const optionalEntryFields = ["error_code", "error_stage", "failures", "persisted_count", "task_count", "isolated_count", "superseded_count", "unresolved_count"];
+  const optionalEntryFields = ["error_code", "error_stage", "error_type", "failures", "persisted_count", "task_count", "isolated_count", "superseded_count", "unresolved_count"];
   const validEntry = (value: unknown) => {
     const entry = exactRecord(value, ["scope", "status", "updated_at"], optionalEntryFields);
     return entry !== null && strings(entry, ["scope", "status", "updated_at"])
       && Object.entries(entry).every(([key, item]) => {
         if (key === "scope" || key === "status" || key === "updated_at") return typeof item === "string";
-        if (key === "error_code" || key === "error_stage") return item === null || typeof item === "string";
+        if (key === "error_code" || key === "error_stage" || key === "error_type") return item === null || typeof item === "string";
         return item === null || (Number.isInteger(item) && Number(item) >= 0);
       });
   };
