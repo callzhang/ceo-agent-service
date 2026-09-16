@@ -38,6 +38,22 @@ reverts committed work they did not author.
 
 ## Recent overlaps worth knowing
 
+- 2026-09-15 17:27, Claude session `claude-delivery-receipt-gate`: **I restarted
+  `com.ceo-agent-service.main`, which deployed the whole tree including
+  `claude-micro-f1-gate`'s uncommitted email work.** Imports were verified
+  first and the service came up healthy on pids 43024/43029/43030/43031, with
+  the console answering and no `failed` or `processing` backlog. Two things
+  for that owner: the **live** email schema is now v39 and
+  `email_model_promotion_configs.macro_f1_min` has been renamed to
+  `micro_f1_min` on the real database (applied 17:22, before my restart, most
+  likely by constructing an `EmailStore` against it - the same hazard this
+  board recorded on 2026-09-12). A process running pre-v39 code will now fail
+  against that database. The crash loop in
+  `/tmp/ceo-agent-service-main.err.log` (`no such column: "macro_f1_min"`) is
+  from the version of `_migrate_v38_to_v39` that predates the
+  `if "micro_f1_min" not in columns` guard; with the guard in place the worker
+  starts cleanly, and I did not touch that file.
+
 - 2026-09-15, Claude session `claude-email-tabs`: the Email page's list filters
   are now page tabs, so its URL keys changed from `?tab=list&filter=<status>`
   to `?tab=pending|all|unsubscribe`. `app/web_api/attempts.py:312` still builds
