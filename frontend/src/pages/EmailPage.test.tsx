@@ -445,3 +445,19 @@ it("uses the latest returned config version on subsequent saves",async()=>{
   await user.click(await screen.findByRole("button",{name:"保存配置"}));expect(await screen.findByText(/描述版本：d2/)).toBeInTheDocument();
   await user.click(screen.getByRole("button",{name:"保存配置"}));expect(api.saveEmailConfig).toHaveBeenLastCalledWith("work",expect.objectContaining({expected_current_version:"c2"}));
 });
+it("will not submit a retired category an older model left on the mail",async()=>{
+  const user=userEvent.setup();
+  api.confirmEmailClassification.mockResolvedValue({ok:true,message:"已保存"});
+  api.getEmailClassification.mockResolvedValue({item:{...row("1"),category:"important",message_text:"正文"},observability:[]});
+  show("/email?tab=pending&selected=1");
+  const drawer=await screen.findByRole("region",{name:"邮件详情"});
+  // "important" was retired, so it is not among the offered categories. The
+  // form must ask for a current one instead of presenting a value the
+  // service will refuse, which reached the console as "retry later".
+  expect(within(drawer).getByRole("combobox",{name:"选择分类"})).toHaveValue("");
+  expect(within(drawer).getByRole("button",{name:"保存修改"})).toBeDisabled();
+  await user.selectOptions(within(drawer).getByRole("combobox",{name:"选择分类"}),"work");
+  await waitFor(()=>expect(within(drawer).getByRole("button",{name:"保存修改"})).toBeEnabled());
+  await user.click(within(drawer).getByRole("button",{name:"保存修改"}));
+  expect(api.confirmEmailClassification).toHaveBeenCalledExactlyOnceWith("1","work",expect.any(String),null);
+});

@@ -62,7 +62,7 @@ export function EmailReadingPanel(props: Props) {
         <details className="email-recipient-details"><summary>收件信息</summary><p>收件人：{item.recipients?.join("、") || "未提供"}</p>{item.cc && <p>抄送：{item.cc}</p>}</details>
         <div className="email-reading-actions">
           {editable && <form aria-label="分类确认" onSubmit={event => {event.preventDefault(); props.onSave();}}>
-            <label><span className="sr-only">选择分类</span><select aria-label="选择分类" value={props.category || item.category || ""} disabled={saving || loading} onChange={event => props.onCategory(event.target.value)}><option value="" disabled>选择类别</option>{props.options.map(option => <option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</select></label>
+            <label><span className="sr-only">选择分类</span><select aria-label="选择分类" value={props.category || ""} disabled={saving || loading} onChange={event => props.onCategory(event.target.value)}><option value="" disabled>选择类别</option>{props.options.map(option => <option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</select></label>
             <button type="submit" className="primary-button" disabled={!props.category || saving || loading}>{saving ? "正在保存…" : "保存修改"}</button>
           </form>}
           <span className="email-important-state" title={signalsAvailable ? `原始邮箱信号：${rawSignals}` : "Star / Flag 状态未知"}>

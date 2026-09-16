@@ -33,6 +33,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   const rowRefs=useRef(new Map<string,HTMLButtonElement>());
   const open=!!selected && closed!==selected;
   const options=[...configurableCategories(configs).filter(item=>item.enabled),{category_key:"junk",display_name:"垃圾（Trash）"}];
+  const offered=(key?:string|null)=>!!key && options.some(option=>option.category_key===key);
   const label=(key?:string|null)=>key ? (configs.find(item=>item.category_key===key)?.display_name || key) : "未分类（留在收件箱）";
   useEffect(()=>{setSearchText(query);},[query]);
   function applySearch(value:string) {
@@ -67,11 +68,17 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
     }).catch(reason=>{if(!controller.signal.aborted)setDetailError(errorMessage(reason));});
     return ()=>controller.abort();
   },[selected,open,detailRevision]);
+  // A mail an older model classified can carry a retired category. Offering
+  // it as the saved value made the select show nothing, the button look ready,
+  // and the confirmation submit a category the service refuses. Categories
+  // load asynchronously, so this resolves itself once they arrive rather than
+  // clearing a valid choice that was merely early.
+  const editableCategory=offered(category) ? category : "";
   async function save() {
-    if(lock.current || !category || !detail || loading)return;
+    if(lock.current || !editableCategory || !detail || loading)return;
     lock.current=true;setSaving(true);onBusy(true);setSaveError("");
     try {
-      const result=await confirmEmailClassification(selected,category,`email-feedback:${selected}:${category}:${detail.item.current_action_plan_id || "initial"}`,detail.item.current_action_plan_id);
+      const result=await confirmEmailClassification(selected,editableCategory,`email-feedback:${selected}:${editableCategory}:${detail.item.current_action_plan_id || "initial"}`,detail.item.current_action_plan_id);
       if(!result.ok)throw new Error(result.message || "保存失败，请重试");
       const index=rows.findIndex(item=>item.id===selected);
       const nextId=rows[index+1]?.id || rows[index-1]?.id;
@@ -122,7 +129,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
       </button>)}
     </div>
     </section>
-    {open && <EmailReadingPanel key={selected} detail={detail} error={detailError} saving={saving} loading={loading} category={category} saveError={saveError} saved={saved} configs={configs} options={options} position={rows.findIndex(item=>item.id===selected)} count={rows.length} expanded={expanded}
+    {open && <EmailReadingPanel key={selected} detail={detail} error={detailError} saving={saving} loading={loading} category={editableCategory} saveError={saveError} saved={saved} configs={configs} options={options} position={rows.findIndex(item=>item.id===selected)} count={rows.length} expanded={expanded}
       onCategory={value=>{setCategory(value);setSaved(false);}} onSave={()=>void save()} onClose={closeReading} onRetry={()=>setDetailRevision(value=>value+1)} onExpand={()=>setExpanded(value=>!value)}
       onPrevious={()=>{const index=rows.findIndex(item=>item.id===selected);if(index>0){navigate(page,pageSize,rows[index-1].id);setSaved(false);}}}
       onNext={()=>{const index=rows.findIndex(item=>item.id===selected);if(index>=0&&index<rows.length-1){navigate(page,pageSize,rows[index+1].id);setSaved(false);}}}/>}

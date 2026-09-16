@@ -3756,3 +3756,53 @@ def test_email_config_put_maps_second_account_binding_conflict_and_rolls_back(
     assert response.json()["code"] == "email_folder_binding_conflict"
     assert store.get_category_config("work") == before_config
     assert store.list_account_folder_bindings("work") == before_bindings
+
+
+def test_retired_category_feedback_is_refused_at_the_boundary(tmp_path: Path):
+    """A retired category must not reach the confirmation as a 500.
+
+    An older model still predicts `important`, so the console can post it for
+    a mail that model classified. `EmailCategory` still carries the retired
+    keys, so reading the payload through it accepted a category the write path
+    goes on to refuse -- deep enough that the refusal escaped unhandled and the
+    console showed "请求失败，请稍后重试" for a request no retry can fix.
+    """
+    store = EmailStore(tmp_path / "retired-category.sqlite3")
+    identity = 165239721836324343
+    classification = EmailClassification.model_validate({
+        "classification_id": identity,
+        "stable_message_identity": "account-1:message-id:<retired@example.com>",
+        "provider_locator": {"account_id": "account-1", "folder": "INBOX", "uidvalidity": 1, "uid": 1, "rfc_message_id": "<retired@example.com>", "thread_id": "retired"},
+        "category": EmailCategory.NOTIFICATION, "confidence": 0.136, "margin": 0.0003,
+        "probabilities": {"notification": 0.136}, "model_id": "email-tfidf-lr-20260905T214932Z-53379cdd",
+        "config_version": "test-v1", "status": EmailClassificationStatus.PENDING_FEEDBACK,
+        "classification_source": "model", "action_plan": None,
+    })
+    store.persist_scan_result(classification, sender="collections@example.com", subject="Overdue", preview="Overdue", model_text="Overdue")
+    app = FastAPI()
+    register_email_routes(app, lambda: store)
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/console/email/classifications/{identity}/feedback",
+        json={
+            "category": "important",
+            "feedback_request_id": f"email-feedback:{identity}",
+            "expected_current_action_plan_id": None,
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "retired" in response.json()["detail"]
+    # The mail is untouched, so it can still be confirmed as a live category.
+    assert store.get_classification(identity)["classification_source"] == "model"
+    accepted = client.post(
+        f"/api/console/email/classifications/{identity}/feedback",
+        json={
+            "category": "external_billing",
+            "feedback_request_id": f"email-feedback:{identity}:external_billing",
+            "expected_current_action_plan_id": None,
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert store.get_classification(identity)["category"] == "external_billing"

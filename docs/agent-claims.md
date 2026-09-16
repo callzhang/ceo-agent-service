@@ -33,10 +33,40 @@ reverts committed work they did not author.
 | codex-session-readable-history | frontend/src/pages/CodexPages.tsx, frontend/src/pages/CodexPages.test.tsx, frontend/src/components/status/StatusBadge.tsx, frontend/src/components/status/StatusBadge.test.tsx, frontend/src/styles.css, docs/agent-claims.md | Explain unavailable/reused Codex sessions and group related Attempt history | 2026-09-15 |
 | codex-session-history-docs | docs/architecture.md, docs/agent-claims.md | Document the user-visible meaning of unavailable Codex transcripts and related Attempt indexes | 2026-09-15 |
 | claude-delivery-receipt-gate | app/agent_effect_guard.py, app/dingtalk_send_evidence.py, app/audit_agent.py, app/worker.py, app/consumer_agent.py, app/email_unsubscribe_continuation.py, tests/test_agent_effect_guard.py, tests/test_dingtalk_send_evidence.py, tests/test_worker.py, tests/test_audit_agent.py, docs/runtime-mechanism.md, docs/agent-claims.md | Require a provider receipt before an Audit `executed` closes a DingTalk send; stop accepting the model's self-reported delivery | 2026-09-15 |
-| claude-micro-f1-gate | app/email_classifier_runtime.py, app/email_store.py, app/web_api/email.py, app/email_classifier_training.py, app/email_model_registry.py, app/email_classifier_shadow.py, frontend/src/pages/email/ModelTraining.tsx, frontend/src/pages/email/PromotionPanel.tsx, frontend/src/pages/email/shared.ts, frontend/src/pages/email/modelTrend.ts, tests/test_email_promotion_gate.py | Promotion gate and model displays switch from macro F1 to micro F1 (Derek confirmed the gate change explicitly) | 2026-09-15 |
+| claude-retired-category-save | app/web_api/email.py, frontend/src/pages/email/EmailList.tsx, frontend/src/pages/email/EmailReadingPanel.tsx, frontend/src/pages/EmailPage.test.tsx, tests/test_email_web_api.py, docs/agent-claims.md | Stop the console offering a retired category as a saveable value, and refuse one at the API boundary instead of as a 500 | 2026-09-15 |
 
 
 ## Recent overlaps worth knowing
+
+- 2026-09-16, Claude session `claude-micro-f1-gate` (`854a4abc`): **the live
+  email schema is now v39 and the service was restarted.** The promotion gate
+  measures micro F1, and `email_model_promotion_configs.macro_f1_min` is now
+  `micro_f1_min`. A process running pre-v39 code cannot open that database, so
+  do not start an older checkout against it.
+
+  This cost about twenty minutes of live email downtime and it was my fault, so
+  the mechanism is worth knowing: my first version of `_migrate_v38_to_v39` was
+  not idempotent. Someone's `launchctl kickstart` deployed the working tree
+  while that version sat uncommitted, the migration renamed the column, and
+  every later start crashed in `EmailStore.__init__` with `no such column:
+  "macro_f1_min"`, which surfaced as `email_store_unavailable` 503s on the
+  Email page. The committed migration checks `pragma table_info` first and
+  records version 39 in `email_schema_migrations`, which the first version also
+  skipped. If you write a migration here, assume a restart will deploy it
+  before you are ready and make it safe to run twice.
+
+  I also touched two files claimed by others, in unrelated regions, and staged
+  only my own hunks: `frontend/src/api/console.ts` (three email metric type
+  lines; `codex-agent-health-metrics` owns it) and `app/email_store.py` (the
+  promotion config column and the new migration, alongside that session's
+  in-progress `important_signals_json` work, which I left unstaged). The same
+  session's `frontend/src/test/email-fixture.tsx` edit is untouched: my staged
+  blob is HEAD plus the rename only.
+
+  `README.md`, `CHANGELOG.md` and `docs/architecture.md` are all claimed, so
+  the metric change is not written up there yet. Whoever holds them: the gate
+  now reads "share of messages classified correctly", not "mean of per-class
+  F1", and the configured 0.95 carried over unchanged.
 
 - 2026-09-15 17:27, Claude session `claude-delivery-receipt-gate`: **I restarted
   `com.ceo-agent-service.main`, which deployed the whole tree including

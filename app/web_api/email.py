@@ -27,7 +27,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from app import config as app_config
 from app.email_classifier_contracts import (
     EmailAction,
-    EmailCategory,
     EmailClassificationStatus,
     build_email_action_plan,
     validate_email_category_key,
@@ -1342,12 +1341,28 @@ def register_email_routes(
             raise HTTPException(status_code=415, detail="JSON Content-Type required")
         try:
             payload = EmailFeedbackPayload.model_validate(await request.json())
-            category = EmailCategory(payload.category)
             feedback_request_id = payload.feedback_request_id
             expected_current_action_plan_id = payload.expected_current_action_plan_id
         except (ValueError, TypeError, ValidationError) as exc:
             raise HTTPException(
                 status_code=400, detail="email feedback is invalid"
+            ) from exc
+        try:
+            # Read the category through the validator the write path uses, as
+            # every other category endpoint in this file does. `EmailCategory`
+            # still carries the retired keys an older model can predict, so
+            # reading the payload through it accepted a category the
+            # confirmation would go on to refuse -- deep enough that the
+            # refusal escaped as a 500 and reached the console as "retry
+            # later", for a request no retry can fix.
+            category = validate_email_category_key(payload.category)
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"category {payload.category} is retired and can no longer "
+                    "be confirmed; choose a current category"
+                ),
             ) from exc
         learning_result = None
         application = None
