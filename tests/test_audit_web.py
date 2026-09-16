@@ -11445,3 +11445,77 @@ def test_run_audit_web_reload_uses_stable_uvicorn_protocols(
     assert calls["kwargs"]["reload"] is True
     assert calls["kwargs"]["loop"] == "asyncio"
     assert calls["kwargs"]["http"] == "h11"
+
+
+def _failed_email_action(
+    store: AutoReplyStore,
+    *,
+    attempt_count: int,
+    next_attempt_at: str,
+) -> str:
+    """Insert one processed classification and its failed provider action."""
+    EmailStore(store.path)
+    action_id = f"email-action:{attempt_count}:{next_attempt_at or 'exhausted'}"
+    plan_id = f"email-action-plan:{attempt_count}"
+    with store._connect() as db:
+        db.execute(
+            "insert into email_classifications ("
+            "id, account_id, folder, uidvalidity, uid, rfc_message_id, "
+            "stable_message_identity, sender, subject, category, confidence, "
+            "margin, probabilities_json, model_id, config_version, status, "
+            "classification_source, received_at, current_action_plan_id) "
+            "values (?, 'acct', 'INBOX', 2, 27727, '<mid@example.com>', "
+            "'acct:mid', 'daniela@example.com', 'MorningStar Technical Deepdive', "
+            "'work', 0.9, 0.5, '{}', 'model-1', 'v1', 'processed', "
+            "'model', 'Mon, 08 Sep 2025 12:08:13 +0000', ?)",
+            (9000 + attempt_count, plan_id),
+        )
+        db.execute(
+            "insert into email_action_plans ("
+            "action_plan_id, action_plan_version, classification_id, account_id, "
+            "category, classification_source, confidence, model_id, config_version, "
+            "actions_json, action_parameters_json, created_at) "
+            "values (?, 1, ?, 'acct', 'work', 'model', 0.9, 'model-1', 'v1', "
+            "'[\"move\"]', '{}', '2026-09-16T07:27:13+00:00')",
+            (plan_id, 9000 + attempt_count),
+        )
+        db.execute(
+            "insert into email_actions ("
+            "action_id, action_plan_id, classification_id, account_id, action_type, "
+            "parameters_json, config_version, status, attempt_count, next_attempt_at, "
+            "provider_operation, provider_target, error, created_at, updated_at) "
+            "values (?, ?, ?, 'acct', 'move', '{\"target_folder\":\"工作\"}', 'v1', "
+            "'failed', ?, ?, 'READ', 'acct:mid', "
+            "'provider_read_failed:ImapMessageUnavailable', "
+            "'2026-09-16T07:27:13+00:00', '2026-09-16T07:28:28+00:00')",
+            (action_id, plan_id, 9000 + attempt_count, attempt_count, next_attempt_at),
+        )
+    return action_id
+
+
+def test_attention_includes_an_exhausted_failed_email_action(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    action_id = _failed_email_action(store, attempt_count=3, next_attempt_at="")
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    action_rows = [row for row in rows if row["category"] == "Email action"]
+    assert len(action_rows) == 1
+    assert action_rows[0]["id"] == action_id
+    assert action_rows[0]["status"] == "failed"
+    assert action_rows[0]["context"] == "daniela@example.com"
+    assert action_rows[0]["summary"] == "MorningStar Technical Deepdive"
+    assert action_rows[0]["error"] == "provider_read_failed:ImapMessageUnavailable"
+
+
+def test_attention_excludes_an_email_action_still_inside_its_retry_window(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    _failed_email_action(
+        store, attempt_count=1, next_attempt_at="2026-09-16T07:40:00+00:00"
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert not any(row["category"] == "Email action" for row in rows)

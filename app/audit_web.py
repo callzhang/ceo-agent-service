@@ -3291,6 +3291,49 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if (
+            _sqlite_table_exists(db, "email_actions")
+            and _sqlite_table_exists(db, "email_classifications")
+        ):
+            # Mirror the status page: a failed action is attention-worthy only
+            # once it is outside its retry window, so both surfaces agree.
+            email_action_sql = """
+                select a.action_id as id, a.status,
+                       coalesce(nullif(c.sender, ''), a.account_id) as context,
+                       coalesce(
+                           nullif(c.subject, ''),
+                           nullif(a.provider_target, ''),
+                           a.action_type
+                       ) as summary,
+                       a.updated_at, a.error
+                from email_actions as a
+                join email_classifications as c on c.id=a.classification_id
+                where a.action_plan_id=c.current_action_plan_id
+                  and c.status='processed'
+                  and lower(a.status)='failed'
+                  and not (
+                        a.attempt_count < ?
+                        and trim(a.next_attempt_at) != ''
+                        and datetime(a.next_attempt_at) is not null
+                  )
+                order by a.updated_at desc, a.action_id desc
+            """
+            email_action_params: tuple[object, ...] = (DIRECT_ACTION_MAX_ATTEMPTS,)
+            if limit is not None:
+                email_action_sql += " limit ?"
+                email_action_params += (limit,)
+            for row in db.execute(email_action_sql, email_action_params).fetchall():
+                rows.append(
+                    {
+                        "category": "Email action",
+                        "id": str(row["id"]),
+                        "status": str(row["status"] or ""),
+                        "context": str(row["context"] or ""),
+                        "summary": str(row["summary"] or ""),
+                        "updated_at": str(row["updated_at"] or ""),
+                        "error": str(row["error"] or ""),
+                    }
+                )
+        if (
             _sqlite_table_exists(db, "meeting_memory_write_events")
             and _sqlite_table_exists(db, "meeting_alignment_jobs")
         ):
