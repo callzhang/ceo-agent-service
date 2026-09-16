@@ -32,9 +32,9 @@ reverts committed work they did not author.
 | codex-attempt-detail-readable-history | app/web_api/attempts.py, frontend/src/pages/AttemptDetailPage.tsx, frontend/src/pages/AttemptDetailPage.test.tsx, frontend/src/styles.css, tests/test_console_attempt_detail_api.py, docs/agent-claims.md | Group Attempt runtime history and render audit explanations in user-facing language | 2026-09-15 |
 | codex-session-readable-history | frontend/src/pages/CodexPages.tsx, frontend/src/pages/CodexPages.test.tsx, frontend/src/components/status/StatusBadge.tsx, frontend/src/components/status/StatusBadge.test.tsx, frontend/src/styles.css, docs/agent-claims.md | Explain unavailable/reused Codex sessions and group related Attempt history | 2026-09-15 |
 | codex-session-history-docs | docs/architecture.md, docs/agent-claims.md | Document the user-visible meaning of unavailable Codex transcripts and related Attempt indexes | 2026-09-15 |
-| claude-delivery-receipt-gate | app/agent_effect_guard.py, app/dingtalk_send_evidence.py, app/audit_agent.py, app/worker.py, app/consumer_agent.py, app/email_unsubscribe_continuation.py, tests/test_agent_effect_guard.py, tests/test_dingtalk_send_evidence.py, tests/test_worker.py, tests/test_audit_agent.py, docs/runtime-mechanism.md, docs/agent-claims.md | Require a provider receipt before an Audit `executed` closes a DingTalk send; stop accepting the model's self-reported delivery | 2026-09-15 |
 | claude-retired-category-save | app/web_api/email.py, frontend/src/pages/email/EmailList.tsx, frontend/src/pages/email/EmailReadingPanel.tsx, frontend/src/pages/EmailPage.test.tsx, tests/test_email_web_api.py, docs/agent-claims.md | Stop the console offering a retired category as a saveable value, and refuse one at the API boundary instead of as a 500 | 2026-09-15 |
 | claude-todo-sync-skipped | app/todo_sync.py, app/store.py (task_todo_sync_outbox region and STORE_SCHEMA_VERSION), app/dispatcher/adapters.py (TaskTodoSyncOutboxQueueAdapter only), tests/test_todo_sync.py, tests/test_store.py (pinned schema version literal only), docs/agent-claims.md | Record a Todo that never qualified for a DingTalk mirror as `skipped` instead of a failed external delivery | 2026-09-16 |
+| claude-self-agent-echo | app/worker.py (candidate filtering only), tests/test_worker.py, docs/agent-claims.md | Identify the service's own DWS delivery by the provider's AI-send marker so a renumbered read-back stops opening a run on our own message | 2026-09-16 |
 | claude-evidence-gate-wiring | app/audit_agent.py, tests/test_audit_agent.py, docs/agent-claims.md | `989ed829` shipped `DingTalkSendEvidenceDriver` but `_parse_evidenced_result` only wrapped `parse_result` when `email_unsubscribe_tools` was truthy, so the new driver never actually ran for a DingTalk task; wire the wrap unconditionally (each driver already no-ops when out of scope) | 2026-09-16 |
 
 
@@ -55,14 +55,23 @@ reverts committed work they did not author.
   `if email_unsubscribe_tools` condition and always wrap with
   `_parse_evidenced_result`; both drivers (`DingTalkSendEvidenceDriver`,
   `EmailUnsubscribeContinuationDriver`) already return `True` (no-op) for
-  tasks outside their own channel/schema, so this only changes behavior for
-  a proposal that actually claims a DingTalk chat-send with no receipt.
-  Regression test: `test_non_email_executed_without_tool_evidence_is_an_invalid_result`
-  in `tests/test_audit_agent.py`, run against the pre-fix code first to
-  confirm it failed there (`DID NOT RAISE ResultParseError`). Attempt #9550
-  itself is untouched by this fix — it is a historical row, and this change
-  only affects turns that run after it deploys. Whether/how to notify 张静
-  for 9550 specifically is Derek's call, not folded into this commit.
+  tasks outside their own channel/schema, and `domain_continuation is None`
+  in tests/paths that don't set one is handled inside `_parse_evidenced_result`
+  itself, so this only changes behavior for a proposal that actually claims a
+  DingTalk chat-send with no receipt. Regression test:
+  `test_non_email_executed_without_tool_evidence_is_an_invalid_result` in
+  `tests/test_audit_agent.py`, run against the pre-fix code first to confirm
+  it failed there (`DID NOT RAISE ResultParseError`). Attempt #9550 itself is
+  untouched by this fix — it is a historical row, and this change only
+  affects turns that run after it deploys. Whether/how to notify 张静 for
+  9550 specifically is Derek's call, not folded into this commit.
+
+- 2026-09-16, Claude session `claude-self-agent-echo`: I removed the spent
+  `claude-delivery-receipt-gate` row. Its work landed in `989ed829` and the
+  tree is clean for every file it listed, so the row was only holding
+  `app/worker.py` and `tests/test_worker.py` against the next owner. I am now
+  that owner, and I touch only the candidate-filtering region of
+  `app/worker.py`; the receipt gate itself is untouched.
 
 - 2026-09-16, Claude session `claude-todo-sync-skipped` (`8d237619` plus the
   follow-up commit): **the live store schema version is now `2026-09-16.1`.**

@@ -60,6 +60,7 @@ from app.skill_features import FeatureRegistry
 from app.runtime_environment import central_python
 from app.worker import (
     DWS_AUTH_LOGIN_STATE_KEY,
+    ORG_CACHE_REFRESHED_DATE_STATE_KEY,
     HANDOFF_NOTIFICATION_PREFIX,
     PROCESSING_ACK,
     DingTalkAutoReplyWorker,
@@ -4290,6 +4291,110 @@ def test_robot_direct_message_the_service_sent_itself_is_not_a_trigger(
 
     assert worker.produce_once(max_tasks=1) == 0
     assert worker.store.list_reply_tasks(statuses=("pending",), limit=10) == []
+
+
+def _pin_principal_identity(worker) -> None:
+    """Cache the principal's identity the way a live service already has it.
+
+    `produce_once` refreshes the org cache when it has not run for a week, and
+    the fake DWS has no directory to refresh from, so an unpinned test loses
+    the very profile that says which open id is the principal.
+    """
+    worker.store.set_service_state(
+        ORG_CACHE_REFRESHED_DATE_STATE_KEY,
+        worker._now().date().isoformat(),
+    )
+    worker.store.set_current_user_id("principal-user-1")
+    worker.store.upsert_org_user_profile(
+        user_id="principal-user-1",
+        name="Derek",
+        open_dingtalk_id="current-open-id",
+        manager_user_id=None,
+        department_ids=set(),
+    )
+
+
+def test_renumbered_service_delivery_read_back_is_not_a_trigger(
+    tmp_path: Path, monkeypatch
+):
+    """Our own delivery stays ours even when DingTalk rewrites its list.
+
+    A numbered list we send comes back renumbered -- `2.` returns as `1.` --
+    so the record of the body we sent misses by one character and the service
+    opens a run on its own meeting follow-up. The provider's AI-send marker
+    plus the signed-in user's identity is what still holds.
+    """
+    delivery = dict(
+        channel="dingtalk",
+        delivery_key="meeting-alignment:2",
+        body="【会议跟进】招聘站会\n\n1. 候选人安排未定。\n\n2. 团队人员安排未定。",
+        original_text="招聘站会纪要",
+        feedback_base_url="",
+    )
+    renumbered = (
+        compose_outbound_postfix(**delivery)
+        .final_body.replace("\n\n", "  \n")
+        .replace("2. 团队人员安排未定。", "1. 团队人员安排未定。")
+    )
+    echo = message(
+        renumbered,
+        message_id="msg-renumbered-echo",
+        single_chat=True,
+        sender_user_id=None,
+    ).model_copy(
+        update={
+            "open_conversation_id": "cid-bot",
+            "conversation_title": "磊哥",
+            "sender_name": "磊哥",
+            "sender_open_dingtalk_id": "current-open-id",
+            "raw_payload": {
+                "ceo_agent_source": "robot_direct",
+                "messageAiSendFlag": "DWS",
+            },
+        }
+    )
+    dws = FakeDws([], {"cid-bot": [echo]})
+    dws.robot_direct_messages = {"cid-bot": [echo]}
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    worker.store.prepare_outbound_postfix(**delivery)
+    _pin_principal_identity(worker)
+
+    assert worker.produce_once(max_tasks=1) == 0
+    assert worker.store.list_reply_tasks(statuses=("pending",), limit=10) == []
+
+
+def test_another_persons_agent_message_still_triggers_reply(
+    tmp_path: Path, monkeypatch
+):
+    """The same marker under someone else's identity is still someone asking.
+
+    Colleagues answer through their own agents, and those messages carry the
+    provider's AI-send marker too. They are not this service's output, so they
+    keep opening a run exactly as a typed message does.
+    """
+    trigger = message(
+        "@磊哥 需要先确认下需求：水杯用途、数量、预算分别是什么？",
+        message_id="msg-colleague-agent",
+    ).model_copy(
+        update={
+            "sender_name": "Mina 邹",
+            "sender_user_id": "colleague-user-1",
+            "sender_open_dingtalk_id": "colleague-open-id",
+            "raw_payload": {"messageAiSendFlag": "DWS"},
+        }
+    )
+    monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    _pin_principal_identity(worker)
+
+    assert worker.produce_once(max_tasks=1) == 1
+
+    pending_tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert len(pending_tasks) == 1
+    assert pending_tasks[0].trigger_message_id == "msg-colleague-agent"
 
 
 def test_no_reply_agent_envelope_reaction_adds_emoji_without_text_reply(

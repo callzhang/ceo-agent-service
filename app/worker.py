@@ -4864,6 +4864,7 @@ class DingTalkAutoReplyWorker:
                 for message in messages
                 if self._is_current_user_message_for_candidate_filter(message)
                 and message.open_message_id not in service_outbound
+                and not self._is_service_agent_delivery(message)
                 and not self._is_processing_ack_message(message)
                 and not self._is_system_or_notification_message(message)
             ]
@@ -4879,6 +4880,7 @@ class DingTalkAutoReplyWorker:
             for message in eligible_messages
             if not self._is_current_user_message_for_candidate_filter(message)
             and message.open_message_id not in service_outbound
+            and not self._is_service_agent_delivery(message)
             and (
                 ignore_current_user_cutoff
                 or latest_current_user_message_time is None
@@ -5045,6 +5047,9 @@ class DingTalkAutoReplyWorker:
     ) -> bool:
         if self._is_robot_direct_trigger(message):
             return False
+        return self._is_current_user_sender(message)
+
+    def _is_current_user_sender(self, message: DingTalkMessage) -> bool:
         current_user_id = self.store.get_current_user_id()
         if current_user_id and message.sender_user_id:
             return message.sender_user_id == current_user_id
@@ -5054,6 +5059,27 @@ class DingTalkAutoReplyWorker:
             )
             return profile is not None and profile.user_id == current_user_id
         return False
+
+    def _is_service_agent_delivery(self, message: DingTalkMessage) -> bool:
+        """True when this is our own DWS delivery handed back to us.
+
+        The record of what we sent identifies our own message only while the
+        text survives the round trip, and it does not: DingTalk renumbers an
+        ordered list on the way back, so a delivery that left with `2.` returns
+        with `1.` and the comparison misses by one character. DingTalk also
+        marks the message it accepted through DWS, and that marker plus the
+        signed-in user's identity is the message saying what it is rather than
+        us reconstructing it from its body.
+
+        This describes our own deliveries only. A message another person's
+        agent sent carries the same marker under *their* identity and stays a
+        trigger, because to this service it is someone else asking for
+        something.
+        """
+        flag = message.raw_payload.get("messageAiSendFlag")
+        if str(flag or "").strip().casefold() != "dws":
+            return False
+        return self._is_current_user_sender(message)
 
     @staticmethod
     def _is_processing_ack_message(message: DingTalkMessage) -> bool:
