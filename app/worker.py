@@ -3745,7 +3745,9 @@ class DingTalkAutoReplyWorker:
         )
         grouped: dict[str, list[DingTalkMessage]] = {}
         for message in messages:
-            if self._is_current_user_message_for_candidate_filter(message):
+            if self._is_current_user_message_for_candidate_filter(
+                message
+            ) and not self._is_principal_instruction_to_agent(message):
                 continue
             grouped.setdefault(message.open_conversation_id, []).append(message)
         return grouped
@@ -4863,6 +4865,7 @@ class DingTalkAutoReplyWorker:
                 message.create_time
                 for message in messages
                 if self._is_current_user_message_for_candidate_filter(message)
+                and not self._is_principal_instruction_to_agent(message)
                 and message.open_message_id not in service_outbound
                 and not self._is_service_agent_delivery(message)
                 and not self._is_processing_ack_message(message)
@@ -4878,7 +4881,10 @@ class DingTalkAutoReplyWorker:
         candidates = [
             message
             for message in eligible_messages
-            if not self._is_current_user_message_for_candidate_filter(message)
+            if (
+                not self._is_current_user_message_for_candidate_filter(message)
+                or self._is_principal_instruction_to_agent(message)
+            )
             and message.open_message_id not in service_outbound
             and not self._is_service_agent_delivery(message)
             and (
@@ -5078,6 +5084,27 @@ class DingTalkAutoReplyWorker:
         """
         flag = message.raw_payload.get("messageAiSendFlag")
         if str(flag or "").strip().casefold() != "dws":
+            return False
+        return self._is_current_user_sender(message)
+
+    def _is_principal_instruction_to_agent(self, message: DingTalkMessage) -> bool:
+        """True when the principal is addressing the agent by name.
+
+        The principal's own messages are otherwise read as the conversation's
+        own history: they close whatever was pending in the room rather than
+        asking for anything. `@磊哥` is the exception, because there is nobody
+        else in the room it could be addressed to — the principal is asking the
+        agent to act, in the same words a colleague would use.
+
+        Our own deliveries also carry the agent's name and the principal's
+        identity, so they are excluded first; without that this would answer
+        itself. A broadcast the principal sends to the whole room is not an
+        instruction either, which is why this asks for the agent's name rather
+        than `addresses_principal`.
+        """
+        if not message.mentions_agent():
+            return False
+        if self._is_service_agent_delivery(message):
             return False
         return self._is_current_user_sender(message)
 

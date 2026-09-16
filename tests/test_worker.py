@@ -4397,6 +4397,87 @@ def test_another_persons_agent_message_still_triggers_reply(
     assert pending_tasks[0].trigger_message_id == "msg-colleague-agent"
 
 
+def test_principal_message_naming_the_agent_triggers_reply(
+    tmp_path: Path, monkeypatch
+):
+    """`@磊哥` from the principal is an instruction, not conversation history.
+
+    In a group the principal's own messages are read as history and close what
+    was pending. Naming the agent is the exception: there is nobody else in the
+    room it could be addressed to.
+    """
+    monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
+    trigger = message(
+        "@磊哥 你最近在忙什么",
+        message_id="msg-principal-instruction",
+    ).model_copy(
+        update={
+            "sender_name": "磊哥",
+            "sender_user_id": None,
+            "sender_open_dingtalk_id": "current-open-id",
+        }
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    _pin_principal_identity(worker)
+
+    assert worker.produce_once(max_tasks=1) == 1
+
+    pending_tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert len(pending_tasks) == 1
+    assert pending_tasks[0].trigger_message_id == "msg-principal-instruction"
+
+
+def test_principal_group_message_without_the_agent_name_is_not_a_trigger(
+    tmp_path: Path, monkeypatch
+):
+    """Everything else the principal says in a room stays history."""
+    monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
+    spoken = message(
+        "@Claire Huang(Claire) 参考一下",
+        message_id="msg-principal-spoken",
+    ).model_copy(
+        update={
+            "sender_name": "磊哥",
+            "sender_user_id": None,
+            "sender_open_dingtalk_id": "current-open-id",
+        }
+    )
+    dws = FakeDws([conversation()], {"cid-1": [spoken]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    _pin_principal_identity(worker)
+
+    assert worker.produce_once(max_tasks=1) == 0
+    assert worker.store.list_reply_tasks(statuses=("pending",), limit=10) == []
+
+
+def test_our_own_group_delivery_naming_the_agent_is_not_a_trigger(
+    tmp_path: Path, monkeypatch
+):
+    """Our own replies name the agent too, and must not answer themselves."""
+    monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
+    delivery = message(
+        "@磊哥 已按你的口径收口。（by磊哥分身）",
+        message_id="msg-own-group-delivery",
+    ).model_copy(
+        update={
+            "sender_name": "磊哥",
+            "sender_user_id": None,
+            "sender_open_dingtalk_id": "current-open-id",
+            "raw_payload": {"messageAiSendFlag": "DWS"},
+        }
+    )
+    dws = FakeDws([conversation()], {"cid-1": [delivery]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    _pin_principal_identity(worker)
+
+    assert worker.produce_once(max_tasks=1) == 0
+    assert worker.store.list_reply_tasks(statuses=("pending",), limit=10) == []
+
+
 def test_no_reply_agent_envelope_reaction_adds_emoji_without_text_reply(
     tmp_path: Path,
     monkeypatch,
