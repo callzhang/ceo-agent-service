@@ -29,10 +29,21 @@ reverts committed work they did not author.
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
 | codex-agent-health-metrics | app/store.py, app/audit_web.py, app/cli.py, frontend/src/api/console.ts, frontend/src/pages/StatusPage.tsx, tests/test_store.py, tests/test_audit_web.py, tests/test_cli.py, tests/test_console_status_response.py, frontend/src/api/console.test.ts, frontend/src/pages/StatusPage.test.tsx, README.md, CHANGELOG.md | Meeting Memory lease-backed health payload, degraded health gate, components and status UI | 2026-09-15 |
-| codex-attempt-consumer-result-fix | app/web_api/attempts.py, tests/test_console_attempt_detail_api.py, docs/agent-claims.md | Preserve valid Consumer metrics when a historical result is partially structured | 2026-09-15 |
+| codex-attempt-detail-readable-history | app/web_api/attempts.py, frontend/src/pages/AttemptDetailPage.tsx, frontend/src/pages/AttemptDetailPage.test.tsx, frontend/src/styles.css, tests/test_console_attempt_detail_api.py, docs/agent-claims.md | Group Attempt runtime history and render audit explanations in user-facing language | 2026-09-15 |
+| codex-session-readable-history | frontend/src/pages/CodexPages.tsx, frontend/src/pages/CodexPages.test.tsx, frontend/src/components/status/StatusBadge.tsx, frontend/src/components/status/StatusBadge.test.tsx, frontend/src/styles.css, docs/agent-claims.md | Explain unavailable/reused Codex sessions and group related Attempt history | 2026-09-15 |
+| codex-session-history-docs | docs/architecture.md, docs/agent-claims.md | Document the user-visible meaning of unavailable Codex transcripts and related Attempt indexes | 2026-09-15 |
 
 
 ## Recent overlaps worth knowing
+
+- 2026-09-15, Claude session `claude-email-tabs`: the Email page's list filters
+  are now page tabs, so its URL keys changed from `?tab=list&filter=<status>`
+  to `?tab=pending|all|unsubscribe`. `app/web_api/attempts.py:312` still builds
+  `/email?tab=list&selected=<id>` and is claimed by
+  `codex-attempt-detail-readable-history`, so I left it alone: an unknown `tab`
+  now falls back to 待确认, and `selected` still opens that mail's reading
+  panel, so the link keeps working. If you want it to land on 全部 instead,
+  change that string to `?tab=all&selected=...` - no change needed on my side.
 
 - 2026-09-12, from another Claude session (`e583f9e6 fix(console): flatten the
   stored tool-event stream so the fallback call list is readable`): its edit to

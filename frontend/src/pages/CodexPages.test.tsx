@@ -27,8 +27,8 @@ describe("CodexSessionDetailPage", () => {
   it("shows related attempts instead of an empty runtime detail panel when the transcript is unavailable", async () => {
     render(<MemoryRouter initialEntries={["/codex/session-1"]}><Routes><Route path="/codex/:sessionId" element={<CodexSessionDetailPage />} /></Routes></MemoryRouter>);
 
-    expect(await screen.findByRole("heading", { name: "本机执行记录不可用" })).toBeInTheDocument();
-    expect(screen.getByText("本机的 session 文件已被清理或当前不可读取。")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Agent 记录不可用" })).toBeInTheDocument();
+    expect(screen.getByText("原始 session 文件已被清理或当前不可读取。")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Attempt #8840" })).toHaveAttribute("href", "/attempts/8840");
     expect(screen.queryByText("Runtime details")).not.toBeInTheDocument();
   });
@@ -98,5 +98,36 @@ describe("CodexSessionDetailPage", () => {
     expect(screen.getAllByText("输入").length).toBeGreaterThan(0);
     expect(screen.getAllByText("输出").length).toBeGreaterThan(0);
     expect(screen.queryByText("Tool output: call-1")).not.toBeInTheDocument();
+  });
+
+  it("explains an unavailable reused session and collapses older related attempts", async () => {
+    getCodexSession.mockResolvedValueOnce({
+      item: {
+        available: false,
+        message: "本机执行记录不可用",
+        events: [],
+        related_attempts: [
+          { id: 7716, status: "skipped", role: "consumer", role_label: "处理 Agent" },
+          { id: 7178, status: "decision_selected", role: "consumer", role_label: "处理 Agent" },
+          { id: 7177, status: "failed", role: "consumer", role_label: "处理 Agent" },
+          { id: 7169, status: "pending_reconciliation", role: "consumer", role_label: "处理 Agent" },
+          { id: 7161, status: "pending_reconciliation", role: "consumer", role_label: "处理 Agent" },
+          { id: 7154, status: "pending_reconciliation", role: "consumer", role_label: "处理 Agent" },
+        ],
+      },
+      meta: { snapshot_at: "2026-09-15T23:00:00Z" },
+    });
+
+    render(<MemoryRouter initialEntries={["/codex/session-missing"]}><Routes><Route path="/codex/:sessionId" element={<CodexSessionDetailPage />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByRole("heading", { name: "Agent 记录不可用" })).toBeInTheDocument();
+    expect(screen.getByText("这个会话关联了 6 条处理记录；它们不等于 6 次发送。")).toBeInTheDocument();
+    expect(screen.getByText("最新关联事项")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Attempt #7716" })).toBeInTheDocument();
+    expect(screen.getByText("已选择人工决定")).toBeInTheDocument();
+    expect(screen.getAllByText("等待外部结果核对").length).toBeGreaterThan(0);
+    expect(screen.getByText("查看其余 1 条关联事项")).toBeInTheDocument();
+    expect(screen.queryByText("decision_selected")).not.toBeInTheDocument();
+    expect(screen.queryByText("pending_reconciliation")).not.toBeInTheDocument();
   });
 });

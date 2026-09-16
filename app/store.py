@@ -22726,12 +22726,14 @@ class AutoReplyStore:
         An Attempt row stores one session id, the last role that ran, so a
         Consumer transcript matched nothing and its page could not say which
         business record it belonged to. The agent run that owns the session
-        names both its task and its role.
+        names its task, execution generation, and role. Only the Attempt
+        projection for that same generation belongs on this session page;
+        older generations of the task remain History, not session records.
         """
         with self._connect() as db:
             runs = db.execute(
                 """
-                select reply_task_id, role
+                select reply_task_id, execution_generation, role
                 from agent_runs
                 where codex_session_id=?
                 order by id desc
@@ -22748,9 +22750,10 @@ class AutoReplyStore:
                     from reply_attempts attempt
                     join agent_runs run on run.id = attempt.agent_run_id
                     where run.reply_task_id = ?
+                      and run.execution_generation = ?
                     order by attempt.id desc
                     """,
-                    (run["reply_task_id"],),
+                    (run["reply_task_id"], run["execution_generation"]),
                 ).fetchall():
                     key = (int(row["id"]), role)
                     if key in seen:

@@ -28,6 +28,8 @@ type CodexSessionPayload = {
   related_attempts?: Array<{ id: number; status: string; role?: string; role_label?: string }>;
 };
 
+type RelatedAttempt = { id: number; status: string; role?: string; role_label?: string };
+
 function displayEventTime(value?: string) {
   if (!value) return "时间未记录";
   const date = new Date(value);
@@ -125,9 +127,29 @@ function SessionTimeline({ events }: { events: CodexSessionEvent[] }) {
   </section>;
 }
 
-function RelatedAttempts({ attempts }: { attempts: Array<{ id: number; status: string; role?: string; role_label?: string }> }) {
+function RelatedAttemptList({ attempts }: { attempts: RelatedAttempt[] }) {
+  return <ul>{attempts.map((attempt) => <li key={`${attempt.id}-${attempt.role || ""}`}><Link to={`/attempts/${attempt.id}`}>Attempt #{attempt.id}</Link>{attempt.role_label && <span className="codex-related-role">{attempt.role_label}</span>}<StatusBadge value={attempt.status || "unknown"} /></li>)}</ul>;
+}
+
+function RelatedAttempts({ attempts }: { attempts: RelatedAttempt[] }) {
   if (!attempts.length) return null;
-  return <section className="console-card codex-related-attempts"><div><h2>关联事项</h2><p>这些业务记录使用了本次 Agent 执行。</p></div><ul>{attempts.map((attempt) => <li key={`${attempt.id}-${attempt.role || ""}`}><Link to={`/attempts/${attempt.id}`}>Attempt #{attempt.id}</Link>{attempt.role_label && <span className="codex-related-role">{attempt.role_label}</span>}<StatusBadge value={attempt.status || "unknown"} /></li>)}</ul></section>;
+  const visibleAttempts = attempts.slice(0, 5);
+  const olderAttempts = attempts.slice(5);
+  return <section className="console-card codex-related-attempts">
+    <div>
+      <h2>关联事项</h2>
+      <p>同一个 Agent 会话可能被多个处理轮次复用；这些记录不等于重复发送。</p>
+      <p className="codex-related-summary">这个会话关联了 {attempts.length} 条处理记录；它们不等于 {attempts.length} 次发送。</p>
+    </div>
+    <div className="codex-related-latest">
+      <h3>最新关联事项</h3>
+      <RelatedAttemptList attempts={visibleAttempts} />
+    </div>
+    {olderAttempts.length > 0 && <details className="codex-related-history">
+      <summary>查看其余 {olderAttempts.length} 条关联事项</summary>
+      <RelatedAttemptList attempts={olderAttempts} />
+    </details>}
+  </section>;
 }
 
 export function CodexSessionDetailPage() {
@@ -149,6 +171,6 @@ export function CodexSessionDetailPage() {
   const relatedAttempts = payload?.related_attempts || [];
 
   return <ConsolePageLayout title="Agent 执行过程" actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to="/codex">返回会话列表</Link></>}>
-    {error ? <section className="console-card page-state page-state-error" role="alert">{error}</section> : !payload ? <section className="console-card page-state" role="status">正在加载…</section> : payload.available ? <><SessionTimeline events={events} /><RelatedAttempts attempts={relatedAttempts} /></> : <><section className="console-card codex-session-unavailable"><div><h2>本机执行记录不可用</h2><p>{payload.message === "本机执行记录不可用" ? "本机的 session 文件已被清理或当前不可读取。" : displayValue(payload.message || "本机 transcript 文件已不可用。")}</p><p>业务处理结果仍保留在关联事项中；可从那里查看最终回复、状态和审计结论。</p></div><StatusBadge value="unavailable" /></section><RelatedAttempts attempts={relatedAttempts} /></>}
+    {error ? <section className="console-card page-state page-state-error" role="alert">{error}</section> : !payload ? <section className="console-card page-state" role="status">正在加载…</section> : payload.available ? <><SessionTimeline events={events} /><RelatedAttempts attempts={relatedAttempts} /></> : <><section className="console-card codex-session-unavailable"><div><h2>Agent 记录不可用</h2><p>{payload.message === "本机执行记录不可用" ? "原始 session 文件已被清理或当前不可读取。" : displayValue(payload.message || "本机执行记录不可用。")}</p><p>这不会删除业务结果；请从下方关联事项查看最终状态和审计结论。关联事项是索引，不代表每条记录都执行过外部动作。</p></div><StatusBadge value="unavailable" /></section><RelatedAttempts attempts={relatedAttempts} /></>}
   </ConsolePageLayout>;
 }

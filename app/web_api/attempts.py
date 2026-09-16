@@ -107,6 +107,8 @@ def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]
 
 
 def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
+    from app.codex_history import find_codex_session_path
+
     result = []
     for run in agent_runs:
         role = _run_role(run)
@@ -115,6 +117,17 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
             result.append(
                 {
                     "role": normalize_display_value(role),
+                    "run_id": int(getattr(run, "id", 0) or 0),
+                    "execution_generation": normalize_display_value(
+                        getattr(run, "execution_generation", "")
+                    ),
+                    "attempt_number": int(getattr(item, "attempt_number", 0) or 0),
+                    "created_at": normalize_display_value(
+                        getattr(item, "created_at", "")
+                    ),
+                    "finished_at": normalize_display_value(
+                        getattr(item, "finished_at", "")
+                    ),
                     "session_url": (
                         f"/codex/{quote(session_id, safe='')}" if session_id else ""
                     ),
@@ -124,7 +137,9 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
                     "runtime": normalize_display_value(getattr(item, "runtime_kind", "")),
                     "credential_mode": normalize_display_value(getattr(item, "credential_mode", "")),
                     "model": normalize_display_value(getattr(item, "model", "")),
-                    "session_available": bool(session_id),
+                    "session_available": bool(
+                        session_id and find_codex_session_path(session_id) is not None
+                    ),
                     "status": normalize_display_value(getattr(item, "status", "")),
                     "failure_code": normalize_display_value(getattr(item, "failure_code", "")),
                     "failover_permitted": bool(getattr(item, "failover_permitted", False)),

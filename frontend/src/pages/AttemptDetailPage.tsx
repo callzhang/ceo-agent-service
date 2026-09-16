@@ -16,6 +16,86 @@ function ReviewBlock({ title, value, className = "", lines = 5 }: { title: strin
   return <section className={`attempt-review-block ${className}`}><h2>{title}</h2><SummaryText value={displayValue(value)} lines={lines} /></section>;
 }
 
+type AuditParts = {
+  reviewerFeedback: string;
+  originalAmbiguity: string;
+  summary: string;
+};
+
+function parseAuditExplanation(text: string): AuditParts {
+  const source = String(text || "").trim();
+  if (!source) return { reviewerFeedback: "", originalAmbiguity: "", summary: "" };
+  const sections = new Map<string, string>();
+  const heading = /(?:^|\n)\s*(Reviewer feedback|Original ambiguity summary|Suggested response):\s*/gi;
+  let match: RegExpExecArray | null;
+  let previousEnd = 0;
+  let previousKey = "";
+  while ((match = heading.exec(source)) !== null) {
+    if (previousKey) sections.set(previousKey, source.slice(previousEnd, match.index).trim());
+    previousKey = match[1].toLowerCase();
+    previousEnd = heading.lastIndex;
+  }
+  if (previousKey) sections.set(previousKey, source.slice(previousEnd).trim());
+
+  const rawFeedback = sections.get("reviewer feedback") || "";
+  const reviewerFeedback = rawFeedback
+    .replace(/^Human decision for source attempt #\d+:\s*/i, "")
+    .trim();
+  const originalAmbiguity = sections.get("original ambiguity summary") || "";
+  const suggestedResponse = sections.get("suggested response") || "";
+  const summary = !sections.size
+    ? source
+    : [suggestedResponse && !/^reviewed_message_reply$/i.test(suggestedResponse) ? suggestedResponse : ""]
+      .filter(Boolean)
+      .join("\n");
+  return { reviewerFeedback, originalAmbiguity, summary };
+}
+
+function AuditExplanation({ detail }: { detail: AttemptDetail }) {
+  const parts = parseAuditExplanation(detail.audit_explanation.text);
+  const rawStatus = detail.status.raw.trim().toLowerCase();
+  const conclusion = rawStatus === "done" || rawStatus === "completed" || rawStatus === "skipped"
+    ? "当前没有新的外部动作需要执行，事项已收口。"
+    : detail.status.message;
+  return <section className="attempt-review-block attempt-audit-section attempt-audit-readable">
+    <h2>{detail.audit_explanation.title || "审计说明"}</h2>
+    <dl>
+      <div><dt>审计结论</dt><dd>{conclusion}</dd></div>
+      {parts.reviewerFeedback && <div><dt>人工决定</dt><dd>{parts.reviewerFeedback}</dd></div>}
+      {parts.originalAmbiguity && <div><dt>原始疑点</dt><dd>{parts.originalAmbiguity}</dd></div>}
+      {parts.summary && <div><dt>审计摘要</dt><dd>{parts.summary}</dd></div>}
+    </dl>
+  </section>;
+}
+
+type ConsumerMetricName = "confidence" | "information_completeness" | "rule_coverage" | "risk";
+type ConsumerMetricTone = "good" | "warning" | "bad" | "neutral";
+
+function consumerMetricTone(name: ConsumerMetricName, value: string): ConsumerMetricTone {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized || normalized === "—" || normalized === "未提供") return "neutral";
+
+  if (name === "risk") {
+    if (normalized === "low" || normalized === "低") return "good";
+    if (normalized === "medium" || normalized === "中" || normalized === "moderate") return "warning";
+    if (normalized === "high" || normalized === "高") return "bad";
+    return "neutral";
+  }
+
+  const percent = Number.parseFloat(normalized.replace("%", ""));
+  if (!Number.isFinite(percent)) return "neutral";
+  if (percent >= 80) return "good";
+  if (percent >= 50) return "warning";
+  return "bad";
+}
+
+function ConsumerMetric({ name, value }: { name: ConsumerMetricName; value: string }) {
+  return <div className={`attempt-metadata-item attempt-consumer-metric attempt-consumer-metric-${consumerMetricTone(name, value)}`}>
+    <span>{name}</span>
+    <strong>{value}</strong>
+  </div>;
+}
+
 function ConsumerResult({ result }: { result: AttemptConsumerResult }) {
   const currentRun = result.current_run;
   const currentLabel = currentRun
@@ -23,10 +103,10 @@ function ConsumerResult({ result }: { result: AttemptConsumerResult }) {
     : "";
   const currentStatus = currentRun?.status === "running" ? "运行中" : "等待中";
   return <>
-    <div className="attempt-metadata-item"><span>confidence</span><strong>{result.confidence}</strong></div>
-    <div className="attempt-metadata-item"><span>information_completeness</span><strong>{result.information_completeness}</strong></div>
-    <div className="attempt-metadata-item"><span>rule_coverage</span><strong>{result.rule_coverage}</strong></div>
-    <div className="attempt-metadata-item"><span>risk</span><strong>{result.risk}</strong></div>
+    <ConsumerMetric name="confidence" value={result.confidence} />
+    <ConsumerMetric name="information_completeness" value={result.information_completeness} />
+    <ConsumerMetric name="rule_coverage" value={result.rule_coverage} />
+    <ConsumerMetric name="risk" value={result.risk} />
     {result.error_reason && <div className="attempt-metadata-item"><span>Consumer error</span><strong>{result.error_reason}</strong></div>}
     {currentRun && <div className="attempt-metadata-item"><span>{currentLabel}</span><strong>{currentStatus}</strong></div>}
   </>;
@@ -41,15 +121,45 @@ function ToolUseList({ uses }: { uses: AttemptToolUse[] }) {
   return <ol className="attempt-tool-use-list">{uses.map((use, index) => <li key={`${use.call_id}-${index}`}><article className="attempt-tool-use"><header><strong>{use.title || use.tool || "未命名调用"}</strong>{use.source && <small>{use.source}</small>}</header>{use.relevance && <p className="attempt-tool-use-relevance">{use.relevance}</p>}<dl><div><dt>参数</dt><dd><SummaryText value={displayValue(use.args)} lines={4} /></dd></div><div><dt>结果</dt><dd><SummaryText value={displayValue(use.output)} lines={6} /></dd></div></dl></article></li>)}</ol>;
 }
 
+type RuntimeBatch = {
+  key: string;
+  entries: AttemptRuntimeEntry[];
+};
+
+function groupRuntimeAttempts(entries: AttemptRuntimeEntry[]): RuntimeBatch[] {
+  const batches: RuntimeBatch[] = [];
+  const byKey = new Map<string, RuntimeBatch>();
+  entries.forEach((entry, index) => {
+    const key = entry.execution_generation || `legacy-${entry.proposal_revision}-${entry.role}-${index}`;
+    let batch = byKey.get(key);
+    if (!batch) {
+      batch = { key, entries: [] };
+      byKey.set(key, batch);
+      batches.push(batch);
+    }
+    batch.entries.push(entry);
+  });
+  return batches;
+}
+
 function ProcessingPanel({ detail }: { detail: AttemptDetail }) {
   const recordedCalls = detail.agent_sessions.length ? [] : detail.tool_uses;
   const processCount = detail.runtime_attempts.length + recordedCalls.length;
+  const runtimeBatches = groupRuntimeAttempts(detail.runtime_attempts);
   if (!processCount && !detail.context_only_info) return null;
   return <section className="console-card attempt-process-card" aria-label="处理过程">
-    <div className="attempt-process-header"><div><h2>处理过程</h2><p>这里集中展示处理上下文、工具调用和每一轮处理结果。</p></div>{processCount > 0 && <span>{processCount} 个处理步骤</span>}</div>
+    <div className="attempt-process-header"><div><h2>处理历史</h2><p>这里保留当前处理和历史重试；历史重试不会等同于重复发送。</p></div>{processCount > 0 && <span>{runtimeBatches.length || processCount} 个处理批次</span>}</div>
+    {detail.runtime_attempts.length > 0 && <p className="attempt-process-count">{runtimeBatches.length} 个处理批次；{detail.runtime_attempts.length} 个内部运行记录；历史重试不会等同于重复发送。</p>}
     {detail.context_only_info && <div className="attempt-process-context"><span>上下文说明</span><SummaryText value={detail.context_only_info} lines={4} /></div>}
     {recordedCalls.length > 0 && <div className="attempt-process-subsection"><h3>调用记录</h3><ToolUseList uses={recordedCalls} /></div>}
-    {detail.runtime_attempts.length > 0 && <div className="attempt-process-subsection"><h3>处理轮次</h3><div className="attempt-runtime-list">{detail.runtime_attempts.map((entry, index) => <RuntimeEntry entry={entry} key={`${entry.role}-${entry.proposal_revision}-${entry.turn_attempt}-${index}`} />)}</div></div>}
+    {runtimeBatches.length > 0 && <div className="attempt-process-subsection"><div className="attempt-process-batches">{runtimeBatches.map((batch, index) => {
+      const latest = index === runtimeBatches.length - 1;
+      const roles = [...new Set(batch.entries.map((entry) => entry.role === "audit" ? "审计" : entry.role === "consumer" ? "Consumer" : "系统"))].join(" + ");
+      return <details className="attempt-process-batch" key={batch.key} open={latest}>
+        <summary><span>{latest ? "当前批次" : `历史批次 ${index + 1}`}</span><small>{roles} · {batch.entries.length} 次内部运行</small></summary>
+        <div className="attempt-runtime-list">{batch.entries.map((entry, entryIndex) => <RuntimeEntry entry={entry} key={`${entry.run_id}-${entry.attempt_number}-${entry.role}-${entryIndex}`} />)}</div>
+      </details>;
+    })}</div></div>}
   </section>;
 }
 
@@ -75,7 +185,16 @@ function RuntimeEntry({ entry }: { entry: AttemptRuntimeEntry }) {
   const phase = isAudit ? "审计核验" : entry.role === "consumer" ? "处理判断" : "系统处理";
   const description = isAudit ? "核验方案的事实、边界和对外动作；必要时会要求下一轮修订。" : "根据当前消息和已知上下文形成处理方案。";
   const retry = entry.turn_attempt > 0 ? ` · 第 ${entry.turn_attempt + 1} 次尝试` : "";
-  return <article className="attempt-runtime-entry"><div className="attempt-runtime-heading"><div><strong>{phase} · 第 {entry.proposal_revision + 1} 轮{retry}</strong><p>{description}</p></div><StatusBadge value={entry.status} /></div>{(entry.failure_code || entry.effect_started_at) && <dl className="attempt-runtime-grid">{entry.failure_code && <div><dt>结果说明</dt><dd>{entry.failure_code}</dd></div>}{entry.effect_started_at && <div><dt>开始外部动作</dt><dd>{entry.effect_started_at}</dd></div>}</dl>}{entry.session_url && <Link className="agent-log-button" to={entry.session_url}>查看这一步的 Agent 记录</Link>}</article>;
+  const failureDescriptions: Record<string, string> = {
+    service_restart_before_effect: "服务在产生外部动作前重启，之后可继续恢复。",
+    runtime_capability_missing: "当前运行环境缺少所需能力，未执行外部动作。",
+    runtime_route_unavailable: "当前运行路由不可用，系统等待后续恢复。",
+    codex_result_missing: "Agent 没有返回可验证结果。",
+    audit_recovery_candidate_invalid: "审计恢复结果无法验证，未执行外部动作。",
+    runtime_unclassified: "运行环境没有返回可验证结果，系统进行了恢复或重试。",
+  };
+  const failureText = entry.failure_code ? (failureDescriptions[entry.failure_code] || entry.failure_code) : "";
+  return <article className="attempt-runtime-entry"><div className="attempt-runtime-heading"><div><strong>{phase} · 第 {entry.proposal_revision + 1} 轮{retry}</strong><p>{description}</p></div><StatusBadge value={entry.status} /></div>{(failureText || entry.effect_started_at) && <dl className="attempt-runtime-grid">{failureText && <div><dt>结果说明</dt><dd>{failureText}</dd></div>}{entry.effect_started_at && <div><dt>开始外部动作</dt><dd>{entry.effect_started_at}</dd></div>}</dl>}{entry.session_url && <Link className="agent-log-button" to={entry.session_url}>查看这一步的 Agent 记录</Link>}</article>;
 }
 
 function ExecutionDetail({ detail, role, snapshot }: { detail: AttemptDetail; role: "consumer" | "audit"; snapshot: string }) {
@@ -203,9 +322,9 @@ export function AttemptDetailPage() {
       <section className="console-card compact-card attempt-conversation-banner" aria-label="主题与操作"><div className="attempt-conversation-left" data-testid="attempt-conversation-summary"><div className="attempt-conversation-title"><span>{detail.conversation.label}：</span><strong>{detail.conversation.title}</strong></div><div className="attempt-conversation-sub">触发人：{detail.conversation.trigger_sender || "未提供"}</div></div><div className="attempt-banner-actions" data-testid="attempt-conversation-actions">{detail.email?.classification_url && <Link className="agent-log-button" to={detail.email.classification_url}>打开这封邮件</Link>}{detail.actions.wechat_open_url && <button type="button" className="secondary-button" onClick={() => void runAction(detail.actions.wechat_open_url || "", "已打开微信消息")}>查看微信消息</button>}{detail.actions.delivery_action_url && <button type="button" className="primary-button" onClick={() => { if (window.confirm(detail.actions.delivery_action_label === "发送" ? "确认发送这条微信回复？" : "确认重新尝试发送这条微信回复？")) void runAction(detail.actions.delivery_action_url || "", `${detail.actions.delivery_action_label}已提交`); }}>{detail.actions.delivery_action_label}</button>}{detail.actions.consumer_url && <Link className="agent-log-button" to={detail.actions.consumer_url} title="查看 Agent 如何形成这次处理方案">查看处理过程</Link>}{detail.actions.audit_url && <Link className="agent-log-button" to={detail.actions.audit_url} title="查看 Agent 如何核验方案、边界和实际结果">查看审计过程</Link>}{detail.actions.agent_url && <Link className="agent-log-button" to={detail.actions.agent_url} title="查看关联的 Agent 会话">查看 Agent session</Link>}{detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认重新处理这条 Attempt？")) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>重新处理</button>}{detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}{!detail.agent_execution_record && <span className="muted">未记录 Agent 过程</span>}{detail.actions.terminal && <span className="disabled-action">无需操作</span>}{detail.actions.dingtalk_url && <a className="compact-button open-dingtalk-action" href={detail.actions.dingtalk_url} target="_blank" rel="noreferrer">{detail.oa.url ? "查看审批" : "查看钉钉消息"}</a>}</div></section>
       <div className="attempt-detail-layout attempt-review-grid">
         <div className="attempt-detail-main">
-          {((detail.status.attention.reason || ["sent", "skipped", "needs_human", "failed"].includes(detail.status.raw.trim().toLowerCase()))) && <section className="console-card compact-card attempt-status-card"><p><strong>事项：</strong>{detail.status.subject}</p><p><strong>当前状态：</strong>{detail.status.message}</p><p><strong>需要你决策：</strong>{detail.status.requires_decision ? "是" : "否"}</p>{detail.status.attention.reason && <dl className="attempt-attention-details"><div><dt>原因</dt><dd>{detail.status.attention.reason}</dd></div><div><dt>外部副作用</dt><dd>{detail.status.attention.external_effect}</dd></div>{detail.status.attention.retry_at && <div><dt>重试计划</dt><dd>{detail.status.attention.retry_at}</dd></div>}</dl>}</section>}
+          {((detail.status.attention.reason || ["sent", "skipped", "needs_human", "failed", "done", "completed"].includes(detail.status.raw.trim().toLowerCase()))) && <section className="console-card compact-card attempt-status-card"><h2>当前状态</h2><p><strong>事项：</strong>{detail.status.subject}</p><p><strong>当前状态：</strong>{detail.status.message}</p><p><strong>需要你决策：</strong>{detail.status.requires_decision ? "是" : "否"}</p>{detail.status.attention.reason && <dl className="attempt-attention-details"><div><dt>原因</dt><dd>{detail.status.attention.reason}</dd></div><div><dt>外部副作用</dt><dd>{detail.status.attention.external_effect}</dd></div>{detail.status.attention.retry_at && <div><dt>重试计划</dt><dd>{detail.status.attention.retry_at}</dd></div>}</dl>}</section>}
           <MetadataGrid rows={[...detail.metadata, ...(detail.revision_count ? [{ label: "revisions", value: `${detail.revision_count} revisions` }] : [])]} consumerResult={detail.consumer_result} />
-          <section className="console-card attempt-review-main"><div className="reply-meta" aria-label="处理状态">{detail.action_pills.map((pill) => <StatusBadge key={`${pill.label}-${pill.status}`} value={pill.status} />)}</div><ReviewBlock title={detail.trigger.title} value={detail.trigger.text} /><ReviewBlock title={detail.audit_explanation.title} value={detail.audit_explanation.text} className="attempt-audit-section" /><ReviewBlock title={detail.generated_reply.title} value={detail.generated_reply.text} className="attempt-generated-reply" /></section>
+          <section className="console-card attempt-review-main"><div className="reply-meta" aria-label="处理状态">{detail.action_pills.map((pill) => <StatusBadge key={`${pill.label}-${pill.status}`} value={pill.status} />)}</div><ReviewBlock title={detail.trigger.title} value={detail.trigger.text} /><AuditExplanation detail={detail} /><ReviewBlock title={detail.generated_reply.title} value={detail.generated_reply.text} className="attempt-generated-reply" /></section>
           <EmailContext email={detail.email} />
           <References references={detail.references} />
           {detail.failure_reason && <DetailSection title="失败原因" value={detail.failure_reason} />}

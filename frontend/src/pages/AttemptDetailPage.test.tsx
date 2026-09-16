@@ -128,14 +128,70 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByTestId("attempt-conversation-actions")).toContainElement(screen.getByRole("link", { name: "查看 Agent session" }));
     expect(screen.getByRole("link", { name: "查看 Agent session" })).toHaveAttribute("href", "/codex/session-8448");
     expect(screen.queryByRole("heading", { name: "Draft reply (raw Codex reply)" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "处理过程" })).toBeInTheDocument();
-    expect(screen.getByText("这里集中展示处理上下文、工具调用和每一轮处理结果。")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "处理历史" })).toBeInTheDocument();
+    expect(screen.getByText("这里保留当前处理和历史重试；历史重试不会等同于重复发送。")).toBeInTheDocument();
     expect(screen.getByText("处理判断 · 第 1 轮")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-grid")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-side")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-main .attempt-review-block + .attempt-review-block")).toBeInTheDocument();
-    expect(document.querySelector(".attempt-status-card")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "当前状态" })).toBeInTheDocument();
     expect(screen.queryByText("session-8448")).not.toBeInTheDocument();
+  });
+
+  it("groups runtime retries into collapsed processing batches", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        runtime_attempts: [
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "failed", failure_code: "service_restart_before_effect", failover_permitted: true, transcript_start: 0, transcript_end: 0, effect_started_at: "", run_id: 1, execution_generation: "generation-old", attempt_number: 1, created_at: "2026-08-24 04:11:51", finished_at: "2026-08-24 04:12:31" },
+          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "failed", failure_code: "runtime_capability_missing", failover_permitted: true, transcript_start: 0, transcript_end: 0, effect_started_at: "", run_id: 2, execution_generation: "generation-old", attempt_number: 2, created_at: "2026-08-24 04:14:58", finished_at: "2026-08-24 04:15:02" },
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 3, execution_generation: "generation-new", attempt_number: 1, created_at: "2026-08-25 18:26:05", finished_at: "2026-08-25 18:27:42" },
+          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 4, execution_generation: "generation-new", attempt_number: 1, created_at: "2026-08-25 18:27:51", finished_at: "2026-08-27 06:34:48" },
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 5, execution_generation: "generation-newest", attempt_number: 1, created_at: "2026-09-08 02:17:28", finished_at: "2026-09-08 02:18:12" },
+        ],
+      },
+      meta: { snapshot_at: "2026-09-14T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "处理历史" })).toBeInTheDocument();
+    expect(screen.getByText("3 个处理批次")).toBeInTheDocument();
+    expect(screen.getByText(/5 个内部运行记录/)).toBeInTheDocument();
+    expect(document.querySelector(".attempt-process-count")).toHaveTextContent(
+      "历史重试不会等同于重复发送",
+    );
+    const batches = document.querySelectorAll<HTMLDetailsElement>(".attempt-process-batch");
+    expect(batches).toHaveLength(3);
+    expect(batches[0].open).toBe(false);
+    expect(batches[1].open).toBe(false);
+    expect(batches[2].open).toBe(true);
+  });
+
+  it("turns internal audit labels into a readable explanation", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        status: { ...detail.status, raw: "done", message: "当前事项已完成，无需你操作。" },
+        audit_explanation: {
+          title: "审计说明",
+          text: "Reviewer feedback: Human decision for source attempt #7178: 确认硅谷行程不推迟。\n\nOriginal ambiguity summary:\n当时无法确认是否推迟行程。\nSuggested response:\nreviewed_message_reply",
+        },
+      },
+      meta: { snapshot_at: "2026-09-14T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "审计说明" })).toBeInTheDocument();
+    expect(screen.getByText("审计结论")).toBeInTheDocument();
+    expect(screen.getByText("人工决定")).toBeInTheDocument();
+    expect(screen.getByText("原始疑点")).toBeInTheDocument();
+    expect(screen.getByText("确认硅谷行程不推迟。")).toBeInTheDocument();
+    expect(screen.getByText("当时无法确认是否推迟行程。")).toBeInTheDocument();
+    expect(screen.queryByText("Reviewer feedback:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Original ambiguity summary:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Suggested response:")).not.toBeInTheDocument();
+    expect(screen.queryByText("reviewed_message_reply")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "当前状态" })).toBeInTheDocument();
   });
 
   it("shows the linked Consumer result group with its scores and risk", async () => {
@@ -163,6 +219,10 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("100%")).toBeInTheDocument();
     expect(screen.getByText("risk")).toBeInTheDocument();
     expect(screen.getByText("medium")).toBeInTheDocument();
+    expect(screen.getByText("82%").closest(".attempt-consumer-metric")).toHaveClass("attempt-consumer-metric-good");
+    expect(screen.getByText("75%").closest(".attempt-consumer-metric")).toHaveClass("attempt-consumer-metric-warning");
+    expect(screen.getByText("100%").closest(".attempt-consumer-metric")).toHaveClass("attempt-consumer-metric-good");
+    expect(screen.getByText("medium").closest(".attempt-consumer-metric")).toHaveClass("attempt-consumer-metric-warning");
     expect(screen.queryByText("Consumer error")).not.toBeInTheDocument();
     expect(document.querySelectorAll(".attempt-metadata-grid")).toHaveLength(1);
   });
@@ -188,6 +248,7 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("rule_coverage")).toBeInTheDocument();
     expect(screen.getByText("risk")).toBeInTheDocument();
     expect(screen.getAllByText("—")).toHaveLength(4);
+    expect(document.querySelectorAll(".attempt-consumer-metric-neutral")).toHaveLength(4);
     expect(screen.getByText("Consumer error")).toBeInTheDocument();
     expect(screen.getByText("Consumer 结果不符合当前契约")).toBeInTheDocument();
   });
@@ -261,7 +322,7 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByRole("link", { name: "查看审计过程" })).toHaveAttribute("href", "/attempts/8448/execution/audit");
     // The overview keeps a single merged processing section; role-specific
     // Agent records remain available through the action bar.
-    expect(screen.getByRole("heading", { name: "处理过程" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "处理历史" })).toBeInTheDocument();
   });
 
   it("sends the Consumer execution page to that role's Agent record", async () => {
@@ -361,7 +422,7 @@ describe("AttemptDetailPage", () => {
 
     expect(await screen.findByRole("heading", { name: "关联邮件" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Audit context" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "处理过程" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "处理历史" })).toBeInTheDocument();
     expect(screen.getByText("重复的审计上下文")).toBeInTheDocument();
     expect(document.querySelector(".attempt-detail-layout + .attempt-process-card")).not.toBeInTheDocument();
   });
@@ -377,7 +438,7 @@ describe("AttemptDetailPage", () => {
     });
     renderPage();
 
-    expect(await screen.findByRole("heading", { name: "处理过程" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "处理历史" })).toBeInTheDocument();
     expect(screen.getByText("exec_command")).toBeInTheDocument();
     expect(screen.getByText("2 个匹配")).toBeInTheDocument();
   });
@@ -389,7 +450,7 @@ describe("AttemptDetailPage", () => {
     const layout = document.querySelector(".attempt-detail-layout");
     expect(layout).toBeInTheDocument();
     expect(layout?.querySelector(".attempt-detail-main")).toContainElement(screen.getByRole("heading", { name: "Trigger" }));
-    expect(layout?.querySelector(".attempt-detail-main")).toContainElement(screen.getByRole("heading", { name: "处理过程" }));
+    expect(layout?.querySelector(".attempt-detail-main")).toContainElement(screen.getByRole("heading", { name: "处理历史" }));
     expect(layout?.querySelector(".attempt-review-side")).toContainElement(screen.getByRole("heading", { name: "反馈迭代" }));
     expect(screen.queryByRole("heading", { name: "Audit context" })).not.toBeInTheDocument();
     expect(document.querySelector(".attempt-detail-layout + *")).toBeNull();

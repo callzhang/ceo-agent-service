@@ -25,6 +25,8 @@ describe("StatusBadge", () => {
     ["default", "未设置", "status-warning"],
     ["unsupported", "浏览器不支持", "status-danger"],
     ["unknown", "未知", "status-neutral"],
+    ["decision_selected", "已选择人工决定", "status-success"],
+    ["pending_reconciliation", "等待外部结果核对", "status-warning"],
   ])("maps %s to a stable label and semantic tone", (value, label, tone) => {
     render(<StatusBadge value={value} />);
 

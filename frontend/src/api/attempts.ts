@@ -53,6 +53,11 @@ export interface AttemptEmail {
 
 export interface AttemptRuntimeEntry {
   role: string;
+  run_id: number;
+  execution_generation: string;
+  attempt_number: number;
+  created_at: string;
+  finished_at: string;
   session_url: string;
   proposal_revision: number;
   turn_attempt: number;

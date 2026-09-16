@@ -970,6 +970,13 @@ Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的�
 session 指针读取 JSONL，并只向普通用户展示业务结果；内部角色、规划标签和原始敏感工具
 输出保持折叠或脱敏。
 
+当原始 session JSONL 已被清理、不可读取或不再可用时，Codex 详情页必须明确显示
+“Agent 记录不可用”，不能把它误解成业务结果丢失。页面仍可展示关联的 Attempt 索引；
+关联仅限于该 session 所属 `agent_run` 的同一 task、同一 execution generation 的当前投影，
+不得把同一 task 的早期 generation 全部误标为这个 session 的记录。同一 session 可能被多个
+处理轮次复用，因此关联 Attempt 的数量不等于发送次数或外部动作次数。用户可从最新关联事项
+查看当前状态，较早记录应保持折叠，技术状态枚举必须转换为可读标签。
+
 ## 终态语义
 
 | 终态 | 含义 |
