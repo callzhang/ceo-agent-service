@@ -22,6 +22,11 @@ LOGGER = logging.getLogger(__name__)
 
 MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS = 60.0
 MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS = 15 * 60
+# A retryable dependency that never recovers must still stop. At the delay
+# ceiling this is about five hours of retrying before the event becomes a
+# visible `failed` row; `requeue_failed_meeting_memory_write_event` puts it
+# back once the dependency is fixed.
+MEETING_MEMORY_WRITE_MAX_ATTEMPTS = 20
 MEETING_MEMORY_TITLE_LIMIT = 80
 MEETING_MEMORY_START_STALL_SECONDS = 60
 MEETING_MEMORY_WRITE_LEASE_SECONDS = 45 * 60
@@ -302,12 +307,23 @@ def _process_event(
             or exc.source_code == "runtime_attempt_active"
             or exc.source_code in MEETING_MEMORY_WRITE_RETRYABLE_RUNTIME_CODES
         ):
+            settled_at = _meeting_memory_current_time(clock)
+            if event.attempts + 1 >= MEETING_MEMORY_WRITE_MAX_ATTEMPTS:
+                settled = store.fail_meeting_memory_write_event(
+                    event.id,
+                    owner=owner,
+                    error=(
+                        "meeting_memory_retry_exhausted: "
+                        f"{exc.source_code}: {exc}"
+                    ),
+                    now=settled_at,
+                )
+                return "failed" if settled else "lost_lease"
             delay = retry_delay_seconds(
                 MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS,
                 event.attempts,
                 max_delay_seconds=MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS,
             )
-            settled_at = _meeting_memory_current_time(clock)
             settled = store.retry_meeting_memory_write_event(
                 event.id,
                 owner=owner,
@@ -340,12 +356,23 @@ def _process_event(
         if heartbeat.lost_lease:
             return "lost_lease"
         LOGGER.exception("meeting Memory write event %s crashed", event.id)
+        settled_at = _meeting_memory_current_time(clock)
+        if event.attempts + 1 >= MEETING_MEMORY_WRITE_MAX_ATTEMPTS:
+            settled = store.fail_meeting_memory_write_event(
+                event.id,
+                owner=owner,
+                error=(
+                    "meeting_memory_retry_exhausted: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+                now=settled_at,
+            )
+            return "failed" if settled else "lost_lease"
         delay = retry_delay_seconds(
             MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS,
             event.attempts,
             max_delay_seconds=MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS,
         )
-        settled_at = _meeting_memory_current_time(clock)
         settled = store.retry_meeting_memory_write_event(
             event.id,
             owner=owner,

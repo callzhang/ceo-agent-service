@@ -17,6 +17,7 @@ from app.meeting_memory_write import (
     meeting_memory_payload,
     process_meeting_memory_writes,
 )
+import app.meeting_memory_write as meeting_memory_write
 from app.agent_runtime_router import RoutedCodexExecutionError
 from app.store import AutoReplyStore
 
@@ -1033,3 +1034,66 @@ def test_unsettled_meeting_memory_write_can_be_closed_from_verified_memory_readb
         "error": "",
         "memory_id": "verified-memory-7",
     }
+
+
+def test_a_retryable_dependency_that_never_recovers_stops_at_the_ceiling(
+    tmp_path: Path,
+) -> None:
+    """An unauthorized MCP dependency must end as a visible failure, not churn."""
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    with store._connect() as db:
+        db.execute(
+            "update meeting_memory_write_events set attempts=?",
+            (meeting_memory_write.MEETING_MEMORY_WRITE_MAX_ATTEMPTS - 1,),
+        )
+
+    class _NeverRecoveringDependency:
+        def execute(self, **kwargs):
+            raise RoutedCodexExecutionError("runtime_attempt_active")
+
+    outcome = process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=_NeverRecoveringDependency(),
+        clock=lambda: datetime.fromisoformat("2026-09-16T11:00:00+00:00"),
+    )
+
+    assert outcome.retried == 0
+    with store._connect() as db:
+        row = db.execute(
+            "select status, attempts, error, available_at "
+            "from meeting_memory_write_events"
+        ).fetchone()
+    assert row["status"] == "failed"
+    assert row["available_at"] == ""
+    assert "meeting_memory_retry_exhausted" in str(row["error"])
+    assert "runtime_attempt_active" in str(row["error"])
+
+
+def test_a_retryable_dependency_still_retries_below_the_ceiling(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+
+    class _TransientDependency:
+        def execute(self, **kwargs):
+            raise RoutedCodexExecutionError("runtime_attempt_active")
+
+    outcome = process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=_TransientDependency(),
+        clock=lambda: datetime.fromisoformat("2026-09-16T11:00:00+00:00"),
+    )
+
+    assert outcome.retried == 1
+    with store._connect() as db:
+        row = db.execute(
+            "select status, attempts from meeting_memory_write_events"
+        ).fetchone()
+    assert row["status"] == "pending"
+    assert row["attempts"] == 1
