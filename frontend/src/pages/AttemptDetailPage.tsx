@@ -266,6 +266,15 @@ function isQueryToolUse(use: AttemptToolUse, fileRead: FileReadSummary | null): 
 
 function ToolUseItem({ use, fileRead }: { use: AttemptToolUse; fileRead: FileReadSummary | null }) {
   if (fileRead) return <p className="attempt-tool-use-read">读取 <code>{fileRead.path}</code>{fileRead.range !== "全文" && <span> 第 {fileRead.range} 行</span>}</p>;
+  if (use.tool === "command_execution") {
+    // title, source and args.command are the same shell string three times
+    // over - args is never anything but {command, cwd?} for this tool, so
+    // there is no separate "参数" worth a JSON block; show the command once.
+    const args = isPlainObject(use.args) ? use.args : {};
+    const command = typeof args.command === "string" ? args.command : (use.title || use.tool);
+    const cwd = typeof args.cwd === "string" ? args.cwd : typeof args.path === "string" ? args.path : "";
+    return <article className="attempt-tool-use attempt-tool-use-command"><pre className="attempt-command-line"><code>{command}</code></pre>{cwd && <p className="attempt-tool-use-cwd">工作目录：<code>{cwd}</code></p>}<dl><div><dt>结果</dt><dd><SummaryText value={formatToolPayload(use.output, { unwrapResult: true })} lines={6} /></dd></div></dl></article>;
+  }
   return <article className="attempt-tool-use"><header><strong>{use.title || use.tool || "未命名调用"}</strong>{use.source && <small>{use.source}</small>}</header>{use.relevance && <p className="attempt-tool-use-relevance">{use.relevance}</p>}<dl><div><dt>参数</dt><dd><SummaryText value={formatToolPayload(use.args)} lines={4} /></dd></div><div><dt>结果</dt><dd><SummaryText value={formatToolPayload(use.output, { unwrapResult: true })} lines={6} /></dd></div></dl></article>;
 }
 

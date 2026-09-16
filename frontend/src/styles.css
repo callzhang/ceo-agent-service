@@ -1146,6 +1146,10 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-tool-use-group:last-child { margin-bottom: 0; }
 .attempt-tool-use-group h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; color: var(--ink-soft); font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
 .attempt-tool-use-group h4 span { padding: 1px 6px; border-radius: 999px; background: var(--surface-muted); font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .68rem; font-weight: 700; text-transform: none; letter-spacing: 0; }
+.attempt-command-line { margin: 0 0 8px; padding: 8px 10px; overflow-wrap: anywhere; white-space: pre-wrap; border-radius: 8px; background: var(--surface-muted); color: var(--ink); font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; font-size: .78rem; line-height: 1.45; }
+.attempt-command-line::before { margin-right: 6px; color: var(--ink-soft); content: "$"; }
+.attempt-tool-use-cwd { margin: 0 0 8px; color: var(--ink-soft); font-size: .72rem; }
+.attempt-tool-use-cwd code { color: var(--ink); font-family: "Geist Mono", "SF Mono", Menlo, Consolas, monospace; }
 .attempt-runtime-entry { padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
 .attempt-runtime-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .attempt-runtime-heading strong { overflow-wrap: anywhere; }

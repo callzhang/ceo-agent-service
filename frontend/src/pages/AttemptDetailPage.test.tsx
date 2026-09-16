@@ -702,6 +702,42 @@ describe("AttemptDetailPage", () => {
     expect(within(actionGroup).getAllByText(/mkdir \/tmp\/x/).length).toBeGreaterThan(0);
   });
 
+  it("shows a command once, not the same string as title/source/args, and renders JSON stdout as JSON", async () => {
+    const command = `/bin/zsh -lc 'dws oa approval tasks --instance-id abc --format json'`;
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        agent_sessions: [],
+        tool_uses: [
+          {
+            title: command,
+            tool: "command_execution",
+            call_id: "call-dws",
+            relevance: "",
+            source: `command_execution · ${command}`,
+            args: { command },
+            format: "terminal/json",
+            output: '{\n  "errorCode": 0,\n  "success": true\n}\n',
+          },
+        ],
+      },
+      meta: { snapshot_at: "2026-09-16T00:00:00Z" },
+    });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "处理历史" });
+    // The exact same shell string used to show up three times: as the
+    // header title, the header source, and again wrapped as {"command": ...}
+    // JSON args. It should now show up exactly once.
+    expect(screen.getAllByText(/dws oa approval tasks/).length).toBe(1);
+    expect(screen.queryByText("参数")).not.toBeInTheDocument();
+    expect(screen.queryByText(/"command":/)).not.toBeInTheDocument();
+    // The command's JSON stdout is real JSON, not command-line text - it
+    // still renders parsed and indented under 结果.
+    expect(screen.getByText("结果")).toBeInTheDocument();
+    expect(screen.getByText(/"errorCode": 0/)).toBeInTheDocument();
+  });
+
   it("keeps every post-header section inside the main and sidebar columns", async () => {
     renderPage();
 
