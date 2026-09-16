@@ -129,8 +129,28 @@ export function TrainingSetup({
 
   if (!open) return null;
   const sourceKeys = unique(sources.map((row) => row.source));
-  const categoryKeys = unique(
-    sources.filter((row) => row.supported !== false).map((row) => row.category),
+  const categoryRows = unique(sources.map((row) => row.category)).map(
+    (category) => {
+      const rows = sources.filter((row) => row.category === category);
+      return {
+        category,
+        supported: rows.some((row) => row.supported !== false),
+        records: rows.reduce(
+          (total, row) => total + (row.record_count ?? row.sample_count),
+          0,
+        ),
+        trainable: rows.reduce(
+          (total, row) => total + (row.unique_trainable_count ?? row.sample_count),
+          0,
+        ),
+        bySource: rows
+          .map(
+            (row) =>
+              `${sourceLabel(row.source)} ${row.unique_trainable_count ?? row.sample_count}`,
+          )
+          .join(" · "),
+      };
+    },
   );
   const blocked = !valid
     ? "来源和类别各要至少选择一项"
@@ -187,18 +207,52 @@ export function TrainingSetup({
         </fieldset>
         <fieldset disabled={busy}>
           <legend>类别</legend>
-          {categoryKeys.map((category) => (
-            <label key={category}>
-              <input
-                type="checkbox"
-                checked={selection.categories.includes(category)}
-                onChange={(event) =>
-                  toggle("categories", category, event.target.checked)
-                }
-              />
-              {category}
-            </label>
-          ))}
+          {categoryRows.length ? (
+            <div className="responsive-table-wrap">
+              <table
+                className="settings-table training-category-table"
+                aria-label="类别与数据来源"
+              >
+                <thead>
+                  <tr>
+                    <th>类别</th>
+                    <th>记录数</th>
+                    <th>去重后可训练数</th>
+                    <th>来源</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {categoryRows.map((row) => (
+                    <tr key={row.category}>
+                      <td data-label="类别">
+                        <label className="training-category-pick">
+                          <input
+                            type="checkbox"
+                            checked={selection.categories.includes(row.category)}
+                            disabled={!row.supported}
+                            onChange={(event) =>
+                              toggle(
+                                "categories",
+                                row.category,
+                                event.target.checked,
+                              )
+                            }
+                          />
+                          {row.category}
+                          {!row.supported && "（当前不可选）"}
+                        </label>
+                      </td>
+                      <td data-label="记录数">{row.records}</td>
+                      <td data-label="去重后可训练数">{row.trainable}</td>
+                      <td data-label="来源">{row.bySource}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p>暂无训练来源记录。</p>
+          )}
         </fieldset>
         <fieldset disabled={busy}>
           <legend>模型家族</legend>
@@ -224,7 +278,6 @@ export function TrainingSetup({
           error={previewError}
           onRetry={() => setRetry((value) => value + 1)}
         />
-        <SourceEvidence sources={sources} />
         <div className="email-drawer-footer">
           <p aria-live="polite">{status}</p>
           {blocked && !busy && (
@@ -296,48 +349,6 @@ function PreviewReadback({
       </small>
       <p className="muted">提交时重新校验各模型训练条件。</p>
     </section>
-  );
-}
-
-function SourceEvidence({ sources }: { sources: EmailTrainingSource[] }) {
-  return sources.length ? (
-    <details>
-      <summary>数据来源记录</summary>
-      <div className="responsive-table-wrap">
-        <table className="settings-table" aria-label="训练数据来源明细">
-          <thead>
-            <tr>
-              <th>来源</th>
-              <th>类别</th>
-              <th>记录数</th>
-              <th>去重后可训练数</th>
-              <th>可选状态</th>
-              <th>数据版本 / 摘要</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sources.map((row) => (
-              <tr key={row.source + row.category}>
-                <td>{sourceLabel(row.source)}</td>
-                <td>{row.category}</td>
-                <td>{row.record_count ?? row.sample_count}</td>
-                <td>{row.unique_trainable_count ?? row.sample_count}</td>
-                <td>{row.supported === false ? "当前不可选" : "可选"}</td>
-                <td>
-                  {String(
-                    row.provenance.snapshot_id ||
-                      row.provenance.classification_source ||
-                      "未提供",
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </details>
-  ) : (
-    <p>暂无训练来源记录。</p>
   );
 }
 

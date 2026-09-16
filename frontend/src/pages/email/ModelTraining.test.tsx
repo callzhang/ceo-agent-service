@@ -486,3 +486,34 @@ it("keeps following a training run that started before this page was opened", as
   const line = await screen.findByText(/训练进行中：run-77/);
   expect(line).toHaveTextContent("独立训练进程");
 });
+
+it("shows category counts in one always-visible table instead of a collapsed source list", async () => {
+  const user = userEvent.setup();
+  api.previewEmailTraining.mockResolvedValue({
+    unique_sample_count: 50,
+    snapshot_id: "snapshot-1",
+    snapshot_digest: "digest-1",
+    snapshot_version: "v1",
+    description_version: "d1",
+  });
+  render(
+    <ModelTraining
+      learning={learning}
+      configs={[]}
+      reload={async () => learning}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "新建训练" }));
+  const table = await screen.findByRole("table", { name: "类别与数据来源" });
+  // work is one row totalling both sources, not one row per source.
+  const row = screen.getByRole("checkbox", { name: "work" }).closest("tr")!;
+  expect(row).toHaveTextContent("50");
+  expect(row).toHaveTextContent("Agent 自动标注 20");
+  expect(row).toHaveTextContent("邮件文件夹快照 30");
+  expect(table).toBeVisible();
+  expect(screen.queryByText("数据来源记录")).not.toBeInTheDocument();
+});
