@@ -34,10 +34,23 @@ reverts committed work they did not author.
 | codex-session-history-docs | docs/architecture.md, docs/agent-claims.md | Document the user-visible meaning of unavailable Codex transcripts and related Attempt indexes | 2026-09-15 |
 | claude-delivery-receipt-gate | app/agent_effect_guard.py, app/dingtalk_send_evidence.py, app/audit_agent.py, app/worker.py, app/consumer_agent.py, app/email_unsubscribe_continuation.py, tests/test_agent_effect_guard.py, tests/test_dingtalk_send_evidence.py, tests/test_worker.py, tests/test_audit_agent.py, docs/runtime-mechanism.md, docs/agent-claims.md | Require a provider receipt before an Audit `executed` closes a DingTalk send; stop accepting the model's self-reported delivery | 2026-09-15 |
 | claude-retired-category-save | app/web_api/email.py, frontend/src/pages/email/EmailList.tsx, frontend/src/pages/email/EmailReadingPanel.tsx, frontend/src/pages/EmailPage.test.tsx, tests/test_email_web_api.py, docs/agent-claims.md | Stop the console offering a retired category as a saveable value, and refuse one at the API boundary instead of as a 500 | 2026-09-15 |
-| claude-todo-sync-skipped | app/todo_sync.py, app/store.py (task_todo_sync_outbox region only), app/dispatcher/adapters.py (TaskTodoSyncOutboxQueueAdapter only), tests/test_todo_sync.py, docs/agent-claims.md | Record a Todo that never qualified for a DingTalk mirror as `skipped` instead of a failed external delivery | 2026-09-16 |
+| claude-todo-sync-skipped | app/todo_sync.py, app/store.py (task_todo_sync_outbox region and STORE_SCHEMA_VERSION), app/dispatcher/adapters.py (TaskTodoSyncOutboxQueueAdapter only), tests/test_todo_sync.py, tests/test_store.py (pinned schema version literal only), docs/agent-claims.md | Record a Todo that never qualified for a DingTalk mirror as `skipped` instead of a failed external delivery | 2026-09-16 |
 
 
 ## Recent overlaps worth knowing
+
+- 2026-09-16, Claude session `claude-todo-sync-skipped` (`8d237619` plus the
+  follow-up commit): **the live store schema version is now `2026-09-16.1`.**
+  `task_todo_sync_outbox.status` accepts `skipped`, which needed a CHECK
+  constraint rebuild. `AutoReplyStore._ensure_initialized` skips `_initialize`
+  whenever the stored `store_schema_version` already matches the constant, so
+  DDL alone does nothing on an existing database — my first restart deployed
+  the new table definition and the live table kept the old constraint. If you
+  change DDL here, bump `STORE_SCHEMA_VERSION` in the same commit, and expect
+  `tests/test_store.py` to pin the literal. I touched two files claimed by
+  `codex-agent-health-metrics` in unrelated regions and staged only my own
+  hunks: `app/store.py` (the outbox DDL, its migration and the version
+  constant) and `tests/test_store.py` (the one pinned version literal).
 
 - 2026-09-15, this Claude session: answered Derek's question "attempt页面的
   调用记录是否有必要存在" by removing the `ExecutionDetail` (`/attempts/:id/
