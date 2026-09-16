@@ -93,6 +93,7 @@ from app.permission import PermissionGate
 from app.prompt import MaterialReferenceContext
 from app.runtime_environment import central_python
 from app.store import (
+    AgentRole,
     AgentRun,
     AgentRunLeaseLostError,
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
@@ -517,6 +518,29 @@ class DwsAuthorizationRequiredError(ReplyTaskProcessingError):
 
 class CriticalInformationUnavailableError(ReplyTaskProcessingError):
     """Raised when required material/tool output is unavailable and retrying is unsafe."""
+
+
+def _accepted_consumer_result(
+    store: "AutoReplyStore | None", audit_run: AgentRun
+) -> ConsumerAgentResult | None:
+    """The proposal this Audit run reviewed, read from its own parent run.
+
+    The orchestration result of an audit-terminated turn carries the Audit
+    result alone, so the accepted proposal is not on it. The lineage still
+    holds it: an Audit run's parent is the Consumer run whose candidate it
+    accepted.
+    """
+    if store is None or audit_run.parent_agent_run_id is None:
+        return None
+    consumer = store.get_agent_run(audit_run.parent_agent_run_id)
+    if consumer is None or consumer.role is not AgentRole.CONSUMER:
+        return None
+    if not consumer.final_result_json.strip():
+        return None
+    try:
+        return ConsumerAgentResult.model_validate_json(consumer.final_result_json)
+    except ValidationError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -2063,7 +2087,7 @@ class DingTalkAutoReplyWorker:
                 audit_result=audit_result,
             )
             projection = self._sent_reply_projection_from_result(
-                task, result, audit_run
+                task, result, audit_run, self.store
             )
             if projection is None:
                 continue
@@ -2553,7 +2577,9 @@ class DingTalkAutoReplyWorker:
         # receipt in the run's own event stream is what establishes that one
         # happened.  This still does not re-audit the business action: it keeps
         # a delivered message visible in History.
-        sent_reply = self._sent_reply_projection_from_result(task, result, run)
+        sent_reply = self._sent_reply_projection_from_result(
+            task, result, run, self.store
+        )
         if sent_reply is not None:
             self.store.record_completed_agent_message_delivery(
                 agent_run_id=run.id,
@@ -2664,6 +2690,7 @@ class DingTalkAutoReplyWorker:
         task: ReplyTask,
         result: OrchestrationResult,
         audit_run: AgentRun,
+        store: AutoReplyStore | None = None,
     ) -> AgentMessageDeliveryProjection | None:
         if task.channel != "dingtalk" or result.status != "executed":
             return None
@@ -2708,9 +2735,17 @@ class DingTalkAutoReplyWorker:
         ).strip()
         if send_status not in {"success", "sent"} and not stable_message_id:
             return None
-        if result.consumer_result is None:
+        consumer_result = result.consumer_result
+        if consumer_result is None:
+            # An audit-terminated orchestration carries only the Audit
+            # result, so the accepted proposal has to be read from the run
+            # lineage.  Treating its absence as "nothing was delivered"
+            # silently dropped the ledger row for every successful send,
+            # leaving the repair sweep as the only writer.
+            consumer_result = _accepted_consumer_result(store, audit_run)
+        if consumer_result is None:
             return None
-        proposal = result.consumer_result.proposal
+        proposal = consumer_result.proposal
         if proposal is None:
             return None
         action_identity = str(reference.get("action_identity") or "").strip()

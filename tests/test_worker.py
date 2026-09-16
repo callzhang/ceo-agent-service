@@ -17264,3 +17264,72 @@ def test_a_send_identified_only_by_its_task_handle_still_reaches_the_ledger():
 
     assert projection is not None
     assert projection.reply_text == "「其它企业」具体是指哪些企业？"
+
+
+def test_an_audit_terminated_send_finds_its_proposal_through_the_run_lineage(tmp_path):
+    """`_audit_terminal` builds an OrchestrationResult with no consumer_result.
+
+    Every successful send ends that way, so the projection read "no accepted
+    proposal" and wrote no ledger row -- leaving the repair sweep as the only
+    writer and every unswept delivery free to be sent a second time.
+    """
+    store = AutoReplyStore(tmp_path / "lineage.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="Group", single_chat=False,
+        trigger_message_id="trigger-1", trigger_create_time="2026-09-16 01:00:00",
+        trigger_sender="Derek", trigger_text="请回复",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    consumer_payload = {
+        "outcome": "proposal", "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0, "summary": "reply",
+        "proposal": {
+            "objective": "reply", "sourced_facts": [], "authored_judgment": "",
+            "actions": [{
+                "description": "reply", "action_identity": "reply-1",
+                "capability": "dingtalk-chat", "operation": "messages-send",
+                "target": {"conversation_id": "cid-1"},
+                "payload": {"content": "已收到，按这个安排。"},
+            }],
+        },
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    }
+    store.complete_agent_run(consumer.id, consumer_payload, owner="consumer")
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
+        operation_id="op-1", owner="audit",
+    ).run
+    audit_result = AuditAgentResult.model_validate({
+        "outcome": "executed", "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
+        "summary": "sent", "proposal_revision": 0, "feedback": None,
+        "external_result": {
+            "operation_id": "op-1",
+            "live_result_reference": {"open_task_id": "openTask-lineage"},
+        },
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })
+    _record_send_receipt(store, audit.id, "openTask-lineage", owner="audit")
+    store.complete_agent_run(audit.id, audit_result.model_dump(mode="json"), owner="audit")
+
+    result = OrchestrationResult(
+        status="executed", final_run_id=audit.id, final_role=AgentRole.AUDIT,
+        summary="sent",
+        error=AgentError(code="", retryable=False, authorization_required=False),
+        feedback_cycles=0, audit_result=audit_result,
+    )
+    assert result.consumer_result is None
+
+    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
+        task, result, store.get_agent_run(audit.id), store
+    )
+
+    assert projection is not None
+    assert projection.reply_text == "已收到，按这个安排。"
+    assert projection.action_identity == "reply-1"
