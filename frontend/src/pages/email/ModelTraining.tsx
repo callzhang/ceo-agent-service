@@ -30,7 +30,12 @@ import {
   reasonLabel,
   statusLabel,
 } from "./shared";
-import { modelMetric, trendPoints, type TrendMetric } from "./modelTrend";
+import {
+  modelMetric,
+  trendLineSeries,
+  trendPoints,
+  type TrendMetric,
+} from "./modelTrend";
 import "./training.css";
 
 type RefreshLearning = () => Promise<EmailLearningEvidence | undefined>;
@@ -77,6 +82,14 @@ export function ModelTraining({
   const candidate =
     models.find((model) => model.model_id === runtime?.candidate_model_id) ||
     null;
+  const candidateLatency = candidate?.end_to_end_latency_ms?.p95 ??
+    candidate?.head_timing_percentiles_ms?.p95 ??
+    null;
+  const candidateLatencyNote = candidate?.end_to_end_latency_ms?.p95 != null
+    ? "端到端实际测量"
+    : candidate?.head_timing_percentiles_ms?.p95 != null
+      ? "输出头实际测量；端到端未测量"
+      : "当前候选无延迟测量";
   const allVersions = useMemo(
     () => [
       ...models.map((model) => ({ kind: "staged" as const, model })),
@@ -337,8 +350,16 @@ export function ModelTraining({
       <section className="training-stats" aria-label="候选模型摘要">
         <Stat
           label="可用训练样本"
-          value="未统计"
-          note="去重后的可训练数尚未统计"
+          value={String(
+            candidate?.training?.sample_count ??
+              learning.training_snapshot?.sample_count ??
+              "未统计",
+          )}
+          note={
+            candidate?.training?.sample_count != null
+              ? "当前候选训练样本"
+              : "去重后的可训练数"
+          }
         />
         <Stat
           label="候选 Macro F1"
@@ -347,8 +368,8 @@ export function ModelTraining({
         />
         <Stat
           label="候选 P95 延迟"
-          value={measured(candidate?.end_to_end_latency_ms?.p95, " ms")}
-          note={candidate ? "端到端实际测量" : "当前候选无延迟测量"}
+          value={measured(candidateLatency, " ms")}
+          note={candidate ? candidateLatencyNote : "当前候选无延迟测量"}
         />
       </section>
       <div className="training-middle">
@@ -739,19 +760,12 @@ function ModelTrend({
         : metric === "p95"
           ? config?.p95_latency_max_ms
           : undefined;
-  const data = points.map((point) => ({
-    name: point.model.model_id,
-    description: `${point.model.model_id} · ${localTime(point.model.trained_at)} · ${point.reason || point.model.evaluation?.test_digest || ""}`,
-    [`segment${point.segment}`]: point.value,
+  const lineSeries = trendLineSeries(points);
+  const data = lineSeries.data.map((row, index) => ({
+    ...row,
+    description: `${points[index].model.model_id} · ${localTime(points[index].model.trained_at)} · ${points[index].reason || points[index].model.evaluation?.test_digest || ""}`,
   }));
-  const segments = Array.from(new Set(points.map((point) => point.segment)));
-  const segmentFamilies = new Map<number, string>();
-  points.forEach((point) => {
-    if (!segmentFamilies.has(point.segment)) {
-      segmentFamilies.set(point.segment, point.model.model_family || "未提供");
-    }
-  });
-  const trendFamilies = Array.from(new Set(segmentFamilies.values()));
+  const trendFamilies = lineSeries.families;
   const values = points
     .map((point) => point.value)
     .filter((value): value is number => value !== null);
@@ -828,14 +842,14 @@ function ModelTrend({
                   label="晋升门槛"
                 />
               )}
-              {segments.map((segment) => (
+              {trendFamilies.map((family) => (
                 <Line
-                  key={segment}
-                  dataKey={`segment${segment}`}
-                  name={segmentFamilies.get(segment) || "未提供"}
+                  key={family}
+                  dataKey={`family:${family}`}
+                  name={family}
                   type="linear"
-                  stroke={familyColor(segmentFamilies.get(segment) || "未提供")}
-                  connectNulls={false}
+                  stroke={familyColor(family)}
+                  connectNulls
                   dot
                   isAnimationActive={false}
                 />

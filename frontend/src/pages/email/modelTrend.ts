@@ -60,3 +60,26 @@ export function trendPoints(
     return { model, value, segment, reason, key };
   });
 }
+
+export function trendLineSeries(
+  points: Array<{
+    model: EmailStagedModel;
+    value: number | null;
+  }>,
+) {
+  const families = Array.from(
+    new Set(points.map((point) => point.model.model_family || "未提供")),
+  );
+  const data = points.map((point) => {
+    const row: Record<string, string | number | null> = {
+      name: point.model.model_id,
+      description: point.model.model_id,
+    };
+    families.forEach((family) => {
+      row[`family:${family}`] =
+        family === (point.model.model_family || "未提供") ? point.value : null;
+    });
+    return row;
+  });
+  return { families, data };
+}

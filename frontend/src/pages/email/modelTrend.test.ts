@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { trendPoints } from "./modelTrend";
+import { trendLineSeries, trendPoints } from "./modelTrend";
 import type { EmailStagedModel } from "../../api/console";
 const model = (id: string, key: string, value: number | null) =>
   ({
@@ -53,4 +53,27 @@ it("breaks a trend when model family changes even if the dataset evidence matche
     "",
   );
   expect(points[1].segment).not.toBe(points[0].segment);
+});
+it("keeps points in the same model-family line when families are interleaved", () => {
+  const points = trendPoints(
+    [
+      model("tfidf-a", "one", 0.8),
+      { ...model("fasttext-a", "one", 0.7), model_family: "fasttext" },
+      model("tfidf-b", "one", 0.9),
+    ],
+    "macro_f1",
+    "",
+  );
+  const series = trendLineSeries(points);
+  expect(series.families).toEqual(["linear", "fasttext"]);
+  expect(series.data.map((row) => row["family:linear"])).toEqual([
+    0.8,
+    null,
+    0.9,
+  ]);
+  expect(series.data.map((row) => row["family:fasttext"])).toEqual([
+    null,
+    0.7,
+    null,
+  ]);
 });

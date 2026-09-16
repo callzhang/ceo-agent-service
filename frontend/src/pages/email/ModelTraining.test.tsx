@@ -96,12 +96,22 @@ const learning = {
         description_version: "d1",
       },
       split_counts: { train: 10, validation: 4, test: 4 },
-      end_to_end_latency_ms: { p50: 12, p95: 82, p99: 100 },
-      head_timing_percentiles_ms: null,
+      end_to_end_latency_ms: null,
+      head_timing_percentiles_ms: { p50: 12, p95: 82, p99: 100 },
+      training: {
+        started_at: "2026-09-14T11:00:00Z",
+        completed_at: "2026-09-14T12:00:00Z",
+        duration_ms: 60000,
+        sample_count: 42,
+        category_sample_count: 42,
+        account_count: 1,
+        group_count: 42,
+      },
     },
   ],
   active_model_id: null,
   pending_examples: 2,
+  training_snapshot: { sample_count: 42 },
   last_trained_feedback_count: 0,
   last_trained_at: null,
   last_feedback_at: null,
@@ -159,13 +169,16 @@ it("keeps the runtime header visible and opens compact setup and promotion dialo
   expect(screen.getByRole("button", { name: "晋升设置" })).toBeInTheDocument();
   expect(screen.getByText(/已收集反馈：2/)).toBeInTheDocument();
   expect(screen.getByText("可用训练样本").parentElement).toHaveTextContent(
-    "未统计",
+    "42",
   );
   expect(screen.getByText("候选 Macro F1").parentElement).toHaveTextContent(
     "88.0%",
   );
   expect(screen.getByText("候选 P95 延迟").parentElement).toHaveTextContent(
     "82.0 ms",
+  );
+  expect(screen.getByText("候选 P95 延迟").parentElement).toHaveTextContent(
+    "输出头实际测量；端到端未测量",
   );
   expect(screen.getByText("类别检查（1 类）")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "新建训练" }));
