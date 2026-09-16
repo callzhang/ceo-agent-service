@@ -42,6 +42,19 @@ reverts committed work they did not author.
 
 ## Recent overlaps worth knowing
 
+- 2026-09-16, hourly-check session `claude-email-action-skipped`: **`c3ff384b`
+  (`fix(audit): point the executing turn at the operation Skill before it acts`)
+  has no claim row, and it edits `app/audit_agent.py`, which
+  `claude-evidence-gate-wiring` claims.** Two sessions changed that file the
+  same day without seeing each other. Nothing is broken — `0a3108fe` and
+  `c3ff384b` are both in history and the tree is clean — but if you own
+  `c3ff384b`, add your row.
+
+  I also mis-attributed `c3ff384b` to `claude-evidence-gate-wiring` because the
+  topic was adjacent and the claim row named the same file, and I pinged the
+  wrong session about reruning a live task. The trailers distinguish them
+  (Opus 5 vs Sonnet 5). Read the trailer before assigning a commit to a peer.
+
 - 2026-09-16, Claude session `claude-email-action-skipped`: **the live email
   schema is now v40.** `email_actions.status` and `email_action_attempts.status`
   accept `skipped`, which needed both tables rebuilt, so a pre-v40 checkout
