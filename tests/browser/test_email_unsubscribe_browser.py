@@ -263,6 +263,24 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     ),
                 )
             )
+        elif path == "/dialog-obstructed":
+            self._send(
+                _page(
+                    "action_required",
+                    "Confirm unsubscribe",
+                    content=(
+                        '<button type="button" '
+                        'onclick="document.querySelector(\'[data-result]\').textContent='
+                        '\'You are unsubscribed\'">Unsubscribe</button>'
+                        '<p data-result></p>'
+                        '<div role="dialog" aria-modal="true" style="position:fixed;'
+                        'inset:0;z-index:10;background:white">'
+                        '<button type="button" aria-label="Close" '
+                        'onclick="this.closest(\'[role=dialog]\').remove()">×</button>'
+                        '<p>Trust case</p></div>'
+                    ),
+                )
+            )
         elif path.startswith("/auth-control-"):
             secret = "profile-secret-never-persist"
             controls = {
@@ -1088,6 +1106,27 @@ def test_empty_form_response_is_recorded_as_provider_accepted(
     assert result.result_text == "Form submission accepted by provider (HTTP 204)"
     assert requests[-1][0] == "POST"
     assert sum(method == "POST" for method, _path in requests) == 1
+
+
+def test_click_dismisses_unique_blocking_dialog_before_unsubscribe(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    """A provider modal must not make its underlying unsubscribe button time out."""
+
+    _first, result, requests, _details, _durable = (
+        _open_then_execute_discovered_control(
+            tmp_path,
+            chrome_browser,
+            path="/dialog-obstructed",
+            operation_kind=UnsubscribeOperationKind.CLICK_CONFIRMATION,
+        )
+    )
+
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert "You are unsubscribed" in result.result_text
+    assert requests[0] == ("GET", "/dialog-obstructed?opaque=private-fixture-token")
+    assert all(method == "GET" for method, _path in requests)
 
 
 def _open_then_execute_discovered_control(

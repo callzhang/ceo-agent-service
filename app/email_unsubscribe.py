@@ -2849,6 +2849,7 @@ class PlaywrightUnsubscribeBrowser:
                     UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
                     "accepted browser control is unavailable",
                 )
+            self._dismiss_unique_blocking_dialog(button)
             try:
                 button.click(timeout=self.timeout_ms)
             except Exception:
@@ -2923,6 +2924,61 @@ class PlaywrightUnsubscribeBrowser:
         if not body.strip():
             return f"form-submit-provider-http-{response.status}"
         return None
+
+    def _dismiss_unique_blocking_dialog(self, target: object) -> None:
+        """Close one modal that visibly covers the accepted control.
+
+        Some providers open an informational dialog over the unsubscribe page
+        as soon as it loads.  It is safe to dismiss only a modal whose bounds
+        cover the target and which exposes exactly one conventional close
+        button; ambiguous dialogs remain untouched and follow the normal
+        bounded click failure path.
+        """
+
+        dialogs = self.page.locator('[role="dialog"][aria-modal="true"]')
+        if dialogs.count() != 1:
+            return
+        dialog = dialogs.first
+        try:
+            if not dialog.is_visible():
+                return
+            target_box = target.bounding_box()
+            dialog_box = dialog.bounding_box()
+        except Exception:
+            return
+        if not target_box or not dialog_box:
+            return
+        target_x = target_box["x"] + target_box["width"] / 2
+        target_y = target_box["y"] + target_box["height"] / 2
+        if not (
+            dialog_box["x"] <= target_x <= dialog_box["x"] + dialog_box["width"]
+            and dialog_box["y"] <= target_y <= dialog_box["y"] + dialog_box["height"]
+        ):
+            return
+
+        def is_close_label(value: str) -> bool:
+            normalized = " ".join(value.casefold().split())
+            return normalized in {"close", "dismiss", "关闭", "×", "✕", "✖"}
+
+        candidates = dialog.locator("button[aria-label]")
+        close_buttons = []
+        for index in range(candidates.count()):
+            candidate = candidates.nth(index)
+            try:
+                label = str(candidate.get_attribute("aria-label") or "")
+                if is_close_label(label) and candidate.is_visible() and candidate.is_enabled():
+                    close_buttons.append(candidate)
+            except Exception:
+                continue
+        if len(close_buttons) != 1:
+            return
+        close_buttons[0].click(timeout=min(self.timeout_ms, 1_000))
+        try:
+            dialog.wait_for(state="hidden", timeout=min(self.timeout_ms, 1_000))
+        except Exception:
+            # The provider may remove the dialog asynchronously; the target
+            # click below remains the authoritative bounded operation.
+            pass
 
     def _execute_email_otp_control(
         self,
