@@ -295,11 +295,13 @@ def test_render_local_codex_session_renders_completed_mcp_event_as_one_trace(tmp
 
     tool_event = rendered.events[-1]
     assert tool_event.kind == "tool"
+    # The tool's real answer is the empty list at content[0].text; the
+    # content/type envelope around it is not something to read.
     assert tool_event.trace == {
         "call_id": "mcp-1",
         "name": "codex_apps.calendar.list_events",
         "input": '{\n  "calendar_id": "primary"\n}',
-        "output": '{\n  "content": [\n    {\n      "type": "text",\n      "text": "[]"\n    }\n  ]\n}',
+        "output": "[]",
     }
 
 
@@ -418,12 +420,15 @@ def test_extract_codex_audit_events_from_modern_completed_mcp_call(tmp_path: Pat
         codex_home=tmp_path,
     )
 
+    # The tool's real return value is `structuredContent`; `content` and
+    # `isError` are the MCP envelope around it, not the answer itself, and
+    # showing the envelope meant reading escaped JSON-inside-JSON.
     assert events == [{
         "event_type": "event_msg",
         "tool": "memory_recall",
         "call_id": "exec-modern-1",
         "input": json.dumps({"query": "上线范围"}, ensure_ascii=False, indent=2),
-        "output": json.dumps(result, ensure_ascii=False, indent=2),
+        "output": json.dumps(result["structuredContent"], ensure_ascii=False, indent=2),
     }]
 
 
@@ -713,7 +718,9 @@ def test_normalize_stored_tool_events_flattens_the_real_codex_json_stream_shape(
     user_get = flattened[0]
     assert user_get["call_id"] == "item_2"
     assert user_get["mcp_name"] == "memory_connector"
-    assert json.loads(user_get["output"])["content"][0]["text"] == '{"ok": true}'
+    # The tool's real answer is content[0].text, re-parsed - not the
+    # content/type envelope wrapped around it.
+    assert json.loads(user_get["output"]) == {"ok": True}
 
     command = flattened[1]
     assert command["command"] == "/bin/zsh -lc \"sed -n '1,10p' SKILL.md\""
@@ -748,3 +755,100 @@ def test_normalize_stored_tool_events_returns_empty_for_a_stream_with_no_calls()
         {"provider": {}, "type": "turn.completed"},
     ]
     assert normalize_stored_tool_events(envelope_only) == []
+
+
+def test_normalize_stored_tool_events_unwraps_the_mcp_result_envelope():
+    """A stored call's result is JSON-encoded twice: once for the real
+    value, once more wrapping it in content[].text. Reading raw \\n and \\"
+    escapes instead of the value itself was the whole complaint - fixed by
+    unwrapping before the call ever reaches storage-fallback rendering.
+    """
+    events = [
+        {
+            "item": {
+                "id": "item_1",
+                "type": "mcp_tool_call",
+                "tool": "get_interview_context",
+                "server": "xiaoqing_interview",
+                "arguments": {"interview_id": "int-1"},
+                "status": "completed",
+                "result": {
+                    "content": [{"type": "text", "text": json.dumps({"status": "old"})}],
+                    "structured_content": {"status": "ok", "candidate_name": "孙英双"},
+                },
+                "error": None,
+            },
+            "type": "item.completed",
+        }
+    ]
+
+    [flattened] = normalize_stored_tool_events(events)
+
+    assert json.loads(flattened["output"]) == {"status": "ok", "candidate_name": "孙英双"}
+
+
+def test_normalize_stored_tool_events_shrinks_a_large_result_instead_of_slicing_the_text():
+    """Real interview-context payloads run 40-50k characters once unwrapped -
+    still over the 20k body cap. Cutting the encoded text at a fixed offset
+    (the old behaviour) sliced through the middle of a string and handed
+    back invalid JSON the page could not read at all. Shrinking the value
+    itself keeps the result parseable no matter how large the source is.
+    """
+    from app.codex_history import MAX_EVENT_BODY_CHARS
+
+    long_note = "候选人技术背景与项目经验详细说明" * 200  # well over the per-string cap
+    interviews = [
+        {"interview_id": f"int-{index}", "round": f"{index}面", "notes": long_note}
+        for index in range(40)
+    ]
+    events = [
+        {
+            "item": {
+                "id": "item_1",
+                "type": "mcp_tool_call",
+                "tool": "get_interview_context",
+                "server": "xiaoqing_interview",
+                "arguments": {},
+                "status": "completed",
+                "result": {"structured_content": {"interviews": interviews}},
+                "error": None,
+            },
+            "type": "item.completed",
+        }
+    ]
+
+    [flattened] = normalize_stored_tool_events(events)
+
+    assert len(flattened["output"]) <= MAX_EVENT_BODY_CHARS
+    parsed = json.loads(flattened["output"])  # must still be valid JSON
+    assert len(parsed["interviews"]) < len(interviews)
+    assert any("未显示" in str(item) for item in parsed["interviews"])
+
+
+def test_normalize_stored_tool_events_falls_back_to_the_old_cut_only_as_a_last_resort():
+    """A single string too long to fit even after shrinking (well past any
+    realistic tool result) must still return something bounded rather than
+    raise - the historical behaviour, now reached only in this edge case.
+    """
+    from app.codex_history import MAX_EVENT_BODY_CHARS
+
+    events = [
+        {
+            "item": {
+                "id": "item_1",
+                "type": "mcp_tool_call",
+                "tool": "dump_everything",
+                "server": "x",
+                "arguments": {},
+                "status": "completed",
+                "result": {"structured_content": "a" * (MAX_EVENT_BODY_CHARS * 2)},
+                "error": None,
+            },
+            "type": "item.completed",
+        }
+    ]
+
+    [flattened] = normalize_stored_tool_events(events)
+
+    assert len(flattened["output"]) <= MAX_EVENT_BODY_CHARS + len("\n...[truncated]")
+    assert flattened["output"].endswith("...[truncated]")

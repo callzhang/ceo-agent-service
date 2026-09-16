@@ -522,13 +522,13 @@ def _flatten_stream_mcp_call(item: dict[str, Any]) -> dict[str, str] | None:
     arguments = _json_argument_text(item.get("arguments"))
     if arguments:
         flat["input"] = arguments
-    output = _json_value_text(item.get("result"))
+    output = _mcp_result_text(item.get("result"))
     if not output:
         error = item.get("error")
         if error not in (None, "", {}):
-            output = _json_value_text(error)
+            output = _mcp_result_text(error)
     if output:
-        flat["output"] = _truncate(output)
+        flat["output"] = output
     return flat
 
 
@@ -573,7 +573,7 @@ def _audit_event_from_jsonl(payload: dict[str, Any]) -> dict[str, str] | None:
             tool = _string(item.get("tool")) or "tool"
             arguments = _json_argument_text(item.get("arguments"))
             result = item.get("result")
-            output = _json_value_text(result)
+            output = _mcp_result_text(result)
             audit_event: dict[str, str] = {
                 "event_type": "event_msg",
                 "tool": tool,
@@ -590,7 +590,7 @@ def _audit_event_from_jsonl(payload: dict[str, Any]) -> dict[str, str] | None:
             if path:
                 audit_event["path"] = path
             if output:
-                audit_event["output"] = output[:MAX_EVENT_BODY_CHARS]
+                audit_event["output"] = output
                 output_path = _first_pathish_token(output)
                 if output_path and "path" not in audit_event:
                     audit_event["path"] = output_path
@@ -692,6 +692,123 @@ def _json_value_text(value: Any) -> str:
         return _string(value)
 
 
+def _unwrap_mcp_result(result: Any) -> Any:
+    """Return the value an MCP tool call actually returned.
+
+    A raw MCP result is ``{"content": [{"type": "text", "text": "<value>"}],
+    "structured_content"?: <value>}`` - the tool's own return value only ever
+    reaches storage JSON-encoded a second time, inside that text field. Some
+    servers also attach ``structured_content`` (or ``structuredContent``),
+    the same value already decoded once; prefer it and skip re-parsing text
+    entirely. This mirrors the frontend's unwrapToolResultEnvelope so both
+    surfaces read the same value the same way.
+    """
+    if not isinstance(result, dict):
+        return result
+    structured = result.get("structured_content", result.get("structuredContent"))
+    if structured is not None:
+        return structured
+    content = result.get("content")
+    if isinstance(content, list):
+        texts = [
+            item.get("text")
+            for item in content
+            if isinstance(item, dict)
+            and item.get("type") == "text"
+            and isinstance(item.get("text"), str)
+        ]
+        if texts:
+            joined = "\n".join(texts)
+            try:
+                return json.loads(joined)
+            except (TypeError, ValueError):
+                return joined
+    return result
+
+
+def _shrink_json_value(value: Any, budget: list[int]) -> Any:
+    """Bound a JSON value's size while staying valid JSON, against a shared,
+    mutable character budget consumed as the value is walked.
+
+    A per-field cap (a fixed max string length, a fixed max list length)
+    cannot bound the total: fifteen items with two long fields each still
+    blow past any per-field limit once multiplied out. Spending down one
+    shared budget across every string and every dict key encountered, in
+    encounter order, is the only way to guarantee the final encoding fits -
+    whatever is left once the budget is exhausted becomes a short marker
+    instead of being included at all.
+    """
+    if budget[0] <= 0:
+        return "…"
+    if isinstance(value, str):
+        if len(value) <= budget[0]:
+            budget[0] -= len(value)
+            return value
+        kept_chars = max(0, budget[0] - 10)
+        budget[0] = 0
+        return f"{value[:kept_chars]}…" if kept_chars else "…"
+    if isinstance(value, list):
+        kept = []
+        for item in value:
+            if budget[0] <= 0:
+                kept.append(f"…还有 {len(value) - len(kept)} 项未显示")
+                break
+            kept.append(_shrink_json_value(item, budget))
+        return kept
+    if isinstance(value, dict):
+        kept: dict[str, Any] = {}
+        for key, item in value.items():
+            if budget[0] <= 0:
+                kept["__more__"] = f"还有 {len(value) - len(kept)} 个字段未显示"
+                break
+            budget[0] -= len(key)
+            kept[key] = _shrink_json_value(item, budget)
+        return kept
+    return value
+
+
+def _mcp_result_text(result: Any, *, max_chars: int = MAX_EVENT_BODY_CHARS) -> str:
+    """Render an MCP tool result as one readable, always-parseable JSON
+    string, unwrapped and bounded to max_chars.
+
+    Unwrapping alone roughly halves the encoded size of a large result (the
+    double-JSON-encoding overhead in `content[].text`), but a genuinely large
+    payload - a candidate's full interview history, for one - can still
+    exceed max_chars afterward. Shrinking the value itself keeps that case
+    valid JSON too; only if that somehow still does not fit does this fall
+    back to the old blind character-offset cut, which stays correct (just
+    unreadable, as before) rather than ever raising.
+    """
+    if result is None or result == "":
+        return ""
+    unwrapped = _unwrap_mcp_result(result)
+    if isinstance(unwrapped, str):
+        text = unwrapped
+    else:
+        try:
+            text = json.dumps(unwrapped, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError):
+            return _string(result)
+    if len(text) <= max_chars:
+        return text
+    if isinstance(unwrapped, (dict, list)):
+        try:
+            # Leave headroom below max_chars for the braces, commas, quotes
+            # and per-level indentation json.dumps adds on top of the content
+            # the budget actually spent - a deeply nested value has a lot of
+            # that overhead, so this is deliberately generous.
+            shrunk_text = json.dumps(
+                _shrink_json_value(unwrapped, [max_chars * 3 // 5]),
+                ensure_ascii=False,
+                indent=2,
+            )
+            if len(shrunk_text) <= max_chars:
+                return shrunk_text
+        except (TypeError, ValueError):
+            pass
+    return _truncate(text)
+
+
 def _mcp_tool_result_from_event_msg(
     payload: dict[str, Any],
 ) -> dict[str, object] | None:
@@ -764,7 +881,7 @@ def _render_event_msg(
         server = _string(item.get("server"))
         tool = _string(item.get("tool")) or "tool"
         input_text = _truncate(_json_argument_text(item.get("arguments")))
-        output_text = _truncate(_json_value_text(item.get("result")))
+        output_text = _mcp_result_text(item.get("result"))
         name = f"{server}.{tool}" if server else tool
         return RenderedCodexEvent(
             timestamp=timestamp,
