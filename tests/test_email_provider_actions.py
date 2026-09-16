@@ -1565,3 +1565,45 @@ def test_production_imap_rejects_non_atom_keyword_without_store() -> None:
     assert result.error == "provider_apply_failed:ImapKeywordUnsupported"
     assert result.retryable is False
     assert not any(call[:2] == ("uid", "STORE") for call in session.calls)
+
+
+@pytest.mark.parametrize(
+    ("action_type", "parameters"),
+    (
+        (EmailAction.MOVE, {"target_folder": "Projects"}),
+        (EmailAction.LABEL, {"labels": ("work",)}),
+        (EmailAction.ARCHIVE, {}),
+    ),
+)
+def test_a_gone_message_skips_an_action_it_can_never_satisfy(
+    action_type: EmailAction,
+    parameters: dict[str, object],
+) -> None:
+    """The message left the account, so no provider call can apply the action."""
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(messages={"INBOX": {}, "Projects": {}})
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(action_type, parameters))
+
+    assert result.status == "skipped"
+    assert result.provider_operation == "readback_missing"
+    assert result.provider_result_id.startswith("message-unavailable:")
+    assert result.error == ""
+    assert not any(call[:2] == ("uid", "STORE") for call in session.calls)
+    assert not any(call[:2] == ("uid", "COPY") for call in session.calls)
+
+
+def test_a_gone_message_still_completes_a_trash_action() -> None:
+    """Trash wants the message gone, and it already is."""
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(messages={"INBOX": {}})
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.TRASH, {}))
+
+    assert result.status == "done"
+    assert result.provider_operation == "readback_noop"
+    assert result.provider_result_id.startswith("message-unavailable:")

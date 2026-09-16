@@ -3347,8 +3347,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_38() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 38
+def test_email_schema_version_is_40() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 40
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:
@@ -3741,7 +3741,8 @@ def test_current_schema_rejects_weakened_cursor_column_declarations_and_checks(
         (
             "text not null check(action_type in "
             "('label', 'mark_read', 'archive', 'move', 'trash', 'auto_reply'))",
-            "text not null check(status in ('pending', 'processing', 'done', 'failed'))",
+            "text not null check(status in "
+            "('pending', 'processing', 'done', 'skipped', 'failed'))",
         ),
         (
             "text not null check(action_type in "
@@ -3780,7 +3781,8 @@ def test_current_schema_rejects_weakened_direct_action_checks(
             "text collate nocase not null check(action_type in "
             "('label', 'mark_read', 'archive', 'move', 'trash', "
             "'flag_important'))",
-            "text not null check(status in ('pending', 'processing', 'done', 'failed'))",
+            "text not null check(status in "
+            "('pending', 'processing', 'done', 'skipped', 'failed'))",
         ),
         (
             "status",
@@ -3788,7 +3790,7 @@ def test_current_schema_rejects_weakened_direct_action_checks(
             "('label', 'mark_read', 'archive', 'move', 'trash', "
             "'flag_important'))",
             "text collate nocase not null "
-            "check(status in ('pending', 'processing', 'done', 'failed'))",
+            "check(status in ('pending', 'processing', 'done', 'skipped', 'failed'))",
         ),
     ),
 )
@@ -3858,7 +3860,8 @@ def test_current_schema_rejects_collation_on_required_action_attempt_status(
         database,
         attempt_number_declaration="integer not null check(attempt_number > 0)",
         status_declaration=(
-            "text collate nocase not null check(status in ('done', 'failed'))"
+            "text collate nocase not null "
+            "check(status in ('done', 'skipped', 'failed'))"
         ),
     )
 
@@ -6325,7 +6328,7 @@ def test_action_attempts_append_and_duplicate_or_invalid_values_are_rejected(
     with pytest.raises(sqlite3.IntegrityError, match="status"):
         with sqlite3.connect(database) as db:
             db.execute(
-                "update email_actions set status='skipped' where action_id=?",
+                "update email_actions set status='discarded' where action_id=?",
                 (action_id,),
             )
 
@@ -10185,3 +10188,54 @@ def test_unsubscribe_receipt_has_no_entry_url_when_no_entry_was_selected(
 
     # An entry that was never selected has no URL to record.
     assert receipt["entry_url"] == ""
+
+
+def test_a_skipped_attempt_is_terminal_and_schedules_no_retry(tmp_path: Path):
+    """A gone message ends the action without a retry or an error."""
+    database = tmp_path / "skipped-attempt.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    action_id = _fetchall(database, "select action_id from email_actions")[0][
+        "action_id"
+    ]
+
+    attempt = store.append_action_attempt(
+        action_id=action_id,
+        attempt_number=1,
+        status="skipped",
+        provider_operation="readback_missing",
+        provider_target="dingtalk-account:message-id:<msg-1@example.com>",
+        provider_result_id="message-unavailable:abc123",
+        error="",
+        started_at="2026-09-16T07:27:18+00:00",
+        finished_at="2026-09-16T07:27:36+00:00",
+    )
+
+    assert attempt["status"] == "skipped"
+    assert attempt["provider_result_id"] == "message-unavailable:abc123"
+    assert attempt["error"] == ""
+
+
+def test_a_skipped_attempt_still_requires_a_receipt_and_no_error(tmp_path: Path):
+    database = tmp_path / "skipped-receipt.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    action = store.claim_next_direct_action(claimed_at="2026-09-16T07:27:13+00:00")
+    assert action is not None
+
+    with pytest.raises(ValueError, match="skipped attempts require"):
+        store.complete_direct_action_attempt(
+            action,
+            status="skipped",
+            provider_operation="readback_missing",
+            provider_target=action.locator.stable_message_identity,
+            provider_result_id="",
+            error="",
+            finished_at="2026-09-16T07:27:36+00:00",
+        )

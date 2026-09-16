@@ -34,7 +34,7 @@ from app.email_provider_folders import ProviderFolder
 
 @dataclass(frozen=True)
 class ProviderActionResult:
-    status: Literal["done", "failed"]
+    status: Literal["done", "skipped", "failed"]
     provider_operation: str
     provider_target: str
     provider_result_id: str
@@ -161,6 +161,15 @@ class DeterministicEmailActionExecutor:
                         provider_target=action.locator.stable_message_identity,
                         provider_result_id=_message_unavailable_revision(action),
                     )
+                if _message_is_gone(exc):
+                    # The message left the account, so this action can never be
+                    # applied and no provider call was made. It is not a failure.
+                    return ProviderActionResult(
+                        status="skipped",
+                        provider_operation="readback_missing",
+                        provider_target=action.locator.stable_message_identity,
+                        provider_result_id=_message_unavailable_revision(action),
+                    )
                 return self._failed(action, "READ", "provider_read_failed", exc)
             except Exception as exc:
                 return self._failed(action, "READ", "provider_read_failed", exc)
@@ -277,13 +286,19 @@ def _changed_locator(
     return observed
 
 
+def _message_is_gone(exc: ImapMessageUnavailable) -> bool:
+    """A missing message is absent; an ambiguous one is a real anomaly."""
+
+    return "missing" in str(exc).casefold()
+
+
 def _message_unavailable_satisfies_action(
     action: StoredEmailAction,
     exc: ImapMessageUnavailable,
 ) -> bool:
-    """Treat a missing message as terminal only for trash-style cleanup."""
+    """A gone message already satisfies trash-style cleanup."""
 
-    return action.action_type is EmailAction.TRASH and "missing" in str(exc).casefold()
+    return action.action_type is EmailAction.TRASH and _message_is_gone(exc)
 
 
 def _message_unavailable_revision(action: StoredEmailAction) -> str:

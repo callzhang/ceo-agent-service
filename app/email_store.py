@@ -67,7 +67,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 39
+EMAIL_SCHEMA_VERSION = 40
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -87,8 +87,10 @@ _CLASSIFICATION_STATUSES = frozenset(
     status.value for status in EmailClassificationStatus
 )
 _CLASSIFICATION_SOURCES = frozenset({"model", "user", "agent"})
-_CURRENT_ACTION_STATUSES = frozenset({"pending", "processing", "done", "failed"})
-_TERMINAL_ATTEMPT_STATUSES = frozenset({"done", "failed"})
+_CURRENT_ACTION_STATUSES = frozenset(
+    {"pending", "processing", "done", "skipped", "failed"}
+)
+_TERMINAL_ATTEMPT_STATUSES = frozenset({"done", "skipped", "failed"})
 _DIRECT_ACTION_VALUES = frozenset(action.value for action in DIRECT_ACTIONS)
 _EMAIL_REPLY_CLAIM_STATUSES = frozenset(
     {"dispatching", "retryable", "uncertain", "done"}
@@ -601,12 +603,12 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
     "email_actions": (
         "action_type in ('label', 'mark_read', 'archive', 'move', 'trash', 'flag_important')",
         "json_valid(parameters_json)",
-        "status in ('pending', 'processing', 'done', 'failed')",
+        "status in ('pending', 'processing', 'done', 'skipped', 'failed')",
         "attempt_count >= 0",
     ),
     "email_action_attempts": (
         "attempt_number > 0",
-        "status in ('done', 'failed')",
+        "status in ('done', 'skipped', 'failed')",
     ),
     "email_feedback_requests": (
         "trim(feedback_request_id) != ''",
@@ -2997,6 +2999,9 @@ class EmailStore:
             if latest_version == 38:
                 self._migrate_v38_to_v39(db, replace_version=is_prototype)
                 latest_version = 39
+            if latest_version == 39:
+                self._migrate_v39_to_v40(db, replace_version=is_prototype)
+                latest_version = 40
             self._validate_durable_state(db)
 
     @classmethod
@@ -4983,6 +4988,104 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v39_to_v40(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Let a direct action end as `skipped` when its message is gone.
+
+        A `move` whose message has left the account could never be applied and
+        never reached the provider, but the only non-success terminal state was
+        `failed`, so it retried three times and then sat as a permanent failure.
+        Derek asked for a gone message to count as skipped.
+        """
+
+        for trigger in (
+            "trg_email_direct_action_blocks_plan_switch",
+            "trg_email_direct_action_blocks_account_update",
+            "trg_email_direct_action_blocks_account_delete",
+        ):
+            db.execute(f"drop trigger if exists {trigger}")
+        db.execute("drop index if exists idx_email_actions_status")
+        db.execute(
+            "alter table email_action_attempts rename to email_action_attempts_v39"
+        )
+        db.execute("alter table email_actions rename to email_actions_v39")
+        statements = (
+            """
+            create table email_actions (
+                action_id text primary key,
+                action_plan_id text not null,
+                classification_id integer not null,
+                account_id text not null,
+                action_type text not null
+                    check(action_type in (
+                        'label', 'mark_read', 'archive', 'move', 'trash',
+                        'flag_important'
+                    )),
+                parameters_json text not null check(json_valid(parameters_json)),
+                config_version text not null,
+                status text not null
+                    check(status in (
+                        'pending', 'processing', 'done', 'skipped', 'failed'
+                    )),
+                attempt_count integer not null default 0 check(attempt_count >= 0),
+                started_at text not null default '',
+                finished_at text not null default '',
+                next_attempt_at text not null default '',
+                provider_operation text not null default '',
+                provider_target text not null default '',
+                provider_result_id text not null default '',
+                error text not null default '',
+                created_at text not null,
+                updated_at text not null,
+                unique(action_plan_id, action_type),
+                foreign key(action_plan_id) references email_action_plans(action_plan_id)
+                    on delete restrict,
+                foreign key(classification_id) references email_classifications(id)
+                    on delete restrict
+            )
+            """,
+            "insert into email_actions select * from email_actions_v39",
+            """
+            create table email_action_attempts (
+                id integer primary key autoincrement,
+                action_id text not null,
+                attempt_number integer not null check(attempt_number > 0),
+                status text not null
+                    check(status in ('done', 'skipped', 'failed')),
+                provider_operation text not null,
+                provider_target text not null,
+                provider_result_id text not null,
+                error text not null,
+                started_at text not null,
+                finished_at text not null,
+                unique(action_id, attempt_number),
+                foreign key(action_id) references email_actions(action_id)
+                    on delete restrict
+            )
+            """,
+            (
+                "insert into email_action_attempts "
+                "select * from email_action_attempts_v39"
+            ),
+            "drop table email_action_attempts_v39",
+            "drop table email_actions_v39",
+        )
+        for statement in statements:
+            db.execute(statement)
+        self._create_indexes_and_triggers(db)
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=40, applied_at=? "
+                "where version=39",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (40, ?)",
+                (self._now(),),
+            )
+
     @staticmethod
     def _validate_model_promotion_values(
         *,
@@ -5432,7 +5535,9 @@ class EmailStore:
                 parameters_json text not null check(json_valid(parameters_json)),
                 config_version text not null,
                 status text not null
-                    check(status in ('pending', 'processing', 'done', 'failed')),
+                    check(status in (
+                        'pending', 'processing', 'done', 'skipped', 'failed'
+                    )),
                 attempt_count integer not null default 0 check(attempt_count >= 0),
                 started_at text not null default '',
                 finished_at text not null default '',
@@ -5455,7 +5560,8 @@ class EmailStore:
                 id integer primary key autoincrement,
                 action_id text not null,
                 attempt_number integer not null check(attempt_number > 0),
-                status text not null check(status in ('done', 'failed')),
+                status text not null
+                    check(status in ('done', 'skipped', 'failed')),
                 provider_operation text not null,
                 provider_target text not null,
                 provider_result_id text not null,
@@ -14566,7 +14672,7 @@ class EmailStore:
     ) -> dict[str, Any]:
         _require_positive_int(attempt_number, field="attempt_number")
         if status not in _TERMINAL_ATTEMPT_STATUSES:
-            raise ValueError("attempt status must be done or failed")
+            raise ValueError("attempt status must be done, skipped or failed")
         with self._connect() as db:
             db.execute("begin immediate")
             action = db.execute(
@@ -15143,15 +15249,17 @@ class EmailStore:
         """Append a terminal attempt and update its current projection atomically."""
 
         if status not in _TERMINAL_ATTEMPT_STATUSES:
-            raise ValueError("attempt status must be done or failed")
+            raise ValueError("attempt status must be done, skipped or failed")
         if not isinstance(retryable, bool):
             raise TypeError("retryable must be a boolean")
         if not provider_operation:
             raise ValueError("provider_operation must be non-empty")
         if provider_target != action.locator.stable_message_identity:
             raise ValueError("provider_target must match the stable message identity")
-        if status == "done" and (not provider_result_id or error):
-            raise ValueError("done attempts require readback receipt and no error")
+        if status in {"done", "skipped"} and (not provider_result_id or error):
+            raise ValueError(
+                f"{status} attempts require readback receipt and no error"
+            )
         if status == "failed" and not error:
             raise ValueError("failed attempts require an error")
         if updated_locator is not None:

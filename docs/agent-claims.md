@@ -35,11 +35,28 @@ reverts committed work they did not author.
 | claude-retired-category-save | app/web_api/email.py, frontend/src/pages/email/EmailList.tsx, frontend/src/pages/email/EmailReadingPanel.tsx, frontend/src/pages/EmailPage.test.tsx, tests/test_email_web_api.py, docs/agent-claims.md | Stop the console offering a retired category as a saveable value, and refuse one at the API boundary instead of as a 500 | 2026-09-15 |
 | claude-todo-sync-skipped | app/todo_sync.py, app/store.py (task_todo_sync_outbox region and STORE_SCHEMA_VERSION), app/dispatcher/adapters.py (TaskTodoSyncOutboxQueueAdapter only), tests/test_todo_sync.py, tests/test_store.py (pinned schema version literal only), docs/agent-claims.md | Record a Todo that never qualified for a DingTalk mirror as `skipped` instead of a failed external delivery | 2026-09-16 |
 | claude-email-action-attention | app/audit_web.py (_queue_attention_rows only), tests/test_audit_web.py (new Email action cases only), docs/agent-claims.md | Surface an exhausted failed email provider action in Attention, so it agrees with the status page's own failed count | 2026-09-16 |
+| claude-email-action-skipped | app/email_provider_actions.py, app/email_store.py (direct action status sets, DDL, _migrate_v39_to_v40, EMAIL_SCHEMA_VERSION), tests/test_email_provider_actions.py, tests/test_email_store.py, scripts/requeue_gone_message_email_actions.py, docs/agent-claims.md | Let a direct email action end as `skipped` when its message has left the account (Derek: 消失的邮件就算 skip) | 2026-09-16 |
 | claude-self-agent-echo | app/worker.py (candidate filtering only), tests/test_worker.py, docs/agent-claims.md | Identify the service's own DWS delivery by the provider's AI-send marker so a renumbered read-back stops opening a run on our own message | 2026-09-16 |
 | claude-evidence-gate-wiring | app/audit_agent.py, tests/test_audit_agent.py, docs/agent-claims.md | `989ed829` shipped `DingTalkSendEvidenceDriver` but `_parse_evidenced_result` only wrapped `parse_result` when `email_unsubscribe_tools` was truthy, so the new driver never actually ran for a DingTalk task; wire the wrap unconditionally (each driver already no-ops when out of scope) | 2026-09-16 |
 
 
 ## Recent overlaps worth knowing
+
+- 2026-09-16, Claude session `claude-email-action-skipped`: **the live email
+  schema is now v40.** `email_actions.status` and `email_action_attempts.status`
+  accept `skipped`, which needed both tables rebuilt, so a pre-v40 checkout
+  cannot write those tables correctly. Verified on a copy of the live database:
+  1,835 actions and 1,978 attempts survive, the three direct-action triggers are
+  recreated, and a second open is a no-op.
+
+  Two warnings from this change. First, `tests/test_email_store.py` had 9
+  pre-existing failures before I touched anything (the v15/v16/v20/v23/v36
+  migration tests and two snapshot tests); they are unrelated to v40 and still
+  fail. I measured the baseline before and after, and v40 adds none. Second, I
+  briefly ran `git stash` in this shared tree to take that baseline, which
+  removed another agent's in-flight edits to `app/email_classifier_*.py` for
+  about twenty seconds. `stash pop` restored them intact, but do not do this
+  here — check out a temporary worktree instead.
 
 - 2026-09-16, Claude session `claude-evidence-gate-wiring`: attempt #9550
   closed `completed` after its Audit turn reported `executed` for a proposal
