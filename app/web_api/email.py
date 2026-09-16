@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from app import config as app_config
 from app.email_classifier_contracts import (
+    MODEL_OTHERS_CATEGORY_KEY,
     EmailAction,
     EmailClassificationStatus,
     build_email_action_plan,
@@ -1528,8 +1529,12 @@ def register_email_routes(
                     for row in catalog
                     if row["source"] in payload.sources and row["supported"] is True
                 }
+                # others is not a catalog category: it is the mail this
+                # selection leaves out, relabelled when the snapshot is frozen.
                 unknown_categories = sorted(
-                    set(payload.categories) - allowed_categories
+                    set(payload.categories)
+                    - allowed_categories
+                    - {MODEL_OTHERS_CATEGORY_KEY}
                 )
                 if unknown_categories:
                     return error_response(
@@ -1628,7 +1633,16 @@ def register_email_routes(
                 seed=20260905,
             )
             blockers = selected_training_snapshot_blockers(
-                preview_snapshot, categories=payload.categories
+                preview_snapshot,
+                categories=[
+                    category
+                    for category in payload.categories
+                    if category != MODEL_OTHERS_CATEGORY_KEY
+                    or any(
+                        row.category_key == MODEL_OTHERS_CATEGORY_KEY
+                        for row in preview_snapshot.observations
+                    )
+                ],
             )
         except FolderTrainingSnapshotError as exc:
             blockers = (str(exc),)

@@ -372,7 +372,7 @@ it("selects only executable training sources and records a narrowed folder scope
   const category=screen.getByRole("checkbox",{name:"legal"});expect(category).not.toBeChecked();
   await waitFor(()=>expect(screen.getByRole("button",{name:"开始训练"})).toBeEnabled());
   await user.click(screen.getByRole("button",{name:"开始训练"}));
-  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]});
+  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work","others"],model_families:["embedding-mlp"]});
   expect(await screen.findByText(/训练状态：/)).toHaveTextContent("running");
 });
 it("shows model family support and submits the selected family",async()=>{
@@ -395,7 +395,7 @@ it("shows model family support and submits the selected family",async()=>{
   expect(screen.getByRole("checkbox",{name:"fastText（当前不可用）"})).toBeDisabled();
   await waitFor(()=>expect(screen.getByRole("button",{name:"开始训练"})).toBeEnabled());
   await user.click(screen.getByRole("button",{name:"开始训练"}));
-  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]});
+  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work","others"],model_families:["embedding-mlp"]});
 });
 it("reuses a mode request ID on retry and prevents duplicate submissions",async()=>{
   const user=userEvent.setup(),pending=deferred<unknown>();api.saveEmailRuntimeMode.mockReturnValueOnce(pending.promise).mockRejectedValueOnce(new Error("重试失败"));show("/email?tab=learning");

@@ -24,7 +24,10 @@ from collections.abc import Mapping
 
 import numpy as np
 
-from app.email_classifier_contracts import validate_email_category_key
+from app.email_classifier_contracts import (
+    MODEL_OTHERS_CATEGORY_KEY,
+    validate_email_category_key,
+)
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_scan import EmailScanConfig, EmailScanResult, scan_readonly_batch
 from app.email_store import EmailStore
@@ -455,9 +458,13 @@ def assess_online_promotion_gate(
                        "operator": operator, "passed": passed,
                        "reason": "passed" if passed else ("not_measured" if value is None else reason)})
 
+    # The others class counts towards the overall score: leaving it out would
+    # let a model that dumps everything it is unsure of into others score well
+    # on the classes that remain.
+    scored_category_keys = (*enabled_category_keys, MODEL_OTHERS_CATEGORY_KEY)
     check(
         "micro_f1",
-        micro_f1_from_categories(metrics, enabled_category_keys),
+        micro_f1_from_categories(metrics, scored_category_keys),
         config["micro_f1_min"],
     )
     for key in enabled_category_keys:
@@ -474,7 +481,8 @@ def assess_online_promotion_gate(
     compatible = bool(enabled_category_keys) and isinstance(categories, (list, tuple)) and (
         all(isinstance(key, str) for key in categories)
         and len(categories) == len(set(categories))
-        and set(categories) == set(enabled_category_keys)
+        # A candidate carries the others class alongside the configured ones.
+        and set(categories) - {MODEL_OTHERS_CATEGORY_KEY} == set(enabled_category_keys)
         and compatibility.get("description_version") == description_version
     )
     system_pass = bool(compatible and artifact_verified and not registry_issues and readiness.ready
@@ -813,6 +821,14 @@ class OnlineEmbeddingPredictor:
                 self.latency.record_fallback("model_rejected")
                 return OnlineClassificationResult(
                     source="model", value=None, fallback_reason="model_rejected"
+                )
+            # others means the model recognised the message as outside the
+            # categories it was trained on, which is the Agent's job, not a
+            # classification to persist.
+            if timed.prediction.category == MODEL_OTHERS_CATEGORY_KEY:
+                self.latency.record_fallback("model_others")
+                return OnlineClassificationResult(
+                    source="model", value=None, fallback_reason="model_others"
                 )
             return OnlineClassificationResult(source="model", value=timed.prediction)
         except Exception as exc:

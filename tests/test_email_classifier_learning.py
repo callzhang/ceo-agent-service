@@ -826,3 +826,44 @@ def test_learning_poll_clears_orphan_and_next_tick_can_retry(tmp_path: Path):
     assert failed.state.active_run_id is None
     assert retried.training_run is None
     assert retried.decision.due is False
+
+
+def test_unselected_categories_train_as_others_when_others_is_selected(tmp_path: Path):
+    """Mail from a category nobody picked teaches the model that the message is
+    outside its scope, instead of being forced into the nearest picked one."""
+
+    from app.email_classifier_learning import _selection_provenance
+
+    class _Store:
+        def latest_training_snapshot_state(self):
+            return None
+
+        def list_selected_training_records(self):
+            return [
+                {
+                    "source": "user_feedback",
+                    "account_id": "account-a",
+                    "stable_message_identity": f"mail-{index}",
+                    "provider_thread_id": None,
+                    "normalized_model_input": '{"body":"m"}',
+                    "category_key": category,
+                }
+                for index, category in enumerate(("work", "work", "personal", "finance"))
+            ]
+
+    store = _Store()
+    with_others = _selection_provenance(
+        store, sources=["user_feedback"], categories=["work", "others"]
+    )
+    labels = sorted(
+        str(row["category_key"]) for row in with_others["selected_training_records"]
+    )
+    assert labels == ["others", "others", "work", "work"]
+
+    without_others = _selection_provenance(
+        store, sources=["user_feedback"], categories=["work"]
+    )
+    assert sorted(
+        str(row["category_key"])
+        for row in without_others["selected_training_records"]
+    ) == ["work", "work"]

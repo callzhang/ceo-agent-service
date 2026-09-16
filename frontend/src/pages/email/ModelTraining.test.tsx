@@ -35,7 +35,8 @@ it("leaves categories below the cold-start floor out of the default training sel
     { source: "agent_auto_label", category: "legal", sample_count: 19, unique_trainable_count: 19, provenance: {} },
   ], []);
   expect(selection.sources).toEqual(["agent_auto_label"]);
-  expect(selection.categories).toEqual(["work"]);
+  // personal and legal fall under the cold-start floor, so they train as others.
+  expect(selection.categories).toEqual(["work", "others"]);
 });
 
 const learning = {
@@ -516,4 +517,42 @@ it("shows category counts in one always-visible table instead of a collapsed sou
   expect(row).toHaveTextContent("邮件文件夹快照 30");
   expect(table).toBeVisible();
   expect(screen.queryByText("数据来源记录")).not.toBeInTheDocument();
+});
+
+it("adds an others row that totals the categories left unselected", async () => {
+  const user = userEvent.setup();
+  api.previewEmailTraining.mockResolvedValue({
+    unique_sample_count: 50,
+    snapshot_id: "snapshot-1",
+    snapshot_digest: "digest-1",
+    snapshot_version: "v1",
+    description_version: "d1",
+  });
+  const sparse = {
+    ...learning,
+    training_sources: [
+      ...learning.training_sources,
+      { source: "agent_auto_label", category: "personal", sample_count: 4, provenance: {} },
+    ],
+  };
+  render(
+    <ModelTraining
+      learning={sparse}
+      configs={[]}
+      reload={async () => sparse}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "新建训练" }));
+  const others = await screen.findByRole("checkbox", { name: "others" });
+  expect(others).toBeChecked();
+  const row = others.closest("tr")!;
+  expect(row).toHaveTextContent("4");
+  expect(row).toHaveTextContent("personal");
+  // It is a real choice: thin leftover mail can make the split impossible.
+  await user.click(others);
+  expect(others).not.toBeChecked();
 });

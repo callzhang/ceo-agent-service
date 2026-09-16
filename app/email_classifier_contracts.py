@@ -39,8 +39,12 @@ INITIAL_EMAIL_CATEGORY_KEYS = (
     "junk",
 )
 RESERVED_EMAIL_CATEGORY_KEYS = frozenset(
-    {"important", "subscription", "other", "billing"}
+    {"important", "subscription", "other", "billing", "others"}
 )
+# The class a trained model uses for mail outside the categories it was trained
+# on. It is never a configurable category: it has no folder action, and a
+# prediction of it hands the message to the Agent.
+MODEL_OTHERS_CATEGORY_KEY = "others"
 LEGACY_EMAIL_CATEGORY_KEYS = frozenset({"important", "subscription", "billing"})
 _LEGACY_CATEGORY_CONTEXT_KEY = "allow_legacy_email_category_keys"
 

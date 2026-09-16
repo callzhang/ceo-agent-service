@@ -11,7 +11,10 @@ import tempfile
 import uuid
 from hashlib import sha256
 
-from app.email_classifier_contracts import EmailCategory
+from app.email_classifier_contracts import (
+    MODEL_OTHERS_CATEGORY_KEY,
+    EmailCategory,
+)
 from app.email_classifier_model_families import validate_model_families
 from app.email_classifier_retrain import (
     AutoRetrainResult,
@@ -146,18 +149,31 @@ def _selection_provenance(
             for row in snapshot["observations"]
             if row.get("category_key") is not None
         )
-    if not set(categories) <= available:
+    # others is not a stored category: it is whatever the selection leaves out.
+    if not set(categories) - {MODEL_OTHERS_CATEGORY_KEY} <= available:
         raise ValueError("training selection category is unavailable")
 
+    # With others selected, mail from a category nobody picked still trains the
+    # model: it learns the message is outside its scope instead of being forced
+    # into the nearest selected category. A prediction of others goes to the
+    # Agent. Without it, that mail stays out of the training set entirely.
+    collect_others = MODEL_OTHERS_CATEGORY_KEY in categories
     selected_by_source: dict[str, list[dict[str, object]]] = {}
     for source in sources:
-        selected_by_source[source] = [
-            row
-            for row in source_records[source]
-            if str(row.get("category_key") or "") in categories
-            and str(row.get("stable_message_identity") or "")
-            and str(row.get("normalized_model_input") or "").strip()
-        ]
+        rows: list[dict[str, object]] = []
+        for row in source_records[source]:
+            category = str(row.get("category_key") or "")
+            if (
+                not category
+                or not str(row.get("stable_message_identity") or "")
+                or not str(row.get("normalized_model_input") or "").strip()
+            ):
+                continue
+            if category in categories:
+                rows.append(row)
+            elif collect_others:
+                rows.append({**row, "category_key": MODEL_OTHERS_CATEGORY_KEY})
+        selected_by_source[source] = rows
     provenance: list[dict[str, object]] = []
     for source in sources:
         for category in categories:

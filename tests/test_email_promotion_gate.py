@@ -161,3 +161,33 @@ def test_gate_overflowing_json_numbers_are_unmeasured(field):
     target = row["end_to_end_latency_ms"] if field == "p95" else row["metrics"]["categories"]["work"]
     target[field] = 10 ** 400
     assert assess(row)["promotion_eligible"] is False
+
+
+def test_others_counts_towards_micro_f1_and_keeps_the_candidate_compatible():
+    """others is scored but is not a configured category, so it must not make
+    the candidate look incompatible either."""
+
+    row = evidence()
+    row["compatibility"]["enabled_categories"] = ["work", "others"]
+    row["metrics"]["categories"]["others"] = {
+        "precision": .2, "recall": .2, "f1": .2, "support": 25,
+    }
+    result = assess(row)
+    check = micro_check(result)
+    assert check["actual"] == pytest.approx((.97 * 25 + .2 * 25) / 50)
+    assert check["passed"] is False
+    integrity = next(
+        item for item in result["checks"] if item["key"] == "system_integrity"
+    )
+    assert integrity["passed"] is True
+
+
+def test_others_is_not_held_to_the_per_category_checks():
+    row = evidence()
+    row["compatibility"]["enabled_categories"] = ["work", "others"]
+    row["metrics"]["categories"]["others"] = {
+        "precision": .2, "recall": 1., "f1": .3, "support": 1,
+    }
+    keys = {check["key"] for check in assess(row)["checks"]}
+    assert "category_precision:others" not in keys
+    assert "category_validation_samples:others" not in keys

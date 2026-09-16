@@ -18,6 +18,7 @@ type PreviewTraining = (
 ) => Promise<EmailTrainingPreview>;
 
 const DEFAULT_CATEGORY_MINIMUM_SAMPLES = 20;
+export const OTHERS_CATEGORY = "others";
 
 export function initialTrainingSelection(
   sources: EmailTrainingSource[],
@@ -38,15 +39,19 @@ export function initialTrainingSelection(
     // by default. Keep sparse data visible and selectable for deliberate
     // experiments, while preventing a new training drawer from failing on
     // categories that cannot yet support an independent evaluation.
-    categories: unique(
-      supported
+    categories: unique([
+      ...supported
         .filter(
           (row) =>
             (trainableByCategory.get(row.category) || 0) >=
             DEFAULT_CATEGORY_MINIMUM_SAMPLES,
         )
         .map((row) => row.category),
-    ),
+      // Everything left out trains as one others class, so the model can say a
+      // message is outside its scope instead of forcing it into the nearest
+      // category. Deselect it when that leftover mail is too thin to split.
+      OTHERS_CATEGORY,
+    ]),
     modelFamilies: unique(
       families
         .filter((row) => row.supported && row.configured)
@@ -129,6 +134,12 @@ export function TrainingSetup({
 
   if (!open) return null;
   const sourceKeys = unique(sources.map((row) => row.source));
+  const pickedCategories = unique(sources.map((row) => row.category)).filter(
+    (category) => selection.categories.includes(category),
+  );
+  const othersRows = sources.filter(
+    (row) => !pickedCategories.includes(row.category),
+  );
   const categoryRows = unique(sources.map((row) => row.category)).map(
     (category) => {
       const rows = sources.filter((row) => row.category === category);
@@ -152,6 +163,21 @@ export function TrainingSetup({
       };
     },
   );
+  categoryRows.push({
+    category: OTHERS_CATEGORY,
+    supported: true,
+    records: othersRows.reduce(
+      (total, row) => total + (row.record_count ?? row.sample_count),
+      0,
+    ),
+    trainable: othersRows.reduce(
+      (total, row) => total + (row.unique_trainable_count ?? row.sample_count),
+      0,
+    ),
+    bySource: othersRows.length
+      ? unique(othersRows.map((row) => row.category)).join("、")
+      : "未勾选的类别",
+  });
   const blocked = !valid
     ? "来源和类别各要至少选择一项"
     : previewing || previewKey !== selectionKey

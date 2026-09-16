@@ -2345,3 +2345,49 @@ def test_controller_restart_keeps_known_live_pid_running_past_stale_timeout(
 
     assert observed.status == "running"
     assert observed.run_id == run.run_id
+
+
+class _OthersHead(_OnlineHead):
+    def predict_result(self, result, *, index=0):
+        return TimedEmbeddingModelPrediction(
+            prediction=EmbeddingModelPrediction(
+                category="others",
+                category_probability=0.99,
+                category_probabilities={"legal": 0.01, "others": 0.99},
+                category_accepted=True,
+                important=False,
+                important_probability=0.1,
+                head_ms=4.0,
+            ),
+            timing=EmbeddingTiming(1.0, 2.0, 3.0, 4.0, 10.0),
+        )
+
+
+def test_confident_others_prediction_is_handed_to_the_agent():
+    """others means the message is outside the trained categories, so it is the
+    Agent's to classify even though the model was confident."""
+
+    latency = StageLatencyRecorder()
+    predictor = OnlineEmbeddingPredictor(
+        model_id="email-embedding-mlp-second",
+        classifier=_OthersHead(),
+        cache=_ExactCache(),
+        embedding_client=_EmbeddingClient(),
+        latency=latency,
+        clock=lambda: 100.0,
+    )
+
+    result = predictor(OnlineModelInput("outside every trained category", "input-v3"))
+
+    assert result.value is None
+    assert result.fallback_reason == "model_others"
+    assert latency.fallback_counts()["model_others"] == 1
+
+    agent_calls = []
+    routed = SequentialOnlineClassifier(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        model_predict=lambda value: result,
+        agent_classify=lambda value: agent_calls.append(value) or "agent-classified",
+    ).classify(OnlineModelInput("outside every trained category", "input-v3"))
+    assert routed.source == "agent"
+    assert routed.value == "agent-classified"
