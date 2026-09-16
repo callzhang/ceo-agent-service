@@ -132,14 +132,21 @@ export function TrainingSetup({
   const categoryKeys = unique(
     sources.filter((row) => row.supported !== false).map((row) => row.category),
   );
-  const previewReady =
-    valid &&
-    preview !== null &&
-    preview.unique_sample_count > 0 &&
-    preview.training_ready !== false &&
-    previewKey === selectionKey &&
-    !previewing &&
-    !previewError;
+  const blocked = !valid
+    ? "来源和类别各要至少选择一项"
+    : previewing || previewKey !== selectionKey
+      ? "正在按当前选择核对样本"
+      : previewError
+        ? previewError
+        : preview === null
+          ? "样本核对结果尚未返回"
+          : preview.unique_sample_count === 0
+            ? "当前选择没有可训练的样本"
+            : preview.training_ready === false
+              ? `${(preview.training_blockers || []).join("、")} 的邮件不够分成训练、验证和测试三份，请取消这些类别或补充邮件`
+              : !selection.modelFamilies.length
+                ? "至少选择一个模型家族"
+                : "";
   const toggle = (
     field: keyof TrainingSelection,
     value: string,
@@ -220,10 +227,16 @@ export function TrainingSetup({
         <SourceEvidence sources={sources} />
         <div className="email-drawer-footer">
           <p aria-live="polite">{status}</p>
+          {blocked && !busy && (
+            <p className="training-blocked" id="training-blocked" role="status">
+              还不能开始训练：{blocked}
+            </p>
+          )}
           <button
             type="button"
             className="primary-button"
-            disabled={busy || !previewReady || !selection.modelFamilies.length}
+            disabled={busy || Boolean(blocked)}
+            aria-describedby={blocked && !busy ? "training-blocked" : undefined}
             onClick={onSubmit}
           >
             {busy ? "正在提交…" : "开始训练"}

@@ -433,3 +433,56 @@ it("does not call a historical registry active model the runtime primary and loc
   expect(screen.getByRole("group", { name: "模型家族" })).toBeDisabled();
   submission.resolve({ learning: { training_status: "queued" } });
 });
+
+it("says why 开始训练 is unavailable instead of doing nothing", async () => {
+  const user = userEvent.setup();
+  api.previewEmailTraining.mockResolvedValue({
+    unique_sample_count: 1238,
+    snapshot_id: "snapshot-1",
+    snapshot_digest: "digest-1",
+    snapshot_version: "v1",
+    description_version: "d1",
+    training_ready: false,
+    training_blockers: ["external_billing:test"],
+  });
+  render(
+    <ModelTraining
+      learning={learning}
+      configs={[]}
+      reload={async () => learning}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "新建训练" }));
+  const start = await screen.findByRole("button", { name: "开始训练" });
+  await waitFor(() =>
+    expect(document.querySelector(".training-blocked")?.textContent).toContain(
+      "external_billing:test",
+    ),
+  );
+  const reason = document.querySelector(".training-blocked")!;
+  expect(reason).toHaveTextContent("还不能开始训练");
+  expect(start).toBeDisabled();
+  expect(start).toHaveAttribute("aria-describedby", reason.id);
+  expect(api.requestEmailTraining).not.toHaveBeenCalled();
+});
+
+it("keeps following a training run that started before this page was opened", async () => {
+  const running = { ...learning, active_run_id: "run-77" };
+  render(
+    <ModelTraining
+      learning={running}
+      configs={[]}
+      reload={async () => running}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+
+  const line = await screen.findByText(/训练进行中：run-77/);
+  expect(line).toHaveTextContent("独立训练进程");
+});

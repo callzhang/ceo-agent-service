@@ -142,6 +142,12 @@ export function ModelTraining({
   }
   useEffect(() => () => stopPolling(), []);
   useEffect(() => {
+    // A run started before this page was opened is still worth following: the
+    // status line used to appear only for whoever submitted it in this tab.
+    if (learning.active_run_id) beginPolling(learning.active_run_id);
+    else stopPolling();
+  }, [learning.active_run_id]);
+  useEffect(() => {
     setDetail(null);
     setDetailError("");
     if (!selected) return;
@@ -341,6 +347,12 @@ export function ModelTraining({
             ? "切换需要确认，以服务器读取结果为准。"
             : "服务器尚未允许切换；请查看晋升检查和完整性证据。"}
       </p>
+      {learning.active_run_id && (
+        <p className="training-active-run" role="status">
+          训练进行中：{learning.active_run_id} ·
+          在服务启动的独立训练进程中执行，完成后新版本会出现在下方「模型版本」。
+        </p>
+      )}
       {trainingStatus && (
         <p className="training-request-status" role="status">
           {trainingStatus}
