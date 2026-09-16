@@ -1757,6 +1757,41 @@ def register_email_routes(
             result.append(row)
         return result
 
+    def _latest_training_run(service: object) -> dict[str, object] | None:
+        """Report the newest training run so a finished one stops disappearing.
+
+        A run that fails seconds after launch clears ``active_run_id`` and left
+        the console with nothing to show, which reads as the request having
+        vanished.
+        """
+
+        controller = getattr(service, "controller", None)
+        runs = getattr(getattr(controller, "registry", None), "runs", None)
+        if not isinstance(runs, Path) or not runs.is_dir():
+            return None
+        latest: dict[str, object] | None = None
+        for path in sorted(runs.glob("*.json")):
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(row, dict):
+                continue
+            if latest is None or str(row.get("started_at") or "") > str(
+                latest.get("started_at") or ""
+            ):
+                latest = row
+        if latest is None:
+            return None
+        return {
+            "run_id": str(latest.get("run_id") or ""),
+            "status": str(latest.get("status") or ""),
+            "started_at": str(latest.get("started_at") or ""),
+            "finished_at": str(latest.get("finished_at") or ""),
+            # Written by this service's own training subprocess, not a provider.
+            "reason": str(latest.get("reason") or "")[:300],
+        }
+
     def training_controls(service, email_store, staged_evidence, registry_issues):
         from app.email_description_optimizer import description_set_digest
         from app.email_embedding_classifier import CategoryDescription
@@ -1989,6 +2024,7 @@ def register_email_routes(
                 "last_trained_at": state.last_trained_at,
                 "last_feedback_at": state.last_feedback_at,
                 "active_run_id": state.active_run_id,
+                "latest_training_run": _latest_training_run(service),
                 "models": models,
                 "staged_models": [
                     _project_staged_model_evidence(row) for row in staged_evidence

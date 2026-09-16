@@ -556,3 +556,30 @@ it("adds an others row that totals the categories left unselected", async () => 
   await user.click(others);
   expect(others).not.toBeChecked();
 });
+
+it("keeps a failed run visible with its reason instead of showing nothing", async () => {
+  const failed = {
+    ...learning,
+    active_run_id: null,
+    latest_training_run: {
+      run_id: "run-88",
+      status: "failed",
+      started_at: "2026-09-16T08:06:18Z",
+      finished_at: "2026-09-16T08:06:21Z",
+      reason: "EmailPersistenceCorruption:attempt count mismatch for action email-action:8fc9",
+    },
+  };
+  render(
+    <ModelTraining
+      learning={failed}
+      configs={[]}
+      reload={async () => failed}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+
+  const line = await screen.findByText(/上次训练（run-88）失败/);
+  expect(line).toHaveTextContent("attempt count mismatch");
+});

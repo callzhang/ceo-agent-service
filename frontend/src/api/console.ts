@@ -410,6 +410,7 @@ export interface EmailLearningEvidence {
   last_trained_at: string | null;
   last_feedback_at: string | null;
   active_run_id: string | null;
+  latest_training_run?: {run_id: string; status: string; started_at: string; finished_at: string; reason: string} | null;
   models: EmailModelEvidence[];
   training_snapshot?: { sample_count: number; [key: string]: unknown } | null;
   registry_issues: Array<{ model_id: string; integrity_status: "corrupt"; integrity_error: string }>;

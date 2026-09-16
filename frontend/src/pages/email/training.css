@@ -340,3 +340,13 @@
     font-size: 24px;
   }
 }
+.training-run-failed {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--danger, #b3261e);
+  border-radius: 6px;
+  color: var(--danger, #b3261e);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}

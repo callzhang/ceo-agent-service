@@ -353,6 +353,17 @@ export function ModelTraining({
           在服务启动的独立训练进程中执行，完成后新版本会出现在下方「模型版本」。
         </p>
       )}
+      {!learning.active_run_id &&
+        learning.latest_training_run &&
+        learning.latest_training_run.status !== "succeeded" && (
+          <p className="training-run-failed" role="status">
+            上次训练（{learning.latest_training_run.run_id}）
+            {learning.latest_training_run.status === "failed" ? "失败" : `结束于 ${learning.latest_training_run.status}`}
+            {learning.latest_training_run.reason
+              ? `：${learning.latest_training_run.reason}`
+              : "，未记录原因"}
+          </p>
+        )}
       {trainingStatus && (
         <p className="training-request-status" role="status">
           {trainingStatus}
