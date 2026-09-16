@@ -1338,6 +1338,7 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
                 "status": "degraded",
                 "instance_id": "current-instance",
                 "error_code": "provider_action_failed",
+                "error_stage": "reconcile_action_tasks",
                 "private_target": "INBOX/secret",
             }
         ),
@@ -1449,6 +1450,7 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
             "scope": "component:email-provider-actions",
             "status": "degraded",
             "error_code": "provider_action_failed",
+            "error_stage": "reconcile_action_tasks",
             "updated_at": email["checks"][0]["updated_at"],
         }
     ]
