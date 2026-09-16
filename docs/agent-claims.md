@@ -252,6 +252,23 @@ reverts committed work they did not author.
   that is a patch per case; the contract itself is still open, and Derek has
   approved making these codes a service-owned type.
 
+  **Still live, re-measured 2026-09-16 and still unowned.** Model-authored
+  codes in the last 7 days include `xiaoqing_mcp_not_injected` (7),
+  `xiaoqing_interview_mcp_not_injected` (6), `provider_not_available` (1, which
+  closed task 384271 today) and `AUTHORIZATION_REQUIRED` (5) alongside
+  `authorization_required` (12) — the same concept in two spellings, which is
+  what free text buys. `_WireBase.error_payload` in
+  `app/agent_wire_contracts.py` is the single chokepoint every model-authored
+  error passes through, and it already overrides the model for
+  `_RUNTIME_RETRYABLE_DEPENDENCY_ERRORS`, so the insertion point exists.
+
+  What blocks it is not the code, it is the taxonomy: 25 distinct codes appear
+  in 7 days across runtime, codex, unsubscribe and authorization domains, and
+  each has to be classified service-owned or model-authored before the
+  chokepoint can quarantine the rest into `source_code`. Misclassifying one
+  changes the terminal behaviour of ~7,600 runs a week. That list needs Derek
+  or a focused pass, not a guess folded into another change.
+
   **A terminal unsubscribe receipt cannot be reused across generations.**
   `get_email_unsubscribe_terminal_snapshot` checks the durable claim's Audit
   lineage against the task's current `execution_generation`
@@ -262,6 +279,16 @@ reverts committed work they did not author.
   `awaiting_audit`; for one that is `done`/`terminal` it turns an idempotency
   record into an error. Tasks 383232 and 383234 hit this with real
   `skipped_login_required` receipts.
+
+  **Closed 2026-09-16, verified against the live database.** The generation
+  check now reads the task's generation as it is *right now* and requires the
+  caller to be current, while allowing a receipt earned in an earlier
+  generation — see the `lineage_live_task_generation` comment in
+  `_validate_email_unsubscribe_effect_audit_lineage`. Evidence: task 383232 is
+  `skipped` and 383234 is `done`, both with no error; all 123 email tasks are
+  terminal (110 done, 13 skipped, 0 failed); and `errors` holds exactly one
+  `EmailPersistenceCorruption` ever, last written 2026-09-11 03:53, the day
+  this finding was recorded. No code change needed — this entry was stale.
 
   **Persisted Consumer results predating `310234e8` no longer parse.** That
   commit made `risk`, `confidence`, `rule_coverage` and
