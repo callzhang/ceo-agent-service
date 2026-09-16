@@ -98,8 +98,20 @@ export function ModelTraining({
           (model) => !models.some((item) => item.model_id === model.model_id),
         )
         .map((model) => ({ kind: "historical" as const, model })),
+      // A run that produced no model still belongs here: otherwise a training
+      // attempt that failed leaves no trace of having happened at all.
+      ...(learning.training_runs_without_model || []).map((run) => ({
+        kind: "run" as const,
+        model: {
+          model_id: run.run_id,
+          model_family: "未产出模型",
+          status: run.status,
+          trained_at: run.started_at,
+        },
+        reason: run.reason,
+      })),
     ],
-    [models, learning.models],
+    [models, learning.models, learning.training_runs_without_model],
   );
   const families = Array.from(
     new Set(allVersions.map((item) => item.model.model_family || "未提供")),
@@ -353,17 +365,6 @@ export function ModelTraining({
           在服务启动的独立训练进程中执行，完成后新版本会出现在下方「模型版本」。
         </p>
       )}
-      {!learning.active_run_id &&
-        learning.latest_training_run &&
-        learning.latest_training_run.status !== "succeeded" && (
-          <p className="training-run-failed" role="status">
-            上次训练（{learning.latest_training_run.run_id}）
-            {learning.latest_training_run.status === "failed" ? "失败" : `结束于 ${learning.latest_training_run.status}`}
-            {learning.latest_training_run.reason
-              ? `：${learning.latest_training_run.reason}`
-              : "，未记录原因"}
-          </p>
-        )}
       {trainingStatus && (
         <p className="training-request-status" role="status">
           {trainingStatus}
@@ -397,11 +398,13 @@ export function ModelTraining({
       </section>
       <div className="training-middle">
         <ModelTrend
-          models={allVersions.map((item) =>
-            item.kind === "staged"
-              ? item.model
-              : legacyModelForTrend(item.model),
-          )}
+          models={allVersions
+            .filter((item) => item.kind !== "run")
+            .map((item) =>
+              item.kind === "staged"
+                ? item.model
+                : legacyModelForTrend(item.model),
+            )}
           config={learning.promotion_gate?.config}
         />
         <aside className="training-gate-summary">
@@ -516,32 +519,47 @@ export function ModelTraining({
                     </td>
                     <td>{item.model.model_family || "未提供"}</td>
                     <td>
-                      {item.kind === "historical"
+                      {item.kind === "run"
+                        ? item.model.status === "failed"
+                          ? "训练失败"
+                          : `训练${item.model.status || "未提供"}`
+                        : item.kind === "historical"
                         ? `历史版本 · ${item.model.status || "未提供"}`
                         : `${statusLabel(item.model.status)}${runtime?.active_model_id === item.model.model_id ? " · 当前运行主模型" : ""}`}
                     </td>
                     <td>{localTime(item.model.trained_at)}</td>
                     <td>
-                      {item.kind === "staged"
-                        ? (item.model.training?.sample_count ?? "未测量")
-                        : (item.model.sample_count ?? "未测量")}
+                      {item.kind === "run"
+                        ? "未产出"
+                        : item.kind === "staged"
+                          ? (item.model.training?.sample_count ?? "未测量")
+                          : (item.model.sample_count ?? "未测量")}
                     </td>
                     <td>
-                      {measured(
-                        item.kind === "staged"
-                          ? item.model.metrics?.micro_f1
-                          : item.model.micro_f1,
-                      )}
+                      {item.kind === "run"
+                        ? "未产出"
+                        : measured(
+                            item.kind === "staged"
+                              ? item.model.metrics?.micro_f1
+                              : item.model.micro_f1,
+                          )}
                     </td>
                     <td>
-                      {measured(
-                        item.kind === "staged"
-                          ? item.model.end_to_end_latency_ms?.p95
-                          : item.model.prediction_latency_p95_ms,
-                        " ms",
-                      )}
+                      {item.kind === "run"
+                        ? "未产出"
+                        : measured(
+                            item.kind === "staged"
+                              ? item.model.end_to_end_latency_ms?.p95
+                              : item.model.prediction_latency_p95_ms,
+                            " ms",
+                          )}
                     </td>
                     <td>
+                      {item.kind === "run" ? (
+                        <span className="training-run-reason">
+                          {item.reason || "未记录原因"}
+                        </span>
+                      ) : (
                       <button
                         className="compact-button"
                         aria-label={
@@ -560,6 +578,7 @@ export function ModelTraining({
                       >
                         查看
                       </button>
+                      )}
                     </td>
                   </tr>
                 ))}

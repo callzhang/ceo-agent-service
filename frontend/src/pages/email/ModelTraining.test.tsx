@@ -557,17 +557,19 @@ it("adds an others row that totals the categories left unselected", async () => 
   expect(others).not.toBeChecked();
 });
 
-it("keeps a failed run visible with its reason instead of showing nothing", async () => {
+it("lists a run that produced no model in the version table with its reason", async () => {
   const failed = {
     ...learning,
     active_run_id: null,
-    latest_training_run: {
-      run_id: "run-88",
-      status: "failed",
-      started_at: "2026-09-16T08:06:18Z",
-      finished_at: "2026-09-16T08:06:21Z",
-      reason: "EmailPersistenceCorruption:attempt count mismatch for action email-action:8fc9",
-    },
+    training_runs_without_model: [
+      {
+        run_id: "run-88",
+        status: "failed",
+        started_at: "2026-09-16T08:06:18Z",
+        finished_at: "2026-09-16T08:06:21Z",
+        reason: "RuntimeError:training selection categories are unavailable",
+      },
+    ],
   };
   render(
     <ModelTraining
@@ -580,6 +582,8 @@ it("keeps a failed run visible with its reason instead of showing nothing", asyn
     />,
   );
 
-  const line = await screen.findByText(/上次训练（run-88）失败/);
-  expect(line).toHaveTextContent("attempt count mismatch");
+  const row = (await screen.findByText("run-88")).closest("tr")!;
+  expect(row).toHaveTextContent("训练失败");
+  expect(row).toHaveTextContent("未产出模型");
+  expect(row).toHaveTextContent("training selection categories are unavailable");
 });
