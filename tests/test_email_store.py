@@ -210,8 +210,9 @@ def test_training_snapshot_migration_preserves_existing_rows(tmp_path: Path):
     assert "email_training_snapshots" in tables
     assert "email_training_snapshot_observations" in tables
     assert preserved_model_text == "__subject__preserved migration row"
-    assert versions == list(range(22, 39))
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 38
+    assert versions == list(
+        range(22, email_store_module.EMAIL_SCHEMA_VERSION + 1)
+    )
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select frozen from email_training_snapshots").fetchall() == []
@@ -252,7 +253,7 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
             for row in db.execute(
                 "select version from email_schema_migrations order by version"
             )
-        ] == list(range(23, 39))
+        ] == list(range(23, email_store_module.EMAIL_SCHEMA_VERSION + 1))
 
 
 def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path):
@@ -309,7 +310,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == list(range(23, 39))
+    ] == list(range(23, email_store_module.EMAIL_SCHEMA_VERSION + 1))
 
 
 def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
@@ -3347,8 +3348,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_40() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 40
+def test_email_schema_version_is_41() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 41
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:
@@ -4105,30 +4106,8 @@ def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
                 "select version from email_schema_migrations order by version"
             )
         ] == [
-            16,
-            17,
-            18,
-            19,
-            20,
-            21,
-            22,
-            23,
-            24,
-            25,
-            26,
-            27,
-            28,
-            29,
-            30,
-            31,
-            32,
-            33,
-            34,
-            35,
-            36,
-            37,
-            38,
-        ]
+        *range(16, email_store_module.EMAIL_SCHEMA_VERSION + 1),
+    ]
         assert {
             row[1]
             for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
@@ -4367,29 +4346,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
         )
     ] == [
         2,
-        16,
-        17,
-        18,
-        19,
-        20,
-        21,
-        22,
-        23,
-        24,
-        25,
-        26,
-        27,
-        28,
-        29,
-        30,
-        31,
-        32,
-        33,
-        34,
-        35,
-        36,
-        37,
-        38,
+        *range(16, email_store_module.EMAIL_SCHEMA_VERSION + 1),
     ]
 
     EmailStore(database)
@@ -4454,30 +4411,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
             "select version from email_schema_migrations order by version",
         )
     ] == [
-        15,
-        16,
-        17,
-        18,
-        19,
-        20,
-        21,
-        22,
-        23,
-        24,
-        25,
-        26,
-        27,
-        28,
-        29,
-        30,
-        31,
-        32,
-        33,
-        34,
-        35,
-        36,
-        37,
-        38,
+        *range(15, email_store_module.EMAIL_SCHEMA_VERSION + 1),
     ]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
@@ -4882,29 +4816,7 @@ def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
             "select version from email_schema_migrations order by version",
         )
     ] == [
-        16,
-        17,
-        18,
-        19,
-        20,
-        21,
-        22,
-        23,
-        24,
-        25,
-        26,
-        27,
-        28,
-        29,
-        30,
-        31,
-        32,
-        33,
-        34,
-        35,
-        36,
-        37,
-        38,
+        *range(16, email_store_module.EMAIL_SCHEMA_VERSION + 1),
     ]
 
 
@@ -7660,6 +7572,9 @@ def test_startup_rejects_action_attempt_count_mismatch(tmp_path: Path):
     database = tmp_path / "attempt-count.sqlite3"
     _, action_id = _create_action_with_attempts(database, ("done",))
     with sqlite3.connect(database) as db:
+        # The write-time guard exists to stop exactly this; drop it to seed the
+        # drift a past write left behind and prove startup still refuses it.
+        db.execute("drop trigger trg_email_action_attempt_count_update")
         db.execute(
             "update email_actions set attempt_count=2 where action_id=?",
             (action_id,),
@@ -9559,7 +9474,6 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
 
     migrated = EmailStore(database)
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 38
     assert migrated.get_account("primary")["imap_move_mode"] == "copy_as_move"
     assert (
         migrated.list_account_folder_bindings("junk")[0]["provider_folder_id"]
@@ -9926,7 +9840,11 @@ def test_v36_drops_policy_keys_from_immutable_email_task_inputs(tmp_path: Path) 
         }
     )
     with sqlite3.connect(database) as db:
-        db.execute("update email_schema_migrations set version=35 where version=38")
+        db.execute("delete from email_schema_migrations where version > 35")
+        db.execute(
+            "insert or ignore into email_schema_migrations(version, applied_at) "
+            "values (35, '2026-09-01 00:00:00')"
+        )
         db.execute(
             """
             insert into reply_task_inputs (
@@ -9959,7 +9877,7 @@ def test_v36_drops_policy_keys_from_immutable_email_task_inputs(tmp_path: Path) 
     assert "unsubscribe_network_policy_reference" not in payload
     assert "unsubscribe_network_policy_origin_references" not in payload
     assert payload["action_type"] == "unsubscribe"
-    assert versions[-1] == 38
+    assert versions[-1] == email_store_module.EMAIL_SCHEMA_VERSION
 
 
 def _fd_regression_account_values() -> dict[str, object]:
