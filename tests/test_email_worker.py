@@ -633,6 +633,34 @@ def test_training_maintenance_repairs_tasks_even_when_runtime_tick_fails():
     assert calls == ["runtime", "reconcile"]
 
 
+def test_training_maintenance_marks_failure_stage_for_health_projection():
+    module = _module()
+    error = RuntimeError("training failed")
+
+    with pytest.raises(RuntimeError) as raised:
+        module.run_model_training_maintenance(
+            SimpleNamespace(tick=lambda: (_ for _ in ()).throw(error)),
+            reconcile_action_tasks_once=lambda: None,
+        )
+
+    assert raised.value is error
+    assert error.ceo_training_stage == "active_model_tick"
+
+
+def test_training_health_error_includes_safe_failure_stage():
+    module = _module()
+    error = RuntimeError("private details")
+    error.ceo_training_stage = "reconcile_action_tasks"
+
+    assert module._training_health_error(error) == {
+        "status": "degraded",
+        "failures": 1,
+        "error_code": "training_runtime_error",
+        "error_type": "RuntimeError",
+        "error_stage": "reconcile_action_tasks",
+    }
+
+
 @pytest.mark.parametrize("conflict", ("model_id", "category", "important", "plan_version"))
 def test_model_accept_stable_readback_conflict_fails_closed_without_agent(
     tmp_path, conflict

@@ -1103,6 +1103,19 @@ def _safe_health_error(exc: Exception) -> dict[str, object]:
     }
 
 
+def _training_health_error(exc: Exception) -> dict[str, object]:
+    payload = {
+        "status": "degraded",
+        "failures": 1,
+        "error_code": "training_runtime_error",
+        "error_type": type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH],
+    }
+    stage = getattr(exc, "ceo_training_stage", "")
+    if stage:
+        payload["error_stage"] = str(stage)[:MAX_HEALTH_TEXT_LENGTH]
+    return payload
+
+
 def _health_error_code(value: object, *, fallback: str) -> str:
     candidate = str(value or "").strip().casefold()
     if not candidate or not candidate.replace("_", "").isalnum():
@@ -1921,15 +1934,7 @@ def run_training_scheduler_loop(
         try:
             training_tick()
         except Exception as exc:  # noqa: BLE001 - keep the component alive
-            record_health(
-                "component:email-training",
-                {
-                    "status": "degraded",
-                    "failures": 1,
-                    "error_code": "training_runtime_error",
-                    "error_type": type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH],
-                },
-            )
+            record_health("component:email-training", _training_health_error(exc))
         else:
             record_health(
                 "component:email-training",
@@ -1954,12 +1959,14 @@ def run_model_training_maintenance(
         return active_model.tick()
     except BaseException as exc:
         runtime_error = exc
+        setattr(exc, "ceo_training_stage", "active_model_tick")
         raise
     finally:
         try:
             reconcile_action_tasks_once()
-        except BaseException:
+        except BaseException as exc:
             if runtime_error is None:
+                setattr(exc, "ceo_training_stage", "reconcile_action_tasks")
                 raise
 
 
