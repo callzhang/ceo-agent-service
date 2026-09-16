@@ -206,10 +206,43 @@ function formatToolPayload(raw: unknown, { unwrapResult = false }: { unwrapResul
   if (typeof parsed === "string") return parsed || "未提供";
   if (parsed === null || parsed === undefined) return "未提供";
   try {
-    return JSON.stringify(parsed, null, 2);
+    return prettyPrintPreservingNewlines(parsed);
   } catch {
     return displayValue(parsed);
   }
+}
+
+// JSON.stringify escapes a real newline inside a string value as the two
+// characters \n - correct JSON, unreadable when that string is a multi-line
+// script or a long paragraph (a "code" argument to a REPL tool, for one).
+// This mirrors JSON.stringify(value, null, 2) except a string containing a
+// newline is written with its real line breaks instead of escaped - no
+// longer strictly valid JSON, but nothing here is fed back into a parser;
+// it only has to be read.
+function prettyPrintPreservingNewlines(value: unknown, indent = 0): string {
+  const pad = "  ".repeat(indent);
+  const childPad = "  ".repeat(indent + 1);
+  if (typeof value === "string") {
+    if (!value.includes("\n")) return JSON.stringify(value);
+    return value.split("\n").map((line) => childPad + line).join("\n");
+  }
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    const items = value.map((item) => childPad + prettyPrintPreservingNewlines(item, indent + 1));
+    return `[\n${items.join(",\n")}\n${pad}]`;
+  }
+  const keys = Object.keys(value as Record<string, unknown>);
+  if (keys.length === 0) return "{}";
+  const items = keys.map((key) => {
+    const rendered = prettyPrintPreservingNewlines((value as Record<string, unknown>)[key], indent + 1);
+    // Only a multi-line string breaks onto its own line (it starts with
+    // childPad, having no quote/brace/bracket of its own); a nested object
+    // or array keeps the usual `"key": {` on one line.
+    const isMultilineString = rendered.startsWith(childPad);
+    return `${childPad}${JSON.stringify(key)}:${isMultilineString ? "\n" : " "}${rendered}`;
+  });
+  return `{\n${items.join(",\n")}\n${pad}}`;
 }
 
 function ToolUseList({ uses }: { uses: AttemptToolUse[] }) {

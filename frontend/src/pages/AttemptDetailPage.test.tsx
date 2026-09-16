@@ -623,6 +623,38 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText(/No such file or directory/)).toBeInTheDocument();
   });
 
+  it("shows a multi-line code argument with real line breaks, not escaped \\n", async () => {
+    const code = 'const result = {\n  outcome: "no_action",\n  summary: "test"\n};\nconsole.log(JSON.stringify(result, null, 2));';
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        agent_sessions: [],
+        tool_uses: [
+          {
+            title: "js",
+            tool: "js",
+            call_id: "call-repl",
+            relevance: "",
+            source: "node_repl · js",
+            args: { code },
+            format: "json",
+            output: JSON.stringify({ outcome: "no_action", summary: "test" }, null, 2),
+          },
+        ],
+      },
+      meta: { snapshot_at: "2026-09-16T00:00:00Z" },
+    });
+    renderPage();
+
+    await screen.findByRole("heading", { name: "处理历史" });
+    // JSON.stringify would have shown this whole script as one line with
+    // literal \n between statements - the point is real line breaks instead.
+    const block = screen.getByText(/const result = \{/);
+    expect(block.textContent).toContain("const result = {\n");
+    expect(block.textContent).toContain('outcome: "no_action",\n');
+    expect(block.textContent).not.toContain("\\n");
+  });
+
   it("keeps every post-header section inside the main and sidebar columns", async () => {
     renderPage();
 
