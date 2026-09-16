@@ -474,6 +474,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "provider_folder_name": ("text", False, None),
         "category_key": ("text", False, None),
         "important": ("integer", False, None),
+        "important_signals_json": ("text", False, None),
         "observed_at": ("text", True, None),
     },
     "email_training_snapshot_observations": {
@@ -713,6 +714,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "trim(stable_message_identity) != ''",
         "state in ('available','unavailable','excluded')",
         "important is null or important in (0, 1)",
+        "important_signals_json is null or json_valid(important_signals_json)",
         "trim(observed_at) != ''",
     ),
     "email_training_snapshot_observations": (
@@ -2841,6 +2843,7 @@ class EmailStore:
             db.execute("begin")
             latest_version = self._read_schema_version(db)
             if latest_version == EMAIL_SCHEMA_VERSION:
+                self._ensure_provider_observation_signal_column(db)
                 self._validate_durable_state(db)
                 return
             if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
@@ -2865,6 +2868,7 @@ class EmailStore:
                     f"this runtime supports {EMAIL_SCHEMA_VERSION}"
                 )
             if latest_version == EMAIL_SCHEMA_VERSION:
+                self._ensure_provider_observation_signal_column(db)
                 self._validate_durable_state(db)
                 return
             legacy_reply_claims = False
@@ -2890,6 +2894,7 @@ class EmailStore:
             self._ensure_training_snapshot_frozen_column(db)
             self._ensure_training_snapshot_watermark_columns(db)
             self._ensure_email_account_move_mode_column(db)
+            self._ensure_provider_observation_signal_column(db)
             if legacy_reply_claims:
                 self._finish_v8_reply_claim_migration(db)
             if legacy_unsubscribe_claims:
@@ -2988,15 +2993,15 @@ class EmailStore:
                 latest_version = 37
             if latest_version == 37:
                 self._migrate_v37_to_v38(db, replace_version=is_prototype)
+                latest_version = 38
+            if latest_version == 38:
+                self._migrate_v38_to_v39(db, replace_version=is_prototype)
+                latest_version = 39
             self._validate_durable_state(db)
 
     @classmethod
     def _prepare_v8_reply_claim_migration(cls, db: sqlite3.Connection) -> bool:
         if "email_reply_dispatch_claims" not in {
-                latest_version = 38
-            if latest_version == 38:
-                self._migrate_v38_to_v39(db, replace_version=is_prototype)
-                latest_version = 39
             row["name"]
             for row in db.execute("select name from sqlite_master where type='table'")
         }:
@@ -4513,6 +4518,18 @@ class EmailStore:
             ),
         )
 
+    @classmethod
+    def _ensure_provider_observation_signal_column(cls, db: sqlite3.Connection) -> None:
+        cls._ensure_column(
+            db,
+            table="email_provider_observations",
+            column="important_signals_json",
+            declaration=(
+                "text check(important_signals_json is null or "
+                "json_valid(important_signals_json))"
+            ),
+        )
+
     def _migrate_v32_to_v33(
         self, db: sqlite3.Connection, *, replace_version: bool = False
     ) -> None:
@@ -4934,23 +4951,6 @@ class EmailStore:
                 )
             ]
 
-    @staticmethod
-    def _validate_model_promotion_values(
-        *,
-        micro_f1_min: float,
-        category_precision_min: float,
-        category_validation_samples_min: int,
-        p95_latency_max_ms: float,
-    ) -> None:
-        for field, value, minimum, maximum in (
-            ("micro_f1_min", micro_f1_min, 0, 1),
-            ("category_precision_min", category_precision_min, 0, 1),
-            ("p95_latency_max_ms", p95_latency_max_ms, 0, 1.7976931348623157e308),
-        ):
-            if (
-                type(value) not in (int, float)
-                or not minimum <= value <= maximum
-                or not math.isfinite(value)
     def _migrate_v38_to_v39(
         self, db: sqlite3.Connection, *, replace_version: bool = False
     ) -> None:
@@ -4983,6 +4983,23 @@ class EmailStore:
                 (self._now(),),
             )
 
+    @staticmethod
+    def _validate_model_promotion_values(
+        *,
+        micro_f1_min: float,
+        category_precision_min: float,
+        category_validation_samples_min: int,
+        p95_latency_max_ms: float,
+    ) -> None:
+        for field, value, minimum, maximum in (
+            ("micro_f1_min", micro_f1_min, 0, 1),
+            ("category_precision_min", category_precision_min, 0, 1),
+            ("p95_latency_max_ms", p95_latency_max_ms, 0, 1.7976931348623157e308),
+        ):
+            if (
+                type(value) not in (int, float)
+                or not minimum <= value <= maximum
+                or not math.isfinite(value)
             ):
                 raise ValueError(f"{field} must be a finite number in range")
         if p95_latency_max_ms <= 0:
@@ -5696,6 +5713,8 @@ class EmailStore:
                 provider_folder_name text,
                 category_key text,
                 important integer check(important is null or important in (0, 1)),
+                important_signals_json text
+                    check(important_signals_json is null or json_valid(important_signals_json)),
                 observed_at text not null check(trim(observed_at) != ''),
                 primary key(account_id, stable_message_identity)
             )
@@ -13664,8 +13683,8 @@ class EmailStore:
                 return {"state": "unavailable", "reason": "classification_missing"}
             row = db.execute(
                 """
-                select state, category_key, important, provider_folder_id,
-                       provider_folder_name, observed_at
+                select state, category_key, important, important_signals_json,
+                       provider_folder_id, provider_folder_name, observed_at
                 from email_provider_observations
                 where account_id=? and stable_message_identity=?
                 """,
@@ -13690,10 +13709,42 @@ class EmailStore:
             if category_key is not None
             else "unclassified"
         )
+        raw_signals: list[str] | None = None
+        starred: bool | None = None
+        important_flag: bool | None = None
+        if row["important_signals_json"] is not None:
+            try:
+                decoded_signals = json.loads(row["important_signals_json"])
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise EmailPersistenceCorruption(
+                    "provider important signals are not valid JSON"
+                ) from exc
+            if not isinstance(decoded_signals, list) or not all(
+                isinstance(value, str) and value.strip() for value in decoded_signals
+            ):
+                raise EmailPersistenceCorruption(
+                    "provider important signals have invalid shape"
+                )
+            raw_signals = decoded_signals
+            normalized_signals = {value.casefold() for value in raw_signals}
+            star_names = {r"\flagged", "starred"}
+            important_flag_names = {
+                "$important",
+                r"\important",
+                "important",
+                "importance=high",
+            }
+            recognized_names = star_names | important_flag_names
+            if not raw_signals or normalized_signals & recognized_names:
+                starred = bool(star_names & normalized_signals)
+                important_flag = bool(important_flag_names & normalized_signals)
         return {
             "state": state,
             "category_key": category_key,
             "important": bool(row["important"]),
+            "important_signals": raw_signals,
+            "starred": starred,
+            "important_flag": important_flag,
             "provider_folder_id": row["provider_folder_id"],
             "provider_folder_name": row["provider_folder_name"],
             "observed_at": row["observed_at"],
@@ -13742,10 +13793,16 @@ class EmailStore:
                 category_key = None
             signals = observation.get("important_signals")
             important_value = getattr(signals, "provider_important", None)
+            raw_signal_names = getattr(signals, "raw_signal_names", ())
             if isinstance(signals, Mapping):
                 important_value = signals.get("provider_important")
+                raw_signal_names = signals.get("raw_signal_names", ())
             if type(important_value) is not bool:
                 raise ValueError("provider important state is invalid")
+            if not isinstance(raw_signal_names, (list, tuple)) or not all(
+                isinstance(value, str) and value.strip() for value in raw_signal_names
+            ):
+                raise ValueError("provider important signals are invalid")
             rows.append(
                 (
                     account_id,
@@ -13755,6 +13812,7 @@ class EmailStore:
                     folder_name,
                     category_key,
                     int(important_value),
+                    _json_dump(list(raw_signal_names)),
                     observed_at,
                 )
             )
@@ -13772,14 +13830,15 @@ class EmailStore:
                 insert into email_provider_observations (
                     account_id, stable_message_identity, state,
                     provider_folder_id, provider_folder_name, category_key,
-                    important, observed_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                    important, important_signals_json, observed_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(account_id, stable_message_identity) do update set
                     state=excluded.state,
                     provider_folder_id=excluded.provider_folder_id,
                     provider_folder_name=excluded.provider_folder_name,
                     category_key=excluded.category_key,
                     important=excluded.important,
+                    important_signals_json=excluded.important_signals_json,
                     observed_at=excluded.observed_at
                 """,
                 rows,
@@ -13799,7 +13858,8 @@ class EmailStore:
                     db.execute(
                         "update email_provider_observations set state='unavailable', "
                         "provider_folder_id=null, provider_folder_name=null, "
-                        "category_key=null, important=null, observed_at=? "
+                        "category_key=null, important=null, important_signals_json=null, "
+                        "observed_at=? "
                         "where account_id=? and provider_folder_id=? and "
                         f"stable_message_identity not in ({placeholders})",
                         (observed_at, account_id, folder_id, *sorted(identities)),
@@ -13808,7 +13868,8 @@ class EmailStore:
                     db.execute(
                         "update email_provider_observations set state='unavailable', "
                         "provider_folder_id=null, provider_folder_name=null, "
-                        "category_key=null, important=null, observed_at=? "
+                        "category_key=null, important=null, important_signals_json=null, "
+                        "observed_at=? "
                         "where account_id=? and provider_folder_id=?",
                         (observed_at, account_id, folder_id),
                     )
@@ -13818,7 +13879,8 @@ class EmailStore:
                     db.execute(
                         "update email_provider_observations set state='unavailable', "
                         "provider_folder_id=null, provider_folder_name=null, "
-                        "category_key=null, important=null, observed_at=? "
+                        "category_key=null, important=null, "
+                        "important_signals_json=null, observed_at=? "
                         f"where account_id not in ({placeholders})",
                         (observed_at, *active_accounts),
                     )
@@ -13826,7 +13888,7 @@ class EmailStore:
                     db.execute(
                         "update email_provider_observations set state='unavailable', "
                         "provider_folder_id=null, provider_folder_name=null, "
-                        "category_key=null, important=null, observed_at=?",
+                        "category_key=null, important=null, important_signals_json=null, observed_at=?",
                         (observed_at,),
                     )
             for value in unavailable:
@@ -13837,6 +13899,7 @@ class EmailStore:
                     """
                     update email_provider_observations
                     set state='unavailable', category_key=null, important=null,
+                        important_signals_json=null,
                         observed_at=?
                     where account_id=? and provider_folder_id=?
                     """,

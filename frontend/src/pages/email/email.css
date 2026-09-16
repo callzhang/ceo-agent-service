@@ -4,7 +4,7 @@
 .email-list-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 40px; margin-bottom: 8px; }
 .email-list-toolbar label { display: flex; align-items: center; gap: 6px; }
 .email-row-list { min-width: 0; }
-.email-dense-row { width: 100%; height: 44px; min-height: 44px; display: grid; grid-template-columns: 24px minmax(120px, 17%) minmax(180px, 1fr) minmax(120px, 16%) 110px 92px; gap: 8px; align-items: center; text-align: left; padding: 0 10px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.email-dense-row { width: 100%; height: 44px; min-height: 44px; display: grid; grid-template-columns: 38px minmax(120px, 17%) minmax(180px, 1fr) minmax(120px, 16%) 110px 92px; gap: 8px; align-items: center; text-align: left; padding: 0 10px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
 .email-dense-row > span, .email-dense-row time { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .email-dense-row[aria-pressed="true"] { background: var(--accent-soft, #e9efff); }
 .email-dense-row:hover { background: var(--surface-muted); }
@@ -59,9 +59,9 @@
 }
 .email-trend-chart { width: 100%; min-width: 0; height: 240px; }
 .email-dense-list button:focus-visible, .email-detail-drawer :focus-visible, .email-training :focus-visible, .email-tabs :focus-visible { outline: 2px solid var(--accent, #4263eb); outline-offset: -2px; }
-@media(max-width: 1100px) { .email-dense-row { grid-template-columns: 20px 110px minmax(100px, 1fr) 120px 90px 105px; gap: 7px; } }
+@media(max-width: 1100px) { .email-dense-row { grid-template-columns: 32px 110px minmax(100px, 1fr) 120px 90px 105px; gap: 7px; } }
 @media(max-width: 759px) {
-  .email-dense-row { grid-template-columns: 20px minmax(90px, 1fr) minmax(65px, 100px) 75px; gap: 6px; padding: 0 5px; }
+  .email-dense-row { grid-template-columns: 32px minmax(90px, 1fr) minmax(65px, 100px) 75px; gap: 6px; padding: 0 5px; }
   .email-row-sender, .email-row-status { display: none; }
   .email-mobile-sender { display: inline; }
   .email-detail-drawer { width: 100vw; box-sizing: border-box; padding: 20px; }
@@ -91,7 +91,7 @@
 .email-workspace button:disabled { opacity: .45; cursor: default; }
 .email-workspace .email-list-toolbar { font-size: 12px; gap: 6px; }
 .email-workspace .email-dense-row { height: 48px; padding-inline: 14px; }
-.email-workspace.has-reading .email-dense-row { grid-template-columns: 18px minmax(75px, 25%) minmax(0, 1fr) 64px; gap: 8px; }
+.email-workspace.has-reading .email-dense-row { grid-template-columns: 38px minmax(75px, 25%) minmax(0, 1fr) 64px; gap: 8px; }
 .email-workspace.has-reading .email-row-category, .email-workspace.has-reading .email-row-status { display: none; }
 .email-workspace.has-reading .email-dense-row time { font-size: 11px; }
 .email-reading { min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel, #fff); overflow-wrap: anywhere; position: sticky; top: 76px; max-height: calc(100dvh - 92px); overflow: auto; }
@@ -108,6 +108,8 @@
 .email-reading-actions form { display: flex; gap: 8px; align-items: center; }
 .email-reading-actions select { min-width: 125px; }
 .email-reading-actions .primary-button { font-size: 13px; padding: 8px 14px; border-radius: 6px; }
+.email-important-signals { display: inline-flex; align-items: center; justify-content: center; gap: 3px; color: var(--ink-soft); }
+.email-important-signals svg, .email-important-state svg { flex: 0 0 auto; }
 .email-important-state { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: 12px; }
 .email-classification-details { margin-top: 14px; border-radius: 6px; background: var(--surface-muted); padding: 10px 12px; font-size: 12px; }
 .email-classification-details summary span { float: right; color: var(--ink-soft); }

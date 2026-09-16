@@ -978,6 +978,37 @@ def _persist_scan(
     )
 
 
+def test_provider_observation_preserves_star_and_flag_signals(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "provider-signals.sqlite3")
+    classification = _classification(status=EmailClassificationStatus.PENDING_FEEDBACK)
+    persisted = _persist_scan(store, classification)
+
+    store.record_current_provider_observations(
+        [
+            {
+                "account_id": "dingtalk-account",
+                "stable_message_identity": persisted["stable_message_identity"],
+                "provider_folder_id": "folder-work",
+                "provider_folder_name": "Work",
+                "folder_role": FolderRole.CATEGORY,
+                "bound_category_key": "work",
+                "folder_binding_status": "active",
+                "important_signals": ImportantSignals((r"\Flagged", "$Important"), True),
+            }
+        ],
+        unavailable_folders=(),
+        observed_at="2026-09-15T12:00:00+00:00",
+    )
+
+    state = store.get_provider_classification_state(int(persisted["id"]))
+
+    assert state["important_signals"] == [r"\Flagged", "$Important"]
+    assert state["starred"] is True
+    assert state["important_flag"] is True
+
+
 def test_classification_body_display_removes_html_style_payload(
     tmp_path: Path,
 ) -> None:

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Flag, Star } from "lucide-react";
 import { confirmEmailClassification, getEmailClassification, listEmailClassifications, type EmailCategoryConfig, type EmailClassificationDetail, type EmailClassificationItem, type EmailClassificationStatus } from "../../api/console";
 import { EmailReadingPanel } from "./EmailReadingPanel";
 import { configurableCategories, errorMessage, localTime, measured, sourceLabel, statusLabel } from "./shared";
@@ -103,7 +104,16 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
     {!loading&&!error&&!rows.length&&<p className="page-state">{query.trim()?"未找到匹配邮件":status==="pending_feedback"?"当前没有待确认邮件":status==="unsubscribe"?"当前没有退订记录":"当前没有邮件"}</p>}
     <div className="email-row-list" aria-busy={loading}>
       {rows.map(item=><button type="button" key={item.id} ref={element=>{if(element)rowRefs.current.set(item.id,element);else rowRefs.current.delete(item.id);}} aria-label={`打开邮件 ${item.subject || "无主题"}`} aria-pressed={selected===item.id} disabled={saving||loading} className="email-dense-row" onClick={()=>{navigate(page,pageSize,item.id);setClosed("");setSaved(false);}}>
-        <span title={item.important==null?"重要状态未知":item.important?"重要 · Star / Flag":"未标记重要"} aria-label={item.important==null?"重要状态未知":item.important?"重要":"未标记重要"}>{item.important==null?"?":item.important?"★":"☆"}</span>
+        {(() => {
+          const provider = item.provider_classification;
+          const signalsAvailable = provider && ("starred" in provider || "important_flag" in provider);
+          const starLabel = provider?.starred == null ? "未知" : provider.starred ? "已标星" : "未标星";
+          const flagLabel = provider?.important_flag == null ? "未知" : provider.important_flag ? "已标记" : "未标记";
+          return <span className="email-important-signals" title={signalsAvailable ? `Star：${starLabel} · Flag：${flagLabel}` : "Star / Flag 状态未知"} aria-label={signalsAvailable ? `Star：${starLabel}，Flag：${flagLabel}` : "重要状态未知"}>
+            <Star size={14} fill={provider?.starred === true ? "currentColor" : "none"} aria-hidden="true"/>
+            <Flag size={14} fill={provider?.important_flag === true ? "currentColor" : "none"} aria-hidden="true"/>
+          </span>;
+        })()}
         <span className="email-row-sender" title={item.sender}>{item.sender || "未提供发件人"}</span>
         <span className="email-row-content"><span className="email-mobile-sender">{item.sender} · </span><strong>{item.subject || "无主题"}</strong><span className="email-row-original-text">{item.message_text || "未提供正文"}</span></span>
         <span className="email-row-category" title={status==="unsubscribe"?"退订任务":categoryLabel(item.category)}>{status==="unsubscribe"?"退订任务":item.status==="pending_feedback"?"建议：":""}{status!=="unsubscribe"&&categoryLabel(item.category)}{status!=="unsubscribe"&&item.status==="pending_feedback"&&<small> · {measured(item.confidence)}</small>}</span>

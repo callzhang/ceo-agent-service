@@ -306,6 +306,9 @@ export interface EmailProviderClassification {
   state: string;
   category_key: string | null;
   important: boolean | null;
+  important_signals?: string[] | null;
+  starred?: boolean | null;
+  important_flag?: boolean | null;
   [key: string]: unknown;
 }
 export interface EmailCategoryConfig {
