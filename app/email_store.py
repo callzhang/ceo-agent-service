@@ -67,7 +67,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 38
+EMAIL_SCHEMA_VERSION = 39
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -170,7 +170,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
     },
     "email_model_promotion_configs": {
         "config_version": ("text", True, None),
-        "macro_f1_min": ("real", True, None),
+        "micro_f1_min": ("real", True, None),
         "category_precision_min": ("real", True, None),
         "category_validation_samples_min": ("integer", True, None),
         "p95_latency_max_ms": ("real", True, None),
@@ -537,7 +537,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
     ),
     "email_model_promotion_configs": (
         "trim(config_version) != ''",
-        "macro_f1_min >= 0 and macro_f1_min <= 1",
+        "micro_f1_min >= 0 and micro_f1_min <= 1",
         "category_precision_min >= 0 and category_precision_min <= 1",
         "typeof(category_validation_samples_min) = 'integer' and category_validation_samples_min > 0",
         "p95_latency_max_ms > 0 and (p95_latency_max_ms - p95_latency_max_ms) is 0.0",
@@ -2993,6 +2993,10 @@ class EmailStore:
     @classmethod
     def _prepare_v8_reply_claim_migration(cls, db: sqlite3.Connection) -> bool:
         if "email_reply_dispatch_claims" not in {
+                latest_version = 38
+            if latest_version == 38:
+                self._migrate_v38_to_v39(db, replace_version=is_prototype)
+                latest_version = 39
             row["name"]
             for row in db.execute("select name from sqlite_master where type='table'")
         }:
@@ -4532,7 +4536,7 @@ class EmailStore:
         db.execute("""
             create table if not exists email_model_promotion_configs (
                 config_version text primary key not null check(trim(config_version) != ''),
-                macro_f1_min real not null check(macro_f1_min >= 0 and macro_f1_min <= 1),
+                micro_f1_min real not null check(micro_f1_min >= 0 and micro_f1_min <= 1),
                 category_precision_min real not null check(category_precision_min >= 0 and category_precision_min <= 1),
                 category_validation_samples_min integer not null check(typeof(category_validation_samples_min) = 'integer' and category_validation_samples_min > 0),
                 p95_latency_max_ms real not null check(p95_latency_max_ms > 0 and (p95_latency_max_ms - p95_latency_max_ms) is 0.0),
@@ -4933,13 +4937,13 @@ class EmailStore:
     @staticmethod
     def _validate_model_promotion_values(
         *,
-        macro_f1_min: float,
+        micro_f1_min: float,
         category_precision_min: float,
         category_validation_samples_min: int,
         p95_latency_max_ms: float,
     ) -> None:
         for field, value, minimum, maximum in (
-            ("macro_f1_min", macro_f1_min, 0, 1),
+            ("micro_f1_min", micro_f1_min, 0, 1),
             ("category_precision_min", category_precision_min, 0, 1),
             ("p95_latency_max_ms", p95_latency_max_ms, 0, 1.7976931348623157e308),
         ):
@@ -4947,6 +4951,38 @@ class EmailStore:
                 type(value) not in (int, float)
                 or not minimum <= value <= maximum
                 or not math.isfinite(value)
+    def _migrate_v38_to_v39(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Gate promotion on micro F1 instead of the unweighted macro F1.
+
+        The column is renamed rather than re-seeded so the configured number
+        survives, but its meaning changes: the target is now the share of
+        messages classified correctly, not the mean of the per-class F1 scores.
+        Derek asked for this after seeing two classes with almost no evaluated
+        mail hold back a candidate that classified 82.6% of messages correctly.
+        """
+
+        columns = {
+            row["name"]
+            for row in db.execute("pragma table_info(email_model_promotion_configs)")
+        }
+        if "micro_f1_min" not in columns:
+            db.execute(
+                "alter table email_model_promotion_configs "
+                "rename column macro_f1_min to micro_f1_min"
+            )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=39, applied_at=? where version=38",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (39, ?)",
+                (self._now(),),
+            )
+
             ):
                 raise ValueError(f"{field} must be a finite number in range")
         if p95_latency_max_ms <= 0:
@@ -4963,13 +4999,13 @@ class EmailStore:
         self,
         *,
         expected_current_version: str,
-        macro_f1_min: float,
+        micro_f1_min: float,
         category_precision_min: float,
         category_validation_samples_min: int,
         p95_latency_max_ms: float,
     ) -> dict[str, Any]:
         values = dict(
-            macro_f1_min=macro_f1_min,
+            micro_f1_min=micro_f1_min,
             category_precision_min=category_precision_min,
             category_validation_samples_min=category_validation_samples_min,
             p95_latency_max_ms=p95_latency_max_ms,
@@ -6389,7 +6425,7 @@ class EmailStore:
                     **{
                         key: row[key]
                         for key in (
-                            "macro_f1_min",
+                            "micro_f1_min",
                             "category_precision_min",
                             "category_validation_samples_min",
                             "p95_latency_max_ms",

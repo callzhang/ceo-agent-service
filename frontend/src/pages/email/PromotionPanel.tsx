@@ -9,7 +9,7 @@ import { EmailDrawer } from "./EmailDrawer";
 import { checkLabel, checkValue, errorMessage, reasonLabel } from "./shared";
 
 const fields = [
-  "macro_f1_min",
+  "micro_f1_min",
   "category_precision_min",
   "category_validation_samples_min",
   "p95_latency_max_ms",
@@ -188,7 +188,7 @@ function ThresholdEditor({
           !values[key].trim() ||
           !Number.isFinite(parsed[key]) ||
           parsed[key] <= 0 ||
-          ((key === "macro_f1_min" || key === "category_precision_min") &&
+          ((key === "micro_f1_min" || key === "category_precision_min") &&
             parsed[key] > 1) ||
           (key === "category_validation_samples_min" &&
             !Number.isInteger(parsed[key])),
@@ -230,18 +230,18 @@ function ThresholdEditor({
       </h3>
       <fieldset disabled={busy || disabled} className="email-threshold-fields">
         <label>
-          Macro F1 最低值
+          Micro F1 最低值
           <input
-            aria-label="Macro F1 最低值"
+            aria-label="Micro F1 最低值"
             type="number"
             min="0"
             max="1"
             step="any"
-            value={values.macro_f1_min}
+            value={values.micro_f1_min}
             onChange={(event) =>
               setValues((current) => ({
                 ...current,
-                macro_f1_min: event.target.value,
+                micro_f1_min: event.target.value,
               }))
             }
           />

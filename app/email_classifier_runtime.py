@@ -401,6 +401,35 @@ def measured_end_to_end_latency(value: object) -> dict[str, object] | None:
     )}
 
 
+def micro_f1_from_categories(categories, enabled_category_keys):
+    """Micro F1 over the enabled classes, read from the per-class evaluation.
+
+    Each evaluated message carries exactly one true class and receives exactly
+    one predicted class, so a wrong prediction contributes one false positive to
+    the predicted class and one false negative to the true one. Pooled precision
+    and recall are therefore both correct messages over all messages, and micro
+    F1 is that same share. Correct messages per class are recall x support.
+    """
+
+    if not isinstance(categories, Mapping):
+        return None
+    rows = [
+        categories.get(key) if isinstance(categories.get(key), Mapping) else {}
+        for key in enabled_category_keys
+    ]
+    recalls = [_finite_evidence_number(row.get("recall")) for row in rows]
+    supports = [_finite_evidence_number(row.get("support")) for row in rows]
+    if not rows or any(value is None or not 0 <= value <= 1 for value in recalls):
+        return None
+    if any(type(value) is not int or value < 0 for value in supports):
+        return None
+    if sum(supports) <= 0:
+        return None
+    return sum(
+        recall * support for recall, support in zip(recalls, supports)
+    ) / sum(supports)
+
+
 def assess_online_promotion_gate(
     *, evidence, config, enabled_category_keys, description_version,
     readiness, registry_issues=(), artifact_verified=False,
@@ -421,9 +450,11 @@ def assess_online_promotion_gate(
                        "operator": operator, "passed": passed,
                        "reason": "passed" if passed else ("not_measured" if value is None else reason)})
 
-    f1s = [_finite_evidence_number(mapping(metrics.get(key)).get("f1")) for key in enabled_category_keys]
-    macro = sum(f1s) / len(f1s) if f1s and all(v is not None and 0 <= v <= 1 for v in f1s) else None
-    check("macro_f1", macro, config["macro_f1_min"])
+    check(
+        "micro_f1",
+        micro_f1_from_categories(metrics, enabled_category_keys),
+        config["micro_f1_min"],
+    )
     for key in enabled_category_keys:
         category = mapping(metrics.get(key))
         precision = _finite_evidence_number(category.get("precision"))

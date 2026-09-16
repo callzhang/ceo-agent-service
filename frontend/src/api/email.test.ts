@@ -35,7 +35,7 @@ it("sends exact versioned JSON commands to config and training endpoints",async(
   const fields={core_description:"Core",include:["In"],exclude:["Out"],threshold:.9,enabled:true};
   await saveEmailConfig("custom-key",{...fields,expected_current_version:"c9"});
   await createEmailCategory({...fields,category_key:"custom-key",display_name:"Custom",provider_folder_name:"Mail/Custom"});
-  await saveEmailPromotionConfig({macro_f1_min:.95,category_precision_min:.95,category_validation_samples_min:20,p95_latency_max_ms:500,expected_current_version:"p9"});
+  await saveEmailPromotionConfig({micro_f1_min:.95,category_precision_min:.95,category_validation_samples_min:20,p95_latency_max_ms:500,expected_current_version:"p9"});
   const command={mode:"model_primary" as const,model_id:"model-v2",request_id:"request-123",expected_mode:"agent_primary" as const,expected_model_id:null};
   await saveEmailRuntimeMode(command);
   expect(fetch.mock.calls.map(call=>[call[0],call[1].method])).toEqual([

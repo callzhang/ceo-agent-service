@@ -1,6 +1,6 @@
 import type { EmailStagedModel } from "../../api/console";
 export type TrendMetric =
-  | "macro_f1"
+  | "micro_f1"
   | "accuracy"
   | "precision"
   | "recall"
@@ -14,7 +14,7 @@ export function modelMetric(
   category: string,
 ): number | null {
   const value =
-    metric === "macro_f1" || metric === "accuracy"
+    metric === "micro_f1" || metric === "accuracy"
       ? model.metrics?.[metric]
       : metric === "p50" || metric === "p95" || metric === "p99"
         ? model.end_to_end_latency_ms?.[metric]

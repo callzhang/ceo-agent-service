@@ -17,13 +17,13 @@ from app.email_store import (
 def test_promotion_config_defaults_history_and_restart(tmp_path):
     store = EmailStore(tmp_path / "email.sqlite3")
     initial = store.current_model_promotion_config()
-    assert initial["macro_f1_min"] == 0.95
+    assert initial["micro_f1_min"] == 0.95
     assert initial["category_precision_min"] == 0.95
     assert initial["category_validation_samples_min"] == 20
     assert initial["p95_latency_max_ms"] == 500.0
     changed = store.create_model_promotion_config(
         expected_current_version=initial["config_version"],
-        macro_f1_min=0.96,
+        micro_f1_min=0.96,
         category_precision_min=0.97,
         category_validation_samples_min=25,
         p95_latency_max_ms=450.0,
@@ -36,7 +36,7 @@ def test_promotion_config_defaults_history_and_restart(tmp_path):
     with pytest.raises(ValueError, match="changed"):
         store.create_model_promotion_config(
             expected_current_version=initial["config_version"],
-            macro_f1_min=0.96,
+            micro_f1_min=0.96,
             category_precision_min=0.97,
             category_validation_samples_min=25,
             p95_latency_max_ms=450.0,
@@ -46,15 +46,15 @@ def test_promotion_config_defaults_history_and_restart(tmp_path):
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("macro_f1_min", float("nan")),
-        ("macro_f1_min", 1.1),
+        ("micro_f1_min", float("nan")),
+        ("micro_f1_min", 1.1),
         ("category_precision_min", -1),
         ("category_validation_samples_min", 0),
         ("category_validation_samples_min", 1.5),
         ("category_validation_samples_min", True),
         ("p95_latency_max_ms", float("inf")),
         ("p95_latency_max_ms", 0),
-        ("macro_f1_min", True),
+        ("micro_f1_min", True),
         ("category_precision_min", "0.95"),
         ("p95_latency_max_ms", True),
         ("category_validation_samples_min", 2**63),
@@ -66,7 +66,7 @@ def test_promotion_config_rejects_invalid_values(tmp_path, field, value):
     values = {
         key: initial[key]
         for key in (
-            "macro_f1_min",
+            "micro_f1_min",
             "category_precision_min",
             "category_validation_samples_min",
             "p95_latency_max_ms",
@@ -174,7 +174,7 @@ def test_config_cas_serializes_competing_writers(tmp_path):
         try:
             return store.create_model_promotion_config(
                 expected_current_version=initial["config_version"],
-                macro_f1_min=0.96,
+                micro_f1_min=0.96,
                 category_precision_min=0.95,
                 category_validation_samples_min=20,
                 p95_latency_max_ms=500,
@@ -217,7 +217,7 @@ def test_v33_migration_backup_and_restart(tmp_path):
     with sqlite3.connect(path) as db:
         assert db.execute(
             "select version from email_schema_migrations order by version"
-        ).fetchall() == [(33,), (34,), (35,), (36,), (37,), (38,)]
+        ).fetchall() == [(33,), (34,), (35,), (36,), (37,), (38,), (39,)]
         assert db.execute("pragma foreign_key_check").fetchall() == []
     with sqlite3.connect(tmp_path / "before.sqlite3") as db:
         assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
@@ -230,8 +230,8 @@ def test_v33_migration_backup_and_restart(tmp_path):
 @pytest.mark.parametrize(
     "old,new",
     [
-        ("macro_f1_min real not null", "macro_f1_min text not null"),
-        ("check(macro_f1_min >= 0 and macro_f1_min <= 1)", ""),
+        ("micro_f1_min real not null", "micro_f1_min text not null"),
+        ("check(micro_f1_min >= 0 and micro_f1_min <= 1)", ""),
         ("on delete restrict", "on delete cascade"),
     ],
 )
@@ -500,7 +500,7 @@ def test_history_order_survives_frozen_and_backwards_clock(tmp_path, monkeypatch
     initial = store.current_model_promotion_config()
     changed = store.create_model_promotion_config(
         expected_current_version=initial["config_version"],
-        macro_f1_min=0.96,
+        micro_f1_min=0.96,
         category_precision_min=0.95,
         category_validation_samples_min=20,
         p95_latency_max_ms=500,

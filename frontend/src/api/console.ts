@@ -390,7 +390,7 @@ export interface EmailModelEvidence {
   account_counts: Record<string, number>;
   validation_method: string;
   accuracy: number;
-  macro_f1: number;
+  micro_f1: number;
   per_category_metrics: Record<string, Record<string, unknown>>;
   prediction_latency_p50_ms: number;
   prediction_latency_p95_ms: number;
@@ -438,7 +438,7 @@ export interface EmailRuntime {
   toggle_enabled: boolean;
 }
 export interface EmailPromotionConfig {
-  macro_f1_min: number;
+  micro_f1_min: number;
   category_precision_min: number;
   category_validation_samples_min: number;
   p95_latency_max_ms: number;
@@ -449,7 +449,7 @@ export interface EmailStagedModel {
   model_family?: string;
   status: string;
   trained_at: string;
-  metrics: {accuracy: number | null; macro_f1: number | null; categories: Record<string, Record<string, number | null>>; important?: Record<string, number | null>} | null;
+  metrics: {accuracy: number | null; micro_f1: number | null; categories: Record<string, Record<string, number | null>>; important?: Record<string, number | null>} | null;
   evaluation: {protocol: string; test_digest: string; comparability_key: string} | null;
   head_timing_percentiles_ms: EmailLatency | null;
   end_to_end_latency_ms: EmailLatency | null;

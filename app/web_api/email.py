@@ -45,6 +45,7 @@ from app.email_classifier_runtime import (
     EmailClassifierRuntimeMode,
     derive_runtime_mode,
     assess_online_promotion_gate,
+    micro_f1_from_categories,
     switch_online_model,
     online_control_history,
     measured_end_to_end_latency,
@@ -453,7 +454,10 @@ def _project_staged_model_evidence(
     metric_categories = raw_metrics.get("categories", {})
     projected_metrics = {
         "accuracy": measured(raw_metrics.get("accuracy"), unit=True),
-        "macro_f1": measured(raw_metrics.get("macro_f1"), unit=True),
+        "micro_f1": measured(
+            micro_f1_from_categories(metric_categories, tuple(metric_categories)),
+            unit=True,
+        ),
         "categories": {
             category: {
                 **{
@@ -609,12 +613,16 @@ def _project_legacy_model_inventory(entry: object) -> dict[str, object] | None:
             "account_counts",
             "validation_method",
             "accuracy",
-            "macro_f1",
             "prediction_latency_p50_ms",
             "prediction_latency_p95_ms",
             "artifact_sha256",
         )
     }
+    # Each evaluated message carries one label and receives one prediction, so
+    # micro F1 is the share classified correctly, which this record already
+    # stores as accuracy. Its per-class numbers are threshold-gated validation
+    # figures and measure something else, so they cannot produce it.
+    projected["micro_f1"] = projected["accuracy"]
     per_category_metrics = metadata.get("per_category_metrics")
     projected["per_category_metrics"] = {
         str(category): {
@@ -817,7 +825,7 @@ class EmailCategoryUpdatePayload(BaseModel):
 
 class EmailPromotionConfigPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
-    macro_f1_min: float = Field(gt=0, le=1)
+    micro_f1_min: float = Field(gt=0, le=1)
     category_precision_min: float = Field(gt=0, le=1)
     category_validation_samples_min: int = Field(gt=0)
     p95_latency_max_ms: float = Field(gt=0)

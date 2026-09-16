@@ -49,7 +49,7 @@ def test_training_console_empty_registry_explains_agent_mode(tmp_path):
     learning = response.json()["learning"]
     assert learning["runtime"]["mode"] == "agent_primary"
     assert learning["runtime"]["toggle_enabled"] is False
-    assert learning["promotion_gate"]["config"]["macro_f1_min"] == 0.95
+    assert learning["promotion_gate"]["config"]["micro_f1_min"] == 0.95
     assert learning["promotion_gate"]["promotion_eligible"] is False
 
 
@@ -395,7 +395,7 @@ def test_promotion_config_changes_do_not_activate_model(tmp_path):
     initial = store.current_model_promotion_config()
     payload = {
         "expected_current_version": initial["config_version"],
-        "macro_f1_min": 0.94,
+        "micro_f1_min": 0.94,
         "category_precision_min": 0.96,
         "category_validation_samples_min": 25,
         "p95_latency_max_ms": 400.0,

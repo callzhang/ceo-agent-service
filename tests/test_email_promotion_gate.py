@@ -9,7 +9,7 @@ def evidence():
     return {
         "model_id": "candidate",
         "compatibility": {"enabled_categories": ["work"], "description_version": "d1"},
-        "metrics": {"categories": {"work": {"precision": .98, "f1": .97, "support": 25}}},
+        "metrics": {"categories": {"work": {"precision": .98, "recall": .97, "f1": .97, "support": 25}}},
         "end_to_end_latency_ms": measured_latency(),
     }
 
@@ -28,10 +28,10 @@ def measured_latency():
 def assess(row, **kwargs):
     return runtime.assess_online_promotion_gate(
         evidence=row,
-        config={"config_version": "v1", "macro_f1_min": .95,
+        config={"config_version": "v1", "micro_f1_min": .95,
                 "category_precision_min": .95, "category_validation_samples_min": 20,
                 "p95_latency_max_ms": 500.},
-        enabled_category_keys=("work",),
+        enabled_category_keys=kwargs.get("enabled_category_keys", ("work",)),
         description_version="d1",
         readiness=SimpleNamespace(ready=True, passing_model_ids=("previous", "candidate"), reason="ready"),
         registry_issues=kwargs.get("registry_issues", ()),
@@ -45,10 +45,39 @@ def test_gate_accepts_complete_evidence():
     assert all(check["passed"] for check in result["checks"])
 
 
-@pytest.mark.parametrize("field,value", [("precision", .94), ("support", 19), ("f1", .94), ("support", None)])
+@pytest.mark.parametrize("field,value", [("precision", .94), ("support", 19), ("recall", .94), ("support", None)])
 def test_gate_requires_each_class_metric(field, value):
     row = evidence()
     row["metrics"]["categories"]["work"][field] = value
+    assert assess(row)["promotion_eligible"] is False
+
+
+def micro_check(result):
+    return next(check for check in result["checks"] if check["key"] == "micro_f1")
+
+
+def test_micro_f1_weighs_each_class_by_its_evaluated_messages():
+    """A class with almost no evaluated mail cannot sink the overall score."""
+
+    row = evidence()
+    row["compatibility"]["enabled_categories"] = ["work", "legal"]
+    row["metrics"]["categories"]["work"]["recall"] = 1.
+    row["metrics"]["categories"]["legal"] = {
+        "precision": 1., "recall": .0, "f1": .0, "support": 1,
+    }
+    check = micro_check(assess(row, enabled_category_keys=("work", "legal")))
+    assert check["actual"] == pytest.approx(25 / 26)
+    assert check["passed"] is True
+    # The unweighted mean of the two classes would have been .5 and failed.
+    assert (1. + .0) / 2 < .95
+
+
+def test_micro_f1_is_unmeasured_without_recall_for_every_class():
+    row = evidence()
+    del row["metrics"]["categories"]["work"]["recall"]
+    check = micro_check(assess(row))
+    assert check["actual"] is None
+    assert check["reason"] == "not_measured"
     assert assess(row)["promotion_eligible"] is False
 
 
@@ -108,7 +137,7 @@ def test_gate_malformed_containers_fail_without_crashing(path, value):
     assert assess(row)["promotion_eligible"] is False
 
 
-@pytest.mark.parametrize("field", ["precision", "f1", "support", "p95"])
+@pytest.mark.parametrize("field", ["precision", "recall", "support", "p95"])
 def test_gate_overflowing_json_numbers_are_unmeasured(field):
     row = evidence()
     target = row["end_to_end_latency_ms"] if field == "p95" else row["metrics"]["categories"]["work"]

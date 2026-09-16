@@ -48,7 +48,7 @@ const learning = {
   },
   promotion_gate: {
     config: {
-      macro_f1_min: 0.95,
+      micro_f1_min: 0.95,
       category_precision_min: 0.9,
       category_validation_samples_min: 20,
       p95_latency_max_ms: 500,
@@ -83,7 +83,7 @@ const learning = {
       trained_at: "2026-09-14T12:00:00Z",
       metrics: {
         accuracy: 0.9,
-        macro_f1: 0.88,
+        micro_f1: 0.88,
         categories: { work: { precision: 0.91, recall: 0.85, f1: 0.88 } },
       },
       evaluation: {
@@ -171,7 +171,7 @@ it("keeps the runtime header visible and opens compact setup and promotion dialo
   expect(screen.getByText("可用训练样本").parentElement).toHaveTextContent(
     "42",
   );
-  expect(screen.getByText("候选 Macro F1").parentElement).toHaveTextContent(
+  expect(screen.getByText("候选 Micro F1").parentElement).toHaveTextContent(
     "88.0%",
   );
   expect(screen.getByText("候选 P95 延迟").parentElement).toHaveTextContent(
@@ -217,7 +217,7 @@ it("uses measurable historical registry models when no staged model is available
     validation_method: "time-ordered-holdout",
     training_dataset_version: "dataset-v1",
     accuracy: 0.8,
-    macro_f1: 0.78,
+    micro_f1: 0.78,
     per_category_metrics: {
       work: { precision: 0.82, recall: 0.76, f1: 0.78 },
     },

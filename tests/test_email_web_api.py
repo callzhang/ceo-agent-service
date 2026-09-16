@@ -1622,13 +1622,13 @@ def test_model_training_metrics_preserve_missing_values_and_comparability():
     current_schema = _project_staged_model_evidence(evidence)
     assert current_schema["compatibility"]["input_schema_version"] == "email-folder-model-input-v3"
     evidence["compatibility"]["input_schema_version"] = "email-folder-model-input-v2"
-    assert old["metrics"]["macro_f1"] is None
+    assert old["metrics"]["micro_f1"] is None
     assert old["end_to_end_latency_ms"] is None
     evidence["metrics"]["categories"]["legal"].update(precision=.97, recall=.95, f1=.96, support=25)
-    evidence["metrics"].update(accuracy=.97, macro_f1=.96)
+    evidence["metrics"].update(accuracy=.97)
     evidence["evaluation"] = {"protocol": "email-folder-heldout-v1", "test_digest": "c" * 64}
     current = _project_staged_model_evidence(evidence)
-    assert current["metrics"]["macro_f1"] == .96
+    assert current["metrics"]["micro_f1"] == .95
     assert current["metrics"]["categories"]["legal"]["support"] == 25
     assert current["evaluation"]["comparability_key"]
     assert current["head_timing_percentiles_ms"]["p95"] == 20

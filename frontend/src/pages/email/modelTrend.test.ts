@@ -7,7 +7,7 @@ const model = (id: string, key: string, value: number | null) =>
     model_family: "linear",
     trained_at: "",
     status: "candidate",
-    metrics: { accuracy: value, macro_f1: value, categories: {} },
+    metrics: { accuracy: value, micro_f1: value, categories: {} },
     evaluation: {
       protocol: "holdout",
       test_digest: key,
@@ -26,7 +26,7 @@ it("breaks different protocols, datasets, missing evidence and category sets", (
       model("d", "two", null),
       model("e", "two", 0.96),
     ],
-    "macro_f1",
+    "micro_f1",
     "",
   );
   expect(points[0].segment).toBe(points[1].segment);
@@ -49,7 +49,7 @@ it("breaks a trend when model family changes even if the dataset evidence matche
       model("linear", "one", 0.8),
       { ...model("mlp", "one", 0.9), model_family: "mlp" },
     ],
-    "macro_f1",
+    "micro_f1",
     "",
   );
   expect(points[1].segment).not.toBe(points[0].segment);
@@ -61,7 +61,7 @@ it("keeps points in the same model-family line when families are interleaved", (
       { ...model("fasttext-a", "one", 0.7), model_family: "fasttext" },
       model("tfidf-b", "one", 0.9),
     ],
-    "macro_f1",
+    "micro_f1",
     "",
   );
   const series = trendLineSeries(points);

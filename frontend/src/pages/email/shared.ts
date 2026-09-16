@@ -24,7 +24,7 @@ export function checkLabel(key:string,configs:EmailCategoryConfig[]) {
   const name=configs.find(item=>item.category_key===category)?.display_name || category || "各类别";
   if(kind==="category_precision")return name+" · Precision";
   if(kind==="category_validation_samples")return name+" · 独立验证样本";
-  return ({macro_f1:"整体 Macro F1",p95_latency:"端到端 P95 延迟",system_integrity:"模型与配置完整性"} as Record<string,string>)[key] || "其他晋升检查";
+  return ({micro_f1:"整体 Micro F1",p95_latency:"端到端 P95 延迟",system_integrity:"模型与配置完整性"} as Record<string,string>)[key] || "其他晋升检查";
 }
 export function reasonLabel(reason:string) {
   return ({passed:"已满足条件",not_measured:"未测量，请等待独立评测",threshold_not_met:"尚未达到门槛",model_evidence_or_configuration_not_ready:"模型证据或当前配置尚未就绪，请检查版本、评测和完整性",user_enabled_primary_model:"用户启用主模型",user_disabled_primary_model:"用户恢复 Agent 主分类"} as Record<string,string>)[reason] || (reason?"请查看原始证据":"—");
@@ -32,7 +32,7 @@ export function reasonLabel(reason:string) {
 export function checkValue(key:string,value:unknown) {
   if(value==null)return "未测量";
   if(typeof value==="boolean")return value?"满足":"不满足";
-  if(key==="macro_f1"||key.startsWith("category_precision:"))return measured(value);
+  if(key==="micro_f1"||key.startsWith("category_precision:"))return measured(value);
   if(key==="p95_latency")return measured(value," ms");
   return typeof value==="number"?String(value):"请查看原始证据";
 }

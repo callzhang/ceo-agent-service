@@ -362,8 +362,8 @@ export function ModelTraining({
           }
         />
         <Stat
-          label="候选 Macro F1"
-          value={measured(candidate?.metrics?.macro_f1)}
+          label="候选 Micro F1"
+          value={measured(candidate?.metrics?.micro_f1)}
           note={candidate ? `候选 ${candidate.model_id}` : "当前候选无评测"}
         />
         <Stat
@@ -480,7 +480,7 @@ export function ModelTraining({
                   <th>状态</th>
                   <th>训练时间</th>
                   <th>样本数</th>
-                  <th>Macro F1</th>
+                  <th>Micro F1</th>
                   <th>P95</th>
                   <th>详情</th>
                 </tr>
@@ -506,8 +506,8 @@ export function ModelTraining({
                     <td>
                       {measured(
                         item.kind === "staged"
-                          ? item.model.metrics?.macro_f1
-                          : item.model.macro_f1,
+                          ? item.model.metrics?.micro_f1
+                          : item.model.micro_f1,
                       )}
                     </td>
                     <td>
@@ -705,7 +705,7 @@ function legacyModelForTrend(
     trained_at: model.trained_at,
     metrics: {
       accuracy: numberOrNull(model.accuracy),
-      macro_f1: numberOrNull(model.macro_f1),
+      micro_f1: numberOrNull(model.micro_f1),
       categories,
     },
     evaluation:
@@ -738,7 +738,7 @@ function ModelTrend({
   models: EmailStagedModel[];
   config?: EmailPromotionConfig;
 }) {
-  const [metric, setMetric] = useState<TrendMetric>("macro_f1");
+  const [metric, setMetric] = useState<TrendMetric>("micro_f1");
   const [category, setCategory] = useState("");
   const categories = Array.from(
     new Set(
@@ -753,8 +753,8 @@ function ModelTrend({
   );
   const latency = ["p50", "p95", "p99"].includes(metric);
   const target =
-    metric === "macro_f1"
-      ? config?.macro_f1_min
+    metric === "micro_f1"
+      ? config?.micro_f1_min
       : metric === "precision"
         ? config?.category_precision_min
         : metric === "p95"
@@ -788,7 +788,7 @@ function ModelTrend({
             onChange={(event) => setMetric(event.target.value as TrendMetric)}
           >
             {[
-              "macro_f1",
+              "micro_f1",
               "accuracy",
               "precision",
               "recall",
@@ -960,8 +960,8 @@ function EffectDetails({ model }: { model: EmailStagedModel }) {
   return (
     <section aria-label="效果">
       <p>
-        Accuracy {measured(model.metrics?.accuracy)} · Macro F1{" "}
-        {measured(model.metrics?.macro_f1)}
+        Accuracy {measured(model.metrics?.accuracy)} · Micro F1{" "}
+        {measured(model.metrics?.micro_f1)}
       </p>
       <CategoryMetrics model={model} />
       <h4>important 独立输出头</h4>
@@ -1149,8 +1149,8 @@ function LegacyDetails({
           {model.status}
         </p>
         <p>
-          Accuracy {measured(model.accuracy)} · Macro F1{" "}
-          {measured(model.macro_f1)} · P95{" "}
+          Accuracy {measured(model.accuracy)} · Micro F1{" "}
+          {measured(model.micro_f1)} · P95{" "}
           {measured(model.prediction_latency_p95_ms, " ms")}
         </p>
         <p className="muted">
