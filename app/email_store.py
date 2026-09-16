@@ -67,7 +67,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 40
+EMAIL_SCHEMA_VERSION = 41
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -1068,6 +1068,28 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
             where id=new.id;
         end
     """,
+    "trg_email_action_attempt_count_insert": """
+        create trigger trg_email_action_attempt_count_insert
+        after insert on email_actions
+        when exists (
+            select 1 from email_action_attempts where action_id=new.action_id
+        ) and new.attempt_count != (
+            select count(*) from email_action_attempts where action_id=new.action_id
+        )
+        begin
+            select raise(abort, 'email_action_attempt_count_drift');
+        end
+    """,
+    "trg_email_action_attempt_count_update": """
+        create trigger trg_email_action_attempt_count_update
+        after update on email_actions
+        when new.attempt_count != (
+            select count(*) from email_action_attempts where action_id=new.action_id
+        )
+        begin
+            select raise(abort, 'email_action_attempt_count_drift');
+        end
+    """,
     "trg_email_direct_action_blocks_plan_switch": """
         create trigger trg_email_direct_action_blocks_plan_switch
         before update of status, current_action_plan_id on email_classifications
@@ -1250,6 +1272,8 @@ _REQUIRED_TRIGGER_TABLES: Mapping[str, str] = {
     "trg_email_training_observations_require_unfrozen_snapshot": (
         "email_training_snapshot_observations"
     ),
+    "trg_email_action_attempt_count_insert": "email_actions",
+    "trg_email_action_attempt_count_update": "email_actions",
     "trg_email_direct_action_blocks_account_update": "email_accounts",
     "trg_email_direct_action_blocks_account_delete": "email_accounts",
     "trg_email_reply_dispatch_blocks_account_update": "email_accounts",
@@ -3009,6 +3033,9 @@ class EmailStore:
             if latest_version == 39:
                 self._migrate_v39_to_v40(db, replace_version=is_prototype)
                 latest_version = 40
+            if latest_version == 40:
+                self._migrate_v40_to_v41(db, replace_version=is_prototype)
+                latest_version = 41
             self._validate_durable_state(db)
 
     @classmethod
@@ -4992,6 +5019,40 @@ class EmailStore:
         else:
             db.execute(
                 "insert into email_schema_migrations(version, applied_at) values (39, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v40_to_v41(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Refuse a write that leaves attempt_count disagreeing with the ledger.
+
+        One live action reached attempt_count 0 against three attempt rows. No
+        writer in this module can produce that - each updates both in one
+        transaction under an optimistic guard - and the write was never
+        identified, but it only surfaced when an unrelated process next opened
+        the store and failed durable validation, which took out training and
+        would have taken out the next service start.
+
+        These triggers move the failure to the write that causes it. A rebuild
+        that copies email_actions before email_action_attempts must drop them
+        first, which is why the insert trigger only fires once attempts exist.
+        """
+
+        for name in (
+            "trg_email_action_attempt_count_insert",
+            "trg_email_action_attempt_count_update",
+        ):
+            db.execute(f"drop trigger if exists {name}")
+            db.execute(_REQUIRED_TRIGGER_SQL[name])
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=41, applied_at=? where version=40",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (41, ?)",
                 (self._now(),),
             )
 

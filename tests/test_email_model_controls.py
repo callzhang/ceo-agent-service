@@ -217,7 +217,7 @@ def test_v33_migration_backup_and_restart(tmp_path):
     with sqlite3.connect(path) as db:
         assert db.execute(
             "select version from email_schema_migrations order by version"
-        ).fetchall() == [(33,), (34,), (35,), (36,), (37,), (38,), (39,)]
+        ).fetchall() == [(33,), (34,), (35,), (36,), (37,), (38,), (39,), (40,), (41,)]
         assert db.execute("pragma foreign_key_check").fetchall() == []
     with sqlite3.connect(tmp_path / "before.sqlite3") as db:
         assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
@@ -707,3 +707,36 @@ def test_new_category_initial_revision_is_preserved(tmp_path):
         bindings=[],
     )
     assert store.list_category_description_revisions("partners")[0]["config"] == created
+
+
+def test_attempt_count_drift_is_refused_at_the_write(tmp_path):
+    """The counter and the attempt ledger must part company at the write that
+    does it, not at whatever unrelated process next opens the store."""
+
+    path = tmp_path / "email.sqlite3"
+    EmailStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        db.execute(
+            "insert into email_actions (action_id, action_plan_id,"
+            " classification_id, account_id, action_type, parameters_json,"
+            " config_version, status, attempt_count, created_at, updated_at)"
+            " values ('a:1', 'plan-1', 1, 'account', 'move', '{}', 'c',"
+            " 'processing', 0, 'now', 'now')"
+        )
+        db.execute(
+            "insert into email_action_attempts (action_id, attempt_number, status,"
+            " provider_operation, provider_target, provider_result_id, error,"
+            " started_at, finished_at)"
+            " values ('a:1', 1, 'failed', 'move', 't', '', 'boom', 'now', 'now')"
+        )
+        db.execute(
+            "update email_actions set attempt_count=1, updated_at='later'"
+            " where action_id='a:1'"
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="attempt_count_drift"):
+            db.execute(
+                "update email_actions set attempt_count=0 where action_id='a:1'"
+            )
+        db.execute("rollback")

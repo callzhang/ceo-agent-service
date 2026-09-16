@@ -1751,6 +1751,8 @@ def _replace_email_actions(
     with sqlite3.connect(database) as db:
         db.executescript(
             f"""
+            drop trigger if exists trg_email_action_attempt_count_insert;
+            drop trigger if exists trg_email_action_attempt_count_update;
             drop table email_action_attempts;
             alter table email_actions rename to old_email_actions;
             create table email_actions (
@@ -7553,6 +7555,8 @@ def test_startup_rejects_pending_action_with_historical_terminal_attempt(
     database = tmp_path / "pending-with-attempt.sqlite3"
     _, action_id = _create_action_with_attempts(database, ("done",))
     with sqlite3.connect(database) as db:
+        # Lift the write-time guard only to seed what a past write left behind.
+        db.execute("drop trigger trg_email_action_attempt_count_update")
         db.execute(
             """
             update email_actions
@@ -7563,6 +7567,11 @@ def test_startup_rejects_pending_action_with_historical_terminal_attempt(
             """,
             (action_id,),
         )
+        db.execute(
+            email_store_module._REQUIRED_TRIGGER_SQL[
+                "trg_email_action_attempt_count_update"
+            ]
+        )
 
     with pytest.raises(EmailPersistenceCorruption, match="pending action.*attempt"):
         EmailStore(database)
@@ -7572,12 +7581,18 @@ def test_startup_rejects_action_attempt_count_mismatch(tmp_path: Path):
     database = tmp_path / "attempt-count.sqlite3"
     _, action_id = _create_action_with_attempts(database, ("done",))
     with sqlite3.connect(database) as db:
-        # The write-time guard exists to stop exactly this; drop it to seed the
-        # drift a past write left behind and prove startup still refuses it.
+        # The write-time guard exists to stop exactly this. Lift it only long
+        # enough to seed the drift a past write left behind, then restore it, so
+        # this still proves startup refuses a database that already drifted.
         db.execute("drop trigger trg_email_action_attempt_count_update")
         db.execute(
             "update email_actions set attempt_count=2 where action_id=?",
             (action_id,),
+        )
+        db.execute(
+            email_store_module._REQUIRED_TRIGGER_SQL[
+                "trg_email_action_attempt_count_update"
+            ]
         )
 
     with pytest.raises(EmailPersistenceCorruption, match="attempt count mismatch"):
