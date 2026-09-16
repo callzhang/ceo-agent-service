@@ -254,10 +254,8 @@ class AuditAgentRunner:
                     cwd=str(SERVICE_ROOT),
                 ) if email_unsubscribe_tools else None,
             ),
-            parse_result=(
-                self._parse_evidenced_result(task, run, parse_result=parse_result)
-                if email_unsubscribe_tools
-                else parse_result
+            parse_result=self._parse_evidenced_result(
+                task, run, parse_result=parse_result
             ),
             persist_conversation_session=False,
             expected_actions=expected_actions,

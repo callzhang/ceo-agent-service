@@ -35,9 +35,34 @@ reverts committed work they did not author.
 | claude-delivery-receipt-gate | app/agent_effect_guard.py, app/dingtalk_send_evidence.py, app/audit_agent.py, app/worker.py, app/consumer_agent.py, app/email_unsubscribe_continuation.py, tests/test_agent_effect_guard.py, tests/test_dingtalk_send_evidence.py, tests/test_worker.py, tests/test_audit_agent.py, docs/runtime-mechanism.md, docs/agent-claims.md | Require a provider receipt before an Audit `executed` closes a DingTalk send; stop accepting the model's self-reported delivery | 2026-09-15 |
 | claude-retired-category-save | app/web_api/email.py, frontend/src/pages/email/EmailList.tsx, frontend/src/pages/email/EmailReadingPanel.tsx, frontend/src/pages/EmailPage.test.tsx, tests/test_email_web_api.py, docs/agent-claims.md | Stop the console offering a retired category as a saveable value, and refuse one at the API boundary instead of as a 500 | 2026-09-15 |
 | claude-todo-sync-skipped | app/todo_sync.py, app/store.py (task_todo_sync_outbox region and STORE_SCHEMA_VERSION), app/dispatcher/adapters.py (TaskTodoSyncOutboxQueueAdapter only), tests/test_todo_sync.py, tests/test_store.py (pinned schema version literal only), docs/agent-claims.md | Record a Todo that never qualified for a DingTalk mirror as `skipped` instead of a failed external delivery | 2026-09-16 |
+| claude-evidence-gate-wiring | app/audit_agent.py, tests/test_audit_agent.py, docs/agent-claims.md | `989ed829` shipped `DingTalkSendEvidenceDriver` but `_parse_evidenced_result` only wrapped `parse_result` when `email_unsubscribe_tools` was truthy, so the new driver never actually ran for a DingTalk task; wire the wrap unconditionally (each driver already no-ops when out of scope) | 2026-09-16 |
 
 
 ## Recent overlaps worth knowing
+
+- 2026-09-16, Claude session `claude-evidence-gate-wiring`: attempt #9550
+  closed `completed` after its Audit turn reported `executed` for a proposal
+  that included a `notify_zhangjing_evaluation_submitted` DingTalk chat-send
+  action, then self-described that same action as
+  `not_executed_due_to_missing_dingtalk_mcp_tool` in the same result — no
+  `dws chat` call, no provider receipt, message never sent. This is exactly
+  the case `DingTalkSendEvidenceDriver` (shipped in `989ed829`) exists to
+  reject, but `AuditAgentRunner._execute_claimed` only substituted
+  `self._parse_evidenced_result(...)` for the plain `parse_result` when
+  `email_unsubscribe_tools` was truthy — true only for the email-unsubscribe
+  lifecycle, never for a DingTalk task. So the one domain the driver was
+  built for was the one domain where it was never invoked. Fix: drop the
+  `if email_unsubscribe_tools` condition and always wrap with
+  `_parse_evidenced_result`; both drivers (`DingTalkSendEvidenceDriver`,
+  `EmailUnsubscribeContinuationDriver`) already return `True` (no-op) for
+  tasks outside their own channel/schema, so this only changes behavior for
+  a proposal that actually claims a DingTalk chat-send with no receipt.
+  Regression test: `test_non_email_executed_without_tool_evidence_is_an_invalid_result`
+  in `tests/test_audit_agent.py`, run against the pre-fix code first to
+  confirm it failed there (`DID NOT RAISE ResultParseError`). Attempt #9550
+  itself is untouched by this fix — it is a historical row, and this change
+  only affects turns that run after it deploys. Whether/how to notify 张静
+  for 9550 specifically is Derek's call, not folded into this commit.
 
 - 2026-09-16, Claude session `claude-todo-sync-skipped` (`8d237619` plus the
   follow-up commit): **the live store schema version is now `2026-09-16.1`.**

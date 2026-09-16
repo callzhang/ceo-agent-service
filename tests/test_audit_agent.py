@@ -822,6 +822,43 @@ class _EvidenceDriver:
         return "external_result: executed without a receipt from unsubscribe_email"
 
 
+def test_non_email_executed_without_tool_evidence_is_an_invalid_result(setup):
+    """The evidence gate must not be scoped to the email-unsubscribe path.
+
+    Regression for attempt #9550: a dingtalk task's Audit turn reported
+    `executed` for a proposal that included a chat-send action, but the
+    domain driver found no provider receipt for it. Before this fix,
+    `_parse_evidenced_result` only wrapped `parse_result` when the turn also
+    carried the email-unsubscribe tool grant, so this exact case -- the one
+    `DingTalkSendEvidenceDriver` exists to catch -- was accepted at face
+    value and the task closed as done with nothing actually sent.
+    """
+    store, task, audit_context, parent = setup
+    assert task.channel == "dingtalk"
+    driver = _EvidenceDriver(evidence=False)
+    executor = CapturingExecutor(
+        _audit_jsonl("operation-1", session="session-dingtalk-audit")
+    )
+
+    with pytest.raises(ResultParseError):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+            domain_continuation=driver,
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None and run.status == "failed"
+    assert driver.calls == [(task.id, run.id)]
+
+
 def test_audited_email_executed_without_tool_evidence_is_an_invalid_result(setup):
     store, email_task, email_context, parent = _audited_email_setup(setup)
     driver = _EvidenceDriver(evidence=False)
