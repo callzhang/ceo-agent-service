@@ -349,6 +349,7 @@ def _external_action_identity_prompt(
         {
             "action_index": entry["action_index"],
             "action_identity": entry["action_identity"],
+            "capability": entry["capability"],
             "external_action_key": entry["external_action_key"],
             "delivery_key": entry["delivery_key"],
         }
@@ -360,6 +361,11 @@ def _external_action_identity_prompt(
         "They are not command authorizations and do not restrict the runtime tool. "
         "Reuse the matching external_action_key as the provider idempotency identity "
         "when the provider supports one.\n"
+        "Read the operation Skill named by an action's `capability` before "
+        "executing that action, and use the operations it documents. The Skill "
+        "is the only place the provider's real command shape is written down; a "
+        "turn that skips it invents a command, finds it missing, and reports a "
+        "provider failure for a provider that was available the whole time.\n"
         + json.dumps(identities, ensure_ascii=False, separators=(",", ":"))
     )
 

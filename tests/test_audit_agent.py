@@ -1269,3 +1269,30 @@ def test_audited_email_executed_binds_operation_id_from_the_run(setup):
     persisted = json.loads(run.final_result_json)
     assert persisted["external_result"]["operation_id"] == run.operation_id
     assert persisted["proposal_revision"] == run.proposal_revision
+
+
+def test_the_action_identity_prompt_points_at_the_operation_skill():
+    """Audit run 19675 guessed `dingtalk-cli chat send` and gave up.
+
+    `dws` was working on the same machine the whole time. The turn never read
+    the `dingtalk-chat` Skill, which is where the real command shape is
+    written, so it invented one, found it missing, and closed the task with a
+    self-authored `provider_not_available`.
+    """
+    action = ProposedAction.model_validate({
+        "description": "Ask what the fragment meant.",
+        "action_identity": "clarify_other_companies_message",
+        "capability": "dingtalk-chat",
+        "operation": "send",
+        "payload": {"content": "「其它企业」具体是指哪些企业？"},
+        "target": {"open_dingtalk_id": "open-recipient"},
+    })
+    expected = expected_external_action(
+        action, action_index=0, business_object_key="message:dingtalk:cid-1:msg-1"
+    )
+    expected["delivery_key"] = "agent-message:abc"
+
+    prompt = audit_agent._external_action_identity_prompt((expected,))
+
+    assert "dingtalk-chat" in prompt
+    assert "Read the operation Skill named by an action's `capability`" in prompt
