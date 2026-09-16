@@ -1119,7 +1119,7 @@ def _training_health_error(exc: Exception) -> dict[str, object]:
             fields = [
                 ".".join(str(part) for part in item.get("loc", ()))
                 for item in errors()
-                if isinstance(item, Mapping) and item.get("loc")
+                if hasattr(item, "get") and item.get("loc")
             ]
         except Exception:  # noqa: BLE001 - health projection must remain safe
             fields = []
