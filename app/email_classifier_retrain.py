@@ -28,6 +28,8 @@ from app.email_embedding_client import EmailEmbeddingClient
 from app.email_classifier_contracts import (
     MODEL_OTHERS_CATEGORY_CORE_DESCRIPTION,
     MODEL_OTHERS_CATEGORY_DESCRIPTION_VERSION,
+    MODEL_OTHERS_CATEGORY_EXCLUDE,
+    MODEL_OTHERS_CATEGORY_INCLUDE,
     MODEL_OTHERS_CATEGORY_KEY,
 )
 from app.email_embedding_classifier import CategoryDescription
@@ -1009,8 +1011,8 @@ def _run_training_job(
                     **descriptions,
                     MODEL_OTHERS_CATEGORY_KEY: CategoryDescription(
                         core=MODEL_OTHERS_CATEGORY_CORE_DESCRIPTION,
-                        include=(),
-                        exclude=(),
+                        include=MODEL_OTHERS_CATEGORY_INCLUDE,
+                        exclude=MODEL_OTHERS_CATEGORY_EXCLUDE,
                         version=MODEL_OTHERS_CATEGORY_DESCRIPTION_VERSION,
                     ),
                 }

@@ -39,14 +39,23 @@ INITIAL_EMAIL_CATEGORY_KEYS = (
     "junk",
 )
 RESERVED_EMAIL_CATEGORY_KEYS = frozenset(
-    {"important", "subscription", "other", "billing", "others"}
+    {"important", "subscription", "other", "billing"}
 )
 # The class a trained model uses for mail outside the categories it was trained
-# on. It is never a configurable category: it has no folder action, and a
-# prediction of it hands the message to the Agent.
+# on. It has no folder action and a prediction of it hands the message to the
+# Agent. It is a valid key inside the model pipeline, which is why it is not in
+# RESERVED_EMAIL_CATEGORY_KEYS; the category config writer refuses it instead,
+# so nobody can configure a business category that collides with it.
 MODEL_OTHERS_CATEGORY_KEY = "others"
 MODEL_OTHERS_CATEGORY_CORE_DESCRIPTION = (
     "不属于本次训练所选类别的邮件。命中这一类时交由 Agent 分类。"
+)
+MODEL_OTHERS_CATEGORY_INCLUDE = (
+    "与所选业务类别都不相关的邮件",
+    "所选类别覆盖不到的其他事务邮件",
+)
+MODEL_OTHERS_CATEGORY_EXCLUDE = (
+    "任何一个所选业务类别能够覆盖的邮件",
 )
 MODEL_OTHERS_CATEGORY_DESCRIPTION_VERSION = "others-complement-v1"
 LEGACY_EMAIL_CATEGORY_KEYS = frozenset({"important", "subscription", "billing"})

@@ -27,6 +27,7 @@ from uuid import uuid4
 from app.email_classifier_contracts import (
     ACTION_DEPENDENCY_PARAMETER,
     DIRECT_ACTIONS,
+    MODEL_OTHERS_CATEGORY_KEY,
     EmailAction,
     EmailActionPlan,
     EmailAttachmentMetadata,
@@ -15629,6 +15630,10 @@ class EmailStore:
         bindings: Sequence[VerifiedEmailFolderBinding],
     ) -> dict[str, Any]:
         category_key = validate_email_category_key(category_key)
+        if category_key == MODEL_OTHERS_CATEGORY_KEY:
+            raise ValueError(
+                "others is the model's out-of-scope class, not a category"
+            )
         include_values, exclude_values = validate_category_descriptions(
             display_name=display_name,
             core_description=core_description,
