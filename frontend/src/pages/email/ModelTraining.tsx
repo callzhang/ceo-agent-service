@@ -1097,7 +1097,7 @@ function Detail({ label, value }: { label: string; value: unknown }) {
 function CategoryMetrics({ model }: { model: EmailStagedModel }) {
   return (
     <div className="responsive-table-wrap">
-      <table className="settings-table">
+      <table className="settings-table email-metric-table">
         <thead>
           <tr>
             <th>类别</th>
@@ -1114,17 +1114,17 @@ function CategoryMetrics({ model }: { model: EmailStagedModel }) {
           {Object.entries(model.metrics?.categories || {}).map(
             ([key, value]) => (
               <tr key={key}>
-                <td>{key}</td>
-                <td>{measured(value.precision)}</td>
-                <td>{measured(value.recall)}</td>
-                <td>{measured(value.f1)}</td>
-                <td>{value.support ?? "未测量"}</td>
-                <td>{measured(value.accepted_precision)}</td>
-                <td>
+                <td data-label="类别">{key}</td>
+                <td data-label="Precision">{measured(value.precision)}</td>
+                <td data-label="Recall">{measured(value.recall)}</td>
+                <td data-label="F1">{measured(value.f1)}</td>
+                <td data-label="support">{value.support ?? "未测量"}</td>
+                <td data-label="接受准确率">{measured(value.accepted_precision)}</td>
+                <td data-label="接受数量 / 独立事项组">
                   {value.accepted_hits ?? "未测量"} /{" "}
                   {value.independent_groups ?? "未测量"}
                 </td>
-                <td>{measured(value.threshold)}</td>
+                <td data-label="阈值">{measured(value.threshold)}</td>
               </tr>
             ),
           )}
