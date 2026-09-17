@@ -36,7 +36,9 @@ from app.agent_runtime_contracts import (
 from app.agent_runtime_router import AgentRuntimeRouter, route_unavailable_code
 from app.claude_runtime_adapter import (
     ClaudeEventNormalizer,
+    ClaudeInputTooLargeError,
     ClaudeRuntimeAdapter,
+    claude_input_contract,
     ClaudeCommandPolicy,
     require_claude_session_id,
 )
@@ -86,7 +88,6 @@ _LOGGER = logging.getLogger(__name__)
 
 ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
-CLAUDE_INPUT_MAX_BYTES = 1024 * 1024
 _COMMON_RUNTIME_CAPABILITIES = frozenset(
     {"structured_output", "local_schema_validation"}
 )
@@ -600,17 +601,13 @@ def _is_terminal_codex_auth_failure(code: str) -> bool:
 
 
 def _claude_input_contract(*, prompt: str, developer_instructions: str) -> str:
-    payload = (
-        "<developer-instructions>\n"
-        f"{developer_instructions}\n"
-        "</developer-instructions>\n"
-        "<task>\n"
-        f"{prompt}\n"
-        "</task>"
-    )
-    if len(payload.encode("utf-8")) > CLAUDE_INPUT_MAX_BYTES:
-        raise RuntimeRouteUnavailableError("claude_input_contract_too_large")
-    return payload
+    """The shared Claude turn contract, with this loop's unavailable-route error."""
+    try:
+        return claude_input_contract(
+            prompt=prompt, developer_instructions=developer_instructions
+        )
+    except ClaudeInputTooLargeError as exc:
+        raise RuntimeRouteUnavailableError(exc.code) from exc
 
 
 def _execution_mode_environment(

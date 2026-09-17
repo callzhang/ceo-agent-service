@@ -37,6 +37,64 @@ INT_CODEC = RoutedResultCodec.integer(schema_id="test.integer.v1")
 TEXT_CODEC = RoutedResultCodec.text(schema_id="test.text.v1")
 
 
+class FakeClaudeProof:
+    def __init__(self, result: str) -> None:
+        self.result = result
+
+
+class FakeClaudeNormalizer:
+    """Collect the run's events the way the Claude adapter's normalizer does."""
+
+    def __init__(self) -> None:
+        self.session_id = ""
+        self.final_message = ""
+
+    def normalize_events(self, event):
+        if event.get("type") == "system":
+            self.session_id = str(event.get("session_id") or "")
+        if event.get("type") == "result":
+            self.final_message = str(event.get("result") or "")
+        return [event]
+
+    def finalize(self):
+        return None
+
+    def terminal_proof(self):
+        return FakeClaudeProof(self.final_message)
+
+
+class FakeClaudeAdapter:
+    def __init__(self) -> None:
+        self.commands: list[list[str]] = []
+        self.finished: list[list[str]] = []
+
+    def build_command(self, *, route, session_id, max_turns, **kwargs):
+        command = ["claude-test", route.name, session_id or "fresh", str(max_turns)]
+        self.commands.append(command)
+        return command
+
+    def build_env(self, route, *, command=None):
+        return {"ROUTE": route.name}
+
+    def new_event_normalizer(self, *, expected_session_id=None, command=None):
+        return FakeClaudeNormalizer()
+
+    def parse_final_result(self, *, normalizer, proof, parser):
+        return parser(proof.result)
+
+    def finish_invocation(self, command):
+        self.finished.append(command)
+
+    def classify_failure(self, stdout, stderr, returncode, **kwargs):
+        return RuntimeFailure(
+            failure_class=RuntimeFailureClass.AUTHENTICATION,
+            code="claude_credentials_unavailable",
+            detail="redacted",
+            failover_permitted=True,
+            route_pause_required=True,
+        )
+
+
 class FakeFridayAdapter:
     def __init__(self, result=None, error=None):
         self.result = result
@@ -255,8 +313,17 @@ def test_friday_unreachable_continues_to_next_configured_route(tmp_path, monkeyp
     adapter = FakeAdapter()
 
     def executor(command, **kwargs):
-        if command[1] == "claude_api":
-            return ProcessRunResult(0, "9", "")
+        if command[0] == "claude-test":
+            return ProcessRunResult(
+                0,
+                "\n".join(
+                    [
+                        json.dumps({"type": "system", "session_id": "claude-session"}),
+                        json.dumps({"type": "result", "result": "9"}),
+                    ]
+                ),
+                "",
+            )
         return ProcessRunResult(1, "", "provider unavailable")
 
     routed = RoutedCodexExecution(
@@ -267,13 +334,14 @@ def test_friday_unreachable_continues_to_next_configured_route(tmp_path, monkeyp
         ),
         adapter=adapter,
         friday_adapter=friday,
+        claude_adapter=FakeClaudeAdapter(),
         executor=executor,
         now=lambda: NOW,
     )
     result = routed.execute(
         workload_kind="agent_run", workload_key=str(run_id), prompt="return 9",
         command_factory=CodexCommandFactory.standard(developer_instructions="test"),
-        parser=int, result_codec=INT_CODEC,
+        parser=_friday_int, result_codec=INT_CODEC,
     )
 
     assert result.value == 9
@@ -2263,3 +2331,78 @@ def test_a_provider_whose_capacity_is_exhausted_switches_without_retrying(store,
     assert result.value == 42
     assert calls == ["codex_oauth", "codex_api"]
     assert sleeps == []
+
+
+def test_a_workload_runs_on_claude_through_the_same_path(tmp_path, monkeypatch):
+    """A workload's parser reads one event stream, whichever runtime ran."""
+    store = AutoReplyStore(tmp_path / "claude-workload.sqlite3")
+    key = seed_structured_parent(store, 31)
+    config = _friday_config(monkeypatch, "claude_oauth")
+    claude = FakeClaudeAdapter()
+
+    def executor(command, **kwargs):
+        assert command[0] == "claude-test"
+        assert "<developer-instructions>" in kwargs["prompt"]
+        assert "analyze" in kwargs["prompt"]
+        return ProcessRunResult(
+            0,
+            "\n".join(
+                [
+                    json.dumps({"type": "system", "session_id": "claude-session"}),
+                    json.dumps({"type": "result", "result": '{"value": 42}'}),
+                ]
+            ),
+            "",
+        )
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=AgentRuntimeRouter(
+            routes=config.routes, store=store, snapshots=_friday_snapshots(config), now=lambda: NOW
+        ),
+        adapter=FakeAdapter(),
+        claude_adapter=claude,
+        executor=executor,
+        now=lambda: NOW,
+    )
+
+    result = routed.execute(
+        workload_kind="structured", workload_key=key, prompt="analyze",
+        command_factory=CodexCommandFactory.standard(developer_instructions="rules"),
+        parser=lambda raw: json.loads(parse_agent_text_result(raw))["value"],
+        result_codec=INT_CODEC,
+    )
+
+    assert result.value == 42
+    assert result.route_name == "claude_oauth"
+    attempt = store.list_runtime_operation_attempts("structured", key)[-1]
+    assert attempt.status == "completed"
+    assert attempt.session_id == "claude-session"
+    assert attempt.transcript_reference == "claude_session:claude-session"
+    # The invocation is always released, so its boundary files do not pile up.
+    assert claude.finished == claude.commands
+
+
+def test_a_claude_route_without_its_adapter_is_reported_not_run(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "claude-missing.sqlite3")
+    key = seed_structured_parent(store, 32)
+    config = _friday_config(monkeypatch, "claude_oauth")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=AgentRuntimeRouter(
+            routes=config.routes, store=store, snapshots=_friday_snapshots(config), now=lambda: NOW
+        ),
+        adapter=FakeAdapter(),
+        executor=lambda *args, **kwargs: ProcessRunResult(0, "42", ""),
+        now=lambda: NOW,
+    )
+
+    with pytest.raises(RoutedCodexExecutionError, match="claude_runtime_unavailable"):
+        routed.execute(
+            workload_kind="structured", workload_key=key, prompt="analyze",
+            command_factory=CodexCommandFactory.standard(developer_instructions="rules"),
+            parser=int, result_codec=INT_CODEC,
+        )

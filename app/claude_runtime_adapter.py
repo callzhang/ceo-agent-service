@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import uuid
 from collections.abc import Callable
@@ -84,6 +85,34 @@ class ClaudeCommandPolicy:
         return cls(tools_enabled=True, seal=_POLICY_SEAL)
 
 
+CLAUDE_INPUT_MAX_BYTES = 1024 * 1024
+
+
+class ClaudeInputTooLargeError(ValueError):
+    """The turn's text exceeds what one Claude invocation accepts."""
+
+    code = "claude_input_contract_too_large"
+
+
+def claude_input_contract(*, prompt: str, developer_instructions: str) -> str:
+    """The single message a Claude turn receives, for every caller.
+
+    Claude has no separate developer-instruction channel, so the instructions
+    and the task travel in one message under fixed tags.
+    """
+    payload = (
+        "<developer-instructions>\n"
+        f"{developer_instructions}\n"
+        "</developer-instructions>\n"
+        "<task>\n"
+        f"{prompt}\n"
+        "</task>"
+    )
+    if len(payload.encode("utf-8")) > CLAUDE_INPUT_MAX_BYTES:
+        raise ClaudeInputTooLargeError(ClaudeInputTooLargeError.code)
+    return payload
+
+
 def require_claude_session_id(session_id: str) -> str:
     """Return one CLI-safe, normalized Claude conversation session ID."""
     if not isinstance(session_id, str):
@@ -98,6 +127,43 @@ def require_claude_session_id(session_id: str) -> str:
     ):
         raise ValueError("Claude session_id must be normalized and CLI-safe")
     return session_id
+
+
+_RUNTIME_DIR_PREFIX = "ceo-agent-claude-"
+_OWNER_PID_MARKER = ".owner_pid"
+
+
+def _owner_pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _reap_orphaned_runtime_dirs(claude_home: Path) -> None:
+    """Delete prior runtime dirs whose owning process is confirmed dead.
+
+    A graceful shutdown or a probe's own ``close()`` already removes its
+    directory; this sweep exists for the case a process is killed before it
+    gets that chance (SIGKILL, OOM, container restart), which no in-process
+    ``finally`` block can observe.
+    """
+    try:
+        candidates = list(claude_home.glob(f"{_RUNTIME_DIR_PREFIX}*"))
+    except OSError:
+        return
+    for candidate in candidates:
+        marker = candidate / _OWNER_PID_MARKER
+        try:
+            owner_pid = int(marker.read_text().strip())
+        except (OSError, ValueError):
+            continue
+        if _owner_pid_is_alive(owner_pid):
+            continue
+        shutil.rmtree(candidate, ignore_errors=True)
 
 
 class ClaudeRuntimeAdapter:
@@ -117,9 +183,11 @@ class ClaudeRuntimeAdapter:
         self._service_mcp_servers = service_mcp_servers
         claude_home = Path.home() / ".claude"
         claude_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+        _reap_orphaned_runtime_dirs(claude_home)
         self._runtime_root = tempfile.TemporaryDirectory(
-            prefix="ceo-agent-claude-", dir=claude_home
+            prefix=_RUNTIME_DIR_PREFIX, dir=claude_home
         )
+        Path(self._runtime_root.name, _OWNER_PID_MARKER).write_text(str(os.getpid()))
         self._mcp_proxy = ClaudeMcpCredentialProxyManager(
             root=Path(self._runtime_root.name)
         )
@@ -132,6 +200,11 @@ class ClaudeRuntimeAdapter:
     @property
     def active_proxy_process_count(self) -> int:
         return self._mcp_proxy.active_process_count
+
+    def close(self) -> None:
+        """Release the MCP proxy and the per-adapter runtime temp dir."""
+        self._mcp_proxy.close()
+        self._runtime_root.cleanup()
 
     def build_command(
         self,

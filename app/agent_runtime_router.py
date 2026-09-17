@@ -31,6 +31,7 @@ from app.codex_decision import extract_codex_session_id
 from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.codex_history import count_codex_session_lines
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.claude_runtime_adapter import ClaudeRuntimeAdapter, claude_input_contract
 from app.friday_runtime_adapter import (
     FridayExecutionResult,
     FridayRuntimeAdapter,
@@ -223,13 +224,13 @@ class CodexCommandFactory:
         return command, adapter.build_env(route)
 
 
-def _friday_turn_text(command_factory: CodexCommandFactory, prompt: str) -> str:
-    """Carry everything a Codex turn receives out of band into Friday's one message.
+def _out_of_band_instructions(command_factory: CodexCommandFactory) -> str:
+    """What Codex receives as separate channels, as one block of text.
 
     Codex gets the developer instructions (agent spec and business Skills) and
-    the output JSON Schema as separate channels. Friday's turn API accepts a
-    single user message and has no schema field, so without this the model
-    sees neither and cannot produce the required result shape.
+    the output JSON Schema out of band. A runtime whose turn is a single
+    message has neither channel, so without this the model sees neither and
+    cannot produce the required result shape.
     """
     parts = [command_factory.developer_instructions.strip()]
     if command_factory.use_output_schema and command_factory.output_schema_path is not None:
@@ -239,16 +240,30 @@ def _friday_turn_text(command_factory: CodexCommandFactory, prompt: str) -> str:
             "Return exactly one JSON object that validates against this schema.\n\n"
             f"```json\n{schema}\n```"
         )
-    parts.append(prompt)
     return "\n\n".join(part for part in parts if part)
 
 
-def _friday_result_events(text: str) -> str:
-    """Present Friday's final message as the runtime events every parser reads.
+def _friday_turn_text(command_factory: CodexCommandFactory, prompt: str) -> str:
+    """Friday's turn API takes one user message and has no schema field."""
+    return "\n\n".join(
+        part for part in (_out_of_band_instructions(command_factory), prompt) if part
+    )
 
-    Workload parsers read the provider-neutral event stream Codex emits and the
-    Claude adapter reproduces. Friday returns only the final message, so handed
-    over raw it matched no event and every typed result was rejected as missing.
+
+def _claude_turn_text(command_factory: CodexCommandFactory, prompt: str) -> str:
+    """Claude reads its instructions from the same contract Agent turns use."""
+    return claude_input_contract(
+        prompt=prompt,
+        developer_instructions=_out_of_band_instructions(command_factory),
+    )
+
+
+def _final_message_events(text: str) -> str:
+    """Present one final message as the runtime events every parser reads.
+
+    Workload parsers read the provider-neutral event stream Codex emits. A
+    runtime that returns only its final message (Friday, Claude) has its text
+    shaped here, so the workload's parser never learns which runtime ran.
     """
     return "\n".join(
         json.dumps(event, ensure_ascii=False)
@@ -887,6 +902,7 @@ class RoutedCodexExecution:
         router: AgentRuntimeRouter,
         adapter: CodexRuntimeAdapter,
         friday_adapter: FridayRuntimeAdapter | None = None,
+        claude_adapter: ClaudeRuntimeAdapter | None = None,
         executor: ProcessExecutor = run_process_with_idle_timeout,
         session_id_parser: Callable[[str], str | None] = extract_codex_session_id,
         session_line_counter: Callable[[str], int] = count_codex_session_lines,
@@ -905,6 +921,7 @@ class RoutedCodexExecution:
         self._router = router
         self._adapter = adapter
         self._friday_adapter = friday_adapter
+        self._claude_adapter = claude_adapter
         self._executor = executor
         self._session_id_parser = session_id_parser
         self._session_line_counter = session_line_counter
@@ -1208,7 +1225,9 @@ class RoutedCodexExecution:
             transcript_reference = ""
             # Friday's operation identifier is the durable execution evidence;
             # unlike Codex, it has no stdout session transcript to reference.
-            if route.runtime_kind is not RuntimeKind.FRIDAY_RUNTIME:
+            # Only Codex has a stdout session transcript to reference; Friday
+            # and Claude carry their own identifiers, set when the turn ran.
+            if route.runtime_kind is RuntimeKind.CODEX_CLI:
                 transcript_reference = (
                     f"codex_session:{observed_session_id}" if observed_session_id else ""
                 )
@@ -1268,6 +1287,7 @@ class RoutedCodexExecution:
                 action=lambda: self._renew_attempt_parent_lease(active_attempt),
             )
             friday_result: FridayExecutionResult | None = None
+            failure_adapter = self._adapter
             if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
                 try:
                     friday_result = self._friday_adapter.execute(
@@ -1289,7 +1309,7 @@ class RoutedCodexExecution:
                         now=self._now(),
                     )
                     process = ProcessRunResult(
-                        0, _friday_result_events(friday_result.text), ""
+                        0, _final_message_events(friday_result.text), ""
                     )
                 except FridayRuntimeError as exc:
                     if exc.thread_id:
@@ -1369,6 +1389,44 @@ class RoutedCodexExecution:
                     raise RoutedCodexExecutionError(
                         "friday_runtime_failed", "adapter_execution"
                     ) from exc
+            elif route.runtime_kind is RuntimeKind.CLAUDE_CLI:
+                if self._claude_adapter is None:
+                    self._terminalize_active_attempt(
+                        active_attempt,
+                        failure_class=RuntimeFailureClass.CAPABILITY,
+                        failure_code="claude_runtime_unavailable",
+                        session_id=observed_session_id,
+                        transcript_reference=transcript_reference,
+                        transcript_start=transcript_start,
+                        transcript_end=transcript_end,
+                    )
+                    raise RoutedCodexExecutionError(
+                        "claude_runtime_unavailable",
+                        "Claude Runtime adapter is not configured",
+                    )
+                failure_adapter = self._claude_adapter
+                process, claude_session_id = self._finalized_step(
+                    active_attempt,
+                    stage="process_execution",
+                    evidence=current_evidence,
+                    action=lambda: self._run_claude_turn(
+                        route=route,
+                        session_id=route_session_id,
+                        command_factory=command_factory,
+                        prompt=prompt,
+                        on_stdout_line=observe_stdout_line,
+                    ),
+                )
+                if claude_session_id:
+                    observed_session_id = claude_session_id
+                    transcript_reference = f"claude_session:{claude_session_id}"
+                    active_attempt = self._store.set_agent_runtime_attempt_session(
+                        active_attempt.id,
+                        claude_session_id,
+                        transcript_reference,
+                        owner=self._owner,
+                        now=self._now(),
+                    )
             else:
                 command, env = self._finalized_step(
                     active_attempt,
@@ -1440,7 +1498,9 @@ class RoutedCodexExecution:
                         action=lambda: self._session_line_counter(observed_session_id),
                     ),
                 )
-            if route.runtime_kind is not RuntimeKind.FRIDAY_RUNTIME:
+            # Only Codex has a stdout session transcript to reference; Friday
+            # and Claude carry their own identifiers, set when the turn ran.
+            if route.runtime_kind is RuntimeKind.CODEX_CLI:
                 transcript_reference = (
                     f"codex_session:{observed_session_id}" if observed_session_id else ""
                 )
@@ -1575,7 +1635,8 @@ class RoutedCodexExecution:
                 active_attempt,
                 stage="failure_classification",
                 evidence=current_evidence,
-                action=lambda: self._adapter.classify_failure(
+                # Each runtime reads its own provider's failure.
+                action=lambda: failure_adapter.classify_failure(
                     process.stdout,
                     process.stderr,
                     process.returncode,
@@ -1707,6 +1768,59 @@ class RoutedCodexExecution:
                 ),
             )
             active_attempt = successor
+
+    def _run_claude_turn(
+        self,
+        *,
+        route: RuntimeRoute,
+        session_id: str | None,
+        command_factory: CodexCommandFactory,
+        prompt: str,
+        on_stdout_line: Callable[[str], None],
+    ) -> tuple[ProcessRunResult, str]:
+        """Run one Claude turn and return it in the shape every parser reads.
+
+        Claude reports its work as its own event stream and ends with a final
+        message. The adapter's normalizer is what validates that stream, and
+        the message is then shaped like any other runtime's, so the workload's
+        parser never learns which runtime ran.
+        """
+        adapter = self._claude_adapter
+        assert adapter is not None
+        command = adapter.build_command(
+            route=route, session_id=session_id, max_turns=1
+        )
+        env = adapter.build_env(route, command=command)
+        normalizer = adapter.new_event_normalizer(
+            expected_session_id=session_id, command=command
+        )
+        try:
+            process = self._executor(
+                command,
+                prompt=_claude_turn_text(command_factory, prompt),
+                env=env,
+                total_timeout_seconds=self._total_timeout_seconds,
+                idle_timeout_seconds=self._idle_timeout_seconds,
+                on_stdout_line=on_stdout_line,
+            )
+            if process.returncode != 0 or process.timed_out:
+                return process, ""
+            for line in process.stdout.splitlines():
+                if line.strip():
+                    normalizer.normalize_events(json.loads(line))
+            normalizer.finalize()
+            text = adapter.parse_final_result(
+                normalizer=normalizer,
+                proof=normalizer.terminal_proof(),
+                parser=lambda raw: raw,
+            )
+            return (
+                ProcessRunResult(0, _final_message_events(text), ""),
+                normalizer.session_id or "",
+            )
+        finally:
+            adapter.finish_invocation(command)
+
 
     def _claim_and_start(
         self,
