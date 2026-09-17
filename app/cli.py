@@ -3769,26 +3769,103 @@ def _scheduled_task_option_service(settings: WorkerSettings, runtime_skill_snaps
     )
 
 
-def _install_bundled_business_skills_on_service_start(settings: WorkerSettings) -> None:
-    """Sync the repo's bundled ceo-* business Skills into ~/.agents/skills.
+def _capture_runtime_skill_edits(settings: WorkerSettings) -> None:
+    """Record Skill files edited in place since the last run as new revisions.
 
-    Scheduled tasks reference these by name (e.g. $ceo-work-tracking) and read
-    them from the runtime Skill root at dispatch time; this keeps that copy from
-    silently drifting behind the checked-out repo on a fresh clone or upgrade.
-    Failure degrades to a recorded error rather than aborting the rest of startup,
-    matching the runtime_refresher probe below.
+    The runtime tree is what every CLI actually reads, so an edit there is live
+    before this service starts. Capturing it first means nothing later in startup
+    can discard a change that was already in effect.
     """
-    from app.business_skills import install_bundled_business_skills
+    from app.managed_skills import capture_runtime_skill_edits
 
     try:
-        install_bundled_business_skills(Path.home() / ".agents" / "skills")
+        capture_runtime_skill_edits(AutoReplyStore(settings.db_path))
     except Exception as exc:  # noqa: BLE001 - startup must degrade, not abort service
         AutoReplyStore(settings.db_path).record_error(
             "",
             "",
-            "bundled_business_skills_install_failed",
-            f"Bundled business Skill sync failed at startup; runtime copies may be stale: {exc}",
+            "runtime_skill_edit_capture_failed",
+            f"Could not record in-place Skill edits; version history may be incomplete: {exc}",
         )
+
+
+def _install_missing_repository_skills(settings: WorkerSettings) -> None:
+    """Write the repo baseline only for managed Skills missing from the runtime tree.
+
+    An existing file is left alone: it is the live source for every CLI on this
+    machine and its content is already tracked as a revision, so overwriting it
+    from the repo on every restart would silently revert edits that are in effect.
+    """
+    from app.business_skills import sync_bundled_skill
+    from app.managed_skills import REPOSITORY_MANAGED_SKILL_NAMES
+
+    root = Path.home() / ".agents" / "skills"
+    for name in REPOSITORY_MANAGED_SKILL_NAMES:
+        if (root / name / "SKILL.md").is_file():
+            continue
+        try:
+            sync_bundled_skill(name, target_root=root)
+        except Exception as exc:  # noqa: BLE001 - one Skill must not abort startup
+            AutoReplyStore(settings.db_path).record_error(
+                "",
+                "",
+                "repository_skill_install_failed",
+                f"Managed Skill {name} is missing and could not be installed: {exc}",
+            )
+
+
+def _ensure_claude_skills_link(settings: WorkerSettings) -> None:
+    """Point ~/.claude/skills at the shared ~/.agents/skills tree.
+
+    Claude Code reads only ~/.claude/skills, so without this link every Skill the
+    service maintains is invisible to Claude Code sessions on this machine. A real
+    directory there is reported instead of replaced: reconciling one needs version
+    judgment a person has to make, and discarding it could destroy Skills that
+    exist nowhere else.
+    """
+    link = Path.home() / ".claude" / "skills"
+    target = Path.home() / ".agents" / "skills"
+
+    def record(code: str, detail: str) -> None:
+        AutoReplyStore(settings.db_path).record_error("", "", code, detail)
+
+    try:
+        if not target.is_dir():
+            record(
+                "claude_skills_link_target_missing",
+                f"Runtime Skill root {target} does not exist; left {link} untouched.",
+            )
+            return
+        if link.is_symlink():
+            if link.resolve() == target.resolve():
+                return
+            # Only a link is discarded here, never real content.
+            link.unlink()
+        elif link.exists():
+            record(
+                "claude_skills_link_blocked",
+                f"{link} is a real directory, not a link to {target}; "
+                "merge it by hand so no Skill that exists only there is lost.",
+            )
+            return
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target, target_is_directory=True)
+    except Exception as exc:  # noqa: BLE001 - startup must degrade, not abort service
+        record(
+            "claude_skills_link_failed",
+            f"Could not link {link} to {target}; Claude Code cannot see service Skills: {exc}",
+        )
+
+
+def _prepare_runtime_skills_on_service_start(settings: WorkerSettings) -> None:
+    """Make the runtime Skill tree usable and its history honest before any read.
+
+    Order matters: capture in-place edits before anything writes, then fill in
+    only what is missing.
+    """
+    _ensure_claude_skills_link(settings)
+    _capture_runtime_skill_edits(settings)
+    _install_missing_repository_skills(settings)
 
 
 def _seed_scheduled_tasks_on_service_start(
@@ -3826,7 +3903,7 @@ def run_service(
                 "agent_runtime_probe_startup_failed",
                 "Agent runtime startup probe failed; routes remain unavailable.",
             )
-    _install_bundled_business_skills_on_service_start(settings)
+    _prepare_runtime_skills_on_service_start(settings)
     _seed_scheduled_tasks_on_service_start(settings, runtime_skill_snapshot)
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_orphaned_reply_tasks_on_service_start(settings)

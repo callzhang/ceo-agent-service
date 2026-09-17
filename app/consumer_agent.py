@@ -33,7 +33,8 @@ from app.agent_wire_contracts import (
 )
 from app.audit_rules import validate_audit_rules_text
 from app.business_skills import (
-    installed_business_skill_catalog,
+    BUNDLED_BUSINESS_SKILL_NAMES,
+    installed_runtime_skills,
     render_business_skill_protocol,
 )
 from app.managed_skills import RuntimeSkillSnapshot
@@ -192,10 +193,11 @@ def consumer_wire_contract_hash(
         "consumer_rules": _CONSUMER_AGENT_RULES,
         "role_boundary": CONSUMER_ROLE_BOUNDARY,
         "agent_capability_instructions": AGENT_CAPABILITY_INSTRUCTIONS,
-        "business_skill_protocol": (
-            runtime_skill_snapshot.protocol()
-            if runtime_skill_snapshot is not None
-            else render_business_skill_protocol(installed_business_skill_catalog())
+        # The runtime Skill tree is the single source the Agent reads; the
+        # snapshot below records which revisions were in force, it is not the
+        # content the Agent is served.
+        "business_skill_protocol": render_business_skill_protocol(
+            installed_runtime_skills(names=BUNDLED_BUSINESS_SKILL_NAMES)
         ),
         "work_profile_instruction": work_profile_instruction(),
         "wire_schema": ConsumerAgentWireResult.model_json_schema(),
@@ -571,6 +573,7 @@ class ConsumerAgentRunner:
 
         result = process.execute(
                 run=claim.run,
+                skill_names=context.skill_names,
                 prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries. The proposal must match the supplied JSON Schema exactly.\n\n"
                 + (
                     "## Scheduled Consumer Prompt\n"
@@ -589,10 +592,10 @@ class ConsumerAgentRunner:
                         part for part in (
                             context_skill_protocol
                             if context_skill_protocol is not None
-                            else (
-                                self.runtime_skill_snapshot.protocol()
-                                if self.runtime_skill_snapshot is not None
-                                else render_business_skill_protocol(installed_business_skill_catalog())
+                            else render_business_skill_protocol(
+                                installed_runtime_skills(
+                                    names=BUNDLED_BUSINESS_SKILL_NAMES
+                                )
                             ),
                         ) if part
                     ),

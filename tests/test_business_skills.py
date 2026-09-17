@@ -9,7 +9,11 @@ from app.business_skills import (
     BusinessSkillInstallRollbackError,
     BusinessSkillInstallTargetError,
     BusinessSkillValidationError,
+    codex_skill_exclusion_override,
+    expand_skill_dependencies,
     install_bundled_business_skills,
+    installed_runtime_skill_paths,
+    installed_runtime_skills,
     installed_business_skill_catalog,
     load_bundled_business_skills,
     render_business_skill_protocol,
@@ -405,3 +409,130 @@ def _write_bundle(
         ),
         encoding="utf-8",
     )
+
+
+def _skill_file(root: Path, relative: str, name: str, description: str) -> Path:
+    path = root / relative / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n\nBody\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_runtime_scan_finds_nested_skills_and_skips_unparsable(tmp_path: Path):
+    root = tmp_path / "skills"
+    _skill_file(root, "top-level", "top-level", "A top level skill.")
+    _skill_file(root, "bundle/nested", "nested", "A nested skill.")
+    broken = root / "broken" / "SKILL.md"
+    broken.parent.mkdir(parents=True)
+    broken.write_text("no frontmatter here\n", encoding="utf-8")
+
+    paths = installed_runtime_skill_paths(root)
+    entries = installed_runtime_skills(root)
+
+    # The exclusion list must see every file, including the unparsable one.
+    assert len(paths) == 3
+    # The catalog only lists what it can describe.
+    assert {item.name for item in entries} == {"top-level", "nested"}
+    assert {item.description for item in entries} == {
+        "A top level skill.",
+        "A nested skill.",
+    }
+
+
+def test_runtime_scan_filters_to_the_requested_names(tmp_path: Path):
+    root = tmp_path / "skills"
+    _skill_file(root, "wanted", "wanted", "Keep me.")
+    _skill_file(root, "other", "other", "Not this run.")
+
+    entries = installed_runtime_skills(root, names={"wanted"})
+
+    assert [item.name for item in entries] == ["wanted"]
+
+
+def test_codex_exclusion_override_disables_everything_outside_the_allow_set(
+    tmp_path: Path,
+):
+    root = tmp_path / "skills"
+    _skill_file(root, "wanted", "wanted", "Keep me.")
+    unwanted = _skill_file(root, "unwanted", "unwanted", "Disable me.")
+    nested = _skill_file(root, "bundle/deep", "deep", "Disable me too.")
+
+    override = codex_skill_exclusion_override({"wanted"}, target_root=root)
+
+    assert override.startswith("skills.config=[")
+    assert f'{{path="{unwanted}",enabled=false}}' in override
+    assert f'{{path="{nested}",enabled=false}}' in override
+    assert "wanted/SKILL.md" not in override.replace("unwanted/SKILL.md", "")
+
+
+def test_codex_exclusion_override_is_empty_when_nothing_to_disable(tmp_path: Path):
+    root = tmp_path / "skills"
+    _skill_file(root, "only", "only", "The only skill.")
+
+    assert codex_skill_exclusion_override({"only"}, target_root=root) == ""
+
+
+def _skill_with_body(root: Path, name: str, body: str) -> None:
+    path = root / name / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\nname: {name}\ndescription: {name}.\n---\n\n{body}\n", encoding="utf-8"
+    )
+
+
+def test_dependencies_are_followed_to_the_end_not_cut_at_a_depth(tmp_path: Path):
+    root = tmp_path / "skills"
+    _skill_with_body(root, "task", "Delegate reading to reader.")
+    _skill_with_body(root, "reader", "Scanned pages go through ocr.")
+    _skill_with_body(root, "ocr", "Convert output with pdf.")
+    _skill_with_body(root, "pdf", "Leaf.")
+    _skill_with_body(root, "unrelated", "Nobody points here.")
+
+    closed = set(expand_skill_dependencies(["task"], target_root=root))
+
+    assert closed == {"task", "reader", "ocr", "pdf"}
+
+
+def test_dependency_cycles_terminate(tmp_path: Path):
+    root = tmp_path / "skills"
+    _skill_with_body(root, "alpha", "See beta.")
+    _skill_with_body(root, "beta", "See alpha.")
+
+    assert set(expand_skill_dependencies(["alpha"], target_root=root)) == {"alpha", "beta"}
+
+
+def test_dws_command_resolves_to_its_dingtalk_skill_only_when_installed(tmp_path: Path):
+    root = tmp_path / "skills"
+    _skill_with_body(
+        root, "task", "Run `dws doc read` then `dws nonexistent list`."
+    )
+    _skill_with_body(root, "dingtalk-doc", "Leaf.")
+
+    closed = set(expand_skill_dependencies(["task"], target_root=root))
+
+    assert "dingtalk-doc" in closed
+    assert "dingtalk-nonexistent" not in closed
+
+
+def test_a_skill_name_inside_a_longer_name_is_not_a_reference(tmp_path: Path):
+    root = tmp_path / "skills"
+    _skill_with_body(root, "task", "Use dingtalk-docs-export for this.")
+    _skill_with_body(root, "dingtalk-doc", "Leaf.")
+
+    assert set(expand_skill_dependencies(["task"], target_root=root)) == {"task"}
+
+
+def test_exclusion_override_keeps_the_whole_dependency_closure(tmp_path: Path):
+    root = tmp_path / "skills"
+    _skill_with_body(root, "task", "Read attachments with ocr.")
+    _skill_with_body(root, "ocr", "Leaf.")
+    _skill_with_body(root, "sora", "Leaf.")
+
+    override = codex_skill_exclusion_override(["task"], target_root=root)
+
+    assert "sora/SKILL.md" in override
+    assert "ocr/SKILL.md" not in override
+    assert "task/SKILL.md" not in override

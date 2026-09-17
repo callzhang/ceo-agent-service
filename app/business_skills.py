@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import tempfile
+
+import yaml
 
 
 BUNDLED_BUSINESS_SKILL_NAMES = (
@@ -101,42 +105,42 @@ def sync_bundled_skill(
         raise BusinessSkillInstallTargetError(
             f"business Skill destination escaped target root: {target_dir}"
         )
-    target_file = target_dir / "SKILL.md"
-    if target_dir.is_symlink():
-        raise BusinessSkillInstallTargetError(f"refusing symlinked business Skill directory: {target_dir}")
-    if target_dir.exists() and (not target_file.is_file() or not _is_service_managed(target_file)):
-        raise BusinessSkillInstallConflict(f"refusing to overwrite user-owned Skill: {target_dir}")
+    had_existing = _check_swap_conflict(target_dir)
     root.mkdir(parents=True, exist_ok=True)
     transaction_root = Path(tempfile.mkdtemp(prefix=".ceo-business-skill-", dir=root.parent))
     staged_dir = transaction_root / "staged"
     backup_dir = transaction_root / "backup"
-    had_existing = target_dir.exists()
-    backup_moved = False
-    installed = False
+    swap = _SwapState(
+        staged_dir=staged_dir,
+        target_dir=target_dir,
+        backup_dir=backup_dir / name,
+        had_existing=had_existing,
+    )
+    cleanup_transaction = True
     try:
         staged_dir.mkdir()
         backup_dir.mkdir()
         (staged_dir / "SKILL.md").write_bytes(raw_content)
-        if had_existing:
-            os.replace(target_dir, backup_dir / name)
-            backup_moved = True
-        os.replace(staged_dir, target_dir)
-        installed = True
+        expected_resolved_root = root.resolve(strict=True)
+        if expected_resolved_root != resolved_root:
+            raise BusinessSkillInstallTargetError(
+                f"business Skill target changed during installation: {root}"
+            )
+        _swap_in(swap, root, expected_resolved_root)
     except BaseException as install_error:
-        rollback_errors: list[tuple[Path, BaseException]] = []
-        try:
-            if installed:
-                os.replace(target_dir, staged_dir)
-            if backup_moved:
-                os.replace(backup_dir / name, target_dir)
-        except BaseException as rollback_error:
-            rollback_errors.append((target_dir, rollback_error))
-        if rollback_errors:
-            raise BusinessSkillInstallRollbackError(install_error, tuple(rollback_errors), transaction_root) from install_error
-        shutil.rmtree(transaction_root)
+        rollback_error = _rollback_swap(swap, root, resolved_root)
+        if rollback_error is not None:
+            cleanup_transaction = False
+            raise BusinessSkillInstallRollbackError(
+                install_error, ((target_dir, rollback_error),), transaction_root
+            ) from install_error
         raise
-    shutil.rmtree(transaction_root)
-    return target_file
+    finally:
+        if cleanup_transaction:
+            shutil.rmtree(transaction_root)
+    return target_dir / "SKILL.md"
+
+
 @dataclass(frozen=True)
 class BundledBusinessSkill:
     name: str
@@ -156,6 +160,7 @@ class InstalledBusinessSkill:
 class BusinessSkillCatalogEntry:
     name: str
     skill_path: Path
+    description: str = ""
 
 
 @dataclass
@@ -166,6 +171,53 @@ class _SwapState:
     had_existing: bool
     backup_moved: bool = False
     installed: bool = False
+
+
+def _check_swap_conflict(target_dir: Path) -> bool:
+    """Validate a would-be swap target is safe to replace; return whether it exists.
+
+    Shared preflight used by both the single-Skill and bulk install paths so a
+    user-owned or symlinked directory is always rejected before anything is staged.
+    """
+    if target_dir.is_symlink():
+        raise BusinessSkillInstallTargetError(
+            f"refusing symlinked business Skill directory: {target_dir}"
+        )
+    if target_dir.exists():
+        target_file = target_dir / "SKILL.md"
+        if not target_file.is_file() or not _is_service_managed(target_file):
+            raise BusinessSkillInstallConflict(
+                f"refusing to overwrite user-owned Skill: {target_dir}"
+            )
+        return True
+    return False
+
+
+def _swap_in(swap: _SwapState, target_root: Path, expected_resolved_root: Path) -> None:
+    """Move a staged Skill directory live, backing up any existing directory first."""
+    if swap.had_existing:
+        os.replace(swap.target_dir, swap.backup_dir)
+        swap.backup_moved = True
+    _validate_swap_destination(target_root, expected_resolved_root, swap.target_dir)
+    os.replace(swap.staged_dir, swap.target_dir)
+    swap.installed = True
+
+
+def _rollback_swap(
+    swap: _SwapState, target_root: Path, expected_resolved_root: Path
+) -> BaseException | None:
+    """Undo one swap, returning the failure if rollback itself could not complete."""
+    try:
+        if swap.installed:
+            os.replace(swap.target_dir, swap.staged_dir)
+            swap.installed = False
+        if swap.backup_moved:
+            _validate_swap_destination(target_root, expected_resolved_root, swap.target_dir)
+            os.replace(swap.backup_dir, swap.target_dir)
+            swap.backup_moved = False
+    except BaseException as rollback_error:  # noqa: BLE001 - surfaced to the caller
+        return rollback_error
+    return None
 
 
 def bundled_business_skills_root() -> Path:
@@ -189,11 +241,79 @@ def installed_business_skill_catalog(
     )
 
 
+def runtime_skill_root(target_root: Path | None = None) -> Path:
+    return (
+        Path.home() / ".agents" / "skills"
+        if target_root is None
+        else Path(target_root).expanduser()
+    )
+
+
+def installed_runtime_skill_paths(target_root: Path | None = None) -> tuple[Path, ...]:
+    """Every SKILL.md under the runtime tree, including nested ones.
+
+    Codex disables Skills by path and discovers them at any depth, so the
+    exclusion list has to be built from a full walk rather than a top-level
+    listing; a Skill missed here silently stays enabled.
+    """
+    root = runtime_skill_root(target_root)
+    if not root.is_dir():
+        return ()
+    return tuple(sorted(root.rglob("SKILL.md")))
+
+
+def installed_runtime_skills(
+    target_root: Path | None = None, *, names: Iterable[str] | None = None
+) -> tuple[BusinessSkillCatalogEntry, ...]:
+    """Describe runtime Skills by reading their frontmatter, optionally filtered.
+
+    Scanning beats a hardcoded list: a Skill added or removed on disk is
+    reflected without a code change, and an entry can never point at a file that
+    is not there. Frontmatter is parsed as real YAML because Skills in the wild
+    use structures the bundled strict parser rejects. A file that will not parse
+    is skipped: a catalog entry without a description cannot help the Agent
+    choose, which is the only reason to list it.
+    """
+    wanted = None if names is None else {name for name in names if name}
+    entries: list[BusinessSkillCatalogEntry] = []
+    for path in installed_runtime_skill_paths(target_root):
+        try:
+            content = path.read_text(encoding="utf-8")
+            lines = content.splitlines()
+            if not lines or lines[0].strip() != "---":
+                continue
+            frontmatter = yaml.safe_load("\n".join(lines[1 : lines.index("---", 1)]))
+        except (OSError, UnicodeError, ValueError, yaml.YAMLError):
+            continue
+        if not isinstance(frontmatter, dict):
+            continue
+        name = frontmatter.get("name")
+        description = frontmatter.get("description")
+        if not isinstance(name, str) or not isinstance(description, str):
+            continue
+        name, description = name.strip(), description.strip()
+        if not name or not description:
+            continue
+        if wanted is not None and name not in wanted:
+            continue
+        entries.append(
+            BusinessSkillCatalogEntry(
+                name=name, skill_path=path.resolve(), description=description
+            )
+        )
+    return tuple(entries)
+
+
 def render_business_skill_protocol(
     catalog: tuple[BusinessSkillCatalogEntry, ...],
 ) -> str:
     inventory = [
-        {"name": item.name, "path": str(item.skill_path)} for item in catalog
+        {
+            "name": item.name,
+            "path": str(item.skill_path),
+            **({"description": item.description} if item.description else {}),
+        }
+        for item in catalog
     ]
     return (
         "## Installed CEO business Skill catalog\n"
@@ -206,6 +326,86 @@ def render_business_skill_protocol(
         "operation Skill needed for the judgment. Do not return an outcome before "
         "completing this read."
     )
+
+
+def expand_skill_dependencies(
+    names: Iterable[str], *, target_root: Path | None = None
+) -> tuple[str, ...]:
+    """Add every installed Skill the given Skills reference, transitively.
+
+    A task declares the Skills it works through; those Skills delegate to others
+    by name (the OA Skill shells out to `ocr`, which leads to `pdf` and `xlsx`
+    several hops away). Leaving a dependency out would hide it from the Agent
+    silently, so the closure is followed to the end rather than cut at a depth.
+
+    Two kinds of reference count, and only when they resolve to a Skill that is
+    actually installed: an exact Skill name, and a `dws <product>` command, which
+    is documented by the `dingtalk-<product>` Skill. Matching a Skill mentioned
+    only to say "do not use it" over-includes, which errs toward visibility; an
+    unresolvable token is never invented into a name.
+    """
+    catalog = {entry.name: entry.skill_path for entry in installed_runtime_skills(target_root)}
+    if not catalog:
+        return tuple(dict.fromkeys(name for name in names if name))
+    name_pattern = re.compile(
+        r"(?<![\w-])("
+        + "|".join(re.escape(name) for name in sorted(catalog, key=len, reverse=True))
+        + r")(?![\w-])"
+    )
+    dws_pattern = re.compile(r"(?<![\w-])dws\s+([a-z][a-z0-9-]*)")
+    resolved: dict[str, None] = {}
+    pending = [name for name in names if name]
+    while pending:
+        name = pending.pop()
+        if name in resolved:
+            continue
+        resolved[name] = None
+        path = catalog.get(name)
+        if path is None:
+            continue
+        try:
+            body = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        referenced = set(name_pattern.findall(body))
+        referenced |= {
+            f"dingtalk-{product}"
+            for product in dws_pattern.findall(body)
+            if f"dingtalk-{product}" in catalog
+        }
+        pending.extend(sorted(referenced - resolved.keys()))
+    return tuple(resolved)
+
+
+def codex_skill_exclusion_override(
+    allowed_names: Iterable[str], *, target_root: Path | None = None
+) -> str:
+    """Build the Codex `-c` override that disables every Skill outside the allow set.
+
+    Codex always injects its own Skill catalog and offers no allow-list: the only
+    working lever is marking individual Skills `enabled = false`, verified against
+    `codex debug prompt-input`. Passing this on the command line keeps the user's
+    own ~/.codex/config.toml untouched. Trimming matters for quality, not just
+    size: over its Skill budget Codex truncates descriptions mid-sentence, which
+    is what the Agent relies on to pick the right Skill.
+
+    Returns an empty string when nothing needs disabling, so the caller can omit
+    the flag entirely.
+    """
+    allowed = set(expand_skill_dependencies(allowed_names, target_root=target_root))
+    keep = {
+        entry.skill_path
+        for entry in installed_runtime_skills(target_root, names=allowed)
+    }
+    excluded = [
+        path
+        for path in installed_runtime_skill_paths(target_root)
+        if path.resolve() not in keep
+    ]
+    if not excluded:
+        return ""
+    items = ",".join(f'{{path="{path}",enabled=false}}' for path in excluded)
+    return f"skills.config=[{items}]"
 
 
 def load_bundled_business_skills() -> tuple[BundledBusinessSkill, ...]:
@@ -253,17 +453,7 @@ def install_bundled_business_skills(
 
     # Ownership and symlink checks happen before staging creates anything.
     for skill in skills:
-        target_dir = target_root / skill.name
-        target = target_dir / "SKILL.md"
-        if target_dir.is_symlink():
-            raise BusinessSkillInstallTargetError(
-                f"refusing symlinked business Skill directory: {target_dir}"
-            )
-        if target_dir.exists():
-            if not target.is_file() or not _is_service_managed(target):
-                raise BusinessSkillInstallConflict(
-                    f"refusing to overwrite user-owned Skill: {target_dir}"
-                )
+        _check_swap_conflict(target_root / skill.name)
 
     resolved_target_root = target_root.resolve(strict=False)
     resolved_target_root.parent.mkdir(parents=True, exist_ok=True)
@@ -301,34 +491,14 @@ def install_bundled_business_skills(
                 had_existing=(target_root / skill.name).exists(),
             )
             swaps.append(swap)
-            if swap.had_existing:
-                os.replace(swap.target_dir, swap.backup_dir)
-                swap.backup_moved = True
-            _validate_swap_destination(
-                target_root,
-                expected_resolved_root,
-                swap.target_dir,
-            )
-            os.replace(swap.staged_dir, swap.target_dir)
-            swap.installed = True
+            _swap_in(swap, target_root, expected_resolved_root)
     except BaseException as install_error:
         rollback_errors: list[tuple[Path, BaseException]] = []
         # Continue restoring other directories if one restore fails. Their backups
         # remain together until every directory reports a successful rollback.
         for swap in reversed(swaps):
-            try:
-                if swap.installed:
-                    os.replace(swap.target_dir, swap.staged_dir)
-                    swap.installed = False
-                if swap.backup_moved:
-                    _validate_swap_destination(
-                        target_root,
-                        resolved_target_root,
-                        swap.target_dir,
-                    )
-                    os.replace(swap.backup_dir, swap.target_dir)
-                    swap.backup_moved = False
-            except BaseException as rollback_error:
+            rollback_error = _rollback_swap(swap, target_root, resolved_target_root)
+            if rollback_error is not None:
                 rollback_errors.append((swap.target_dir, rollback_error))
         if rollback_errors:
             cleanup_transaction = False

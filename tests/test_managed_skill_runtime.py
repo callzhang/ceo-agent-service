@@ -254,9 +254,11 @@ def test_snapshot_remains_exact_when_a_later_config_is_created(tmp_path: Path) -
     assert "Version two" not in snapshot.protocol()
 
 
-def test_consumer_uses_startup_snapshot_without_reading_installed_business_catalog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_activating_a_revision_elsewhere_does_not_change_a_running_contract(
+    tmp_path: Path,
 ) -> None:
+    """The runtime tree is the Agent's Skill source, but a live process's own
+    contract stays pinned to the snapshot it started with."""
     store, first = configured_store(tmp_path)
     active = store.create_runtime_skill_config(
         {first.skill_id: first.id}, expected_parent_id=None
@@ -267,13 +269,6 @@ def test_consumer_uses_startup_snapshot_without_reading_installed_business_catal
     consumer = ConsumerAgentRunner(
         store=store, workspace=tmp_path, runtime_skill_snapshot=snapshot
     )
-    def installed_catalog_must_not_be_read():
-        raise AssertionError("managed runtime invocation read mutable installed catalog")
-
-    monkeypatch.setattr(
-        "app.consumer_agent.installed_business_skill_catalog",
-        installed_catalog_must_not_be_read,
-    )
     original_contract = consumer_wire_contract_hash(consumer.runtime_skill_snapshot)
     second = store.create_managed_skill_revision(first.skill_id, SKILL_V2, source="settings")
     store.create_runtime_skill_config(
@@ -281,6 +276,7 @@ def test_consumer_uses_startup_snapshot_without_reading_installed_business_catal
     )
 
     assert consumer_wire_contract_hash(consumer.runtime_skill_snapshot) == original_contract
+    # The snapshot still records which revisions were in force for this process.
     assert "Version one" in consumer.runtime_skill_snapshot.protocol()
     assert "Version two" not in consumer.runtime_skill_snapshot.protocol()
 

@@ -19,6 +19,8 @@ from app.managed_skills import (
     ManagedSkillValidationError,
     REPOSITORY_IMPORT_SOURCE,
     REPOSITORY_MANAGED_SKILL_NAMES,
+    RUNTIME_EDIT_SOURCE,
+    capture_runtime_skill_edits,
     export_managed_skill_revision,
     import_repository_managed_skills,
     resolve_pending_runtime_skills,
@@ -964,3 +966,66 @@ def test_reopening_an_existing_database_repairs_missing_immutability_triggers(
             "update managed_skill_revisions set content=? where id=?",
             (SKILL_V2, revision.id),
         )
+
+
+def _runtime_skill_file(root: Path, name: str, body: str) -> Path:
+    path = root / name / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\nname: {name}\ndescription: Runtime copy under test.\n"
+        f"metadata:\n  managed_by: ceo-agent-service\n---\n\n{body}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_capture_runtime_skill_edits_records_an_in_place_edit(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "skills.sqlite3")
+    import_repository_managed_skills(store)
+    name = REPOSITORY_MANAGED_SKILL_NAMES[0]
+    skill = store.get_managed_skill_by_name(name)
+    before = store.list_managed_skill_revisions(skill.id)
+    root = tmp_path / "agents-skills"
+    path = _runtime_skill_file(root, name, "hand edited in the runtime tree")
+
+    captured = capture_runtime_skill_edits(store, skills_root=root)
+
+    assert [item.name for item in captured] == [name]
+    after = store.list_managed_skill_revisions(skill.id)
+    assert len(after) == len(before) + 1
+    newest = max(after, key=lambda revision: revision.revision_number)
+    assert newest.content == path.read_text(encoding="utf-8")
+    assert newest.source == RUNTIME_EDIT_SOURCE
+    assert newest.sha256 == captured[0].sha256
+    # The edit is already live for every CLI, so the file is left exactly as found.
+    assert path.read_text(encoding="utf-8").endswith(
+        "hand edited in the runtime tree\n"
+    )
+
+
+def test_capture_runtime_skill_edits_is_a_noop_when_content_matches(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "skills.sqlite3")
+    import_repository_managed_skills(store)
+    name = REPOSITORY_MANAGED_SKILL_NAMES[0]
+    skill = store.get_managed_skill_by_name(name)
+    latest = max(
+        store.list_managed_skill_revisions(skill.id),
+        key=lambda revision: revision.revision_number,
+    )
+    root = tmp_path / "agents-skills"
+    path = root / name / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(latest.content, encoding="utf-8")
+
+    assert capture_runtime_skill_edits(store, skills_root=root) == ()
+    assert capture_runtime_skill_edits(store, skills_root=root) == ()
+    assert len(store.list_managed_skill_revisions(skill.id)) == 1
+
+
+def test_capture_runtime_skill_edits_skips_absent_files(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "skills.sqlite3")
+    import_repository_managed_skills(store)
+
+    assert capture_runtime_skill_edits(store, skills_root=tmp_path / "empty") == ()

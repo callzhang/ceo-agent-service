@@ -722,6 +722,60 @@ def test_runtime_probe_loop_survives_unexpected_refresh_failure():
     assert calls == ["sleep", "refresh", "sleep"]
 
 
+def test_claude_skills_link_is_created_and_is_idempotent(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    agents = home / ".agents" / "skills"
+    agents.mkdir(parents=True)
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda _cls: home))
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+
+    cli._ensure_claude_skills_link(settings)
+    link = home / ".claude" / "skills"
+
+    assert link.is_symlink()
+    assert link.resolve() == agents.resolve()
+
+    cli._ensure_claude_skills_link(settings)
+
+    assert link.resolve() == agents.resolve()
+    assert AutoReplyStore(settings.db_path).list_errors(limit=10) == []
+
+
+def test_claude_skills_link_repoints_a_link_aimed_elsewhere(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    agents = home / ".agents" / "skills"
+    agents.mkdir(parents=True)
+    stale = tmp_path / "somewhere-else"
+    stale.mkdir()
+    link = home / ".claude" / "skills"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(stale, target_is_directory=True)
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda _cls: home))
+
+    cli._ensure_claude_skills_link(WorkerSettings(db_path=tmp_path / "worker.sqlite3"))
+
+    assert link.resolve() == agents.resolve()
+    assert stale.is_dir()
+
+
+def test_claude_skills_link_never_destroys_a_real_directory(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".agents" / "skills").mkdir(parents=True)
+    real = home / ".claude" / "skills"
+    only_copy = real / "skill-that-exists-nowhere-else" / "SKILL.md"
+    only_copy.parent.mkdir(parents=True)
+    only_copy.write_text("keep me\n", encoding="utf-8")
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda _cls: home))
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+
+    cli._ensure_claude_skills_link(settings)
+
+    assert not real.is_symlink()
+    assert only_copy.read_text(encoding="utf-8") == "keep me\n"
+    errors = AutoReplyStore(settings.db_path).list_errors(limit=10)
+    assert [error.kind for error in errors] == ["claude_skills_link_blocked"]
+
+
 def test_run_service_probes_before_starting_shared_refresh_component(
     tmp_path, monkeypatch
 ):
@@ -745,6 +799,11 @@ def test_run_service_probes_before_starting_shared_refresh_component(
     monkeypatch.setattr(cli, "_wechat_service_components", lambda _settings: ())
     monkeypatch.setattr(
         cli,
+        "_prepare_runtime_skills_on_service_start",
+        lambda settings: calls.append(("install-skills",)),
+    )
+    monkeypatch.setattr(
+        cli,
         "_seed_scheduled_tasks_on_service_start",
         lambda settings, snapshot: calls.append(("seed", snapshot is not None)),
     )
@@ -759,7 +818,8 @@ def test_run_service_probes_before_starting_shared_refresh_component(
     )
 
     assert calls[0] == ("refresh", True)
-    assert calls[1] == ("seed", True)
+    assert calls[1] == ("install-skills",)
+    assert calls[2] == ("seed", True)
     assert ("start", "ceo-agent-service-runtime-probe", True) in calls
     assert calls[-1] == ("wait",)
 
@@ -787,6 +847,9 @@ def test_run_service_starts_components_when_initial_runtime_refresh_raises(
 
     monkeypatch.setattr(cli, "doctor_mcp_command", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli, "_wechat_service_components", lambda _settings: ())
+    monkeypatch.setattr(
+        cli, "_prepare_runtime_skills_on_service_start", lambda settings: None
+    )
 
     run_service(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
@@ -7562,6 +7625,9 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
     )
     gate = SimpleNamespace(ready=lambda: True)
     monkeypatch.setattr(cli, "NetworkDependencyGate", lambda: gate)
+    monkeypatch.setattr(
+        cli, "_prepare_runtime_skills_on_service_start", lambda settings: None
+    )
 
     run_service(
         WorkerSettings(
@@ -7836,7 +7902,7 @@ def test_agent_cron_dispatcher_dry_run_leaves_todo_outbox_unclaimed(
     assert captured["shared_max_in_flight"] == 2
 
 
-def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
+def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path, monkeypatch):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     store.enqueue_reply_task(
@@ -7860,6 +7926,9 @@ def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
         def start(self):
             calls.append(("start", self.name, self.daemon))
 
+    monkeypatch.setattr(
+        cli, "_prepare_runtime_skills_on_service_start", lambda settings: None
+    )
     run_service(
         WorkerSettings(db_path=db_path),
         host="127.0.0.1",
@@ -7879,7 +7948,9 @@ def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
     assert calls[-1] == ("wait",)
 
 
-def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path):
+def test_run_service_requeues_processing_work_summary_inputs_on_startup(
+    tmp_path, monkeypatch
+):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     item = WorkItem.model_validate(
@@ -7912,6 +7983,9 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path
         def start(self):
             calls.append(("start", self.name, self.daemon))
 
+    monkeypatch.setattr(
+        cli, "_prepare_runtime_skills_on_service_start", lambda settings: None
+    )
     run_service(
         WorkerSettings(db_path=db_path),
         host="127.0.0.1",
@@ -7933,7 +8007,7 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path
     assert calls[-1] == ("wait",)
 
 
-def test_run_service_keeps_terminal_user_rejected_wechat_delivery(tmp_path):
+def test_run_service_keeps_terminal_user_rejected_wechat_delivery(tmp_path, monkeypatch):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     store.enqueue_reply_task(
@@ -7970,6 +8044,9 @@ def test_run_service_keeps_terminal_user_rejected_wechat_delivery(tmp_path):
         def start(self):
             calls.append(("start", self.name, self.daemon))
 
+    monkeypatch.setattr(
+        cli, "_prepare_runtime_skills_on_service_start", lambda settings: None
+    )
     run_service(
         WorkerSettings(db_path=db_path),
         host="127.0.0.1",
@@ -7985,7 +8062,7 @@ def test_run_service_keeps_terminal_user_rejected_wechat_delivery(tmp_path):
     assert calls[-1] == ("wait",)
 
 
-def test_run_service_requeues_recoverable_okr_requests_on_startup(tmp_path):
+def test_run_service_requeues_recoverable_okr_requests_on_startup(tmp_path, monkeypatch):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     request_id = store.create_okr_review_request(
@@ -8013,6 +8090,9 @@ def test_run_service_requeues_recoverable_okr_requests_on_startup(tmp_path):
         def start(self):
             calls.append(("start", self.name, self.daemon))
 
+    monkeypatch.setattr(
+        cli, "_prepare_runtime_skills_on_service_start", lambda settings: None
+    )
     run_service(
         WorkerSettings(db_path=db_path),
         host="127.0.0.1",

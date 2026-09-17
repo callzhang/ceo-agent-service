@@ -450,6 +450,73 @@ def _import_repository_managed_skills_locked(
     )
 
 
+RUNTIME_EDIT_SOURCE = "runtime:agents-skills"
+
+
+@dataclass(frozen=True)
+class RuntimeSkillEditCapture:
+    """One hand edit found in the runtime Skill tree and recorded as a revision."""
+
+    name: str
+    revision_id: int
+    revision_number: int
+    sha256: str
+
+
+def capture_runtime_skill_edits(
+    store: "AutoReplyStore", *, skills_root: Path | None = None
+) -> tuple[RuntimeSkillEditCapture, ...]:
+    """Record edits made directly in the runtime Skill tree as new revisions.
+
+    The file is the runtime source every CLI on this machine reads, so an edit
+    there is already in effect before this service ever sees it. Capturing it
+    keeps the version history honest; without this, the next write from any other
+    path would discard a change that was already live.
+
+    A file whose content still matches the skill's latest revision is untouched.
+    A Skill that has no revisions yet, or no file on disk, is skipped rather than
+    invented.
+    """
+    root = Path(
+        skills_root or (Path.home() / ".agents" / "skills")
+    ).expanduser()
+    captured: list[RuntimeSkillEditCapture] = []
+    for name in REPOSITORY_MANAGED_SKILL_NAMES:
+        path = root / name / "SKILL.md"
+        if not path.is_file():
+            continue
+        skill = store.get_managed_skill_by_name(name)
+        if skill is None:
+            continue
+        revisions = store.list_managed_skill_revisions(skill.id)
+        if not revisions:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ManagedSkillValidationError(
+                f"unable to read runtime Skill: {path}: {exc}"
+            ) from exc
+        latest = max(revisions, key=lambda revision: revision.revision_number)
+        if validate_managed_skill_content(name, content) == latest.sha256:
+            continue
+        revision = store.create_managed_skill_revision(
+            skill.id, content, source=RUNTIME_EDIT_SOURCE
+        )
+        store.record_managed_skill_export(
+            revision.id, sha256=revision.sha256, path=str(path)
+        )
+        captured.append(
+            RuntimeSkillEditCapture(
+                name=name,
+                revision_id=revision.id,
+                revision_number=revision.revision_number,
+                sha256=revision.sha256,
+            )
+        )
+    return tuple(captured)
+
+
 def export_managed_skill_revision(
     store: "AutoReplyStore", revision_id: int, *, skills_root: Path | None = None
 ) -> RepositoryManagedSkillExport:
