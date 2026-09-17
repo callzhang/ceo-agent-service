@@ -753,20 +753,25 @@ Claude CLI 有两条并列路由，共用 `CEO_CLAUDE_MODEL`（默认 `sonnet`�
 
 | 路由 | 凭据 | 命令差异 |
 | --- | --- | --- |
-| `claude_oauth` | 本机 `claude` CLI 的登录态（订阅） | 不使用 `--bare`，不设置 `ANTHROPIC_API_KEY` 和 `CLAUDE_CONFIG_DIR` |
-| `claude_api` | `CEO_CLAUDE_API_KEY` | 使用 `--bare`，凭据只进子进程环境，配置目录指向服务自有临时目录 |
+| `claude_oauth` | 本机 `claude` CLI 的登录态（订阅） | 不使用 `--bare`，不设置 `ANTHROPIC_API_KEY`，`CLAUDE_CONFIG_DIR` 不覆盖 |
+| `claude_api` | `CEO_CLAUDE_API_KEY` | 使用 `--bare`，凭据只进子进程环境，`CLAUDE_CONFIG_DIR` 同样不覆盖 |
 
-服务自有临时目录统一创建在当前运行用户的 `~/.claude/ceo-agent-claude-*`，不在
-`CEO_WORKSPACE` 指向的业务资料目录中创建运行文件。服务进程退出时由临时目录对象回收；异常
-终止遗留的同名前缀空目录可以在确认无进程占用后清理。
+两条路由都不覆盖 `CLAUDE_CONFIG_DIR`，直接复用调用方真实的 `~/.claude`：`--bare` 已经
+保证 `claude_api` 的认证只能来自 `ANTHROPIC_API_KEY`（不会读到 `~/.claude` 里缓存的 OAuth
+凭据），所以没有必要为凭据隔离单独换一个配置目录。每次调用要落地的
+`ceo-agent-service-settings-<uuid>.json` / `ceo-agent-service-mcp-<uuid>.json` 文件（文件名
+按 uuid 区分、带 `ceo-agent-service-` 前缀跟真实配置区分开，不需要目录级隔离）直接写在
+`~/.claude/` 根目录下，跟 Codex 直接写在 `~/.codex` 根目录（`auth.json`、`sessions/` 等）
+是同一个做法——没有专门建子目录，也就没有目录生命周期要管理。调用结束后单个文件由
+`finish_invocation` 清理，不需要任何清理任务。
 
 `--bare` 规定 Anthropic 认证只能来自 `ANTHROPIC_API_KEY`，因此订阅路由必须去掉它，改由
 CLI 自己解析本机登录态；`CLAUDE_CODE_SIMPLE=1` 与 `--bare` 等价，同样不可用于该路由。
 `--safe-mode` 虽然能屏蔽个人配置，但会连同 `--mcp-config` 显式传入的服务 MCP 一起停用，
 所以两条路由都不使用它。两条路由的隔离都由 `--setting-sources ""`、`--settings` 和
 `--strict-mcp-config --mcp-config` 保证：调用方的 CLAUDE.md、skills、plugins 和 hooks 都
-不会进入服务运行。`claude_oauth` 复用本机登录态的代价是会话文件写入调用方的
-`~/.claude/projects/<cwd>`，与本人交互式会话共享订阅额度。
+不会进入服务运行。两条路由都会把会话文件写入调用方的 `~/.claude/projects/<cwd>`，与本人
+交互式会话共享订阅额度（`claude_api` 用的是独立的 API Key 配额，只是会话记录文件位置共用）。
 
 Claude 事件语法只把 turn item 映射成 runtime 事件。传输层遥测不携带 turn item，
 统一映射为空事件：订阅额度窗口 `rate_limit_event`（可能出现在 session init 之前）和

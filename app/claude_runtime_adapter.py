@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import tempfile
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -134,41 +132,17 @@ def require_claude_session_id(session_id: str) -> str:
     return session_id
 
 
-_RUNTIME_DIR_PREFIX = "ceo-agent-claude-"
-_OWNER_PID_MARKER = ".owner_pid"
-
-
-def _owner_pid_is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def _reap_orphaned_runtime_dirs(claude_home: Path) -> None:
-    """Delete prior runtime dirs whose owning process is confirmed dead.
-
-    A graceful shutdown or a probe's own ``close()`` already removes its
-    directory; this sweep exists for the case a process is killed before it
-    gets that chance (SIGKILL, OOM, container restart), which no in-process
-    ``finally`` block can observe.
-    """
-    try:
-        candidates = list(claude_home.glob(f"{_RUNTIME_DIR_PREFIX}*"))
-    except OSError:
-        return
-    for candidate in candidates:
-        marker = candidate / _OWNER_PID_MARKER
-        try:
-            owner_pid = int(marker.read_text().strip())
-        except (OSError, ValueError):
-            continue
-        if _owner_pid_is_alive(owner_pid):
-            continue
-        shutil.rmtree(candidate, ignore_errors=True)
+# Where per-invocation ceo-agent-service-settings-*.json/-mcp-*.json scratch
+# files live. Fixed
+# and shared across every adapter and every process: unlike a route's actual
+# isolation (--bare forces ANTHROPIC_API_KEY-only auth; --setting-sources ""
+# and --strict-mcp-config keep the caller's CLAUDE.md/skills/hooks/local MCP
+# config out), which files land where doesn't need per-invocation directory
+# isolation, only per-invocation *file* naming -- already handled by the uuid
+# and the service-specific prefix in each filename (see
+# _write_invocation_boundary). So these files sit directly in ~/.claude, the
+# same way Codex writes directly into ~/.codex; there is no directory to leak.
+_ARTIFACT_PREFIX = "ceo-agent-service"
 
 
 class ClaudeRuntimeAdapter:
@@ -188,14 +162,8 @@ class ClaudeRuntimeAdapter:
         self._service_mcp_servers = service_mcp_servers
         claude_home = Path.home() / ".claude"
         claude_home.mkdir(parents=True, exist_ok=True, mode=0o700)
-        _reap_orphaned_runtime_dirs(claude_home)
-        self._runtime_root = tempfile.TemporaryDirectory(
-            prefix=_RUNTIME_DIR_PREFIX, dir=claude_home
-        )
-        Path(self._runtime_root.name, _OWNER_PID_MARKER).write_text(str(os.getpid()))
-        self._mcp_proxy = ClaudeMcpCredentialProxyManager(
-            root=Path(self._runtime_root.name)
-        )
+        self._runtime_root = claude_home
+        self._mcp_proxy = ClaudeMcpCredentialProxyManager(root=self._runtime_root)
         self._lock = RLock()
         self._pending_proofs: dict[object, tuple[ClaudeTerminalProof, str]] = {}
         self._invocations_by_mcp_path: dict[str, str] = {}
@@ -207,9 +175,8 @@ class ClaudeRuntimeAdapter:
         return self._mcp_proxy.active_process_count
 
     def close(self) -> None:
-        """Release the MCP proxy and the per-adapter runtime temp dir."""
+        """Release the MCP proxy. The shared runtime dir is never torn down."""
         self._mcp_proxy.close()
-        self._runtime_root.cleanup()
 
     def build_command(
         self,
@@ -283,9 +250,10 @@ class ClaudeRuntimeAdapter:
             if secret is None or not secret.get_secret_value():
                 raise ValueError("claude_api credential is missing")
             env["ANTHROPIC_API_KEY"] = secret.get_secret_value()
-            # Prevent Claude from consulting the caller's ~/.claude state.  Each
-            # invocation receives only the service-owned settings and MCP config.
-            env["CLAUDE_CONFIG_DIR"] = self._runtime_root.name
+            # --bare (see build_command) already forces auth to come from
+            # ANTHROPIC_API_KEY alone, so CLAUDE_CONFIG_DIR does not need to
+            # move: the caller's ~/.claude credentials are never consulted
+            # regardless of where session/config state lives.
         if command is not None:
             try:
                 mcp_path = str(
@@ -520,10 +488,10 @@ class ClaudeRuntimeAdapter:
     def _write_invocation_boundary(
         self, policy: ClaudeCommandPolicy
     ) -> tuple[Path, Path]:
-        root = Path(self._runtime_root.name)
+        root = self._runtime_root
         invocation_id = uuid.uuid4().hex
-        settings_path = root / f"settings-{invocation_id}.json"
-        mcp_path = root / f"mcp-{invocation_id}.json"
+        settings_path = root / f"{_ARTIFACT_PREFIX}-settings-{invocation_id}.json"
+        mcp_path = root / f"{_ARTIFACT_PREFIX}-mcp-{invocation_id}.json"
         artifacts = (settings_path, mcp_path)
         try:
             transports = self._mcp_transports(

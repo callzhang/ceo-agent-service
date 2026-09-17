@@ -87,14 +87,20 @@ def route(config):
 
 
 @pytest.fixture
-def adapter(tmp_path, config):
+def adapter(tmp_path, config, monkeypatch):
+    # The runtime dir is now fixed and shared (see ClaudeRuntimeAdapter), so
+    # tests must sandbox it under tmp_path instead of touching the real
+    # ~/.claude -- otherwise assertions about its contents race with every
+    # other adapter (test or production) sharing the real one.
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     runtime_adapter = ClaudeRuntimeAdapter(
         workspace=tmp_path,
         config=config,
         claude_bin="claude-test",
     )
     yield runtime_adapter
-    runtime_adapter._mcp_proxy.close()
+    runtime_adapter.close()
 
 
 @pytest.fixture
@@ -268,7 +274,7 @@ def test_claude_child_receives_only_configured_anthropic_credential(
     env = adapter.build_env(route)
 
     assert env["ANTHROPIC_API_KEY"] == "anthropic-secret"
-    assert env["CLAUDE_CONFIG_DIR"] == adapter._runtime_root.name
+    assert "CLAUDE_CONFIG_DIR" not in env
     assert "OPENAI_API_KEY" not in env
     assert "CODEX_API_KEY" not in env
     assert "CEO_CODEX_API_KEY" not in env
@@ -291,12 +297,11 @@ def test_claude_runtime_root_is_created_under_user_claude_directory(
         claude_bin="claude-test",
     )
     try:
-        runtime_root = Path(runtime_adapter._runtime_root.name)
-        assert runtime_root.parent == user_home / ".claude"
+        runtime_root = runtime_adapter._runtime_root
+        assert runtime_root == user_home / ".claude"
         assert not tuple(workspace.glob("ceo-agent-claude-*"))
     finally:
-        runtime_adapter._mcp_proxy.close()
-        runtime_adapter._runtime_root.cleanup()
+        runtime_adapter.close()
 
 
 def test_claude_adapter_rejects_unconfigured_or_codex_route(adapter, config):
@@ -896,7 +901,7 @@ def test_environment_backed_mcp_args_fail_closed_before_serialization(
         )
     assert not any(
         "raw-args-secret" in path.read_text(encoding="utf-8")
-        for path in Path(adapter._runtime_root.name).iterdir()
+        for path in adapter._runtime_root.iterdir()
     )
 
 
@@ -952,7 +957,7 @@ def test_invocation_build_failure_rolls_back_proxy_and_all_artifacts(
     original_write_text = Path.write_text
 
     def fail_mcp_write(path, *args, **kwargs):
-        if path.name.startswith("mcp-"):
+        if "-mcp-" in path.name:
             raise OSError("synthetic config write failure")
         return original_write_text(path, *args, **kwargs)
 
@@ -966,8 +971,8 @@ def test_invocation_build_failure_rolls_back_proxy_and_all_artifacts(
         )
 
     assert adapter.active_proxy_process_count == 0
-    assert list(Path(adapter._runtime_root.name).glob("settings-*.json")) == []
-    assert list(Path(adapter._runtime_root.name).glob("mcp-*.json")) == []
+    assert list(adapter._runtime_root.glob("ceo-agent-service-settings-*.json")) == []
+    assert list(adapter._runtime_root.glob("ceo-agent-service-mcp-*.json")) == []
 
 
 def test_terminal_parse_closes_invocation_proxy(adapter, route, tmp_path, monkeypatch):
