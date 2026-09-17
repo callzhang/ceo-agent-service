@@ -242,3 +242,28 @@ def test_nothing_is_promoted_when_no_category_qualifies():
     assert result["promoted_categories"] == []
     assert result["promotion_eligible"] is False
     assert micro_check(result)["reason"] == "not_measured"
+
+
+def test_a_category_is_judged_on_the_messages_its_threshold_accepts():
+    """Below-threshold predictions go to the Agent, so they must not sink it."""
+
+    row = evidence()
+    row["metrics"]["categories"]["work"].update(
+        precision=.80, support=120, accepted_precision=.95, accepted_hits=40,
+    )
+    result = assess(row)
+    precision = next(c for c in result["checks"] if c["key"] == "category_precision:work")
+    samples = next(c for c in result["checks"] if c["key"] == "category_validation_samples:work")
+
+    assert precision["actual"] == pytest.approx(.95)
+    assert samples["actual"] == 40
+    assert result["promoted_categories"] == ["work"]
+
+
+def test_too_few_accepted_messages_keeps_a_category_with_the_agent():
+    row = evidence()
+    row["metrics"]["categories"]["work"].update(
+        precision=.99, support=120, accepted_precision=.99, accepted_hits=3,
+    )
+
+    assert assess(row)["promoted_categories"] == []

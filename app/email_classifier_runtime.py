@@ -466,10 +466,18 @@ def assess_online_promotion_gate(
     category_checks_passed: dict[str, bool] = {}
     for key in enabled_category_keys:
         category = mapping(metrics.get(key))
-        precision = _finite_evidence_number(category.get("precision"))
+        # Live, the model only keeps a prediction that clears its calibrated
+        # threshold; everything below goes to the Agent. So a category is
+        # judged on the messages it would actually decide: their precision and
+        # how many of them there were. Evidence without those falls back to
+        # all predictions.
+        accepted = "accepted_precision" in category and "accepted_hits" in category
+        precision = _finite_evidence_number(
+            category.get("accepted_precision" if accepted else "precision")
+        )
         check(f"category_precision:{key}", precision if precision is not None and 0 <= precision <= 1 else None,
               config["category_precision_min"])
-        support = category.get("support")
+        support = category.get("accepted_hits" if accepted else "support")
         check(f"category_validation_samples:{key}", support if type(support) is int and support >= 0 else None,
               config["category_validation_samples_min"])
         category_checks_passed[key] = checks[-1]["passed"] and checks[-2]["passed"]
