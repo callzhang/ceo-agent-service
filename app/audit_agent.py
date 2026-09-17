@@ -14,6 +14,11 @@ from app.agent_effect_claim import (
     claims_external_action_without_tools,
     generation_tool_events,
 )
+from app.outbound_text_authority import (
+    UNPREPARED_SEND_REQUIREMENT,
+    provider_send_texts,
+    unprepared_send_texts,
+)
 from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
@@ -261,7 +266,13 @@ class AuditAgentRunner:
                 ) if email_unsubscribe_tools else None,
             ),
             parse_result=self._parse_evidenced_result(
-                task, run, parse_result=parse_result
+                task,
+                run,
+                parse_result=parse_result,
+                delivery_keys=tuple(
+                    str(expected.get("delivery_key") or "")
+                    for expected in expected_actions
+                ),
             ),
             persist_conversation_session=False,
             expected_actions=expected_actions,
@@ -269,12 +280,25 @@ class AuditAgentRunner:
             required_capabilities=self._required_capabilities(context),
         )
 
+    def _prepared_bodies(self, delivery_keys: tuple[str, ...]) -> list[str]:
+        """The exact bodies the service prepared for this proposal's actions."""
+
+        bodies: list[str] = []
+        for key in delivery_keys:
+            if not key:
+                continue
+            prepared = self.store.get_outbound_postfix("dingtalk", key)
+            if prepared is not None:
+                bodies.append(prepared.final_body)
+        return bodies
+
     def _parse_evidenced_result(
         self,
         task: ReplyTask,
         run: AgentRun,
         *,
         parse_result: Callable[[str], AuditAgentResult] = parse_audit_agent_wire_result,
+        delivery_keys: tuple[str, ...] = (),
     ) -> Callable[[str], AuditAgentResult]:
         """Accept `executed` only when the audited tool ran for this turn.
 
@@ -290,6 +314,13 @@ class AuditAgentRunner:
             # action, whatever its outcome says. The evidence gate below asks
             # a different question: whether a write backs an `executed`.
             refreshed = self.store.get_agent_run(run.id)
+            if refreshed is not None:
+                unprepared = unprepared_send_texts(
+                    provider_send_texts(refreshed.tool_events),
+                    self._prepared_bodies(delivery_keys),
+                )
+                if unprepared:
+                    raise ResultParseError(UNPREPARED_SEND_REQUIREMENT)
             if refreshed is not None and claims_external_action_without_tools(
                 result=result.model_dump(mode="json"),
                 tool_events=generation_tool_events(
