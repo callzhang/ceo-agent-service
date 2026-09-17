@@ -77,6 +77,19 @@ def test_a_full_provider_is_waited_out_on_the_same_route(failures):
     assert plan.wait_seconds == 10.0 * 2 ** (failures - 1)
 
 
+@pytest.mark.parametrize("failures", range(1, CAPACITY_RETRIES_ON_SAME_ROUTE + 1))
+def test_a_same_route_capacity_retry_resumes_the_session(failures):
+    """Production 2026-09-17: this plan said fresh_session=True. The Agent loop
+    reads that as "clear an incompatible session", whose guard accepts only
+    session_route_incompatible, so every Agent run failed on its first 429 with
+    "fresh session retry lacks persisted resume evidence" - 27 runs that day,
+    no wait and no failover. A full provider does not invalidate the session."""
+    plan = _plan(_failure(RuntimeFailureClass.CAPACITY, same_route=True), _full(failures))
+
+    assert plan.retry_same_route is True
+    assert plan.fresh_session is False
+
+
 def test_a_provider_still_full_after_the_retries_switches_runtime():
     plan = _plan(
         _failure(RuntimeFailureClass.CAPACITY, same_route=True),

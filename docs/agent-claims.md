@@ -54,6 +54,16 @@ reverts committed work they did not author.
 
 ## Recent overlaps worth knowing
 
+- 2026-09-17, Claude session `ceo-agent-service-bd`, **I edited `app/runtime_fallback.py`
+  and `tests/test_runtime_fallback.py` inside `claude-unified-runtime-fallback`'s claim,
+  with Derek's explicit authorisation** (owner session notified directly). One line:
+  the `capacity_retry` plan now returns `fresh_session=False`. It returned `True`, which
+  the Agent loop in `app/agent_turn_runner.py` reads as "clear an incompatible session";
+  that guard only accepts `session_route_incompatible`, so every Agent run failed on its
+  first codex 429 with "fresh session retry lacks persisted resume evidence" — no
+  same-route wait, no failover. 27 runs failed that way on 2026-09-17. Nothing else in
+  your files changed; a regression test pins the contract.
+
 - 2026-09-17, Claude session `claude-per-category-promotion`: **the email model is now promoted per category**
   against the console's `email_model_promotion_configs` thresholds instead of hard-coded 0.95 / 20 / 10.
   `WholeModelReadiness` carries `promoted_categories`; `online-active.json` records them and

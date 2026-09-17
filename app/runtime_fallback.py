@@ -92,9 +92,12 @@ def plan_runtime_fallback(
         if 0 < failures <= CAPACITY_RETRIES_ON_SAME_ROUTE:
             # Waiting out a full provider keeps the route available to every
             # other workload; only a route that stays full is taken away.
+            # A full provider does not invalidate the session, so the retry
+            # resumes it; the Agent loop treats fresh_session as "clear an
+            # incompatible session" and fails the run on any other failure.
             return FallbackPlan(
                 route=route,
-                fresh_session=True,
+                fresh_session=False,
                 reason="capacity_retry",
                 pause_route=False,
                 retry_same_route=True,
