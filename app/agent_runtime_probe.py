@@ -270,46 +270,43 @@ class AgentRuntimeProbe:
             max_turns=2,
             policy=policy,
         )
-        env = adapter.build_env(route, command=command)
-        normalizer = adapter.new_event_normalizer(command=command)
-        try:
-            completed = self._executor(
-                command,
-                prompt=prompt,
-                env=env,
-                total_timeout_seconds=self._total_timeout_seconds,
-                idle_timeout_seconds=self._idle_timeout_seconds,
+        env = adapter.build_env(route)
+        normalizer = adapter.new_event_normalizer()
+        completed = self._executor(
+            command,
+            prompt=prompt,
+            env=env,
+            total_timeout_seconds=self._total_timeout_seconds,
+            idle_timeout_seconds=self._idle_timeout_seconds,
+        )
+        if completed.returncode != 0 or completed.timed_out:
+            return (
+                adapter.classify_failure(
+                    completed.stdout,
+                    completed.stderr,
+                    completed.returncode,
+                    timed_out=completed.timed_out,
+                    timeout_kind=completed.timeout_kind,
+                ),
+                (),
             )
-            if completed.returncode != 0 or completed.timed_out:
-                return (
-                    adapter.classify_failure(
-                        completed.stdout,
-                        completed.stderr,
-                        completed.returncode,
-                        timed_out=completed.timed_out,
-                        timeout_kind=completed.timeout_kind,
-                    ),
-                    (),
-                )
-            normalized = []
-            for line in completed.stdout.splitlines():
-                if line.strip():
-                    normalized.extend(normalizer.normalize_events(json.loads(line)))
-            normalizer.finalize()
-            result = adapter.parse_final_result(
-                normalizer=normalizer,
-                proof=normalizer.terminal_proof(),
-                parser=_parse_probe_result,
-            )
-            if not (
-                set(result) == {"ok"}
-                and type(result["ok"]) is bool
-                and result["ok"] is True
-            ):
-                raise ValueError("Claude probe result is invalid")
-            return None, tuple(normalized)
-        finally:
-            adapter.finish_invocation(command)
+        normalized = []
+        for line in completed.stdout.splitlines():
+            if line.strip():
+                normalized.extend(normalizer.normalize_events(json.loads(line)))
+        normalizer.finalize()
+        result = adapter.parse_final_result(
+            normalizer=normalizer,
+            proof=normalizer.terminal_proof(),
+            parser=_parse_probe_result,
+        )
+        if not (
+            set(result) == {"ok"}
+            and type(result["ok"]) is bool
+            and result["ok"] is True
+        ):
+            raise ValueError("Claude probe result is invalid")
+        return None, tuple(normalized)
 
     def _route(self, route_name: str) -> RuntimeRoute:
         route = next(

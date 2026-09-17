@@ -135,7 +135,7 @@ def test_normal_command_delegates_tool_review_to_claude_runtime(
         policy=ClaudeCommandPolicy.normal(),
     )
     mcp_config = json.loads(
-        Path(command[command.index("--mcp-config") + 1]).read_text(encoding="utf-8")
+        command[command.index("--mcp-config") + 1]
     )
 
     assert set(mcp_config["mcpServers"]) == {"memory_connector", "new_provider"}
@@ -226,10 +226,10 @@ def test_no_tools_command_is_noninteractive_stream_json_and_prompt_free(adapter,
     assert "--permission-prompt-tool" not in command
     assert prompt not in command
     settings = json.loads(
-        Path(command[command.index("--settings") + 1]).read_text(encoding="utf-8")
+        command[command.index("--settings") + 1]
     )
     mcp_config = json.loads(
-        Path(command[command.index("--mcp-config") + 1]).read_text(encoding="utf-8")
+        command[command.index("--mcp-config") + 1]
     )
     assert settings["enableAllProjectMcpServers"] is False
     assert settings["enabledMcpjsonServers"] == []
@@ -282,22 +282,25 @@ def test_claude_child_receives_only_configured_anthropic_credential(
     assert "UNRELATED_SERVICE_TOKEN" not in env
 
 
-def test_claude_runtime_root_is_created_under_user_claude_directory(
-    tmp_path, config, monkeypatch
-):
+def test_building_a_turn_writes_nothing_to_disk(tmp_path, config, monkeypatch):
+    """Settings and MCP servers go to the CLI inline (Derek: no temp files)."""
     user_home = tmp_path / "home"
     workspace = tmp_path / "business-workspace"
     workspace.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
-
     runtime_adapter = ClaudeRuntimeAdapter(
-        workspace=workspace,
-        config=config,
-        claude_bin="claude-test",
+        workspace=workspace, config=config, claude_bin="claude-test"
     )
-    runtime_root = runtime_adapter._runtime_root
-    assert runtime_root == user_home / ".claude"
-    assert not tuple(workspace.glob("ceo-agent-claude-*"))
+
+    command = runtime_adapter.build_command(
+        route=config.routes[0], session_id=None, max_turns=2,
+        policy=ClaudeCommandPolicy.normal(),
+    )
+
+    assert json.loads(command[command.index("--settings") + 1])["enableAllProjectMcpServers"] is True
+    assert "mcpServers" in json.loads(command[command.index("--mcp-config") + 1])
+    assert not user_home.exists()
+    assert list(workspace.iterdir()) == []
 
 
 def test_claude_adapter_rejects_unconfigured_or_codex_route(adapter, config):
@@ -773,7 +776,7 @@ def test_terminal_proof_is_consumed_even_when_caller_parser_fails(adapter):
         )
 
 
-def test_mcp_secrets_stay_out_of_the_command_and_environment_and_leave_with_the_invocation(
+def test_mcp_credentials_reach_the_server_header_and_never_the_child_environment(
     adapter, route, tmp_path, monkeypatch
 ):
     manifest = tmp_path / "service-mcp.json"
@@ -806,28 +809,24 @@ def test_mcp_secrets_stay_out_of_the_command_and_environment_and_leave_with_the_
         policy=ClaudeCommandPolicy.normal(),
     )
 
-    child_env = adapter.build_env(route, command=command)
-    mcp_path = Path(command[command.index("--mcp-config") + 1])
-    settings_path = Path(command[command.index("--settings") + 1])
-    command_line = "\n".join([*command, settings_path.read_text()])
+    child_env = adapter.build_env(route)
 
-    # Derek, 2026-09-17: no local proxy. A server's configured credential is
-    # handed to Claude as that server's header in this invocation's MCP config;
-    # it never reaches the command line or the child's environment, and the
-    # config file goes away with the invocation.
+    # Derek, 2026-09-17: no local proxy and no temp files. A server's configured
+    # credential is handed to Claude as that server's header in the inline MCP
+    # config, as the native CLI keeps it in ~/.claude.json; the child's
+    # environment never carries the variables it was read from.
     assert "CONNECTOR_API_KEY" not in child_env
     assert "MEMORY_AUTH_TYPE" not in child_env
     assert "FOREIGN_API_KEY" not in child_env
     for secret in ("raw-memory-secret", "raw-auth-secret", "raw-foreign-secret"):
-        assert secret not in command_line
         assert secret not in "\n".join(child_env.values())
-    headers = json.loads(mcp_path.read_text())["mcpServers"]["memory_connector"]["headers"]
+    headers = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"][
+        "memory_connector"
+    ]["headers"]
     assert headers == {
         "Authorization": "Bearer raw-memory-secret",
         "X-Memory-Auth": "raw-auth-secret",
     }
-    adapter.finish_invocation(command)
-    assert not mcp_path.exists()
 
 
 def test_normalized_tool_events_never_retain_raw_arguments_or_results(normalizer):
@@ -898,81 +897,9 @@ def test_environment_backed_mcp_args_fail_closed_before_serialization(
             max_turns=2,
             policy=ClaudeCommandPolicy.normal(),
         )
-    assert not any(
-        "raw-args-secret" in path.read_text(encoding="utf-8")
-        for path in adapter._runtime_root.iterdir()
-    )
 
 
-def test_invocation_files_are_removed_when_it_finishes_or_its_executor_fails(
-    adapter, route, tmp_path, monkeypatch
-):
-    manifest = tmp_path / "service-mcp.json"
-    manifest.write_text(
-        json.dumps(
-            {"servers": {"memory_connector": {"url": "http://127.0.0.1:9/mcp"}}}
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
-    policy = ClaudeCommandPolicy.normal()
-
-    for _ in range(2):
-        command = adapter.build_command(
-            route=route, session_id=None, max_turns=2, policy=policy
-        )
-        settings_path = Path(command[command.index("--settings") + 1])
-        mcp_path = Path(command[command.index("--mcp-config") + 1])
-        mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
-        assert set(mcp["mcpServers"]) == {"memory_connector"}
-        assert all(path.exists() for path in (settings_path, mcp_path))
-        adapter.finish_invocation(command)
-        assert not any(path.exists() for path in (settings_path, mcp_path))
-
-    command = adapter.build_command(
-        route=route, session_id=None, max_turns=2, policy=policy
-    )
-    settings_path = Path(command[command.index("--settings") + 1])
-    with pytest.raises(RuntimeError, match="executor failed"):
-        adapter.execute(
-            command,
-            lambda _command: (_ for _ in ()).throw(RuntimeError("executor failed")),
-        )
-    assert not settings_path.exists()
-
-
-def test_invocation_build_failure_rolls_back_all_artifacts(
-    adapter, route, tmp_path, monkeypatch
-):
-    manifest = tmp_path / "service-mcp.json"
-    manifest.write_text(
-        json.dumps(
-            {"servers": {"memory_connector": {"url": "http://127.0.0.1:9/mcp"}}}
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
-    original_write_text = Path.write_text
-
-    def fail_mcp_write(path, *args, **kwargs):
-        if "-mcp-" in path.name:
-            raise OSError("synthetic config write failure")
-        return original_write_text(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "write_text", fail_mcp_write)
-    with pytest.raises(OSError, match="synthetic config write failure"):
-        adapter.build_command(
-            route=route,
-            session_id=None,
-            max_turns=2,
-            policy=ClaudeCommandPolicy.normal(),
-        )
-
-    assert list(adapter._runtime_root.glob("ceo-agent-service-settings-*.json")) == []
-    assert list(adapter._runtime_root.glob("ceo-agent-service-mcp-*.json")) == []
-
-
-def test_terminal_parse_removes_invocation_files(adapter, route, tmp_path, monkeypatch):
+def test_terminal_parse_returns_the_final_result(adapter, route, tmp_path, monkeypatch):
     manifest = tmp_path / "service-mcp.json"
     manifest.write_text(
         json.dumps(
@@ -987,7 +914,7 @@ def test_terminal_parse_removes_invocation_files(adapter, route, tmp_path, monke
         max_turns=2,
         policy=ClaudeCommandPolicy.normal(),
     )
-    normalizer = adapter.new_event_normalizer(command=command)
+    normalizer = adapter.new_event_normalizer()
     normalizer.normalize_event(SYSTEM_INIT)
     normalizer.normalize_event(FINAL_RESULT)
 
@@ -999,11 +926,9 @@ def test_terminal_parse_removes_invocation_files(adapter, route, tmp_path, monke
         )
         == '{"ok":true}'
     )
-    mcp_path = Path(command[command.index("--mcp-config") + 1])
-    assert not mcp_path.exists()
 
 
-def test_terminal_event_failure_unlinks_artifacts(
+def test_a_result_before_init_is_a_grammar_failure(
     adapter, route, tmp_path, monkeypatch
 ):
     manifest = tmp_path / "service-mcp.json"
@@ -1020,14 +945,10 @@ def test_terminal_event_failure_unlinks_artifacts(
         max_turns=2,
         policy=ClaudeCommandPolicy.normal(),
     )
-    settings_path = Path(command[command.index("--settings") + 1])
-    mcp_path = Path(command[command.index("--mcp-config") + 1])
-    normalizer = adapter.new_event_normalizer(command=command)
+    normalizer = adapter.new_event_normalizer()
 
     with pytest.raises(ClaudeEventPolicyError, match="claude_init_missing"):
         normalizer.normalize_event(FINAL_RESULT)
-
-    assert not any(path.exists() for path in (settings_path, mcp_path))
 
 
 @pytest.fixture
@@ -1305,7 +1226,7 @@ def test_service_mcp_servers_are_connected_directly(adapter, route, tmp_path, mo
         route=route, session_id=None, max_turns=2, policy=ClaudeCommandPolicy.normal()
     )
     servers = json.loads(
-        Path(command[command.index("--mcp-config") + 1]).read_text(encoding="utf-8")
+        command[command.index("--mcp-config") + 1]
     )["mcpServers"]
 
     assert servers["memory_connector"] == {
@@ -1317,4 +1238,3 @@ def test_service_mcp_servers_are_connected_directly(adapter, route, tmp_path, mo
         "headers": {"Authorization": "Bearer keyed-secret"},
     }
     assert servers["local"] == {"type": "stdio", "command": "/opt/local-mcp", "args": ["--serve"]}
-    adapter.finish_invocation(command)

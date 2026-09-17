@@ -1796,37 +1796,31 @@ class RoutedCodexExecution:
             session_id=session_id,
             max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
         )
-        env = adapter.build_env(route, command=command)
-        normalizer = adapter.new_event_normalizer(
-            expected_session_id=session_id, command=command
+        env = adapter.build_env(route)
+        normalizer = adapter.new_event_normalizer(expected_session_id=session_id)
+        process = self._executor(
+            command,
+            prompt=_claude_turn_text(command_factory, prompt),
+            env=env,
+            total_timeout_seconds=self._total_timeout_seconds,
+            idle_timeout_seconds=self._idle_timeout_seconds,
+            on_stdout_line=on_stdout_line,
         )
-        try:
-            process = self._executor(
-                command,
-                prompt=_claude_turn_text(command_factory, prompt),
-                env=env,
-                total_timeout_seconds=self._total_timeout_seconds,
-                idle_timeout_seconds=self._idle_timeout_seconds,
-                on_stdout_line=on_stdout_line,
-            )
-            if process.returncode != 0 or process.timed_out:
-                return process, ""
-            for line in process.stdout.splitlines():
-                if line.strip():
-                    normalizer.normalize_events(json.loads(line))
-            normalizer.finalize()
-            text = adapter.parse_final_result(
-                normalizer=normalizer,
-                proof=normalizer.terminal_proof(),
-                parser=lambda raw: raw,
-            )
-            return (
-                ProcessRunResult(0, _final_message_events(text), ""),
-                normalizer.session_id or "",
-            )
-        finally:
-            adapter.finish_invocation(command)
-
+        if process.returncode != 0 or process.timed_out:
+            return process, ""
+        for line in process.stdout.splitlines():
+            if line.strip():
+                normalizer.normalize_events(json.loads(line))
+        normalizer.finalize()
+        text = adapter.parse_final_result(
+            normalizer=normalizer,
+            proof=normalizer.terminal_proof(),
+            parser=lambda raw: raw,
+        )
+        return (
+            ProcessRunResult(0, _final_message_events(text), ""),
+            normalizer.session_id or "",
+        )
 
     def _claim_and_start(
         self,

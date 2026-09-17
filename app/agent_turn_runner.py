@@ -1055,9 +1055,8 @@ class AgentTurnProcess(Generic[ResultT]):
                     )
                     claude_normalizer = claude_adapter.new_event_normalizer(
                         expected_session_id=route_session_id,
-                        command=command,
                     )
-                    command_env = claude_adapter.build_env(route, command=command)
+                    command_env = claude_adapter.build_env(route)
                 elif route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
                     if self.friday_adapter is None:
                         self.friday_adapter = FridayRuntimeAdapter(self.runtime_config)
@@ -1145,8 +1144,6 @@ class AgentTurnProcess(Generic[ResultT]):
                         )
                     process = ProcessRunResult(1, "", exc.detail)
                 except Exception:
-                    if claude_adapter is not None:
-                        claude_adapter.finish_invocation(command)
                     self._fail_runtime_attempt_unclassified(active_attempt)
                     raise
                 if process.returncode == 0 and not process.timed_out:
@@ -1187,8 +1184,6 @@ class AgentTurnProcess(Generic[ResultT]):
                                 raise
                             result = parse_result(session_result)
                     break
-                if claude_adapter is not None:
-                    claude_adapter.finish_invocation(command)
                 if friday_failure is not None:
                     failure = friday_failure
                 else:

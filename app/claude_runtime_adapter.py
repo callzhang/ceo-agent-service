@@ -131,19 +131,6 @@ def require_claude_session_id(session_id: str) -> str:
     return session_id
 
 
-# Where per-invocation ceo-agent-service-settings-*.json/-mcp-*.json scratch
-# files live. Fixed
-# and shared across every adapter and every process: unlike a route's actual
-# isolation (--bare forces ANTHROPIC_API_KEY-only auth; --setting-sources ""
-# and --strict-mcp-config keep the caller's CLAUDE.md/skills/hooks/local MCP
-# config out), which files land where doesn't need per-invocation directory
-# isolation, only per-invocation *file* naming -- already handled by the uuid
-# and the service-specific prefix in each filename (see
-# _write_invocation_boundary). So these files sit directly in ~/.claude, the
-# same way Codex writes directly into ~/.codex; there is no directory to leak.
-_ARTIFACT_PREFIX = "ceo-agent-service"
-
-
 def _mcp_transport(
     server: ServiceMcpServer, source_env: Mapping[str, str]
 ) -> dict[str, object]:
@@ -194,14 +181,8 @@ class ClaudeRuntimeAdapter:
         self.config = config
         self.claude_bin = claude_bin
         self._service_mcp_servers = service_mcp_servers
-        claude_home = Path.home() / ".claude"
-        claude_home.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self._runtime_root = claude_home
         self._lock = RLock()
         self._pending_proofs: dict[object, tuple[ClaudeTerminalProof, str]] = {}
-        self._invocations_by_mcp_path: dict[str, str] = {}
-        self._invocations_by_owner: dict[object, str] = {}
-        self._artifact_paths: dict[str, tuple[Path, ...]] = {}
 
     def build_command(
         self,
@@ -227,7 +208,7 @@ class ClaudeRuntimeAdapter:
             raise ValueError("max_turns must be a positive integer")
         if session_id is not None:
             require_claude_session_id(session_id)
-        settings_path, mcp_path = self._write_invocation_boundary(selected_policy)
+        settings_json, mcp_json = self._invocation_boundary(selected_policy)
         command = [self.claude_bin, "-p"]
         if configured.credential_mode is CredentialMode.SERVICE_API:
             # --bare reads Anthropic auth strictly from ANTHROPIC_API_KEY.  The
@@ -240,10 +221,10 @@ class ClaudeRuntimeAdapter:
                 "--setting-sources",
                 "",
                 "--settings",
-                str(settings_path),
+                settings_json,
                 "--strict-mcp-config",
                 "--mcp-config",
-                str(mcp_path),
+                mcp_json,
                 "--input-format",
                 "text",
                 "--output-format",
@@ -265,9 +246,7 @@ class ClaudeRuntimeAdapter:
             command.extend(["--resume", session_id])
         return command
 
-    def build_env(
-        self, route: RuntimeRoute, *, command: list[str] | None = None
-    ) -> dict[str, str]:
+    def build_env(self, route: RuntimeRoute) -> dict[str, str]:
         configured = self._configured_route(route)
         env = _safe_child_environment(dict(os.environ))
         if configured.credential_mode is CredentialMode.SERVICE_API:
@@ -279,35 +258,19 @@ class ClaudeRuntimeAdapter:
             # ANTHROPIC_API_KEY alone, so CLAUDE_CONFIG_DIR does not need to
             # move: the caller's ~/.claude credentials are never consulted
             # regardless of where session/config state lives.
-        if command is not None:
-            try:
-                mcp_path = str(
-                    Path(command[command.index("--mcp-config") + 1]).resolve()
-                )
-            except (ValueError, IndexError):
-                raise ValueError("Claude invocation MCP config is missing") from None
-            with self._lock:
-                invocation_id = self._invocations_by_mcp_path.get(mcp_path)
-            if invocation_id is None:
-                raise ValueError("Claude invocation MCP config is not adapter-owned")
         return env
 
     def new_event_normalizer(
         self,
         *,
         expected_session_id: str | None = None,
-        command: list[str] | None = None,
     ) -> ClaudeEventNormalizer:
         owner = object()
-        if command is not None:
-            invocation_id = self._invocation_id(command)
-            with self._lock:
-                self._invocations_by_owner[owner] = invocation_id
         return ClaudeEventNormalizer(
             expected_session_id=expected_session_id,
             owner=owner,
             proof_issuer=self._issue_terminal_proof,
-            cleanup_owner=self._finish_owner,
+            cleanup_owner=self._discard_owner,
         )
 
     def parse_final_result(
@@ -335,60 +298,12 @@ class ClaudeRuntimeAdapter:
                 _result_failure("claude_result_validation_failed")
             ) from exc
         finally:
-            self._finish_owner(normalizer._owner)
+            self._discard_owner(normalizer._owner)
 
-    def execute(
-        self, command: list[str], executor: Callable[..., ResultT], **kwargs
-    ) -> ResultT:
-        """Run one Claude process and always close its credential proxies."""
-
-        try:
-            return executor(command, **kwargs)
-        finally:
-            self.finish_invocation(command)
-
-    def finish_invocation(self, command: list[str]) -> None:
-        invocation_id = self._invocation_id(command, required=False)
-        if invocation_id is None:
-            return
-        self._finish_invocation_id(invocation_id)
-
-    def _finish_invocation_id(self, invocation_id: str) -> None:
+    def _discard_owner(self, owner: object) -> None:
+        """Forget a finished stream's unclaimed terminal proof."""
         with self._lock:
-            stale_paths = [
-                path
-                for path, candidate in self._invocations_by_mcp_path.items()
-                if candidate == invocation_id
-            ]
-            for path in stale_paths:
-                del self._invocations_by_mcp_path[path]
-            artifacts = self._artifact_paths.pop(invocation_id, ())
-        for path in artifacts:
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                pass
-
-    def _finish_owner(self, owner: object) -> None:
-        with self._lock:
-            invocation_id = self._invocations_by_owner.pop(owner, None)
-        if invocation_id is not None:
-            self._finish_invocation_id(invocation_id)
-
-    def _invocation_id(
-        self, command: list[str], *, required: bool = True
-    ) -> str | None:
-        try:
-            path = str(Path(command[command.index("--mcp-config") + 1]).resolve())
-        except (ValueError, IndexError):
-            if required:
-                raise ValueError("Claude invocation MCP config is missing") from None
-            return None
-        with self._lock:
-            invocation_id = self._invocations_by_mcp_path.get(path)
-        if invocation_id is None and required:
-            raise ValueError("Claude invocation MCP config is not adapter-owned")
-        return invocation_id
+            self._pending_proofs.pop(owner, None)
 
     def _issue_terminal_proof(
         self, owner: object, result: str, session_id: str
@@ -509,43 +424,25 @@ class ClaudeRuntimeAdapter:
             ),
         )
 
-    def _write_invocation_boundary(
-        self, policy: ClaudeCommandPolicy
-    ) -> tuple[Path, Path]:
-        root = self._runtime_root
-        invocation_id = uuid.uuid4().hex
-        settings_path = root / f"{_ARTIFACT_PREFIX}-settings-{invocation_id}.json"
-        mcp_path = root / f"{_ARTIFACT_PREFIX}-mcp-{invocation_id}.json"
-        artifacts = (settings_path, mcp_path)
-        try:
-            transports = self._mcp_transports() if policy.tools_enabled else {}
-            settings_path.write_text(
-                json.dumps(
-                    {
-                        "enableAllProjectMcpServers": policy.tools_enabled,
-                        "enabledMcpjsonServers": sorted(transports),
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-                encoding="utf-8",
-            )
-            mcp_path.write_text(
-                json.dumps(
-                    {"mcpServers": transports},
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-                encoding="utf-8",
-            )
-        except Exception:
-            for path in artifacts:
-                path.unlink(missing_ok=True)
-            raise
-        with self._lock:
-            self._invocations_by_mcp_path[str(mcp_path.resolve())] = invocation_id
-            self._artifact_paths[invocation_id] = artifacts
-        return settings_path, mcp_path
+    def _invocation_boundary(self, policy: ClaudeCommandPolicy) -> tuple[str, str]:
+        """The settings and MCP servers for one turn, passed to the CLI inline.
+
+        The CLI takes both as JSON strings, so nothing is written to disk and
+        nothing has to be cleaned up after the turn.
+        """
+        transports = self._mcp_transports() if policy.tools_enabled else {}
+        settings_json = json.dumps(
+            {
+                "enableAllProjectMcpServers": policy.tools_enabled,
+                "enabledMcpjsonServers": sorted(transports),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        mcp_json = json.dumps(
+            {"mcpServers": transports}, sort_keys=True, separators=(",", ":")
+        )
+        return settings_json, mcp_json
 
     def _mcp_transports(self) -> dict[str, dict[str, object]]:
         configured = (

@@ -67,7 +67,6 @@ class FakeClaudeNormalizer:
 class FakeClaudeAdapter:
     def __init__(self) -> None:
         self.commands: list[list[str]] = []
-        self.finished: list[list[str]] = []
 
     def build_command(self, *, route, session_id, max_turns, **kwargs):
         self.max_turns = max_turns
@@ -75,17 +74,14 @@ class FakeClaudeAdapter:
         self.commands.append(command)
         return command
 
-    def build_env(self, route, *, command=None):
+    def build_env(self, route):
         return {"ROUTE": route.name}
 
-    def new_event_normalizer(self, *, expected_session_id=None, command=None):
+    def new_event_normalizer(self, *, expected_session_id=None):
         return FakeClaudeNormalizer()
 
     def parse_final_result(self, *, normalizer, proof, parser):
         return parser(proof.result)
-
-    def finish_invocation(self, command):
-        self.finished.append(command)
 
     def classify_failure(self, stdout, stderr, returncode, **kwargs):
         return RuntimeFailure(
@@ -2385,8 +2381,6 @@ def test_a_workload_runs_on_claude_through_the_same_path(tmp_path, monkeypatch):
     # One turn cannot finish work that calls a tool: the run ends on
     # `stop_reason: tool_use` and no result ever arrives.
     assert claude.max_turns == CLAUDE_MAX_TURNS_PER_INVOCATION
-    # The invocation is always released, so its boundary files do not pile up.
-    assert claude.finished == claude.commands
 
 
 def test_a_claude_route_without_its_adapter_is_reported_not_run(tmp_path, monkeypatch):
