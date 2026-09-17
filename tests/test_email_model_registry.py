@@ -1069,3 +1069,32 @@ def test_staged_evidence_carries_the_thresholds_it_was_judged_by() -> None:
     assert PromotionThresholds.from_mapping(
         {"category_precision_min": 0.9, "category_validation_samples_min": 10}
     ) == PromotionThresholds(0.9, 10)
+
+
+def test_a_category_whose_evidence_shrank_is_held_back_alone() -> None:
+    shrunk = HistoricalEligibility(precision=0.99, accepted_hits=15, independent_groups=15)
+    first = _with_eligibility(
+        _maturity("candidate-1"),
+        legal=HistoricalEligibility(precision=0.99, accepted_hits=30, independent_groups=30),
+    )
+    second = _with_eligibility(_maturity("candidate-2"), legal=shrunk)
+
+    readiness = assess_whole_model_readiness((first, second))
+
+    assert readiness.ready is True
+    assert readiness.promoted_categories == ("work",)
+
+
+def test_readiness_fails_only_when_every_category_regressed() -> None:
+    strong = HistoricalEligibility(precision=0.99, accepted_hits=60, independent_groups=60)
+    weaker = HistoricalEligibility(precision=0.99, accepted_hits=30, independent_groups=30)
+    first = CandidateMaturityEvidence(
+        **{**_with_eligibility(_maturity("candidate-1"), work=strong, legal=strong).__dict__,
+           "important_eligibility": strong}
+    )
+    second = CandidateMaturityEvidence(
+        **{**_with_eligibility(_maturity("candidate-2"), work=weaker, legal=weaker).__dict__,
+           "important_eligibility": weaker}
+    )
+
+    assert assess_whole_model_readiness((first, second)).reason == "evaluation_evidence_regressed"

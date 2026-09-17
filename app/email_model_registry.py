@@ -289,12 +289,26 @@ def assess_whole_model_readiness(
         return WholeModelReadiness(False, (), "label_watermark_not_advanced")
     previous_metrics = (*previous.category_eligibility.values(), previous.important_eligibility)
     current_metrics = (*current.category_eligibility.values(), current.important_eligibility)
-    if any(
-        current_item.accepted_hits < previous_item.accepted_hits
-        or current_item.independent_groups < previous_item.independent_groups
-        for previous_item, current_item in zip(
-            previous_metrics, current_metrics, strict=True
+
+    def regressed(previous_item, current_item) -> bool:
+        return (
+            current_item.accepted_hits < previous_item.accepted_hits
+            or current_item.independent_groups < previous_item.independent_groups
         )
+
+    # Evidence that shrank only holds back the category it belongs to:
+    # cross-validated hits move a little between runs, and one category's dip
+    # says nothing about the others.
+    regressed_categories = {
+        category
+        for category in current.category_eligibility
+        if regressed(
+            previous.category_eligibility[category],
+            current.category_eligibility[category],
+        )
+    }
+    if len(regressed_categories) == len(current.category_eligibility) and regressed(
+        previous.important_eligibility, current.important_eligibility
     ):
         return WholeModelReadiness(False, (), "evaluation_evidence_regressed")
     if not any(
@@ -310,7 +324,7 @@ def assess_whole_model_readiness(
     promoted = tuple(
         category
         for category in current.eligible_categories
-        if category in previously_eligible
+        if category in previously_eligible and category not in regressed_categories
     )
     if not promoted:
         return WholeModelReadiness(False, (), "maturity_gate_not_met")
@@ -319,7 +333,11 @@ def assess_whole_model_readiness(
         (previous.model_id, current.model_id),
         "two_consecutive_compatible_candidates_passed",
         promoted_categories=promoted,
-        important_promoted=previous.important_eligible and current.important_eligible,
+        important_promoted=(
+            previous.important_eligible
+            and current.important_eligible
+            and not regressed(previous.important_eligibility, current.important_eligibility)
+        ),
     )
 
 
