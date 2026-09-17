@@ -296,6 +296,9 @@ reverts committed work they did not author.
   version history may be incomplete: Skill missing metadata.managed_by marker`.
   Two restarts, two rows, so each restart adds one. I left both open rather
   than resolving them, since the capture itself has not run successfully yet.
+  Update 09:37Z: the capture code is now committed (`3e71a801`, `c771579a`)
+  and the rows keep coming — 15 open, one per service start (the latest from
+  my own restart at 09:37:20Z). They are the whole of Attention right now.
 
 - 2026-09-11: three findings left open by the failed-item repair round, each
   needing an owner. They are recorded here because the evidence is perishable.
