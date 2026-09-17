@@ -112,7 +112,9 @@ export function ModelTraining({
         },
         reason: run.reason,
       })),
-    ],
+      // Newest first, across models and failed runs alike: the three sources
+      // arrive in different orders and read as scrambled when concatenated.
+    ].sort((a, b) => (b.model.trained_at || "").localeCompare(a.model.trained_at || "")),
     [models, learning.models, learning.training_runs_without_model],
   );
   // Runs carry no family and no model status, so they must not offer filter

@@ -617,3 +617,23 @@ it("says every email stays with the Agent when no category qualifies", () => {
 
   expect(screen.getByLabelText("按分类上线")).toHaveTextContent("暂无分类达标，所有邮件继续由 Agent 处理。");
 });
+
+it("lists model versions and failed runs newest first", () => {
+  const mixed = {
+    ...learning,
+    staged_models: [
+      { ...learning.staged_models[0], model_id: "email-embedding-mlp-older", trained_at: "2026-09-14T08:00:00Z" },
+      { ...learning.staged_models[0], model_id: "email-embedding-mlp-newest", trained_at: "2026-09-17T08:00:00Z" },
+    ],
+    training_runs_without_model: [
+      { run_id: "run-middle", status: "failed", started_at: "2026-09-16T08:00:00Z", finished_at: "2026-09-16T08:01:00Z", reason: "boom" },
+    ],
+  };
+  render(
+    <ModelTraining learning={mixed} configs={[]} reload={async () => mixed} runtimeVerified onRuntimeUnverified={vi.fn()} onBusy={vi.fn()} />,
+  );
+
+  const table = screen.getByRole("table", { name: "模型版本" });
+  const ids = Array.from(table.querySelectorAll("tbody tr td:first-child")).map((cell) => cell.getAttribute("title"));
+  expect(ids).toEqual(["email-embedding-mlp-newest", "run-middle", "email-embedding-mlp-older"]);
+});
