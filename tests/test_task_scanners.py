@@ -1546,3 +1546,75 @@ def test_scan_pending_oa_approvals_gives_each_approval_its_own_conversation(tmp_
 
     conversations = {task.conversation_id for task in store.claim_reply_tasks(limit=10)}
     assert conversations == {"oa_pending_scan:proc-1", "oa_pending_scan:proc-2"}
+
+
+def test_scan_pending_oa_approvals_waits_for_a_new_comment_once_reviewed(tmp_path):
+    """Derek 2026-09-17: once we have commented, wake on a new comment, not a timer.
+
+    A daily reminder for an approval whose ball is in someone else's court is
+    noise.  An approval we have NOT commented on is different -- that one can
+    have lost its turn silently, so it keeps the daily revisit.
+    """
+
+    class FakeDws:
+        extra_records: list = []
+
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [DwsOaApprovalCandidate(process_instance_id="proc-1", title="付款申请")]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": "task-1",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {
+                "result": {
+                    "operationRecords": [
+                        {
+                            "operationType": "ADD_REMARK",
+                            "operationTime": 1,
+                            "userId": "requester",
+                        },
+                        *self.extra_records,
+                    ]
+                }
+            }
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    day_one = datetime.fromisoformat("2026-09-17T19:00:00+08:00")
+
+    # Not reviewed yet: the daily revisit still protects it.
+    assert scan_pending_oa_approvals(store, dws, now=day_one) == 1
+    assert scan_pending_oa_approvals(store, dws, now=day_one + timedelta(days=1)) == 1
+
+    # We commented. No timer wake-up, however many days pass: our own record
+    # is excluded from the revision, so nothing about the approval has moved.
+    dws.extra_records = [
+        {"operationType": "ADD_REMARK", "operationTime": 2, "userId": "principal-user-1"}
+    ]
+    assert scan_pending_oa_approvals(store, dws, now=day_one + timedelta(days=2)) == 0
+    assert scan_pending_oa_approvals(store, dws, now=day_one + timedelta(days=3)) == 0
+    assert scan_pending_oa_approvals(store, dws, now=day_one + timedelta(days=9)) == 0
+
+    # Someone else comments: that is the wake-up signal.
+    dws.extra_records = [
+        *dws.extra_records,
+        {"operationType": "ADD_REMARK", "operationTime": 3, "userId": "requester"},
+    ]
+    assert scan_pending_oa_approvals(store, dws, now=day_one + timedelta(days=10)) == 1

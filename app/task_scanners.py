@@ -679,14 +679,22 @@ def scan_pending_oa_approvals(
         if not revision:
             continue
         process_revisions[process_instance_id] = revision
-        # An unchanged approval is normally skipped, but it is still waiting on
-        # the principal: a turn that ended without a decision (a comment, or a
-        # service-side result that never reached DingTalk) leaves it pending
-        # forever, because nothing else will change its revision. Look at it
-        # again once a day so it cannot fall out of the pipeline silently.
-        if (
-            previous_revisions.get(process_instance_id) == revision
-            and previous_queued_days.get(process_instance_id) == scan_date
+        # An unchanged approval is normally skipped, but it can still be waiting
+        # on the principal: a turn that ended without a decision and without a
+        # comment leaves it pending forever, because nothing else will change
+        # its revision. Look at that one again once a day so it cannot fall out
+        # of the pipeline silently.
+        #
+        # Once the review comment is there, the ball is in someone else's court
+        # and a daily reminder is just noise: wait for new activity instead. The
+        # revision already excludes the principal's own records, so it moves
+        # only when somebody else comments or acts -- which is exactly the
+        # wake-up signal.
+        if previous_revisions.get(process_instance_id) == revision and (
+            _oa_principal_has_commented(
+                records_payload, current_user_id=current_user_id
+            )
+            or previous_queued_days.get(process_instance_id) == scan_date
         ):
             continue
         queued_days[process_instance_id] = scan_date
@@ -956,6 +964,22 @@ def _oa_approval_revision(
 # Commenting on an approval is not deciding it; DingTalk records both as
 # operation records by the same user.
 OA_COMMENT_OPERATION_TYPES = frozenset({"ADD_REMARK", "add_remark", "COMMENT"})
+
+
+def _oa_principal_has_commented(
+    records_payload: Any,
+    *,
+    current_user_id: str,
+) -> bool:
+    """Return whether the principal has already left a comment on the approval."""
+    if not current_user_id:
+        return False
+    return any(
+        _oa_task_field(record, ("userId", "userid", "user_id")) == current_user_id
+        and _oa_task_field(record, ("operationType", "type"))
+        in OA_COMMENT_OPERATION_TYPES
+        for record in _oa_operation_records(records_payload)
+    )
 
 
 def _oa_pending_approval_revision(
