@@ -161,6 +161,28 @@ describe("SettingsPage", () => {
     }), {});
   });
 
+  it("enables Claude API from its own card, which the page used to name but never offer", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,friday_runtime",
+      CEO_CLAUDE_API_KEY: "claude-token",
+    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    expect(await screen.findByLabelText("Claude API Token")).toHaveValue("claude-token");
+    await user.click(screen.getByRole("switch", { name: "启用 Claude API" }));
+
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "1Codex OAuth", "2Claude API", "3Friday Runtime",
+    ]);
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,claude_api,friday_runtime",
+      CEO_CLAUDE_API_KEY: "claude-token",
+    }), {});
+  });
+
   it("shows the Agent Runtime validation reason without discarding the draft", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {

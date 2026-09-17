@@ -1873,6 +1873,48 @@ def test_console_agent_runtime_returns_saved_credentials_for_prefill(monkeypatch
     assert fields["CEO_FRIDAY_SESSION_TOKEN"] == "session-token"
 
 
+def test_console_agent_runtime_save_without_routes_is_refused(
+    monkeypatch, tmp_path: Path
+):
+    """This payload answered 200 已保存 and cut the routes to codex_oauth."""
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api,claude_oauth,friday_runtime\n"
+        "CEO_CODEX_API_KEY=codex-token\n"
+        "CEO_CLAUDE_MODEL=sonnet\n"
+        "CEO_CLAUDE_MODEL_REASONING_EFFORT=medium\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/console/settings/agent-runtime",
+            json={"fields": {
+                "CEO_CODEX_MODEL": "gpt-5.5",
+                "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
+                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
+                "CEO_CODEX_API_MODEL": "gpt-5.5",
+                "CEO_CODEX_API_KEY": "codex-token",
+                "CEO_CLAUDE_MODEL": "sonnet",
+                "CEO_CLAUDE_MODEL_REASONING_EFFORT": "medium",
+                "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:52628",
+                "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo",
+                "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1",
+                "CEO_FRIDAY_RUNTIME_TICKET": "",
+                "CEO_FRIDAY_SESSION_TOKEN": "",
+            }},
+        )
+
+    assert response.status_code == 400, response.json()
+    assert response.json()["code"] == "validation_error"
+    assert (
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api,claude_oauth,friday_runtime"
+        in env_path.read_text(encoding="utf-8")
+    )
+
+
 def test_console_agent_runtime_save_keeps_the_configured_claude_route(
     monkeypatch, tmp_path: Path
 ):

@@ -781,6 +781,9 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
           {input("CEO_CLAUDE_MODEL", "Model")}
           {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
         </RuntimeRouteCard>
+        <RuntimeRouteCard title="Claude API" description="本机 Claude 登录不可用时的 API 路由；模型与 Claude OAuth 共用" enabled={enabled("claude_api")} onToggle={(next) => toggleRoute("claude_api", next)}>
+          <SecretField id="claude-api-token" label="Claude API Token" configured={Boolean(raw("CEO_CLAUDE_API_KEY"))} value={raw("CEO_CLAUDE_API_KEY")} onChange={(next) => update("CEO_CLAUDE_API_KEY", next)} />
+        </RuntimeRouteCard>
         <RuntimeRouteCard title="Friday Runtime" description="本机 Friday Runtime 服务和 provider 凭据" enabled={enabled("friday_runtime")} onToggle={(next) => toggleRoute("friday_runtime", next)} wide>
           {input("CEO_FRIDAY_RUNTIME_BASE_URL", "Runtime Base URL", "url")}
           {input("CEO_FRIDAY_RUNTIME_PROJECT_ID", "Project ID")}

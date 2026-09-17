@@ -9423,6 +9423,8 @@ def handle_agent_runtime_config_post(
     api_model = parsed.get("codex_api_model", [""])[0].strip()
     api_token = parsed.get("codex_api_token", [""])[0].strip()
     claude_enabled = parsed.get("claude_oauth_enabled", [""])[0] == "1"
+    claude_api_enabled = parsed.get("claude_api_enabled", [""])[0] == "1"
+    claude_api_token = parsed.get("claude_api_token", [""])[0].strip()
     # An omitted or blank field keeps the configured value, so a caller that
     # does not own these controls cannot blank them out.
     claude_model = parsed.get("claude_model", [""])[0].strip() or (
@@ -9516,6 +9518,11 @@ def handle_agent_runtime_config_post(
         return _invalid_agent_runtime_config(
             "API Token is required before API fallback can be enabled."
         )
+    existing_claude_api_token = _agent_runtime_config_value("CEO_CLAUDE_API_KEY")
+    if claude_api_enabled and not (claude_api_token or existing_claude_api_token):
+        return _invalid_agent_runtime_config(
+            "API Token is required before Claude API can be enabled."
+        )
     existing_friday_ticket = _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_TICKET")
     existing_friday_session = _agent_runtime_config_value("CEO_FRIDAY_SESSION_TOKEN")
     existing_friday_provider_key = _agent_runtime_config_value(
@@ -9571,6 +9578,7 @@ def handle_agent_runtime_config_post(
                     ("codex_oauth", True),
                     ("codex_api", api_enabled),
                     ("claude_oauth", claude_enabled),
+                    ("claude_api", claude_api_enabled),
                     ("friday_runtime", friday_enabled),
                 )
                 if enabled
@@ -9586,6 +9594,8 @@ def handle_agent_runtime_config_post(
     }
     if api_token:
         updates["CEO_CODEX_API_KEY"] = api_token
+    if claude_api_token:
+        updates["CEO_CLAUDE_API_KEY"] = claude_api_token
     if friday_auth_disabled:
         updates["CEO_FRIDAY_RUNTIME_TICKET"] = ""
         updates["CEO_FRIDAY_SESSION_TOKEN"] = ""

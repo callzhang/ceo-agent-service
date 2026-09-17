@@ -1659,6 +1659,7 @@ def register_console_routes(
                     "CEO_AGENT_RUNTIME_ROUTES", "CEO_CODEX_API_BASE_URL",
                     "CEO_CODEX_API_MODEL", "CEO_CODEX_API_KEY",
                     "CEO_CLAUDE_MODEL", "CEO_CLAUDE_MODEL_REASONING_EFFORT",
+                    "CEO_CLAUDE_API_KEY",
                     "CEO_FRIDAY_RUNTIME_BASE_URL", "CEO_FRIDAY_RUNTIME_PROJECT_ID",
                     "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL",
                     "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL",
@@ -1668,7 +1669,7 @@ def register_console_routes(
                 )}
             if payload is None:
                 payload = {"section": section, "fields": fields}
-            payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"] if section == "agent-runtime" else []
+            payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_CLAUDE_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"] if section == "agent-runtime" else []
         return item_envelope(payload)
 
     @app.get("/api/console/tutorial")
@@ -1943,6 +1944,27 @@ def register_console_routes(
         elif section == "agent-runtime":
             from app import config as app_config
 
+            # A payload that names no route at all used to disable every
+            # optional route and still answer 已保存. Saving one field must
+            # never turn off a route the caller never mentioned.
+            route_selection_keys = {
+                "codex_api_enabled",
+                "claude_oauth_enabled",
+                "claude_api_enabled",
+                "friday_runtime_enabled",
+            }
+            if fields.get("CEO_AGENT_RUNTIME_ROUTES") is None and not (
+                route_selection_keys & set(fields)
+            ):
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "code": "validation_error",
+                        "message": "保存 Agent Runtime 必须带上启用的线路，否则未列出的线路会被关闭。",
+                        "details": {},
+                    },
+                    status_code=400,
+                )
             routes = {
                 route.strip()
                 for route in str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or "").split(",")
@@ -1954,6 +1976,9 @@ def register_console_routes(
             claude_oauth_enabled = fields.get("claude_oauth_enabled")
             if claude_oauth_enabled is None:
                 claude_oauth_enabled = "1" if "claude_oauth" in routes else "0"
+            claude_api_enabled = fields.get("claude_api_enabled")
+            if claude_api_enabled is None:
+                claude_api_enabled = "1" if "claude_api" in routes else "0"
             friday_auth_disabled = fields.get("friday_runtime_auth_disabled")
             if friday_auth_disabled is None:
                 friday_auth_disabled = fields.get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED")
@@ -1969,6 +1994,8 @@ def register_console_routes(
                 "claude_oauth_enabled": "1" if str(claude_oauth_enabled).lower() in {"1", "true", "yes", "on"} else "0",
                 "claude_model": str(fields.get("claude_model") or fields.get("CEO_CLAUDE_MODEL") or app_config.read_env_file().get("CEO_CLAUDE_MODEL", "")),
                 "claude_reasoning_effort": str(fields.get("claude_reasoning_effort") or fields.get("CEO_CLAUDE_MODEL_REASONING_EFFORT") or app_config.read_env_file().get("CEO_CLAUDE_MODEL_REASONING_EFFORT", "")),
+                "claude_api_enabled": "1" if str(claude_api_enabled).lower() in {"1", "true", "yes", "on"} else "0",
+                "claude_api_token": str(fields.get("claude_api_token") or fields.get("CEO_CLAUDE_API_KEY") or ""),
                 "friday_runtime_settings_present": "1",
                 "friday_runtime_enabled": "1" if "friday_runtime" in str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or "").split(",") else "0",
                 "friday_runtime_base_url": str(fields.get("friday_runtime_base_url") or fields.get("CEO_FRIDAY_RUNTIME_BASE_URL") or ""),

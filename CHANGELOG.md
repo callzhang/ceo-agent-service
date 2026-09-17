@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-17: Settings / Agent Runtime now has a Claude API card, and a save
+  that names no route is refused. The panel listed `claude_api` in its failover
+  order and reported it 未启用, but had no card for it, so the route could never
+  be enabled or given a token from the console. Separately, a save whose payload
+  carried no route selection answered 200 已保存 while writing
+  `CEO_AGENT_RUNTIME_ROUTES=codex_oauth`, silently disabling Codex API, Claude
+  OAuth and Friday Runtime; that shape is now a validation error and the
+  configured routes are left alone.
+
 - 2026-09-17: The runtime probe now allows a full-length turn (300s, was 60s in
   the class and 120s in the service) and `probe-agent-runtimes --route` accepts
   every supported route instead of only the two Codex ones. A Friday Runtime

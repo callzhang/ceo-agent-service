@@ -5287,6 +5287,61 @@ def test_agent_runtime_settings_form_submits_friday_configuration(
     )
 
 
+def test_handle_agent_runtime_config_post_enables_claude_api_with_its_token(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """Claude API is a supported route the page named but could never enable."""
+
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_CODEX_API_KEY=existing-token\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, _, _ = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5"
+            "&codex_reasoning_effort=medium"
+            "&codex_api_enabled=0"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+            "&claude_reasoning_effort=medium"
+            "&claude_api_enabled=1"
+            "&claude_api_token=claude-secret"
+        ).encode()
+    )
+
+    assert status == 303
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,claude_api" in env_text
+    assert "CEO_CLAUDE_API_KEY=claude-secret" in env_text
+
+
+def test_handle_agent_runtime_config_post_refuses_claude_api_without_a_token(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_CODEX_API_KEY=existing-token\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, _, html = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5"
+            "&codex_reasoning_effort=medium"
+            "&codex_api_enabled=0"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+            "&claude_reasoning_effort=medium"
+            "&claude_api_enabled=1"
+            "&claude_api_token="
+        ).encode()
+    )
+
+    assert status == 400
+    assert "Claude API" in html
+    assert "CEO_AGENT_RUNTIME_ROUTES" not in env_path.read_text(encoding="utf-8")
+
+
 def test_handle_agent_runtime_config_post_saves_friday_runtime_ticket_and_route(
     tmp_path: Path,
     monkeypatch,
