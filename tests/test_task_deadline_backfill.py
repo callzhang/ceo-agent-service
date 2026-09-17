@@ -286,7 +286,7 @@ def test_a_deadline_backfill_attempt_belongs_to_its_todo_not_a_project(tmp_path)
         ) is False
 
 
-def _spend_correction(store, key: str) -> None:
+def _spend_correction(store, key: str, *, then: str = "") -> None:
     from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
 
     route = RuntimeRoute(
@@ -303,6 +303,15 @@ def _spend_correction(store, key: str) -> None:
         attempt.id, "result", "runtime_result_validation_failed", False,
         owner="test-owner",
     )
+    if then:
+        # The correction attempt then ends some other way.
+        correction = store.claim_runtime_operation_attempt(
+            "task", key, route.name, route.runtime_kind.value,
+            route.credential_mode.value, route.model, owner="test-owner",
+        )
+        store.fail_agent_runtime_attempt(
+            correction.id, "process", then, False, owner="test-owner"
+        )
 
 
 def test_a_todo_whose_correction_was_spent_gets_a_new_generation(tmp_path):
@@ -330,3 +339,15 @@ def test_a_generation_key_is_accepted_and_checked_against_its_todo(tmp_path):
         AutoReplyStore._validate_runtime_operation_workload("task", f"{todo_id}:deadline_backfill.0")
     with store._connect() as db:
         assert store._runtime_operation_parent_exists(db, "task", f"{todo_id}:deadline_backfill.3")
+
+
+def test_a_spent_correction_that_later_lost_its_lease_still_opens_a_generation(tmp_path):
+    """Seen live on TODO 357: the correction ran, then its lease expired."""
+    from app.task_deadline_backfill import deadline_backfill_workload_key
+
+    store = _store(tmp_path)
+    project = _project(store)
+    todo_id = _todo(store, project, "改正后租约过期")
+    _spend_correction(store, f"{todo_id}:deadline_backfill", then="runtime_lease_expired")
+
+    assert deadline_backfill_workload_key(store, todo_id) == f"{todo_id}:deadline_backfill.1"

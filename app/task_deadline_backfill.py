@@ -208,11 +208,13 @@ def deadline_backfill_workload_key(store, todo_id: int) -> str:
         attempts = store.list_runtime_operation_attempts("task", key)
         if not attempts:
             return key
-        latest = attempts[-1]
-        if not (
-            latest.status == "failed"
-            and latest.failure_code == "runtime_result_validation_failed"
-        ):
+        # Spent means the correction ran and the operation still ended failed,
+        # however the last attempt ended (a lease can expire after it).
+        correction_spent = attempts[-1].status == "failed" and any(
+            attempt.failure_code == "runtime_result_validation_failed"
+            for attempt in attempts
+        )
+        if not correction_spent:
             return key
         generation += 1
 
