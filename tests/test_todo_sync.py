@@ -1301,3 +1301,51 @@ def test_legacy_task_todo_outbox_gains_skipped_status_without_losing_rows(tmp_pa
         for row in store.list_task_todo_sync_outbox(statuses=("skipped",))
     }
     assert "new-ineligible" in skipped
+
+
+def _unknown_create(store, todo_id):
+    store.enqueue_task_todo_sync_outbox(
+        operation_key=f"deadline-backfill:{todo_id}:create",
+        work_todo_id=todo_id,
+        operation="create",
+    )
+    store.claim_task_todo_sync_outbox(owner="worker-a", now="2026-06-27 10:00:00", lease_seconds=1)
+    store.claim_task_todo_sync_outbox(owner="worker-b", now="2026-06-27 10:01:00")
+    [row] = store.list_task_todo_sync_outbox(statuses=("unknown",))
+    return int(row["id"])
+
+
+def test_an_unknown_create_proven_absent_is_requeued_and_its_half_link_closed(tmp_path):
+    """Seen live: TODO 1238's link stayed `creating`, which counts as the
+    active link, so no later create would ever have reached DingTalk."""
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    outbox_id = _unknown_create(store, todo_id)
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id, executor_user_id="owner-1", executor_name="Alex",
+        title_snapshot="给客户同步验收 ETA", deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1", status="creating",
+    )
+
+    assert store.reconcile_unknown_task_todo_sync_outbox(
+        outbox_id=outbox_id,
+        provider_absent_evidence="dws todo +search complete=true count=0",
+    )
+
+    row = store.get_task_todo_sync_outbox(outbox_id)
+    assert row["status"] == "queued" and row["error"] == ""
+    assert "count=0" in json.loads(row["evidence_json"])["provider_absent_reconciliation"]
+    assert store.get_work_todo_dingtalk_link(link_id).status == "failed"
+    assert store.get_active_work_todo_dingtalk_link(todo_id) is None
+
+
+def test_reconciliation_needs_evidence_and_only_touches_an_unknown_create(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    outbox_id = _unknown_create(store, todo_id)
+
+    with pytest.raises(ValueError, match="evidence"):
+        store.reconcile_unknown_task_todo_sync_outbox(outbox_id=outbox_id, provider_absent_evidence=" ")
+    assert store.reconcile_unknown_task_todo_sync_outbox(outbox_id=outbox_id, provider_absent_evidence="read")
+    # Already queued: a second reconciliation changes nothing.
+    assert not store.reconcile_unknown_task_todo_sync_outbox(outbox_id=outbox_id, provider_absent_evidence="read")

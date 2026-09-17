@@ -24075,6 +24075,54 @@ class AutoReplyStore:
             if changed.rowcount != 1:
                 raise ValueError("task todo sync receipt ownership lost")
 
+    def reconcile_unknown_task_todo_sync_outbox(
+        self,
+        *,
+        outbox_id: int,
+        provider_absent_evidence: str,
+    ) -> bool:
+        """Requeue a mirror whose create outcome was unknown, once a read proves it absent.
+
+        An `unknown` row means the worker stopped inside the provider call, so
+        the task may or may not exist in DingTalk and nothing may resend it
+        blind. Once a complete provider read shows the task was never created,
+        the same operation goes back to `queued`. The half-written `creating`
+        link is closed as well: left in place, it counts as the TODO's active
+        link and every later create returns it instead of creating anything.
+        """
+        evidence = provider_absent_evidence.strip()
+        if not evidence:
+            raise ValueError("provider evidence that the task is absent is required")
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select work_todo_id, operation, status, evidence_json "
+                "from task_todo_sync_outbox where id=?",
+                (outbox_id,),
+            ).fetchone()
+            if row is None or row["status"] != "unknown" or row["operation"] != "create":
+                return False
+            try:
+                recorded = json.loads(row["evidence_json"] or "{}")
+            except json.JSONDecodeError:
+                recorded = {}
+            if not isinstance(recorded, dict):
+                recorded = {}
+            recorded["provider_absent_reconciliation"] = evidence
+            db.execute(
+                "update work_todo_dingtalk_links set status='failed', last_error=?, "
+                "updated_at=current_timestamp where work_todo_id=? and status='creating' "
+                "and trim(dingtalk_task_id)=''",
+                (f"reconciled_absent_after_unknown_create: {evidence}"[:500], row["work_todo_id"]),
+            )
+            changed = db.execute(
+                "update task_todo_sync_outbox set status='queued', error='', "
+                "lease_owner='', lease_expires_at='', next_attempt_at='', "
+                "evidence_json=?, updated_at=current_timestamp "
+                "where id=? and status='unknown'",
+                (json.dumps(recorded, ensure_ascii=False, sort_keys=True), outbox_id),
+            )
+            return changed.rowcount == 1
+
     def retry_task_todo_sync_outbox(
         self,
         *,
