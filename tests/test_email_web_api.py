@@ -3997,3 +3997,52 @@ def test_account_api_saves_the_scan_window_and_rejects_one_out_of_range(
     assert unknown_state.status_code == 400
     stored = EmailStore(database).get_account("windowed")
     assert (stored["scan_lookback_days"], stored["scan_read_state"]) == (90, "all")
+
+
+def test_learning_reports_the_active_run_only_while_it_is_still_running(tmp_path: Path):
+    """The retrain state keeps a finished run's id; the console must not."""
+
+    from app.email_classifier_retrain import RetrainState, save_retrain_state
+
+    database = tmp_path / "active-run.sqlite3"
+    registry = EmailModelRegistry(tmp_path / "models")
+    state_path = tmp_path / "models" / "retrain-state.json"
+    service = SimpleNamespace(
+        registry=registry,
+        retrain_state_path=state_path,
+        controller=SimpleNamespace(registry=registry),
+    )
+    app = FastAPI()
+    register_email_routes(app, lambda: EmailStore(database), email_learning_factory=lambda: service)
+
+    def write_run(run_id: str, status: str, model_ids: list[str]) -> None:
+        (registry.runs / f"{run_id}.json").write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "status": status,
+                    "started_at": "2026-09-17T08:00:00+00:00",
+                    "finished_at": "",
+                    "reason": "",
+                    "model_ids": model_ids,
+                    "training_selection": {"model_families": ["embedding-mlp"]},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    write_run("run-finished", "succeeded", ["email-embedding-mlp-done"])
+    save_retrain_state(state_path, RetrainState().with_active_run("run-finished"))
+    with TestClient(app) as client:
+        stale = client.get("/api/console/email/learning").json()["learning"]
+
+    write_run("run-live", "running", [])
+    save_retrain_state(state_path, RetrainState().with_active_run("run-live"))
+    with TestClient(app) as client:
+        live = client.get("/api/console/email/learning").json()["learning"]
+
+    assert stale["active_run_id"] is None
+    assert live["active_run_id"] == "run-live"
+    running_rows = [row for row in live["training_runs_without_model"] if row["run_id"] == "run-live"]
+    assert running_rows and running_rows[0]["status"] == "running"
+    assert running_rows[0]["model_families"] == ["embedding-mlp"]

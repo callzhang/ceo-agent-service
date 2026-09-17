@@ -471,8 +471,14 @@ it("says why 开始训练 is unavailable instead of doing nothing", async () => 
   expect(api.requestEmailTraining).not.toHaveBeenCalled();
 });
 
-it("keeps following a training run that started before this page was opened", async () => {
-  const running = { ...learning, active_run_id: "run-77" };
+it("shows a training run in progress as a row in the version table, not a banner", async () => {
+  const running = {
+    ...learning,
+    active_run_id: "run-77",
+    training_runs_without_model: [
+      { run_id: "run-77", status: "running", started_at: "2026-09-17T09:00:00Z", finished_at: "", reason: "", model_families: ["embedding-mlp"] },
+    ],
+  };
   render(
     <ModelTraining
       learning={running}
@@ -484,8 +490,11 @@ it("keeps following a training run that started before this page was opened", as
     />,
   );
 
-  const line = await screen.findByText(/训练进行中：run-77/);
-  expect(line).toHaveTextContent("独立训练进程");
+  const table = screen.getByRole("table", { name: "模型版本" });
+  const row = Array.from(table.querySelectorAll("tbody tr")).find((item) => item.querySelector("td")?.getAttribute("title") === "run-77");
+  expect(row).toHaveTextContent("训练中");
+  expect(row).toHaveTextContent("embedding-mlp");
+  expect(screen.queryByText(/训练进行中/)).not.toBeInTheDocument();
 });
 
 it("shows category counts in one always-visible table instead of a collapsed source list", async () => {

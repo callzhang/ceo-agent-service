@@ -1811,6 +1811,27 @@ def register_email_routes(
             result.append(row)
         return result
 
+    def _live_active_run_id(service: object, run_id: str | None) -> str | None:
+        """Report the active run only while its own record says it is running.
+
+        The retrain state keeps the last launched run id after a selected run
+        finishes, so trusting it left the console saying training was still in
+        progress long after the model appeared.
+        """
+
+        if not run_id:
+            return None
+        controller = getattr(service, "controller", None)
+        runs = getattr(getattr(controller, "registry", None), "runs", None)
+        if not isinstance(runs, Path):
+            return run_id
+        try:
+            row = json.loads((runs / f"{run_id}.json").read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+        status = str(row.get("status") or "") if isinstance(row, dict) else ""
+        return run_id if status in {"queued", "launching", "running"} else None
+
     def _training_runs_without_model(service: object) -> list[dict[str, object]]:
         """Report training runs that ended without producing a model version.
 
@@ -1831,8 +1852,8 @@ def register_email_routes(
                 continue
             if not isinstance(row, dict) or row.get("model_ids"):
                 continue
-            if str(row.get("status") or "") in {"queued", "launching", "running"}:
-                continue
+            # A run still in progress is listed too, so the version table
+            # shows it as training instead of a separate banner.
             rows.append(
                 {
                     "run_id": str(row.get("run_id") or ""),
@@ -2090,7 +2111,7 @@ def register_email_routes(
                 "last_trained_feedback_count": state.last_trained_feedback_count,
                 "last_trained_at": state.last_trained_at,
                 "last_feedback_at": state.last_feedback_at,
-                "active_run_id": state.active_run_id,
+                "active_run_id": _live_active_run_id(service, state.active_run_id),
                 "training_runs_without_model": _training_runs_without_model(service),
                 "models": models,
                 "staged_models": [

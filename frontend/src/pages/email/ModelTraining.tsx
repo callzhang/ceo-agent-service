@@ -366,12 +366,6 @@ export function ModelTraining({
             ? "切换需要确认，以服务器读取结果为准。"
             : "服务器尚未允许切换；请查看晋升检查和完整性证据。"}
       </p>
-      {learning.active_run_id && (
-        <p className="training-active-run" role="status">
-          训练进行中：{learning.active_run_id} ·
-          在服务启动的独立训练进程中执行，完成后新版本会出现在下方「模型版本」。
-        </p>
-      )}
       {trainingStatus && (
         <p className="training-request-status" role="status">
           {trainingStatus}
@@ -528,7 +522,9 @@ export function ModelTraining({
                       {item.kind === "run"
                         ? item.model.status === "failed"
                           ? "训练失败"
-                          : `训练${item.model.status || "未提供"}`
+                          : ["queued", "launching", "running"].includes(item.model.status)
+                            ? "训练中"
+                            : `训练${item.model.status || "未提供"}`
                         : item.kind === "historical"
                         ? `历史版本 · ${item.model.status || "未提供"}`
                         : `${statusLabel(item.model.status)}${runtime?.active_model_id === item.model.model_id ? " · 当前运行主模型" : ""}`}
