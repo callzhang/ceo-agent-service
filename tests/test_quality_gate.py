@@ -1134,3 +1134,50 @@ def test_quality_gate_fails_when_a_live_channel_is_not_ready(tmp_path):
     assert [(item.source, item.code) for item in report.violations] == [
         ("channel:wechat", "not_ready")
     ]
+
+
+def _outbox_row(store: AutoReplyStore, *, key: str, status: str, attempts: int) -> None:
+    with store._connect() as db:
+        db.execute(
+            "insert into task_todo_sync_outbox "
+            "(operation_key, work_todo_id, operation, status, attempt_count) "
+            "values (?, 1, 'create', ?, ?)",
+            (key, status, attempts),
+        )
+
+
+def test_quality_gate_covers_the_task_todo_sync_outbox(tmp_path):
+    store = AutoReplyStore(tmp_path / "outbox.sqlite3")
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert "task_todo_sync_outbox" in report.checked_sources
+
+
+def test_quality_gate_flags_an_exhausted_or_unreconciled_outbox_row(tmp_path):
+    store = AutoReplyStore(tmp_path / "outbox-failed.sqlite3")
+    _outbox_row(store, key="exhausted", status="failed", attempts=3)
+    _outbox_row(store, key="unreconciled", status="unknown", attempts=1)
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    outbox = [
+        issue for issue in report.violations
+        if issue.source == "task_todo_sync_outbox" and issue.code == "failed"
+    ]
+    assert len(outbox) == 1
+    assert outbox[0].count == 2
+    assert report.ok is False
+
+
+def test_quality_gate_does_not_flag_an_outbox_row_still_being_retried(tmp_path):
+    store = AutoReplyStore(tmp_path / "outbox-retrying.sqlite3")
+    _outbox_row(store, key="retrying", status="failed", attempts=1)
+    _outbox_row(store, key="done", status="completed", attempts=1)
+    _outbox_row(store, key="nothing-to-do", status="skipped", attempts=1)
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(
+        issue.source == "task_todo_sync_outbox" for issue in report.violations
+    )

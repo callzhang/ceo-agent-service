@@ -39,7 +39,7 @@ REQUIRED_SOURCES = (
     "wechat_read_state",
     "errors",
 )
-OPTIONAL_QUEUE_SOURCES = ("email_agent_classification_tasks",)
+OPTIONAL_QUEUE_SOURCES = ("email_agent_classification_tasks", "task_todo_sync_outbox")
 
 REPLY_PROCESSING_STALE_SECONDS = 30 * 60
 WORK_ITEM_PROCESSING_STALE_SECONDS = 21 * 60
@@ -787,6 +787,15 @@ def _check_external_delivery_queues(
             ("failed",),
             ("pending",),
             "",
+        ),
+        # A failed row below the retry cap is still being retried; only an
+        # exhausted failure or an unreconciled effect needs recovery.
+        (
+            "task_todo_sync_outbox",
+            "status",
+            ("failed", "unknown"),
+            ("queued", "running"),
+            "and not (lower(status)='failed' and attempt_count < 3)",
         ),
     ):
         if source == "work_todo_dingtalk_links":
