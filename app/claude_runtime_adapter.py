@@ -86,6 +86,11 @@ class ClaudeCommandPolicy:
 
 
 CLAUDE_INPUT_MAX_BYTES = 1024 * 1024
+# Claude requires an explicit turn budget; Codex has none, and the shared
+# total/idle timeouts are what actually bound a turn. One turn cannot finish
+# any work that calls a tool: the run ends on `stop_reason: tool_use` and the
+# result never arrives, which is how every Claude turn failed before this.
+CLAUDE_MAX_TURNS_PER_INVOCATION = 64
 
 
 class ClaudeInputTooLargeError(ValueError):

@@ -27,6 +27,7 @@ from app.agent_runtime_router import (
 )
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.agent_result import parse_agent_text_result, parse_typed_agent_result
+from app.claude_runtime_adapter import CLAUDE_MAX_TURNS_PER_INVOCATION
 from app.friday_runtime_adapter import FridayExecutionResult, FridayRuntimeError
 from app.process_runner import ProcessRunResult
 from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AgentRole, AutoReplyStore
@@ -69,6 +70,7 @@ class FakeClaudeAdapter:
         self.finished: list[list[str]] = []
 
     def build_command(self, *, route, session_id, max_turns, **kwargs):
+        self.max_turns = max_turns
         command = ["claude-test", route.name, session_id or "fresh", str(max_turns)]
         self.commands.append(command)
         return command
@@ -2380,6 +2382,9 @@ def test_a_workload_runs_on_claude_through_the_same_path(tmp_path, monkeypatch):
     assert attempt.status == "completed"
     assert attempt.session_id == "claude-session"
     assert attempt.transcript_reference == "claude_session:claude-session"
+    # One turn cannot finish work that calls a tool: the run ends on
+    # `stop_reason: tool_use` and no result ever arrives.
+    assert claude.max_turns == CLAUDE_MAX_TURNS_PER_INVOCATION
     # The invocation is always released, so its boundary files do not pile up.
     assert claude.finished == claude.commands
 

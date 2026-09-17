@@ -31,7 +31,11 @@ from app.codex_decision import extract_codex_session_id
 from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.codex_history import count_codex_session_lines
 from app.codex_runtime_adapter import CodexRuntimeAdapter
-from app.claude_runtime_adapter import ClaudeRuntimeAdapter, claude_input_contract
+from app.claude_runtime_adapter import (
+    CLAUDE_MAX_TURNS_PER_INVOCATION,
+    ClaudeRuntimeAdapter,
+    claude_input_contract,
+)
 from app.friday_runtime_adapter import (
     FridayExecutionResult,
     FridayRuntimeAdapter,
@@ -1788,7 +1792,9 @@ class RoutedCodexExecution:
         adapter = self._claude_adapter
         assert adapter is not None
         command = adapter.build_command(
-            route=route, session_id=session_id, max_turns=1
+            route=route,
+            session_id=session_id,
+            max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
         )
         env = adapter.build_env(route, command=command)
         normalizer = adapter.new_event_normalizer(

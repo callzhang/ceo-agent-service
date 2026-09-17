@@ -36,6 +36,7 @@ from app.agent_runtime_contracts import (
 from app.agent_runtime_router import AgentRuntimeRouter, route_unavailable_code
 from app.claude_runtime_adapter import (
     ClaudeEventNormalizer,
+    CLAUDE_MAX_TURNS_PER_INVOCATION,
     ClaudeInputTooLargeError,
     ClaudeRuntimeAdapter,
     claude_input_contract,
@@ -1048,7 +1049,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     command = claude_adapter.build_command(
                         route=route,
                         session_id=route_session_id,
-                        max_turns=1,
+                        max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
                         reasoning_effort=self.reasoning_effort or None,
                     )
                     claude_normalizer = claude_adapter.new_event_normalizer(
