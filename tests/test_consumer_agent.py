@@ -2955,3 +2955,30 @@ def test_only_a_failed_outcome_is_checked_for_browser_codes() -> None:
     )
 
     assert result.error.code == "email_unsubscribe_page_state_unknown"
+
+
+def test_decision_quality_gate_defines_how_to_score_the_coverage_fields():
+    """The gates were load-bearing on an undefined scale.
+
+    The protocol demanded four numbers and gated on `< 0.5` without ever
+    saying what the numbers measure, so every agent scored itself above the
+    gate: across 1092 production runs `rule_coverage` never once fell below
+    0.5, and `information_completeness` did 12 times, while results whose own
+    summary listed missing materials reported 0.98.
+    """
+
+    text = consumer_agent.DECISION_QUALITY_GATE_INSTRUCTIONS
+
+    # The scale is defined, not just thresholded.
+    assert "How to score the two coverage fields" in text
+    assert "the share of the facts this decision requires" in text
+
+    # Actions already taken must not inflate the material score.
+    assert "does NOT raise this score" in text
+
+    # A written rule is required; own judgement does not count.
+    assert "do not count" in text
+    assert "not permission to decide on common sense" in text
+
+    # The scores must agree with the summary that accompanies them.
+    assert "must agree with your own summary" in text

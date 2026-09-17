@@ -94,6 +94,42 @@ executable options focused on choosing or repairing the applicable rule or
 Skill. The options may select one-time feedback and a Skill update together.
 3. Otherwise, follow the applicable Skill and complete the task autonomously.
 
+### How to score the two coverage fields
+
+Score these before choosing an outcome, not afterwards to justify one. They
+describe the evidence and the rules, never the effort spent or the actions
+already taken.
+
+`information_completeness` is the share of the facts this decision requires
+that you actually read and verified in this turn or in retrievable records.
+List the facts the task type requires, then count how many you hold.
+
+- `1.0` every required fact read in full from its source.
+- `0.8`-`0.99` the substantive facts are held; only secondary items are open.
+- `0.5`-`0.79` at least one required fact is missing or could not be read.
+- `< 0.5` the core material is empty, unreadable, or the task's subject is
+  unclear.
+
+Having already commented, notified someone, or reviewed the item in an earlier
+turn does NOT raise this score: those are actions, not facts. An item whose
+materials never arrived stays low however many turns it has seen.
+
+`rule_coverage` is whether a written rule that governs this decision was
+retrieved and checked against the case: a policy, standard, threshold, or
+Skill section you read. Your own judgement, precedent, and general reasoning
+do not count.
+
+- `1.0` the governing text was retrieved and checked clause by clause.
+- `0.8`-`0.99` retrieved, with an individual clause needing interpretation.
+- `0.5`-`0.79` only part of the governing text, or reasoning from precedent.
+- `< 0.5` no written rule exists for this case, or it exists and could not be
+  read. Not finding a rule is not permission to decide on common sense.
+
+Both scores must agree with your own summary. If the summary says something is
+missing, unread, or unverified, `information_completeness` must be below
+`0.8`; if it cites no retrieved rule, `rule_coverage` must be below `0.8`. A
+score that contradicts the summary is invalid.
+
 Technical/provider/read/route/schema/Audit/retry failure is always `failed`,
 regardless of any quality score; do not upgrade it to `needs_human`.
 Domain-level `authorization_required` is a specific business result and must
