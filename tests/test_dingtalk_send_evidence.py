@@ -306,6 +306,25 @@ def test_an_approval_on_the_proposed_instance_counts() -> None:
     assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
 
 
+def test_a_write_command_that_printed_a_dws_error_is_not_evidence() -> None:
+    """Audit run 20012 reported an approval executed after only a failed comment call.
+
+    `dws oa approval oa-comments ... | head -150` printed `--content is required`
+    but the pipeline exited 0 through `head`, so the failed write counted.
+    """
+    driver, task = _driver(
+        action=APPROVE,
+        tool_events=[
+            _shell(
+                "dws oa approval approve --instance-id mgprBD0wT1Sr6WqM3Qkr_A03641789432389 --format json 2>&1 | head -150",
+                output='{\n  "error": {\n    "category": "internal",\n    "code": 5,\n    "message": "--content is required"\n  }\n}\n',
+            )
+        ],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+
 def test_a_send_under_another_capability_spelling_is_still_gated() -> None:
     """September spelled chat as dingtalk-chat, dingtalk_chat, dingtalk chat and dws chat.
 

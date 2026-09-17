@@ -212,7 +212,7 @@ def _completed_native_command(event: object) -> dict[str, object] | None:
     if not isinstance(item, dict):
         return None
     if item.get("type") == "command_execution":
-        if item.get("exit_code") != 0:
+        if item.get("exit_code") != 0 or _reports_failure(item.get("aggregated_output")):
             return None
         argv = _first_stage_argv(item.get("command"))
         return {"argv": list(argv)} if argv else None
@@ -223,6 +223,25 @@ def _completed_native_command(event: object) -> dict[str, object] | None:
         argv = arguments.get("argv") if isinstance(arguments, dict) else None
         return {"argv": argv} if isinstance(argv, list) else None
     return None
+
+
+def _reports_failure(output: object) -> bool:
+    """Whether the call printed DWS's own failure envelope.
+
+    A piped command (`dws ... | head`) exits with the last stage's status, so
+    exit code 0 does not mean the provider call succeeded. Audit run 20012
+    counted `dws oa approval oa-comments` that printed `--content is required`
+    as a write on the approval, and a proposed approval that never ran passed.
+    """
+    if not isinstance(output, str):
+        return False
+    try:
+        payload = json.loads(output)
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return bool(payload.get("error")) or payload.get("ok") is False or payload.get("success") is False
 
 
 def _third_party_tool_answer(
