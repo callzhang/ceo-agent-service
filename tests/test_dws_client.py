@@ -2169,6 +2169,39 @@ def test_list_pending_oa_approvals_command_and_parser():
     ]
 
 
+def test_parse_pending_oa_approvals_reads_the_values_key_dws_returns():
+    """`oa approval list-pending` returns its rows under `result.values`.
+
+    Missing this key made the scanner see an empty pending queue on every run
+    while DingTalk still showed the approvals waiting.
+    """
+
+    approvals = DwsClient.parse_pending_oa_approvals(
+        {
+            "errorCode": 0,
+            "result": {
+                "hasMore": False,
+                "values": [
+                    {
+                        "processInstanceId": "eambfZbMQ6mMEoYWfXTJsg0364",
+                        "title": "宋述提交的劳动合同续签申请",
+                        "status": "RUNNING",
+                        "taskId": "102838815583",
+                    }
+                ],
+            },
+        }
+    )
+
+    assert approvals == [
+        DwsOaApprovalCandidate(
+            process_instance_id="eambfZbMQ6mMEoYWfXTJsg0364",
+            title="宋述提交的劳动合同续签申请",
+            process_name="",
+        )
+    ]
+
+
 def test_parse_pending_oa_approvals_accepts_process_instance_list():
     approvals = DwsClient.parse_pending_oa_approvals(
         {

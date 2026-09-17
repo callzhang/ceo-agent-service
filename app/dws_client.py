@@ -5017,7 +5017,15 @@ class DwsClient:
         result = payload.get("result", {})
         records = []
         if isinstance(result, dict):
-            for key in ("list", "items", "processInstances", "processInstanceList"):
+            # `values` is what `oa approval list-pending` actually returns; the
+            # other keys are kept for older payload shapes.
+            for key in (
+                "values",
+                "list",
+                "items",
+                "processInstances",
+                "processInstanceList",
+            ):
                 if isinstance(result.get(key), list):
                     records = result[key]
                     break
