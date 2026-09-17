@@ -422,6 +422,8 @@ export interface EmailLearningEvidence {
   last_feedback_at: string | null;
   active_run_id: string | null;
   training_runs_without_model?: Array<{run_id: string; status: string; started_at: string; finished_at: string; reason: string}>;
+  /** Owner review of historical systematic errors; promotion waits while unresolved. */
+  historical_review?: {unresolved: boolean; source: string; reason: string; updated_at: string};
   models: EmailModelEvidence[];
   training_snapshot?: { sample_count: number; [key: string]: unknown } | null;
   registry_issues: Array<{ model_id: string; integrity_status: "corrupt"; integrity_error: string }>;
@@ -807,6 +809,12 @@ export function listEmailLearning(signal?: AbortSignal) {
 export function requestEmailTraining(payload: {sources: string[]; categories: string[]; model_families: string[]}) {
   return request<{ok: boolean; learning: {training_status: string; training_run_id: string | null; selection: typeof payload}}>(
     "/api/console/email/training", {method: "POST", body: JSON.stringify(payload)},
+  );
+}
+
+export function recordEmailHistoricalReview(payload: {resolved: boolean; note?: string}) {
+  return request<{ok: boolean; historical_review: {unresolved: boolean; source: string; reason: string; updated_at: string}}>(
+    "/api/console/email/learning/historical-review", {method: "POST", body: JSON.stringify(payload)},
   );
 }
 

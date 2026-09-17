@@ -11,6 +11,7 @@ import {
 import {
   getEmailModelVersion,
   previewEmailTraining,
+  recordEmailHistoricalReview,
   requestEmailTraining,
   saveEmailRuntimeMode,
   type EmailCategoryConfig,
@@ -376,6 +377,7 @@ export function ModelTraining({
         </p>
       )}
       {switchError && <p role="alert">{switchError}</p>}
+      <HistoricalReview review={learning.historical_review} reload={reload} onBusy={onBusy} />
       <section className="training-stats" aria-label="候选模型摘要">
         <Stat
           label="可用训练样本"
@@ -1214,5 +1216,53 @@ function LegacyDetails({
         </details>
       </div>
     </EmailDrawer>
+  );
+}
+
+
+function HistoricalReview({
+  review,
+  reload,
+  onBusy,
+}: {
+  review: EmailLearningEvidence["historical_review"];
+  reload: RefreshLearning;
+  onBusy: (busy: boolean) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  if (!review) return null;
+  const resolved = !review.unresolved;
+  async function confirmReview() {
+    setSaving(true);
+    setError("");
+    onBusy(true);
+    try {
+      await recordEmailHistoricalReview({ resolved: true, note: "负责人已复核训练标注与历史系统性错误" });
+      await reload();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "复核记录保存失败");
+    } finally {
+      setSaving(false);
+      onBusy(false);
+    }
+  }
+  return (
+    <section className="console-card training-review" aria-label="历史系统性错误复核">
+      <div>
+        <strong>历史系统性错误复核：{resolved ? "已复核" : "未复核"}</strong>
+        <p className="muted">
+          {resolved
+            ? `${review.reason}（${review.updated_at}）。复核之后训练出的候选模型才会按分类判断能否上线。`
+            : "上线前需要确认：训练标注已审核、没有成批标错的邮件。确认后需要重新训练一次，新候选才会带上复核状态。"}
+        </p>
+        {error && <p className="field-error" role="alert">{error}</p>}
+      </div>
+      {!resolved && (
+        <button type="button" className="primary-button" disabled={saving} onClick={() => void confirmReview()}>
+          {saving ? "正在记录…" : "确认已复核"}
+        </button>
+      )}
+    </section>
   );
 }
