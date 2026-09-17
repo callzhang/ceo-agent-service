@@ -20,6 +20,7 @@ from app.managed_skills import (
     REPOSITORY_IMPORT_SOURCE,
     REPOSITORY_MANAGED_SKILL_NAMES,
     RUNTIME_EDIT_SOURCE,
+    RuntimeSkillCaptureIncomplete,
     capture_runtime_skill_edits,
     export_managed_skill_revision,
     import_repository_managed_skills,
@@ -1029,3 +1030,33 @@ def test_capture_runtime_skill_edits_skips_absent_files(tmp_path: Path) -> None:
     import_repository_managed_skills(store)
 
     assert capture_runtime_skill_edits(store, skills_root=tmp_path / "empty") == ()
+
+
+def test_a_foreign_file_under_a_managed_name_does_not_hide_other_edits(
+    tmp_path: Path,
+) -> None:
+    """Production: the runtime ceo-wechat was a separately written Skill with no
+    managed marker; capture aborted there and never reached the Skills after it."""
+    store = AutoReplyStore(tmp_path / "skills.sqlite3")
+    import_repository_managed_skills(store)
+    root = tmp_path / "agents-skills"
+    foreign_name = REPOSITORY_MANAGED_SKILL_NAMES[0]
+    edited_name = REPOSITORY_MANAGED_SKILL_NAMES[-1]
+    foreign = root / foreign_name / "SKILL.md"
+    foreign.parent.mkdir(parents=True)
+    foreign.write_text(
+        f"---\nname: {foreign_name}\ndescription: Someone else's Skill.\n---\n\nBody\n",
+        encoding="utf-8",
+    )
+    _runtime_skill_file(root, edited_name, "edited after the foreign one")
+    edited_skill = store.get_managed_skill_by_name(edited_name)
+    before = len(store.list_managed_skill_revisions(edited_skill.id))
+
+    with pytest.raises(RuntimeSkillCaptureIncomplete) as exc_info:
+        capture_runtime_skill_edits(store, skills_root=root)
+
+    assert len(exc_info.value.problems) == 1
+    assert foreign_name in exc_info.value.problems[0]
+    assert str(foreign) in exc_info.value.problems[0]
+    assert len(store.list_managed_skill_revisions(edited_skill.id)) == before + 1
+    assert foreign.read_text(encoding="utf-8").endswith("Body\n")

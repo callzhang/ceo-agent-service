@@ -453,6 +453,16 @@ def _import_repository_managed_skills_locked(
 RUNTIME_EDIT_SOURCE = "runtime:agents-skills"
 
 
+class RuntimeSkillCaptureIncomplete(ManagedSkillValidationError):
+    """Some runtime Skills could not be captured; every other one still was."""
+
+    def __init__(self, problems: tuple[str, ...]):
+        self.problems = problems
+        super().__init__(
+            "could not capture runtime Skill(s): " + "; ".join(problems)
+        )
+
+
 @dataclass(frozen=True)
 class RuntimeSkillEditCapture:
     """One hand edit found in the runtime Skill tree and recorded as a revision."""
@@ -481,6 +491,7 @@ def capture_runtime_skill_edits(
         skills_root or (Path.home() / ".agents" / "skills")
     ).expanduser()
     captured: list[RuntimeSkillEditCapture] = []
+    problems: list[str] = []
     for name in REPOSITORY_MANAGED_SKILL_NAMES:
         path = root / name / "SKILL.md"
         if not path.is_file():
@@ -491,14 +502,15 @@ def capture_runtime_skill_edits(
         revisions = store.list_managed_skill_revisions(skill.id)
         if not revisions:
             continue
+        # One unreadable or foreign file must not hide edits to the others, so
+        # each Skill is attempted and every failure is named at the end.
         try:
             content = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            raise ManagedSkillValidationError(
-                f"unable to read runtime Skill: {path}: {exc}"
-            ) from exc
-        latest = max(revisions, key=lambda revision: revision.revision_number)
-        if validate_managed_skill_content(name, content) == latest.sha256:
+            latest = max(revisions, key=lambda revision: revision.revision_number)
+            if validate_managed_skill_content(name, content) == latest.sha256:
+                continue
+        except (OSError, UnicodeError, ManagedSkillValidationError) as exc:
+            problems.append(f"{name} ({path}): {exc}")
             continue
         revision = store.create_managed_skill_revision(
             skill.id, content, source=RUNTIME_EDIT_SOURCE
@@ -514,6 +526,8 @@ def capture_runtime_skill_edits(
                 sha256=revision.sha256,
             )
         )
+    if problems:
+        raise RuntimeSkillCaptureIncomplete(tuple(problems))
     return tuple(captured)
 
 
