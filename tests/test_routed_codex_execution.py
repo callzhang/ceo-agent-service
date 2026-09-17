@@ -2164,3 +2164,102 @@ def test_a_typed_workload_parser_reads_friday_s_final_message(tmp_path, monkeypa
     )
 
     assert Answer.model_validate_json(result.value).ok is True
+
+
+def _provider_full_executor(calls: list[str], full_calls: int):
+    """Fail the first ``full_calls`` calls as provider-full, then answer 42."""
+
+    def executor(command, **kwargs):
+        calls.append(kwargs["env"]["ROUTE"])
+        if len(calls) <= full_calls:
+            return ProcessRunResult(1, "", "server_overloaded")
+        return ProcessRunResult(0, json.dumps({"type": "result", "value": 42}), "")
+
+    return executor
+
+
+def _run_structured(routed, key):
+    return routed.execute(
+        workload_kind="structured",
+        workload_key=key,
+        prompt="analyze",
+        command_factory=CodexCommandFactory.standard(
+            developer_instructions="reviewed reads only"
+        ),
+        parser=lambda raw: json.loads(raw.splitlines()[-1])["value"],
+        result_codec=INT_CODEC,
+        required_capabilities=CAPABILITIES,
+    )
+
+
+def test_a_full_provider_is_retried_on_the_same_route_before_switching(store, config):
+    """Derek, 2026-09-17: on 429 retry three times, then switch runtime."""
+    key = seed_structured_parent(store)
+    calls: list[str] = []
+    sleeps: list[float] = []
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=CorrectionTurnFailureAdapter(CORRECTION_TURN_PROVIDER_FAILURES[0]),
+        executor=_provider_full_executor(calls, full_calls=2),
+        sleep=sleeps.append,
+    )
+
+    result = _run_structured(routed, key)
+
+    assert result.value == 42
+    assert result.route_name == "codex_oauth"
+    assert calls == ["codex_oauth"] * 3
+    assert sleeps == [10.0, 20.0]
+    # Retries that succeed never take the route away from other work.
+    assert store.active_runtime_route_pause("codex_oauth", now=NOW) is None
+
+
+def test_a_provider_still_full_after_three_retries_switches_runtime(store, config):
+    key = seed_structured_parent(store)
+    calls: list[str] = []
+    sleeps: list[float] = []
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=CorrectionTurnFailureAdapter(CORRECTION_TURN_PROVIDER_FAILURES[0]),
+        executor=_provider_full_executor(calls, full_calls=4),
+        sleep=sleeps.append,
+    )
+
+    result = _run_structured(routed, key)
+
+    assert result.value == 42
+    assert calls == ["codex_oauth"] * 4 + ["codex_api"]
+    assert sleeps == [10.0, 20.0, 40.0]
+    assert store.active_runtime_route_pause("codex_oauth", now=NOW) is not None
+
+
+def test_a_provider_whose_capacity_is_exhausted_switches_without_retrying(store, config):
+    """An exhausted plan does not refill in a minute; only 'full' is retried."""
+    key = seed_structured_parent(store)
+    calls: list[str] = []
+    sleeps: list[float] = []
+    exhausted = RuntimeFailure(
+        failure_class=RuntimeFailureClass.CAPACITY,
+        code="codex_provider_capacity_exhausted",
+        detail="redacted",
+        failover_permitted=True,
+        route_pause_required=True,
+    )
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=CorrectionTurnFailureAdapter(exhausted),
+        executor=_provider_full_executor(calls, full_calls=1),
+        sleep=sleeps.append,
+    )
+
+    result = _run_structured(routed, key)
+
+    assert result.value == 42
+    assert calls == ["codex_oauth", "codex_api"]
+    assert sleeps == []
