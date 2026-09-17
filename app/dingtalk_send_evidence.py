@@ -22,6 +22,7 @@ a retry of a delivered message sends it twice.
 from __future__ import annotations
 
 import json
+import shlex
 
 from app.agent_effect_guard import provider_receipts
 from app.agent_result import EffectKind
@@ -53,21 +54,36 @@ class DingTalkSendEvidenceDriver:
         run = self.store.get_agent_run(audit_run_id)
         if run is None:
             return False
-        actions = self._accepted_actions(task, run.proposal_revision)
-        if any(_is_chat_send(action) for action in actions) and not provider_receipts(
-            run.tool_events
-        ):
+        actions = self._accepted_actions(run)
+        if actions is None:
+            # The proposal this run reviewed cannot be read, so nothing it
+            # claims can be checked against anything.
             return False
-        calendar_actions = [
-            action for action in actions if action.get("capability") == "dingtalk-calendar"
-        ]
-        if calendar_actions and not self._responded_to_each(
-            run.tool_events, calendar_actions
-        ):
+        written, unclassifiable = self._touched_objects(run.tool_events)
+        has_receipt = bool(provider_receipts(run.tool_events))
+        # Neither `capability` nor `operation` decides anything here: both are
+        # free text the model writes, and September alone spelled chat as
+        # `dingtalk-chat`, `dingtalk_chat`, `dingtalk chat` and `dws chat`. A
+        # gate keyed on one spelling let the others through.
+        for action in actions:
+            identifiers = _action_identifiers(action)
+            if identifiers & written:
+                continue
+            if _carries_outgoing_text(action) and has_receipt:
+                # A send can address its recipient by display name, which no
+                # proposed identifier matches, so a message body is also
+                # satisfied by the receipt the send returned. A document
+                # comment carries a body too but returns no message receipt;
+                # its classified write on the document is what satisfies it.
+                continue
+            if identifiers & unclassifiable:
+                # The object was only reached through a tool the service
+                # cannot classify -- a third-party MCP server such as the
+                # interview system -- so a write cannot be told from a read.
+                # Refusing here would block honest work the service has no
+                # means to recognise; that class stays on self-report.
+                continue
             return False
-        # Approvals and reactions keep the contract they have until each one
-        # has evidence of its own: a reaction returns `result: {}` with no
-        # identifier, so a receipt shape cannot describe it.
         return True
 
     def execution_evidence_requirement(self) -> str:
@@ -75,33 +91,36 @@ class DingTalkSendEvidenceDriver:
             "external_result: executed requires evidence that the provider "
             "accepted the effect. For a chat send, that is the receipt the send "
             "returned; a message id taken from the conversation or from this "
-            "prompt is not a receipt. For a calendar action, that is a completed "
-            "respond call on the proposed event. If a calendar action needs no "
+            "prompt is not a receipt. For any other action, that is a completed "
+            "write call on the object the proposal named -- a calendar response, "
+            "an approval, a reaction. If an action needs no "
             "write -- it only verifies, or the response is already in place -- "
             "it is not executable: return feedback_provided so the proposal "
             "drops it, instead of reporting it executed."
         )
 
-    def _responded_to_each(
-        self, tool_events: list[dict[str, object]], calendar_actions: list[dict]
-    ) -> bool:
-        """Whether every proposed calendar event received an effectful call.
+    def _touched_objects(
+        self, tool_events: list[dict[str, object]]
+    ) -> tuple[set[str], set[str]]:
+        """Identifiers the run wrote to, and identifiers it reached unclassifiably.
 
         A write is recognised from DWS's own schema through the native CLI
-        classifier, so a `get`, a `list` or a `--help` never counts, and a chat
-        send made instead of the response does not count either: the effect has
-        to land on the event the proposal named.
+        classifier, so a `get`, a `list` or a `--help` never counts, and the
+        identifiers are the targets that classified write named. Calls to
+        third-party MCP servers are outside that schema: their results are
+        collected separately, as objects the service saw but cannot judge.
         """
-        touched: set[str] = set()
+        written: set[str] = set()
+        unclassifiable: set[str] = set()
         for event in tool_events:
             command = _completed_native_command(event)
-            if command is None:
+            if command is not None:
+                classified = self._classify(command)
+                if classified is not None and classified.effect is EffectKind.EFFECTFUL:
+                    written.update(classified.target_identifiers.values())
                 continue
-            classified = self._classify(command)
-            if classified is None or classified.effect is not EffectKind.EFFECTFUL:
-                continue
-            touched.update(classified.target_identifiers.values())
-        return all(_action_identifiers(action) & touched for action in calendar_actions)
+            unclassifiable.update(_third_party_result_identifiers(event))
+        return written, unclassifiable
 
     def _classify(self, command: dict[str, object]):
         if self._classifier is None:
@@ -111,27 +130,28 @@ class DingTalkSendEvidenceDriver:
         except NativeCliMetadataUnavailableError:
             return None
 
-    def _accepted_actions(self, task: ReplyTask, proposal_revision: int) -> list[dict]:
-        """The actions of the proposal this Audit revision reviewed."""
-        runs = self.store.list_agent_runs_for_task_generation(
-            task.id, task.execution_generation
-        )
-        consumer = next(
-            (
-                run
-                for run in reversed(runs)
-                if run.role is AgentRole.CONSUMER
-                and run.proposal_revision == proposal_revision
-                and run.final_result_json
-            ),
-            None,
-        )
-        if consumer is None:
-            return []
+    def _accepted_actions(self, run) -> list[dict] | None:
+        """The actions of the proposal this Audit run reviewed, from its own parent.
+
+        The parent link names the exact Consumer run whose candidate was under
+        review. Searching the task's current generation instead finds a
+        different proposal once the task has been rerun, and a search that
+        finds nothing must not read as "nothing was proposed".
+        """
+        if run.parent_agent_run_id is None:
+            return None
+        consumer = self.store.get_agent_run(run.parent_agent_run_id)
+        if consumer is None or consumer.role is not AgentRole.CONSUMER:
+            return None
+        if not consumer.final_result_json.strip():
+            return None
         # Read the fields this question needs rather than validating the whole
         # result: the scoring fields a Consumer result carries have changed
         # shape over time and have nothing to do with what the proposal does.
-        proposal = json.loads(consumer.final_result_json).get("proposal")
+        try:
+            proposal = json.loads(consumer.final_result_json).get("proposal")
+        except ValueError:
+            return None
         if not isinstance(proposal, dict):
             return []
         actions = proposal.get("actions")
@@ -139,21 +159,16 @@ class DingTalkSendEvidenceDriver:
             return []
         return [action for action in actions if isinstance(action, dict)]
 
+def _carries_outgoing_text(action: dict) -> bool:
+    """An action whose payload is a message body to deliver.
 
-def _is_chat_send(action: dict) -> bool:
-    """A chat action carrying a message body, whether or not its target resolved.
-
-    Deliberately wider than the actions the service prepared a body for: an
-    action naming no resolvable target is one the service could not prepare,
-    but a turn can still report having sent it, and that report is exactly what
-    needs a receipt behind it.
+    Judged by the payload alone, so it holds however the model spelled the
+    capability, and it stays wider than the actions the service prepared a
+    body for: an action naming no resolvable target could not be prepared, but
+    a turn can still report having sent it.
     """
     payload = action.get("payload")
-    return (
-        action.get("capability") == "dingtalk-chat"
-        and isinstance(payload, dict)
-        and dingtalk_outgoing_text_key(payload) is not None
-    )
+    return isinstance(payload, dict) and dingtalk_outgoing_text_key(payload) is not None
 
 
 def _action_identifiers(action: dict) -> set[str]:
@@ -184,7 +199,8 @@ def _completed_native_command(event: object) -> dict[str, object] | None:
     if item.get("type") == "command_execution":
         if item.get("exit_code") != 0:
             return None
-        return {"command": item.get("command")}
+        argv = _first_stage_argv(item.get("command"))
+        return {"argv": list(argv)} if argv else None
     if item.get("type") == "mcp_tool_call":
         if item.get("error") or not item.get("result"):
             return None
@@ -192,3 +208,79 @@ def _completed_native_command(event: object) -> dict[str, object] | None:
         argv = arguments.get("argv") if isinstance(arguments, dict) else None
         return {"argv": argv} if isinstance(argv, list) else None
     return None
+
+
+def _third_party_result_identifiers(event: object) -> set[str]:
+    """String values in a successful call to an MCP server the service cannot classify."""
+    if not isinstance(event, dict):
+        return set()
+    item = event.get("item")
+    if not isinstance(item, dict) or item.get("type") != "mcp_tool_call":
+        return set()
+    if item.get("server") == "agent_cli" or item.get("error") or not item.get("result"):
+        return set()
+    values: set[str] = set()
+    _collect_strings(item.get("result"), values, depth=0)
+    return values
+
+
+def _collect_strings(value: object, found: set[str], *, depth: int) -> None:
+    if depth > 8:
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _collect_strings(item, found, depth=depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_strings(item, found, depth=depth + 1)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            try:
+                _collect_strings(json.loads(stripped), found, depth=depth + 1)
+            except ValueError:
+                found.add(stripped)
+        elif stripped:
+            found.add(stripped)
+
+
+_SHELL_OPERATOR_CHARACTERS = frozenset("|&;<>")
+
+
+def _first_stage_argv(command: object) -> tuple[str, ...] | None:
+    """The simple command a shell line ran first, for recognising its effect.
+
+    Models routinely append `2>&1` or `| head` to a provider call. The native
+    classifier refuses any line containing shell operators, which is right
+    when deciding whether a command may run, but here the question is only what
+    already ran: in `dws ... 2>&1 | head` the provider call is `dws ...`. So the
+    line is cut at its first operator and a file-descriptor number left before a
+    redirection is dropped. Command substitution is still refused, because then
+    the text no longer says what executed.
+    """
+    if not isinstance(command, str) or "$(" in command or "`" in command:
+        return None
+    try:
+        outer = shlex.split(command)
+    except ValueError:
+        return None
+    if len(outer) >= 3 and outer[0].rsplit("/", 1)[-1] in {"bash", "sh", "zsh"}:
+        for flag in ("-lc", "-c"):
+            if flag in outer and outer.index(flag) + 1 < len(outer):
+                return _first_stage_argv(outer[outer.index(flag) + 1])
+        return None
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    stage: list[str] = []
+    for token in tokens:
+        if token and set(token) <= _SHELL_OPERATOR_CHARACTERS:
+            if stage and stage[-1].isdigit():
+                stage.pop()
+            break
+        stage.append(token)
+    return tuple(stage) or None

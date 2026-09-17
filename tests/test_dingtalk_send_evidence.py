@@ -62,25 +62,30 @@ def _receipt_event(receipt: str):
     }
 
 
-def _driver(*, action: dict, tool_events: list, classifier=None):
+def _driver(*, action=None, actions=None, tool_events: list, classifier=None, parent=True):
     task = SimpleNamespace(
         id=384224, channel="dingtalk", execution_generation="initial"
-    )
-    audit_run = SimpleNamespace(
-        id=19557, role=AgentRole.AUDIT, proposal_revision=0,
-        final_result_json="", tool_events=tool_events,
     )
     consumer_run = SimpleNamespace(
         id=19556,
         role=AgentRole.CONSUMER,
         proposal_revision=0,
-        final_result_json=_proposal(action),
+        final_result_json=_proposal_with(actions if actions is not None else [action]),
     )
-    store = SimpleNamespace(
-        get_agent_run=lambda _id: audit_run,
-        list_agent_runs_for_task_generation=lambda *_a: [consumer_run, audit_run],
+    audit_run = SimpleNamespace(
+        id=19557, role=AgentRole.AUDIT, proposal_revision=0,
+        parent_agent_run_id=19556 if parent else None,
+        final_result_json="", tool_events=tool_events,
     )
+    runs = {19556: consumer_run, 19557: audit_run}
+    store = SimpleNamespace(get_agent_run=lambda run_id: runs.get(run_id))
     return DingTalkSendEvidenceDriver(store, classifier=classifier), task
+
+
+def _proposal_with(actions: list) -> str:
+    payload = json.loads(_proposal(actions[0]))
+    payload["proposal"]["actions"] = actions
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def test_a_send_claimed_without_any_provider_call_has_no_evidence() -> None:
@@ -146,12 +151,17 @@ class _SchemaClassifier:
             return None
         path = " ".join(argv[1:4])
         ids = {}
-        if "--id" in argv:
-            ids["id"] = argv[argv.index("--id") + 1]
+        for flag in ("--id", "--message-id", "--instance-id", "--node"):
+            if flag in argv:
+                ids[flag.strip("-")] = argv[argv.index(flag) + 1]
         effect = {
             "calendar event respond": EffectKind.EFFECTFUL,
             "calendar event get": EffectKind.READ_ONLY,
             "chat +messages-send --group": EffectKind.EFFECTFUL,
+            "chat message add-emoji": EffectKind.EFFECTFUL,
+            "oa approval approve": EffectKind.EFFECTFUL,
+            "oa approval detail": EffectKind.READ_ONLY,
+            "doc comment create": EffectKind.EFFECTFUL,
         }.get(path)
         if effect is None:
             return None
@@ -233,19 +243,124 @@ def test_a_response_through_the_reviewed_cli_tool_counts() -> None:
     assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
 
 
-def test_a_reaction_is_not_gated_here() -> None:
-    """A reaction returns `result: {}` with no identifier to require."""
-    reaction = {
-        "description": "点赞", "action_identity": "react", "capability": "dingtalk-chat",
-        "operation": "messages-add-emoji", "target": {"message_id": "msg-1"},
-        "payload": {"emoji": "👍"},
-    }
-    driver, task = _driver(action=reaction, tool_events=[], classifier=_SchemaClassifier())
-    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
-
-
 def test_the_correction_says_what_to_do_when_no_calendar_write_is_needed() -> None:
     driver, _ = _driver(action=RESPOND, tool_events=[], classifier=_SchemaClassifier())
     requirement = driver.execution_evidence_requirement()
     assert "feedback_provided" in requirement
-    assert "respond call on the proposed event" in requirement
+    assert "write call on the object the proposal named" in requirement
+
+
+REACTION = {
+    "description": "表情回复", "action_identity": "react", "capability": "dingtalk-chat",
+    "operation": "add-emoji",
+    "target": {"conversation_id": "cidecoVMQj5AbsnpzlPqHbyQw==", "message_id": "msgyXmTAdXUx3cezX0pO1ppLA=="},
+    "payload": {"emoji": "收到"},
+}
+
+APPROVE = {
+    "description": "批准请假", "action_identity": "approve", "capability": "dingtalk-oa-approval",
+    "operation": "approve",
+    "target": {"process_instance_id": "mgprBD0wT1Sr6WqM3Qkr_A03641789432389"},
+    "payload": {"remark": "同意"},
+}
+
+
+def test_a_reaction_the_provider_accepted_counts_even_with_its_output_redirected() -> None:
+    """Audit run 19561 added the emoji and got `success: true` back.
+
+    The command ended in `2>&1`, which the native classifier refuses to parse,
+    so the real reaction read as no reaction. What ran is the first stage.
+    """
+    driver, task = _driver(
+        action=REACTION,
+        tool_events=[_shell('dws chat message add-emoji --conversation-id cidecoVMQj5AbsnpzlPqHbyQw== --message-id msgyXmTAdXUx3cezX0pO1ppLA== --emoji "收到" 2>&1')],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_a_reaction_claimed_without_reacting_has_no_evidence() -> None:
+    driver, task = _driver(action=REACTION, tool_events=[], classifier=_SchemaClassifier())
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+
+def test_an_approval_claimed_without_approving_has_no_evidence() -> None:
+    """Reading the approval and notifying the applicant is not approving it."""
+    driver, task = _driver(
+        actions=[APPROVE, CHAT_SEND],
+        tool_events=[
+            _shell("dws oa approval detail --instance-id mgprBD0wT1Sr6WqM3Qkr_A03641789432389 --format json"),
+            _shell("dws chat +messages-send --group cid-1 --text 已同意", output='{"result":{"openTaskId":"t-1"},"success":true}'),
+        ],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+
+def test_an_approval_on_the_proposed_instance_counts() -> None:
+    driver, task = _driver(
+        action=APPROVE,
+        tool_events=[_shell("dws oa approval approve --instance-id mgprBD0wT1Sr6WqM3Qkr_A03641789432389 --format json")],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_a_send_under_another_capability_spelling_is_still_gated() -> None:
+    """September spelled chat as dingtalk-chat, dingtalk_chat, dingtalk chat and dws chat.
+
+    A gate keyed on one spelling let run 8302's `dingtalk_chat` send through.
+    """
+    send = dict(CHAT_SEND, capability="dingtalk_chat")
+    driver, task = _driver(action=send, tool_events=[], classifier=_SchemaClassifier())
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+
+def test_a_document_comment_is_satisfied_by_its_write_without_a_message_receipt() -> None:
+    comment = {
+        "description": "评论文档", "action_identity": "comment", "capability": "dingtalk-doc",
+        "operation": "comment_create", "target": {"node": "N7dx2rn0JbRoGDyBfNKmazywJMGjLRb3"},
+        "payload": {"content": "第三节的数据口径需要统一。"},
+    }
+    driver, task = _driver(
+        action=comment,
+        tool_events=[_shell("dws doc comment create --node N7dx2rn0JbRoGDyBfNKmazywJMGjLRb3 --content x")],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_an_object_reached_only_through_a_third_party_tool_is_not_judged() -> None:
+    """The interview system is an MCP server the service cannot classify.
+
+    Run 19653 really uploaded the interview result there. The service cannot
+    tell that write from a read, so it does not refuse it.
+    """
+    upload = {
+        "description": "上传面试结果", "action_identity": "upload", "capability": "xiaoqing-interview",
+        "operation": "upload_interview_result",
+        "target": {"interview_id": "int-97c2d24b-79f7-4cb7-bb34-4b049e3ce9ca"}, "payload": {},
+    }
+    mcp = {"type": "item.completed", "item": {
+        "type": "mcp_tool_call", "server": "xiaoqing_interview", "tool": "upload_interview_result",
+        "error": None, "arguments": {"interview_id": "int-97c2d24b-79f7-4cb7-bb34-4b049e3ce9ca"},
+        "result": {"content": [{"type": "text", "text": json.dumps(
+            {"status": "ok", "data": {"interview_id": "int-97c2d24b-79f7-4cb7-bb34-4b049e3ce9ca"}})}]},
+    }}
+    driver, task = _driver(action=upload, tool_events=[mcp], classifier=_SchemaClassifier())
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_a_run_whose_reviewed_proposal_cannot_be_found_has_no_evidence() -> None:
+    """Finding nothing must not read as "nothing was proposed"."""
+    driver, task = _driver(action=CHAT_SEND, tool_events=[], classifier=_SchemaClassifier(), parent=False)
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+
+def test_command_substitution_is_never_read_as_what_ran() -> None:
+    from app.dingtalk_send_evidence import _first_stage_argv
+
+    assert _first_stage_argv("/bin/zsh -lc 'dws calendar event respond --id $(cat id)'") is None
+    assert _first_stage_argv('dws chat +dm --to "张毅倜" --content "a|b > c"') == (
+        "dws", "chat", "+dm", "--to", "张毅倜", "--content", "a|b > c"
+    )
