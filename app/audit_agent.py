@@ -238,6 +238,7 @@ class AuditAgentRunner:
             )
         return process.execute(
             run=run,
+            skill_names=context.task.skill_names,
             prompt=prompt,
             session_id=run.codex_session_id or None,
             developer_instructions="\n\n".join(

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from app.agent_runtime_config import AgentRuntimeConfig
+from app.business_skills import codex_skill_exclusion_override
 from app.agent_runtime_contracts import (
     CredentialMode,
     RuntimeFailure,
@@ -121,6 +122,7 @@ class CodexRuntimeAdapter:
         sandbox_mode: str | None = None,
         skip_git_repo_check: bool = False,
         reasoning_effort: str | None = None,
+        skill_names: tuple[str, ...] = (),
     ) -> list[str]:
         configured_route = self._configured_route(route)
         command = self.runner.build_command(
@@ -145,6 +147,9 @@ class CodexRuntimeAdapter:
             sandbox_mode=sandbox_mode,
             skip_git_repo_check=skip_git_repo_check,
             reasoning_effort=reasoning_effort,
+            skill_exclusion_override=codex_skill_exclusion_override(skill_names)
+            if skill_names
+            else "",
         )
         _insert_service_mcp_options(command, session_id=session_id)
         return command

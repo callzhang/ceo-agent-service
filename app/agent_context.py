@@ -98,6 +98,7 @@ class AgentTaskContext:
     image_sha256s: tuple[str, ...] = ()
     consumer_prompt: str = ""
     skill_protocol_override: str | None = None
+    skill_names: tuple[str, ...] = ()
 
     @property
     def unresolved_image_count(self) -> int:

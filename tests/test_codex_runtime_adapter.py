@@ -581,3 +581,71 @@ def test_chatgpt_oauth_rejected_model_is_classified_without_hiding_the_cause(
     assert failure.code == "codex_oauth_model_unsupported"
     assert failure.failover_permitted is False
     assert failure.route_pause_required is False
+
+
+def _write_skill(root: Path, name: str) -> Path:
+    path = root / name / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\nname: {name}\ndescription: {name} description.\n---\n\nBody\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _skill_config_override(command: list[str]) -> str:
+    overrides = [
+        command[index + 1]
+        for index, part in enumerate(command[:-1])
+        if part == "-c" and command[index + 1].startswith("skills.config=")
+    ]
+    return overrides[0] if overrides else ""
+
+
+def test_task_skill_list_disables_every_other_runtime_skill(
+    adapter, config, tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    root = home / ".agents" / "skills"
+    wanted = _write_skill(root, "dingtalk-oa-approval")
+    unwanted = _write_skill(root, "sora")
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+
+    command = adapter.build_command(
+        route(config, "codex_oauth"),
+        prompt="hello",
+        session_id=None,
+        image_paths=None,
+        output_schema_path=None,
+        use_output_schema=False,
+        approval_policy="on-failure",
+        developer_instructions="Follow the contract.",
+        use_approval_bypass=True,
+        skill_names=("dingtalk-oa-approval",),
+    )
+
+    override = _skill_config_override(command)
+    assert f'{{path="{unwanted}",enabled=false}}' in override
+    assert str(wanted) not in override
+
+
+def test_run_without_a_task_skill_list_leaves_codex_skills_untouched(
+    adapter, config, tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    _write_skill(home / ".agents" / "skills", "sora")
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+
+    command = adapter.build_command(
+        route(config, "codex_oauth"),
+        prompt="hello",
+        session_id=None,
+        image_paths=None,
+        output_schema_path=None,
+        use_output_schema=False,
+        approval_policy="on-failure",
+        developer_instructions="Follow the contract.",
+        use_approval_bypass=True,
+    )
+
+    assert _skill_config_override(command) == ""

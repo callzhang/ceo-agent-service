@@ -234,6 +234,7 @@ class CodexRunner:
         shell_environment_policy_core: bool = False,
         sandbox_mode: str | None = None,
         skip_git_repo_check: bool = False,
+        skill_exclusion_override: str = "",
     ) -> list[str]:
         if approval_policy not in {"on-failure", "never"}:
             raise ValueError("unsupported approval policy")
@@ -300,6 +301,11 @@ class CodexRunner:
             *(["--skip-git-repo-check"] if skip_git_repo_check else []),
             "--json",
             *(["--ignore-user-config"] if ignore_user_config else []),
+            # Codex always injects its own Skill catalog and has no allow-list;
+            # disabling the Skills this run does not need is the only lever, and
+            # it matters for quality: over budget Codex truncates the very
+            # descriptions the Agent uses to pick a Skill.
+            *(["-c", skill_exclusion_override] if skill_exclusion_override else []),
             *(
                 []
                 if preserve_native_model_config
