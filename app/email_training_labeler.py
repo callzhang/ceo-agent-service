@@ -257,8 +257,12 @@ def label_candidate(
     )
     payload = task_input.payload()
     task = SimpleNamespace(
-        task_id="email-training-label:"
-        + sha256(task_input.stable_message_identity.encode("utf-8")).hexdigest(),
+        # The runtime router only accepts classification-shaped workload keys.
+        # The digest is namespaced so it never equals a realtime task's key.
+        task_id="email-classification:"
+        + sha256(
+            ("training-label:" + task_input.stable_message_identity).encode("utf-8")
+        ).hexdigest(),
         stable_message_identity=task_input.stable_message_identity,
         input_json=json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
     )
@@ -384,9 +388,10 @@ def _scan_context(email_store: object, account_id: str) -> object:
 
 def main(argv: Iterable[str] | None = None) -> int:
     from app.agent_runtime_config import load_runtime_config
-    from app.config import load_env_file, worker_db_path
-    from app.email_agent_api import EmailClassifierApiBackend
-    from app.email_classifier_agent import EmailClassifierAgent
+    from app.config import load_env_file, worker_db_path, workspace_path
+    from app.agent_runtime_production import build_production_routed_codex_execution
+    from app.email_agent_api import EmailClassifierApiBackend, EmailClassifierFallbackBackend
+    from app.email_classifier_agent import EmailClassifierAgent, EmailClassifierRoutedBackend
     from app.email_store import EmailStore
     from app.email_worker import _build_email_source_factory, _reread_historical_candidate_message
     from app.managed_skills import runtime_skill_snapshot_for_process
@@ -464,10 +469,21 @@ def main(argv: Iterable[str] | None = None) -> int:
     if route is None or secret is None:
         raise SystemExit("codex_api runtime route and key are required")
     agent = EmailClassifierAgent(
-        EmailClassifierApiBackend(
-            base_url=runtime_config.codex_api_base_url,
-            model=route.model,
-            api_key=secret.get_secret_value(),
+        EmailClassifierFallbackBackend(
+            EmailClassifierApiBackend(
+                base_url=runtime_config.codex_api_base_url,
+                model=route.model,
+                api_key=secret.get_secret_value(),
+            ),
+            EmailClassifierRoutedBackend(
+                build_production_routed_codex_execution(
+                    store=task_store,
+                    workspace=workspace_path(),
+                    total_timeout_seconds=300.0,
+                    idle_timeout_seconds=120.0,
+                )
+            ),
+            recorder=lambda event: print(json.dumps(event, ensure_ascii=False)),
         ),
         runtime_skill_snapshot=snapshot,
         skill_name="ceo-email-classifier",

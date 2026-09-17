@@ -358,3 +358,58 @@ def test_backend_does_not_retry_four_xx_and_records_token_counts():
     assert events[0]["input_tokens"] is None
     assert events[0]["output_tokens"] is None
     assert "SECRET-KEY" not in repr(events)
+
+
+def test_a_failed_api_call_falls_back_and_the_api_rests_for_the_cooldown():
+    from app.email_agent_api import EmailClassifierApiError, EmailClassifierFallbackBackend
+
+    calls = []
+    now = [0.0]
+
+    class Primary:
+        fail = True
+
+        def classify(self, **kwargs):
+            calls.append(("api", kwargs["task_id"]))
+            if self.fail:
+                raise EmailClassifierApiError(
+                    "retryable email classifier API error (http_500)", retryable=True
+                )
+            return "api-result"
+
+    class Fallback:
+        def classify(self, **kwargs):
+            calls.append(("router", kwargs["task_id"]))
+            return "router-result"
+
+    primary = Primary()
+    events = []
+    backend = EmailClassifierFallbackBackend(
+        primary, Fallback(), cooldown_seconds=60, clock=lambda: now[0], recorder=events.append
+    )
+
+    assert backend.classify(task_id="t1") == "router-result"
+    now[0] = 30
+    assert backend.classify(task_id="t2") == "router-result"
+    primary.fail = False
+    now[0] = 61
+    assert backend.classify(task_id="t3") == "api-result"
+
+    assert calls == [("api", "t1"), ("router", "t1"), ("router", "t2"), ("api", "t3")]
+    assert [event["request_status"] for event in events] == ["fallback"]
+
+
+def test_an_invalid_result_is_not_hidden_by_the_fallback():
+    import pytest
+    from app.email_agent_api import EmailClassifierFallbackBackend
+
+    class Primary:
+        def classify(self, **kwargs):
+            raise ValueError("invalid classification")
+
+    class Fallback:
+        def classify(self, **kwargs):
+            raise AssertionError("must not be called")
+
+    with pytest.raises(ValueError):
+        EmailClassifierFallbackBackend(Primary(), Fallback()).classify(task_id="t1")

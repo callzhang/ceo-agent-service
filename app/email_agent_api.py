@@ -223,3 +223,48 @@ def _usage(response: httpx.Response) -> Mapping[str, object]:
         "input_tokens": usage.get("input_tokens"),
         "output_tokens": usage.get("output_tokens"),
     }
+
+
+class EmailClassifierFallbackBackend:
+    """Use the direct API, and hand a failed call to the shared runtime router.
+
+    The API is fast and cheap, but it is one provider: an exhausted plan answers
+    every call with 500 or 429. Such a failure sends that call to the fallback,
+    and the API is then skipped for a cooldown so each message does not first
+    burn its retries on a provider that is known to be down.
+    """
+
+    def __init__(
+        self,
+        primary: object,
+        fallback: object,
+        *,
+        cooldown_seconds: float = 600.0,
+        clock: Callable[[], float] = time.monotonic,
+        recorder: Callable[[Mapping[str, object]], None] | None = None,
+    ) -> None:
+        if cooldown_seconds < 0:
+            raise ValueError("cooldown_seconds must be non-negative")
+        self._primary = primary
+        self._fallback = fallback
+        self._cooldown_seconds = cooldown_seconds
+        self._clock = clock
+        self._recorder = recorder or (lambda _event: None)
+        self._primary_unavailable_until: float | None = None
+
+    def classify(self, **kwargs: object) -> str:
+        now = self._clock()
+        if self._primary_unavailable_until is None or now >= self._primary_unavailable_until:
+            try:
+                return self._primary.classify(**kwargs)
+            except EmailClassifierApiError as exc:
+                self._primary_unavailable_until = now + self._cooldown_seconds
+                self._recorder(
+                    {
+                        "task_id": kwargs.get("task_id"),
+                        "request_status": "fallback",
+                        "error_code": str(exc),
+                        "cooldown_seconds": self._cooldown_seconds,
+                    }
+                )
+        return self._fallback.classify(**kwargs)

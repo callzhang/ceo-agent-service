@@ -3285,8 +3285,12 @@ def build_email_worker_dependencies(
 ) -> EmailWorkerBootstrap:
     from app.email_classifier_agent import (
         EmailClassifierAgent,
+        EmailClassifierRoutedBackend,
     )
-    from app.email_agent_api import EmailClassifierApiBackend
+    from app.email_agent_api import (
+        EmailClassifierApiBackend,
+        EmailClassifierFallbackBackend,
+    )
     from app.email_classifier_learning import EmailClassifierLearningService
     from app.email_description_optimizer import (
         DescriptionOptimizationOrchestrator,
@@ -3402,15 +3406,28 @@ def build_email_worker_dependencies(
         if api_route is None or api_secret is None:
             raise ValueError(
                 "Email classification requires the codex_api runtime route and "
-                "CEO_CODEX_API_KEY; it will not fall back to Codex CLI"
+                "CEO_CODEX_API_KEY"
             )
         routed_classifier = EmailClassifierAgent(
-            EmailClassifierApiBackend(
-                base_url=runtime_config.codex_api_base_url,
-                model=api_route.model,
-                api_key=api_secret.get_secret_value(),
+            EmailClassifierFallbackBackend(
+                EmailClassifierApiBackend(
+                    base_url=runtime_config.codex_api_base_url,
+                    model=api_route.model,
+                    api_key=api_secret.get_secret_value(),
+                    recorder=lambda event: record_health(
+                        "component:email-agent-api", event
+                    ),
+                ),
+                EmailClassifierRoutedBackend(
+                    build_production_routed_codex_execution(
+                        store=task_store,
+                        workspace=Path(settings.workspace),
+                        total_timeout_seconds=300.0,
+                        idle_timeout_seconds=120.0,
+                    )
+                ),
                 recorder=lambda event: record_health(
-                    "component:email-agent-api", event
+                    "component:email-agent-fallback", event
                 ),
             ),
             runtime_skill_snapshot=runtime_skill_snapshot,

@@ -6334,16 +6334,19 @@ def test_email_dependency_builder_applies_classifier_model_override_only(
             tick=lambda: None,
         ),
     )
-    from app.email_agent_api import EmailClassifierApiBackend
-
-    assert isinstance(
-        dependencies.run_classification_once.args[1].backend,
+    from app.email_agent_api import (
         EmailClassifierApiBackend,
+        EmailClassifierFallbackBackend,
     )
+
+    backend = dependencies.run_classification_once.args[1].backend
+    assert isinstance(backend, EmailClassifierFallbackBackend)
+    assert isinstance(backend._primary, EmailClassifierApiBackend)
     assert description_agents[0]({"candidate": "test"}) == {"candidate": "test"}
 
-    assert len(routed_calls) == 1
-    assert "codex_oauth_model" not in routed_calls[0]
+    # One router for the classifier fallback, one for the description optimizer.
+    assert len(routed_calls) == 2
+    assert all("codex_oauth_model" not in call for call in routed_calls)
 
 
 def test_worker_startup_isolates_legacy_before_agent_claim_and_starts_components(
