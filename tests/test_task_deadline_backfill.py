@@ -264,3 +264,23 @@ def test_a_runtime_outage_stops_the_batch_without_filing_errors(tmp_path):
             "select count(*) from errors where kind='todo_deadline_backfill'"
         ).fetchone()[0]
     assert count == 0
+
+
+def test_a_deadline_backfill_attempt_belongs_to_its_todo_not_a_project(tmp_path):
+    """Seen live: TODO 3322 was rejected because no project had id 3322."""
+    store = _store(tmp_path)
+    project = _project(store)
+    todo_id = _todo(store, project, "编号比所有项目都大")
+
+    with store._connect() as db:
+        assert store._runtime_operation_parent_exists(
+            db, "task", f"{todo_id + 1000}:deadline_backfill"
+        ) is False
+        assert store._runtime_operation_parent_exists(
+            db, "task", f"{todo_id}:deadline_backfill"
+        ) is True
+    store.update_work_todo(todo_id, status="done")
+    with store._connect() as db:
+        assert store._runtime_operation_parent_exists(
+            db, "task", f"{todo_id}:deadline_backfill"
+        ) is False

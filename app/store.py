@@ -9413,8 +9413,16 @@ class AutoReplyStore:
             query = "select 1 from meeting_alignment_runs where id=? and status='running'"
             args = (int(workload_key),)
         elif workload_kind == "task":
-            row_id, separator, _ = workload_key.partition(":")
-            if separator:
+            row_id, separator, suffix = workload_key.partition(":")
+            if suffix == "deadline_backfill":
+                # The deadline backfill is keyed by TODO. Checking it against
+                # work_projects let a TODO through only when a project happened
+                # to share its id, and rejected every TODO past the last one.
+                query = (
+                    "select 1 from work_todos where id=? "
+                    "and status in ('open', 'waiting_owner')"
+                )
+            elif separator:
                 query = (
                     "select 1 from work_projects where id=? "
                     "and status in ('active', 'waiting', 'done', 'archived')"
