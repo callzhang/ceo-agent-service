@@ -1349,3 +1349,42 @@ def test_reconciliation_needs_evidence_and_only_touches_an_unknown_create(tmp_pa
     assert store.reconcile_unknown_task_todo_sync_outbox(outbox_id=outbox_id, provider_absent_evidence="read")
     # Already queued: a second reconciliation changes nothing.
     assert not store.reconcile_unknown_task_todo_sync_outbox(outbox_id=outbox_id, provider_absent_evidence="read")
+
+
+def test_an_unknown_create_that_got_its_task_id_is_completed_not_resent(tmp_path):
+    """Seen live: a restart landed between DingTalk returning the task id and
+    the read-back, leaving TODO 1238 unknown although the task existed."""
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    outbox_id = _unknown_create(store, todo_id)
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id, executor_user_id="owner-1", executor_name="Alex",
+        title_snapshot="给客户同步验收 ETA", deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1", status="creating", dingtalk_task_id="57249450733",
+    )
+
+    assert store.complete_unknown_task_todo_sync_outbox_from_receipt(
+        outbox_id=outbox_id,
+        provider_readback_json='{"taskId": "57249450733", "done": false}',
+    )
+
+    row = store.get_task_todo_sync_outbox(outbox_id)
+    assert row["status"] == "completed"
+    assert json.loads(row["receipt_json"]) == {"link_id": link_id, "dingtalk_task_id": "57249450733"}
+    assert store.get_work_todo_dingtalk_link(link_id).status == "active"
+
+
+def test_an_unknown_create_without_a_task_id_cannot_be_completed_from_a_receipt(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    outbox_id = _unknown_create(store, todo_id)
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id, executor_user_id="owner-1", executor_name="Alex",
+        title_snapshot="t", deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1", status="creating",
+    )
+
+    assert not store.complete_unknown_task_todo_sync_outbox_from_receipt(
+        outbox_id=outbox_id, provider_readback_json='{"taskId": "x"}'
+    )
+    assert store.get_task_todo_sync_outbox(outbox_id)["status"] == "unknown"

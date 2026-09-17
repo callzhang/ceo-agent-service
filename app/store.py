@@ -24123,6 +24123,60 @@ class AutoReplyStore:
             )
             return changed.rowcount == 1
 
+    def complete_unknown_task_todo_sync_outbox_from_receipt(
+        self,
+        *,
+        outbox_id: int,
+        provider_readback_json: str,
+    ) -> bool:
+        """Settle an unknown create whose link already holds the provider's task id.
+
+        The worker stopped after DingTalk returned the task id but before the
+        read-back, so the effect happened and is receipted on the link. Resending
+        would create a second task; the operation is completed from that receipt
+        and a fresh provider read-back instead.
+        """
+        try:
+            readback = json.loads(provider_readback_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("provider read-back must be JSON") from exc
+        if not isinstance(readback, dict) or not readback:
+            raise ValueError("provider read-back is required")
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select work_todo_id, operation, status from task_todo_sync_outbox where id=?",
+                (outbox_id,),
+            ).fetchone()
+            if row is None or row["status"] != "unknown" or row["operation"] != "create":
+                return False
+            link = db.execute(
+                "select id, dingtalk_task_id from work_todo_dingtalk_links "
+                "where work_todo_id=? and status='creating' and trim(dingtalk_task_id)<>'' "
+                "order by id desc limit 1",
+                (row["work_todo_id"],),
+            ).fetchone()
+            if link is None:
+                return False
+            db.execute(
+                "update work_todo_dingtalk_links set status='active', last_error='', "
+                "last_dingtalk_payload_json=?, last_pull_at=current_timestamp, "
+                "updated_at=current_timestamp where id=?",
+                (json.dumps(readback, ensure_ascii=False), link["id"]),
+            )
+            changed = db.execute(
+                "update task_todo_sync_outbox set status='completed', error='', receipt_json=?, "
+                "lease_owner='', lease_expires_at='', completed_at=current_timestamp, "
+                "updated_at=current_timestamp where id=? and status='unknown'",
+                (
+                    json.dumps(
+                        {"link_id": link["id"], "dingtalk_task_id": link["dingtalk_task_id"]},
+                        ensure_ascii=False,
+                    ),
+                    outbox_id,
+                ),
+            )
+            return changed.rowcount == 1
+
     def retry_task_todo_sync_outbox(
         self,
         *,
