@@ -4,6 +4,18 @@
 
 Do not add audit, review, authorization, confirmation, safety-gate, effect-reconciliation, or other safety-policy logic as an incidental part of an unrelated feature or bug fix. Any such logic must be proposed and confirmed as a separate, explicitly scoped change before implementation. Keep its code, tests, documentation, and commit separate from the surrounding functional change; do not hide or silently introduce it through shared helpers, routing, retry, or status handling.
 
+## Keep runtime plumbing simple
+
+Do what the native Agent CLI does. Pass configuration the way the CLI accepts
+it (inline where it takes JSON strings), connect MCP servers directly, and use
+the CLI's own home directory. Do not add defensive layers of your own making:
+no local credential proxies, no per-invocation temp files, no "was this built by
+this adapter" ownership checks, and no "keep secrets off disk" machinery beyond
+what the native CLI already does (it keeps MCP headers and env in
+`~/.claude.json`). Each of these was removed on Derek's instruction after it
+caused real failures (the MCP proxy broke OAuth for `memory_connector` on every
+Claude turn). If you find another such layer, propose removing it.
+
 ## Concurrent agents in this working tree
 
 Several agents edit this repository at the same time (Claude Code sessions and
