@@ -2404,3 +2404,34 @@ def test_producer_never_reenters_terminal_job(tmp_path):
 
     assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
     assert store.get_meeting_alignment_job(job.id).status == "no_action"
+
+
+def rejected_direct_decision() -> MeetingAlignmentDecision:
+    """A business send addressed to a participant who is not the organizer."""
+    payload = summary_decision().model_dump(mode="json")
+    payload["target"] = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "u-b",
+        "title": "B",
+        "candidates": [],
+    }
+    return MeetingAlignmentDecision.model_validate(payload)
+
+
+def test_a_rejected_target_is_kept_with_the_failure(tmp_path):
+    """The failure has to say who the turn picked, not only which rule broke."""
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(rejected_direct_decision())
+
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "failed"
+    assert json.loads(job.error)["kind"] == "meeting_target"
+    assert job.target_kind == "direct"
+    assert job.target_id == "u-b"
+    assert job.target_title == "B"
+    assert json.loads(job.decision_json)["target"]["title"] == "B"

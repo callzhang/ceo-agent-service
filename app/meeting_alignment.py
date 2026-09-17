@@ -946,12 +946,30 @@ def _analyze_meeting_job(
             runner,
             run_id,
             job_id=job.id,
-            decision=None,
+            decision=exc.decision,
             status="failed",
             error=error,
         )
+        # Keep the target the roster rejected. Discarding it left the failure
+        # saying a rule was broken without saying who the turn had picked, so
+        # the same meeting could only be diagnosed by running it again.
+        rejected = exc.decision.target if exc.decision is not None else None
         store.update_meeting_alignment_job(
-            job.id, status="failed", error=error
+            job.id,
+            status="failed",
+            error=error,
+            decision_json=(
+                exc.decision.model_dump_json() if exc.decision is not None else "{}"
+            ),
+            target_kind=rejected.kind if rejected is not None else "",
+            target_id=(
+                rejected.conversation_id
+                if rejected is not None and rejected.kind == "group"
+                else rejected.direct_user_id
+                if rejected is not None
+                else ""
+            ),
+            target_title=rejected.title if rejected is not None else "",
         )
         return
     except (ValidationError, ValueError) as exc:
