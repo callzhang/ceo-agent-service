@@ -62,7 +62,7 @@ def _receipt_event(receipt: str):
     }
 
 
-def _driver(*, action: dict, tool_events: list):
+def _driver(*, action: dict, tool_events: list, classifier=None):
     task = SimpleNamespace(
         id=384224, channel="dingtalk", execution_generation="initial"
     )
@@ -80,7 +80,7 @@ def _driver(*, action: dict, tool_events: list):
         get_agent_run=lambda _id: audit_run,
         list_agent_runs_for_task_generation=lambda *_a: [consumer_run, audit_run],
     )
-    return DingTalkSendEvidenceDriver(store), task
+    return DingTalkSendEvidenceDriver(store, classifier=classifier), task
 
 
 def test_a_send_claimed_without_any_provider_call_has_no_evidence() -> None:
@@ -121,16 +121,6 @@ def test_a_send_identified_by_reading_the_conversation_back_still_has_evidence()
     assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
 
 
-def test_an_action_the_service_prepared_no_message_for_is_not_gated_here() -> None:
-    """Calendar, approval and reaction effects carry other provider identities.
-
-    This receipt shape does not describe them, so answering for them would
-    block honest work rather than catch anything.
-    """
-    driver, task = _driver(action=CALENDAR_RESPOND, tool_events=[])
-    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
-
-
 def test_a_task_on_another_channel_keeps_its_own_contract() -> None:
     driver, task = _driver(action=CHAT_SEND, tool_events=[])
     task.channel = "email"
@@ -142,3 +132,120 @@ def test_the_correction_names_the_receipt_rather_than_the_claim() -> None:
     requirement = driver.execution_evidence_requirement()
     assert "receipt" in requirement
     assert "not a receipt" in requirement
+
+
+class _SchemaClassifier:
+    """Stand-in for DWS's own schema: respond writes, get and list only read."""
+
+    def classify(self, command):
+        from app.agent_result import EffectKind
+        from app.native_cli_metadata import native_command_argv
+
+        argv = native_command_argv(command)
+        if argv is None or "--help" in argv:
+            return None
+        path = " ".join(argv[1:4])
+        ids = {}
+        if "--id" in argv:
+            ids["id"] = argv[argv.index("--id") + 1]
+        effect = {
+            "calendar event respond": EffectKind.EFFECTFUL,
+            "calendar event get": EffectKind.READ_ONLY,
+            "chat +messages-send --group": EffectKind.EFFECTFUL,
+        }.get(path)
+        if effect is None:
+            return None
+        return SimpleNamespace(command_path=path, effect=effect, target_identifiers=ids)
+
+
+RESPOND = {
+    "description": "接受会议邀请",
+    "action_identity": "accept-invite",
+    "capability": "dingtalk-calendar",
+    "operation": "event_response",
+    "target": {"event_id": "VG9xMTg5THNpWldxREcwSzZvNms3QT09"},
+    "payload": {},
+}
+
+
+def _shell(command: str, output: str = '{"result":{},"success":true}'):
+    return {
+        "type": "item.completed",
+        "item": {"type": "command_execution", "exit_code": 0,
+                 "command": f"/bin/zsh -lc '{command}'", "aggregated_output": output},
+    }
+
+
+def test_a_calendar_response_claimed_without_responding_has_no_evidence() -> None:
+    """Audit run 19644 read the invite, listed the calendar, and stopped there.
+
+    It then reported the invitation accepted. 19 of 56 September calendar runs
+    that claimed executed never made an effectful call at all.
+    """
+    driver, task = _driver(
+        action=RESPOND,
+        tool_events=[_shell("dws calendar event get --id VG9xMTg5THNpWldxREcwSzZvNms3QT09 --format json")],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+
+def test_a_response_on_the_proposed_event_is_evidence() -> None:
+    driver, task = _driver(
+        action=RESPOND,
+        tool_events=[_shell("dws calendar event respond --id VG9xMTg5THNpWldxREcwSzZvNms3QT09 --status accepted --format json")],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_an_effect_on_something_other_than_the_proposed_event_is_not_evidence() -> None:
+    """Three September runs claimed a calendar response and only sent a message.
+
+    Any effectful call would have passed them; the effect has to land on the
+    event the proposal named.
+    """
+    driver, task = _driver(
+        action=RESPOND,
+        tool_events=[_shell("dws chat +messages-send --group cid-1 --text 好的")],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+
+def test_asking_for_help_on_respond_is_not_a_response() -> None:
+    driver, task = _driver(
+        action=RESPOND,
+        tool_events=[_shell("dws calendar event respond --help")],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+
+def test_a_response_through_the_reviewed_cli_tool_counts() -> None:
+    mcp = {"type": "item.completed", "item": {
+        "type": "mcp_tool_call", "server": "agent_cli", "tool": "execute_reviewed_write",
+        "error": None, "result": {"content": [{"type": "text", "text": "{}"}]},
+        "arguments": {"argv": ["dws", "calendar", "event", "respond", "--id",
+                               "VG9xMTg5THNpWldxREcwSzZvNms3QT09", "--status", "accepted"]},
+    }}
+    driver, task = _driver(action=RESPOND, tool_events=[mcp], classifier=_SchemaClassifier())
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_a_reaction_is_not_gated_here() -> None:
+    """A reaction returns `result: {}` with no identifier to require."""
+    reaction = {
+        "description": "点赞", "action_identity": "react", "capability": "dingtalk-chat",
+        "operation": "messages-add-emoji", "target": {"message_id": "msg-1"},
+        "payload": {"emoji": "👍"},
+    }
+    driver, task = _driver(action=reaction, tool_events=[], classifier=_SchemaClassifier())
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_the_correction_says_what_to_do_when_no_calendar_write_is_needed() -> None:
+    driver, _ = _driver(action=RESPOND, tool_events=[], classifier=_SchemaClassifier())
+    requirement = driver.execution_evidence_requirement()
+    assert "feedback_provided" in requirement
+    assert "respond call on the proposed event" in requirement

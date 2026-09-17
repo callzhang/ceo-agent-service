@@ -24,15 +24,26 @@ from __future__ import annotations
 import json
 
 from app.agent_effect_guard import provider_receipts
+from app.agent_result import EffectKind
 from app.consumer_agent import dingtalk_outgoing_text_key
+from app.native_cli_metadata import (
+    NativeCliMetadataClassifier,
+    NativeCliMetadataUnavailableError,
+)
 from app.store import AgentRole, AutoReplyStore, ReplyTask
 
 
 class DingTalkSendEvidenceDriver:
-    """Answer whether one Audit run really reached a provider for its sends."""
+    """Answer whether one Audit run really reached a provider for its effects."""
 
-    def __init__(self, store: AutoReplyStore) -> None:
+    def __init__(
+        self,
+        store: AutoReplyStore,
+        *,
+        classifier: NativeCliMetadataClassifier | None = None,
+    ) -> None:
         self.store = store
+        self._classifier = classifier
 
     def audit_run_has_execution_evidence(
         self, task: ReplyTask, *, audit_run_id: int
@@ -42,30 +53,66 @@ class DingTalkSendEvidenceDriver:
         run = self.store.get_agent_run(audit_run_id)
         if run is None:
             return False
-        if not self._claims_a_chat_send(task, run.proposal_revision):
-            # Calendar responses, approvals and reactions carry their own
-            # provider identities, which this receipt shape does not describe.
-            # They keep the contract they have until each one has a receipt of
-            # its own; answering for them here would block honest work.
-            return True
-        return bool(provider_receipts(run.tool_events))
+        actions = self._accepted_actions(task, run.proposal_revision)
+        if any(_is_chat_send(action) for action in actions) and not provider_receipts(
+            run.tool_events
+        ):
+            return False
+        calendar_actions = [
+            action for action in actions if action.get("capability") == "dingtalk-calendar"
+        ]
+        if calendar_actions and not self._responded_to_each(
+            run.tool_events, calendar_actions
+        ):
+            return False
+        # Approvals and reactions keep the contract they have until each one
+        # has evidence of its own: a reaction returns `result: {}` with no
+        # identifier, so a receipt shape cannot describe it.
+        return True
 
     def execution_evidence_requirement(self) -> str:
         return (
-            "external_result: executed requires the provider receipt returned "
-            "when the send was accepted. Send through the reviewed CLI and "
-            "report what it returned; a message id taken from the conversation "
-            "or from this prompt is not a receipt."
+            "external_result: executed requires evidence that the provider "
+            "accepted the effect. For a chat send, that is the receipt the send "
+            "returned; a message id taken from the conversation or from this "
+            "prompt is not a receipt. For a calendar action, that is a completed "
+            "respond call on the proposed event. If a calendar action needs no "
+            "write -- it only verifies, or the response is already in place -- "
+            "it is not executable: return feedback_provided so the proposal "
+            "drops it, instead of reporting it executed."
         )
 
-    def _claims_a_chat_send(self, task: ReplyTask, proposal_revision: int) -> bool:
-        """Whether the accepted proposal carries a chat message to send.
+    def _responded_to_each(
+        self, tool_events: list[dict[str, object]], calendar_actions: list[dict]
+    ) -> bool:
+        """Whether every proposed calendar event received an effectful call.
 
-        Deliberately wider than the actions the service prepared a body for:
-        an action naming no resolvable target is one the service could not
-        prepare, but a turn can still report having sent it, and that report
-        is exactly what needs a receipt behind it.
+        A write is recognised from DWS's own schema through the native CLI
+        classifier, so a `get`, a `list` or a `--help` never counts, and a chat
+        send made instead of the response does not count either: the effect has
+        to land on the event the proposal named.
         """
+        touched: set[str] = set()
+        for event in tool_events:
+            command = _completed_native_command(event)
+            if command is None:
+                continue
+            classified = self._classify(command)
+            if classified is None or classified.effect is not EffectKind.EFFECTFUL:
+                continue
+            touched.update(classified.target_identifiers.values())
+        return all(_action_identifiers(action) & touched for action in calendar_actions)
+
+    def _classify(self, command: dict[str, object]):
+        if self._classifier is None:
+            self._classifier = NativeCliMetadataClassifier()
+        try:
+            return self._classifier.classify(command)
+        except NativeCliMetadataUnavailableError:
+            return None
+
+    def _accepted_actions(self, task: ReplyTask, proposal_revision: int) -> list[dict]:
+        """The actions of the proposal this Audit revision reviewed."""
         runs = self.store.list_agent_runs_for_task_generation(
             task.id, task.execution_generation
         )
@@ -80,21 +127,68 @@ class DingTalkSendEvidenceDriver:
             None,
         )
         if consumer is None:
-            return False
-        # Read the two fields this question needs rather than validating the
-        # whole result: the scoring fields a Consumer result carries have
-        # changed shape over time and have nothing to do with whether the
-        # proposal sends a message.
+            return []
+        # Read the fields this question needs rather than validating the whole
+        # result: the scoring fields a Consumer result carries have changed
+        # shape over time and have nothing to do with what the proposal does.
         proposal = json.loads(consumer.final_result_json).get("proposal")
         if not isinstance(proposal, dict):
-            return False
+            return []
         actions = proposal.get("actions")
         if not isinstance(actions, list):
-            return False
-        return any(
-            isinstance(action, dict)
-            and action.get("capability") == "dingtalk-chat"
-            and isinstance(action.get("payload"), dict)
-            and dingtalk_outgoing_text_key(action["payload"]) is not None
-            for action in actions
-        )
+            return []
+        return [action for action in actions if isinstance(action, dict)]
+
+
+def _is_chat_send(action: dict) -> bool:
+    """A chat action carrying a message body, whether or not its target resolved.
+
+    Deliberately wider than the actions the service prepared a body for: an
+    action naming no resolvable target is one the service could not prepare,
+    but a turn can still report having sent it, and that report is exactly what
+    needs a receipt behind it.
+    """
+    payload = action.get("payload")
+    return (
+        action.get("capability") == "dingtalk-chat"
+        and isinstance(payload, dict)
+        and dingtalk_outgoing_text_key(payload) is not None
+    )
+
+
+def _action_identifiers(action: dict) -> set[str]:
+    """Every identifier the action names, wherever the proposal put it."""
+    values: set[str] = set()
+    for field in ("target", "payload"):
+        container = action.get(field)
+        if isinstance(container, dict):
+            values.update(
+                value.strip()
+                for value in container.values()
+                if isinstance(value, str) and value.strip()
+            )
+    return values
+
+
+def _completed_native_command(event: object) -> dict[str, object] | None:
+    """The native command a completed, successful call ran, in classifier shape.
+
+    Shell calls carry the command string; calls through the reviewed CLI's MCP
+    tool carry `arguments.argv`. Both are the same provider operation.
+    """
+    if not isinstance(event, dict):
+        return None
+    item = event.get("item")
+    if not isinstance(item, dict):
+        return None
+    if item.get("type") == "command_execution":
+        if item.get("exit_code") != 0:
+            return None
+        return {"command": item.get("command")}
+    if item.get("type") == "mcp_tool_call":
+        if item.get("error") or not item.get("result"):
+            return None
+        arguments = item.get("arguments")
+        argv = arguments.get("argv") if isinstance(arguments, dict) else None
+        return {"argv": argv} if isinstance(argv, list) else None
+    return None
