@@ -2942,7 +2942,8 @@ def test_a_failure_the_consumer_turn_can_own_is_still_accepted() -> None:
         _consumer_failure_wire("email_provider_transient:TimeoutError")
     )
 
-    assert result.error.code == "email_provider_transient:TimeoutError"
+    assert result.error.code == "agent_reported_failure"
+    assert result.error.source_code == "email_provider_transient:TimeoutError"
 
 
 def test_only_a_failed_outcome_is_checked_for_browser_codes() -> None:

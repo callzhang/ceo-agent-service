@@ -2456,7 +2456,7 @@ class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
                         int(candidate["proposal_revision"]),
                         "Authorization must be restored.",
                         operation_id=str(candidate["operation_id"]),
-                        code="authorization_wait",
+                        code="authorization_required",
                         retryable=True,
                         authorization_required=True,
                     )
@@ -2940,7 +2940,7 @@ def test_worker_retries_authorization_failed_turn_after_gate_recovery(tmp_path: 
     waiting = worker.store.get_reply_task(task_id)
     assert waiting is not None
     assert waiting.status == "pending"
-    assert waiting.error == "authorization_wait"
+    assert waiting.error == "authorization_required"
     assert executor.audit_attempts == 1
     with worker.store._connect() as db:
         db.execute(
@@ -2975,7 +2975,7 @@ def test_worker_defers_authorization_failure_at_attempt_limit(tmp_path: Path):
     waiting = worker.store.get_reply_task(task_id)
     assert waiting is not None
     assert waiting.status == "pending"
-    assert waiting.error == "authorization_wait"
+    assert waiting.error == "authorization_required"
     assert waiting.attempts == 0
 
 
@@ -2998,11 +2998,11 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
     waiting = worker.store.get_reply_task(task_id)
     assert waiting is not None and waiting.status == "pending"
     assert waiting.attempts == 1
-    assert waiting.error == "audit_dependency_unavailable"
+    assert waiting.error == "agent_reported_failure"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "failed"
-    assert attempt.send_error == "audit_dependency_unavailable"
+    assert attempt.send_error == "agent_reported_failure"
     assert executor.audit_attempts == 2
     audit_runs = [
         run
@@ -3027,7 +3027,7 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
         if attempt.trigger_message_id == trigger.open_message_id
     ]
     assert len(attempts) == 1
-    assert {attempt.send_error for attempt in attempts} == {"audit_dependency_unavailable"}
+    assert {attempt.send_error for attempt in attempts} == {"agent_reported_failure"}
     assert executor.audit_attempts == 4
 
 
@@ -4816,8 +4816,10 @@ def test_task_image_is_removed_after_failed_consumer_turn(
     _enqueue(worker.store, trigger)
 
     assert worker.consume_once(max_tasks=1) == 0
-    assert len(executor.image_inspections) == 1
-    assert not Path(executor.image_inspections[0][0]).exists()
+    # The service retries a failure it did not diagnose, and every turn's
+    # image copy is removed after that turn.
+    assert len(executor.image_inspections) == 2
+    assert not any(Path(path).exists() for path, _digest in executor.image_inspections)
 
 
 def test_url_image_reference_is_not_a_required_attachment(
@@ -4898,19 +4900,21 @@ def test_unavailable_decisive_material_returns_dependency_failure_without_invent
     runs = _assert_task4_receipts_and_consumer_read_only(
         worker,
         skill_paths,
-        expected_roles=(AgentRole.CONSUMER,),
+        # A failure the service did not diagnose gets the bounded retry.
+        expected_roles=(AgentRole.CONSUMER, AgentRole.CONSUMER),
     )
     consumer = runs[0]
     error = json.loads(consumer.structured_error_json)
     assert consumer.status == "failed"
     assert consumer.final_result_json == ""
-    assert error["code"] == "document_dependency_unavailable"
+    assert error["code"] == "agent_reported_failure"
+    assert error["source_code"] == "document_dependency_unavailable"
     assert _task4_completed_operations(runs[0]) == ["doc read"]
     assert executor.write_operations == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "failed"
-    assert attempt.send_error == "document_dependency_unavailable"
+    assert attempt.send_error == "agent_reported_failure"
 
 
 def _authorized_mail_skill_paths(tmp_path: Path, monkeypatch) -> dict[str, Path]:
@@ -5522,14 +5526,14 @@ def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
     task = worker.store.get_reply_task(task_id)
     assert task is not None and task.status == "failed"
     assert task.attempts == 1
-    assert task.error == "native_write_failed"
+    assert task.error == "agent_reported_failure"
     run = _get_audit_run(worker.store, task_id, "g1")
     assert run is not None
     assert run.status == "failed"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "failed"
-    assert attempt.send_error == "native_write_failed"
+    assert attempt.send_error == "agent_reported_failure"
     audit_runs = [
         item
         for item in worker.store.list_agent_runs_for_task_generation(task_id, "g1")

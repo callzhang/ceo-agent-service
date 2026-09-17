@@ -1199,7 +1199,7 @@ def test_consumer_wire_result_normalizes_dependency_read_failure_as_retryable():
     assert result.error.retryable is True
 
 
-def test_wire_result_does_not_make_business_failure_retryable():
+def test_the_service_decides_what_an_unknown_reported_failure_means():
     result = AuditAgentWireResult.model_validate(
         {
             "outcome": "failed",
@@ -1214,11 +1214,16 @@ def test_wire_result_does_not_make_business_failure_retryable():
             "information_completeness": 1.0,
             "error_code": "invalid_business_request",
             "error_retryable": False,
-            "error_authorization_required": False,
+            "error_authorization_required": True,
         }
     ).to_result()
 
-    assert result.error.retryable is False
+    # The turn's own flags are not read: a code the service does not know
+    # takes the bounded retry, and the turn's wording is kept for diagnosis.
+    assert result.error.code == "agent_reported_failure"
+    assert result.error.retryable is True
+    assert result.error.authorization_required is False
+    assert result.error.source_code == "invalid_business_request"
 
 
 def test_audit_wire_result_preserves_revision_feedback_fields():

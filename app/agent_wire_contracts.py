@@ -19,16 +19,8 @@ from app.agent_contracts import (
     DecisionOption,
     RiskLevel,
 )
+from app.agent_reported_error import agent_error_payload
 from app.agent_result import ResultParseError, parse_typed_agent_result
-
-
-_RUNTIME_RETRYABLE_DEPENDENCY_ERRORS = frozenset(
-    {
-        "dependency_read_unavailable",
-        "xiaoqing_interview_mcp_not_injected",
-        "xiaoqing_interview_unavailable",
-    }
-)
 
 
 class _WireBase(BaseModel):
@@ -51,16 +43,11 @@ class _WireBase(BaseModel):
         return RiskLevel(value) if isinstance(value, str) else value
 
     def error_payload(self) -> dict[str, object]:
-        error_code = self.error_code or ""
-        return {
-            "code": error_code,
-            # Runtime dependency availability is observed, not decided by the
-            # model. Keep these failures on the worker's shared backoff path
-            # even when a turn incorrectly reports them as terminal.
-            "retryable": self.error_retryable
-            or error_code in _RUNTIME_RETRYABLE_DEPENDENCY_ERRORS,
-            "authorization_required": self.error_authorization_required,
-        }
+        # The service decides what a reported code means; error_retryable and
+        # error_authorization_required are not read. See agent_reported_error.
+        return agent_error_payload(
+            self.error_code, failed=getattr(self, "outcome", "") == "failed"
+        )
 
 
 class _ConsumerProposalWire(_WireBase):
