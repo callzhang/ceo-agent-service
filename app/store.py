@@ -15895,6 +15895,32 @@ class AutoReplyStore:
             ).fetchone()
             return None if row is None else str(row["contract_hash"])
 
+    def clear_conversation_runtime_sessions(self, conversation_id: str) -> int:
+        """Drop every route's session for a conversation, so the next turn is new.
+
+        Some work is a fresh look at external state rather than a continuing
+        conversation: resuming there lets a turn answer from its own previous
+        transcript instead of reading the source again. Clearing only the
+        legacy `conversations` column would leave the other routes resuming.
+        """
+        conversation_id = self._require_runtime_attempt_text(
+            conversation_id, field="conversation_id"
+        )
+        with self._agent_run_write_transaction(None) as (db, _):
+            cursor = db.execute(
+                "delete from conversation_runtime_sessions where conversation_id=?",
+                (conversation_id,),
+            )
+            legacy = db.execute(
+                """
+                update conversations
+                set codex_session_id=null, codex_session_contract_hash=''
+                where conversation_id=? and codex_session_id is not null
+                """,
+                (conversation_id,),
+            )
+            return max(cursor.rowcount, legacy.rowcount)
+
     def clear_conversation_runtime_session_if_matches(
         self,
         conversation_id: str,

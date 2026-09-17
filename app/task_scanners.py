@@ -763,6 +763,13 @@ def scan_pending_oa_approvals(
             channel="dingtalk",
         )
         if inserted:
+            # Each scan is an independent look at the approval's external
+            # state, so the turn must not resume the previous turn's session.
+            # A resumed one answers "已在此前一次运行中完成实时审阅" from its own
+            # transcript and makes no tool call at all: four consecutive runs on
+            # 98194 returned the same text, byte for byte, without reading
+            # DingTalk once.
+            store.clear_conversation_runtime_sessions(trigger.open_conversation_id)
             queued += 1
             queued_process_ids.append(process_instance_id)
 

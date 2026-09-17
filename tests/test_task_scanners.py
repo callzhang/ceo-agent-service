@@ -1618,3 +1618,70 @@ def test_scan_pending_oa_approvals_waits_for_a_new_comment_once_reviewed(tmp_pat
         {"operationType": "ADD_REMARK", "operationTime": 3, "userId": "requester"},
     ]
     assert scan_pending_oa_approvals(store, dws, now=day_one + timedelta(days=10)) == 1
+
+
+def test_scan_pending_oa_approvals_starts_each_review_from_a_clean_session(tmp_path):
+    """A new scan is a fresh look at DingTalk, not a continuation.
+
+    The session is bound to the conversation, so a requeued approval resumed
+    the previous turn's transcript: runs 20017, 20021, 20023 and 20032 on the
+    same approval all carried session 01a0b122 and the last three returned
+    "已在此前一次运行中完成实时审阅" verbatim with zero tool calls.
+    """
+
+    class FakeDws:
+        revision_seed = 1
+
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [DwsOaApprovalCandidate(process_instance_id="proc-1", title="续签")]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": "task-1",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {
+                "result": {
+                    "operationRecords": [
+                        {
+                            "operationType": "ADD_REMARK",
+                            "operationTime": self.revision_seed,
+                            "userId": "requester",
+                        }
+                    ]
+                }
+            }
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    conversation = "oa_pending_scan:proc-1"
+    now = datetime.fromisoformat("2026-09-17T19:00:00+08:00")
+
+    assert scan_pending_oa_approvals(store, dws, now=now) == 1
+    store.upsert_conversation_runtime_session(
+        conversation, "codex_oauth", "session-from-the-previous-turn"
+    )
+    assert (
+        store.get_conversation_runtime_session(conversation, "codex_oauth") is not None
+    )
+
+    # The applicant replies, so the next scan is a genuinely new review.
+    dws.revision_seed = 2
+    assert scan_pending_oa_approvals(store, dws, now=now + timedelta(days=1)) == 1
+
+    assert store.get_conversation_runtime_session(conversation, "codex_oauth") is None
