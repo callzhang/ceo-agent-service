@@ -32,8 +32,14 @@ OPEN_TODO_STATUSES = (TodoStatus.OPEN.value, TodoStatus.WAITING_OWNER.value)
 class TodoDeadlineDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    deadline_at: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
+    deadline_at: str = Field(
+        min_length=1,
+        description="ISO 8601 datetime with timezone, later than the current time.",
+    )
+    reason: str = Field(
+        min_length=1,
+        description="One sentence: stated in the source, or inferred from scope and urgency.",
+    )
 
 
 @dataclass

@@ -33,6 +33,10 @@ PINNED: dict[str, tuple[str, str]] = {
         "app.meeting_alignment_models",
         "MeetingAlignmentDecision",
     ),
+    "todo_deadline_decision.schema.json": (
+        "app.task_deadline_backfill",
+        "TodoDeadlineDecision",
+    ),
 }
 
 # Snapshots that do NOT equal their model. Each of these files is read at run

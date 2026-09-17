@@ -1,19 +1,24 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "TodoDeadlineDecision",
-  "type": "object",
   "additionalProperties": false,
-  "required": ["deadline_at", "reason"],
   "properties": {
     "deadline_at": {
-      "type": "string",
+      "description": "ISO 8601 datetime with timezone, later than the current time.",
       "minLength": 1,
-      "description": "ISO 8601 datetime with timezone, later than the current time."
+      "title": "Deadline At",
+      "type": "string"
     },
     "reason": {
-      "type": "string",
+      "description": "One sentence: stated in the source, or inferred from scope and urgency.",
       "minLength": 1,
-      "description": "One sentence: stated in the source, or inferred from scope and urgency."
+      "title": "Reason",
+      "type": "string"
     }
-  }
+  },
+  "required": [
+    "deadline_at",
+    "reason"
+  ],
+  "title": "TodoDeadlineDecision",
+  "type": "object"
 }
