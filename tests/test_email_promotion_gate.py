@@ -33,7 +33,13 @@ def assess(row, **kwargs):
                 "p95_latency_max_ms": 500.},
         enabled_category_keys=kwargs.get("enabled_category_keys", ("work",)),
         description_version="d1",
-        readiness=SimpleNamespace(ready=True, passing_model_ids=("previous", "candidate"), reason="ready"),
+        readiness=SimpleNamespace(
+            ready=True, passing_model_ids=("previous", "candidate"), reason="ready",
+            promoted_categories=kwargs.get(
+                "proven", tuple(kwargs.get("enabled_category_keys", ("work",)))
+            ),
+            important_promoted=True,
+        ),
         registry_issues=kwargs.get("registry_issues", ()),
         artifact_verified=True,
     )
@@ -57,7 +63,7 @@ def micro_check(result):
 
 
 def test_micro_f1_weighs_each_class_by_its_evaluated_messages():
-    """A class with almost no evaluated mail cannot sink the overall score."""
+    """A class too thin to promote stays with the Agent and is not scored."""
 
     row = evidence()
     row["compatibility"]["enabled_categories"] = ["work", "legal"]
@@ -65,8 +71,10 @@ def test_micro_f1_weighs_each_class_by_its_evaluated_messages():
     row["metrics"]["categories"]["legal"] = {
         "precision": 1., "recall": .0, "f1": .0, "support": 1,
     }
-    check = micro_check(assess(row, enabled_category_keys=("work", "legal")))
-    assert check["actual"] == pytest.approx(25 / 26)
+    result = assess(row, enabled_category_keys=("work", "legal"))
+    check = micro_check(result)
+    assert result["promoted_categories"] == ["work"]
+    assert check["actual"] == pytest.approx(1.0)
     assert check["passed"] is True
     # The unweighted mean of the two classes would have been .5 and failed.
     assert (1. + .0) / 2 < .95
@@ -87,7 +95,9 @@ def test_micro_f1_scores_the_classes_the_evaluation_measured():
         if item["key"] == "category_validation_samples:legal"
     )
     assert coverage["actual"] is None
-    assert result["promotion_eligible"] is False
+    # legal fails its own checks, which no longer holds work back.
+    assert result["promoted_categories"] == ["work"]
+    assert result["promotion_eligible"] is True
 
 
 def test_micro_f1_is_unmeasured_without_recall_for_every_class():
@@ -191,3 +201,44 @@ def test_others_is_not_held_to_the_per_category_checks():
     keys = {check["key"] for check in assess(row)["checks"]}
     assert "category_precision:others" not in keys
     assert "category_validation_samples:others" not in keys
+
+
+def test_each_category_is_promoted_on_its_own_evidence():
+    """A proven category goes live while a weak one stays with the Agent."""
+
+    row = evidence()
+    row["compatibility"]["enabled_categories"] = ["work", "legal"]
+    row["metrics"]["categories"]["work"]["recall"] = 1.
+    row["metrics"]["categories"]["legal"] = {
+        "precision": .5, "recall": .9, "f1": .6, "support": 40,
+    }
+
+    result = assess(row, enabled_category_keys=("work", "legal"))
+
+    assert result["promotion_eligible"] is True
+    assert result["promoted_categories"] == ["work"]
+    legal = next(c for c in result["checks"] if c["key"] == "category_precision:legal")
+    assert legal["passed"] is False
+
+
+def test_a_category_the_registry_has_not_proven_twice_is_not_promoted():
+    row = evidence()
+    row["compatibility"]["enabled_categories"] = ["work", "legal"]
+    row["metrics"]["categories"]["legal"] = {
+        "precision": .99, "recall": .99, "f1": .99, "support": 40,
+    }
+
+    result = assess(row, enabled_category_keys=("work", "legal"), proven=("work",))
+
+    assert result["promoted_categories"] == ["work"]
+
+
+def test_nothing_is_promoted_when_no_category_qualifies():
+    row = evidence()
+    row["metrics"]["categories"]["work"]["precision"] = .5
+
+    result = assess(row)
+
+    assert result["promoted_categories"] == []
+    assert result["promotion_eligible"] is False
+    assert micro_check(result)["reason"] == "not_measured"

@@ -1811,6 +1811,10 @@ def register_email_routes(
             result.append(row)
         return result
 
+    def _historical_review_state(registry: object) -> dict[str, object] | None:
+        reader = getattr(registry, "historical_systematic_error_state", None)
+        return reader().to_dict() if callable(reader) else None
+
     def _training_runs_without_model(service: object) -> list[dict[str, object]]:
         """Report training runs that ended without producing a model version.
 
@@ -2003,7 +2007,10 @@ def register_email_routes(
                 or gate["candidate_model_id"] != payload.model_id
             ):
                 raise ValueError("candidate is not eligible")
-            return gate["config"]["config_version"]
+            return {
+                "config_version": gate["config"]["config_version"],
+                "promoted_categories": gate["promoted_categories"],
+            }
 
         try:
             switch_online_model(
@@ -2119,7 +2126,7 @@ def register_email_routes(
                 "last_feedback_at": state.last_feedback_at,
                 "active_run_id": state.active_run_id,
                 "training_runs_without_model": _training_runs_without_model(service),
-                "historical_review": service.registry.historical_systematic_error_state().to_dict(),
+                "historical_review": _historical_review_state(service.registry),
                 "models": models,
                 "staged_models": [
                     _project_staged_model_evidence(row) for row in staged_evidence

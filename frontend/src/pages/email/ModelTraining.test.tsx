@@ -618,3 +618,31 @@ it("lets the owner confirm the historical systematic-error review that blocks pr
   expect(screen.getByText("历史系统性错误复核：已复核")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "确认已复核" })).not.toBeInTheDocument();
 });
+
+it("names the categories that go live and leaves the rest with the Agent", () => {
+  const perCategory = {
+    ...learning,
+    promotion_gate: { ...learning.promotion_gate, promotion_eligible: true, promoted_categories: ["work"], important_promoted: false },
+  };
+  render(
+    <ModelTraining
+      learning={perCategory}
+      configs={[{ category_key: "work", display_name: "工作" } as never]}
+      reload={async () => perCategory}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByLabelText("按分类上线")).toHaveTextContent("可上线的分类：工作。其余分类继续由 Agent 处理，模型不会标记重要邮件。");
+});
+
+it("says every email stays with the Agent when no category qualifies", () => {
+  const none = { ...learning, promotion_gate: { ...learning.promotion_gate, promoted_categories: [] } };
+  render(
+    <ModelTraining learning={none} configs={[]} reload={async () => none} runtimeVerified onRuntimeUnverified={vi.fn()} onBusy={vi.fn()} />,
+  );
+
+  expect(screen.getByLabelText("按分类上线")).toHaveTextContent("暂无分类达标，所有邮件继续由 Agent 处理。");
+});

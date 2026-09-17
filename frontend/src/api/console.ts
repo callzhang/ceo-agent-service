@@ -412,7 +412,14 @@ export interface EmailModelEvidence {
 }
 export interface EmailLearningEvidence {
   runtime: EmailRuntime;
-  promotion_gate: {config: EmailPromotionConfig; promotion_eligible: boolean; checks: Array<{key: string; actual: unknown; target: unknown; operator: string; passed: boolean; reason: string}>};
+  promotion_gate: {
+    config: EmailPromotionConfig;
+    promotion_eligible: boolean;
+    /** Categories the model will decide once switched on; the rest stay with the Agent. */
+    promoted_categories?: string[];
+    important_promoted?: boolean;
+    checks: Array<{key: string; actual: unknown; target: unknown; operator: string; passed: boolean; reason: string}>;
+  };
   mode_transitions: Array<Record<string, unknown>>;
   staged_models: EmailStagedModel[];
   active_model_id: string | null;

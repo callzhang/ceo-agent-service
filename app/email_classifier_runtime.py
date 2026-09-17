@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,6 +65,8 @@ class OnlineModelActivation:
     model_id: str
     artifact_sha256: str
     compatibility: Mapping[str, object]
+    promoted_categories: tuple[str, ...] = ()
+    important_promoted: bool = False
 
 
 @dataclass(frozen=True)
@@ -458,15 +461,9 @@ def assess_online_promotion_gate(
                        "operator": operator, "passed": passed,
                        "reason": "passed" if passed else ("not_measured" if value is None else reason)})
 
-    # The others class counts towards the overall score: leaving it out would
-    # let a model that dumps everything it is unsure of into others score well
-    # on the classes that remain.
-    scored_category_keys = (*enabled_category_keys, MODEL_OTHERS_CATEGORY_KEY)
-    check(
-        "micro_f1",
-        micro_f1_from_categories(metrics, scored_category_keys),
-        config["micro_f1_min"],
-    )
+    # Each category is judged on its own. A category the model has not proven
+    # stays with the Agent instead of holding back the ones it has.
+    category_checks_passed: dict[str, bool] = {}
     for key in enabled_category_keys:
         category = mapping(metrics.get(key))
         precision = _finite_evidence_number(category.get("precision"))
@@ -475,6 +472,20 @@ def assess_online_promotion_gate(
         support = category.get("support")
         check(f"category_validation_samples:{key}", support if type(support) is int and support >= 0 else None,
               config["category_validation_samples_min"])
+        category_checks_passed[key] = checks[-1]["passed"] and checks[-2]["passed"]
+    proven = set(getattr(readiness, "promoted_categories", ()) or ())
+    promoted_categories = tuple(
+        key for key in enabled_category_keys if category_checks_passed[key] and key in proven
+    )
+    # Scored over the categories the model will decide, plus others: the rest
+    # never reach it, but mail it wrongly calls "others" is still a miss, and
+    # counting others stops a model from parking uncertain mail there.
+    check(
+        "micro_f1",
+        micro_f1_from_categories(metrics, (*promoted_categories, MODEL_OTHERS_CATEGORY_KEY))
+        if promoted_categories else None,
+        config["micro_f1_min"],
+    )
     latency = measured_end_to_end_latency(row.get("end_to_end_latency_ms"))
     check("p95_latency", latency["p95"] if latency else None, config["p95_latency_max_ms"], "<=")
     categories = compatibility.get("enabled_categories")
@@ -490,8 +501,13 @@ def assess_online_promotion_gate(
     checks.append({"key": "system_integrity", "actual": system_pass, "target": True,
                    "operator": "==", "passed": system_pass,
                    "reason": "passed" if system_pass else "model_evidence_or_configuration_not_ready"})
+    blocking = [item for item in checks
+                if not item["key"].startswith(("category_precision:", "category_validation_samples:"))]
     return {"config": dict(config), "candidate_model_id": row.get("model_id"),
-            "promotion_eligible": all(item["passed"] for item in checks), "checks": checks}
+            "promotion_eligible": bool(promoted_categories) and all(item["passed"] for item in blocking),
+            "promoted_categories": list(promoted_categories),
+            "important_promoted": bool(getattr(readiness, "important_promoted", False)),
+            "checks": checks}
 
 
 def _prepare_online_activation(
@@ -508,6 +524,8 @@ def _prepare_online_activation(
         raise EmailClassifierUnavailable(f"whole model is not ready: {readiness.reason}")
     if model_id != readiness.passing_model_ids[-1]:
         raise ValueError("only the latest whole-model-ready candidate may activate")
+    if not readiness.promoted_categories:
+        raise EmailClassifierUnavailable("no category is ready for promotion")
     evidence = registry.get_staged_evidence(model_id)
     hashes = evidence.get("hashes")
     compatibility = evidence.get("compatibility")
@@ -523,6 +541,8 @@ def _prepare_online_activation(
         model_id=model_id,
         artifact_sha256=expected_digest,
         compatibility=dict(compatibility),
+        promoted_categories=tuple(readiness.promoted_categories),
+        important_promoted=bool(readiness.important_promoted),
     )
     return activation
 
@@ -575,6 +595,14 @@ def _read_online_control(registry) -> dict[str, object]:
     fields = {"mode", "promotion_config_version", "mode_transitions"}
     if payload["mode"] == "model_primary":
         fields |= {"model_id", "artifact_sha256", "compatibility"}
+        if "promoted_categories" in payload or "important_promoted" in payload:
+            promoted = payload.get("promoted_categories")
+            if (not isinstance(promoted, list) or not promoted
+                    or any(not text(item) for item in promoted)
+                    or len(promoted) != len(set(promoted))
+                    or type(payload.get("important_promoted")) is not bool):
+                raise ValueError("invalid promoted categories")
+            fields |= {"promoted_categories", "important_promoted"}
         digest = payload.get("artifact_sha256")
         if (not isinstance(digest, str) or len(digest) != 64
                 or any(char not in "0123456789abcdef" for char in digest)
@@ -648,14 +676,27 @@ def switch_online_model(
         current_model = current.get("model_id") if current_mode == "model_primary" else None
         if current_mode != expected_mode or current_model != expected_model_id:
             raise ValueError("runtime state changed")
-        config_version = validate_promotion() if mode == "model_primary" else current.get("promotion_config_version", "email-promotion-gate-v1")
+        promoted: tuple[str, ...] = ()
+        if mode == "model_primary":
+            decision = validate_promotion()
+            # The console's gate narrows the proven set with measured test
+            # precision; a bare version string keeps the registry's set.
+            if isinstance(decision, Mapping):
+                config_version = decision.get("config_version")
+                promoted = tuple(decision.get("promoted_categories") or ())
+            else:
+                config_version = decision
+        else:
+            config_version = current.get("promotion_config_version", "email-promotion-gate-v1")
         if not isinstance(config_version, str) or not config_version.strip():
             raise ValueError("invalid promotion configuration version")
         payload = {"mode": mode, "promotion_config_version": config_version}
         if mode == "model_primary":
             activation = _prepare_online_activation(registry, model_id, classifier_loader=classifier_loader)
             payload.update(model_id=activation.model_id, artifact_sha256=activation.artifact_sha256,
-                           compatibility=dict(activation.compatibility))
+                           compatibility=dict(activation.compatibility),
+                           promoted_categories=list(promoted or activation.promoted_categories),
+                           important_promoted=activation.important_promoted)
         transition = {**request, "promotion_config_version": config_version, "status": "applied",
                       "reason": "user_enabled_primary_model" if model_id else "user_disabled_primary_model",
                       "created_at": datetime.now(timezone.utc).isoformat()}
@@ -730,9 +771,17 @@ class OnlineEmbeddingPredictor:
         runtime_id: str | None = None,
         latency: "StageLatencyRecorder | None" = None,
         clock: Callable[[], float] = time.perf_counter,
+        promoted_categories: tuple[str, ...] | None = None,
+        important_promoted: bool = True,
     ) -> None:
         if not model_id.strip():
             raise ValueError("model_id must be nonblank")
+        # None means an activation from before per-category promotion, which
+        # promoted the whole model.
+        self.promoted_categories = (
+            None if promoted_categories is None else frozenset(promoted_categories)
+        )
+        self.important_promoted = bool(important_promoted)
         if isinstance(classifier, CpuTfidfLogisticClassifier):
             raise TypeError("TF-IDF cannot be used as an online model")
         if (
@@ -830,7 +879,22 @@ class OnlineEmbeddingPredictor:
                 return OnlineClassificationResult(
                     source="model", value=None, fallback_reason="model_others"
                 )
-            return OnlineClassificationResult(source="model", value=timed.prediction)
+            # A category that did not pass promotion is still the Agent's to
+            # decide, however confident the model is.
+            if (
+                self.promoted_categories is not None
+                and timed.prediction.category not in self.promoted_categories
+            ):
+                self.latency.record_fallback("model_category_not_promoted")
+                return OnlineClassificationResult(
+                    source="model",
+                    value=None,
+                    fallback_reason="model_category_not_promoted",
+                )
+            prediction = timed.prediction
+            if not self.important_promoted and prediction.important:
+                prediction = dataclass_replace(prediction, important=False)
+            return OnlineClassificationResult(source="model", value=prediction)
         except Exception as exc:
             if isinstance(exc, OnlineEmbeddingBatchError):
                 failure_timing = exc.timing
@@ -1109,6 +1173,12 @@ class PromotedEmailClassifierRuntime:
                     f"{classifier.embedding_revision}"
                 ),
                 latency=generation_latency,
+                promoted_categories=(
+                    tuple(payload["promoted_categories"])
+                    if "promoted_categories" in payload
+                    else None
+                ),
+                important_promoted=bool(payload.get("important_promoted", True)),
             )
         except Exception:
             if batcher is not None:

@@ -3596,8 +3596,13 @@ def build_email_worker_dependencies(
             ):
                 raise ValueError("historical eligibility evidence is incomplete")
             category_evidence = historical["categories"]
+            from app.email_classifier_contracts import MODEL_OTHERS_CATEGORY_KEY
+
             eligibility = {
-                category: bool(category_evidence[category].get("eligible"))
+                # others only means "none of the selected categories"; the
+                # Agent decides those, so history never acts on it.
+                category: category != MODEL_OTHERS_CATEGORY_KEY
+                and bool(category_evidence[category].get("eligible"))
                 for category in model.enabled_categories
                 if isinstance(category_evidence.get(category), Mapping)
             }

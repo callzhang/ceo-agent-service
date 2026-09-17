@@ -54,6 +54,11 @@ reverts committed work they did not author.
 
 ## Recent overlaps worth knowing
 
+- 2026-09-17, Claude session `claude-per-category-promotion`: **the email model is now promoted per category**
+  against the console's `email_model_promotion_configs` thresholds instead of hard-coded 0.95 / 20 / 10.
+  `WholeModelReadiness` carries `promoted_categories`; `online-active.json` records them and
+  `OnlineEmbeddingPredictor` hands any other category to the Agent (`model_category_not_promoted`).
+  Training evidence records `promotion_thresholds`; evidence without it is judged by the legacy values.
 - 2026-09-17, Claude session `claude-account-binding-gate`: **`EMAIL_SCHEMA_VERSION` is now 42**
   (`_migrate_v41_to_v42` adds `scan_lookback_days` and `scan_read_state` to
   `email_accounts`), inside `claude-email-action-skipped`'s schema-version claim, and

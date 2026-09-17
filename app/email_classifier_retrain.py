@@ -891,6 +891,18 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
+def _console_promotion_thresholds(store: object):
+    """Read the per-category thresholds the owner set in the console."""
+
+    from app.email_model_registry import PromotionThresholds
+
+    config = store.current_model_promotion_config()
+    return PromotionThresholds(
+        precision_min=float(config["category_precision_min"]),
+        samples_min=int(config["category_validation_samples_min"]),
+    )
+
+
 def _run_training_job(
     *,
     db_path: Path,
@@ -1075,6 +1087,7 @@ def _run_training_job(
                     description_overlay=description_overlay,
                     benchmark_candidate=benchmark_candidate,
                     selected_message_identities=selected_message_identities,
+                    promotion_thresholds=_console_promotion_thresholds(store),
                 )
                 model_ids.append(result.model_id)
                 if description_overlay is not None:

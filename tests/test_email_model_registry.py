@@ -971,3 +971,99 @@ def test_candidate_protocol_requires_exact_artifact_metadata_and_metric_shape(
             expected_labels=("work",),
         )
     assert unsafe_registry.get_model(model_id).status == "failed"
+
+
+def _with_eligibility(candidate, **by_category):
+    """Replace chosen categories' eligibility; others keep the passing metric."""
+
+    eligibility = dict(candidate.category_eligibility)
+    eligibility.update(by_category)
+    return CandidateMaturityEvidence(
+        **{**candidate.__dict__, "category_eligibility": eligibility}
+    )
+
+
+def test_readiness_promotes_only_categories_proven_by_both_candidates() -> None:
+    # Fewer hits than the second candidate, so evidence still advances.
+    weak = HistoricalEligibility(precision=0.5, accepted_hits=20, independent_groups=10)
+    first = _with_eligibility(_maturity("candidate-1"), legal=weak)
+    second = _with_eligibility(_maturity("candidate-2"))
+
+    readiness = assess_whole_model_readiness((first, second))
+
+    assert readiness.ready is True
+    assert readiness.promoted_categories == ("work",)
+
+
+def test_readiness_is_not_ready_when_no_category_is_proven() -> None:
+    weak = HistoricalEligibility(precision=0.5, accepted_hits=40, independent_groups=30)
+    first = _with_eligibility(_maturity("candidate-1"), work=weak, legal=weak)
+    second = _with_eligibility(_maturity("candidate-2"), work=weak, legal=weak)
+
+    readiness = assess_whole_model_readiness((first, second))
+
+    assert readiness.ready is False
+    assert readiness.reason == "maturity_gate_not_met"
+    assert readiness.promoted_categories == ()
+
+
+def test_console_thresholds_decide_eligibility_and_must_not_change_between_candidates():
+    from app.email_model_registry import PromotionThresholds
+
+    relaxed = PromotionThresholds(precision_min=0.9, samples_min=10)
+    borderline = HistoricalEligibility(precision=0.91, accepted_hits=10, independent_groups=5)
+
+    assert borderline.eligible is False  # legacy 0.95 / 20 / 10
+    assert borderline.meets(relaxed) is True
+    assert relaxed.groups_min == 5
+
+    first = CandidateMaturityEvidence(
+        **{**_with_eligibility(_maturity("candidate-1"), work=borderline, legal=borderline).__dict__,
+           "thresholds": relaxed}
+    )
+    second = CandidateMaturityEvidence(
+        **{**_with_eligibility(_maturity("candidate-2"), work=borderline, legal=borderline).__dict__,
+           "thresholds": relaxed}
+    )
+    changed = CandidateMaturityEvidence(
+        **{**second.__dict__, "thresholds": PromotionThresholds(0.95, 20)}
+    )
+
+    assert assess_whole_model_readiness((first, second)).promoted_categories == ("work", "legal")
+    assert assess_whole_model_readiness((first, changed)).reason == "promotion_thresholds_changed"
+
+
+def test_others_is_never_promoted_and_a_weak_important_head_only_disables_flagging() -> None:
+    from app.email_model_registry import PromotionThresholds
+
+    def candidate(model_id):
+        more = 1 if model_id.endswith("2") else 0
+        passing = HistoricalEligibility(precision=0.99, accepted_hits=50 + more, independent_groups=40 + more)
+        weak = HistoricalEligibility(precision=0.5, accepted_hits=50 + more, independent_groups=40 + more)
+        base = _maturity(model_id)
+        compatibility = CandidateCompatibility(
+            **{**base.compatibility.__dict__, "enabled_categories": ("work", "others")}
+        )
+        return CandidateMaturityEvidence(
+            **{
+                **base.__dict__,
+                "compatibility": compatibility,
+                "category_eligibility": {"work": passing, "others": passing},
+                "important_eligibility": weak,
+            }
+        )
+
+    readiness = assess_whole_model_readiness((candidate("candidate-1"), candidate("candidate-2")))
+
+    assert readiness.ready is True
+    assert readiness.promoted_categories == ("work",)
+    assert readiness.important_promoted is False
+
+
+def test_staged_evidence_carries_the_thresholds_it_was_judged_by() -> None:
+    from app.email_model_registry import LEGACY_PROMOTION_THRESHOLDS, PromotionThresholds
+
+    assert PromotionThresholds.from_mapping(None) == LEGACY_PROMOTION_THRESHOLDS
+    assert PromotionThresholds.from_mapping(
+        {"category_precision_min": 0.9, "category_validation_samples_min": 10}
+    ) == PromotionThresholds(0.9, 10)

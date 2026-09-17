@@ -2391,3 +2391,104 @@ def test_confident_others_prediction_is_handed_to_the_agent():
     ).classify(OnlineModelInput("outside every trained category", "input-v3"))
     assert routed.source == "agent"
     assert routed.value == "agent-classified"
+
+
+class _ConfidentLegalHead(_OnlineHead):
+    def predict_result(self, result, *, index=0):
+        return TimedEmbeddingModelPrediction(
+            prediction=EmbeddingModelPrediction(
+                category="legal",
+                category_probability=0.99,
+                category_probabilities={"legal": 0.99, "others": 0.01},
+                category_accepted=True,
+                important=True,
+                important_probability=0.9,
+                head_ms=4.0,
+            ),
+            timing=EmbeddingTiming(1.0, 2.0, 3.0, 4.0, 10.0),
+        )
+
+
+def _legal_predictor(**kwargs):
+    latency = StageLatencyRecorder()
+    predictor = OnlineEmbeddingPredictor(
+        model_id="email-embedding-mlp-second",
+        classifier=_ConfidentLegalHead(),
+        cache=_ExactCache(),
+        embedding_client=_EmbeddingClient(),
+        latency=latency,
+        clock=lambda: 100.0,
+        **kwargs,
+    )
+    return predictor, latency
+
+
+def test_a_confident_prediction_for_an_unpromoted_category_goes_to_the_agent():
+    predictor, latency = _legal_predictor(promoted_categories=("work",))
+
+    result = predictor(OnlineModelInput("a contract question", "input-v3"))
+
+    assert result.value is None
+    assert result.fallback_reason == "model_category_not_promoted"
+    assert latency.fallback_counts()["model_category_not_promoted"] == 1
+
+
+def test_a_promoted_category_is_decided_by_the_model_without_unproven_importance():
+    predictor, _latency = _legal_predictor(
+        promoted_categories=("legal",), important_promoted=False
+    )
+
+    result = predictor(OnlineModelInput("a contract question", "input-v3"))
+
+    assert result.fallback_reason is None or result.fallback_reason == ""
+    assert result.value.category == "legal"
+    # The important head was not proven, so the model never flags mail.
+    assert result.value.important is False
+
+
+def test_an_activation_from_before_per_category_promotion_keeps_every_category():
+    predictor, _latency = _legal_predictor()
+
+    result = predictor(OnlineModelInput("a contract question", "input-v3"))
+
+    assert result.value.category == "legal"
+    assert result.value.important is True
+
+
+def test_activation_records_only_the_categories_the_gate_promoted(tmp_path):
+    import json as _json
+
+    from app.email_classifier_runtime import ONLINE_ACTIVATION_FILENAME, switch_online_model
+
+    first, second = b"first", b"second"
+    registry = _ActivationRegistry(tmp_path / "registry", (
+        _mature_evidence("email-embedding-mlp-first", sha256(first).hexdigest()),
+        _mature_evidence("email-embedding-mlp-second", sha256(second).hexdigest()),
+    ))
+    (registry.embedding_artifacts / "email-embedding-mlp-first.artifact").write_bytes(first)
+    (registry.embedding_artifacts / "email-embedding-mlp-second.artifact").write_bytes(second)
+    proven = runtime_module_readiness(registry)
+
+    switch_online_model(
+        registry, mode="model_primary", model_id="email-embedding-mlp-second",
+        expected_mode="agent_primary", expected_model_id=None,
+        request_id="switch-per-category", actor="console-user",
+        validate_promotion=lambda: {
+            "config_version": "gate-v1",
+            "promoted_categories": [proven[0]],
+        },
+        classifier_loader=lambda _: _LoadedOnlineModel(),
+    )
+
+    control = _json.loads((registry.root / ONLINE_ACTIVATION_FILENAME).read_text())
+    assert control["promoted_categories"] == [proven[0]]
+    assert type(control["important_promoted"]) is bool
+    assert derive_runtime_mode(registry) is EmailClassifierRuntimeMode.MODEL_PRIMARY
+
+
+def runtime_module_readiness(registry):
+    from app.email_model_registry import assess_staged_candidate_readiness
+
+    readiness = assess_staged_candidate_readiness(tuple(registry.list_staged_evidence()))
+    assert readiness.ready and readiness.promoted_categories
+    return readiness.promoted_categories

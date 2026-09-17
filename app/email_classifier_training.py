@@ -45,6 +45,8 @@ from app.email_model_registry import (
     CandidateMaturityEvidence,
     HistoricalEligibility,
     HistoricalSystematicErrorState,
+    LEGACY_PROMOTION_THRESHOLDS,
+    PromotionThresholds,
     assess_staged_candidate_readiness,
 )
 from app.email_store import EmailStore
@@ -181,8 +183,17 @@ def train_frozen_embedding_candidate(
     description_overlay: DescriptionSetOverlay | None = None,
     benchmark_candidate: Callable[[object, Sequence[Mapping[str, object]]], Mapping[str, object]] | None = None,
     selected_message_identities: Sequence[str] | None = None,
+    promotion_thresholds: PromotionThresholds = LEGACY_PROMOTION_THRESHOLDS,
 ) -> FrozenEmbeddingCandidateResult:
-    """Train both heads from one frozen Task 5 split and only stage evidence."""
+    """Train both heads from one frozen Task 5 split and only stage evidence.
+
+    `promotion_thresholds` are the console's per-category thresholds. They set
+    the precision each category's accept threshold is calibrated to, and they
+    are recorded with the evidence so promotion later judges this candidate by
+    the thresholds it was trained under.
+    """
+    if type(promotion_thresholds) is not PromotionThresholds:
+        raise TypeError("promotion_thresholds must be PromotionThresholds")
 
     training_started_at = datetime.now(timezone.utc)
     training_started_clock = time.perf_counter()
@@ -358,6 +369,7 @@ def train_frozen_embedding_candidate(
             eligible=[
                 prediction.category == category for prediction in validation_predictions
             ],
+            precision_min=promotion_thresholds.precision_min,
         )
         for category in categories
     }
@@ -367,6 +379,7 @@ def train_frozen_embedding_candidate(
         ],
         positives=[bool(row["important"]) for row in important_validation],
         eligible=[True for _item in important_validation_predictions],
+        precision_min=promotion_thresholds.precision_min,
     )
     classifier = DescriptionAwareEmailClassifier(
         enabled_categories=categories,
@@ -459,6 +472,7 @@ def train_frozen_embedding_candidate(
             independent_groups=int(important_metrics["independent_groups"]),
         ),
         unresolved_historical_systematic_error=unresolved_historical_systematic_error,
+        thresholds=promotion_thresholds,
     )
     compatibility_evidence = {
         **compatibility.__dict__,
@@ -479,6 +493,7 @@ def train_frozen_embedding_candidate(
         "unresolved_historical_systematic_error": (
             unresolved_historical_systematic_error
         ),
+        "promotion_thresholds": promotion_thresholds.to_dict(),
     }
     classification_conflicts = [
         {
@@ -586,7 +601,7 @@ def train_frozen_embedding_candidate(
                     "precision": value.precision,
                     "accepted_hits": value.accepted_hits,
                     "independent_groups": value.independent_groups,
-                    "eligible": value.eligible,
+                    "eligible": value.meets(maturity.thresholds),
                 }
                 for key, value in maturity.category_eligibility.items()
             },
@@ -594,13 +609,16 @@ def train_frozen_embedding_candidate(
                 "precision": maturity.important_eligibility.precision,
                 "accepted_hits": maturity.important_eligibility.accepted_hits,
                 "independent_groups": maturity.important_eligibility.independent_groups,
-                "eligible": maturity.important_eligibility.eligible,
+                "eligible": maturity.important_eligible,
             },
         },
+        "promotion_thresholds": promotion_thresholds.to_dict(),
         "whole_model_readiness": {
             "ready": whole_readiness.ready,
             "passing_model_ids": list(whole_readiness.passing_model_ids),
             "reason": whole_readiness.reason,
+            "promoted_categories": list(whole_readiness.promoted_categories),
+            "important_promoted": whole_readiness.important_promoted,
         },
         "head_latency_ms": head_latency_ms,
         "candidate_benchmark": benchmark_evidence,
@@ -679,6 +697,7 @@ def _calibrated_threshold(
     probabilities: Sequence[float],
     positives: Sequence[bool],
     eligible: Sequence[bool],
+    precision_min: float = LEGACY_PROMOTION_THRESHOLDS.precision_min,
 ) -> float:
     candidates = sorted({float(item) for item in probabilities}, reverse=True)
     selected = 1.0
@@ -693,7 +712,7 @@ def _calibrated_threshold(
             continue
         hits = sum(bool(positives[index]) for index in accepted)
         precision = hits / len(accepted)
-        if precision >= 0.95 and hits > best_hits:
+        if precision >= precision_min and hits > best_hits:
             selected, best_hits = threshold, hits
     return selected
 

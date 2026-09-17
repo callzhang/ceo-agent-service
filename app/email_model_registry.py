@@ -19,6 +19,7 @@ from typing import Any, Literal, get_args
 
 from app.email_classifier_contracts import (
     INITIAL_EMAIL_CATEGORY_KEYS,
+    MODEL_OTHERS_CATEGORY_KEY,
     validate_email_category_key,
 )
 from app.email_classifier_model import CpuTfidfLogisticClassifier
@@ -97,11 +98,64 @@ class HistoricalEligibility:
 
     @property
     def eligible(self) -> bool:
+        return self.meets(LEGACY_PROMOTION_THRESHOLDS)
+
+    def meets(self, thresholds: "PromotionThresholds") -> bool:
         return (
-            self.precision >= 0.95
-            and self.accepted_hits >= 20
-            and self.independent_groups >= 10
+            self.precision >= thresholds.precision_min
+            and self.accepted_hits >= thresholds.samples_min
+            and self.independent_groups >= thresholds.groups_min
         )
+
+
+@dataclass(frozen=True)
+class PromotionThresholds:
+    """The console's per-category promotion thresholds a candidate was judged by.
+
+    `samples_min` bounds accepted hits; at least half of them must come from
+    independent groups, the ratio the original 20 hits / 10 groups encoded, so
+    one long thread cannot make a category look proven.
+    """
+
+    precision_min: float
+    samples_min: int
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.precision_min, bool)
+            or not isinstance(self.precision_min, (int, float))
+            or not 0.0 <= float(self.precision_min) <= 1.0
+        ):
+            raise ValueError("precision_min must be between zero and one")
+        if (
+            isinstance(self.samples_min, bool)
+            or not isinstance(self.samples_min, int)
+            or self.samples_min < 1
+        ):
+            raise ValueError("samples_min must be a positive integer")
+
+    @property
+    def groups_min(self) -> int:
+        return (self.samples_min + 1) // 2
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "category_precision_min": self.precision_min,
+            "category_validation_samples_min": self.samples_min,
+        }
+
+    @classmethod
+    def from_mapping(cls, value: object) -> "PromotionThresholds":
+        if not isinstance(value, Mapping):
+            return LEGACY_PROMOTION_THRESHOLDS
+        return cls(
+            precision_min=float(value["category_precision_min"]),
+            samples_min=int(value["category_validation_samples_min"]),
+        )
+
+
+# Evidence staged before thresholds were recorded was judged by these.
+LEGACY_PROMOTION_THRESHOLDS = PromotionThresholds(precision_min=0.95, samples_min=20)
 
 
 @dataclass(frozen=True)
@@ -145,6 +199,7 @@ class CandidateMaturityEvidence:
     category_eligibility: Mapping[str, HistoricalEligibility]
     important_eligibility: HistoricalEligibility
     unresolved_historical_systematic_error: bool
+    thresholds: PromotionThresholds = LEGACY_PROMOTION_THRESHOLDS
 
     def __post_init__(self) -> None:
         _text(self.model_id, "model_id")
@@ -170,11 +225,28 @@ class CandidateMaturityEvidence:
             raise TypeError("systematic-error flag must be boolean")
 
     @property
+    def eligible_categories(self) -> tuple[str, ...]:
+        """Business categories this candidate proved under its thresholds.
+
+        `others` is never promotable: it only means "not one of the selected
+        categories", so the Agent always decides those messages.
+        """
+
+        return tuple(
+            category
+            for category, item in self.category_eligibility.items()
+            if category != MODEL_OTHERS_CATEGORY_KEY and item.meets(self.thresholds)
+        )
+
+    @property
+    def important_eligible(self) -> bool:
+        return self.important_eligibility.meets(self.thresholds)
+
+    @property
     def passing(self) -> bool:
         return (
             not self.unresolved_historical_systematic_error
-            and all(item.eligible for item in self.category_eligibility.values())
-            and self.important_eligibility.eligible
+            and bool(self.eligible_categories)
         )
 
 
@@ -183,6 +255,10 @@ class WholeModelReadiness:
     ready: bool
     passing_model_ids: tuple[str, ...]
     reason: str
+    # The categories the model may decide on its own; everything else goes to
+    # the Agent. Empty unless ready.
+    promoted_categories: tuple[str, ...] = ()
+    important_promoted: bool = False
 
 
 def assess_whole_model_readiness(
@@ -202,6 +278,8 @@ def assess_whole_model_readiness(
         return WholeModelReadiness(False, (), "independent_snapshot_required")
     if previous.compatibility != current.compatibility:
         return WholeModelReadiness(False, (), "candidate_compatibility_changed")
+    if previous.thresholds != current.thresholds:
+        return WholeModelReadiness(False, (), "promotion_thresholds_changed")
     if (
         current.folder_label_watermark < previous.folder_label_watermark
         or current.important_label_watermark < previous.important_label_watermark
@@ -230,18 +308,26 @@ def assess_whole_model_readiness(
         )
     ):
         return WholeModelReadiness(False, (), "evaluation_evidence_not_advanced")
-    if not previous.passing or not current.passing:
-        reason = (
-            "historical_systematic_error_unresolved"
-            if previous.unresolved_historical_systematic_error
-            or current.unresolved_historical_systematic_error
-            else "maturity_gate_not_met"
-        )
-        return WholeModelReadiness(False, (), reason)
+    if (
+        previous.unresolved_historical_systematic_error
+        or current.unresolved_historical_systematic_error
+    ):
+        return WholeModelReadiness(False, (), "historical_systematic_error_unresolved")
+    # A category is promoted only when both consecutive candidates proved it.
+    previously_eligible = set(previous.eligible_categories)
+    promoted = tuple(
+        category
+        for category in current.eligible_categories
+        if category in previously_eligible
+    )
+    if not promoted:
+        return WholeModelReadiness(False, (), "maturity_gate_not_met")
     return WholeModelReadiness(
         True,
         (previous.model_id, current.model_id),
         "two_consecutive_compatible_candidates_passed",
+        promoted_categories=promoted,
+        important_promoted=previous.important_eligible and current.important_eligible,
     )
 
 
@@ -326,6 +412,7 @@ def candidate_maturity_from_mapping(
             category: eligibility(category_metrics[category]) for category in categories
         },
         important_eligibility=eligibility(important_metrics),
+        thresholds=PromotionThresholds.from_mapping(value.get("promotion_thresholds")),
         unresolved_historical_systematic_error=_strict_boolean(
             value.get("unresolved_historical_systematic_error"),
             "unresolved_historical_systematic_error",

@@ -429,6 +429,9 @@ export function ModelTraining({
                 : "待处理"}
             </span>
           </h3>
+          {learning.promotion_gate && (
+            <PromotedCategories gate={learning.promotion_gate} configs={configs} />
+          )}
           {learning.promotion_gate ? (
             <GateChecks
               checks={learning.promotion_gate.checks}
@@ -1264,5 +1267,27 @@ function HistoricalReview({
         </button>
       )}
     </section>
+  );
+}
+
+
+function PromotedCategories({
+  gate,
+  configs,
+}: {
+  gate: EmailLearningEvidence["promotion_gate"];
+  configs: EmailCategoryConfig[];
+}) {
+  const promoted = gate.promoted_categories || [];
+  const name = (key: string) =>
+    configs.find((item) => item.category_key === key)?.display_name || key;
+  return (
+    <p className="training-promoted" aria-label="按分类上线">
+      {promoted.length
+        ? `可上线的分类：${promoted.map(name).join("、")}。其余分类继续由 Agent 处理${
+            gate.important_promoted === false ? "，模型不会标记重要邮件" : ""
+          }。`
+        : "暂无分类达标，所有邮件继续由 Agent 处理。"}
+    </p>
   );
 }

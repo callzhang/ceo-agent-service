@@ -801,6 +801,9 @@ def test_training_subprocess_reads_frozen_error_state_and_description_overlay(
         def __init__(self, _path):
             pass
 
+        def current_model_promotion_config(self):
+            return {"category_precision_min": 0.9, "category_validation_samples_min": 10}
+
         def list_category_configs(self):
             raise AssertionError("proposal subprocess must use immutable overlay")
 
@@ -848,6 +851,10 @@ def test_training_subprocess_reads_frozen_error_state_and_description_overlay(
     assert observed["descriptions"] == overlay.descriptions
     assert observed["description_overlay"] == overlay
     assert observed["historical_systematic_error_state"] == error_state
+    # The console's per-category thresholds travel into the trainer.
+    from app.email_model_registry import PromotionThresholds
+
+    assert observed["promotion_thresholds"] == PromotionThresholds(0.9, 10)
     from app.email_candidate_benchmark import benchmark_candidate
 
     assert observed["benchmark_candidate"] is benchmark_candidate
@@ -956,6 +963,9 @@ def test_selected_folder_categories_reach_the_staged_trainer(tmp_path, monkeypat
     class Store:
         def __init__(self, _path):
             pass
+
+        def current_model_promotion_config(self):
+            return {"category_precision_min": 0.9, "category_validation_samples_min": 10}
 
         def list_category_configs(self):
             return [
