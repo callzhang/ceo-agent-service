@@ -24125,8 +24125,10 @@ class AutoReplyStore:
             if not isinstance(recorded, dict):
                 recorded = {}
             recorded["provider_absent_reconciliation"] = evidence
+            # The link is abandoned, not failed: the requeued create replaces it,
+            # and a `failed` link would stay in History after that create lands.
             db.execute(
-                "update work_todo_dingtalk_links set status='failed', last_error=?, "
+                "update work_todo_dingtalk_links set status='cancelled', last_error=?, "
                 "updated_at=current_timestamp where work_todo_id=? and status='creating' "
                 "and trim(dingtalk_task_id)=''",
                 (f"reconciled_absent_after_unknown_create: {evidence}"[:500], row["work_todo_id"]),

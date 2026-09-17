@@ -1335,7 +1335,9 @@ def test_an_unknown_create_proven_absent_is_requeued_and_its_half_link_closed(tm
     row = store.get_task_todo_sync_outbox(outbox_id)
     assert row["status"] == "queued" and row["error"] == ""
     assert "count=0" in json.loads(row["evidence_json"])["provider_absent_reconciliation"]
-    assert store.get_work_todo_dingtalk_link(link_id).status == "failed"
+    # Cancelled, not failed: the requeued create replaces it, so it must not
+    # remain a History failure once that create lands.
+    assert store.get_work_todo_dingtalk_link(link_id).status == "cancelled"
     assert store.get_active_work_todo_dingtalk_link(todo_id) is None
 
 
