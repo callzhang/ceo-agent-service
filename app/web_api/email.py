@@ -932,6 +932,49 @@ def register_email_routes(
             secret_environment
         )
 
+    def account_saved_message(missing: tuple[str, ...]) -> str:
+        """Say plainly which categories this save left switched off, and why."""
+
+        if not missing:
+            return "Email account configuration saved"
+        return (
+            "邮箱已保存。以下分类在这个邮箱里还没有验证到对应文件夹，已暂停："
+            + "、".join(missing)
+            + "。请确认邮箱密码和文件夹权限后重新保存。"
+        )
+
+    def verify_account_folders(
+        account: dict[str, Any],
+        snapshot: object,
+    ) -> tuple[str, ...]:
+        """Prove this mailbox's category folders, then restore what it switched off.
+
+        Saving a mailbox disables every category it has no verified folder for,
+        so the categories that were working stop for every mailbox. This asks
+        the provider for that mailbox's folders, records what it proved, and
+        restores each category whose bindings are complete again. Returns the
+        categories still off, which is what the console explains.
+        """
+
+        store = require_store()
+        if not bool(account.get("enabled")):
+            return store.restore_category_enablement_with_complete_bindings(snapshot)
+        assert folder_binding_coordinator is not None
+        for category in store.list_category_configs():
+            category_key = str(category["category_key"])
+            bindings = folder_binding_coordinator.create_and_verify_bindings(
+                category_key=category_key,
+                provider_folder_name=str(category["display_name"]),
+                enabled_accounts=(account,),
+            )
+            for binding in bindings:
+                try:
+                    store.upsert_verified_folder_binding(category_key, binding)
+                except (EmailFolderBindingConflict, ValueError, TypeError):
+                    # One unusable folder must not lose the others it proved.
+                    continue
+        return store.restore_category_enablement_with_complete_bindings(snapshot)
+
     def account_response(account: dict[str, Any]) -> dict[str, Any]:
         env = secret_environment()
         operational_fields = {
@@ -955,6 +998,13 @@ def register_email_routes(
             **operational_fields,
             "imap_secret_configured": bool(
                 resolve_secret(account["imap_secret_reference"], env)
+            ),
+            # Empty while the account runs: the console uses it to explain a
+            # mailbox switched off because its folders were never verified.
+            "unverified_categories": list(
+                require_store().categories_missing_active_bindings(
+                    str(account["account_id"])
+                )
             ),
         }
 
@@ -1116,12 +1166,13 @@ def register_email_routes(
             except sqlite3.DatabaseError:
                 compensated = False
             return secret_write_error(compensated=compensated)
+        missing = verify_account_folders(row, category_snapshot)
         return JSONResponse(
             {
                 "ok": True,
                 "item": account_response(row),
                 "restart_required": True,
-                "message": "Email account configuration saved",
+                "message": account_saved_message(missing),
             },
             status_code=201,
         )
@@ -1172,11 +1223,12 @@ def register_email_routes(
             except sqlite3.DatabaseError:
                 compensated = False
             return secret_write_error(compensated=compensated)
+        missing = verify_account_folders(row, category_snapshot)
         return {
             "ok": True,
             "item": account_response(row),
             "restart_required": True,
-            "message": "Email account configuration saved",
+            "message": account_saved_message(missing),
         }
 
     @app.post("/api/console/email/accounts/{account_id}/test")

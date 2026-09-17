@@ -337,6 +337,20 @@ describe("SettingsPage", () => {
     expect(document.body.textContent).not.toContain("known-imap-secret");
   });
 
+  it("explains which categories a mailbox paused because its folders are unverified", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
+    listEmailAccounts.mockResolvedValueOnce({
+      items: [
+        { account_id: "private_mail", display_name: "私人邮箱", email_address: "private@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "private@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, unverified_categories: ["junk", "work"], created_at: "", updated_at: "" },
+      ],
+      meta: { snapshot_at: "2026-09-05T00:00:00Z" },
+    });
+
+    renderSettings("/settings?tab=connectors&connector=email");
+
+    expect(await screen.findByText(/这些分类在本邮箱里没有验证到文件夹/)).toHaveTextContent("junk、work");
+  });
+
   it("adds and edits an IMAP account while leaving a saved secret undisclosed", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });

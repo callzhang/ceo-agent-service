@@ -12268,6 +12268,85 @@ class EmailStore:
         return cursor.rowcount == 1
 
     @staticmethod
+    def _categories_missing_active_bindings(
+        db: sqlite3.Connection,
+        account_id: str,
+    ) -> tuple[str, ...]:
+        """Return the categories this mailbox has no usable folder for.
+
+        A category the owner switched off on purpose, and never bound here, is
+        not a problem to report; one that is enabled, or whose readback came
+        back unusable, is exactly what the console has to explain.
+        """
+
+        rows = db.execute(
+            """
+            select configs.category_key
+            from email_category_configs as configs
+            left join email_category_folder_bindings as bindings
+              on bindings.category_key=configs.category_key
+             and bindings.account_id=?
+            where coalesce(bindings.binding_status, '') != 'active'
+              and (
+                configs.enabled=1
+                or bindings.account_id is not null
+                or exists (
+                    select 1 from email_category_folder_bindings as elsewhere
+                    where elsewhere.category_key=configs.category_key
+                      and elsewhere.binding_status='active'
+                )
+              )
+            order by configs.category_key
+            """,
+            (account_id,),
+        ).fetchall()
+        return tuple(str(row["category_key"]) for row in rows)
+
+    def categories_missing_active_bindings(self, account_id: str) -> tuple[str, ...]:
+        """Return why an account cannot be enabled yet, for the console to show."""
+
+        with self._connect() as db:
+            return self._categories_missing_active_bindings(db, account_id)
+
+    def restore_category_enablement_with_complete_bindings(
+        self,
+        snapshot: EmailCategoryEnablementSnapshot,
+    ) -> tuple[str, ...]:
+        """Switch back on the categories one account write switched off.
+
+        Adding a mailbox disables every category it has no verified folder for,
+        which is what keeps mail from being filed or trashed into a folder
+        nobody proved exists. Once that mailbox's folders are verified the
+        reason is gone, so each category whose bindings now cover every enabled
+        account is restored. Returns the ones still left off.
+        """
+
+        if type(snapshot) is not EmailCategoryEnablementSnapshot:
+            raise TypeError("snapshot must be an EmailCategoryEnablementSnapshot")
+        now = self._now()
+        still_disabled: list[str] = []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            for state in snapshot.states:
+                if not self._bindings_cover_enabled_accounts(db, state.category_key):
+                    still_disabled.append(state.category_key)
+                    continue
+                db.execute(
+                    """
+                    update email_category_configs set enabled=?, updated_at=?
+                    where category_key=? and enabled=0 and updated_at=?
+                    """,
+                    (
+                        int(state.enabled),
+                        now,
+                        state.category_key,
+                        state.mutation_updated_at,
+                    ),
+                )
+            self._validate_category_binding_completeness(db)
+        return tuple(sorted(still_disabled))
+
+    @staticmethod
     def _disable_categories_missing_active_bindings(
         db: sqlite3.Connection,
         *,

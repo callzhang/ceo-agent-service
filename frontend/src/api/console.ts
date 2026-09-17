@@ -340,6 +340,8 @@ export interface EmailAccountItem {
   imap_secret_configured: boolean;
   enabled: boolean;
   scan_folders: string[];
+  /** Categories this mailbox has no verified folder for; they stay paused. */
+  unverified_categories?: string[];
   created_at: string;
   updated_at: string;
 }

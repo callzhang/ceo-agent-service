@@ -496,6 +496,7 @@ function EmailAccountsPanel() {
       {accounts.length ? accounts.map((account) => <article className="email-account-card" key={account.account_id}>
         <div className="email-account-summary"><div><h4>{account.display_name}</h4><p>{account.email_address}</p><p className="muted">{account.imap_host}:{account.imap_port} · {account.scan_folders.join("、")}</p></div><label className="email-account-switch"><span>启用</span><input type="checkbox" role="switch" aria-label={`启用${account.display_name}`} checked={account.enabled} disabled={Boolean(busyAccountId)} onChange={() => void toggleAccount(account)} /></label></div>
         <div className="email-account-status-row"><span>{account.imap_secret_configured ? "已保存密码" : "尚未设置密码"}</span><span>{connectionStates[account.account_id] || "尚未测试连接"}</span></div>
+        {account.unverified_categories?.length ? <p className="field-error" role="status">这些分类在本邮箱里没有验证到文件夹，已暂停：{account.unverified_categories.join("、")}。确认密码和文件夹权限后重新保存邮箱即可恢复。</p> : null}
         <div className="email-account-actions"><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`编辑${account.display_name}`} onClick={() => { setDraft(emailAccountDraft(account)); setError(""); }}>编辑</button><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`测试${account.display_name}连接`} onClick={() => void testConnection(account)}>测试连接</button></div>
       </article>) : <p className="wechat-empty">还没有邮箱账户。点击“添加邮箱”开始配置。</p>}
     </div>}

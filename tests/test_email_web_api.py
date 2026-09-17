@@ -3805,3 +3805,158 @@ def test_retired_category_feedback_is_refused_at_the_boundary(tmp_path: Path):
     )
     assert accepted.status_code == 200, accepted.text
     assert store.get_classification(identity)["category"] == "external_billing"
+
+
+def _verified_binding(
+    account_id: str,
+    category_key: str,
+    *,
+    status: str = "active",
+) -> VerifiedEmailFolderBinding:
+    role = FolderRole.TRASH if category_key == "junk" else FolderRole.UNBOUND
+    return VerifiedEmailFolderBinding(
+        account_id=account_id,
+        provider_folder_id=f"{category_key}-folder" if status == "active" else "",
+        provider_folder_name=f"{category_key}-folder",
+        binding_status=status,
+        last_verified_at="2026-09-17T01:00:00+00:00",
+        provider_folder_role=role if status == "active" else FolderRole.UNBOUND,
+    )
+
+
+def _running_mailbox(database: Path, account_id: str) -> EmailStore:
+    """One mailbox with every category verified and enabled, as a live install is."""
+
+    store = EmailStore(database)
+    store.create_account(
+        {
+            "account_id": account_id,
+            "display_name": account_id,
+            "email_address": f"{account_id}@example.test",
+            "imap_host": "imap.example.test",
+            "imap_port": 993,
+            "imap_tls": True,
+            "imap_username": f"{account_id}@example.test",
+            "imap_secret_reference": f"keychain://{account_id}",
+            "imap_move_mode": "move",
+            "smtp_host": "",
+            "smtp_port": 587,
+            "smtp_tls": True,
+            "smtp_username": "",
+            "smtp_secret_reference": "",
+            "enabled": True,
+            "scan_folders": ["INBOX"],
+            "scan_interval_seconds": 60,
+        }
+    )
+    for category_key in INITIAL_EMAIL_CATEGORY_KEYS:
+        store.upsert_verified_folder_binding(
+            category_key, _verified_binding(account_id, category_key)
+        )
+        config = store.get_category_config(category_key)
+        store.update_category_descriptions(
+            category_key,
+            core_description=config["core_description"],
+            include=config["include"],
+            exclude=config["exclude"],
+            threshold=config["threshold"],
+            enabled=True,
+            description_version=config["description_version"],
+            config_version=f"{category_key}-enabled-v1",
+        )
+    return store
+
+
+class _CoordinatorStub:
+    """Return what a provider readback would prove for one account."""
+
+    def __init__(self, *, failing_categories: frozenset[str] = frozenset()):
+        self.failing_categories = failing_categories
+
+    def create_and_verify_bindings(
+        self, *, category_key: str, provider_folder_name: str, enabled_accounts
+    ):
+        del provider_folder_name
+        status = "error" if category_key in self.failing_categories else "active"
+        return tuple(
+            _verified_binding(
+                str(account["account_id"]), category_key, status=status
+            )
+            for account in enabled_accounts
+        )
+
+
+def _new_account_payload(account_id: str) -> dict[str, object]:
+    return {
+        "account_id": account_id,
+        "display_name": account_id,
+        "email_address": f"{account_id}@example.test",
+        "imap_host": "imap.example.test",
+        "imap_port": 993,
+        "imap_tls": True,
+        "imap_username": f"{account_id}@example.test",
+        "imap_secret": "second-mailbox-secret",
+        "enabled": True,
+        "scan_folders": ["INBOX"],
+    }
+
+
+def test_adding_a_second_mailbox_keeps_the_first_one_classifying(tmp_path: Path):
+    """The incident: adding a mailbox switched every category off for all of them."""
+
+    database = tmp_path / "second-mailbox.sqlite3"
+    _running_mailbox(database, "primary")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(database),
+        email_env_path=tmp_path / ".env",
+        folder_binding_coordinator=_CoordinatorStub(),
+    )
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/console/email/accounts", json=_new_account_payload("second")
+        )
+
+    assert created.status_code == 201
+    assert created.json()["item"]["unverified_categories"] == []
+    assert created.json()["message"] == "Email account configuration saved"
+    store = EmailStore(database)
+    assert [
+        row["category_key"]
+        for row in store.list_category_configs()
+        if not row["enabled"]
+    ] == []
+
+
+def test_a_mailbox_whose_folder_fails_pauses_only_that_category_and_says_so(
+    tmp_path: Path,
+):
+    database = tmp_path / "unverified-folder.sqlite3"
+    _running_mailbox(database, "primary")
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(database),
+        email_env_path=tmp_path / ".env",
+        folder_binding_coordinator=_CoordinatorStub(
+            failing_categories=frozenset({"junk"})
+        ),
+    )
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/console/email/accounts", json=_new_account_payload("second")
+        )
+
+    assert created.status_code == 201
+    assert created.json()["item"]["unverified_categories"] == ["junk"]
+    assert "junk" in created.json()["message"]
+    store = EmailStore(database)
+    disabled = [
+        row["category_key"]
+        for row in store.list_category_configs()
+        if not row["enabled"]
+    ]
+    assert disabled == ["junk"]

@@ -10211,3 +10211,93 @@ def test_exhausted_interrupted_claim_recovers_after_retry_ceiling(tmp_path: Path
     assert retry is not None
     assert retry.action_type is EmailAction.MOVE
     assert retry.attempt_number == 4
+
+
+def _enable_category_with_binding(store: EmailStore, category_key: str, account_id: str):
+    store.upsert_verified_folder_binding(
+        category_key,
+        _task2_verified_binding(
+            account_id=account_id,
+            folder_id=f"{category_key}-folder",
+            folder_name=f"{category_key}-folder",
+            folder_role=FolderRole.TRASH if category_key == "junk" else FolderRole.UNBOUND,
+        ),
+    )
+    config = store.get_category_config(category_key)
+    return store.update_category_descriptions(
+        category_key,
+        core_description=config["core_description"],
+        include=config["include"],
+        exclude=config["exclude"],
+        threshold=config["threshold"],
+        enabled=True,
+        description_version=config["description_version"],
+        config_version=f"{category_key}-enabled-for-{account_id}",
+    )
+
+
+def test_a_verified_second_mailbox_gets_its_categories_switched_back_on(
+    tmp_path: Path,
+):
+    """Adding a mailbox pauses the categories; verifying its folders resumes them."""
+
+    store = EmailStore(tmp_path / "restore-after-binding.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    for category_key in ("work", "junk"):
+        _enable_category_with_binding(store, category_key, "primary")
+
+    _created, snapshot = store.create_account_with_category_enablement_snapshot(
+        _task2_account_values("second")
+    )
+
+    assert [state.category_key for state in snapshot.states] == ["junk", "work"]
+    assert store.get_category_config("work")["enabled"] is False
+    assert store.categories_missing_active_bindings("second") == ("junk", "work")
+
+    for category_key in ("work", "junk"):
+        store.upsert_verified_folder_binding(
+            category_key,
+            _task2_verified_binding(
+                account_id="second",
+                folder_id=f"{category_key}-folder",
+                folder_name=f"{category_key}-folder",
+                folder_role=(
+                    FolderRole.TRASH if category_key == "junk" else FolderRole.UNBOUND
+                ),
+            ),
+        )
+
+    assert store.restore_category_enablement_with_complete_bindings(snapshot) == ()
+    assert store.get_category_config("work")["enabled"] is True
+    assert store.get_category_config("junk")["enabled"] is True
+    assert store.categories_missing_active_bindings("second") == ()
+
+
+def test_a_category_whose_folder_stays_unverified_is_not_switched_back_on(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "restore-partial-binding.sqlite3")
+    store.create_account(_task2_account_values("primary"))
+    for category_key in ("work", "junk"):
+        _enable_category_with_binding(store, category_key, "primary")
+
+    _created, snapshot = store.create_account_with_category_enablement_snapshot(
+        _task2_account_values("second")
+    )
+    store.upsert_verified_folder_binding(
+        "work",
+        _task2_verified_binding(
+            account_id="second", folder_id="work-folder", folder_name="work-folder"
+        ),
+    )
+    store.upsert_verified_folder_binding(
+        "junk",
+        _task2_verified_binding(
+            account_id="second", folder_id="", folder_name="junk-folder", status="error"
+        ),
+    )
+
+    assert store.restore_category_enablement_with_complete_bindings(snapshot) == ("junk",)
+    assert store.get_category_config("work")["enabled"] is True
+    assert store.get_category_config("junk")["enabled"] is False
+    assert store.categories_missing_active_bindings("second") == ("junk",)
