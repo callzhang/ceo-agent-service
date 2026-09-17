@@ -1097,3 +1097,72 @@ def test_a_retryable_dependency_still_retries_below_the_ceiling(
         ).fetchone()
     assert row["status"] == "pending"
     assert row["attempts"] == 1
+
+
+def test_a_retry_after_a_completed_failing_turn_runs_a_new_turn(tmp_path: Path) -> None:
+    """Seen live on event 295278: a completed turn reported a failing Memory
+    connection, and 16 retries handed that stored result back without running."""
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    with store._connect() as db:
+        event = db.execute("select id, execution_generation from meeting_memory_write_events").fetchone()
+    first_key = f"meeting_memory_write_event:{event['id']}:{event['execution_generation']}"
+
+    from app.codex_memory_write import MEMORY_WRITE_RESULT_CODEC
+
+    class _CompletedFailingTurn:
+        def execute(self, *, workload_key, **kwargs):
+            value = json.dumps({
+                "status": "failed", "retryable": True, "memory_id": None,
+                "source_code": "mcp_connection_error",
+                "detail": "memory_connector: Protected resource does not match",
+            })
+            # The router stores this completed turn under the operation key.
+            attempt = store.claim_runtime_operation_attempt(
+                "memory", workload_key, "codex_api", "codex_cli", "service_api", "m",
+                owner="runtime",
+            )
+            store.complete_agent_runtime_attempt(
+                attempt.id, "", "", 0, 0, owner="runtime",
+                result_schema_id=MEMORY_WRITE_RESULT_CODEC.schema_id,
+                result_envelope_json=MEMORY_WRITE_RESULT_CODEC.encode(value),
+            )
+            return SimpleNamespace(value=value)
+
+    outcome = process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=_CompletedFailingTurn(),
+        clock=lambda: datetime.fromisoformat("2026-09-16T11:00:00+00:00"),
+    )
+
+    assert outcome.retried == 1
+    with store._connect() as db:
+        row = db.execute("select status, execution_generation from meeting_memory_write_events").fetchone()
+    assert row["status"] == "pending"
+    assert row["execution_generation"] != event["execution_generation"]
+    assert store.list_runtime_operation_attempts("memory", first_key)
+
+
+def test_a_retry_after_a_turn_that_never_completed_keeps_its_operation(tmp_path: Path) -> None:
+    """A deferral must resume the same operation, never start a second turn."""
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    with store._connect() as db:
+        generation = db.execute("select execution_generation from meeting_memory_write_events").fetchone()[0]
+
+    class _Deferred:
+        def execute(self, **kwargs):
+            raise RoutedCodexExecutionError("runtime_attempt_active")
+
+    process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        routed_execution=_Deferred(),
+        clock=lambda: datetime.fromisoformat("2026-09-16T11:00:00+00:00"),
+    )
+
+    with store._connect() as db:
+        assert db.execute("select execution_generation from meeting_memory_write_events").fetchone()[0] == generation

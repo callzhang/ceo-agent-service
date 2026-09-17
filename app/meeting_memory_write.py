@@ -105,6 +105,14 @@ def _structured_topic_title(decision_json: str) -> str | None:
     return "；".join(titles) or None
 
 
+def _turn_completed(store, workload_key: str) -> bool:
+    """Whether this operation already holds a completed turn's result."""
+    return any(
+        attempt.status == "completed"
+        for attempt in store.list_runtime_operation_attempts("memory", workload_key)
+    )
+
+
 def meeting_memory_payload(job: Any) -> dict[str, str]:
     """Build the only Memory payload: the conclusion that was delivered."""
     if str(job.status) != "sent" or not str(job.final_message).strip():
@@ -330,6 +338,13 @@ def _process_event(
                 error=f"{exc.source_code}: {exc}",
                 available_at=(settled_at + timedelta(seconds=delay)).isoformat(),
                 now=settled_at,
+                # Seen live on event 295278: a turn that completed and reported a
+                # failing Memory connection was handed back unchanged on 16
+                # retries, because each one reused the operation holding it.
+                new_generation=_turn_completed(
+                    store,
+                    f"meeting_memory_write_event:{event.id}:{event.execution_generation}",
+                ),
             )
             return "retried" if settled else "lost_lease"
         else:

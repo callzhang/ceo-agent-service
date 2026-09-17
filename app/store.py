@@ -14767,18 +14767,35 @@ class AutoReplyStore:
         error: str,
         available_at: str,
         now: datetime | None = None,
+        new_generation: bool = False,
     ) -> bool:
+        """Put a Memory write back in the queue.
+
+        ``new_generation`` gives the retry its own runtime operation. A turn
+        that ran to completion is stored under the event's generation, and the
+        same generation hands that stored result straight back; a retry after a
+        completed turn therefore needs a new generation to run another turn.
+        """
         settlement_time = _meeting_memory_settlement_time(now)
         with self._connect() as db:
             cursor = db.execute(
                 """
                 update meeting_memory_write_events
                 set status='pending', attempts=attempts+1, available_at=?, error=?,
+                    execution_generation=case when ? then ? else execution_generation end,
                     lease_owner='', lease_expires_at='', updated_at=current_timestamp
                 where id=? and status='processing' and lease_owner=?
                   and datetime(lease_expires_at)>datetime(?)
                 """,
-                (available_at, error[:500], event_id, owner, settlement_time),
+                (
+                    available_at,
+                    error[:500],
+                    1 if new_generation else 0,
+                    uuid4().hex,
+                    event_id,
+                    owner,
+                    settlement_time,
+                ),
             )
         return cursor.rowcount == 1
 
