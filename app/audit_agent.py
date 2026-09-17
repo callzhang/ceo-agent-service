@@ -12,6 +12,7 @@ from app.agent_contracts import AuditAgentResult, AuditOutcome
 from app.agent_effect_claim import (
     EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
     claims_external_action_without_tools,
+    generation_tool_events,
 )
 from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
@@ -289,9 +290,13 @@ class AuditAgentRunner:
             # action, whatever its outcome says. The evidence gate below asks
             # a different question: whether a write backs an `executed`.
             refreshed = self.store.get_agent_run(run.id)
-            if claims_external_action_without_tools(
+            if refreshed is not None and claims_external_action_without_tools(
                 result=result.model_dump(mode="json"),
-                tool_events=refreshed.tool_events if refreshed is not None else [],
+                tool_events=generation_tool_events(
+                    self.store,
+                    reply_task_id=refreshed.reply_task_id,
+                    execution_generation=refreshed.execution_generation,
+                ),
             ):
                 raise ResultParseError(EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT)
             if (

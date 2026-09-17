@@ -22,20 +22,20 @@ from collections.abc import Iterable, Mapping
 
 # Phrases in which the turn asserts an external action already happened.
 # Each is a completed-action claim, not a plan ("将发送") or a recommendation
-# ("建议通过"), which stay outside this check.
+# ("建议通过"), which stay outside this check. Phrases that usually describe
+# somebody else's action -- "已提交", "已通过" on their own -- are deliberately
+# absent: run 19542 only relayed that Lily had submitted a plan.
 _CLAIM_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(pattern)
     for pattern in (
         r"已执行",
         r"已发送",
-        r"已通过",
         r"执行通过",
         r"已批准",
         r"已同意",
         r"已退回",
         r"已拒绝",
         r"已评论",
-        r"已提交",
     )
 )
 
@@ -82,10 +82,30 @@ EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT = (
 )
 
 
+def generation_tool_events(store, *, reply_task_id: int, execution_generation: str):
+    """Every tool event of the task's current generation, across its runs."""
+
+    events: list[object] = []
+    for run in store.list_agent_runs_for_task_generation(
+        reply_task_id, execution_generation
+    ):
+        events.extend(run.tool_events or [])
+    return events
+
+
 def claims_external_action_without_tools(
     *, result: object, tool_events: Iterable[object]
 ) -> bool:
-    """The narrow failure: an external-action claim from a turn with no tools."""
+    """The narrow failure: an external-action claim with no tool call behind it.
+
+    ``tool_events`` must cover every run of the task's current execution
+    generation, not just this turn. A Consumer proposal and its Audit review
+    are separate runs of the same generation, and each legitimately describes
+    what the other already did: over seven days, judging a run alone flagged
+    33 results, of which 31 were true statements about a sibling turn's work.
+    Scoped to the generation, the same week leaves only the run that invented
+    the action outright.
+    """
 
     events = list(tool_events)
     if run_made_tool_calls(events):

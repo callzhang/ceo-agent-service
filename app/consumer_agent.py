@@ -17,6 +17,7 @@ from app.agent_contracts import (
 from app.agent_effect_claim import (
     EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
     claims_external_action_without_tools,
+    generation_tool_events,
 )
 from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
@@ -814,9 +815,13 @@ def _claim_checked_consumer_result(store, run_id: int):
     def parse(raw: str):
         result = _parse_consumer_result(raw)
         run = store.get_agent_run(run_id)
-        if claims_external_action_without_tools(
+        if run is not None and claims_external_action_without_tools(
             result=result.model_dump(mode="json") if hasattr(result, "model_dump") else result,
-            tool_events=run.tool_events if run is not None else [],
+            tool_events=generation_tool_events(
+                store,
+                reply_task_id=run.reply_task_id,
+                execution_generation=run.execution_generation,
+            ),
         ):
             raise ResultParseError(EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT)
         return result
