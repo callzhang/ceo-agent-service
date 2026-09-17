@@ -815,6 +815,7 @@ class DingTalkAutoReplyWorker:
             "read_recent_messages",
             "read_mentioned_messages",
             "read_broadcast_messages",
+            "read_agent_name_mentions",
             "read_robot_direct_messages",
             "list_messages_by_ids",
             "read_recent_messages_fallback",

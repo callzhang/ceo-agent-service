@@ -2856,8 +2856,17 @@ def test_call_dws_resets_sqlite_lock_count_after_success(tmp_path: Path, monkeyp
     assert worker.store.count_errors() == 0
 
 
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "read_robot_direct_messages",
+        # Seen live: the agent-name mention scan was not registered as a
+        # read, so one transient PARAM_ERROR stayed in Attention for good.
+        "read_agent_name_mentions",
+    ],
+)
 def test_call_dws_projects_service_level_read_recovery_to_component_health(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, kind
 ):
     dws = FakeDws([], {})
     codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
@@ -2865,7 +2874,7 @@ def test_call_dws_projects_service_level_read_recovery_to_component_health(
     failure = DwsError("DWS cursor rejected", code="PARAM_ERROR")
 
     assert worker._call_dws(
-        "read_robot_direct_messages",
+        kind,
         lambda: (_ for _ in ()).throw(failure),
         default=[],
     ) == []
@@ -2877,7 +2886,7 @@ def test_call_dws_projects_service_level_read_recovery_to_component_health(
 
     assert (
         worker._call_dws(
-            "read_robot_direct_messages",
+            kind,
             lambda: [],
             default=[],
         )
