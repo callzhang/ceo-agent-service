@@ -118,9 +118,8 @@ def sync_bundled_skill(
     )
     cleanup_transaction = True
     try:
-        staged_dir.mkdir()
         backup_dir.mkdir()
-        (staged_dir / "SKILL.md").write_bytes(raw_content)
+        _stage_skill_package(source.parent, staged_dir, raw_content)
         expected_resolved_root = root.resolve(strict=True)
         if expected_resolved_root != resolved_root:
             raise BusinessSkillInstallTargetError(
@@ -171,6 +170,39 @@ class _SwapState:
     had_existing: bool
     backup_moved: bool = False
     installed: bool = False
+
+
+def _package_file_ignore(directory: str, names: list[str]) -> set[str]:
+    return {
+        name
+        for name in names
+        if name == "__pycache__"
+        or name.endswith(".pyc")
+        or Path(directory, name).is_symlink()
+    }
+
+
+def _stage_skill_package(source_dir: Path, staged_dir: Path, skill_md: bytes) -> None:
+    """Stage a whole Skill package: the validated SKILL.md plus its sibling files.
+
+    A Skill can ship more than instructions - ceo-wechat carries
+    capability.json and the scripts its SKILL.md tells the Agent to run - so
+    installing SKILL.md alone leaves a package whose own commands do not exist.
+    SKILL.md is written from the exact bytes that were validated. Bytecode
+    caches and symlinks are left behind: a cache is rebuilt on use, and a link
+    could point outside the package into files the installer never vetted.
+    """
+    staged_dir.mkdir()
+    (staged_dir / "SKILL.md").write_bytes(skill_md)
+    ignored = _package_file_ignore(str(source_dir), [e.name for e in source_dir.iterdir()])
+    for entry in sorted(source_dir.iterdir(), key=lambda item: item.name):
+        if entry.name == "SKILL.md" or entry.name in ignored:
+            continue
+        destination = staged_dir / entry.name
+        if entry.is_dir():
+            shutil.copytree(entry, destination, ignore=_package_file_ignore)
+        elif entry.is_file():
+            shutil.copy2(entry, destination)
 
 
 def _check_swap_conflict(target_dir: Path) -> bool:
@@ -501,9 +533,11 @@ def install_bundled_business_skills(
         staged_root.mkdir()
         backup_root.mkdir()
         for skill in skills:
-            staged_dir = staged_root / skill.name
-            staged_dir.mkdir()
-            (staged_dir / "SKILL.md").write_text(skill.content, encoding="utf-8")
+            _stage_skill_package(
+                skill.source_path.parent,
+                staged_root / skill.name,
+                skill.content.encode("utf-8"),
+            )
 
         target_root.mkdir(parents=True, exist_ok=True)
         expected_resolved_root = target_root.resolve(strict=True)

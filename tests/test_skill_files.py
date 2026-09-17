@@ -181,3 +181,42 @@ def test_sync_rejects_parent_name_without_touching_runtime(tmp_path: Path):
     with pytest.raises(BusinessSkillValidationError):
         sync_bundled_skill("..", source_path=source, target_root=runtime_root)
     assert not runtime_root.exists()
+
+
+def test_sync_installs_the_whole_skill_package_but_not_caches_or_links(tmp_path: Path):
+    source_root = tmp_path / "skills"
+    runtime_root = tmp_path / "runtime"
+    source = _write_skill(source_root, "valid")
+    package = source.parent
+    (package / "capability.json").write_text('{"ok": true}\n', encoding="utf-8")
+    (package / "scripts").mkdir()
+    (package / "scripts" / "reader.py").write_text("print('read')\n", encoding="utf-8")
+    (package / "scripts" / "__pycache__").mkdir()
+    (package / "scripts" / "__pycache__" / "reader.cpython-312.pyc").write_bytes(b"x")
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("do not copy\n", encoding="utf-8")
+    (package / "scripts" / "linked.txt").symlink_to(outside)
+
+    sync_bundled_skill("valid", source_path=source, target_root=runtime_root)
+
+    installed = runtime_root / "valid"
+    assert (installed / "capability.json").read_text(encoding="utf-8") == '{"ok": true}\n'
+    assert (installed / "scripts" / "reader.py").read_text(encoding="utf-8") == "print('read')\n"
+    assert not (installed / "scripts" / "__pycache__").exists()
+    assert not (installed / "scripts" / "linked.txt").exists()
+
+
+def test_sync_installs_the_real_wechat_package_with_its_scripts(tmp_path: Path):
+    """Production: ceo-wechat's SKILL.md tells the Agent to run scripts that the
+    installer never copied, so an installed package lacked its own commands."""
+    repository = Path(__file__).resolve().parents[1] / "skills" / "ceo-wechat"
+    runtime_root = tmp_path / "runtime"
+
+    sync_bundled_skill(
+        "ceo-wechat", source_path=repository / "SKILL.md", target_root=runtime_root
+    )
+
+    for relative in ("SKILL.md", "capability.json", "scripts/reader.py", "scripts/sender.py"):
+        assert (runtime_root / "ceo-wechat" / relative).read_bytes() == (
+            repository / relative
+        ).read_bytes()
