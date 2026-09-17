@@ -337,3 +337,25 @@ def test_production_agent_runtime_is_pure_and_loads_runtime_transports(
     assert {
         server.name for server in runtime.claude_adapter._service_mcp_servers or ()
     } == {"agent_cli", "memory_connector"}
+
+
+def test_a_claude_route_is_not_offered_to_the_codex_execution_stack(tmp_path, monkeypatch):
+    """Seen live: both Codex routes paused, and every work item routed to
+    claude_oauth died with runtime_command_build_failed. This stack builds
+    Codex and Friday commands; the Agent turn runner owns Claude."""
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,claude_oauth")
+
+    routed = build_production_routed_codex_execution(
+        store=AutoReplyStore(tmp_path / "routed-claude.sqlite3"),
+        workspace=tmp_path,
+        total_timeout_seconds=10,
+        idle_timeout_seconds=5,
+        capability_registry=RuntimeCapabilityRegistry(),
+    )
+
+    assert [route.name for route in routed._router._routes] == ["codex_oauth"]
+    # The full configuration is still what the stack reports and probes.
+    assert [route.name for route in routed._config.routes] == [
+        "codex_oauth",
+        "claude_oauth",
+    ]

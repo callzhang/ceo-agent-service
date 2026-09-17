@@ -205,7 +205,11 @@ def build_production_routed_codex_execution(
         "store": store,
         "config": runtime_config,
         "router": AgentRuntimeRouter(
-            routes=runtime_config.routes,
+            # This stack runs Codex and Friday turns only. A Claude route is
+            # executed by the Agent turn runner, which owns the Claude adapter;
+            # offering it here produced a command this stack cannot build, and
+            # twelve work items failed the moment both Codex routes paused.
+            routes=_codex_executable_routes(runtime_config.routes),
             store=store,
             snapshots=capability_registry,
         ),
@@ -230,6 +234,18 @@ def build_production_routed_codex_execution(
         lambda force=False: refresher.refresh_expired(force=force)
     )
     return RoutedCodexExecution(**kwargs)
+
+
+def _codex_executable_routes(
+    routes: tuple[RuntimeRoute, ...],
+) -> tuple[RuntimeRoute, ...]:
+    """The configured routes RoutedCodexExecution can actually run."""
+    return tuple(
+        route
+        for route in routes
+        if route.runtime_kind
+        in {RuntimeKind.CODEX_CLI, RuntimeKind.FRIDAY_RUNTIME}
+    )
 
 
 def build_production_runtime_refresher(
