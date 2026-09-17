@@ -305,6 +305,58 @@ def test_restart_recovery_requeues_interrupted_run_without_classifying_effects(
     assert runtime is not None and runtime.status == "failed"
 
 
+
+def test_restart_requeues_a_processing_task_whose_last_run_already_failed(tmp_path):
+    """Reply task 135612 sat `processing` for 33 minutes with no live run.
+
+    Its last Audit run had already failed before the restart, so a recovery
+    that looked for a `running` run found nothing and left the task holding a
+    lock no process owned. Attention shows errors, not states, so it was
+    invisible there too.
+    """
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-orphan",
+        conversation_title="审批待办",
+        single_chat=False,
+        trigger_message_id="msg-orphan",
+        trigger_create_time="2026-09-17 22:41:18",
+        trigger_sender="Derek OA",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+    )
+    task = store.get_reply_task_for_message("cid-orphan", "msg-orphan")
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='processing', locked_at=current_timestamp where id=?",
+            (task.id,),
+        )
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="orphan-test-owner",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update agent_runs set status='failed' where id=?",
+            (claim.run.id,),
+        )
+
+    recovered = store.recover_interrupted_agent_runs_after_service_restart()
+
+    assert [item.id for item in recovered] == [task.id]
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "pending"
+    assert updated.error == "service_restart_interrupted"
+
+
 def test_recover_orphaned_agent_run_for_failed_reply_task(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

@@ -11544,6 +11544,13 @@ class AutoReplyStore:
     ) -> list[ReplyTask]:
         """Fail interrupted runs and requeue their business task.
 
+        The service has just started, so nothing of its own is executing: every
+        task still marked `processing` is holding a lock no process owns.
+        Selecting only tasks with a run still `running` left behind the ones
+        whose last run had already failed -- reply task 135612 sat `processing`
+        for 33 minutes after run 20060 failed, invisible to Attention, which
+        shows errors rather than states, and untouched by every later restart.
+
         Restart recovery does not classify provider commands or external effects.
         Durable action identities and provider idempotency keys make the next
         Agent run responsible for observing or continuing the same operation.
@@ -11566,12 +11573,6 @@ class AutoReplyStore:
                 select tasks.*
                 from reply_tasks as tasks
                 where tasks.status='processing'
-                  and exists (
-                      select 1 from agent_runs as runs
-                      where runs.reply_task_id=tasks.id
-                        and runs.execution_generation=tasks.execution_generation
-                        and runs.status='running'
-                  )
                 order by tasks.id
                 limit ?
                 """,
