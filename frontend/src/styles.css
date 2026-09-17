@@ -372,7 +372,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .runtime-move-button:disabled { opacity: 0.35; cursor: default; }
 .runtime-add-card { border-style: dashed; }
 .runtime-add-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
-.runtime-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.runtime-card-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
 .runtime-card { display: flex; flex-direction: column; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
 .runtime-chip { flex: none; padding: 3px 10px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--ink-soft); font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
 .runtime-chip.is-on { border-color: transparent; background: var(--accent-soft); color: var(--accent); }
@@ -388,6 +388,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .runtime-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
 .runtime-field { display: grid; gap: 6px; min-width: 0; color: var(--ink-soft); font-size: 0.76rem; font-weight: 700; }
 .runtime-field input { width: 100%; min-height: 38px; padding: 7px 10px; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); font-weight: 400; }
+.runtime-field .runtime-switch-inline { min-height: 38px; }
+.runtime-field .runtime-switch-inline input { width: 34px; min-height: 0; height: 20px; padding: 0; border-radius: 999px; }
 .runtime-save-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
 .settings-save-row { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
 .runtime-save-bar .settings-save-row { margin-top: 0; }

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-17: Settings / Agent Runtime asks for Friday's credential only when
+  it is needed. The local Friday Runtime starts with authentication switched
+  off and the service refuses a credential in that mode, yet the card always
+  showed both a Runtime ticket and a Session token field. An 接口鉴权 switch now
+  carries that state, and with it on the card asks for one credential type at a
+  time, clearing the other one the service will not store beside it. Runtime
+  cards also sit one per row instead of pairing up at wide widths.
+
 - 2026-09-17: Agent Runtime routes are no longer a fixed set of five names. A
   name outside the built-in set is an added route that describes itself through
   `CEO_RUNTIME_<NAME>_KIND/BASE_URL/MODEL/API_KEY`, so one provider kind can

@@ -797,6 +797,37 @@ function RuntimeRouteCard({ title, description, enabled, locked, wide, onToggle,
   </section>;
 }
 
+function FridayAuthFields({ raw, update, setDraft, draft }: { raw: (key: string) => string; update: (key: string, value: string) => void; setDraft: (value: RecordValue) => void; draft: RecordValue }) {
+  // The local Friday Runtime starts with authentication switched off, and the
+  // service refuses a credential in that mode. Only ask for one when it is on,
+  // and only for the one credential Friday accepts.
+  const required = raw("CEO_FRIDAY_RUNTIME_AUTH_DISABLED") !== "1";
+  const stored: "ticket" | "session" = raw("CEO_FRIDAY_SESSION_TOKEN") ? "session" : "ticket";
+  const [kind, setKind] = useState<"ticket" | "session">(stored);
+  const setRequired = (next: boolean) => {
+    if (next) { update("CEO_FRIDAY_RUNTIME_AUTH_DISABLED", "0"); return; }
+    setDraft({ ...draft, CEO_FRIDAY_RUNTIME_AUTH_DISABLED: "1", CEO_FRIDAY_RUNTIME_TICKET: "", CEO_FRIDAY_SESSION_TOKEN: "" });
+  };
+  const chooseKind = (next: "ticket" | "session") => {
+    setKind(next);
+    setDraft({ ...draft, CEO_FRIDAY_RUNTIME_TICKET: "", CEO_FRIDAY_SESSION_TOKEN: "" });
+  };
+  return <>
+    <div className="runtime-field"><span>接口鉴权</span>
+      <label className="runtime-switch runtime-switch-inline">
+        <input type="checkbox" role="switch" aria-label="Friday Runtime 需要鉴权" checked={required} onChange={(event) => setRequired(event.target.checked)} />
+        <span>{required ? "需要凭据" : "本机免鉴权"}</span>
+      </label>
+    </div>
+    {required && <SelectField id="friday-auth-kind" label="凭据类型" value={kind} onChange={(next) => chooseKind(next === "session" ? "session" : "ticket")}>
+      <option value="ticket">Runtime ticket</option>
+      <option value="session">Session token</option>
+    </SelectField>}
+    {required && kind === "ticket" && <SecretField id="friday-runtime-ticket" label="Runtime ticket" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_TICKET"))} value={raw("CEO_FRIDAY_RUNTIME_TICKET")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_TICKET", next)} />}
+    {required && kind === "session" && <SecretField id="friday-session-token" label="Session token" configured={Boolean(raw("CEO_FRIDAY_SESSION_TOKEN"))} value={raw("CEO_FRIDAY_SESSION_TOKEN")} onChange={(next) => update("CEO_FRIDAY_SESSION_TOKEN", next)} />}
+  </>;
+}
+
 function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error"; saveError: string }) {
   const value = (key: string) => displayValue(draft[key] ?? fieldsOf(payload)[key]);
   const raw = (key: string) => rawValue(draft, payload, key);
@@ -865,8 +896,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
           {input("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "Provider Base URL", "url")}
           <ModelSelect id="friday-provider-model" label="Provider model" value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", next)} />
           <SecretField id="friday-provider-api-token" label="Provider API Token" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"))} value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", next)} />
-          <SecretField id="friday-runtime-ticket" label="Runtime ticket" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_TICKET"))} value={raw("CEO_FRIDAY_RUNTIME_TICKET")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_TICKET", next)} />
-          <SecretField id="friday-session-token" label="Session token" configured={Boolean(raw("CEO_FRIDAY_SESSION_TOKEN"))} value={raw("CEO_FRIDAY_SESSION_TOKEN")} onChange={(next) => update("CEO_FRIDAY_SESSION_TOKEN", next)} />
+          <FridayAuthFields raw={raw} update={update} setDraft={setDraft} draft={draft} />
         </RuntimeRouteCard>
         {addedRoutes.map((name) => {
           const prefix = addedRoutePrefix(name);
