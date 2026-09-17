@@ -334,8 +334,12 @@ dingtalk-chat reply to communicate it. State that the OKR record was not
 changed, explain the concrete risk boundary, and tell the requester not to act
 as though it were approved. This is an executable fallback, not needs_human.
 
-For DingTalk OA, read `dingtalk-misc/references/oa.md` and the latest canonical
-approval detail. If the process is still running but a document, attachment, or
+For DingTalk OA, read `~/.agents/skills/dingtalk-oa-approval/SKILL.md` for the
+approval rules and action choice, `dingtalk-misc/references/oa.md` only for dws
+command usage, and the latest canonical approval detail. The approval rules live
+in our own Skill: naming the vendor reference as the authority sent turns to read
+that instead, and `dws upgrade` overwrites the vendor Skills, so a rule written
+there does not survive. If the process is still running but a document, attachment, or
 other fact can be supplied by the applicant, comment on the original approval
 with the exact missing material and next step, then notify the actual applicant;
 keep the approval pending and do not ask Derek to choose. A timestamp without a

@@ -858,6 +858,10 @@ def test_audit_instructions_do_not_create_reconciliation_prompt():
 def test_consumer_instructions_pin_the_installed_oa_workflow():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
+    # Our own Skill decides the approval; the vendor reference is only dws
+    # command usage, and `dws upgrade` overwrites it.
+    assert "dingtalk-oa-approval/SKILL.md" in instructions
+    assert "only for dws" in instructions
     assert "dingtalk-misc" in instructions
     assert "references/oa.md" in instructions
     assert 'return `no_action`' in instructions
