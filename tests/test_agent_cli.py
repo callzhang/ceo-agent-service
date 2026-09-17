@@ -716,3 +716,40 @@ def test_explicit_reviewed_write_authorization_rejects_any_change_before_runner(
             process_runner=runner,
         )
     assert calls == 0
+
+
+def test_oa_revert_task_passes_write_review():
+    """Sending an approval back must be executable, not just decidable.
+
+    DWS publishes no runtime schema for `oa approval revert-task`, so the
+    metadata classifier cannot type it and the only thing standing between the
+    agent and `agent_cli_command_unreviewed` is the registered-write fallback.
+    Without the registration the skill's "prefer a real revert over parking a
+    comment" rule could never run: every revert was refused before it reached
+    DingTalk, and the turn fell back to a comment.
+    """
+
+    descriptor = agent_cli.describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                "dws",
+                "oa",
+                "approval",
+                "revert-task",
+                "--instance-id",
+                "inst-1",
+                "--task-id",
+                "task-1",
+                "--target-activity-id",
+                "sid-startevent",
+                "--action",
+                "REVERT_FOR_RESUBMIT",
+                "--yes",
+            ],
+        }
+    )
+
+    assert descriptor is not None
+    assert descriptor.command_path == "oa approval revert-task"
+    assert agent_cli._is_registered_native_write(descriptor)

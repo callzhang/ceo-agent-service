@@ -51,11 +51,16 @@
               ]
             },
             {"read": "oa approval detail", "write": "oa approval approve"},
+            {"read": "oa approval detail", "write": "oa approval revert-task"},
             {"read": "oa approval detail", "write": "oa approval comment"},
             {"read": "oa approval detail", "write": "oa approval oa-comments"},
             {
               "read": "app.cli read-oa-approval-detail",
               "write": "oa approval approve"
+            },
+            {
+              "read": "app.cli read-oa-approval-detail",
+              "write": "oa approval revert-task"
             },
             {
               "read": "app.cli read-oa-approval-detail",
@@ -66,6 +71,7 @@
               "write": "oa approval oa-comments"
             },
             {"read": "oa approval tasks", "write": "oa approval approve"},
+            {"read": "oa approval tasks", "write": "oa approval revert-task"},
             {"read": "oa approval tasks", "write": "oa approval comment"},
             {"read": "oa approval tasks", "write": "oa approval oa-comments"},
             {"read": "todo task get", "write": "todo task update"},
