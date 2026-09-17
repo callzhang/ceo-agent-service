@@ -26,6 +26,17 @@ your claim row. Restarting the service deploys the entire working tree,
 including other agents' unfinished edits, so verify the tree imports and tell
 the other owners before you restart.
 
+## Who restarts the service
+
+Derek, 2026-09-17: restarting `com.ceo-agent-service.main` is the heartbeat
+session's job (`CEO 服务错误检查与修复`). Other sessions do not restart it
+under normal circumstances. Push your commit, tell that session, and it
+restarts and reads back the new PID, healthz, queues, Attention and
+History. Restarting deploys the whole working tree, so a single owner
+keeps one session's half-written code from going live under another's
+commit. Restarts go through `launchctl kickstart`; there is no Friday
+runtime restart path.
+
 ## Local Service Reload
 
 ## Current runtime contract
