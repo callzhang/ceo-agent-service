@@ -5287,6 +5287,59 @@ def test_agent_runtime_settings_form_submits_friday_configuration(
     )
 
 
+def test_handle_agent_runtime_config_post_provisions_a_friday_project(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """Friday rejects an invented project id, so the save asks Friday for one."""
+
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_CODEX_API_KEY=existing-token\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    created: list[dict] = []
+
+    class Transport:
+        def request(self, method, path, *, headers, body=None, timeout_seconds):
+            from app.friday_runtime_adapter import FridayHttpResponse
+
+            created.append({"method": method, "path": path, "body": dict(body or {})})
+            return FridayHttpResponse(
+                status_code=200,
+                payload={"data": {"project_id": "project_created_1"}},
+            )
+
+    import app.friday_runtime_adapter as friday_module
+
+    real = friday_module.ensure_friday_project
+    monkeypatch.setattr(
+        friday_module,
+        "ensure_friday_project",
+        lambda config, **kwargs: real(config, transport=Transport()),
+    )
+
+    status, _, html = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5"
+            "&codex_reasoning_effort=medium"
+            "&codex_api_enabled=0"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+            "&claude_reasoning_effort=medium"
+            "&friday_runtime_settings_present=1"
+            "&friday_runtime_enabled=1"
+            "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A52628"
+            "&friday_runtime_project_id="
+            "&friday_runtime_auth_disabled=1"
+        ).encode()
+    )
+
+    assert status == 303, html
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_FRIDAY_RUNTIME_PROJECT_ID=project_created_1" in env_text
+    assert created and created[0]["path"] == "/v1/projects"
+    assert created[0]["body"]["name"] == "CEO Agent"
+
+
 def test_handle_agent_runtime_config_post_enables_claude_api_with_its_token(
     tmp_path: Path,
     monkeypatch,

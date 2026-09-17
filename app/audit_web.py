@@ -9548,9 +9548,29 @@ def handle_agent_runtime_config_post(
         )
     if friday_enabled:
         if not friday_project_id:
-            return _invalid_agent_runtime_config(
-                "Project ID is required before Friday Runtime can be enabled."
+            # Friday owns its project ids, so provision one instead of asking
+            # an operator to invent a value Friday would reject.
+            from app.agent_runtime_config import load_runtime_config
+            from app.friday_runtime_adapter import (
+                FridayRuntimeError,
+                ensure_friday_project,
             )
+
+            try:
+                friday_project_id = ensure_friday_project(
+                    load_runtime_config(
+                        {
+                            **persisted_env,
+                            "CEO_FRIDAY_RUNTIME_BASE_URL": friday_base_url,
+                            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
+                            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "",
+                        }
+                    )
+                )
+            except (FridayRuntimeError, OSError, ValueError) as exc:
+                return _invalid_agent_runtime_config(
+                    f"Friday Runtime could not provide a project: {exc}"
+                )
         if friday_ticket and friday_session_token:
             return _invalid_agent_runtime_config(
                 "Enter either a Friday Runtime ticket or a session token, not both."
@@ -9676,6 +9696,7 @@ def _parsed_added_routes(parsed: dict[str, list[str]]) -> list[dict[str, str]]:
 
     from app.agent_runtime_config import (
         ADDED_ROUTE_KINDS,
+        ADDED_ROUTE_KINDS_WITH_KEY,
         ROUTE_NAME_PATTERN,
         SUPPORTED_RUNTIME_ROUTES,
         added_route_settings_prefix,
@@ -9707,11 +9728,13 @@ def _parsed_added_routes(parsed: dict[str, list[str]]) -> list[dict[str, str]]:
         if not model:
             raise ValueError(f"Runtime {name} requires a model.")
         prefix = added_route_settings_prefix(name)
-        api_key = str(payload.get("api_key") or "").strip() or _agent_runtime_config_value(
-            f"{prefix}API_KEY"
-        )
-        if not api_key:
-            raise ValueError(f"Runtime {name} requires an API token.")
+        api_key = ""
+        if kind in ADDED_ROUTE_KINDS_WITH_KEY:
+            api_key = str(
+                payload.get("api_key") or ""
+            ).strip() or _agent_runtime_config_value(f"{prefix}API_KEY")
+            if not api_key:
+                raise ValueError(f"Runtime {name} requires an API token.")
         base_url = ""
         if kind == "codex_api":
             try:

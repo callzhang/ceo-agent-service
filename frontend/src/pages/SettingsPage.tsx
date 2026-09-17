@@ -740,10 +740,18 @@ function RuntimeRouteOrder({ configured, onMove }: { configured: string; onMove?
   </div>;
 }
 
-const ADDED_RUNTIME_KINDS: Array<{ value: string; label: string; needsBaseUrl: boolean }> = [
-  { value: "codex_api", label: "OpenAI 兼容 API", needsBaseUrl: true },
-  { value: "claude_api", label: "Anthropic API", needsBaseUrl: false },
+// The four kinds an operator can add. A CLI's own login is shared by every
+// route that uses it, so an added OAuth route differs only by its model.
+const ADDED_RUNTIME_KINDS: Array<{ value: string; label: string; hint: string; needsBaseUrl: boolean; needsToken: boolean }> = [
+  { value: "codex_oauth", label: "Codex CLI · 登录", hint: "复用本机 Codex 登录，只换模型", needsBaseUrl: false, needsToken: false },
+  { value: "codex_api", label: "Codex CLI · API", hint: "自带地址、模型和 Token", needsBaseUrl: true, needsToken: true },
+  { value: "claude_oauth", label: "Claude CLI · 登录", hint: "复用本机 Claude 登录，只换模型", needsBaseUrl: false, needsToken: false },
+  { value: "claude_api", label: "Claude CLI · API", hint: "自带模型和 Token", needsBaseUrl: false, needsToken: true },
 ];
+
+function addedKind(value: string) {
+  return ADDED_RUNTIME_KINDS.find((item) => item.value === value);
+}
 
 function addedRoutePrefix(name: string) {
   return `CEO_RUNTIME_${name.toUpperCase()}_`;
@@ -751,31 +759,34 @@ function addedRoutePrefix(name: string) {
 
 function AddRuntimeForm({ onAdd, taken }: { onAdd: (route: { name: string; kind: string; baseUrl: string; model: string; token: string }) => void; taken: string[] }) {
   const [name, setName] = useState("");
-  const [kind, setKind] = useState(ADDED_RUNTIME_KINDS[0].value);
+  // Most added routes bring their own provider, so start on that kind.
+  const [kind, setKind] = useState("codex_api");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
-  const needsBaseUrl = ADDED_RUNTIME_KINDS.find((item) => item.value === kind)?.needsBaseUrl ?? false;
+  const selected = addedKind(kind);
+  const needsBaseUrl = selected?.needsBaseUrl ?? false;
+  const needsToken = selected?.needsToken ?? false;
   const submit = () => {
     const trimmed = name.trim();
     if (!/^[a-z][a-z0-9_]*$/.test(trimmed)) { setError("名称只能用小写字母、数字和下划线，且以字母开头"); return; }
     if (taken.includes(trimmed)) { setError("这个名称已经用过了"); return; }
     if (!model.trim()) { setError("请填写模型名"); return; }
-    if (!token.trim()) { setError("请填写 API Token"); return; }
+    if (needsToken && !token.trim()) { setError("请填写 API Token"); return; }
     if (needsBaseUrl && !baseUrl.trim()) { setError("请填写 API Base URL"); return; }
     setError("");
     onAdd({ name: trimmed, kind, baseUrl: baseUrl.trim(), model: model.trim(), token: token.trim() });
     setName(""); setBaseUrl(""); setModel(""); setToken("");
   };
   return <section className="runtime-card runtime-card-wide runtime-add-card">
-    <div className="runtime-card-head"><div><h3>新增 runtime</h3><p>同一种 API 可以添加多条，各自有自己的地址、模型和 Token</p></div></div>
+    <div className="runtime-card-head"><div><h3>新增 runtime</h3><p>{selected?.hint ?? "同一种类型可以添加多条，各自独立配置"}</p></div></div>
     <div className="runtime-fields">
       <label className="runtime-field"><span>名称</span><input aria-label="新增 runtime 名称" value={name} placeholder="例如 qwen_gpu4" onChange={(event) => setName(event.target.value)} /></label>
       <SelectField id="added-runtime-kind" label="类型" value={kind} onChange={setKind}>{ADDED_RUNTIME_KINDS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</SelectField>
       {needsBaseUrl && <label className="runtime-field"><span>API Base URL</span><input aria-label="新增 runtime API Base URL" type="url" value={baseUrl} placeholder="http://100.93.145.69:8900/v1" onChange={(event) => setBaseUrl(event.target.value)} /></label>}
       <label className="runtime-field"><span>模型</span><input aria-label="新增 runtime 模型" value={model} placeholder="qwen3.8-27b" onChange={(event) => setModel(event.target.value)} /></label>
-      <SecretField id="added-runtime-token" label="新增 runtime API Token" value={token} onChange={setToken} />
+      {needsToken && <SecretField id="added-runtime-token" label="新增 runtime API Token" value={token} onChange={setToken} />}
     </div>
     {error && <p className="field-error" role="alert">{error}</p>}
     <div className="runtime-add-actions"><button type="button" className="secondary-button" onClick={submit}>添加</button></div>
@@ -797,6 +808,13 @@ function RuntimeRouteCard({ title, description, enabled, locked, wide, onToggle,
   </section>;
 }
 
+function RuntimeFieldGroup({ caption, children }: { caption: string; children: ReactNode }) {
+  return <div className="runtime-field-group">
+    <p className="runtime-field-group-caption">{caption}</p>
+    <div className="runtime-fields runtime-fields-nested">{children}</div>
+  </div>;
+}
+
 function FridayAuthFields({ raw, update, setDraft, draft }: { raw: (key: string) => string; update: (key: string, value: string) => void; setDraft: (value: RecordValue) => void; draft: RecordValue }) {
   // The local Friday Runtime starts with authentication switched off, and the
   // service refuses a credential in that mode. Only ask for one when it is on,
@@ -816,7 +834,7 @@ function FridayAuthFields({ raw, update, setDraft, draft }: { raw: (key: string)
     <div className="runtime-field"><span>接口鉴权</span>
       <label className="runtime-switch runtime-switch-inline">
         <input type="checkbox" role="switch" aria-label="Friday Runtime 需要鉴权" checked={required} onChange={(event) => setRequired(event.target.checked)} />
-        <span>{required ? "需要凭据" : "本机免鉴权"}</span>
+        <span>{required ? "开启，需要凭据" : "关闭，本机 Friday 不校验身份"}</span>
       </label>
     </div>
     {required && <SelectField id="friday-auth-kind" label="凭据类型" value={kind} onChange={(next) => chooseKind(next === "session" ? "session" : "ticket")}>
@@ -887,29 +905,34 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
           {input("CEO_CLAUDE_MODEL", "Model")}
           {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
         </RuntimeRouteCard>
-        <RuntimeRouteCard title="Claude API" description="本机 Claude 登录不可用时的 API 路由；模型与 Claude OAuth 共用" enabled={enabled("claude_api")} onToggle={(next) => toggleRoute("claude_api", next)}>
+        <RuntimeRouteCard title="Claude API" description="本机 Claude 登录不可用时的 API 路由" enabled={enabled("claude_api")} onToggle={(next) => toggleRoute("claude_api", next)}>
+          {input("CEO_CLAUDE_MODEL", "Model（与 Claude OAuth 共用）")}
+          {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength（与 Claude OAuth 共用）")}
           <SecretField id="claude-api-token" label="Claude API Token" configured={Boolean(raw("CEO_CLAUDE_API_KEY"))} value={raw("CEO_CLAUDE_API_KEY")} onChange={(next) => update("CEO_CLAUDE_API_KEY", next)} />
         </RuntimeRouteCard>
         <RuntimeRouteCard title="Friday Runtime" description="本机 Friday Runtime 服务和 provider 凭据" enabled={enabled("friday_runtime")} onToggle={(next) => toggleRoute("friday_runtime", next)} wide>
-          {input("CEO_FRIDAY_RUNTIME_BASE_URL", "Runtime Base URL", "url")}
-          {input("CEO_FRIDAY_RUNTIME_PROJECT_ID", "Project ID")}
-          {input("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "Provider Base URL", "url")}
-          <ModelSelect id="friday-provider-model" label="Provider model" value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", next)} />
-          <SecretField id="friday-provider-api-token" label="Provider API Token" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"))} value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", next)} />
-          <FridayAuthFields raw={raw} update={update} setDraft={setDraft} draft={draft} />
+          <RuntimeFieldGroup caption="连接 Friday 服务">
+            {input("CEO_FRIDAY_RUNTIME_BASE_URL", "服务地址", "url")}
+            <FridayAuthFields raw={raw} update={update} setDraft={setDraft} draft={draft} />
+          </RuntimeFieldGroup>
+          <RuntimeFieldGroup caption="Friday 自己调用的模型服务">
+            {input("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "模型服务地址", "url")}
+            <ModelSelect id="friday-provider-model" label="模型" value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", next)} />
+            <SecretField id="friday-provider-api-token" label="模型服务 Token" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"))} value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", next)} />
+          </RuntimeFieldGroup>
         </RuntimeRouteCard>
         {addedRoutes.map((name) => {
           const prefix = addedRoutePrefix(name);
-          const kindLabel = ADDED_RUNTIME_KINDS.find((item) => item.value === raw(`${prefix}KIND`))?.label ?? raw(`${prefix}KIND`);
+          const kindLabel = addedKind(raw(`${prefix}KIND`))?.label ?? raw(`${prefix}KIND`);
           return <section key={name} className="runtime-card">
             <div className="runtime-card-head">
               <div><h3>{name}</h3><p>{kindLabel}</p></div>
               <button type="button" className="secondary-button" aria-label={`删除 ${name}`} onClick={() => removeRoute(name)}>删除</button>
             </div>
             <div className="runtime-fields">
-              {raw(`${prefix}KIND`) === "codex_api" && <label className="runtime-field"><span>API Base URL</span><input aria-label={`${name} API Base URL`} type="url" value={value(`${prefix}BASE_URL`)} onChange={(event) => update(`${prefix}BASE_URL`, event.target.value)} /></label>}
+              {addedKind(raw(`${prefix}KIND`))?.needsBaseUrl && <label className="runtime-field"><span>API Base URL</span><input aria-label={`${name} API Base URL`} type="url" value={value(`${prefix}BASE_URL`)} onChange={(event) => update(`${prefix}BASE_URL`, event.target.value)} /></label>}
               <label className="runtime-field"><span>模型</span><input aria-label={`${name} 模型`} value={value(`${prefix}MODEL`)} onChange={(event) => update(`${prefix}MODEL`, event.target.value)} /></label>
-              <SecretField id={`added-${name}-token`} label={`${name} API Token`} configured={Boolean(raw(`${prefix}API_KEY`))} value={raw(`${prefix}API_KEY`)} onChange={(next) => update(`${prefix}API_KEY`, next)} />
+              {addedKind(raw(`${prefix}KIND`))?.needsToken && <SecretField id={`added-${name}-token`} label={`${name} API Token`} configured={Boolean(raw(`${prefix}API_KEY`))} value={raw(`${prefix}API_KEY`)} onChange={(next) => update(`${prefix}API_KEY`, next)} />}
             </div>
           </section>;
         })}

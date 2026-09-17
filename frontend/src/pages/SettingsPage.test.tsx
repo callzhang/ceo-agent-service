@@ -107,7 +107,7 @@ describe("SettingsPage", () => {
     renderSettings("/settings?tab=agent-runtime");
 
     expect(await screen.findByLabelText("API Token")).toHaveValue("codex-token");
-    expect(screen.getByLabelText("Provider API Token")).toHaveValue("provider-token");
+    expect(screen.getByLabelText("模型服务 Token")).toHaveValue("provider-token");
     // Friday accepts exactly one credential, so the card offers one at a time.
     expect(screen.getByLabelText("Session token")).toHaveValue("session-token");
     expect(screen.queryByLabelText("Runtime ticket")).toBeNull();
@@ -208,6 +208,30 @@ describe("SettingsPage", () => {
       CEO_RUNTIME_QWEN_GPU4_BASE_URL: "http://100.93.145.69:8900/v1",
       CEO_RUNTIME_QWEN_GPU4_MODEL: "qwen3.8-27b",
       CEO_RUNTIME_QWEN_GPU4_API_KEY: "gateway-key",
+    }), {});
+  });
+
+  it("adds a local-login runtime, which carries a model and no token", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth",
+    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    await user.selectOptions(await screen.findByLabelText("类型"), "codex_oauth");
+    expect(screen.queryByLabelText("新增 runtime API Base URL")).toBeNull();
+    expect(screen.queryByLabelText("新增 runtime API Token")).toBeNull();
+    await user.type(screen.getByLabelText("新增 runtime 名称"), "codex_sol");
+    await user.type(screen.getByLabelText("新增 runtime 模型"), "gpt-5.6-sol");
+    await user.click(screen.getByRole("button", { name: "添加" }));
+
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,codex_sol",
+      CEO_RUNTIME_CODEX_SOL_KIND: "codex_oauth",
+      CEO_RUNTIME_CODEX_SOL_MODEL: "gpt-5.6-sol",
+      CEO_RUNTIME_CODEX_SOL_API_KEY: "",
     }), {});
   });
 

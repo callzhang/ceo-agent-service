@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-17: An added runtime now picks one of four kinds — Codex CLI or
+  Claude CLI, on this machine's login or on an API key — and the card asks only
+  for what that kind needs, so a local-login route carries a model and no
+  token. Settings / Agent Runtime lays a card's fields three to a row, gives
+  Claude API the shared model and thinking strength it was missing, groups
+  Friday's own service settings apart from the model service it calls, and no
+  longer asks for a Friday project id: Friday rejects an invented one, so the
+  service asks Friday for a project when none is configured.
+
 - 2026-09-17: Settings / Agent Runtime asks for Friday's credential only when
   it is needed. The local Friday Runtime starts with authentication switched
   off and the service refuses a credential in that mode, yet the card always

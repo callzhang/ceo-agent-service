@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from pydantic import SecretStr
@@ -122,6 +123,45 @@ class UrllibFridayHttpTransport:
             except ValueError:
                 payload = {"message": "Friday Runtime request failed"}
             return FridayHttpResponse(status_code=int(exc.code), payload=payload)
+
+
+def ensure_friday_project(
+    config: AgentRuntimeConfig,
+    *,
+    transport: FridayHttpTransport | None = None,
+    name: str = "CEO Agent",
+    timeout_seconds: float = 20.0,
+) -> str:
+    """Return the configured Friday project, creating one when none is set.
+
+    Friday rejects an unknown project id ("project not found"), so the id has
+    to come from Friday itself rather than from something typed into a form.
+    """
+
+    configured = config.friday_runtime_project_id.strip()
+    if configured:
+        return configured
+    client = transport or UrllibFridayHttpTransport(config.friday_runtime_base_url)
+    workspace_root = str(
+        Path.home() / ".friday" / "runtime-workspace" / "ceo-agent"
+    )
+    response = client.request(
+        "POST",
+        "/v1/projects",
+        headers={},
+        body={"name": name, "workspace_root": workspace_root},
+        timeout_seconds=timeout_seconds,
+    )
+    if response.status_code >= 400:
+        raise FridayRuntimeError(
+            "friday_runtime_project_create_failed",
+            _safe_response_detail(response.payload),
+            retryable=True,
+        )
+    payload = response.payload if isinstance(response.payload, Mapping) else {}
+    data = _mapping_value(payload, "data")
+    project_id = _required_string(data, "project_id")
+    return project_id
 
 
 class FridayRuntimeAdapter:

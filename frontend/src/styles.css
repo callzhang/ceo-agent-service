@@ -385,9 +385,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .runtime-fields .runtime-field > span, .runtime-fields .secret-field > label, .runtime-fields .filter-control-label { color: var(--ink-soft); font-size: 0.76rem; font-weight: 700; letter-spacing: 0; text-transform: none; }
 .runtime-card-wide { grid-column: 1 / -1; }
 .runtime-card h3 { margin-bottom: 5px; font-size: 0.98rem; }
-.runtime-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+.runtime-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
 .runtime-field { display: grid; gap: 6px; min-width: 0; color: var(--ink-soft); font-size: 0.76rem; font-weight: 700; }
 .runtime-field input { width: 100%; min-height: 38px; padding: 7px 10px; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); font-weight: 400; }
+.runtime-field-group { grid-column: 1 / -1; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
+.runtime-field-group-caption { margin: 0; color: var(--ink-soft); font-size: 0.74rem; font-weight: 700; }
+.runtime-fields-nested { margin-top: 10px; }
 .runtime-field .runtime-switch-inline { min-height: 38px; }
 .runtime-field .runtime-switch-inline input { width: 34px; min-height: 0; height: 20px; padding: 0; border-radius: 999px; }
 .runtime-save-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
