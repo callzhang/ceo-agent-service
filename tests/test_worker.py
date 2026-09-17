@@ -17382,3 +17382,27 @@ def test_the_repair_sweep_selects_a_delivery_identified_only_by_its_task_handle(
     candidates = store.list_completed_audit_runs_missing_delivery_projection(limit=10)
 
     assert [run.id for run in candidates] == [audit.id]
+
+
+def test_the_dispatcher_entry_point_runs_the_delivery_repair_sweep(tmp_path):
+    """Production dispatches through `process_claimed_reply_task`.
+
+    The sweep opened `consume_once`, which the service never calls, so a
+    delivery missing from the ledger stayed missing and a later rerun was free
+    to send the same message again.
+    """
+    store = AutoReplyStore(tmp_path / "dispatch.sqlite3")
+    worker = object.__new__(DingTalkAutoReplyWorker)
+    worker.store = store
+    swept: list[int] = []
+    worker._repair_completed_message_delivery_projections = lambda: swept.append(1)
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="Group", single_chat=False,
+        trigger_message_id="trigger-1", trigger_create_time="2026-09-17 01:00:00",
+        trigger_sender="Derek", trigger_text="请回复",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    worker._process_queued_task = lambda conversation, claimed: True
+
+    assert worker.process_claimed_reply_task(task) is True
+    assert swept == [1]

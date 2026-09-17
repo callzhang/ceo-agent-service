@@ -2365,6 +2365,11 @@ class DingTalkAutoReplyWorker:
         """Execute exactly one task that a queue owner already claimed."""
         if task.status != "processing":
             raise ValueError("reply task must be claimed before execution")
+        # The dispatcher calls this method directly; `consume_once` -- which
+        # used to open every pass with the repair sweep -- is not on the
+        # production path at all, so the sweep had never run in the service and
+        # deliveries missing from the ledger were never recovered.
+        self._repair_completed_message_delivery_projections()
         if claim_guard is not None:
             claim_guard.assert_current(self._now().astimezone(timezone.utc))
         conversation = DingTalkConversation(
