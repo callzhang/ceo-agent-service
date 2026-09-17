@@ -125,6 +125,21 @@ describe("SettingsPage", () => {
     expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({ CEO_CODEX_API_KEY: "replacement-token" }), {});
   });
 
+  it("shows the configured failover order and which routes are off", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,claude_oauth",
+    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    expect(await screen.findByText("故障切换顺序")).toBeInTheDocument();
+    const steps = screen.getAllByRole("listitem").map((item) => item.textContent);
+    expect(steps).toEqual(["1Codex OAuth", "2Claude OAuth"]);
+    expect(screen.getByText("未启用：Codex API、Claude API、Friday Runtime")).toBeInTheDocument();
+    // A route left out of the order keeps its card, marked off.
+    expect(screen.getAllByText("已启用")).toHaveLength(2);
+    expect(screen.getAllByText("未启用")).toHaveLength(2);
+  });
+
   it("shows the Agent Runtime validation reason without discarding the draft", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {

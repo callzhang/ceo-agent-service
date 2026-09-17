@@ -710,12 +710,79 @@ function ModelSelect({ id, label, value, groups, onChange }: { id: string; label
   return <SelectField id={id} label={label} value={value} onChange={onChange}><option value="">请选择模型</option>{modelOptions(groups, value).map((group) => <optgroup key={group.label} label={group.label}>{group.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</optgroup>)}</SelectField>;
 }
 
+const RUNTIME_ROUTE_LABELS: Record<string, string> = {
+  codex_oauth: "Codex OAuth",
+  codex_api: "Codex API",
+  claude_oauth: "Claude OAuth",
+  claude_api: "Claude API",
+  friday_runtime: "Friday Runtime",
+};
+
+function routeOrder(configured: string) {
+  return configured.split(",").map((name) => name.trim()).filter(Boolean);
+}
+
+function RuntimeRouteOrder({ configured }: { configured: string }) {
+  const order = routeOrder(configured);
+  const off = Object.keys(RUNTIME_ROUTE_LABELS).filter((name) => !order.includes(name));
+  return <div className="runtime-order">
+    <p className="runtime-order-caption">故障切换顺序</p>
+    <ol className="runtime-order-list">{order.map((name, index) => <li key={name} className="runtime-order-step"><span className="runtime-order-rank">{index + 1}</span>{RUNTIME_ROUTE_LABELS[name] ?? name}</li>)}</ol>
+    {off.length > 0 && <p className="runtime-order-off">未启用：{off.map((name) => RUNTIME_ROUTE_LABELS[name] ?? name).join("、")}</p>}
+  </div>;
+}
+
+function RuntimeRouteCard({ title, description, enabled, wide, children }: { title: string; description: string; enabled: boolean; wide?: boolean; children: ReactNode }) {
+  return <section className={wide ? "runtime-card runtime-card-wide" : "runtime-card"}>
+    <div className="runtime-card-head">
+      <div><h3>{title}</h3><p>{description}</p></div>
+      <span className={enabled ? "runtime-chip is-on" : "runtime-chip"}>{enabled ? "已启用" : "未启用"}</span>
+    </div>
+    <div className="runtime-fields">{children}</div>
+  </section>;
+}
+
 function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error"; saveError: string }) {
   const value = (key: string) => displayValue(draft[key] ?? fieldsOf(payload)[key]);
   const raw = (key: string) => rawValue(draft, payload, key);
   const input = (key: string, label: string, type = "text") => <label className="runtime-field"><span>{label}</span><input type={type} value={value(key)} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} /></label>;
   const update = (key: string, next: string) => setDraft({ ...draft, [key]: next });
-  return <SettingsCard><div className="settings-card-heading"><div><p className="eyebrow">Settings / Agent Runtime</p><h2>Agent Runtime</h2><p className="muted">集中管理模型路由和 fallback 凭据。保存后重启主服务，运行中的 worker 才会使用新配置。</p></div><span className="settings-path">.env backed</span></div><div className="runtime-overview"><StateItem label="Primary route" value="Codex OAuth" /><StateItem label="Model" value={value("CEO_CODEX_MODEL")} /><StateItem label="API fallback" value={value("CEO_AGENT_RUNTIME_ROUTES").includes("codex_api") ? "Active" : "Not active"} /><StateItem label="Claude OAuth" value={value("CEO_AGENT_RUNTIME_ROUTES").includes("claude_oauth") ? "Active" : "Not active"} /><StateItem label="Friday Runtime" value={value("CEO_AGENT_RUNTIME_ROUTES").includes("friday_runtime") ? "Active" : "Not active"} /></div><form onSubmit={(event) => event.preventDefault()}><div className="runtime-card-grid"><section className="runtime-card"><div className="runtime-card-head"><div><h3>Codex OAuth</h3><p>默认的本机 OAuth 路由</p></div><StatusBadge value="Active" /></div><div className="runtime-fields"><ModelSelect id="codex-model" label="Model" value={raw("CEO_CODEX_MODEL")} groups={[{ label: "Codex / OpenAI", options: CODEX_MODEL_OPTIONS }]} onChange={(next) => update("CEO_CODEX_MODEL", next)} />{input("CEO_CODEX_MODEL_REASONING_EFFORT", "Thinking strength")}</div></section><section className="runtime-card"><div className="runtime-card-head"><div><h3>Codex API fallback</h3><p>OAuth 不可用时的备用路由</p></div><StatusBadge value={value("CEO_AGENT_RUNTIME_ROUTES").includes("codex_api") ? "Active" : "Not active"} /></div><div className="runtime-fields">{input("CEO_CODEX_API_BASE_URL", "API Base URL", "url")}<ModelSelect id="codex-api-model" label="Fallback model" value={raw("CEO_CODEX_API_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_CODEX_API_MODEL", next)} /><SecretField id="codex-api-token" label="API Token" configured={Boolean(raw("CEO_CODEX_API_KEY"))} value={raw("CEO_CODEX_API_KEY")} onChange={(next) => update("CEO_CODEX_API_KEY", next)} /></div></section><section className="runtime-card"><div className="runtime-card-head"><div><h3>Claude OAuth</h3><p>复用本机 Claude Code 登录的 fallback 路由</p></div><StatusBadge value={value("CEO_AGENT_RUNTIME_ROUTES").includes("claude_oauth") ? "Active" : "Not active"} /></div><div className="runtime-fields">{input("CEO_CLAUDE_MODEL", "Model")}{input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}</div></section><section className="runtime-card runtime-card-wide"><div className="runtime-card-head"><div><h3>Friday Runtime</h3><p>本机 Friday Runtime 服务和 provider 凭据</p></div><StatusBadge value={value("CEO_AGENT_RUNTIME_ROUTES").includes("friday_runtime") ? "Active" : "Not active"} /></div><div className="runtime-fields">{input("CEO_FRIDAY_RUNTIME_BASE_URL", "Runtime Base URL", "url")}{input("CEO_FRIDAY_RUNTIME_PROJECT_ID", "Project ID")}{input("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "Provider Base URL", "url")}<ModelSelect id="friday-provider-model" label="Provider model" value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", next)} /><SecretField id="friday-provider-api-token" label="Provider API Token" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"))} value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", next)} /><SecretField id="friday-runtime-ticket" label="Runtime ticket" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_TICKET"))} value={raw("CEO_FRIDAY_RUNTIME_TICKET")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_TICKET", next)} /><SecretField id="friday-session-token" label="Session token" configured={Boolean(raw("CEO_FRIDAY_SESSION_TOKEN"))} value={raw("CEO_FRIDAY_SESSION_TOKEN")} onChange={(next) => update("CEO_FRIDAY_SESSION_TOKEN", next)} /></div></section></div><div className="runtime-save-bar"><span className="muted">已保存凭据会回填；可直接编辑后保存。</span><SaveBar state={saveState} error={saveError} /></div></form></SettingsCard>;
+  const routes = routeOrder(value("CEO_AGENT_RUNTIME_ROUTES"));
+  const enabled = (name: string) => routes.includes(name);
+  return <SettingsCard>
+    <div className="settings-card-heading">
+      <div><p className="eyebrow">Settings / Agent Runtime</p><h2>Agent Runtime</h2><p className="muted">集中管理模型路由和 fallback 凭据。保存后重启主服务，运行中的 worker 才会使用新配置。</p></div>
+      <span className="settings-path">.env backed</span>
+    </div>
+    <RuntimeRouteOrder configured={value("CEO_AGENT_RUNTIME_ROUTES")} />
+    <form onSubmit={(event) => event.preventDefault()}>
+      <div className="runtime-card-grid">
+        <RuntimeRouteCard title="Codex OAuth" description="默认的本机 OAuth 路由" enabled={enabled("codex_oauth")}>
+          <ModelSelect id="codex-model" label="Model" value={raw("CEO_CODEX_MODEL")} groups={[{ label: "Codex / OpenAI", options: CODEX_MODEL_OPTIONS }]} onChange={(next) => update("CEO_CODEX_MODEL", next)} />
+          {input("CEO_CODEX_MODEL_REASONING_EFFORT", "Thinking strength")}
+        </RuntimeRouteCard>
+        <RuntimeRouteCard title="Codex API" description="OAuth 不可用时的备用路由" enabled={enabled("codex_api")}>
+          {input("CEO_CODEX_API_BASE_URL", "API Base URL", "url")}
+          <ModelSelect id="codex-api-model" label="Fallback model" value={raw("CEO_CODEX_API_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_CODEX_API_MODEL", next)} />
+          <SecretField id="codex-api-token" label="API Token" configured={Boolean(raw("CEO_CODEX_API_KEY"))} value={raw("CEO_CODEX_API_KEY")} onChange={(next) => update("CEO_CODEX_API_KEY", next)} />
+        </RuntimeRouteCard>
+        <RuntimeRouteCard title="Claude OAuth" description="复用本机 Claude Code 登录的路由" enabled={enabled("claude_oauth")}>
+          {input("CEO_CLAUDE_MODEL", "Model")}
+          {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
+        </RuntimeRouteCard>
+        <RuntimeRouteCard title="Friday Runtime" description="本机 Friday Runtime 服务和 provider 凭据" enabled={enabled("friday_runtime")} wide>
+          {input("CEO_FRIDAY_RUNTIME_BASE_URL", "Runtime Base URL", "url")}
+          {input("CEO_FRIDAY_RUNTIME_PROJECT_ID", "Project ID")}
+          {input("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "Provider Base URL", "url")}
+          <ModelSelect id="friday-provider-model" label="Provider model" value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", next)} />
+          <SecretField id="friday-provider-api-token" label="Provider API Token" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"))} value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", next)} />
+          <SecretField id="friday-runtime-ticket" label="Runtime ticket" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_TICKET"))} value={raw("CEO_FRIDAY_RUNTIME_TICKET")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_TICKET", next)} />
+          <SecretField id="friday-session-token" label="Session token" configured={Boolean(raw("CEO_FRIDAY_SESSION_TOKEN"))} value={raw("CEO_FRIDAY_SESSION_TOKEN")} onChange={(next) => update("CEO_FRIDAY_SESSION_TOKEN", next)} />
+        </RuntimeRouteCard>
+      </div>
+      <div className="runtime-save-bar"><span className="muted">已保存凭据会回填；可直接编辑后保存。</span><SaveBar state={saveState} error={saveError} /></div>
+    </form>
+  </SettingsCard>;
 }
 
 function SettingsContent({ section, payload, draft, setDraft, prompt, view, connector, auditRule, saveState, saveError, onAttentionCountChange }: { section: SettingsSection; payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; prompt: PromptKind; view: "template" | "preview"; connector: string; auditRule: "template" | "consumer" | "audit"; saveState: "idle" | "saving" | "saved" | "error"; saveError: string; onAttentionCountChange: (count: number) => void }) {

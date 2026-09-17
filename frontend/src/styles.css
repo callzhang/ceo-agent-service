@@ -359,10 +359,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .settings-description { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .configuration-group + .configuration-group { margin-top: 24px; }
 .configuration-group h2 { margin: 0 0 10px; font-size: 0.92rem; }
-.runtime-overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 20px 0; }
-.runtime-overview .connector-state-item { min-height: 72px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
-.runtime-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.runtime-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
+.runtime-order { margin: 18px 0 20px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-muted); }
+.runtime-order-caption { margin: 0 0 10px; color: var(--ink-soft); font-size: 0.74rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.runtime-order-list { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.runtime-order-step { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); font-size: 0.86rem; font-weight: 600; }
+.runtime-order-step + .runtime-order-step::before { content: "→"; margin-right: 2px; margin-left: -6px; color: var(--ink-soft); font-weight: 400; }
+.runtime-order-rank { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: var(--ink); color: var(--surface); font-size: 0.74rem; font-weight: 700; }
+.runtime-order-off { margin: 10px 0 0; color: var(--ink-soft); font-size: 0.8rem; }
+.runtime-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.runtime-card { display: flex; flex-direction: column; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
+.runtime-chip { flex: none; padding: 3px 10px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--ink-soft); font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
+.runtime-chip.is-on { border-color: transparent; background: var(--accent-soft); color: var(--accent); }
+.runtime-fields .runtime-field > span, .runtime-fields .secret-field > label, .runtime-fields .filter-control-label { color: var(--ink-soft); font-size: 0.76rem; font-weight: 700; letter-spacing: 0; text-transform: none; }
 .runtime-card-wide { grid-column: 1 / -1; }
 .runtime-card h3 { margin-bottom: 5px; font-size: 0.98rem; }
 .runtime-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
@@ -796,7 +804,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .settings-table td { display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 10px; width: 100%; padding: 5px 0; border: 0; }
   .settings-table td::before { content: attr(data-label); color: var(--ink-soft); font-size: 0.73rem; font-weight: 700; }
   .settings-table th:nth-child(1), .settings-table td:nth-child(1), .settings-table th:nth-child(2), .settings-table td:nth-child(2) { width: auto; }
-  .runtime-overview, .runtime-card-grid, .runtime-fields, .connector-state-grid { grid-template-columns: 1fr; }
+  .runtime-card-grid, .runtime-fields, .connector-state-grid { grid-template-columns: 1fr; }
   .info-logic-section dl > div { grid-template-columns: 1fr; gap: 5px; }
   .notification-status-grid { grid-template-columns: 1fr; }
   .runtime-card-wide { grid-column: auto; }
