@@ -333,7 +333,6 @@ def test_production_agent_runtime_is_pure_and_loads_runtime_transports(
     )
 
     assert runtime.claude_adapter is not None
-    assert runtime.claude_adapter.active_proxy_process_count == 0
     assert {
         server.name for server in runtime.claude_adapter._service_mcp_servers or ()
     } == {"agent_cli", "memory_connector"}

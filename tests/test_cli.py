@@ -894,7 +894,6 @@ def test_worker_constructor_never_refreshes_or_spawns_runtime(tmp_path, monkeypa
     assert worker.store.path == tmp_path / "worker.sqlite3"
     assert worker.agent_runtime is not None
     assert worker.agent_runtime.claude_adapter is not None
-    assert worker.agent_runtime.claude_adapter.active_proxy_process_count == 0
     orchestrator = worker._agent_orchestrator()
     assert orchestrator.consumer.claude_adapter is worker.agent_runtime.claude_adapter
     assert orchestrator.audit.claude_adapter is worker.agent_runtime.claude_adapter

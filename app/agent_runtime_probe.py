@@ -225,32 +225,29 @@ class AgentRuntimeProbe:
             config=self._config,
             claude_bin=self._claude_bin,
         )
-        try:
-            failure, events = self._run_one_claude_probe(
-                adapter=adapter,
+        failure, events = self._run_one_claude_probe(
+            adapter=adapter,
+            route=route,
+            prompt=_PROBE_PROMPT,
+            policy=ClaudeCommandPolicy.no_tools(),
+        )
+        if failure is not None:
+            return _snapshot(
                 route=route,
-                prompt=_PROBE_PROMPT,
-                policy=ClaudeCommandPolicy.no_tools(),
+                checked_at=checked_at,
+                expires_at=expires_at,
+                failure=failure,
             )
-            if failure is not None:
-                return _snapshot(
-                    route=route,
-                    checked_at=checked_at,
-                    expires_at=expires_at,
-                    failure=failure,
-                )
-            if not _claude_probe_grammar_valid(events):
-                return _snapshot(
-                    route=route,
-                    checked_at=checked_at,
-                    expires_at=expires_at,
-                    failure=_probe_failure(
-                        "runtime_probe_grammar_invalid",
-                        "Runtime probe normalized grammar is invalid.",
-                    ),
-                )
-        finally:
-            adapter._mcp_proxy.close()
+        if not _claude_probe_grammar_valid(events):
+            return _snapshot(
+                route=route,
+                checked_at=checked_at,
+                expires_at=expires_at,
+                failure=_probe_failure(
+                    "runtime_probe_grammar_invalid",
+                    "Runtime probe normalized grammar is invalid.",
+                ),
+            )
         return RuntimeCapabilitySnapshot(
             route_name=route.name,
             capabilities=_LOCAL_CAPABILITIES,

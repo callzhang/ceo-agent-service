@@ -100,7 +100,6 @@ def adapter(tmp_path, config, monkeypatch):
         claude_bin="claude-test",
     )
     yield runtime_adapter
-    runtime_adapter.close()
 
 
 @pytest.fixture
@@ -296,12 +295,9 @@ def test_claude_runtime_root_is_created_under_user_claude_directory(
         config=config,
         claude_bin="claude-test",
     )
-    try:
-        runtime_root = runtime_adapter._runtime_root
-        assert runtime_root == user_home / ".claude"
-        assert not tuple(workspace.glob("ceo-agent-claude-*"))
-    finally:
-        runtime_adapter.close()
+    runtime_root = runtime_adapter._runtime_root
+    assert runtime_root == user_home / ".claude"
+    assert not tuple(workspace.glob("ceo-agent-claude-*"))
 
 
 def test_claude_adapter_rejects_unconfigured_or_codex_route(adapter, config):
@@ -777,7 +773,7 @@ def test_terminal_proof_is_consumed_even_when_caller_parser_fails(adapter):
         )
 
 
-def test_mcp_transport_env_is_exact_and_secrets_stay_out_of_files(
+def test_mcp_secrets_stay_out_of_the_command_and_environment_and_leave_with_the_invocation(
     adapter, route, tmp_path, monkeypatch
 ):
     manifest = tmp_path / "service-mcp.json"
@@ -813,22 +809,25 @@ def test_mcp_transport_env_is_exact_and_secrets_stay_out_of_files(
     child_env = adapter.build_env(route, command=command)
     mcp_path = Path(command[command.index("--mcp-config") + 1])
     settings_path = Path(command[command.index("--settings") + 1])
-    serialized = "\n".join(
-        [
-            *command,
-            mcp_path.read_text(),
-            settings_path.read_text(),
-        ]
-    )
+    command_line = "\n".join([*command, settings_path.read_text()])
 
+    # Derek, 2026-09-17: no local proxy. A server's configured credential is
+    # handed to Claude as that server's header in this invocation's MCP config;
+    # it never reaches the command line or the child's environment, and the
+    # config file goes away with the invocation.
     assert "CONNECTOR_API_KEY" not in child_env
     assert "MEMORY_AUTH_TYPE" not in child_env
     assert "FOREIGN_API_KEY" not in child_env
-    assert "raw-memory-secret" not in serialized
-    assert "raw-auth-secret" not in serialized
-    assert "raw-foreign-secret" not in serialized
-    assert "CONNECTOR_API_KEY" not in serialized
-    assert "MEMORY_AUTH_TYPE" not in serialized
+    for secret in ("raw-memory-secret", "raw-auth-secret", "raw-foreign-secret"):
+        assert secret not in command_line
+        assert secret not in "\n".join(child_env.values())
+    headers = json.loads(mcp_path.read_text())["mcpServers"]["memory_connector"]["headers"]
+    assert headers == {
+        "Authorization": "Bearer raw-memory-secret",
+        "X-Memory-Auth": "raw-auth-secret",
+    }
+    adapter.finish_invocation(command)
+    assert not mcp_path.exists()
 
 
 def test_normalized_tool_events_never_retain_raw_arguments_or_results(normalizer):
@@ -905,7 +904,7 @@ def test_environment_backed_mcp_args_fail_closed_before_serialization(
     )
 
 
-def test_proxy_lifecycle_finishes_and_executor_exception_cleans_up(
+def test_invocation_files_are_removed_when_it_finishes_or_its_executor_fails(
     adapter, route, tmp_path, monkeypatch
 ):
     manifest = tmp_path / "service-mcp.json"
@@ -927,23 +926,22 @@ def test_proxy_lifecycle_finishes_and_executor_exception_cleans_up(
         mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
         assert set(mcp["mcpServers"]) == {"memory_connector"}
         assert all(path.exists() for path in (settings_path, mcp_path))
-        assert adapter.active_proxy_process_count == 1
         adapter.finish_invocation(command)
-        assert adapter.active_proxy_process_count == 0
         assert not any(path.exists() for path in (settings_path, mcp_path))
 
     command = adapter.build_command(
         route=route, session_id=None, max_turns=2, policy=policy
     )
+    settings_path = Path(command[command.index("--settings") + 1])
     with pytest.raises(RuntimeError, match="executor failed"):
         adapter.execute(
             command,
             lambda _command: (_ for _ in ()).throw(RuntimeError("executor failed")),
         )
-    assert adapter.active_proxy_process_count == 0
+    assert not settings_path.exists()
 
 
-def test_invocation_build_failure_rolls_back_proxy_and_all_artifacts(
+def test_invocation_build_failure_rolls_back_all_artifacts(
     adapter, route, tmp_path, monkeypatch
 ):
     manifest = tmp_path / "service-mcp.json"
@@ -970,12 +968,11 @@ def test_invocation_build_failure_rolls_back_proxy_and_all_artifacts(
             policy=ClaudeCommandPolicy.normal(),
         )
 
-    assert adapter.active_proxy_process_count == 0
     assert list(adapter._runtime_root.glob("ceo-agent-service-settings-*.json")) == []
     assert list(adapter._runtime_root.glob("ceo-agent-service-mcp-*.json")) == []
 
 
-def test_terminal_parse_closes_invocation_proxy(adapter, route, tmp_path, monkeypatch):
+def test_terminal_parse_removes_invocation_files(adapter, route, tmp_path, monkeypatch):
     manifest = tmp_path / "service-mcp.json"
     manifest.write_text(
         json.dumps(
@@ -1002,10 +999,11 @@ def test_terminal_parse_closes_invocation_proxy(adapter, route, tmp_path, monkey
         )
         == '{"ok":true}'
     )
-    assert adapter.active_proxy_process_count == 0
+    mcp_path = Path(command[command.index("--mcp-config") + 1])
+    assert not mcp_path.exists()
 
 
-def test_terminal_event_failure_closes_proxy_and_unlinks_artifacts(
+def test_terminal_event_failure_unlinks_artifacts(
     adapter, route, tmp_path, monkeypatch
 ):
     manifest = tmp_path / "service-mcp.json"
@@ -1029,7 +1027,6 @@ def test_terminal_event_failure_closes_proxy_and_unlinks_artifacts(
     with pytest.raises(ClaudeEventPolicyError, match="claude_init_missing"):
         normalizer.normalize_event(FINAL_RESULT)
 
-    assert adapter.active_proxy_process_count == 0
     assert not any(path.exists() for path in (settings_path, mcp_path))
 
 
@@ -1046,7 +1043,6 @@ def oauth_adapter(tmp_path, oauth_config):
         claude_bin="claude-test",
     )
     yield runtime_adapter
-    runtime_adapter._mcp_proxy.close()
 
 
 def test_claude_oauth_command_defaults_to_sonnet_medium_without_bare(
@@ -1279,3 +1275,46 @@ def test_a_successful_result_is_never_read_for_failure_markers(adapter):
     failure = adapter.classify_failure(stdout, "", 1)
 
     assert failure.code == "claude_runtime_unclassified"
+
+
+
+def test_service_mcp_servers_are_connected_directly(adapter, route, tmp_path, monkeypatch):
+    """Seen live: memory_connector behind a 127.0.0.1 proxy failed Claude's OAuth
+    check, 'Protected resource https://memory.preseen.ai/mcp/ does not match
+    expected http://127.0.0.1:65159/mcp', on every Claude turn."""
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "memory_connector": {"url": "https://memory.preseen.ai/mcp/"},
+                    "keyed": {
+                        "url": "https://keyed.example.test/mcp",
+                        "bearer_token_env_var": "KEYED_TOKEN",
+                    },
+                    "local": {"command": "/opt/local-mcp", "args": ["--serve"]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+    monkeypatch.setenv("KEYED_TOKEN", "keyed-secret")
+
+    command = adapter.build_command(
+        route=route, session_id=None, max_turns=2, policy=ClaudeCommandPolicy.normal()
+    )
+    servers = json.loads(
+        Path(command[command.index("--mcp-config") + 1]).read_text(encoding="utf-8")
+    )["mcpServers"]
+
+    assert servers["memory_connector"] == {
+        "type": "http", "url": "https://memory.preseen.ai/mcp/"
+    }
+    assert servers["keyed"] == {
+        "type": "http",
+        "url": "https://keyed.example.test/mcp",
+        "headers": {"Authorization": "Bearer keyed-secret"},
+    }
+    assert servers["local"] == {"type": "stdio", "command": "/opt/local-mcp", "args": ["--serve"]}
+    adapter.finish_invocation(command)

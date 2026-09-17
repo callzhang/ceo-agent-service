@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
@@ -23,7 +23,6 @@ from app.agent_runtime_contracts import (
     RuntimeKind,
     RuntimeRoute,
 )
-from app.claude_mcp_proxy import ClaudeMcpCredentialProxyManager
 from app.codex_runtime_adapter import _safe_child_environment
 from app.service_codex_config import ServiceMcpServer, load_service_mcp_servers
 
@@ -145,6 +144,41 @@ def require_claude_session_id(session_id: str) -> str:
 _ARTIFACT_PREFIX = "ceo-agent-service"
 
 
+def _mcp_transport(
+    server: ServiceMcpServer, source_env: Mapping[str, str]
+) -> dict[str, object]:
+    """Describe one service MCP server to Claude the way it is configured.
+
+    Servers are connected directly. Claude-side OAuth (memory_connector) checks
+    that the protected resource named in the server's metadata is the URL it
+    connected to, so anything in between breaks it.
+    """
+    if server.args_env is not None:
+        raise ValueError("Claude MCP args_env is not supported")
+    if server.command is not None:
+        return {"type": "stdio", "command": server.command, "args": list(server.args)}
+    if server.url is None:
+        raise ValueError("Claude MCP transport is incomplete")
+    headers = dict(server.http_headers)
+    for header, env_name in server.env_http_headers:
+        headers[header] = _required_mcp_secret(source_env, env_name)
+    if server.bearer_token_env_var is not None:
+        headers["Authorization"] = "Bearer " + _required_mcp_secret(
+            source_env, server.bearer_token_env_var
+        )
+    transport: dict[str, object] = {"type": "http", "url": server.url}
+    if headers:
+        transport["headers"] = headers
+    return transport
+
+
+def _required_mcp_secret(source_env: Mapping[str, str], name: str) -> str:
+    value = source_env.get(name)
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"Claude MCP credential {name} is not configured")
+    return value
+
+
 class ClaudeRuntimeAdapter:
     """Build isolated non-interactive Claude invocations for one route."""
 
@@ -163,20 +197,11 @@ class ClaudeRuntimeAdapter:
         claude_home = Path.home() / ".claude"
         claude_home.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._runtime_root = claude_home
-        self._mcp_proxy = ClaudeMcpCredentialProxyManager(root=self._runtime_root)
         self._lock = RLock()
         self._pending_proofs: dict[object, tuple[ClaudeTerminalProof, str]] = {}
         self._invocations_by_mcp_path: dict[str, str] = {}
         self._invocations_by_owner: dict[object, str] = {}
         self._artifact_paths: dict[str, tuple[Path, ...]] = {}
-
-    @property
-    def active_proxy_process_count(self) -> int:
-        return self._mcp_proxy.active_process_count
-
-    def close(self) -> None:
-        """Release the MCP proxy. The shared runtime dir is never torn down."""
-        self._mcp_proxy.close()
 
     def build_command(
         self,
@@ -329,7 +354,6 @@ class ClaudeRuntimeAdapter:
         self._finish_invocation_id(invocation_id)
 
     def _finish_invocation_id(self, invocation_id: str) -> None:
-        self._mcp_proxy.close_invocation(invocation_id)
         with self._lock:
             stale_paths = [
                 path
@@ -494,9 +518,7 @@ class ClaudeRuntimeAdapter:
         mcp_path = root / f"{_ARTIFACT_PREFIX}-mcp-{invocation_id}.json"
         artifacts = (settings_path, mcp_path)
         try:
-            transports = self._mcp_transports(
-                invocation_id=invocation_id
-            ) if policy.tools_enabled else {}
+            transports = self._mcp_transports() if policy.tools_enabled else {}
             settings_path.write_text(
                 json.dumps(
                     {
@@ -517,7 +539,6 @@ class ClaudeRuntimeAdapter:
                 encoding="utf-8",
             )
         except Exception:
-            self._mcp_proxy.close_invocation(invocation_id)
             for path in artifacts:
                 path.unlink(missing_ok=True)
             raise
@@ -526,20 +547,13 @@ class ClaudeRuntimeAdapter:
             self._artifact_paths[invocation_id] = artifacts
         return settings_path, mcp_path
 
-    def _mcp_transports(self, *, invocation_id: str) -> dict[str, dict[str, object]]:
+    def _mcp_transports(self) -> dict[str, dict[str, object]]:
         configured = (
             self._service_mcp_servers
             if self._service_mcp_servers is not None
             else load_service_mcp_servers(env=os.environ)
         )
-        return {
-            server.name: self._mcp_proxy.prepare(
-                server,
-                invocation_id=invocation_id,
-                source_env=os.environ,
-            )
-            for server in configured
-        }
+        return {server.name: _mcp_transport(server, os.environ) for server in configured}
 
     _CREDENTIAL_MODES = {
         "claude_oauth": CredentialMode.LOCAL_OAUTH,
