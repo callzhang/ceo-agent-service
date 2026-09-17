@@ -119,6 +119,70 @@ def select_candidates(
     ]
 
 
+def search_candidates(
+    source: object,
+    *,
+    account_id: str,
+    query: str,
+    targeted_category: str,
+    classified_identities: frozenset[str],
+    limit: int,
+    folder: str = "INBOX",
+) -> list[tuple[LabelCandidate, Mapping[str, object]]]:
+    """Find candidates with Gmail's own search, newest first, over a readonly select.
+
+    Gmail already sorts mail into purchases, social and so on; `X-GM-RAW` asks
+    for that directly instead of guessing from subjects. Each hit is fetched once
+    through the readonly adapter, and that fetched record is what the Agent reads.
+    """
+
+    from app.email_classifier_scan import _provider_locator, _stable_message_identity
+    from app.email_imap_mailbox import encode_imap_mailbox_argument
+    from app.email_imap_readonly import _require_ok, _search_uids, _uidvalidity
+
+    session = source.session
+    status, _ = session.select(encode_imap_mailbox_argument(folder), readonly=True)
+    _require_ok(status, "IMAP readonly select failed")
+    uidvalidity = _uidvalidity(session.response("UIDVALIDITY"))
+    quoted = '"' + query.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    status, data = session.uid("SEARCH", "X-GM-RAW", quoted)
+    _require_ok(status, "IMAP X-GM-RAW search failed")
+    uids = sorted((int(uid) for uid in _search_uids(data)), reverse=True)
+    chosen: list[tuple[LabelCandidate, Mapping[str, object]]] = []
+    for uid in uids:
+        if len(chosen) >= limit:
+            break
+        batch = source.fetch_uid_batch(
+            folder, cursor_uidvalidity=uidvalidity, last_seen_uid=uid - 1, limit=1, unread_only=False
+        )
+        message = next((item for item in batch.messages if int(item.get("uid") or 0) == uid), None)
+        if int(batch.uidvalidity) != uidvalidity or message is None:
+            continue
+        locator = _provider_locator(message)
+        identity = _stable_message_identity(message, locator)
+        if identity in classified_identities:
+            continue
+        sender_value = message.get("from") or {}
+        chosen.append(
+            (
+                LabelCandidate(
+                    account_id=account_id,
+                    folder=folder,
+                    uidvalidity=uidvalidity,
+                    uid=uid,
+                    stable_message_identity=identity,
+                    subject=str(message.get("subject") or ""),
+                    sender=str(sender_value.get("email") or "")
+                    if isinstance(sender_value, Mapping)
+                    else str(sender_value),
+                    targeted_category=targeted_category,
+                ),
+                message,
+            )
+        )
+    return chosen
+
+
 def label_only_action_plan(*, classification_id: int, account_id: str, result: object, config_version: str, created_at: datetime):
     """An ActionPlan with no actions: the label is recorded and nothing executes."""
 
@@ -333,6 +397,9 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--limit-per-category", type=int, default=20)
     parser.add_argument("--preview", action="store_true", help="list candidates only; no Agent calls, no writes")
     parser.add_argument("--service-pid", type=int, required=False, help="pid of the running service, to reuse its loaded classifier Skill")
+    parser.add_argument("--account", help="with --gmail-query: the account to search; it may be disabled")
+    parser.add_argument("--gmail-query", help="Gmail search (X-GM-RAW), e.g. category:purchases")
+    parser.add_argument("--target", default="", help="with --gmail-query: the category this search aims at, for the report")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     load_env_file()
@@ -347,12 +414,31 @@ def main(argv: Iterable[str] | None = None) -> int:
         identity
         for identity in _all_classified_identities(email_store)
     )
-    candidates = select_candidates(
-        cache,
-        classified_identities=classified,
-        categories=args.categories,
-        limit_per_category=args.limit_per_category,
-    )
+    source_factory = _build_email_source_factory(SimpleNamespace())
+    fetched: dict[str, Mapping[str, object]] = {}
+    search_source = None
+    if args.gmail_query:
+        account = email_store.get_account(args.account or "")
+        if account is None:
+            parser.error("--gmail-query needs --account naming a configured account")
+        search_source = source_factory(account)
+        found = search_candidates(
+            search_source,
+            account_id=str(account["account_id"]),
+            query=args.gmail_query,
+            targeted_category=args.target,
+            classified_identities=classified,
+            limit=args.limit_per_category,
+        )
+        candidates = [candidate for candidate, _message in found]
+        fetched = {candidate.stable_message_identity: message for candidate, message in found}
+    else:
+        candidates = select_candidates(
+            cache,
+            classified_identities=classified,
+            categories=args.categories,
+            limit_per_category=args.limit_per_category,
+        )
     if args.preview:
         for candidate in candidates:
             print(json.dumps({
@@ -362,6 +448,8 @@ def main(argv: Iterable[str] | None = None) -> int:
                 "sender": candidate.sender,
             }, ensure_ascii=False))
         print(json.dumps({"candidates": len(candidates)}))
+        if search_source is not None:
+            search_source.logout()
         return 0
 
     if not args.service_pid:
@@ -384,7 +472,6 @@ def main(argv: Iterable[str] | None = None) -> int:
         runtime_skill_snapshot=snapshot,
         skill_name="ceo-email-classifier",
     )
-    source_factory = _build_email_source_factory(SimpleNamespace())
     contexts: dict[str, object] = {}
     counts: dict[str, int] = {}
     for candidate in candidates:
@@ -392,6 +479,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         context = contexts.setdefault(candidate.account_id, _scan_context(email_store, candidate.account_id))
 
         def read_current_message(item: LabelCandidate, account=account) -> Mapping[str, object]:
+            if item.stable_message_identity in fetched:
+                return fetched[item.stable_message_identity]
             return _reread_historical_candidate_message(source_factory, account, item)
 
         try:
@@ -407,6 +496,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         key = f"{outcome['outcome']}:{outcome.get('category') or ''}"
         counts[key] = counts.get(key, 0) + 1
         print(json.dumps(outcome, ensure_ascii=False))
+    if search_source is not None:
+        search_source.logout()
     print(json.dumps({"summary": counts}, ensure_ascii=False))
     return 0
 

@@ -175,3 +175,58 @@ def test_an_uncertain_result_is_not_kept(tmp_path):
     assert outcome["outcome"] == "not_certain"
     with sqlite3.connect(database) as db:
         assert db.execute("select count(*) from email_classifications").fetchone()[0] == 0
+
+
+class _SearchSession:
+    def __init__(self):
+        self.calls = []
+
+    def select(self, mailbox, readonly=False):
+        self.calls.append(("select", mailbox, readonly))
+        return "OK", [b"3"]
+
+    def response(self, name):
+        return "OK", [b"42"]
+
+    def uid(self, command, *args):
+        self.calls.append(("uid", command, *args))
+        return "OK", [b"5 7 9"]
+
+
+class _SearchSource:
+    def __init__(self):
+        self.session = _SearchSession()
+
+    def fetch_uid_batch(self, folder, *, cursor_uidvalidity, last_seen_uid, limit, unread_only):
+        uid = last_seen_uid + 1
+        message = {
+            **_message(),
+            "uid": uid,
+            "messageId": f"<m{uid}@example.com>",
+            "stableMessageIdentity": "",
+        }
+        return SimpleNamespace(uidvalidity=cursor_uidvalidity, messages=[message])
+
+
+def test_gmail_search_takes_newest_unclassified_hits_over_a_readonly_select():
+    from app.email_training_labeler import search_candidates
+
+    source = _SearchSource()
+    seen = EmailProviderLocator(
+        account_id="account-1", folder="INBOX", uidvalidity=42, uid=9,
+        rfc_message_id="<m9@example.com>",
+    ).stable_message_identity
+
+    found = search_candidates(
+        source,
+        account_id="account-1",
+        query="category:purchases",
+        targeted_category="shopping",
+        classified_identities=frozenset({seen}),
+        limit=1,
+    )
+
+    assert ("select", "INBOX", True) in source.session.calls
+    assert ("uid", "SEARCH", "X-GM-RAW", '"category:purchases"') in source.session.calls
+    assert [(candidate.uid, candidate.uidvalidity) for candidate, _ in found] == [(7, 42)]
+    assert found[0][1]["uid"] == 7
