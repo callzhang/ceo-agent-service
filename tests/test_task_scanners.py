@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.agent_cron.commands import (
     SERVICE_COMMAND_OPTIONS,
@@ -1349,3 +1349,61 @@ def test_scan_pending_oa_approvals_records_task_read_failures(tmp_path):
     assert json.loads(state["cursor_json"])["read_failure_process_instance_ids"] == [
         "proc-1"
     ]
+
+
+def test_scan_pending_oa_approvals_revisits_an_untouched_approval_the_next_day(tmp_path):
+    """Production 2026-09-17: four approvals sat in Derek's list for weeks.
+
+    A turn had ended without a decision, so nothing changed their revision and
+    the scanner never offered them again, while DingTalk still showed them
+    waiting on him. Same day is still deduplicated; a new day is not.
+    """
+
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [DwsOaApprovalCandidate(process_instance_id="proc-1", title="付款申请")]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": "task-1",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {
+                "result": {
+                    "operationRecords": [
+                        {
+                            "operationType": "ADD_REMARK",
+                            "operationTime": 1,
+                            "userId": "requester",
+                        }
+                    ]
+                }
+            }
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    first = datetime.fromisoformat("2026-07-31T19:00:00+08:00")
+
+    assert scan_pending_oa_approvals(store, dws, now=first) == 1
+    assert scan_pending_oa_approvals(store, dws, now=first) == 0
+    assert (
+        scan_pending_oa_approvals(
+            store, dws, now=first + timedelta(days=1)
+        )
+        == 1
+    )

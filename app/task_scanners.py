@@ -609,6 +609,7 @@ def scan_pending_oa_approvals(
             current_user_id = ""
 
     previous_revisions: dict[str, str] = {}
+    previous_queued_days: dict[str, str] = {}
     previous_state = store.get_daily_scan_state(OA_PENDING_SCANNER)
     if previous_state is not None:
         try:
@@ -619,6 +620,12 @@ def scan_pending_oa_approvals(
                     str(process_id): str(revision)
                     for process_id, revision in revisions.items()
                 }
+            queued_days = cursor.get("queued_days", {})
+            if isinstance(queued_days, dict):
+                previous_queued_days = {
+                    str(process_id): str(day)
+                    for process_id, day in queued_days.items()
+                }
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
 
@@ -628,6 +635,7 @@ def scan_pending_oa_approvals(
     seen_process_ids: set[str] = set()
     queued_process_ids: list[str] = []
     process_revisions: dict[str, str] = {}
+    queued_days: dict[str, str] = dict(previous_queued_days)
     for approval in approvals:
         process_instance_id = str(
             getattr(approval, "process_instance_id", "") or ""
@@ -671,8 +679,17 @@ def scan_pending_oa_approvals(
         if not revision:
             continue
         process_revisions[process_instance_id] = revision
-        if previous_revisions.get(process_instance_id) == revision:
+        # An unchanged approval is normally skipped, but it is still waiting on
+        # the principal: a turn that ended without a decision (a comment, or a
+        # service-side result that never reached DingTalk) leaves it pending
+        # forever, because nothing else will change its revision. Look at it
+        # again once a day so it cannot fall out of the pipeline silently.
+        if (
+            previous_revisions.get(process_instance_id) == revision
+            and previous_queued_days.get(process_instance_id) == scan_date
+        ):
             continue
+        queued_days[process_instance_id] = scan_date
         title = str(getattr(approval, "title", "") or "").strip()
         process_name = str(getattr(approval, "process_name", "") or "").strip()
         label = title or process_name or process_instance_id
@@ -682,7 +699,10 @@ def scan_pending_oa_approvals(
         )
         trigger = DingTalkMessage(
             open_conversation_id="oa_pending_scan",
-            open_message_id=f"oa-pending:{process_instance_id}:{revision}",
+            # The day is part of the trigger identity so a daily revisit is a
+            # new input for the same business object: without it the id repeats
+            # and the enqueue is deduplicated away.
+            open_message_id=f"oa-pending:{process_instance_id}:{revision}:{scan_date}",
             conversation_title="审批待办",
             single_chat=True,
             sender_name="Derek OA",
@@ -744,6 +764,7 @@ def scan_pending_oa_approvals(
                 "seen_process_instance_ids": sorted(seen_process_ids),
                 "queued_process_instance_ids": queued_process_ids,
                 "process_revisions": process_revisions,
+                "queued_days": queued_days,
                 "skipped_missing_task_id_process_instance_ids": skipped_missing_task_id,
                 "read_failure_process_instance_ids": read_failures,
                 "reconciliation_read_failure_process_instance_ids": (
