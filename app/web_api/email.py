@@ -1841,6 +1841,16 @@ def register_email_routes(
                     "finished_at": str(row.get("finished_at") or ""),
                     # Written by this service's own training subprocess.
                     "reason": str(row.get("reason") or "")[:300],
+                    # The families the owner asked this run to train.
+                    "model_families": [
+                        str(item)
+                        for item in (
+                            (row.get("training_selection") or {}).get("model_families")
+                            if isinstance(row.get("training_selection"), dict)
+                            else None
+                        )
+                        or []
+                    ],
                 }
             )
         rows.sort(key=lambda row: str(row["started_at"]), reverse=True)

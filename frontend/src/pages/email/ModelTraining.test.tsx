@@ -626,7 +626,7 @@ it("lists model versions and failed runs newest first", () => {
       { ...learning.staged_models[0], model_id: "email-embedding-mlp-newest", trained_at: "2026-09-17T08:00:00Z" },
     ],
     training_runs_without_model: [
-      { run_id: "run-middle", status: "failed", started_at: "2026-09-16T08:00:00Z", finished_at: "2026-09-16T08:01:00Z", reason: "boom" },
+      { run_id: "run-middle", status: "failed", started_at: "2026-09-16T08:00:00Z", finished_at: "2026-09-16T08:01:00Z", reason: "boom", model_families: ["embedding-mlp", "fasttext"] },
     ],
   };
   render(
@@ -636,4 +636,17 @@ it("lists model versions and failed runs newest first", () => {
   const table = screen.getByRole("table", { name: "模型版本" });
   const ids = Array.from(table.querySelectorAll("tbody tr td:first-child")).map((cell) => cell.getAttribute("title"));
   expect(ids).toEqual(["email-embedding-mlp-newest", "run-middle", "email-embedding-mlp-older"]);
+  // A failed run shows the families it was asked to train.
+  const runRow = Array.from(table.querySelectorAll("tbody tr")).find((row) => row.querySelector("td")?.getAttribute("title") === "run-middle");
+  expect(runRow?.querySelectorAll("td")[1]).toHaveTextContent("embedding-mlp、fasttext");
+});
+
+
+it("offers the threshold editor once, from the header", () => {
+  render(
+    <ModelTraining learning={learning} configs={[]} reload={async () => learning} runtimeVerified onRuntimeUnverified={vi.fn()} onBusy={vi.fn()} />,
+  );
+
+  expect(screen.getAllByRole("button", { name: "晋升设置" })).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "查看与编辑门槛" })).not.toBeInTheDocument();
 });

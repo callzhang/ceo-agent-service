@@ -104,9 +104,9 @@ export function ModelTraining({
         kind: "run" as const,
         model: {
           model_id: run.run_id,
-          // A run that produced nothing has no family and no model status of
-          // its own; its own status column says what happened to it.
-          model_family: "",
+          // The families the run was asked to train; its status column says
+          // what happened to it.
+          model_family: (run.model_families || []).join("、"),
           status: run.status,
           trained_at: run.started_at,
         },
@@ -442,14 +442,6 @@ export function ModelTraining({
           ) : (
             <p role="alert">晋升配置暂不可用，请刷新重试。</p>
           )}
-          <button
-            type="button"
-            className="compact-button"
-            onClick={() => setPromotionOpen(true)}
-            disabled={!learning.promotion_gate}
-          >
-            查看与编辑门槛
-          </button>
         </aside>
       </div>
       {!!learning.registry_issues?.length && (
@@ -529,7 +521,7 @@ export function ModelTraining({
                     </td>
                     <td>
                       {item.kind === "run"
-                        ? "—"
+                        ? item.model.model_family || "—"
                         : item.model.model_family || "未提供"}
                     </td>
                     <td>
