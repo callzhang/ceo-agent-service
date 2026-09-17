@@ -5151,6 +5151,7 @@ class AutoReplyStore:
         *,
         source: str,
         parent_revision_id: int | None = None,
+        require_managed_marker: bool = True,
     ) -> ManagedSkillRevision:
         if not isinstance(source, str) or not source.strip():
             raise ValueError("managed Skill revision source must be nonempty")
@@ -5160,7 +5161,11 @@ class AutoReplyStore:
             ).fetchone()
             if skill_row is None:
                 raise ValueError("managed Skill does not exist")
-            sha256 = validate_managed_skill_content(str(skill_row["name"]), content)
+            sha256 = validate_managed_skill_content(
+                str(skill_row["name"]),
+                content,
+                require_managed_marker=require_managed_marker,
+            )
             latest_row = db.execute(
                 """
                 select id, revision_number from managed_skill_revisions

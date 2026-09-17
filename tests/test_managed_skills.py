@@ -1060,3 +1060,49 @@ def test_a_foreign_file_under_a_managed_name_does_not_hide_other_edits(
     assert str(foreign) in exc_info.value.problems[0]
     assert len(store.list_managed_skill_revisions(edited_skill.id)) == before + 1
     assert foreign.read_text(encoding="utf-8").endswith("Body\n")
+
+
+def test_capture_versions_a_runtime_only_skill_from_its_file(tmp_path):
+    """The OA approval Skill lives only in the runtime tree and had no history.
+
+    Repository-managed Skills get their baseline from the import, so capture
+    skips one with no revisions.  A runtime-only Skill has no baseline anywhere
+    else: its file is the first revision, and without recording it every edit
+    was an untracked overwrite.
+    A runtime-only Skill must NOT carry the ownership marker: the operation
+    Skill catalog rejects a marked file, and the scheduled tasks reference this
+    one as an operation Skill.
+    """
+
+    store = store_module.AutoReplyStore(tmp_path / "skills.sqlite3")
+    root = tmp_path / "skills"
+    name = managed_skills_module.RUNTIME_ONLY_VERSIONED_SKILL_NAMES[0]
+    skill_dir = root / name
+    skill_dir.mkdir(parents=True)
+    path = skill_dir / "SKILL.md"
+    path.write_text(
+        f"---\nname: {name}\ndescription: 钉钉 OA 审批工作流\n---\n\n第一版\n",
+        encoding="utf-8",
+    )
+
+    [first] = managed_skills_module.capture_runtime_skill_edits(
+        store, skills_root=root
+    )
+    assert first.name == name
+    assert first.revision_number == 1
+
+    # An unchanged file is not captured again.
+    assert managed_skills_module.capture_runtime_skill_edits(
+        store, skills_root=root
+    ) == ()
+
+    path.write_text(
+        f"---\nname: {name}\ndescription: 钉钉 OA 审批工作流\n---\n\n第二版：补充退回执行步骤\n",
+        encoding="utf-8",
+    )
+
+    [second] = managed_skills_module.capture_runtime_skill_edits(
+        store, skills_root=root
+    )
+    assert second.revision_number == 2
+    assert second.sha256 != first.sha256

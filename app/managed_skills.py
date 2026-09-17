@@ -132,6 +132,16 @@ REPOSITORY_MANAGED_SKILL_NAMES = (
     MINUTES_SYNC_SKILL_NAME,
 )
 
+# Skills the service depends on that live only in the runtime tree: they have no
+# repository baseline to import from, so the file on disk is their first
+# revision. Without this they were edited in place with no history at all.
+RUNTIME_ONLY_VERSIONED_SKILL_NAMES = ("dingtalk-oa-approval",)
+
+VERSIONED_RUNTIME_SKILL_NAMES = (
+    *REPOSITORY_MANAGED_SKILL_NAMES,
+    *RUNTIME_ONLY_VERSIONED_SKILL_NAMES,
+)
+
 
 def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
     """Return only the repository baselines owned by this service.
@@ -484,36 +494,55 @@ def capture_runtime_skill_edits(
     path would discard a change that was already live.
 
     A file whose content still matches the skill's latest revision is untouched.
-    A Skill that has no revisions yet, or no file on disk, is skipped rather than
-    invented.
+    A repository-managed Skill with no revisions yet, or no file on disk, is
+    skipped rather than invented: its baseline belongs to the import.
+
+    A runtime-only Skill has no baseline anywhere else, so its file IS the first
+    revision and is recorded as one.
     """
     root = Path(
         skills_root or (Path.home() / ".agents" / "skills")
     ).expanduser()
     captured: list[RuntimeSkillEditCapture] = []
     problems: list[str] = []
-    for name in REPOSITORY_MANAGED_SKILL_NAMES:
+    for name in VERSIONED_RUNTIME_SKILL_NAMES:
+        runtime_only = name in RUNTIME_ONLY_VERSIONED_SKILL_NAMES
         path = root / name / "SKILL.md"
         if not path.is_file():
             continue
         skill = store.get_managed_skill_by_name(name)
         if skill is None:
-            continue
+            if not runtime_only:
+                continue
+            try:
+                skill = store.create_managed_skill(name, name)
+            except Exception as exc:  # noqa: BLE001 - reported per Skill below
+                problems.append(f"{name} ({path}): {exc}")
+                continue
         revisions = store.list_managed_skill_revisions(skill.id)
-        if not revisions:
+        if not revisions and not runtime_only:
             continue
         # One unreadable or foreign file must not hide edits to the others, so
         # each Skill is attempted and every failure is named at the end.
         try:
             content = path.read_text(encoding="utf-8")
-            latest = max(revisions, key=lambda revision: revision.revision_number)
-            if validate_managed_skill_content(name, content) == latest.sha256:
-                continue
+            digest = validate_managed_skill_content(
+                name, content, require_managed_marker=not runtime_only
+            )
+            if revisions:
+                latest = max(
+                    revisions, key=lambda revision: revision.revision_number
+                )
+                if digest == latest.sha256:
+                    continue
         except (OSError, UnicodeError, ManagedSkillValidationError) as exc:
             problems.append(f"{name} ({path}): {exc}")
             continue
         revision = store.create_managed_skill_revision(
-            skill.id, content, source=RUNTIME_EDIT_SOURCE
+            skill.id,
+            content,
+            source=RUNTIME_EDIT_SOURCE,
+            require_managed_marker=not runtime_only,
         )
         store.record_managed_skill_export(
             revision.id, sha256=revision.sha256, path=str(path)
@@ -822,8 +851,16 @@ def _process_descends_from(pid: int, ancestor_pid: int) -> bool:
     return False
 
 
-def validate_managed_skill_content(name: str, content: str) -> str:
-    """Validate exact UTF-8 Skill text and return its exact-content SHA-256."""
+def validate_managed_skill_content(
+    name: str, content: str, *, require_managed_marker: bool = True
+) -> str:
+    """Validate exact UTF-8 Skill text and return its exact-content SHA-256.
+
+    A runtime-only Skill is versioned by this service but not owned by it: the
+    operation-Skill catalog rejects any file carrying the ownership marker, so
+    demanding one here would take the Skill away from the scheduled tasks that
+    reference it. Those Skills are validated on name and description alone.
+    """
     name = validate_managed_skill_name(name)
     if not isinstance(content, str):
         raise ManagedSkillValidationError("managed Skill content must be text")
@@ -843,7 +880,10 @@ def validate_managed_skill_content(name: str, content: str) -> str:
         raise ManagedSkillValidationError(str(exc)) from exc
     if declared_name != name:
         raise ManagedSkillValidationError("Skill name does not match managed Skill")
-    metadata = frontmatter.get("metadata")
-    if not isinstance(metadata, dict) or metadata.get("managed_by") != MANAGED_BY:
-        raise ManagedSkillValidationError("Skill missing metadata.managed_by marker")
+    if require_managed_marker:
+        metadata = frontmatter.get("metadata")
+        if not isinstance(metadata, dict) or metadata.get("managed_by") != MANAGED_BY:
+            raise ManagedSkillValidationError(
+                "Skill missing metadata.managed_by marker"
+            )
     return hashlib.sha256(encoded_content).hexdigest()
