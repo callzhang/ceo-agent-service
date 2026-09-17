@@ -518,16 +518,18 @@ def test_timeout_is_bounded_transport_failure(adapter):
     assert failure.failover_permitted is True
 
 
-def test_unknown_documented_event_shape_fails_closed(normalizer):
+def test_an_assistant_message_with_nothing_the_turn_uses_is_skipped(normalizer):
     normalizer.normalize_event(SYSTEM_INIT)
-    with pytest.raises(ClaudeEventPolicyError, match="claude_event_unrecognized"):
-        normalizer.normalize_event(
-            {
-                "type": "assistant",
-                "session_id": "claude-session-1",
-                "message": {"role": "assistant", "content": []},
-            }
-        )
+    assert normalizer.normalize_events(
+        {
+            "type": "assistant",
+            "session_id": "claude-session-1",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "server_tool_use", "id": "srv-1"}, {"type": "thinking"}],
+            },
+        }
+    ) == ()
 
 
 def test_normalizer_binds_resume_session_and_rejects_cross_session(adapter):
@@ -1047,13 +1049,11 @@ def test_subscription_rate_limit_event_produces_no_runtime_event(normalizer):
     )
 
 
-def test_rate_limit_event_still_requires_the_active_session(normalizer):
+def test_a_turn_event_from_another_session_is_still_rejected(normalizer):
     normalizer.normalize_event(SYSTEM_INIT)
 
     with pytest.raises(ClaudeEventPolicyError, match="claude_session_mismatch"):
-        normalizer.normalize_events(
-            {"type": "rate_limit_event", "session_id": "other-session"}
-        )
+        normalizer.normalize_events(ASSISTANT_TEXT | {"session_id": "other-session"})
 
 
 def test_rate_limit_event_before_session_init_is_accepted(normalizer):
@@ -1098,17 +1098,17 @@ def test_thinking_budget_notice_produces_no_runtime_event(normalizer):
     )
 
 
-def test_unknown_system_subtype_is_still_a_grammar_violation(normalizer):
+def test_an_event_kind_the_turn_does_not_use_is_skipped(normalizer):
+    """Seen live: every Agent turn on claude_oauth failed as
+    claude_event_unrecognized; the CLI streams kinds the turn never reads."""
     normalizer.normalize_event(SYSTEM_INIT)
 
-    with pytest.raises(ClaudeEventPolicyError, match="claude_event_unrecognized"):
-        normalizer.normalize_events(
-            {
-                "type": "system",
-                "subtype": "some_future_shape",
-                "session_id": "claude-session-1",
-            }
-        )
+    for event in (
+        {"type": "system", "subtype": "some_future_shape", "session_id": "claude-session-1"},
+        {"type": "system", "subtype": "status", "session_id": "claude-session-1"},
+        {"type": "stream_event", "session_id": "claude-session-1"},
+    ):
+        assert normalizer.normalize_events(event) == ()
 
 
 def test_unusable_credential_is_an_actionable_authentication_failure(adapter):

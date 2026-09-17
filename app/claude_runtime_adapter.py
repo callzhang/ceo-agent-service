@@ -33,12 +33,10 @@ _POLICY_SEAL = object()
 # extended-thinking budget notice raised by --effort.  Neither carries a turn
 # item, and the terminal result still decides the outcome, so both map to no
 # runtime event.  Every other event shape stays a grammar violation.
-_TELEMETRY_EVENTS = frozenset(
-    {
-        ("rate_limit_event", None),
-        ("system", "thinking_tokens"),
-    }
-)
+# The events a turn is read from. Everything else the CLI streams (telemetry,
+# status, hooks, new event kinds) is skipped, as the native CLI's own consumers
+# do: an event we do not use is not a reason to fail the turn.
+_TURN_EVENT_TYPES = frozenset({"assistant", "user", "result"})
 
 
 class ClaudeEventPolicyError(RuntimeError):
@@ -569,33 +567,23 @@ class ClaudeEventNormalizer:
             return (
                 {"type": RuntimeEventType.TURN_STARTED.value, "session_id": session_id},
             )
-        if (event_type, event.get("subtype")) in _TELEMETRY_EVENTS:
-            if self._init_seen:
-                self._require_active_session(session_id)
+        if event_type not in _TURN_EVENT_TYPES:
             return ()
         self._require_active_session(session_id)
         if event_type in {"assistant", "user"}:
             message = event.get("message")
-            if (
-                not isinstance(message, dict)
-                or message.get("role") != event_type
-                or not isinstance(message.get("content"), list)
-                or not message["content"]
-            ):
-                raise ClaudeEventPolicyError("claude_event_unrecognized")
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                return ()
             events: list[dict[str, object]] = []
-            for block in message["content"]:
-                if (
-                    event_type == "assistant"
-                    and isinstance(block, dict)
-                    and block.get("type") in {"thinking", "redacted_thinking"}
-                ):
-                    continue
-                events.append(
+            for block in content:
+                normalized = (
                     self._normalize_assistant_block(block)
                     if event_type == "assistant"
                     else self._normalize_user_block(block)
                 )
+                if normalized is not None:
+                    events.append(normalized)
             return tuple(events)
         if event_type == "result":
             raw = _validated_success_result(event)
@@ -615,7 +603,7 @@ class ClaudeEventNormalizer:
                     "result": raw,
                 },
             )
-        raise ClaudeEventPolicyError("claude_event_unrecognized")
+        return ()
 
     def finalize(self) -> None:
         if self._failed:
@@ -649,16 +637,18 @@ class ClaudeEventNormalizer:
         if session_id != self._session_id:
             raise ClaudeEventPolicyError("claude_session_mismatch")
 
-    def _normalize_assistant_block(self, block: object) -> dict[str, object]:
+    def _normalize_assistant_block(self, block: object) -> dict[str, object] | None:
         if not isinstance(block, dict):
-            raise ClaudeEventPolicyError("claude_event_unrecognized")
+            return None
         if block.get("type") == "text" and isinstance(block.get("text"), str):
             return {
                 "type": RuntimeEventType.ITEM_COMPLETED.value,
                 "item": {"type": "agent_message", "text": block["text"]},
             }
         if block.get("type") != "tool_use":
-            raise ClaudeEventPolicyError("claude_event_unrecognized")
+            # Thinking, server-side tools and new block kinds carry nothing the
+            # turn is read from.
+            return None
         call_id = _required_string(block.get("id"))
         tool_name = _required_string(block.get("name"))
         arguments = block.get("input")
@@ -697,9 +687,9 @@ class ClaudeEventNormalizer:
             "tool": tool_name,
         }
 
-    def _normalize_user_block(self, block: object) -> dict[str, object]:
+    def _normalize_user_block(self, block: object) -> dict[str, object] | None:
         if not isinstance(block, dict) or block.get("type") != "tool_result":
-            raise ClaudeEventPolicyError("claude_event_unrecognized")
+            return None
         call_id = _required_string(block.get("tool_use_id"))
         is_error = block.get("is_error", False)
         if call_id is None or not isinstance(is_error, bool):
