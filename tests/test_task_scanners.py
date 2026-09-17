@@ -905,7 +905,9 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     ]
     assert dws.task_reads == ["proc-1"]
     task = store.claim_reply_tasks(limit=1)[0]
-    assert task.conversation_id == "oa_pending_scan"
+    # One conversation per approval: a shared session let a later
+    # approval inherit an earlier one's transcript and skip its work.
+    assert task.conversation_id == "oa_pending_scan:proc-1"
     assert task.conversation_title == "审批待办"
     assert task.trigger_message_id.startswith("oa-pending:proc-1:")
     assert "张三提交的录用申请" in task.trigger_text
@@ -1480,3 +1482,67 @@ def test_scan_pending_oa_approvals_keeps_an_approval_the_agent_only_commented_on
     now = datetime.fromisoformat("2026-09-17T19:00:00+08:00")
 
     assert scan_pending_oa_approvals(store, dws, now=now) == 1
+
+
+def test_scan_pending_oa_approvals_gives_each_approval_its_own_conversation(tmp_path):
+    """Production 2026-09-17: four approvals, one Agent session, no work done.
+
+    The Agent session is keyed by conversation id.  With every approval sharing
+    `oa_pending_scan`, each run after the first resumed the previous approval's
+    transcript and returned "已在当前会话中完成处理" after zero tool calls -- runs
+    20015 and 20016 made none at all, and 20016 reported an approval it had
+    never executed while DingTalk still showed the item waiting.
+    """
+
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [
+                DwsOaApprovalCandidate(process_instance_id="proc-1", title="立项"),
+                DwsOaApprovalCandidate(process_instance_id="proc-2", title="合同"),
+            ]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {"taskId": f"task-{process_instance_id}", "status": "RUNNING"}
+                    ]
+                }
+            }
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": f"task-{process_instance_id}",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {
+                "result": {
+                    "operationRecords": [
+                        {
+                            "operationType": "ADD_REMARK",
+                            "operationTime": 1,
+                            "userId": "requester",
+                        }
+                    ]
+                }
+            }
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    now = datetime.fromisoformat("2026-09-17T19:00:00+08:00")
+
+    assert scan_pending_oa_approvals(store, FakeDws(), now=now) == 2
+
+    conversations = {task.conversation_id for task in store.claim_reply_tasks(limit=10)}
+    assert conversations == {"oa_pending_scan:proc-1", "oa_pending_scan:proc-2"}

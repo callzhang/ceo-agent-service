@@ -698,7 +698,12 @@ def scan_pending_oa_approvals(
             f"procInstId={quote(process_instance_id)}&taskId={quote(task_id)}"
         )
         trigger = DingTalkMessage(
-            open_conversation_id="oa_pending_scan",
+            # One conversation per approval. The Agent session is keyed by this
+            # id, so a shared one let every approval after the first resume the
+            # transcript of the previous approval and answer "已在当前会话中完成
+            # 处理" without making a single tool call -- one of them reporting an
+            # approval it never executed.
+            open_conversation_id=f"oa_pending_scan:{process_instance_id}",
             # The day is part of the trigger identity so a daily revisit is a
             # new input for the same business object: without it the id repeats
             # and the enqueue is deduplicated away.
