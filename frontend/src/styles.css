@@ -391,6 +391,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .runtime-field-group { grid-column: 1 / -1; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
 .runtime-field-group-caption { margin: 0; color: var(--ink-soft); font-size: 0.74rem; font-weight: 700; }
 .runtime-fields-nested { margin-top: 10px; }
+.runtime-field-group-hint { margin: 10px 0 0; color: var(--ink-soft); font-size: 0.74rem; line-height: 1.5; }
 .runtime-field .runtime-switch-inline { min-height: 38px; }
 .runtime-field .runtime-switch-inline input { width: 34px; min-height: 0; height: 20px; padding: 0; border-radius: 999px; }
 .runtime-save-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }

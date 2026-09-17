@@ -808,10 +808,11 @@ function RuntimeRouteCard({ title, description, enabled, locked, wide, onToggle,
   </section>;
 }
 
-function RuntimeFieldGroup({ caption, children }: { caption: string; children: ReactNode }) {
+function RuntimeFieldGroup({ caption, hint, children }: { caption: string; hint?: string; children: ReactNode }) {
   return <div className="runtime-field-group">
     <p className="runtime-field-group-caption">{caption}</p>
     <div className="runtime-fields runtime-fields-nested">{children}</div>
+    {hint && <p className="runtime-field-group-hint">{hint}</p>}
   </div>;
 }
 
@@ -831,10 +832,10 @@ function FridayAuthFields({ raw, update, setDraft, draft }: { raw: (key: string)
     setDraft({ ...draft, CEO_FRIDAY_RUNTIME_TICKET: "", CEO_FRIDAY_SESSION_TOKEN: "" });
   };
   return <>
-    <div className="runtime-field"><span>接口鉴权</span>
+    <div className="runtime-field"><span>这个 Friday 要不要身份凭据</span>
       <label className="runtime-switch runtime-switch-inline">
         <input type="checkbox" role="switch" aria-label="Friday Runtime 需要鉴权" checked={required} onChange={(event) => setRequired(event.target.checked)} />
-        <span>{required ? "开启，需要凭据" : "关闭，本机 Friday 不校验身份"}</span>
+        <span>{required ? "要，用下面填的凭据" : "不要，直接调用"}</span>
       </label>
     </div>
     {required && <SelectField id="friday-auth-kind" label="凭据类型" value={kind} onChange={(next) => chooseKind(next === "session" ? "session" : "ticket")}>
@@ -911,7 +912,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
           <SecretField id="claude-api-token" label="Claude API Token" configured={Boolean(raw("CEO_CLAUDE_API_KEY"))} value={raw("CEO_CLAUDE_API_KEY")} onChange={(next) => update("CEO_CLAUDE_API_KEY", next)} />
         </RuntimeRouteCard>
         <RuntimeRouteCard title="Friday Runtime" description="本机 Friday Runtime 服务和 provider 凭据" enabled={enabled("friday_runtime")} onToggle={(next) => toggleRoute("friday_runtime", next)} wide>
-          <RuntimeFieldGroup caption="连接 Friday 服务">
+          <RuntimeFieldGroup caption="连接 Friday 服务" hint="要换成另一个 Friday（例如桌面版自带的那个），改上面的服务地址；开关只决定请求里带不带身份凭据。本机自启的 Friday 关闭了校验，所以不需要。">
             {input("CEO_FRIDAY_RUNTIME_BASE_URL", "服务地址", "url")}
             <FridayAuthFields raw={raw} update={update} setDraft={setDraft} draft={draft} />
           </RuntimeFieldGroup>
