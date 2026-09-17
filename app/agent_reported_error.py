@@ -50,6 +50,13 @@ def _reportable_policies() -> dict[str, ErrorPolicy]:
         "management_authorization_missing": _WAIT_FOR_PERSON,
         # The run was told not to execute; nothing to retry.
         "dry_run_execution_suppressed": _FINAL,
+        # The provider refused the send because the identical message is
+        # already delivered. Reply task 135612 failed four runs in a row on
+        # this: the turn notifies the applicant, DingTalk suppresses the
+        # repeat, no receipt comes back, the run fails, it retries, and the
+        # provider suppresses it again. Duplicate suppression is the provider
+        # saying the effect exists, so retrying can only repeat the loop.
+        "provider_duplicate_no_readback": _FINAL,
         # A dependency that was not there this turn may be there the next.
         "dependency_read_unavailable": _RECOVERS_BY_ITSELF,
         "xiaoqing_interview_mcp_not_injected": _RECOVERS_BY_ITSELF,

@@ -59,3 +59,18 @@ def test_no_reported_code_is_no_error():
         "retryable": False,
         "authorization_required": False,
     }
+
+
+def test_a_provider_duplicate_does_not_retry_into_the_same_suppression():
+    """Reply task 135612 failed four runs in a row on this exact loop.
+
+    DingTalk suppressed the repeated notification as a duplicate, no receipt
+    came back, and the bounded retry sent the turn straight back into the
+    same suppression.
+    """
+    payload = agent_error_payload("PROVIDER_DUPLICATE_NO_READBACK", failed=True)
+
+    assert payload["code"] == "provider_duplicate_no_readback"
+    assert payload["retryable"] is False
+    assert payload["authorization_required"] is False
+    assert payload["source_code"] == "PROVIDER_DUPLICATE_NO_READBACK"
