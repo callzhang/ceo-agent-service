@@ -1516,3 +1516,46 @@ def test_a_conversation_never_lands_in_two_folds():
     folds = _group_folds(rows, rows)
 
     assert set(folds) == {"thread-1", "thread-2"}
+
+
+def test_a_threshold_needs_evidence_not_a_lucky_run():
+    """Nine of ten reads as 90% but proves nothing; fifty of fifty-two does."""
+
+    from app.email_classifier_training import _calibrated_threshold, _precision_lower_bound
+
+    assert _precision_lower_bound(9, 10) < 0.9
+    assert _precision_lower_bound(50, 52) >= 0.9
+    assert _precision_lower_bound(0, 0) == 0.0
+
+    lucky = _calibrated_threshold(
+        probabilities=[0.99] * 10,
+        positives=[True] * 9 + [False],
+        eligible=[True] * 10,
+        precision_min=0.9,
+    )
+    proven = _calibrated_threshold(
+        probabilities=[0.99] * 52,
+        positives=[True] * 50 + [False] * 2,
+        eligible=[True] * 52,
+        precision_min=0.9,
+    )
+
+    assert lucky == 1.0  # nothing accepted: the evidence is too thin
+    assert proven == pytest.approx(0.99)
+
+
+def test_a_threshold_keeps_the_point_where_more_mail_is_still_proven():
+    from app.email_classifier_training import _calibrated_threshold
+
+    # A proven block of confident hits, then a tail that is mostly wrong.
+    probabilities = [0.95] * 52 + [0.4] * 10
+    positives = [True] * 50 + [False] * 2 + [False] * 10
+
+    threshold = _calibrated_threshold(
+        probabilities=probabilities,
+        positives=positives,
+        eligible=[True] * 62,
+        precision_min=0.9,
+    )
+
+    assert threshold == pytest.approx(0.95)
