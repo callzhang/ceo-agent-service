@@ -1811,10 +1811,6 @@ def register_email_routes(
             result.append(row)
         return result
 
-    def _historical_review_state(registry: object) -> dict[str, object] | None:
-        reader = getattr(registry, "historical_systematic_error_state", None)
-        return reader().to_dict() if callable(reader) else None
-
     def _training_runs_without_model(service: object) -> list[dict[str, object]]:
         """Report training runs that ended without producing a model version.
 
@@ -2030,46 +2026,6 @@ def register_email_routes(
             )
         return {"ok": True, **controls}
 
-    @app.post("/api/console/email/learning/historical-review")
-    async def email_historical_review(request: Request):
-        """Record the owner's historical systematic-error review.
-
-        Promotion refuses every candidate until a review exists, and nothing
-        else writes one. The owner confirms it after looking at the label audit;
-        a candidate carries the state it was trained under, so the next training
-        run is the first that can pass.
-        """
-
-        if email_learning_factory is None:
-            return error_response(
-                "email_learning_unavailable",
-                "Email learning is unavailable",
-                503,
-            )
-        try:
-            body = json.loads(await request.body() or b"{}")
-            resolved = body.get("resolved")
-            note = str(body.get("note") or "").strip()
-        except (TypeError, ValueError, AttributeError, json.JSONDecodeError):
-            return error_response("invalid_historical_review", "复核内容无效", 400)
-        if type(resolved) is not bool:
-            return error_response("invalid_historical_review", "复核内容无效", 400)
-        from datetime import datetime, timezone
-
-        from app.email_model_registry import HistoricalSystematicErrorState
-
-        state = HistoricalSystematicErrorState(
-            unresolved=not resolved,
-            source="owner_review",
-            reason=note
-            or ("负责人已复核历史系统性错误" if resolved else "负责人标记存在未解决的系统性错误"),
-            updated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        )
-        recorded = email_learning_factory().registry.record_historical_systematic_error_state(
-            state
-        )
-        return {"ok": True, "historical_review": recorded.to_dict()}
-
     @app.get("/api/console/email/learning")
     def email_learning():
         """Expose immutable model evidence and current retraining state."""
@@ -2126,7 +2082,6 @@ def register_email_routes(
                 "last_feedback_at": state.last_feedback_at,
                 "active_run_id": state.active_run_id,
                 "training_runs_without_model": _training_runs_without_model(service),
-                "historical_review": _historical_review_state(service.registry),
                 "models": models,
                 "staged_models": [
                     _project_staged_model_evidence(row) for row in staged_evidence

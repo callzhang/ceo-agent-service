@@ -79,14 +79,16 @@ def test_historical_eligibility_requires_all_three_gates() -> None:
     assert HistoricalEligibility(0.99, 20, 9).eligible is False
 
 
-def test_whole_model_requires_two_consecutive_compatible_passes_and_no_error() -> None:
+def test_whole_model_requires_two_consecutive_compatible_passes() -> None:
     first = _maturity("candidate-1")
     only_one = assess_whole_model_readiness((first,))
     incompatible = assess_whole_model_readiness(
         (first, _maturity("candidate-2", parent="active-v2"))
     )
     ready = assess_whole_model_readiness((first, _maturity("candidate-2")))
-    blocked = assess_whole_model_readiness(
+    # The historical systematic-error flag no longer holds promotion back
+    # (Derek 2026-09-17: nothing detects it, so the review was a formality).
+    flagged = assess_whole_model_readiness(
         (
             first,
             CandidateMaturityEvidence(
@@ -102,7 +104,7 @@ def test_whole_model_requires_two_consecutive_compatible_passes_and_no_error() -
     assert incompatible.ready is False
     assert ready.ready is True
     assert ready.passing_model_ids == ("candidate-1", "candidate-2")
-    assert blocked.ready is False
+    assert flagged.ready is True
 
 
 def test_whole_model_does_not_count_same_candidate_twice() -> None:

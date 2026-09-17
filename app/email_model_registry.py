@@ -244,10 +244,7 @@ class CandidateMaturityEvidence:
 
     @property
     def passing(self) -> bool:
-        return (
-            not self.unresolved_historical_systematic_error
-            and bool(self.eligible_categories)
-        )
+        return bool(self.eligible_categories)
 
 
 @dataclass(frozen=True)
@@ -308,11 +305,6 @@ def assess_whole_model_readiness(
         )
     ):
         return WholeModelReadiness(False, (), "evaluation_evidence_not_advanced")
-    if (
-        previous.unresolved_historical_systematic_error
-        or current.unresolved_historical_systematic_error
-    ):
-        return WholeModelReadiness(False, (), "historical_systematic_error_unresolved")
     # A category is promoted only when both consecutive candidates proved it.
     previously_eligible = set(previous.eligible_categories)
     promoted = tuple(

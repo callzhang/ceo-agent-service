@@ -5,7 +5,6 @@ import { beforeEach, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({
   getEmailModelVersion: vi.fn(),
   previewEmailTraining: vi.fn(),
-  recordEmailHistoricalReview: vi.fn(),
   requestEmailTraining: vi.fn(),
   saveEmailPromotionConfig: vi.fn(),
   saveEmailRuntimeMode: vi.fn(),
@@ -590,34 +589,6 @@ it("lists a run that produced no model in the version table with its reason", as
   expect(row).toHaveTextContent("training selection categories are unavailable");
 });
 
-
-it("lets the owner confirm the historical systematic-error review that blocks promotion", async () => {
-  const user = userEvent.setup();
-  const reviewed = { ...learning, historical_review: { unresolved: false, source: "owner_review", reason: "负责人已复核训练标注与历史系统性错误", updated_at: "2026-09-17T09:00:00+00:00" } };
-  const reload = vi.fn(async () => reviewed);
-  api.recordEmailHistoricalReview.mockResolvedValue({ ok: true, historical_review: reviewed.historical_review });
-  const { rerender } = render(
-    <ModelTraining
-      learning={{ ...learning, historical_review: { unresolved: true, source: "state_missing", reason: "no explicit historical systematic-error review exists", updated_at: "1970-01-01T00:00:00+00:00" } }}
-      configs={[]}
-      reload={reload}
-      runtimeVerified
-      onRuntimeUnverified={vi.fn()}
-      onBusy={vi.fn()}
-    />,
-  );
-
-  expect(screen.getByText("历史系统性错误复核：未复核")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "确认已复核" }));
-
-  expect(api.recordEmailHistoricalReview).toHaveBeenCalledWith(expect.objectContaining({ resolved: true }));
-  await waitFor(() => expect(reload).toHaveBeenCalled());
-  rerender(
-    <ModelTraining learning={reviewed} configs={[]} reload={reload} runtimeVerified onRuntimeUnverified={vi.fn()} onBusy={vi.fn()} />,
-  );
-  expect(screen.getByText("历史系统性错误复核：已复核")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "确认已复核" })).not.toBeInTheDocument();
-});
 
 it("names the categories that go live and leaves the rest with the Agent", () => {
   const perCategory = {
