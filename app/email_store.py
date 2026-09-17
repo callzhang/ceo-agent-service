@@ -14542,6 +14542,35 @@ class EmailStore:
             created_at=created_at,
         )
 
+    def correct_training_label(
+        self,
+        row_id: int,
+        category: EmailCategoryKey,
+        *,
+        feedback_request_id: str,
+        expected_current_action_plan_id: str | None,
+        created_at: datetime | None = None,
+    ) -> EmailFeedbackApplication | None:
+        """Correct what a message is labelled as, without touching the mailbox.
+
+        A console reclassification derives the category's move or trash from
+        its folder binding, which is right when the owner is sorting mail. A
+        training-data review is not: the mail may have been filed long ago, and
+        fixing an inconsistent label must not move or delete it now. This
+        records the same owner confirmation with an ActionPlan that has no
+        actions.
+        """
+
+        return self._apply_human_classification(
+            row_id,
+            category,
+            feedback_request_id=feedback_request_id,
+            expected_current_action_plan_id=expected_current_action_plan_id,
+            allow_processed_correction=True,
+            created_at=created_at,
+            label_only=True,
+        )
+
     def _apply_human_classification(
         self,
         row_id: int,
@@ -14551,6 +14580,7 @@ class EmailStore:
         expected_current_action_plan_id: str | None,
         allow_processed_correction: bool,
         created_at: datetime | None,
+        label_only: bool = False,
     ) -> EmailFeedbackApplication | None:
         feedback_request_id = _validate_feedback_request_id(feedback_request_id)
         expected_current_action_plan_id = _validate_expected_action_plan_id(
@@ -14622,6 +14652,8 @@ class EmailStore:
                 category=category,
                 fallback_config_version=row["config_version"],
             )
+            if label_only:
+                actions, action_parameters = (), {}
             plan_created_at = created_at or datetime.now(timezone.utc)
             action_plan = build_versioned_email_action_plan(
                 action_plan_version=action_plan_version,

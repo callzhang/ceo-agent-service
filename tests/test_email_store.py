@@ -10331,3 +10331,63 @@ def test_v42_gives_existing_mailboxes_a_30_day_unread_only_window(tmp_path: Path
         assert db.execute(
             "select max(version) from email_schema_migrations"
         ).fetchone() == (42,)
+
+
+def test_a_training_label_correction_never_moves_or_trashes_the_message(
+    tmp_path: Path,
+):
+    """Relabelling reviewed training data must not act on mail filed long ago."""
+
+    database = tmp_path / "label-only-correction.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("dingtalk-account"))
+    _enable_category_with_binding(store, "junk", "dingtalk-account")
+    corrected = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="label-only",
+        actions=(),
+        action_parameters={},
+    )
+    reclassified = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="console-reclassified",
+        actions=(),
+        action_parameters={},
+    )
+    for classification in (corrected, reclassified):
+        _persist_scan(store, classification)
+
+    # A console reclassification to junk derives trash from the binding...
+    console = store.apply_human_classification(
+        reclassified.classification_id,
+        EmailCategory.JUNK,
+        feedback_request_id="console-junk",
+        expected_current_action_plan_id=store.get_classification(
+            reclassified.classification_id
+        )["current_action_plan_id"],
+    )
+    assert console is not None
+    # ...a training correction to the same category records the label only.
+    application = store.correct_training_label(
+        corrected.classification_id,
+        EmailCategory.JUNK,
+        feedback_request_id="training-review-junk",
+        expected_current_action_plan_id=store.get_classification(
+            corrected.classification_id
+        )["current_action_plan_id"],
+    )
+
+    assert application is not None
+    with sqlite3.connect(database) as db:
+        actions_by_classification = dict(
+            db.execute(
+                "select classification_id, count(*) from email_actions "
+                "group by classification_id"
+            ).fetchall()
+        )
+    assert actions_by_classification.get(reclassified.classification_id, 0) > 0
+    assert actions_by_classification.get(corrected.classification_id, 0) == 0
+    updated = store.get_classification(corrected.classification_id)
+    assert updated["confirmed_category"] == "junk"
+    assert updated["classification_source"] == "user"
+    assert updated["action_plan"]["actions"] == []
