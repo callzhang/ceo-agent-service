@@ -1575,6 +1575,7 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
             "todo_changes": [
                 {
                     "action": "create",
+                    "deadline_at": "2026-12-31T18:00:00+08:00",
                     "title": "补齐来源链接",
                     "description": "基于售前群 2026-06-07 的讨论，Alex 需要补齐售前知识库材料来源链接，写清每份材料对应的客户场景、缺口 owner 和可验收的完成状态。",
                     "owner_user_id": "owner-1",
@@ -2756,6 +2757,7 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
             "todo_changes": [
                 {
                     "action": "create",
+                    "deadline_at": "2026-12-31T18:00:00+08:00",
                     "todo_ref": "confirm-project-boundary",
                     "title": "确认项目边界",
                     "owner_user_id": "owner-1",
@@ -2825,6 +2827,7 @@ def test_follow_up_draft_scheduled_after_hours_moves_to_next_workday(tmp_path):
             "todo_changes": [
                 {
                     "action": "create",
+                    "deadline_at": "2026-12-31T18:00:00+08:00",
                     "todo_ref": "confirm-project-boundary",
                     "title": "确认项目边界",
                     "owner_user_id": "owner-1",
@@ -2926,6 +2929,7 @@ def test_service_does_not_rejudge_agent_owner_evidence_from_message_text(tmp_pat
             "todo_changes": [
                 {
                     "action": "create",
+                    "deadline_at": "2026-12-31T18:00:00+08:00",
                     "todo_ref": "wangdongcui-business-change",
                     "title": "确认王东翠工商变更真实 owner",
                     "owner_user_id": "owner-1",
@@ -3231,6 +3235,7 @@ def test_todo_owner_create_rejects_name_only_identity(tmp_path):
             "todo_changes": [
                 {
                     "action": "create",
+                    "deadline_at": "2026-12-31T18:00:00+08:00",
                     "title": "Validate owner",
                     "owner_name": "Display One",
                     "owner_evidence": _owner_evidence("", "Display One"),
@@ -3262,6 +3267,7 @@ def test_todo_create_rejects_open_item_without_stable_owner_id(tmp_path):
             "todo_changes": [
                 {
                     "action": "create",
+                    "deadline_at": "2026-12-31T18:00:00+08:00",
                     "title": "Validate owner",
                     "description": "This actionable TODO still needs a stable owner.",
                     "status": "open",
@@ -3660,6 +3666,7 @@ def test_follow_up_draft_requires_owner_evidence(tmp_path):
             "todo_changes": [
                 {
                     "action": "create",
+                    "deadline_at": "2026-12-31T18:00:00+08:00",
                     "todo_ref": "confirm-project-boundary",
                     "title": "确认项目边界",
                     "owner_user_id": "owner-1",
@@ -3713,6 +3720,7 @@ def test_follow_up_draft_rejects_name_only_owner(tmp_path):
             "todo_changes": [
                 {
                     "action": "create",
+                    "deadline_at": "2026-12-31T18:00:00+08:00",
                     "todo_ref": "bound-todo",
                     "title": "Bound TODO",
                     "owner_user_id": "uid-1",
@@ -5054,6 +5062,7 @@ def test_process_work_item_rolls_back_domain_changes_when_apply_is_interrupted(
             "todo_changes": [
                 {
                     "action": "create",
+                    "deadline_at": "2026-12-31T18:00:00+08:00",
                     "title": "补齐来源链接",
                     "owner_user_id": "owner-1",
                     "owner_name": "Alex",
@@ -5965,3 +5974,68 @@ def test_validation_repair_prompt_states_the_memory_context_contract():
     assert "memory_connector_runtime_unavailable" in prompt
     assert 'return action="skip"' in prompt
     assert "unless the new session\nReturn" not in prompt
+
+
+def _create_todo_decision(deadline_at: str) -> TaskAgentDecision:
+    return TaskAgentDecision.model_validate({
+        "action": "update_project",
+        "project": {"id": 3, "title": "Vendor quote", "memory_context": _memory_context()},
+        "todo_changes": [
+            {
+                "action": "create",
+                "todo_ref": "send-quote",
+                "title": "给客户发送正式报价",
+                "deadline_at": deadline_at,
+            }
+        ],
+        "update_summary": "Quote TODO created.",
+        "memory_recall_used": True,
+        "confidence": 0.8,
+    })
+
+
+@pytest.mark.parametrize("deadline_at", ["", "   ", "尽快", "not-a-date"])
+def test_creating_a_todo_without_a_usable_deadline_is_repairable(deadline_at):
+    """Derek 2026-09-17: every TODO must have a deadline. 318 open TODOs had
+    none and could never be mirrored to DingTalk Todo."""
+    from app.task_agent import _validate_task_agent_decision
+
+    with pytest.raises(RepairableTaskDecisionValidationError, match="deadline_at is required"):
+        _validate_task_agent_decision(_create_todo_decision(deadline_at))
+
+
+def test_creating_a_todo_with_a_concrete_deadline_passes():
+    from app.task_agent import _validate_task_agent_decision
+
+    _validate_task_agent_decision(_create_todo_decision("2026-09-25T18:00:00+08:00"))
+
+
+def test_the_task_agent_prompt_requires_a_todo_deadline():
+    item = WorkItem.model_validate({
+        "source": {
+            "type": "local_file",
+            "ref": "/tmp/报价沟通.md#sha256=abc",
+            "title": "报价沟通",
+            "conversation_id": "",
+            "conversation_title": "",
+            "created_at": "2026-09-16T10:00:00+08:00",
+        },
+        "summary": "客户要求下周给出正式报价。",
+        "project_name": "客户正式报价",
+        "context": {
+            "sender": "张静",
+            "participants": ["张静"],
+            "source_conversation_kind": "minutes",
+            "source_conversation_title": "报价沟通",
+        },
+        "task_signals": {
+            "possible_task_update": True,
+            "mentions_follow_up": False,
+            "signal_reason": "客户明确要求报价。",
+        },
+    })
+
+    prompt = build_task_agent_prompt(item, "候选项目:\n[]\n\n近期 follow-up 候选:\n[]")
+
+    assert "Every TODO you create must have deadline_at" in prompt
+    assert "never leave deadline_at empty" in prompt

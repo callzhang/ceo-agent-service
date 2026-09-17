@@ -42,6 +42,7 @@ from app.task_retrieval import (
 )
 from app.todo_completion import complete_follow_ups_for_todo
 from app.todo_sync import (
+    _deadline_to_iso,
     maybe_create_dingtalk_todo,
     sync_completed_todo_to_dingtalk,
 )
@@ -472,6 +473,11 @@ Material-to-task boundary:
   progress change, or next step, return action="skip" with a clear reason.
   Do not create a project, TODO, or follow-up for material that lacks such a
   work signal.
+- Every TODO you create must have deadline_at as a concrete ISO datetime.
+  Use the deadline the source states. When the source commits to work but
+  names no date, infer a reasonable deadline from the work's scope and any
+  stated urgency, and never leave deadline_at empty. A TODO without a
+  deadline cannot be tracked or mirrored to DingTalk Todo.
 - Never infer an owner from the author, speaker, participants, or a matching
   stored project. A non-skip decision may leave ownership empty only when
   the source establishes a real work update but does not assign an owner.
@@ -1084,6 +1090,16 @@ def _validate_task_agent_decision(
     for todo_change in decision.todo_changes:
         if todo_change.action != "create" and todo_change.todo_id is None:
             raise ValueError(f"{todo_change.action} requires todo_id")
+        # Every TODO carries a deadline; without one it can never be mirrored
+        # to DingTalk Todo. Repairable, so the agent supplies one instead of
+        # the work item failing.
+        if todo_change.action == "create" and not _deadline_to_iso(
+            todo_change.deadline_at
+        ):
+            raise RepairableTaskDecisionValidationError(
+                "todo_change.deadline_at is required to create a TODO; "
+                "use the deadline the source states, or infer a reasonable one"
+            )
         if todo_change.action == "close":
             evidence = todo_change.completion_evidence
             _require_evidence_fields(
