@@ -457,3 +457,51 @@ def test_combined_timing_records_all_required_stages_with_fake_clock() -> None:
         "head_ms": pytest.approx(2.0),
         "total_ms": pytest.approx(9.0),
     }
+
+
+def _reference_fit_weights(classifier, matrix, labels, folds):
+    """The tuning loop before it cached fold heads: refit per grid point."""
+
+    label_array = np.asarray(labels)
+    best = (float("-inf"), classifier.DEFAULT_ALPHA, classifier.DEFAULT_BETA)
+    for alpha in classifier._WEIGHT_GRID:
+        for beta in classifier._WEIGHT_GRID:
+            correct = count = 0
+            for train, validation in folds:
+                head = classifier._new_head().fit(matrix[train], label_array[train])
+                for index in validation:
+                    base = classifier._ordered_logits(head, matrix[index])
+                    adjustment = classifier._adjustment_with_weights(matrix[index], alpha, beta)
+                    predicted = classifier.enabled_categories[int(np.argmax(base + adjustment))]
+                    correct += predicted == labels[int(index)]
+                    count += 1
+            score = correct / count
+            candidate = (score, -abs(alpha - classifier.DEFAULT_ALPHA) - abs(beta - classifier.DEFAULT_BETA))
+            incumbent = (best[0], -abs(best[1] - classifier.DEFAULT_ALPHA) - abs(best[2] - classifier.DEFAULT_BETA))
+            if candidate > incumbent:
+                best = (score, alpha, beta)
+    return best[1], best[2]
+
+
+@pytest.mark.parametrize("seed", [1, 7, 42])
+def test_tuning_with_cached_fold_heads_picks_the_same_weights(seed) -> None:
+    rng = np.random.default_rng(seed)
+    matrix = rng.normal(size=(40, 2)).astype(np.float32)
+    labels = tuple("work" if row[0] > row[1] else "legal" for row in matrix)
+    classifier = DescriptionAwareEmailClassifier(
+        enabled_categories=CATEGORIES,
+        descriptions=DESCRIPTIONS,
+        description_vectors=VECTORS,
+        dimension=2,
+        input_schema_version="input-v3",
+        embedding_model_id="jina",
+        embedding_revision="r17",
+    )
+    folds = (
+        (np.arange(0, 40, 2), np.arange(1, 40, 2)),
+        (np.arange(1, 40, 2), np.arange(0, 40, 2)),
+    )
+
+    cached = classifier._fit_weights_in_folds(matrix, labels, folds)
+
+    assert cached == _reference_fit_weights(classifier, matrix, labels, folds)

@@ -469,23 +469,39 @@ class DescriptionAwareEmailClassifier:
     ) -> tuple[float, float]:
         validated_folds = _validated_tuning_folds(folds, sample_count=len(matrix))
         label_array = np.asarray(labels)
+        # The MLP head and each message's description similarities do not
+        # depend on alpha or beta, so both are computed once per fold and only
+        # the weighted sum is re-evaluated for each grid point. Fitting the head
+        # inside the grid refit it 36 times per fold for the same result.
+        evaluated: list[tuple[int, np.ndarray, list[tuple[float, float]]]] = []
+        for train, validation in validated_folds:
+            fold_head = self._new_head().fit(matrix[train], label_array[train])
+            for index in validation:
+                evaluated.append(
+                    (
+                        int(index),
+                        self._ordered_logits(fold_head, matrix[index]),
+                        self._description_similarities(matrix[index]),
+                    )
+                )
         best = (float("-inf"), self.DEFAULT_ALPHA, self.DEFAULT_BETA)
         for alpha in self._WEIGHT_GRID:
             for beta in self._WEIGHT_GRID:
                 correct = 0
                 count = 0
-                for train, validation in validated_folds:
-                    fold_head = self._new_head().fit(matrix[train], label_array[train])
-                    for index in validation:
-                        base = self._ordered_logits(fold_head, matrix[index])
-                        adjustment = self._adjustment_with_weights(
-                            matrix[index], alpha, beta
-                        )
-                        predicted = self.enabled_categories[
-                            int(np.argmax(base + adjustment))
-                        ]
-                        correct += predicted == labels[int(index)]
-                        count += 1
+                for index, base, similarities in evaluated:
+                    adjustment = np.asarray(
+                        [
+                            alpha * positive - beta * exclusion
+                            for positive, exclusion in similarities
+                        ],
+                        dtype=np.float64,
+                    )
+                    predicted = self.enabled_categories[
+                        int(np.argmax(base + adjustment))
+                    ]
+                    correct += predicted == labels[index]
+                    count += 1
                 score = correct / count
                 candidate = (
                     score,
@@ -499,6 +515,26 @@ class DescriptionAwareEmailClassifier:
                 if candidate > incumbent:
                     best = (score, alpha, beta)
         return best[1], best[2]
+
+    def _description_similarities(
+        self, embedding: np.ndarray
+    ) -> list[tuple[float, float]]:
+        """Per category, the mean positive and exclusion similarity of a message."""
+
+        row = _normalize(self._row(embedding)[0])
+        similarities = []
+        for key in self.enabled_categories:
+            vectors = self._description_vectors[key]
+            positive = np.concatenate(
+                (vectors.core.reshape(1, -1), vectors.include), axis=0
+            )
+            similarities.append(
+                (
+                    float(np.mean(_normalize_rows(positive) @ row)),
+                    float(np.mean(_normalize_rows(vectors.exclude) @ row)),
+                )
+            )
+        return similarities
 
     def _adjustment_with_weights(
         self, embedding: np.ndarray, alpha: float, beta: float
