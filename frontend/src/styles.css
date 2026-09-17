@@ -650,6 +650,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .attempt-line { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 9px; align-items: start; min-width: 0; }
 .attempt-label { display: inline-grid; place-items: center; width: 26px; height: 22px; border-radius: 5px; color: var(--accent); background: var(--accent-soft); font-size: .72rem; font-weight: 800; }
 .attempt-copy { min-width: 0; color: var(--ink); font-size: .82rem; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.attempt-copy-code { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 6px; color: var(--ink-soft); background: var(--surface-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .74rem; }
+.attempt-copy > .attempt-copy-code:only-child { margin-left: 0; }
 .tasks-table, .sent-todos-table, .user-feedback-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .tasks-table th, .tasks-table td, .sent-todos-table th, .sent-todos-table td, .user-feedback-table th, .user-feedback-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 .tasks-table th, .sent-todos-table th, .user-feedback-table th { color: var(--ink-soft); background: var(--surface-muted); font-size: .74rem; white-space: nowrap; }

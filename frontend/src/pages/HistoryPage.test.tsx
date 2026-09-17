@@ -10,7 +10,50 @@ vi.mock("../api/console", () => ({
   displayValue: (value: unknown) => typeof value === "string" ? value : JSON.stringify(value),
 }));
 
-import { HistoryPage } from "./HistoryPage";
+import { HistoryPage, isStatusCode, previewText, splitStatusCode } from "./HistoryPage";
+
+describe("History previews", () => {
+  it("names a link instead of spelling out its query string", () => {
+    const raw = "日程：ALE质检流程优化 入会：https://shanhui.dingtalk.com/meetingFromCalendar?uniqueId=Wg5T3JEZzY5&corpId=ding8ffc70";
+
+    expect(previewText(raw)).toBe("日程：ALE质检流程优化 入会：[链接]");
+  });
+
+  it("keeps the text of a markdown link and drops its target", () => {
+    const raw = "见 [会议纪要](https://alidocs.dingtalk.com/i/nodes/abc?corpId=x) 第二节";
+
+    expect(previewText(raw)).toBe("见 会议纪要 第二节");
+  });
+
+  it("names a markdown link whose text is itself a URL", () => {
+    const raw = "群公告 [dingtalk://dingtalkclient/action/openapp](dingtalk://dingtalkclient/action/openapp?corpId=x)";
+
+    expect(previewText(raw)).toBe("群公告 [链接]");
+  });
+
+  it("collapses the whitespace a pasted message carries", () => {
+    expect(previewText("已认领，\n\n  等待执行器领取。")).toBe("已认领， 等待执行器领取。");
+  });
+
+  it("separates a status code appended to a sentence", () => {
+    expect(splitStatusCode("已认领，等待执行器领取。 retry_after_claude_credential_fix")).toEqual({
+      copy: "已认领，等待执行器领取。",
+      code: "retry_after_claude_credential_fix",
+    });
+    expect(splitStatusCode("waiting_fast_path_unread_backoff")).toEqual({
+      copy: "",
+      code: "waiting_fast_path_unread_backoff",
+    });
+    expect(splitStatusCode("已完成同步")).toEqual({ copy: "已完成同步", code: "" });
+  });
+
+  it("tells the service's own status codes from what a person wrote", () => {
+    expect(isStatusCode("waiting_fast_path_unread_backoff")).toBe(true);
+    expect(isStatusCode("codex_result_invalid; audit retry attempts exhausted")).toBe(true);
+    expect(isStatusCode("已认领，等待执行器领取。")).toBe(false);
+    expect(isStatusCode("Sent the reply")).toBe(false);
+  });
+});
 
 describe("HistoryPage", () => {
   beforeEach(() => {
