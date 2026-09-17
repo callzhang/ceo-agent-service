@@ -415,6 +415,62 @@ def expand_skill_dependencies(
     return tuple(resolved)
 
 
+# Plugins whose Skills every Agent turn gets regardless of the task's own list.
+# The Consumer and Audit contracts tell the Agent to recall durable context
+# through memory; trimming these away would leave that instruction unusable.
+DEFAULT_SKILL_PLUGINS = ("memory-connector",)
+
+
+def _version_key(name: str) -> tuple:
+    return tuple(int(part) if part.isdigit() else part for part in name.split("."))
+
+
+def default_plugin_skill_files(plugin_cache_root: Path) -> tuple[Path, ...]:
+    """SKILL.md files of the always-on plugins, newest installed version only.
+
+    A plugin cache keeps every version it ever installed; only the newest is the
+    one the runtime loads, so older copies are not offered to the Agent.
+    """
+    files: list[Path] = []
+    if not plugin_cache_root.is_dir():
+        return ()
+    for plugin in DEFAULT_SKILL_PLUGINS:
+        for plugin_dir in sorted(plugin_cache_root.glob(f"*/{plugin}")):
+            versions = [entry for entry in plugin_dir.iterdir() if entry.is_dir()]
+            if not versions:
+                continue
+            newest = max(versions, key=lambda entry: _version_key(entry.name))
+            files.extend(sorted((newest / "skills").glob("*/SKILL.md")))
+    return tuple(files)
+
+
+def default_skill_catalog(plugin_cache_root: Path | None = None) -> tuple[BusinessSkillCatalogEntry, ...]:
+    """Catalog entries for the always-on plugin Skills, named as the runtime names them.
+
+    Plugin Skills declare short names such as `recall`; the entry carries the
+    runtime's `plugin:skill` name so it cannot be mistaken for another Skill.
+    """
+    root = (
+        Path(plugin_cache_root).expanduser()
+        if plugin_cache_root is not None
+        else Path.home() / ".claude" / "plugins" / "cache"
+    )
+    entries: list[BusinessSkillCatalogEntry] = []
+    for path in default_plugin_skill_files(root):
+        described = _describe_skill_file(path)
+        if described is None:
+            continue
+        plugin = next(name for name in DEFAULT_SKILL_PLUGINS if name in path.parts)
+        entries.append(
+            BusinessSkillCatalogEntry(
+                name=f"{plugin}:{described[0]}",
+                skill_path=path.resolve(),
+                description=described[1],
+            )
+        )
+    return tuple(entries)
+
+
 def codex_skill_roots(
     *, target_root: Path | None = None, codex_home: Path | None = None
 ) -> tuple[Path, ...]:
@@ -456,11 +512,12 @@ def codex_skill_config_override(
     files = sorted(
         {path for root in roots if root.is_dir() for path in root.rglob("SKILL.md")}
     )
+    always_on = set(default_plugin_skill_files(roots[2]))
     enable: list[Path] = []
     disable: list[Path] = []
     for path in files:
         described = _describe_skill_file(path)
-        if described is not None and described[0] in keep_names:
+        if path in always_on or (described is not None and described[0] in keep_names):
             enable.append(path)
         else:
             disable.append(path)

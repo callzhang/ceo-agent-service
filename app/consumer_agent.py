@@ -34,6 +34,7 @@ from app.agent_wire_contracts import (
 from app.audit_rules import validate_audit_rules_text
 from app.business_skills import (
     BUNDLED_BUSINESS_SKILL_NAMES,
+    default_skill_catalog,
     installed_runtime_skills,
     render_business_skill_protocol,
 )
@@ -198,6 +199,7 @@ def consumer_wire_contract_hash(
         # content the Agent is served.
         "business_skill_protocol": render_business_skill_protocol(
             installed_runtime_skills(names=BUNDLED_BUSINESS_SKILL_NAMES)
+            + default_skill_catalog()
         ),
         "work_profile_instruction": work_profile_instruction(),
         "wire_schema": ConsumerAgentWireResult.model_json_schema(),
@@ -596,6 +598,7 @@ class ConsumerAgentRunner:
                                 installed_runtime_skills(
                                     names=BUNDLED_BUSINESS_SKILL_NAMES
                                 )
+                                + default_skill_catalog()
                             ),
                         ) if part
                     ),

@@ -10,6 +10,7 @@ from app.business_skills import (
     BusinessSkillInstallTargetError,
     BusinessSkillValidationError,
     codex_skill_config_override,
+    default_skill_catalog,
     expand_skill_dependencies,
     install_bundled_business_skills,
     installed_runtime_skill_paths,
@@ -576,3 +577,44 @@ def test_exclusion_override_keeps_the_whole_dependency_closure(tmp_path: Path):
     assert '/sora/SKILL.md",enabled=false}' in override
     assert '/ocr/SKILL.md",enabled=true}' in override
     assert '/task/SKILL.md",enabled=true}' in override
+
+
+def _plugin_skill(cache: Path, version: str, skill: str) -> Path:
+    return _skill_file(
+        cache / "memory-connector-local" / "memory-connector" / version / "skills",
+        skill,
+        skill,
+        f"{skill} durable memory.",
+    )
+
+
+def test_memory_skills_stay_on_even_when_the_task_does_not_declare_them(tmp_path: Path):
+    """Consumer and Audit are told to recall durable context; trimming a task to
+    its own Skills must not take memory away."""
+    root = tmp_path / "agents"
+    codex_home = tmp_path / "codex"
+    _skill_file(root, "dingtalk-oa-approval", "dingtalk-oa-approval", "OA.")
+    recall = _plugin_skill(codex_home / "plugins" / "cache", "0.4.0", "recall")
+    other = _skill_file(codex_home / "skills", "sora", "sora", "Video.")
+
+    override = codex_skill_config_override(
+        {"dingtalk-oa-approval"}, target_root=root, codex_home=codex_home
+    )
+
+    assert f'{{path="{recall}",enabled=true}}' in override
+    assert f'{{path="{other}",enabled=false}}' in override
+
+
+def test_default_catalog_offers_only_the_newest_memory_plugin_version(tmp_path: Path):
+    cache = tmp_path / "claude-cache"
+    _plugin_skill(cache, "0.2.0", "recall")
+    newest = _plugin_skill(cache, "0.10.0", "recall")
+    _plugin_skill(cache, "0.10.0", "remember")
+
+    catalog = default_skill_catalog(cache)
+
+    assert [entry.name for entry in catalog] == [
+        "memory-connector:recall",
+        "memory-connector:remember",
+    ]
+    assert catalog[0].skill_path == newest.resolve()
