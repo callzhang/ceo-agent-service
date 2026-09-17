@@ -894,10 +894,11 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     )
 
     assert queued == 1
+    # DingTalk rejects list-pending pages above 20 items (400002 参数错误).
     assert dws.pages == [
         (
             1,
-            30,
+            20,
             "2025-07-27T09:30:00+08:00",
             "2026-07-27T09:30:00+08:00",
         )

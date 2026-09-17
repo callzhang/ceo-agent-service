@@ -50,6 +50,7 @@ reverts committed work they did not author.
 | claude-todo-deadline-required | app/task_agent.py (todo create validation and prompt rule), tests/test_task_agent.py, docs/agent-claims.md | Require a concrete deadline on every TODO the task agent creates (Derek: 必须有截止日期) | 2026-09-17 |
 | claude-self-agent-echo | app/worker.py (candidate filtering only), tests/test_worker.py, docs/agent-claims.md | Identify the service's own DWS delivery by the provider's AI-send marker so a renumbered read-back stops opening a run on our own message | 2026-09-16 |
 | claude-evidence-gate-wiring | app/audit_agent.py, tests/test_audit_agent.py, docs/agent-claims.md | `989ed829` shipped `DingTalkSendEvidenceDriver` but `_parse_evidenced_result` only wrapped `parse_result` when `email_unsubscribe_tools` was truthy, so the new driver never actually ran for a DingTalk task; wire the wrap unconditionally (each driver already no-ops when out of scope) | 2026-09-16 |
+| claude-oa-pending-page-size | app/dws_client.py (list-pending page size only), app/task_scanners.py (OA scan page size only), app/org_cache.py (list-pending default only), tests/test_dws_client.py, tests/test_task_scanners.py, docs/agent-claims.md | DingTalk now rejects `dws oa approval list-pending --limit` above 20 with 400002 参数错误 (21 fails, 20 works, verified live 2026-09-17), so every OA pending scan since ~11:00 UTC failed. Cap the page size at 20. | active |
 
 
 ## Recent overlaps worth knowing

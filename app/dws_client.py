@@ -30,6 +30,8 @@ TITLE_WORD_OR_CJK_PATTERN = re.compile(
 TITLE_AT_FILE_ESCAPE_PREFIX = "回复："
 TEXT_AT_FILE_ESCAPE_PREFIX = " "
 DINGTALK_MESSAGE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
+# DingTalk rejects `oa approval list-pending --limit` above 20 with 400002.
+OA_PENDING_PAGE_SIZE_MAX = 20
 MIN_UNREAD_MESSAGE_LIST_LIMIT = 5
 DWS_AGENT_CODE_ENV = "DINGTALK_DWS_AGENTCODE"
 BRACKETED_EMOJI_PATTERN = re.compile(r"^\[([^\[\]]*)\]$")
@@ -969,7 +971,7 @@ class DwsClient:
     def build_list_pending_oa_approvals_command(
         self,
         page: int = 1,
-        size: int = 30,
+        size: int = OA_PENDING_PAGE_SIZE_MAX,
         *,
         start: str | None = None,
         end: str | None = None,
@@ -2266,7 +2268,7 @@ class DwsClient:
     def list_pending_oa_approvals(
         self,
         page: int = 1,
-        size: int = 30,
+        size: int = OA_PENDING_PAGE_SIZE_MAX,
         *,
         start: str | None = None,
         end: str | None = None,

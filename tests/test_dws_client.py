@@ -2115,6 +2115,12 @@ def test_oa_revert_activities_and_revert_task_commands_match_dws_v1_0_52():
     ]
 
 
+def test_list_pending_oa_approvals_default_page_size_is_dingtalk_maximum():
+    command = DwsClient(dws_bin="dws").build_list_pending_oa_approvals_command()
+
+    assert command[command.index("--limit") + 1] == "20"
+
+
 def test_list_pending_oa_approvals_command_and_parser():
     client = DwsClient(dws_bin="dws")
 

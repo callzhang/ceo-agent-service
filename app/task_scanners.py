@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from app.agent_cron.commands import current_service_command_consumer_context
 from app.dingtalk_models import DingTalkMessage
+from app.dws_client import OA_PENDING_PAGE_SIZE_MAX
 from app.store import AutoReplyStore
 from app.task_models import WorkItem
 from app.skill_features import FeatureRegistry
@@ -512,7 +513,7 @@ def scan_pending_oa_approvals(
     *,
     now: datetime | None = None,
     lookback_days: int = 365,
-    page_size: int = 30,
+    page_size: int = OA_PENDING_PAGE_SIZE_MAX,
     max_pages: int = 10,
     max_new_items: int | None = None,
 ) -> int:

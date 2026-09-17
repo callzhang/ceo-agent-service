@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from app.dingtalk_models import DingTalkMessage
-from app.dws_client import DwsError, DwsUserProfile
+from app.dws_client import OA_PENDING_PAGE_SIZE_MAX, DwsError, DwsUserProfile
 from app.store import AutoReplyStore, OrgUserProfile
 
 ORG_PROFILE_FETCH_BATCH_SIZE = 20
@@ -276,7 +276,9 @@ class CachedDwsClient:
     def comment_oa_approval(self, process_instance_id: str, text: str):
         return self.dws.comment_oa_approval(process_instance_id, text)
 
-    def list_pending_oa_approvals(self, page: int = 1, size: int = 30):
+    def list_pending_oa_approvals(
+        self, page: int = 1, size: int = OA_PENDING_PAGE_SIZE_MAX
+    ):
         return self.dws.list_pending_oa_approvals(page=page, size=size)
 
     def read_oa_approval_detail(self, process_instance_id: str):
