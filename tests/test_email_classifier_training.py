@@ -1334,7 +1334,8 @@ def test_frozen_snapshot_embedding_training_stages_metrics_without_activation(
     assert result.test_count == 4
     assert set(result.category_metrics) == {"work", "legal"}
     assert result.important_metrics["accepted_hits"] >= 0
-    assert result.important_metrics["sample_count"] == 8
+    # Cross-validation scores every message once, not only the test split.
+    assert result.important_metrics["sample_count"] == 30
     assert result.failure_reason == ""
     assert registry.active_manifest() is None
     persisted = registry.get_staged_evidence(result.model_id)
@@ -1354,10 +1355,12 @@ def test_frozen_snapshot_embedding_training_stages_metrics_without_activation(
     assert persisted["metrics"]["accuracy"] == 1.0
     assert "macro_f1" not in persisted["metrics"]
     for category in ("work", "legal"):
-        assert persisted["metrics"]["categories"][category]["support"] == 2
-        assert persisted["metrics"]["categories"][category]["test_independent_groups"] == 2
+        assert persisted["metrics"]["categories"][category]["support"] == 8
+        assert persisted["metrics"]["categories"][category]["test_independent_groups"] == 8
     assert persisted["evaluation"]["category_keys"] == ["work", "legal"]
-    assert persisted["evaluation"]["protocol"] == "email-folder-heldout-v1"
+    assert persisted["evaluation"]["protocol"] == "email-folder-grouped-cv-v1"
+    assert persisted["evaluation"]["folds"] == 5
+    assert persisted["split_counts"]["cross_validation_scored"] == 16
     assert dict(result.head_latency_ms) == persisted["head_latency_ms"]
     assert len(persisted["evaluation"]["test_digest"]) == 64
     training_evidence = persisted["training"]
@@ -1478,3 +1481,38 @@ def test_classic_families_stage_a_frozen_candidate_without_activation(tmp_path, 
     assert record.metadata.model_family == family
     assert record.status == "candidate"
     assert registry.active_manifest() is None
+
+
+def test_group_folds_spread_a_thin_category_across_every_fold():
+    from app.email_classifier_training import CROSS_VALIDATION_FOLDS, _group_folds
+
+    rows = [
+        {"group_key": f"work-{index}", "category_key": "work"} for index in range(40)
+    ] + [
+        {"group_key": f"legal-{index}", "category_key": "legal"} for index in range(5)
+    ]
+
+    folds = _group_folds(rows, rows)
+
+    legal_folds = sorted(folds[f"legal-{index}"] for index in range(5))
+    assert legal_folds == list(range(CROSS_VALIDATION_FOLDS))
+    assert _group_folds(rows, rows) == folds  # deterministic
+    work_counts = [
+        sum(1 for index in range(40) if folds[f"work-{index}"] == fold)
+        for fold in range(CROSS_VALIDATION_FOLDS)
+    ]
+    assert max(work_counts) - min(work_counts) <= 1
+
+
+def test_a_conversation_never_lands_in_two_folds():
+    from app.email_classifier_training import _group_folds
+
+    rows = [
+        {"group_key": "thread-1", "category_key": "work"},
+        {"group_key": "thread-1", "category_key": "work"},
+        {"group_key": "thread-2", "category_key": "legal"},
+    ]
+
+    folds = _group_folds(rows, rows)
+
+    assert set(folds) == {"thread-1", "thread-2"}

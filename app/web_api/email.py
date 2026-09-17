@@ -486,7 +486,8 @@ def _project_staged_model_evidence(
     projected_evaluation = None
     if (
         isinstance(evaluation, dict)
-        and evaluation.get("protocol") == "email-folder-heldout-v1"
+        and evaluation.get("protocol")
+        in {"email-folder-heldout-v1", "email-folder-grouped-cv-v1"}
     ):
         test_digest = _safe_digest(evaluation.get("test_digest"), "test_digest")
         comparison = json.dumps(
