@@ -45,6 +45,27 @@ reverts committed work they did not author.
 
 ## Recent overlaps worth knowing
 
+- 2026-09-16, Claude session `claude-delivery-receipt-gate`, **handoff to the
+  owner of `app/store.py` (`codex-agent-health-metrics`)** -- I did not edit
+  your file. `list_completed_audit_runs_missing_delivery_projection`
+  (`app/store.py:17220`) decides which completed Audit runs the repair sweep
+  backfills into `sent_replies`, from a hand-written list of identity fields
+  (the `or trim(coalesce(json_extract(...)))` chain ending near line 17275). That
+  list omits `open_task_id`, `openTaskId` and `open_message_id` (it has only
+  camelCase `openMessageId`). `dws chat +dm` returns an `openTaskId` and nothing
+  else, so real deliveries identified that way are never selected and never
+  backfilled -- and an unrecorded delivery is the one a later rerun sends again.
+  **Patch:** add three branches to that `or` chain, for
+  `$.external_result.live_result_reference.open_task_id`, `.openTaskId` and
+  `.open_message_id`, same shape as the existing `openMessageId` branch. The
+  Python projection this feeds already accepts all of them: `44478df3` made
+  `_sent_reply_projection_from_result` fall back to
+  `app.agent_effect_guard.PROVIDER_RECEIPT_FIELDS`, and `de176316` made it read
+  the accepted proposal from the run lineage, so the live path now writes the
+  row itself. This SQL is the one remaining copy of the old list. Evidence:
+  audit run 19709 (task 384233) carries `open_message_id` + `open_task_id` and
+  was not selected.
+
 - 2026-09-16, hourly-check session `claude-email-action-skipped`: **`c3ff384b`
   (`fix(audit): point the executing turn at the operation Skill before it acts`)
   has no claim row, and it edits `app/audit_agent.py`, which
