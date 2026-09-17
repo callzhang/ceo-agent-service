@@ -1873,6 +1873,123 @@ def test_console_agent_runtime_returns_saved_credentials_for_prefill(monkeypatch
     assert fields["CEO_FRIDAY_SESSION_TOKEN"] == "session-token"
 
 
+def test_console_agent_runtime_adds_a_runtime_and_keeps_its_order(
+    monkeypatch, tmp_path: Path
+):
+    """One provider kind must be addable several times, in a chosen order."""
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n"
+        "CEO_CLAUDE_MODEL=sonnet\n"
+        "CEO_CLAUDE_MODEL_REASONING_EFFORT=medium\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/console/settings/agent-runtime",
+            json={"fields": {
+                "CEO_AGENT_RUNTIME_ROUTES": "qwen_gpu4,codex_oauth",
+                "CEO_CODEX_MODEL": "gpt-5.5",
+                "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
+                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
+                "CEO_CODEX_API_MODEL": "gpt-5.5",
+                "CEO_CLAUDE_MODEL": "sonnet",
+                "CEO_CLAUDE_MODEL_REASONING_EFFORT": "medium",
+                "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:52628",
+                "CEO_RUNTIME_QWEN_GPU4_KIND": "codex_api",
+                "CEO_RUNTIME_QWEN_GPU4_BASE_URL": "http://100.93.145.69:8900/v1",
+                "CEO_RUNTIME_QWEN_GPU4_MODEL": "qwen3.8-27b",
+                "CEO_RUNTIME_QWEN_GPU4_API_KEY": "gateway-key",
+            }},
+        )
+        reloaded = client.get("/api/console/settings/agent-runtime")
+
+    assert response.status_code == 200, response.json()
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_AGENT_RUNTIME_ROUTES=qwen_gpu4,codex_oauth" in env_text
+    assert "CEO_RUNTIME_QWEN_GPU4_MODEL=qwen3.8-27b" in env_text
+    assert "CEO_RUNTIME_QWEN_GPU4_BASE_URL=http://100.93.145.69:8900/v1" in env_text
+    fields = reloaded.json()["item"]["fields"]
+    assert fields["CEO_RUNTIME_QWEN_GPU4_API_KEY"] == "gateway-key"
+    assert "CEO_RUNTIME_QWEN_GPU4_API_KEY" in reloaded.json()["item"]["secrets"]
+
+
+def test_console_agent_runtime_removing_an_added_runtime_clears_its_settings(
+    monkeypatch, tmp_path: Path
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,qwen_gpu4\n"
+        "CEO_RUNTIME_QWEN_GPU4_KIND=codex_api\n"
+        "CEO_RUNTIME_QWEN_GPU4_BASE_URL=http://100.93.145.69:8900/v1\n"
+        "CEO_RUNTIME_QWEN_GPU4_MODEL=qwen3.8-27b\n"
+        "CEO_RUNTIME_QWEN_GPU4_API_KEY=gateway-key\n"
+        "CEO_CLAUDE_MODEL=sonnet\n"
+        "CEO_CLAUDE_MODEL_REASONING_EFFORT=medium\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/console/settings/agent-runtime",
+            json={"fields": {
+                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
+                "CEO_CODEX_MODEL": "gpt-5.5",
+                "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
+                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
+                "CEO_CODEX_API_MODEL": "gpt-5.5",
+                "CEO_CLAUDE_MODEL": "sonnet",
+                "CEO_CLAUDE_MODEL_REASONING_EFFORT": "medium",
+                "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:52628",
+            }},
+        )
+
+    assert response.status_code == 200, response.json()
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n" in env_text
+    assert 'CEO_RUNTIME_QWEN_GPU4_API_KEY=""' in env_text
+    assert 'CEO_RUNTIME_QWEN_GPU4_MODEL=""' in env_text
+
+
+def test_console_agent_runtime_refuses_an_added_runtime_without_a_token(
+    monkeypatch, tmp_path: Path
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n"
+        "CEO_CLAUDE_MODEL=sonnet\n"
+        "CEO_CLAUDE_MODEL_REASONING_EFFORT=medium\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/console/settings/agent-runtime",
+            json={"fields": {
+                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,qwen_gpu4",
+                "CEO_CODEX_MODEL": "gpt-5.5",
+                "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
+                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
+                "CEO_CODEX_API_MODEL": "gpt-5.5",
+                "CEO_CLAUDE_MODEL": "sonnet",
+                "CEO_CLAUDE_MODEL_REASONING_EFFORT": "medium",
+                "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:52628",
+                "CEO_RUNTIME_QWEN_GPU4_KIND": "codex_api",
+                "CEO_RUNTIME_QWEN_GPU4_BASE_URL": "http://100.93.145.69:8900/v1",
+                "CEO_RUNTIME_QWEN_GPU4_MODEL": "qwen3.8-27b",
+                "CEO_RUNTIME_QWEN_GPU4_API_KEY": "",
+            }},
+        )
+
+    assert response.status_code == 400, response.json()
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n" in env_path.read_text(encoding="utf-8")
+
+
 def test_console_agent_runtime_save_without_routes_is_refused(
     monkeypatch, tmp_path: Path
 ):

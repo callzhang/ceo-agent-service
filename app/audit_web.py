@@ -9425,6 +9425,15 @@ def handle_agent_runtime_config_post(
     claude_enabled = parsed.get("claude_oauth_enabled", [""])[0] == "1"
     claude_api_enabled = parsed.get("claude_api_enabled", [""])[0] == "1"
     claude_api_token = parsed.get("claude_api_token", [""])[0].strip()
+    try:
+        added_routes = _parsed_added_routes(parsed)
+    except ValueError as exc:
+        return _invalid_agent_runtime_config(str(exc))
+    route_order = [
+        value.strip()
+        for value in parsed.get("route_order", [""])[0].split(",")
+        if value.strip()
+    ]
     # An omitted or blank field keeps the configured value, so a caller that
     # does not own these controls cannot blank them out.
     claude_model = parsed.get("claude_model", [""])[0].strip() or (
@@ -9571,18 +9580,16 @@ def handle_agent_runtime_config_post(
         "CEO_CODEX_MODEL_REASONING_EFFORT": reasoning_effort,
         "CEO_CLAUDE_MODEL": claude_model,
         "CEO_CLAUDE_MODEL_REASONING_EFFORT": claude_reasoning_effort,
-        "CEO_AGENT_RUNTIME_ROUTES": (
-            ",".join(
-                route
-                for route, enabled in (
-                    ("codex_oauth", True),
-                    ("codex_api", api_enabled),
-                    ("claude_oauth", claude_enabled),
-                    ("claude_api", claude_api_enabled),
-                    ("friday_runtime", friday_enabled),
-                )
-                if enabled
-            )
+        "CEO_AGENT_RUNTIME_ROUTES": _composed_route_order(
+            enabled={
+                "codex_oauth": True,
+                "codex_api": api_enabled,
+                "claude_oauth": claude_enabled,
+                "claude_api": claude_api_enabled,
+                "friday_runtime": friday_enabled,
+            },
+            added=[route["name"] for route in added_routes],
+            submitted_order=route_order,
         ),
         "CEO_CODEX_API_BASE_URL": api_base_url,
         "CEO_CODEX_API_MODEL": api_model,
@@ -9596,6 +9603,7 @@ def handle_agent_runtime_config_post(
         updates["CEO_CODEX_API_KEY"] = api_token
     if claude_api_token:
         updates["CEO_CLAUDE_API_KEY"] = claude_api_token
+    updates.update(_added_route_updates(added_routes, persisted_env))
     if friday_auth_disabled:
         updates["CEO_FRIDAY_RUNTIME_TICKET"] = ""
         updates["CEO_FRIDAY_SESSION_TOKEN"] = ""
@@ -9610,6 +9618,121 @@ def handle_agent_runtime_config_post(
         updates["CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"] = friday_provider_api_key
     write_env_values(updates)
     return 303, {"Location": "/config?tab=agent-runtime&saved=1"}, ""
+
+
+def _added_route_updates(
+    added_routes: list[dict[str, str]], persisted_env: dict[str, str]
+) -> dict[str, str]:
+    """Write each added route's settings and clear the ones just removed."""
+
+    from app.agent_runtime_config import (
+        SUPPORTED_RUNTIME_ROUTES,
+        added_route_settings_prefix,
+    )
+
+    updates: dict[str, str] = {}
+    for route in added_routes:
+        prefix = added_route_settings_prefix(route["name"])
+        updates[f"{prefix}KIND"] = route["kind"]
+        updates[f"{prefix}BASE_URL"] = route["base_url"]
+        updates[f"{prefix}MODEL"] = route["model"]
+        updates[f"{prefix}API_KEY"] = route["api_key"]
+    kept = {route["name"] for route in added_routes}
+    previous = {
+        name.strip()
+        for name in persisted_env.get("CEO_AGENT_RUNTIME_ROUTES", "").split(",")
+        if name.strip()
+    }
+    for name in previous - SUPPORTED_RUNTIME_ROUTES - kept:
+        prefix = added_route_settings_prefix(name)
+        for suffix in ("KIND", "BASE_URL", "MODEL", "API_KEY"):
+            updates[f"{prefix}{suffix}"] = ""
+    return updates
+
+
+def _composed_route_order(
+    *,
+    enabled: dict[str, bool],
+    added: list[str],
+    submitted_order: list[str],
+) -> str:
+    """Keep the failover order the console submitted, dropping disabled routes."""
+
+    selected = [name for name, is_on in enabled.items() if is_on] + added
+    if not submitted_order:
+        return ",".join(selected)
+    remaining = list(selected)
+    ordered = []
+    for name in submitted_order:
+        if name in remaining:
+            ordered.append(name)
+            remaining.remove(name)
+    # A route the caller enabled without placing it keeps its default position.
+    return ",".join(ordered + remaining)
+
+
+def _parsed_added_routes(parsed: dict[str, list[str]]) -> list[dict[str, str]]:
+    """Read and validate the routes the operator added under their own names."""
+
+    from app.agent_runtime_config import (
+        ADDED_ROUTE_KINDS,
+        ROUTE_NAME_PATTERN,
+        SUPPORTED_RUNTIME_ROUTES,
+        added_route_settings_prefix,
+    )
+
+    raw = parsed.get("added_routes_json", ["[]"])[0].strip() or "[]"
+    try:
+        payloads = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Added runtimes could not be read.") from exc
+    if not isinstance(payloads, list):
+        raise ValueError("Added runtimes could not be read.")
+    routes: list[dict[str, str]] = []
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            raise ValueError("Added runtimes could not be read.")
+        name = str(payload.get("name") or "").strip()
+        if not ROUTE_NAME_PATTERN.match(name) or name in SUPPORTED_RUNTIME_ROUTES:
+            raise ValueError(
+                "A runtime name must be lowercase letters, digits or _, "
+                "and must not reuse a built-in route name."
+            )
+        kind = str(payload.get("kind") or "").strip()
+        if kind not in ADDED_ROUTE_KINDS:
+            raise ValueError(
+                f"Runtime {name} must select one of: {', '.join(ADDED_ROUTE_KINDS)}."
+            )
+        model = str(payload.get("model") or "").strip()
+        if not model:
+            raise ValueError(f"Runtime {name} requires a model.")
+        prefix = added_route_settings_prefix(name)
+        api_key = str(payload.get("api_key") or "").strip() or _agent_runtime_config_value(
+            f"{prefix}API_KEY"
+        )
+        if not api_key:
+            raise ValueError(f"Runtime {name} requires an API token.")
+        base_url = ""
+        if kind == "codex_api":
+            try:
+                base_url = normalize_codex_api_base_url(
+                    str(payload.get("base_url") or "").strip()
+                )
+            except ValueError as exc:
+                raise ValueError(f"Runtime {name}: {exc}") from exc
+        routes.append(
+            {
+                "name": name,
+                "kind": kind,
+                "base_url": base_url,
+                "model": model,
+                "api_key": api_key,
+            }
+        )
+    names = [route["name"] for route in routes]
+    if len(names) != len(set(names)):
+        raise ValueError("Added runtimes must have unique names.")
+    return routes
 
 
 def _invalid_agent_runtime_config(message: str) -> tuple[int, dict[str, str], str]:

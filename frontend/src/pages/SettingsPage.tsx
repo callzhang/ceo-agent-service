@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -722,14 +723,63 @@ function routeOrder(configured: string) {
   return configured.split(",").map((name) => name.trim()).filter(Boolean);
 }
 
-function RuntimeRouteOrder({ configured }: { configured: string }) {
+function RuntimeRouteOrder({ configured, onMove }: { configured: string; onMove?: (from: number, to: number) => void }) {
   const order = routeOrder(configured);
   const off = Object.keys(RUNTIME_ROUTE_LABELS).filter((name) => !order.includes(name));
   return <div className="runtime-order">
     <p className="runtime-order-caption">故障切换顺序</p>
-    <ol className="runtime-order-list">{order.map((name, index) => <li key={name} className="runtime-order-step"><span className="runtime-order-rank">{index + 1}</span>{RUNTIME_ROUTE_LABELS[name] ?? name}</li>)}</ol>
+    <ol className="runtime-order-list">{order.map((name, index) => <li key={name} className="runtime-order-step">
+      <span className="runtime-order-rank">{index + 1}</span>
+      {RUNTIME_ROUTE_LABELS[name] ?? name}
+      {onMove && <span className="runtime-order-move">
+        <button type="button" className="runtime-move-button" aria-label={`${RUNTIME_ROUTE_LABELS[name] ?? name} 上移`} disabled={index === 0} onClick={() => onMove(index, index - 1)}><ChevronUp size={14} aria-hidden="true" /></button>
+        <button type="button" className="runtime-move-button" aria-label={`${RUNTIME_ROUTE_LABELS[name] ?? name} 下移`} disabled={index === order.length - 1} onClick={() => onMove(index, index + 1)}><ChevronDown size={14} aria-hidden="true" /></button>
+      </span>}
+    </li>)}</ol>
     {off.length > 0 && <p className="runtime-order-off">未启用：{off.map((name) => RUNTIME_ROUTE_LABELS[name] ?? name).join("、")}</p>}
   </div>;
+}
+
+const ADDED_RUNTIME_KINDS: Array<{ value: string; label: string; needsBaseUrl: boolean }> = [
+  { value: "codex_api", label: "OpenAI 兼容 API", needsBaseUrl: true },
+  { value: "claude_api", label: "Anthropic API", needsBaseUrl: false },
+];
+
+function addedRoutePrefix(name: string) {
+  return `CEO_RUNTIME_${name.toUpperCase()}_`;
+}
+
+function AddRuntimeForm({ onAdd, taken }: { onAdd: (route: { name: string; kind: string; baseUrl: string; model: string; token: string }) => void; taken: string[] }) {
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState(ADDED_RUNTIME_KINDS[0].value);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [token, setToken] = useState("");
+  const [error, setError] = useState("");
+  const needsBaseUrl = ADDED_RUNTIME_KINDS.find((item) => item.value === kind)?.needsBaseUrl ?? false;
+  const submit = () => {
+    const trimmed = name.trim();
+    if (!/^[a-z][a-z0-9_]*$/.test(trimmed)) { setError("名称只能用小写字母、数字和下划线，且以字母开头"); return; }
+    if (taken.includes(trimmed)) { setError("这个名称已经用过了"); return; }
+    if (!model.trim()) { setError("请填写模型名"); return; }
+    if (!token.trim()) { setError("请填写 API Token"); return; }
+    if (needsBaseUrl && !baseUrl.trim()) { setError("请填写 API Base URL"); return; }
+    setError("");
+    onAdd({ name: trimmed, kind, baseUrl: baseUrl.trim(), model: model.trim(), token: token.trim() });
+    setName(""); setBaseUrl(""); setModel(""); setToken("");
+  };
+  return <section className="runtime-card runtime-card-wide runtime-add-card">
+    <div className="runtime-card-head"><div><h3>新增 runtime</h3><p>同一种 API 可以添加多条，各自有自己的地址、模型和 Token</p></div></div>
+    <div className="runtime-fields">
+      <label className="runtime-field"><span>名称</span><input aria-label="新增 runtime 名称" value={name} placeholder="例如 qwen_gpu4" onChange={(event) => setName(event.target.value)} /></label>
+      <SelectField id="added-runtime-kind" label="类型" value={kind} onChange={setKind}>{ADDED_RUNTIME_KINDS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</SelectField>
+      {needsBaseUrl && <label className="runtime-field"><span>API Base URL</span><input aria-label="新增 runtime API Base URL" type="url" value={baseUrl} placeholder="http://100.93.145.69:8900/v1" onChange={(event) => setBaseUrl(event.target.value)} /></label>}
+      <label className="runtime-field"><span>模型</span><input aria-label="新增 runtime 模型" value={model} placeholder="qwen3.8-27b" onChange={(event) => setModel(event.target.value)} /></label>
+      <SecretField id="added-runtime-token" label="新增 runtime API Token" value={token} onChange={setToken} />
+    </div>
+    {error && <p className="field-error" role="alert">{error}</p>}
+    <div className="runtime-add-actions"><button type="button" className="secondary-button" onClick={submit}>添加</button></div>
+  </section>;
 }
 
 function RuntimeRouteCard({ title, description, enabled, locked, wide, onToggle, children }: { title: string; description: string; enabled: boolean; locked?: boolean; wide?: boolean; onToggle?: (next: boolean) => void; children: ReactNode }) {
@@ -754,18 +804,43 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
   const update = (key: string, next: string) => setDraft({ ...draft, [key]: next });
   const routes = routeOrder(value("CEO_AGENT_RUNTIME_ROUTES"));
   const enabled = (name: string) => routes.includes(name);
-  // The service composes the failover order itself; a toggle only says which
-  // routes take part, so the order stays the canonical one.
-  const toggleRoute = (name: string, next: boolean) => update(
-    "CEO_AGENT_RUNTIME_ROUTES",
-    Object.keys(RUNTIME_ROUTE_LABELS).filter((route) => route === name ? next : routes.includes(route)).join(","),
-  );
+  const builtIn = Object.keys(RUNTIME_ROUTE_LABELS);
+  const addedRoutes = routes.filter((name) => !builtIn.includes(name));
+  // The submitted order is the failover order. Enabling a built-in route puts
+  // it in its canonical place among the other built-ins without disturbing an
+  // order the operator has arranged.
+  const toggleRoute = (name: string, next: boolean) => {
+    if (!next) { update("CEO_AGENT_RUNTIME_ROUTES", routes.filter((route) => route !== name).join(",")); return; }
+    const after = builtIn.slice(builtIn.indexOf(name) + 1);
+    const at = routes.findIndex((route) => after.includes(route));
+    const ordered = [...routes];
+    ordered.splice(at === -1 ? ordered.length : at, 0, name);
+    update("CEO_AGENT_RUNTIME_ROUTES", ordered.join(","));
+  };
+  const moveRoute = (from: number, to: number) => {
+    const ordered = [...routes];
+    const [moved] = ordered.splice(from, 1);
+    ordered.splice(to, 0, moved);
+    update("CEO_AGENT_RUNTIME_ROUTES", ordered.join(","));
+  };
+  const addRoute = (route: { name: string; kind: string; baseUrl: string; model: string; token: string }) => {
+    const prefix = addedRoutePrefix(route.name);
+    setDraft({
+      ...draft,
+      CEO_AGENT_RUNTIME_ROUTES: [...routes, route.name].join(","),
+      [`${prefix}KIND`]: route.kind,
+      [`${prefix}BASE_URL`]: route.baseUrl,
+      [`${prefix}MODEL`]: route.model,
+      [`${prefix}API_KEY`]: route.token,
+    });
+  };
+  const removeRoute = (name: string) => update("CEO_AGENT_RUNTIME_ROUTES", routes.filter((route) => route !== name).join(","));
   return <SettingsCard>
     <div className="settings-card-heading">
       <div><p className="eyebrow">Settings / Agent Runtime</p><h2>Agent Runtime</h2><p className="muted">集中管理模型路由和 fallback 凭据。保存后重启主服务，运行中的 worker 才会使用新配置。</p></div>
       <span className="settings-path">.env backed</span>
     </div>
-    <RuntimeRouteOrder configured={value("CEO_AGENT_RUNTIME_ROUTES")} />
+    <RuntimeRouteOrder configured={value("CEO_AGENT_RUNTIME_ROUTES")} onMove={moveRoute} />
     <form onSubmit={(event) => event.preventDefault()}>
       <div className="runtime-card-grid">
         <RuntimeRouteCard title="Codex OAuth" description="默认的本机 OAuth 路由" enabled locked>
@@ -793,6 +868,22 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
           <SecretField id="friday-runtime-ticket" label="Runtime ticket" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_TICKET"))} value={raw("CEO_FRIDAY_RUNTIME_TICKET")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_TICKET", next)} />
           <SecretField id="friday-session-token" label="Session token" configured={Boolean(raw("CEO_FRIDAY_SESSION_TOKEN"))} value={raw("CEO_FRIDAY_SESSION_TOKEN")} onChange={(next) => update("CEO_FRIDAY_SESSION_TOKEN", next)} />
         </RuntimeRouteCard>
+        {addedRoutes.map((name) => {
+          const prefix = addedRoutePrefix(name);
+          const kindLabel = ADDED_RUNTIME_KINDS.find((item) => item.value === raw(`${prefix}KIND`))?.label ?? raw(`${prefix}KIND`);
+          return <section key={name} className="runtime-card">
+            <div className="runtime-card-head">
+              <div><h3>{name}</h3><p>{kindLabel}</p></div>
+              <button type="button" className="secondary-button" aria-label={`删除 ${name}`} onClick={() => removeRoute(name)}>删除</button>
+            </div>
+            <div className="runtime-fields">
+              {raw(`${prefix}KIND`) === "codex_api" && <label className="runtime-field"><span>API Base URL</span><input aria-label={`${name} API Base URL`} type="url" value={value(`${prefix}BASE_URL`)} onChange={(event) => update(`${prefix}BASE_URL`, event.target.value)} /></label>}
+              <label className="runtime-field"><span>模型</span><input aria-label={`${name} 模型`} value={value(`${prefix}MODEL`)} onChange={(event) => update(`${prefix}MODEL`, event.target.value)} /></label>
+              <SecretField id={`added-${name}-token`} label={`${name} API Token`} configured={Boolean(raw(`${prefix}API_KEY`))} value={raw(`${prefix}API_KEY`)} onChange={(next) => update(`${prefix}API_KEY`, next)} />
+            </div>
+          </section>;
+        })}
+        <AddRuntimeForm onAdd={addRoute} taken={routes} />
       </div>
       <div className="runtime-save-bar"><span className="muted">已保存凭据会回填；可直接编辑后保存。</span><SaveBar state={saveState} error={saveError} /></div>
     </form>

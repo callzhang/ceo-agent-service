@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-17: Agent Runtime routes are no longer a fixed set of five names. A
+  name outside the built-in set is an added route that describes itself through
+  `CEO_RUNTIME_<NAME>_KIND/BASE_URL/MODEL/API_KEY`, so one provider kind can
+  appear as many times as it is configured, each with its own endpoint, model
+  and token; a service-API route now carries its own base URL instead of
+  sharing one global value. `CEO_AGENT_RUNTIME_ROUTES` is the failover order as
+  submitted, and Settings / Agent Runtime can add a runtime, remove it, and
+  move a route up or down.
+
 - 2026-09-17: Settings / Agent Runtime now has a Claude API card, and a save
   that names no route is refused. The panel listed `claude_api` in its failover
   order and reported it 未启用, but had no card for it, so the route could never

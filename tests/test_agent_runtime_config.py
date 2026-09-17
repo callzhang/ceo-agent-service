@@ -88,11 +88,67 @@ def test_codex_api_route_rejects_an_unsuffixed_gpt_5_6_model():
         )
 
 
-def test_runtime_routes_must_be_unique_and_supported():
+def test_runtime_routes_must_be_unique_and_described():
     with pytest.raises(ValueError, match="unique routes"):
         load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_oauth"})
-    with pytest.raises(ValueError, match="unsupported runtime routes"):
+    # A name outside the built-in set is an added route, so it must carry its
+    # own settings instead of being rejected as a typo.
+    with pytest.raises(ValueError, match="CEO_RUNTIME_UNKNOWN_API_KIND"):
         load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "unknown_api"})
+    with pytest.raises(ValueError, match="lowercase letters"):
+        load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "Qwen GPU4"})
+
+
+def test_added_route_carries_its_own_provider_and_repeats_a_kind():
+    """Several routes of one kind must reach different providers."""
+
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,qwen_gpu4,qwen_spare",
+            "CEO_RUNTIME_QWEN_GPU4_KIND": "codex_api",
+            "CEO_RUNTIME_QWEN_GPU4_BASE_URL": "http://100.93.145.69:8900/v1",
+            "CEO_RUNTIME_QWEN_GPU4_MODEL": "qwen3.8-27b",
+            "CEO_RUNTIME_QWEN_GPU4_API_KEY": "gateway-key",
+            "CEO_RUNTIME_QWEN_SPARE_KIND": "codex_api",
+            "CEO_RUNTIME_QWEN_SPARE_BASE_URL": "https://api.example.com/v1",
+            "CEO_RUNTIME_QWEN_SPARE_MODEL": "qwen3.6-35b-a3b-heretic",
+            "CEO_RUNTIME_QWEN_SPARE_API_KEY": "spare-key",
+        }
+    )
+
+    assert [route.name for route in config.routes] == [
+        "codex_oauth",
+        "qwen_gpu4",
+        "qwen_spare",
+    ]
+    added = {route.name: route for route in config.routes}
+    assert added["qwen_gpu4"].base_url == "http://100.93.145.69:8900/v1"
+    assert added["qwen_spare"].base_url == "https://api.example.com/v1"
+    assert added["qwen_gpu4"].model == "qwen3.8-27b"
+    assert config.secret_for("qwen_gpu4").get_secret_value() == "gateway-key"
+    assert config.secret_for("qwen_spare").get_secret_value() == "spare-key"
+
+
+def test_added_route_requires_a_model_and_key():
+    base = {
+        "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,qwen_gpu4",
+        "CEO_RUNTIME_QWEN_GPU4_KIND": "codex_api",
+        "CEO_RUNTIME_QWEN_GPU4_BASE_URL": "http://100.93.145.69:8900/v1",
+    }
+    with pytest.raises(ValueError, match="CEO_RUNTIME_QWEN_GPU4_MODEL"):
+        load_runtime_config(base)
+    with pytest.raises(ValueError, match="CEO_RUNTIME_QWEN_GPU4_API_KEY"):
+        load_runtime_config({**base, "CEO_RUNTIME_QWEN_GPU4_MODEL": "qwen3.8-27b"})
+
+
+def test_route_order_is_the_failover_order():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_oauth,codex_oauth",
+        }
+    )
+
+    assert [route.name for route in config.routes] == ["claude_oauth", "codex_oauth"]
 
 
 def test_claude_route_requires_anthropic_secret():

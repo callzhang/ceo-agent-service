@@ -45,6 +45,9 @@ class RuntimeRoute(BaseModel):
     runtime_kind: RuntimeKind
     credential_mode: CredentialMode
     model: str
+    # A service-API route carries its own provider endpoint, so several routes
+    # of one kind can point at different providers.
+    base_url: str = ""
 
     @field_validator("name", "model")
     @classmethod

@@ -183,6 +183,88 @@ describe("SettingsPage", () => {
     }), {});
   });
 
+  it("adds a runtime under its own name and keeps it after the built-in routes", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth",
+    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    await user.type(await screen.findByLabelText("新增 runtime 名称"), "qwen_gpu4");
+    await user.type(screen.getByLabelText("新增 runtime API Base URL"), "http://100.93.145.69:8900/v1");
+    await user.type(screen.getByLabelText("新增 runtime 模型"), "qwen3.8-27b");
+    await user.type(screen.getByLabelText("新增 runtime API Token"), "gateway-key");
+    await user.click(screen.getByRole("button", { name: "添加" }));
+
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "1Codex OAuth", "2qwen_gpu4",
+    ]);
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,qwen_gpu4",
+      CEO_RUNTIME_QWEN_GPU4_KIND: "codex_api",
+      CEO_RUNTIME_QWEN_GPU4_BASE_URL: "http://100.93.145.69:8900/v1",
+      CEO_RUNTIME_QWEN_GPU4_MODEL: "qwen3.8-27b",
+      CEO_RUNTIME_QWEN_GPU4_API_KEY: "gateway-key",
+    }), {});
+  });
+
+  it("refuses an added runtime name the service would reject", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth",
+    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    await user.type(await screen.findByLabelText("新增 runtime 名称"), "Qwen GPU4");
+    await user.click(screen.getByRole("button", { name: "添加" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("小写字母");
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["1Codex OAuth"]);
+  });
+
+  it("moves a route down the failover order", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,claude_oauth,friday_runtime",
+    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    await user.click(await screen.findByRole("button", { name: "Codex OAuth 下移" }));
+
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "1Claude OAuth", "2Codex OAuth", "3Friday Runtime",
+    ]);
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
+      CEO_AGENT_RUNTIME_ROUTES: "claude_oauth,codex_oauth,friday_runtime",
+    }), {});
+  });
+
+  it("removes an added runtime from the order", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,qwen_gpu4",
+      CEO_RUNTIME_QWEN_GPU4_KIND: "codex_api",
+      CEO_RUNTIME_QWEN_GPU4_BASE_URL: "http://100.93.145.69:8900/v1",
+      CEO_RUNTIME_QWEN_GPU4_MODEL: "qwen3.8-27b",
+      CEO_RUNTIME_QWEN_GPU4_API_KEY: "gateway-key",
+    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    expect(await screen.findByLabelText("qwen_gpu4 模型")).toHaveValue("qwen3.8-27b");
+    await user.click(screen.getByRole("button", { name: "删除 qwen_gpu4" }));
+
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["1Codex OAuth"]);
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth",
+    }), {});
+  });
+
   it("shows the Agent Runtime validation reason without discarding the draft", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {

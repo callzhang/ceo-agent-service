@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from datetime import timedelta
 from urllib.parse import urlsplit
@@ -15,6 +16,8 @@ DEFAULT_FRIDAY_RUNTIME_BASE_URL = "http://127.0.0.1:8080"
 SUPPORTED_CODEX_RUNTIME_MODELS = frozenset(
     {"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
 )
+ROUTE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+ADDED_ROUTE_KINDS = ("codex_api", "claude_api")
 SUPPORTED_RUNTIME_ROUTES = frozenset(
     {
         "codex_oauth",
@@ -97,9 +100,15 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     )
     if not names or len(names) != len(set(names)):
         raise ValueError("CEO_AGENT_RUNTIME_ROUTES must contain unique routes")
-    unknown = set(names) - SUPPORTED_RUNTIME_ROUTES
-    if unknown:
-        raise ValueError(f"unsupported runtime routes: {sorted(unknown)}")
+    # A name outside the built-in set is an added route: it describes itself
+    # through CEO_RUNTIME_<NAME>_* settings, so one provider kind can appear
+    # as many times as it is configured.
+    added = tuple(name for name in names if name not in SUPPORTED_RUNTIME_ROUTES)
+    for name in added:
+        if not ROUTE_NAME_PATTERN.match(name):
+            raise ValueError(
+                f"runtime route name must be lowercase letters, digits or _: {name}"
+            )
     model = env.get("CEO_CODEX_MODEL", DEFAULT_CEO_CODEX_MODEL).strip()
     api_model = env.get("CEO_CODEX_API_MODEL", model).strip()
     if "codex_oauth" in names and model not in SUPPORTED_CODEX_RUNTIME_MODELS:
@@ -154,9 +163,14 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
                     runtime_kind=RuntimeKind.CODEX_CLI,
                     credential_mode=CredentialMode.SERVICE_API,
                     model=api_model,
+                    base_url=codex_api_base_url,
                 )
             )
             secrets[name] = SecretStr(raw_secret)
+        elif name in added:
+            route, secret = _added_route(name, env)
+            routes.append(route)
+            secrets[name] = secret
         elif name == "claude_oauth":
             routes.append(
                 RuntimeRoute(
@@ -237,6 +251,52 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
             if "friday_runtime" in names and friday_provider_key
             else None
         ),
+    )
+
+
+def added_route_settings_prefix(name: str) -> str:
+    """Return the env prefix that describes one added runtime route."""
+
+    return f"CEO_RUNTIME_{name.upper()}_"
+
+
+def _added_route(name: str, env: Mapping[str, str]) -> tuple[RuntimeRoute, SecretStr]:
+    """Build a route the operator added, from its own settings."""
+
+    prefix = added_route_settings_prefix(name)
+    kind = env.get(f"{prefix}KIND", "").strip()
+    if kind not in ADDED_ROUTE_KINDS:
+        raise ValueError(
+            f"{prefix}KIND must be one of {', '.join(ADDED_ROUTE_KINDS)}"
+        )
+    model = env.get(f"{prefix}MODEL", "").strip()
+    if not model:
+        raise ValueError(f"{prefix}MODEL is required")
+    raw_secret = env.get(f"{prefix}API_KEY", "").strip()
+    if not raw_secret:
+        raise ValueError(f"{prefix}API_KEY is required")
+    if kind == "claude_api":
+        # The Claude CLI reads its endpoint from its own installation, so an
+        # added Claude route carries a key and a model, never a base URL.
+        return (
+            RuntimeRoute(
+                name=name,
+                runtime_kind=RuntimeKind.CLAUDE_CLI,
+                credential_mode=CredentialMode.SERVICE_API,
+                model=model,
+            ),
+            SecretStr(raw_secret),
+        )
+    base_url = normalize_codex_api_base_url(env.get(f"{prefix}BASE_URL", "").strip())
+    return (
+        RuntimeRoute(
+            name=name,
+            runtime_kind=RuntimeKind.CODEX_CLI,
+            credential_mode=CredentialMode.SERVICE_API,
+            model=model,
+            base_url=base_url,
+        ),
+        SecretStr(raw_secret),
     )
 
 

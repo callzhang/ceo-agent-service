@@ -69,6 +69,31 @@ def _legacy_settings_error_message(body_text: str) -> str:
     return unescape(re.sub(r"<[^>]+>", "", match.group(1))).strip() or "保存失败，请检查字段"
 
 
+def _added_route_payloads(
+    fields: dict[str, Any], routes: set[str]
+) -> list[dict[str, str]]:
+    """Collect the settings of every route the operator added by name."""
+
+    from app.agent_runtime_config import (
+        SUPPORTED_RUNTIME_ROUTES,
+        added_route_settings_prefix,
+    )
+
+    payloads = []
+    for name in sorted(routes - SUPPORTED_RUNTIME_ROUTES):
+        prefix = added_route_settings_prefix(name)
+        payloads.append(
+            {
+                "name": name,
+                "kind": str(fields.get(f"{prefix}KIND") or "").strip(),
+                "base_url": str(fields.get(f"{prefix}BASE_URL") or "").strip(),
+                "model": str(fields.get(f"{prefix}MODEL") or "").strip(),
+                "api_key": str(fields.get(f"{prefix}API_KEY") or "").strip(),
+            }
+        )
+    return payloads
+
+
 def register_console_routes(
     app: FastAPI,
     store_factory: Callable[[], Any],
@@ -1667,9 +1692,27 @@ def register_console_routes(
                     "CEO_FRIDAY_RUNTIME_AUTH_DISABLED",
                     "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN",
                 )}
+                # An added route describes itself, so the console reads and
+                # writes its settings under the route's own name.
+                from app.agent_runtime_config import (
+                    SUPPORTED_RUNTIME_ROUTES,
+                    added_route_settings_prefix,
+                )
+
+                added_secrets = []
+                for name in (
+                    route.strip()
+                    for route in fields["CEO_AGENT_RUNTIME_ROUTES"].split(",")
+                ):
+                    if not name or name in SUPPORTED_RUNTIME_ROUTES:
+                        continue
+                    prefix = added_route_settings_prefix(name)
+                    for suffix in ("KIND", "BASE_URL", "MODEL", "API_KEY"):
+                        fields[f"{prefix}{suffix}"] = env.get(f"{prefix}{suffix}", "")
+                    added_secrets.append(f"{prefix}API_KEY")
             if payload is None:
                 payload = {"section": section, "fields": fields}
-            payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_CLAUDE_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"] if section == "agent-runtime" else []
+            payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_CLAUDE_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN", *added_secrets] if section == "agent-runtime" else []
         return item_envelope(payload)
 
     @app.get("/api/console/tutorial")
@@ -2006,6 +2049,12 @@ def register_console_routes(
                 "friday_runtime_ticket": str(fields.get("friday_runtime_ticket") or fields.get("CEO_FRIDAY_RUNTIME_TICKET") or ""),
                 "friday_session_token": str(fields.get("friday_session_token") or fields.get("CEO_FRIDAY_SESSION_TOKEN") or ""),
                 "friday_runtime_auth_disabled": str(friday_auth_disabled),
+                "added_routes_json": json.dumps(
+                    _added_route_payloads(fields, routes), ensure_ascii=False
+                ),
+                # The submitted order is the failover order, so the console can
+                # move a route up or down.
+                "route_order": str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or ""),
             }
         else:
             encoded = {str(k): str(v) for k, v in fields.items()}

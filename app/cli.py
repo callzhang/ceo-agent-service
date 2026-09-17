@@ -494,9 +494,12 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--route",
                 action="append",
-                choices=sorted(SUPPORTED_RUNTIME_ROUTES),
                 default=[],
-                help="probe only this configured route; repeat to select several",
+                help=(
+                    "probe only this configured route, built-in ("
+                    + ", ".join(sorted(SUPPORTED_RUNTIME_ROUTES))
+                    + ") or added; repeat to select several"
+                ),
             )
         if command == "read-oa-approval-detail":
             subparser.add_argument("--instance-id", required=True)

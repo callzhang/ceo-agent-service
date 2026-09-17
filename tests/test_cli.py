@@ -613,6 +613,14 @@ def test_parser_probes_every_supported_runtime_route():
         assert args.route == [route_name]
 
 
+def test_parser_probes_an_added_runtime_route():
+    """An operator-added route is named by the operator, not by this parser."""
+
+    args = build_parser().parse_args(["probe-agent-runtimes", "--route", "qwen_gpu4"])
+
+    assert args.route == ["qwen_gpu4"]
+
+
 def test_probe_agent_runtimes_prints_safe_route_json(tmp_path, capsys):
     from app.agent_runtime_contracts import (
         RuntimeCapabilitySnapshot,

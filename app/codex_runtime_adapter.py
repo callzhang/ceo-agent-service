@@ -137,7 +137,7 @@ class CodexRuntimeAdapter:
             model=configured_route.model,
             provider=self._provider_for(configured_route),
             model_provider_settings=(
-                self._api_provider_settings()
+                self._api_provider_settings(configured_route)
                 if configured_route.credential_mode == CredentialMode.SERVICE_API
                 else None
             ),
@@ -297,10 +297,10 @@ class CodexRuntimeAdapter:
             return _API_PROVIDER
         return os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
 
-    def _api_provider_settings(self) -> dict[str, str]:
+    def _api_provider_settings(self, route: RuntimeRoute) -> dict[str, str]:
         return {
             **_API_PROVIDER_METADATA,
-            "base_url": self.config.codex_api_base_url,
+            "base_url": route.base_url,
         }
 
     def _api_key_for(self, route: RuntimeRoute, api_key: str | None) -> str:

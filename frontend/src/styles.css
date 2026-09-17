@@ -366,6 +366,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .runtime-order-step + .runtime-order-step::before { content: "→"; margin-right: 2px; margin-left: -6px; color: var(--ink-soft); font-weight: 400; }
 .runtime-order-rank { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: var(--ink); color: var(--surface); font-size: 0.74rem; font-weight: 700; }
 .runtime-order-off { margin: 10px 0 0; color: var(--ink-soft); font-size: 0.8rem; }
+.runtime-order-move { display: inline-flex; gap: 2px; margin-left: 2px; }
+.runtime-move-button { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink-soft); cursor: pointer; }
+.runtime-move-button:hover:not(:disabled) { border-color: var(--line-strong); color: var(--ink); }
+.runtime-move-button:disabled { opacity: 0.35; cursor: default; }
+.runtime-add-card { border-style: dashed; }
+.runtime-add-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 .runtime-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
 .runtime-card { display: flex; flex-direction: column; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
 .runtime-chip { flex: none; padding: 3px 10px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--ink-soft); font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
