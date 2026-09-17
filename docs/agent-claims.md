@@ -282,6 +282,15 @@ reverts committed work they did not author.
   `codex_process_failed` / "runtime route is paused"), which predates the
   restart and belongs to the cron change in `ceb3931e`.
 
+- 2026-09-17, for whoever owns the uncommitted `_capture_runtime_skill_edits`
+  work (`app/cli.py`, `app/managed_skills.py`, `app/business_skills.py` are all
+  modified in the working tree): that startup step files a Service error on
+  every service start — errors 14237 (07:35:52Z) and 14238 (07:43:55Z),
+  `runtime_skill_edit_capture_failed: Could not record in-place Skill edits;
+  version history may be incomplete: Skill missing metadata.managed_by marker`.
+  Two restarts, two rows, so each restart adds one. I left both open rather
+  than resolving them, since the capture itself has not run successfully yet.
+
 - 2026-09-11: three findings left open by the failed-item repair round, each
   needing an owner. They are recorded here because the evidence is perishable.
 
