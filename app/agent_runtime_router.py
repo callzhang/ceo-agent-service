@@ -17,7 +17,6 @@ from typing import TypeVar
 from zoneinfo import ZoneInfo
 
 from app.agent_effects import IDLE_TIMEOUT_SECONDS, TOTAL_TIMEOUT_SECONDS
-from app.external_retry import retry_delay_seconds
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
@@ -38,6 +37,7 @@ from app.friday_runtime_adapter import (
     FridayRuntimeError,
 )
 from app.leak_check import contains_credential, contains_local_runtime_leak
+from app.runtime_fallback import plan_runtime_fallback
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import (
     MAX_RUNTIME_RESULT_ENVELOPE_BYTES,
@@ -515,35 +515,6 @@ def _is_retryable_external_runtime_failure(failure: RuntimeFailure) -> bool:
 # once it is live again. The fourth such failure fails over to a successor
 # route, which restarts from the original prompt with its own correction turn.
 CAPACITY_WAITS_BEFORE_FAILOVER = 3
-
-# Derek, 2026-09-17: when a provider says it is full (429 / model at capacity),
-# retry the same route three times with growing waits, then switch runtime.
-# The route is paused for other work only once those retries are spent.
-CAPACITY_RETRIES_ON_SAME_ROUTE = 3
-CAPACITY_RETRY_BASE_DELAY_SECONDS = 10.0
-
-
-def _is_same_route_capacity_failure(failure: RuntimeFailure) -> bool:
-    return (
-        failure.failure_class is RuntimeFailureClass.CAPACITY
-        and failure.retryable_on_same_route
-    )
-
-
-def _consecutive_capacity_failures(
-    attempts: Sequence[AgentRuntimeAttempt], route_name: str
-) -> int:
-    """Count the newest run of provider-full failures on one route."""
-    count = 0
-    for attempt in reversed(attempts):
-        if (
-            attempt.route_name != route_name
-            or attempt.failure_class != RuntimeFailureClass.CAPACITY.value
-        ):
-            break
-        count += 1
-    return count
-
 
 _CAPACITY_WAIT_FAILURE_CLASSES = frozenset(
     {RuntimeFailureClass.CAPACITY.value, RuntimeFailureClass.TRANSPORT.value}
@@ -1612,34 +1583,6 @@ class RoutedCodexExecution:
                     timeout_kind=process.timeout_kind,
                 ),
             )
-            capacity_failures = (
-                _consecutive_capacity_failures(
-                    [
-                        attempt
-                        for attempt in self._runtime_attempts(
-                            workload_kind, workload_key, agent_run_id=agent_run_id
-                        )
-                        if attempt.id != active_attempt.id
-                    ],
-                    route.name,
-                )
-                + 1
-                if result_validation_retries_used == 0
-                and _is_same_route_capacity_failure(failure)
-                else 0
-            )
-            retry_same_route = 0 < capacity_failures <= CAPACITY_RETRIES_ON_SAME_ROUTE
-            if failure.route_pause_required and not retry_same_route:
-                self._finalized_step(
-                    active_attempt,
-                    stage="route_pause",
-                    evidence=current_evidence,
-                    action=lambda: self._store.open_runtime_route_pause(
-                        route.name,
-                        failure.code,
-                        self._now() + self._config.retry_delay,
-                    ),
-                )
             failed_attempt = self._finalized_step(
                 active_attempt,
                 stage="attempt_failure",
@@ -1657,6 +1600,40 @@ class RoutedCodexExecution:
                     now=self._now(),
                 ),
             )
+            plan = plan_runtime_fallback(
+                route=route,
+                failure=failure,
+                attempts=self._runtime_attempts(
+                    workload_kind, workload_key, agent_run_id=agent_run_id
+                ),
+                select_next_route=lambda: self._next_route_after_failure(
+                    workload_kind=workload_kind,
+                    workload_key=workload_key,
+                    agent_run_id=agent_run_id,
+                    failed_attempt=failed_attempt,
+                    failure=failure,
+                    required_capabilities=required_capabilities,
+                ),
+                # A correction turn's session lives on the route that failed, so
+                # it waits for that route rather than moving to another one.
+                same_route_retry_permitted=(
+                    result_validation_retries_used == 0
+                    or _is_retryable_external_runtime_failure(failure)
+                ),
+            )
+            if failure.route_pause_required and not (
+                plan.retry_same_route and result_validation_retries_used == 0
+            ):
+                self._finalized_step(
+                    active_attempt,
+                    stage="route_pause",
+                    evidence=current_evidence,
+                    action=lambda: self._store.open_runtime_route_pause(
+                        route.name,
+                        failure.code,
+                        self._now() + self._config.retry_delay,
+                    ),
+                )
             if result_validation_retries_used > 0:
                 if not _is_retryable_external_runtime_failure(failure):
                     # The correction turn was this workload's one repair; any
@@ -1673,7 +1650,7 @@ class RoutedCodexExecution:
                         workload_kind, workload_key, agent_run_id=agent_run_id
                     )
                 )
-                if waits <= CAPACITY_WAITS_BEFORE_FAILOVER:
+                if plan.retry_same_route or waits <= CAPACITY_WAITS_BEFORE_FAILOVER:
                     # The correction session lives on this provider: the
                     # caller defers and the next pass resumes it here.
                     raise RoutedCodexExecutionError(
@@ -1684,24 +1661,13 @@ class RoutedCodexExecution:
                         retryable_external_dependency=True,
                     )
 
-            if retry_same_route:
-                self._sleep(
-                    retry_delay_seconds(
-                        CAPACITY_RETRY_BASE_DELAY_SECONDS, capacity_failures - 1
-                    )
-                )
+            if plan.wait_seconds:
+                self._sleep(plan.wait_seconds)
                 if cancel_requested is not None and cancel_requested():
                     raise RoutedCodexExecutionCancelled()
-                next_decision = RuntimeRouteDecision(route, True, "capacity_retry")
-            else:
-                next_decision = self._next_route_after_failure(
-                    workload_kind=workload_kind,
-                    workload_key=workload_key,
-                    agent_run_id=agent_run_id,
-                    failed_attempt=failed_attempt,
-                    failure=failure,
-                    required_capabilities=required_capabilities,
-                )
+            next_decision = RuntimeRouteDecision(
+                plan.route, plan.fresh_session, plan.reason
+            )
             if next_decision.route is None:
                 raise RoutedCodexExecutionError(
                     "runtime_execution_failed",

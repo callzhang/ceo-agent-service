@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -61,6 +62,7 @@ from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
 from app.agent_runtime_router import _runtime_failure_from_friday_error
 from app.config import feedback_spike_vercel_base_url
 from app.feedback_spike import sanitize_configured_feedback_links
+from app.runtime_fallback import plan_runtime_fallback
 from app.leak_check import (
     contains_credential,
     contains_local_runtime_leak,
@@ -636,6 +638,7 @@ class AgentTurnProcess(Generic[ResultT]):
         workspace: Path,
         owner: str,
         executor: ProcessExecutor | None = None,
+        sleep: Callable[[float], None] = time.sleep,
         codex_bin: str = "codex",
         runtime_config: AgentRuntimeConfig | None = None,
         runtime_router: AgentRuntimeRouter | None = None,
@@ -664,6 +667,7 @@ class AgentTurnProcess(Generic[ResultT]):
             snapshots={},
         )
         self.executor = executor or run_process_with_idle_timeout
+        self._sleep = sleep
         self.refresh_runtime_capabilities = refresh_runtime_capabilities
         self.forced_runtime_route = forced_runtime_route
         self.reasoning_effort = reasoning_effort
@@ -1222,12 +1226,6 @@ class AgentTurnProcess(Generic[ResultT]):
                     transcript_start=attempt_transcript_start,
                     transcript_end=failed_transcript_end,
                 )
-                if failure.route_pause_required:
-                    self.store.open_runtime_route_pause(
-                        route.name,
-                        failure.code,
-                        datetime.now(timezone.utc) + self.runtime_config.retry_delay,
-                    )
                 persisted = self.store.get_agent_run(run.id)
                 assert persisted is not None
                 self.store.renew_agent_run_lease(
@@ -1236,14 +1234,34 @@ class AgentTurnProcess(Generic[ResultT]):
                     lease_seconds=LEASE_SECONDS,
                 )
                 if self.forced_runtime_route is not None:
+                    if failure.route_pause_required:
+                        self.store.open_runtime_route_pause(
+                            route.name,
+                            failure.code,
+                            datetime.now(timezone.utc)
+                            + self.runtime_config.retry_delay,
+                        )
                     self._raise_for_process_failure(process, run=run)
                     raise AssertionError("unreachable forced runtime failure")
-                decision = self.runtime_router.next_route(
-                    run=persisted,
-                    failed_attempt=failed_attempt,
+                decision = plan_runtime_fallback(
+                    route=route,
                     failure=failure,
-                    required_capabilities=required_capabilities,
+                    attempts=self.store.list_agent_runtime_attempts(run.id),
+                    select_next_route=lambda: self.runtime_router.next_route(
+                        run=persisted,
+                        failed_attempt=failed_attempt,
+                        failure=failure,
+                        required_capabilities=required_capabilities,
+                    ),
                 )
+                if decision.pause_route:
+                    self.store.open_runtime_route_pause(
+                        route.name,
+                        failure.code,
+                        datetime.now(timezone.utc) + self.runtime_config.retry_delay,
+                    )
+                if decision.wait_seconds:
+                    self._sleep(decision.wait_seconds)
                 if decision.route is None:
                     self._raise_for_process_failure(process, run=run)
                     raise AssertionError("unreachable process failure")
