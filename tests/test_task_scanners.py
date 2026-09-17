@@ -1192,10 +1192,18 @@ def test_scan_pending_oa_approvals_requeues_when_a_new_remark_arrives(tmp_path):
     assert scan_pending_oa_approvals(store, dws, now=now) == 1
 
 
-def test_scan_pending_oa_approvals_does_not_requeue_for_own_remark(tmp_path):
+def test_scan_pending_oa_approvals_does_not_requeue_after_own_decision(tmp_path):
+    """A decision by the reviewer closes the approval for this scan.
+
+    This used to be asserted with an `ADD_REMARK`, which is a comment rather
+    than a decision; production showed approvals disappearing after the agent
+    commented on them, so only a real decision counts here now.
+    """
+
     class FakeDws:
         latest_operation_time = 1
         latest_operation_user_id = "requester"
+        latest_operation_type = "ADD_REMARK"
 
         def list_pending_oa_approvals(self, *, page, size, start, end):
             return [DwsOaApprovalCandidate(process_instance_id="proc-1", title="付款申请")]
@@ -1229,7 +1237,7 @@ def test_scan_pending_oa_approvals_does_not_requeue_for_own_remark(tmp_path):
                             "userId": "requester",
                         },
                         {
-                            "operationType": "ADD_REMARK",
+                            "operationType": self.latest_operation_type,
                             "operationTime": self.latest_operation_time,
                             "userId": self.latest_operation_user_id,
                         },
@@ -1241,10 +1249,11 @@ def test_scan_pending_oa_approvals_does_not_requeue_for_own_remark(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     now = datetime.fromisoformat("2026-07-31T19:00:00+08:00")
 
-    # The current reviewer has already acted after the applicant's latest
+    # The current reviewer has already decided after the applicant's latest
     # message. A pending-list hit is not new work and must not enter the queue.
     dws.latest_operation_time = 2
     dws.latest_operation_user_id = "principal-user-1"
+    dws.latest_operation_type = "EXECUTE_TASK_NORMAL"
     assert scan_pending_oa_approvals(store, dws, now=now) == 0
 
 
@@ -1407,3 +1416,67 @@ def test_scan_pending_oa_approvals_revisits_an_untouched_approval_the_next_day(t
         )
         == 1
     )
+
+
+def test_scan_pending_oa_approvals_keeps_an_approval_the_agent_only_commented_on(
+    tmp_path,
+):
+    """Production 2026-09-17: a comment is not a decision.
+
+    The agent comments as the principal whenever it reviews without deciding.
+    That comment became the newest operation record for the principal, the
+    revision came back empty, and the approval fell out of every later scan
+    while DingTalk still showed it waiting on him -- the outer cause of the
+    four-approval backlog, ahead of the same-day deduplication.
+    """
+
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [
+                DwsOaApprovalCandidate(
+                    process_instance_id="proc-1", title="软件项目立项全流程"
+                )
+            ]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": "task-1",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {
+                "result": {
+                    "operationRecords": [
+                        {
+                            "operationType": "ADD_REMARK",
+                            "operationTime": 1,
+                            "userId": "requester",
+                        },
+                        {
+                            "operationType": "ADD_REMARK",
+                            "operationTime": 2,
+                            "userId": "principal-user-1",
+                        },
+                    ]
+                }
+            }
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    now = datetime.fromisoformat("2026-09-17T19:00:00+08:00")
+
+    assert scan_pending_oa_approvals(store, dws, now=now) == 1

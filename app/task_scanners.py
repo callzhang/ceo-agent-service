@@ -948,13 +948,25 @@ def _oa_approval_revision(
     return hashlib.sha256(f"{task_id}|{marker}".encode()).hexdigest()[:16]
 
 
+# Commenting on an approval is not deciding it; DingTalk records both as
+# operation records by the same user.
+OA_COMMENT_OPERATION_TYPES = frozenset({"ADD_REMARK", "add_remark", "COMMENT"})
+
+
 def _oa_pending_approval_revision(
     task_id: str,
     records_payload: Any,
     *,
     current_user_id: str,
 ) -> str:
-    """Return a revision only when the newest OA record still needs review."""
+    """Return a revision only when the newest OA record still needs review.
+
+    A record written by the principal normally means the approval has been
+    dealt with.  A comment does not: the agent posts one as the principal
+    whenever it reviews without deciding, and the approval stays `RUNNING`
+    and still waiting on them.  Treating that comment as "dealt with" made
+    the approval permanently invisible to this scan.
+    """
     records = _oa_operation_records(records_payload)
     latest_operation = max(
         records,
@@ -965,9 +977,13 @@ def _oa_pending_approval_revision(
         ),
         default={},
     )
-    if current_user_id and _oa_task_field(
-        latest_operation, ("userId", "userid", "user_id")
-    ) == current_user_id:
+    if (
+        current_user_id
+        and _oa_task_field(latest_operation, ("userId", "userid", "user_id"))
+        == current_user_id
+        and _oa_task_field(latest_operation, ("operationType", "type"))
+        not in OA_COMMENT_OPERATION_TYPES
+    ):
         return ""
     return _oa_approval_revision(
         task_id,
