@@ -220,6 +220,26 @@ class CodexCommandFactory:
         return command, adapter.build_env(route)
 
 
+def _friday_turn_text(command_factory: CodexCommandFactory, prompt: str) -> str:
+    """Carry everything a Codex turn receives out of band into Friday's one message.
+
+    Codex gets the developer instructions (agent spec and business Skills) and
+    the output JSON Schema as separate channels. Friday's turn API accepts a
+    single user message and has no schema field, so without this the model
+    sees neither and cannot produce the required result shape.
+    """
+    parts = [command_factory.developer_instructions.strip()]
+    if command_factory.use_output_schema and command_factory.output_schema_path is not None:
+        schema = command_factory.output_schema_path.read_text(encoding="utf-8").strip()
+        parts.append(
+            "# Output JSON Schema\n\n"
+            "Return exactly one JSON object that validates against this schema.\n\n"
+            f"```json\n{schema}\n```"
+        )
+    parts.append(prompt)
+    return "\n\n".join(part for part in parts if part)
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class RoutedResultCodec[ResultT]:
     """A sealed, versioned codec for durable generalized-operation results."""
@@ -1226,7 +1246,7 @@ class RoutedCodexExecution:
             if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
                 try:
                     friday_result = self._friday_adapter.execute(
-                        prompt,
+                        _friday_turn_text(command_factory, prompt),
                         project_id=self._config.friday_runtime_project_id,
                         conversation_id=conversation_id,
                         model=route.model,

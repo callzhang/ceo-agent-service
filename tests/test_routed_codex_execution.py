@@ -2036,3 +2036,87 @@ def test_route_pause_opened_during_selection_is_rechecked_before_start(
             required_capabilities=CAPABILITIES,
         )
     assert store.list_runtime_operation_attempts("structured", key) == []
+
+
+def test_friday_receives_the_instructions_and_schema_codex_gets_out_of_band(
+    tmp_path, monkeypatch
+):
+    """Friday's turn API takes one message, so it must carry the agent spec,
+    the business Skills and the output schema that Codex receives separately.
+
+    Before this, Friday got only the bare prompt and invented its own result
+    shape, failing every structured agent run with `union_tag_not_found`.
+    """
+    store = AutoReplyStore(tmp_path / "friday-instructions.sqlite3")
+    run_id = seed_agent_run_parent(store, task_id=993)
+    config = _friday_config(monkeypatch, "friday_runtime")
+    schema_path = tmp_path / "result.schema.json"
+    schema_path.write_text('{"type": "object", "required": ["outcome"]}', encoding="utf-8")
+    friday = FakeFridayAdapter(
+        result=FridayExecutionResult(
+            text="7", thread_id="thread-1", turn_id="turn-1",
+            operation_id="operation-1", artifact={"final_message": "7"},
+        )
+    )
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=AgentRuntimeRouter(
+            routes=config.routes, store=store, snapshots=_friday_snapshots(config), now=lambda: NOW
+        ),
+        adapter=FakeAdapter(),
+        friday_adapter=friday,
+        executor=lambda *a, **k: ProcessRunResult(1, "", "unused"),
+        now=lambda: NOW,
+    )
+
+    routed.execute(
+        workload_kind="agent_run", workload_key=str(run_id), prompt="return 7",
+        command_factory=CodexCommandFactory.standard(
+            developer_instructions="# Agent spec\n\nname: consumer\n\nSKILL: business rules",
+            output_schema_path=schema_path,
+            use_output_schema=True,
+        ),
+        parser=int, result_codec=INT_CODEC,
+    )
+
+    sent_text = friday.calls[0][0]
+    assert "# Agent spec" in sent_text
+    assert "SKILL: business rules" in sent_text
+    assert '"required": ["outcome"]' in sent_text
+    assert sent_text.rstrip().endswith("return 7")
+
+
+def test_friday_omits_the_schema_block_when_the_workload_uses_no_output_schema(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "friday-no-schema.sqlite3")
+    run_id = seed_agent_run_parent(store, task_id=994)
+    config = _friday_config(monkeypatch, "friday_runtime")
+    friday = FakeFridayAdapter(
+        result=FridayExecutionResult(
+            text="7", thread_id="thread-1", turn_id="turn-1",
+            operation_id="operation-1", artifact={"final_message": "7"},
+        )
+    )
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=AgentRuntimeRouter(
+            routes=config.routes, store=store, snapshots=_friday_snapshots(config), now=lambda: NOW
+        ),
+        adapter=FakeAdapter(),
+        friday_adapter=friday,
+        executor=lambda *a, **k: ProcessRunResult(1, "", "unused"),
+        now=lambda: NOW,
+    )
+
+    routed.execute(
+        workload_kind="agent_run", workload_key=str(run_id), prompt="return 7",
+        command_factory=CodexCommandFactory.standard(developer_instructions="spec only"),
+        parser=int, result_codec=INT_CODEC,
+    )
+
+    sent_text = friday.calls[0][0]
+    assert sent_text.startswith("spec only")
+    assert "Output JSON Schema" not in sent_text
