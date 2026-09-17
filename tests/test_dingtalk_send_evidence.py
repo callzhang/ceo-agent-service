@@ -364,3 +364,60 @@ def test_command_substitution_is_never_read_as_what_ran() -> None:
     assert _first_stage_argv('dws chat +dm --to "张毅倜" --content "a|b > c"') == (
         "dws", "chat", "+dm", "--to", "张毅倜", "--content", "a|b > c"
     )
+
+
+UPLOAD = {
+    "description": "提交面评", "action_identity": "upload", "capability": "xiaoqing-interview",
+    "operation": "upload_interview_result",
+    "target": {"interview_id": "int-97c2d24b-79f7-4cb7-bb34-4b049e3ce9ca"}, "payload": {},
+}
+
+
+def _interview_call(tool: str, payload: dict):
+    return {"type": "item.completed", "item": {
+        "type": "mcp_tool_call", "server": "xiaoqing_interview", "tool": tool,
+        "error": None, "arguments": {},
+        "result": {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]},
+    }}
+
+
+def test_a_reviewed_third_party_write_is_evidence() -> None:
+    """Run 19653 really uploaded the evaluation through the interview server."""
+    driver, task = _driver(
+        action=UPLOAD,
+        tool_events=[_interview_call("upload_interview_result", {
+            "status": "ok",
+            "data": {"interview_id": "int-97c2d24b-79f7-4cb7-bb34-4b049e3ce9ca"}})],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_a_reviewed_third_party_read_is_not_evidence() -> None:
+    """Run 9611 claimed the upload and only listed and read the candidate.
+
+    Before the server's catalogue was recorded, any successful call to it left
+    the action unjudged, so reading the object passed as writing to it.
+    """
+    driver, task = _driver(
+        action=UPLOAD,
+        tool_events=[
+            _interview_call("list_candidate_interviews", {
+                "status": "ok", "data": {"interview_id": "int-97c2d24b-79f7-4cb7-bb34-4b049e3ce9ca"}}),
+            _interview_call("get_interview_context", {
+                "status": "ok", "data": {"interview_id": "int-97c2d24b-79f7-4cb7-bb34-4b049e3ce9ca"}}),
+        ],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+
+def test_a_tool_the_catalogue_does_not_list_stays_unjudged() -> None:
+    """Adding a tool to a server must not start refusing that server's work."""
+    driver, task = _driver(
+        action=UPLOAD,
+        tool_events=[_interview_call("some_future_tool", {
+            "status": "ok", "data": {"interview_id": "int-97c2d24b-79f7-4cb7-bb34-4b049e3ce9ca"}})],
+        classifier=_SchemaClassifier(),
+    )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True

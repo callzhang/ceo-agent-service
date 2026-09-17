@@ -27,6 +27,7 @@ import shlex
 from app.agent_effect_guard import provider_receipts
 from app.agent_result import EffectKind
 from app.consumer_agent import dingtalk_outgoing_text_key
+from app.mcp_tool_effects import reviewed_mcp_tool_effect
 from app.native_cli_metadata import (
     NativeCliMetadataClassifier,
     NativeCliMetadataUnavailableError,
@@ -119,7 +120,14 @@ class DingTalkSendEvidenceDriver:
                 if classified is not None and classified.effect is EffectKind.EFFECTFUL:
                     written.update(classified.target_identifiers.values())
                 continue
-            unclassifiable.update(_third_party_result_identifiers(event))
+            answer = _third_party_tool_answer(event)
+            if answer is None:
+                continue
+            effect, identifiers = answer
+            if effect is EffectKind.EFFECTFUL:
+                written.update(identifiers)
+            elif effect is None:
+                unclassifiable.update(identifiers)
         return written, unclassifiable
 
     def _classify(self, command: dict[str, object]):
@@ -210,18 +218,34 @@ def _completed_native_command(event: object) -> dict[str, object] | None:
     return None
 
 
-def _third_party_result_identifiers(event: object) -> set[str]:
-    """String values in a successful call to an MCP server the service cannot classify."""
+def _third_party_tool_answer(
+    event: object,
+) -> tuple[EffectKind | None, set[str]] | None:
+    """What a successful call to a non-native MCP server did, and to what.
+
+    The native classifier reads DWS's own schema and cannot speak for another
+    server, so each one's catalogue is recorded in
+    `data/config/mcp-tool-effects.json`. A listed write contributes the
+    identifiers it returned as evidence; a listed read contributes nothing, so
+    a turn that only read cannot pass as a turn that wrote. A tool missing from
+    that file stays unjudged, which keeps a newly added tool from refusing work
+    the service has no means to recognise.
+    """
     if not isinstance(event, dict):
-        return set()
+        return None
     item = event.get("item")
     if not isinstance(item, dict) or item.get("type") != "mcp_tool_call":
-        return set()
+        return None
     if item.get("server") == "agent_cli" or item.get("error") or not item.get("result"):
-        return set()
+        return None
+    effect = reviewed_mcp_tool_effect(
+        str(item.get("server") or ""), str(item.get("tool") or "")
+    )
+    if effect is EffectKind.READ_ONLY:
+        return effect, set()
     values: set[str] = set()
     _collect_strings(item.get("result"), values, depth=0)
-    return values
+    return effect, values
 
 
 def _collect_strings(value: object, found: set[str], *, depth: int) -> None:

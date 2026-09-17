@@ -1,0 +1,15 @@
+{
+  "comment": "Reviewed read/write nature of third-party MCP tools, by server. The native CLI classifier reads DWS's own schema; an MCP server outside that schema needs its catalogue recorded here, so a run that only read cannot pass as a run that wrote. A tool missing from this file stays unjudged: it is never treated as evidence and never causes a refusal, so adding a tool to a server cannot break its tasks -- but it also will not be gated until it is listed.",
+  "servers": {
+    "xiaoqing_interview": {
+      "source": "~/.agents/skills/stardust-interview/SKILL.md",
+      "tools": {
+        "search_candidates": "read_only",
+        "get_interview_context": "read_only",
+        "list_candidate_interviews": "read_only",
+        "upload_transcript_document": "effectful",
+        "upload_interview_result": "effectful"
+      }
+    }
+  }
+}
