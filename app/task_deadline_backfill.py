@@ -167,6 +167,31 @@ def _nested_text_objects(payload: object) -> list[object]:
     return found
 
 
+def _deadline_repair_prompt(raw_output: str, *, now: str) -> str:
+    """Tell the model which rule its last deadline broke."""
+    try:
+        decision = parse_todo_deadline_decision(raw_output)
+    except ValueError:
+        detail = (
+            "- the reply contained no TodoDeadlineDecision JSON object with "
+            "deadline_at and reason"
+        )
+    else:
+        try:
+            validate_todo_deadline(decision, now=now)
+        except ValueError as exc:
+            detail = f"- {exc}"
+        else:
+            detail = "- the decision could not be stored as returned"
+    return (
+        "The previous output was not accepted as a TodoDeadlineDecision. "
+        "Return exactly one JSON object with deadline_at and reason.\n\n"
+        f"Problems in the previous output:\n{detail}\n\n"
+        f"deadline_at must be an ISO 8601 datetime with a timezone and must be "
+        f"later than {now}."
+    )
+
+
 class TodoDeadlineCodexRunner:
     def __init__(self, *, store, workspace: Path, timeout_seconds: int, idle_timeout_seconds: int):
         from app.agent_runtime_production import build_production_routed_codex_execution
@@ -179,11 +204,21 @@ class TodoDeadlineCodexRunner:
         )
 
     def infer(self, *, todo: WorkTodo, project: WorkProject | None, now: str) -> TodoDeadlineDecision:
-        from app.agent_runtime_router import CodexCommandFactory, RoutedResultCodec
+        from app.agent_runtime_router import (
+            CodexCommandFactory,
+            RoutedResultCodec,
+            RoutedResultValidationError,
+            RoutedResultValidationRetry,
+        )
 
         def parse_and_validate(raw: str) -> str:
-            decision = parse_todo_deadline_decision(raw)
-            validate_todo_deadline(decision, now=now)
+            # A rejection is raised as a result-validation failure so the reason
+            # reaches the service log and the turn gets its one correction.
+            try:
+                decision = parse_todo_deadline_decision(raw)
+                validate_todo_deadline(decision, now=now)
+            except ValueError as exc:
+                raise RoutedResultValidationError(str(exc), raw_output=raw) from exc
             return decision.model_dump_json()
 
         result = self.routed_execution.execute(
@@ -202,6 +237,9 @@ class TodoDeadlineCodexRunner:
             result_codec=RoutedResultCodec.text(schema_id="todo_deadline_decision.v1"),
             conversation_id=None,
             required_capabilities=frozenset({"structured_output"}),
+            result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
+                correction_prompt=lambda raw: _deadline_repair_prompt(raw, now=now)
+            ),
         )
         return TodoDeadlineDecision.model_validate_json(result.value)
 

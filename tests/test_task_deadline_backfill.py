@@ -221,3 +221,12 @@ def test_the_parser_prefers_the_final_answer_over_an_earlier_draft():
     )
 
     assert parse_todo_deadline_decision(raw).reason == "最终"
+
+
+def test_the_repair_prompt_names_the_rule_the_deadline_broke():
+    from app.task_deadline_backfill import _deadline_repair_prompt
+
+    past = '{"deadline_at": "2026-06-30T18:00:00+08:00", "reason": "x"}'
+
+    assert "is not after now" in _deadline_repair_prompt(past, now=NOW)
+    assert "no TodoDeadlineDecision JSON object" in _deadline_repair_prompt("抱歉", now=NOW)
