@@ -9300,7 +9300,10 @@ class AutoReplyStore:
             task_id, separator, suffix = workload_key.partition(":")
             if not task_id.isdecimal() or int(task_id) <= 0:
                 raise ValueError("task workload key must start with a persisted ID")
-            if separator and suffix not in {"memory_backfill", "deadline_backfill"}:
+            if separator and not (
+                suffix == "memory_backfill"
+                or re.fullmatch(r"deadline_backfill(?:\.[1-9]\d*)?", suffix)
+            ):
                 raise ValueError("task workload key has an unsupported suffix")
         elif workload_kind == "weekly_okr":
             parts = workload_key.split(":")
@@ -9414,7 +9417,7 @@ class AutoReplyStore:
             args = (int(workload_key),)
         elif workload_kind == "task":
             row_id, separator, suffix = workload_key.partition(":")
-            if suffix == "deadline_backfill":
+            if suffix.startswith("deadline_backfill"):
                 # The deadline backfill is keyed by TODO. Checking it against
                 # work_projects let a TODO through only when a project happened
                 # to share its id, and rejected every TODO past the last one.

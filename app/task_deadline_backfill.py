@@ -194,10 +194,34 @@ def _deadline_repair_prompt(raw_output: str, *, now: str) -> str:
     )
 
 
+def deadline_backfill_workload_key(store, todo_id: int) -> str:
+    """The runtime operation key for this TODO's next deadline inference.
+
+    A runtime operation spends its one result correction for good: once a
+    batch ends a TODO that way, the same key can never run again, so a later
+    batch opens the next generation. Every earlier generation stays as history.
+    """
+    base = f"{todo_id}:deadline_backfill"
+    generation = 0
+    while True:
+        key = base if generation == 0 else f"{base}.{generation}"
+        attempts = store.list_runtime_operation_attempts("task", key)
+        if not attempts:
+            return key
+        latest = attempts[-1]
+        if not (
+            latest.status == "failed"
+            and latest.failure_code == "runtime_result_validation_failed"
+        ):
+            return key
+        generation += 1
+
+
 class TodoDeadlineCodexRunner:
     def __init__(self, *, store, workspace: Path, timeout_seconds: int, idle_timeout_seconds: int):
         from app.agent_runtime_production import build_production_routed_codex_execution
 
+        self.store = store
         self.routed_execution = build_production_routed_codex_execution(
             store=store,
             workspace=workspace,
@@ -225,7 +249,7 @@ class TodoDeadlineCodexRunner:
 
         result = self.routed_execution.execute(
             workload_kind="task",
-            workload_key=f"{todo.id}:deadline_backfill",
+            workload_key=deadline_backfill_workload_key(self.store, todo.id),
             prompt=build_todo_deadline_prompt(todo=todo, project=project, now=now),
             command_factory=CodexCommandFactory.standard(
                 developer_instructions=(
