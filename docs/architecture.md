@@ -778,8 +778,10 @@ Claude 事件语法只把 turn item 映射成 runtime 事件。传输层遥测�
 `claude_oauth` 已登录却仍失败时，先看 403 原文：`OAuth token does not meet scope requirement`
 表示 keychain 里那份 token 没有 `user:inference`。在真实终端跑 `claude auth login` 会重新签发带推理
 scope 的 token，但 keychain 里这份会被本机其他进程改写，线路随之再次失败（2026-09-17 观察到
-03:49Z 改写、04:00Z 再次 403；改写者未确认，可能是 Claude Code 桌面应用，也可能是每 15 分钟向
-keychain 装入凭据的 quota guard）。因此本机登录态只适合临时使用；需要稳定可用的 Claude 线路时
+03:49:39Z 改写、04:00Z 再次 403。改写者是本机 quota guard：它那一轮在 03:49:36Z 向 Hub 上报，与
+keychain 修改时间只差 3 秒。guard 可能把一份不含 `user:inference` 的凭据整份写回 keychain，该机制
+由 quota-report-hub 跟进，尚未用实际 scopes 证实；Hub 用 profile/usage 接口检查凭据，不需要推理
+权限，所以 Hub 侧会一直显示正常）。因此本机登录态只适合临时使用；需要稳定可用的 Claude 线路时
 使用 `claude_api`。
 复现服务所见的情况时必须用服务的最小环境运行 CLI（`env -i HOME=… PATH=… USER=… claude -p …`）：
 在 Claude Code 会话里直接运行 `claude -p` 会继承桌面应用自己的凭据而成功，不能证明服务可用。
