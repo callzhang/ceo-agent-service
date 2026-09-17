@@ -15,6 +15,15 @@ DEFAULT_FRIDAY_RUNTIME_BASE_URL = "http://127.0.0.1:8080"
 SUPPORTED_CODEX_RUNTIME_MODELS = frozenset(
     {"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
 )
+SUPPORTED_RUNTIME_ROUTES = frozenset(
+    {
+        "codex_oauth",
+        "codex_api",
+        "claude_oauth",
+        "claude_api",
+        "friday_runtime",
+    }
+)
 SUPPORTED_RUNTIME_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULT_CEO_CLAUDE_MODEL = "sonnet"
 DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT = "medium"
@@ -88,14 +97,7 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     )
     if not names or len(names) != len(set(names)):
         raise ValueError("CEO_AGENT_RUNTIME_ROUTES must contain unique routes")
-    supported = {
-        "codex_oauth",
-        "codex_api",
-        "claude_oauth",
-        "claude_api",
-        "friday_runtime",
-    }
-    unknown = set(names) - supported
+    unknown = set(names) - SUPPORTED_RUNTIME_ROUTES
     if unknown:
         raise ValueError(f"unsupported runtime routes: {sorted(unknown)}")
     model = env.get("CEO_CODEX_MODEL", DEFAULT_CEO_CODEX_MODEL).strip()

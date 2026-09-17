@@ -12,6 +12,7 @@ from app.agent_runtime_production import (
     build_friday_runtime_launch_environment,
     build_production_agent_runtime,
     build_production_routed_codex_execution,
+    build_production_runtime_probe,
     build_production_runtime_refresher,
 )
 from app.process_runner import ProcessRunResult
@@ -229,6 +230,58 @@ def test_production_runtime_probe_matches_task_idle_timeout_by_default(
     refresher.refresh_expired(force=True)
 
     assert calls == [300.0]
+
+
+def test_production_runtime_probe_allows_a_full_length_turn_by_default(
+    tmp_path, monkeypatch
+):
+    """A Friday turn answering the probe measured 62-102s; 120s left no margin."""
+
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
+    monkeypatch.delenv("CEO_RUNTIME_PROBE_TIMEOUT_SECONDS", raising=False)
+    calls = []
+
+    def executor(*_args, **kwargs):
+        calls.append(kwargs["total_timeout_seconds"])
+        stdout = "\n".join(
+            json.dumps(payload)
+            for payload in (
+                {"type": "thread.started", "thread_id": "probe-session"},
+                {"type": "turn.started"},
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": '{"ok":true}'},
+                },
+                {"type": "turn.completed"},
+            )
+        )
+        return ProcessRunResult(0, stdout, "")
+
+    refresher = build_production_runtime_refresher(
+        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+        executor=executor,
+    )
+
+    refresher.refresh_expired(force=True)
+
+    assert calls == [300.0]
+
+
+def test_production_runtime_probe_is_built_once_for_service_and_command(
+    tmp_path, monkeypatch
+):
+    """The on-demand probe command must use the running service's timeouts."""
+
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
+    monkeypatch.setenv("CEO_RUNTIME_PROBE_TIMEOUT_SECONDS", "450")
+
+    probe = build_production_runtime_probe()
+    refresher = build_production_runtime_refresher(
+        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+    )
+
+    assert probe._total_timeout_seconds == 450.0
+    assert refresher._probe._total_timeout_seconds == 450.0
 
 
 def test_capability_registry_rejects_mismatched_key():

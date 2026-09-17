@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-17: The runtime probe now allows a full-length turn (300s, was 60s in
+  the class and 120s in the service) and `probe-agent-runtimes --route` accepts
+  every supported route instead of only the two Codex ones. A Friday Runtime
+  turn answering the probe prompt measured 62-102s, so the old ceiling reported
+  a healthy route as unreachable, and the route a failover actually falls back
+  to could not be tested at all. The command also asks for this process's own
+  probe: it no longer adopts another process's recent snapshot, which made an
+  operator's explicit check return "healthy" in 0.4s without calling the route.
+
 - 2026-09-15: New-email discovery is now a visible `分类新邮件` Agent Cron
   task instead of a hidden Email Worker timer. Its service command performs one
   deterministic account scan, then the existing internal classifier,

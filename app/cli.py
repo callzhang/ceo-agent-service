@@ -14,6 +14,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, NonNegativeInt, PositiveInt, field_validator
 
+from app.agent_runtime_config import SUPPORTED_RUNTIME_ROUTES
 from app.codex_decision import CodexDecisionRunner
 from app.database_backup import (
     BACKUP_CHECK_INTERVAL_SECONDS,
@@ -493,9 +494,9 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--route",
                 action="append",
-                choices=("codex_oauth", "codex_api"),
+                choices=sorted(SUPPORTED_RUNTIME_ROUTES),
                 default=[],
-                help="probe only this configured route; repeat to select both",
+                help="probe only this configured route; repeat to select several",
             )
         if command == "read-oa-approval-detail":
             subparser.add_argument("--instance-id", required=True)
@@ -4394,7 +4395,11 @@ def probe_agent_runtimes_command(
             ]
             print(json.dumps({"routes": routes}, ensure_ascii=False), flush=True)
             return 1
-    snapshots = refresher.refresh_expired(route_names=route_names, force=True)
+    snapshots = refresher.refresh_expired(
+        route_names=route_names,
+        force=True,
+        adopt_shared=False,
+    )
     routes = [
         {
             "route_name": snapshot.route_name,

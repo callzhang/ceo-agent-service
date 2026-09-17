@@ -737,6 +737,19 @@ def test_refresher_adopts_a_sibling_process_fresh_healthy_snapshot(monkeypatch, 
     assert probed == ["codex_oauth"]  # codex_api was adopted, not probed
 
 
+def test_refresher_probes_every_route_when_sharing_is_refused(monkeypatch, tmp_path):
+    """An operator asking whether a route works now needs this process's own run."""
+
+    config, store = _shared_snapshot_fixture(monkeypatch, tmp_path)
+    probed = []
+    refresher = _refresher_probing_only_oauth(config, store, tmp_path, probed)
+
+    snapshots = refresher.refresh_expired(force=True, adopt_shared=False)
+
+    assert sorted(probed) == ["codex_api", "codex_oauth"]
+    assert snapshots["codex_api"].checked_at == NOW.isoformat()
+
+
 @pytest.mark.parametrize("variant", ("unhealthy", "expired"))
 def test_refresher_probes_when_the_shared_snapshot_is_unusable(monkeypatch, tmp_path, variant):
     config, store = _shared_snapshot_fixture(

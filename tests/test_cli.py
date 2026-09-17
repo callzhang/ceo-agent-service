@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from app import cli
+from app.agent_runtime_config import SUPPORTED_RUNTIME_ROUTES
 from app.cli import (
     WorkerSettings,
     backfill_task_memory_context_command,
@@ -603,6 +604,15 @@ def test_parser_supports_route_scoped_runtime_probe():
     assert args.route == ["codex_api"]
 
 
+def test_parser_probes_every_supported_runtime_route():
+    """The command has to reach the route a failover actually falls back to."""
+
+    for route_name in sorted(SUPPORTED_RUNTIME_ROUTES):
+        args = build_parser().parse_args(["probe-agent-runtimes", "--route", route_name])
+
+        assert args.route == [route_name]
+
+
 def test_probe_agent_runtimes_prints_safe_route_json(tmp_path, capsys):
     from app.agent_runtime_contracts import (
         RuntimeCapabilitySnapshot,
@@ -617,9 +627,12 @@ def test_probe_agent_runtimes_prints_safe_route_json(tmp_path, capsys):
     )
 
     class FakeRefresher:
-        def refresh_expired(self, *, route_names, force):
+        def refresh_expired(self, *, route_names, force, adopt_shared):
             assert route_names == ("codex_api",)
             assert force is True
+            # The command must answer from its own probe, not another
+            # process's recent snapshot.
+            assert adopt_shared is False
             return {
                 "codex_api": RuntimeCapabilitySnapshot(
                     route_name="codex_api",

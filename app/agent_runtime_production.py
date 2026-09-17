@@ -244,6 +244,45 @@ def build_production_routed_codex_execution(
     return RoutedCodexExecution(**kwargs)
 
 
+def build_production_runtime_probe(
+    *,
+    config: AgentRuntimeConfig | None = None,
+    codex_bin: str = "codex",
+    claude_bin: str = "claude",
+    executor: ProcessExecutor | None = None,
+    temporary_root: Path | None = None,
+):
+    """Build the route probe with the timeouts the running service uses."""
+
+    from app.agent_runtime_probe import (
+        PROBE_IDLE_TIMEOUT_SECONDS,
+        PROBE_TOTAL_TIMEOUT_SECONDS,
+        AgentRuntimeProbe,
+    )
+
+    probe_kwargs = {
+        "config": config if config is not None else load_runtime_config(os.environ),
+        "codex_bin": codex_bin,
+        "claude_bin": claude_bin,
+        "temporary_root": temporary_root,
+        "total_timeout_seconds": float(
+            os.getenv(
+                "CEO_RUNTIME_PROBE_TIMEOUT_SECONDS",
+                str(PROBE_TOTAL_TIMEOUT_SECONDS),
+            )
+        ),
+        "idle_timeout_seconds": float(
+            os.getenv(
+                "CEO_RUNTIME_PROBE_IDLE_TIMEOUT_SECONDS",
+                str(PROBE_IDLE_TIMEOUT_SECONDS),
+            )
+        ),
+    }
+    if executor is not None:
+        probe_kwargs["executor"] = executor
+    return AgentRuntimeProbe(**probe_kwargs)
+
+
 def build_production_runtime_refresher(
     *,
     store: AutoReplyStore,
@@ -255,32 +294,18 @@ def build_production_runtime_refresher(
 ):
     """Build the route probe/refresher that owns the shared production view."""
 
-    from app.agent_runtime_probe import AgentRuntimeProbe, RuntimeCapabilityRefresher
+    from app.agent_runtime_probe import RuntimeCapabilityRefresher
 
     runtime_config = load_runtime_config(os.environ)
-    probe_kwargs = {
-        "config": runtime_config,
-        "codex_bin": codex_bin,
-        "claude_bin": claude_bin,
-        "temporary_root": temporary_root,
-        # A startup health probe must not hold the worker offline for the
-        # full task execution timeout. Failed probes are recorded by the
-        # refresher and the worker can retry them on its normal cadence.
-            "total_timeout_seconds": float(
-                os.getenv("CEO_RUNTIME_PROBE_TIMEOUT_SECONDS", "120")
-            ),
-            # The probe uses the same provider path as a real turn.  A shorter
-            # default falsely pauses a healthy route while the model is still
-            # producing its first event.
-            "idle_timeout_seconds": float(
-                os.getenv("CEO_RUNTIME_PROBE_IDLE_TIMEOUT_SECONDS", "300")
-            ),
-    }
-    if executor is not None:
-        probe_kwargs["executor"] = executor
     return RuntimeCapabilityRefresher(
         config=runtime_config,
         store=store,
         registry=capability_registry,
-        probe=AgentRuntimeProbe(**probe_kwargs),
+        probe=build_production_runtime_probe(
+            config=runtime_config,
+            codex_bin=codex_bin,
+            claude_bin=claude_bin,
+            executor=executor,
+            temporary_root=temporary_root,
+        ),
     )

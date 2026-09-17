@@ -33,8 +33,12 @@ from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
 from app.process_runner import run_process_with_idle_timeout
 from app.store import AutoReplyStore
 
-PROBE_TOTAL_TIMEOUT_SECONDS = 60.0
-PROBE_IDLE_TIMEOUT_SECONDS = 30.0
+# The probe runs the same provider path as a real turn, so it has to allow the
+# same latency one takes.  A Friday Runtime turn answers the probe prompt with
+# seven or eight provider calls and measured 62-102s on 2026-09-17, which the
+# former 60s ceiling cut off and reported as an unreachable route.
+PROBE_TOTAL_TIMEOUT_SECONDS = 300.0
+PROBE_IDLE_TIMEOUT_SECONDS = 300.0
 PROBE_RENEWAL_WINDOW = timedelta(seconds=30)
 _PROBE_PROMPT = 'Return only the synthetic probe result {"ok":true}.'
 _PROBE_CANONICAL_RESULT = '{"ok":true}'
@@ -350,7 +354,14 @@ class RuntimeCapabilityRefresher:
         *,
         route_names: Iterable[str] | None = None,
         force: bool = False,
+        adopt_shared: bool = True,
     ) -> Mapping[str, RuntimeCapabilitySnapshot]:
+        """Refresh route snapshots.
+
+        `adopt_shared=False` demands this process's own probe result: an
+        operator asking whether a route works now cannot be answered with
+        another process's recent proof.
+        """
         selected = tuple(route_names or (route.name for route in self._config.routes))
         configured = {route.name for route in self._config.routes}
         if len(selected) != len(set(selected)) or set(selected) - configured:
@@ -370,7 +381,11 @@ class RuntimeCapabilityRefresher:
                     )
                 ):
                     continue
-                shared = self._shared_healthy_snapshot(route_name, current, now)
+                shared = (
+                    self._shared_healthy_snapshot(route_name, current, now)
+                    if adopt_shared
+                    else None
+                )
                 if shared is not None:
                     # A sibling process on this machine already proved the
                     # route healthy moments ago: adopt its view instead of
