@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -133,6 +134,23 @@ class ProposedAction(BaseModel):
     operation: str = Field(min_length=1)
     target: dict[str, JsonValue] = Field(min_length=1)
     payload: dict[str, JsonValue]
+    # Whether performing this action changes anything outside the service.
+    # `capability` and `operation` cannot answer that: they are free text, and
+    # one September month spelled chat four ways and wrote `no-op`,
+    # `accept_already_confirmed` and `event get verification` as operations. The
+    # proposer states it here instead, before anyone knows whether the effect
+    # will happen, and the evidence gate asks for a provider receipt only for
+    # actions that claim one. It defaults to `external` so an action that says
+    # nothing is still held to evidence.
+    effect: Literal["external", "none"] = Field(
+        default="external",
+        description=(
+            "external when performing this action changes something outside "
+            "the service and a provider must accept it; none when it changes "
+            "nothing -- a verification, or a state already in place. An action "
+            "that carries a message body is always external."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_dingtalk_message_target(self) -> "ProposedAction":

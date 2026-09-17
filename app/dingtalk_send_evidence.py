@@ -67,6 +67,13 @@ class DingTalkSendEvidenceDriver:
         # `dingtalk-chat`, `dingtalk_chat`, `dingtalk chat` and `dws chat`. A
         # gate keyed on one spelling let the others through.
         for action in actions:
+            if action.get("effect") == "none" and not _carries_outgoing_text(action):
+                # The proposer declared this action changes nothing outside the
+                # service -- a verification, or a response already in place.
+                # There is no provider receipt to ask for. A message body is
+                # still an external effect whatever the action declares, so the
+                # declaration cannot be used to slip a send past the gate.
+                continue
             identifiers = _action_identifiers(action)
             if identifiers & written:
                 continue

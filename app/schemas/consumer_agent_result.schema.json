@@ -187,6 +187,16 @@
           },
           "title": "Payload",
           "type": "object"
+        },
+        "effect": {
+          "default": "external",
+          "description": "external when performing this action changes something outside the service and a provider must accept it; none when it changes nothing -- a verification, or a state already in place. An action that carries a message body is always external.",
+          "enum": [
+            "external",
+            "none"
+          ],
+          "title": "Effect",
+          "type": "string"
         }
       },
       "required": [

@@ -421,3 +421,28 @@ def test_a_tool_the_catalogue_does_not_list_stays_unjudged() -> None:
         classifier=_SchemaClassifier(),
     )
     assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_an_action_declared_to_change_nothing_needs_no_receipt() -> None:
+    """Task 384361 proposed a single calendar `no-op` and nothing else.
+
+    Audit reported it executed, the gate refused six times because no write had
+    happened, and the task exhausted its retries and failed -- for a proposal
+    whose whole content was that nothing needed doing.
+    """
+    no_op = dict(RESPOND, operation="no-op", effect="none")
+    driver, task = _driver(action=no_op, tool_events=[], classifier=_SchemaClassifier())
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_declaring_no_effect_cannot_slip_a_message_past_the_gate() -> None:
+    send = dict(CHAT_SEND, effect="none")
+    driver, task = _driver(action=send, tool_events=[], classifier=_SchemaClassifier())
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+
+def test_an_action_that_declares_nothing_is_still_held_to_evidence() -> None:
+    """Every proposal written before this field exists omits it."""
+    assert "effect" not in RESPOND
+    driver, task = _driver(action=RESPOND, tool_events=[], classifier=_SchemaClassifier())
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
