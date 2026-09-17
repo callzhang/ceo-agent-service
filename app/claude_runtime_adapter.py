@@ -438,6 +438,10 @@ class ClaudeRuntimeAdapter:
                 "oauth session expired",
                 "not logged in",
                 "please run /login",
+                # A credential that exists but may not run inference: seen live
+                # when another local process replaced the stored token with one
+                # whose scopes exclude user:inference.
+                "does not meet scope requirement",
             )
         ):
             return RuntimeFailure(

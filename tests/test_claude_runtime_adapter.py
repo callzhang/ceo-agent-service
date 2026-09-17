@@ -1235,6 +1235,31 @@ def test_not_logged_in_result_is_classified_the_same_way(adapter):
     )
 
 
+def test_a_token_without_inference_scope_is_a_credential_failure(adapter):
+    """Seen live: another local process replaced the stored token with one
+    whose scopes exclude user:inference, and the run was left unclassified,
+    so the route kept being retried instead of paused."""
+    stdout = json.dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "api_error_status": 403,
+            "result": (
+                "Failed to authenticate. API Error: 403 OAuth token does not "
+                "meet scope requirement any_of(org:service_key_inference, "
+                "user:inference, workspace:inference)"
+            ),
+        }
+    )
+
+    failure = adapter.classify_failure(stdout, "", 1)
+
+    assert failure.code == "claude_credentials_unavailable"
+    assert failure.failure_class is RuntimeFailureClass.AUTHENTICATION
+    assert failure.route_pause_required is True
+
+
 def test_a_successful_result_is_never_read_for_failure_markers(adapter):
     """Only a result the provider itself marked an error may be scanned."""
     stdout = json.dumps(
