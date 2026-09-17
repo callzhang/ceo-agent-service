@@ -230,3 +230,47 @@ def test_gmail_search_takes_newest_unclassified_hits_over_a_readonly_select():
     assert ("uid", "SEARCH", "X-GM-RAW", '"category:purchases"') in source.session.calls
     assert [(candidate.uid, candidate.uidvalidity) for candidate, _ in found] == [(7, 42)]
     assert found[0][1]["uid"] == 7
+
+
+def test_a_rate_limited_batch_waits_and_retries_the_same_api():
+    """The router fallback needs a live service parent; a batch just waits."""
+
+    from app.email_agent_api import EmailClassifierApiError
+    from app.email_training_labeler import _WaitAndRetryBackend
+
+    attempts = []
+    waits = []
+
+    class Backend:
+        def classify(self, **kwargs):
+            attempts.append(kwargs["task_id"])
+            if len(attempts) < 3:
+                raise EmailClassifierApiError(
+                    "non-retryable email classifier API error (http_429)",
+                    retryable=False,
+                )
+            return "labelled"
+
+    backend = _WaitAndRetryBackend(
+        Backend(), first_wait_seconds=10, sleeper=waits.append, report=lambda _e: None
+    )
+
+    assert backend.classify(task_id="t1") == "labelled"
+    assert len(attempts) == 3
+    assert waits == [10, 20]
+
+
+def test_a_batch_gives_up_after_its_last_attempt():
+    import pytest
+
+    from app.email_agent_api import EmailClassifierApiError
+    from app.email_training_labeler import _WaitAndRetryBackend
+
+    class Backend:
+        def classify(self, **kwargs):
+            raise EmailClassifierApiError("http_429", retryable=False)
+
+    with pytest.raises(EmailClassifierApiError):
+        _WaitAndRetryBackend(
+            Backend(), attempts=2, first_wait_seconds=1, sleeper=lambda _s: None
+        ).classify(task_id="t1")

@@ -41,6 +41,25 @@ TARGETING_PATTERNS: Mapping[str, str] = {
         r"签证|护照|保险|健身|会员|旅行|度假|"
         r"flight|hotel|booking|itinerary|visa|passport|insurance|school|doctor|appointment"
     ),
+    "financing": (
+        r"融资|投资|估值|尽调|尽职调查|股权|term sheet|\bTS\b|意向书|"
+        r"轮|基金|投资人|路演|商业计划|\bBP\b|股东|增资|退出|并购|收购|"
+        r"valuation|due diligence|cap table|investor|funding|round|equity|acquisition"
+    ),
+    "legal": (
+        r"合同|协议|法务|律师|诉讼|仲裁|侵权|条款|保密|\bNDA\b|授权书|起诉|"
+        r"合规|违约|索赔|知识产权|专利|商标|"
+        r"legal|contract|agreement|counsel|lawsuit|litigation|compliance|breach|trademark|patent"
+    ),
+    "shopping": (
+        r"订单|发货|已送达|已签收|物流|派送|运单|购买|下单|退货|退款|"
+        r"\border\b|delivered|delivery|shipment|shipped|purchase|receipt|refund|return"
+    ),
+    "human_resources": (
+        r"招聘|面试|简历|入职|离职|转正|offer|录用|员工|社保|公积金|绩效|考勤|"
+        r"薪酬|调岗|人事|\bHR\b|候选人|"
+        r"interview|candidate|onboarding|resignation|payroll|performance review"
+    ),
 }
 
 
@@ -386,12 +405,60 @@ def _scan_context(email_store: object, account_id: str) -> object:
     )
 
 
+class _WaitAndRetryBackend:
+    """Wait out a rate-limited classifier API instead of losing the batch.
+
+    The service falls back to the runtime router, which needs a live parent
+    runtime operation this command does not have. A labelling batch is not
+    latency-sensitive, so it simply waits and tries the same API again.
+    """
+
+    def __init__(
+        self,
+        backend: object,
+        *,
+        attempts: int = 5,
+        first_wait_seconds: float = 20.0,
+        report: Callable[[Mapping[str, object]], None] | None = None,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
+        if attempts < 1:
+            raise ValueError("attempts must be positive")
+        self._backend = backend
+        self._attempts = attempts
+        self._first_wait_seconds = first_wait_seconds
+        self._report = report or (lambda _event: None)
+        import time as _time
+
+        self._sleeper = sleeper or _time.sleep
+
+    def classify(self, **kwargs: object) -> str:
+        from app.email_agent_api import EmailClassifierApiError
+
+        for attempt in range(1, self._attempts + 1):
+            try:
+                return self._backend.classify(**kwargs)
+            except EmailClassifierApiError as exc:
+                if attempt == self._attempts:
+                    raise
+                wait = self._first_wait_seconds * (2 ** (attempt - 1))
+                self._report(
+                    {
+                        "request_status": "waiting",
+                        "error_code": str(exc),
+                        "attempt": attempt,
+                        "wait_seconds": wait,
+                    }
+                )
+                self._sleeper(wait)
+        raise AssertionError("unreachable")
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     from app.agent_runtime_config import load_runtime_config
     from app.config import load_env_file, worker_db_path, workspace_path
-    from app.agent_runtime_production import build_production_routed_codex_execution
-    from app.email_agent_api import EmailClassifierApiBackend, EmailClassifierFallbackBackend
-    from app.email_classifier_agent import EmailClassifierAgent, EmailClassifierRoutedBackend
+    from app.email_agent_api import EmailClassifierApiBackend
+    from app.email_classifier_agent import EmailClassifierAgent
     from app.email_store import EmailStore
     from app.email_worker import _build_email_source_factory, _reread_historical_candidate_message
     from app.managed_skills import runtime_skill_snapshot_for_process
@@ -469,21 +536,13 @@ def main(argv: Iterable[str] | None = None) -> int:
     if route is None or secret is None:
         raise SystemExit("codex_api runtime route and key are required")
     agent = EmailClassifierAgent(
-        EmailClassifierFallbackBackend(
+        _WaitAndRetryBackend(
             EmailClassifierApiBackend(
                 base_url=runtime_config.codex_api_base_url,
                 model=route.model,
                 api_key=secret.get_secret_value(),
             ),
-            EmailClassifierRoutedBackend(
-                build_production_routed_codex_execution(
-                    store=task_store,
-                    workspace=workspace_path(),
-                    total_timeout_seconds=300.0,
-                    idle_timeout_seconds=120.0,
-                )
-            ),
-            recorder=lambda event: print(json.dumps(event, ensure_ascii=False)),
+            report=lambda event: print(json.dumps(event, ensure_ascii=False)),
         ),
         runtime_skill_snapshot=snapshot,
         skill_name="ceo-email-classifier",
