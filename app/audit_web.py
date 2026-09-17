@@ -9434,6 +9434,13 @@ def handle_agent_runtime_config_post(
         for value in parsed.get("route_order", [""])[0].split(",")
         if value.strip()
     ]
+    from app.agent_runtime_config import SUPPORTED_RUNTIME_ROUTES
+
+    hidden_routes = [
+        value.strip()
+        for value in parsed.get("hidden_routes", [""])[0].split(",")
+        if value.strip() in SUPPORTED_RUNTIME_ROUTES and value.strip() != "codex_oauth"
+    ]
     # An omitted or blank field keeps the configured value, so a caller that
     # does not own these controls cannot blank them out.
     claude_model = parsed.get("claude_model", [""])[0].strip() or (
@@ -9547,6 +9554,13 @@ def handle_agent_runtime_config_post(
             "Friday provider requires Base URL, model, and API Token together."
         )
     if friday_enabled:
+        from app.friday_runtime_adapter import bundled_friday_cli
+
+        if not bundled_friday_cli():
+            return _invalid_agent_runtime_config(
+                "Friday Runtime needs the Friday desktop app: it ships the CLI "
+                "this service runs. Install Friday.app, then enable the route."
+            )
         if not friday_project_id:
             # Friday owns its project ids, so provision one instead of asking
             # an operator to invent a value Friday would reject.
@@ -9600,13 +9614,15 @@ def handle_agent_runtime_config_post(
         "CEO_CODEX_MODEL_REASONING_EFFORT": reasoning_effort,
         "CEO_CLAUDE_MODEL": claude_model,
         "CEO_CLAUDE_MODEL_REASONING_EFFORT": claude_reasoning_effort,
+        "CEO_AGENT_RUNTIME_HIDDEN_ROUTES": ",".join(hidden_routes),
         "CEO_AGENT_RUNTIME_ROUTES": _composed_route_order(
             enabled={
                 "codex_oauth": True,
-                "codex_api": api_enabled,
-                "claude_oauth": claude_enabled,
-                "claude_api": claude_api_enabled,
-                "friday_runtime": friday_enabled,
+                "codex_api": api_enabled and "codex_api" not in hidden_routes,
+                "claude_oauth": claude_enabled and "claude_oauth" not in hidden_routes,
+                "claude_api": claude_api_enabled and "claude_api" not in hidden_routes,
+                "friday_runtime": friday_enabled
+                and "friday_runtime" not in hidden_routes,
             },
             added=[route["name"] for route in added_routes],
             submitted_order=route_order,
@@ -9624,6 +9640,21 @@ def handle_agent_runtime_config_post(
     if claude_api_token:
         updates["CEO_CLAUDE_API_KEY"] = claude_api_token
     updates.update(_added_route_updates(added_routes, persisted_env))
+    # Deleting a card drops the credential that belongs to that route only.
+    # Shared settings stay: CEO_CODEX_API_BASE_URL also feeds the email
+    # classifier, and the Claude model is shared with Claude OAuth.
+    own_credentials = {
+        "codex_api": ("CEO_CODEX_API_KEY",),
+        "claude_api": ("CEO_CLAUDE_API_KEY",),
+        "friday_runtime": (
+            "CEO_FRIDAY_RUNTIME_TICKET",
+            "CEO_FRIDAY_SESSION_TOKEN",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY",
+        ),
+    }
+    for route_name in hidden_routes:
+        for key in own_credentials.get(route_name, ()):
+            updates[key] = ""
     if friday_auth_disabled:
         updates["CEO_FRIDAY_RUNTIME_TICKET"] = ""
         updates["CEO_FRIDAY_SESSION_TOKEN"] = ""

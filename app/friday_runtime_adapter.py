@@ -8,6 +8,7 @@ final Artifact message; it does not implement audit or effect policy.
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.parse
@@ -123,6 +124,28 @@ class UrllibFridayHttpTransport:
             except ValueError:
                 payload = {"message": "Friday Runtime request failed"}
             return FridayHttpResponse(status_code=int(exc.code), payload=payload)
+
+
+DESKTOP_FRIDAY_CLI = Path("/Applications/Friday.app/Contents/MacOS/friday-cli")
+FRIDAY_INSTALL_RECORD = Path.home() / ".friday" / "install.json"
+
+
+def bundled_friday_cli() -> str:
+    """Return the Friday CLI the desktop install provides, or "" when absent.
+
+    Friday ships its CLI inside the desktop app, so the service never installs
+    one: without the app there is no Friday to talk to.
+    """
+
+    try:
+        record = json.loads(FRIDAY_INSTALL_RECORD.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        record = {}
+    recorded = str(record.get("cli_executable_path") or "").strip()
+    for candidate in (Path(recorded) if recorded else None, DESKTOP_FRIDAY_CLI):
+        if candidate is not None and candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return ""
 
 
 def ensure_friday_project(

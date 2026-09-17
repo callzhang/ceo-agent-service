@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-17: Settings / Agent Runtime tells a switched-off route from a
+  deleted one. Switching a route off keeps its card and its settings; deleting
+  it hides the card, records the name in `CEO_AGENT_RUNTIME_HIDDEN_ROUTES` and
+  clears only the credential that route owns, leaving shared settings such as
+  `CEO_CODEX_API_BASE_URL`, which the email classifier also reads. A deleted
+  built-in route comes back from the 新增 runtime card. Friday Runtime is greyed
+  out, and refused on save, when the Friday desktop app is absent: that app
+  ships the CLI this service runs, and the service never installs its own.
+
 - 2026-09-17: An added runtime now picks one of four kinds — Codex CLI or
   Claude CLI, on this machine's login or on an API key — and the card asks only
   for what that kind needs, so a local-login route carries a model and no

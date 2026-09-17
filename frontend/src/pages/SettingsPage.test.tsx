@@ -290,6 +290,43 @@ describe("SettingsPage", () => {
     }), {});
   });
 
+  it("deletes a built-in card and offers it back, which switching off does not", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,claude_api",
+      CEO_CLAUDE_API_KEY: "claude-token",
+    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    // Switching it off keeps the card and its token.
+    await user.click(await screen.findByRole("switch", { name: "启用 Claude API" }));
+    expect(screen.getByLabelText("Claude API Token")).toHaveValue("claude-token");
+
+    await user.click(screen.getByRole("button", { name: "删除 Claude API" }));
+    expect(screen.queryByLabelText("Claude API Token")).toBeNull();
+
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth",
+      CEO_AGENT_RUNTIME_HIDDEN_ROUTES: "claude_api",
+    }), {});
+
+    await user.click(screen.getByRole("button", { name: "恢复 Claude API" }));
+    expect(screen.getByLabelText("Claude API Token")).toBeInTheDocument();
+  });
+
+  it("greys out Friday when the desktop app that ships its CLI is missing", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth",
+    }, friday_cli: { available: false, path: "" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    expect(await screen.findByRole("switch", { name: "启用 Friday Runtime" })).toBeDisabled();
+    expect(screen.getByText(/未检测到 Friday 桌面版/)).toBeInTheDocument();
+    expect(screen.getByLabelText("服务地址")).toBeDisabled();
+  });
+
   it("hides the Friday credentials while the local runtime needs no authentication", async () => {
     getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
       CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,friday_runtime",

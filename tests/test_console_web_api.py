@@ -1873,6 +1873,47 @@ def test_console_agent_runtime_returns_saved_credentials_for_prefill(monkeypatch
     assert fields["CEO_FRIDAY_SESSION_TOKEN"] == "session-token"
 
 
+def test_console_agent_runtime_delete_hides_a_card_and_drops_only_its_own_key(
+    monkeypatch, tmp_path: Path
+):
+    """Deleting a card must not clear settings other features read."""
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api\n"
+        "CEO_CODEX_API_BASE_URL=https://api.kksj.org/v1\n"
+        "CEO_CODEX_API_KEY=codex-token\n"
+        "CEO_CLAUDE_MODEL=sonnet\n"
+        "CEO_CLAUDE_MODEL_REASONING_EFFORT=medium\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/console/settings/agent-runtime",
+            json={"fields": {
+                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
+                "CEO_AGENT_RUNTIME_HIDDEN_ROUTES": "codex_api",
+                "CEO_CODEX_MODEL": "gpt-5.5",
+                "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
+                "CEO_CODEX_API_BASE_URL": "https://api.kksj.org/v1",
+                "CEO_CODEX_API_MODEL": "gpt-5.5",
+                "CEO_CLAUDE_MODEL": "sonnet",
+                "CEO_CLAUDE_MODEL_REASONING_EFFORT": "medium",
+                "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:52628",
+            }},
+        )
+
+    assert response.status_code == 200, response.json()
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_AGENT_RUNTIME_HIDDEN_ROUTES=codex_api" in env_text
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n" in env_text
+    assert 'CEO_CODEX_API_KEY=""' in env_text
+    # The email classifier reads this endpoint too, so it survives the delete.
+    assert "CEO_CODEX_API_BASE_URL=https://api.kksj.org/v1" in env_text
+
+
 def test_console_agent_runtime_adds_a_runtime_and_keeps_its_order(
     monkeypatch, tmp_path: Path
 ):

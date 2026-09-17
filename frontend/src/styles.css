@@ -392,6 +392,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .runtime-field-group-caption { margin: 0; color: var(--ink-soft); font-size: 0.74rem; font-weight: 700; }
 .runtime-fields-nested { margin-top: 10px; }
 .runtime-field-group-hint { margin: 10px 0 0; color: var(--ink-soft); font-size: 0.74rem; line-height: 1.5; }
+.runtime-card-unavailable { background: var(--surface-muted); }
+.runtime-card-unavailable-reason { margin: 12px 0 0; color: var(--ink-soft); font-size: 0.76rem; line-height: 1.5; }
+.runtime-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.runtime-fieldset:disabled { opacity: 0.55; }
+.runtime-card-actions { display: inline-flex; flex: none; align-items: center; gap: 10px; }
+.runtime-restore-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; font-size: 0.78rem; }
 .runtime-field .runtime-switch-inline { min-height: 38px; }
 .runtime-field .runtime-switch-inline input { width: 34px; min-height: 0; height: 20px; padding: 0; border-radius: 999px; }
 .runtime-save-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }

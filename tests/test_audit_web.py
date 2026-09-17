@@ -5287,6 +5287,40 @@ def test_agent_runtime_settings_form_submits_friday_configuration(
     )
 
 
+def test_handle_agent_runtime_config_post_refuses_friday_without_the_desktop_cli(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """Friday ships its CLI with the desktop app; without it there is no Friday."""
+
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_CODEX_API_KEY=existing-token\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    import app.friday_runtime_adapter as friday_module
+
+    monkeypatch.setattr(friday_module, "bundled_friday_cli", lambda: "")
+
+    status, _, html = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5"
+            "&codex_reasoning_effort=medium"
+            "&codex_api_enabled=0"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+            "&claude_reasoning_effort=medium"
+            "&friday_runtime_settings_present=1"
+            "&friday_runtime_enabled=1"
+            "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A52628"
+            "&friday_runtime_project_id=ceo"
+            "&friday_runtime_auth_disabled=1"
+        ).encode()
+    )
+
+    assert status == 400
+    assert "desktop app" in html
+    assert "friday_runtime" not in env_path.read_text(encoding="utf-8")
+
+
 def test_handle_agent_runtime_config_post_provisions_a_friday_project(
     tmp_path: Path,
     monkeypatch,

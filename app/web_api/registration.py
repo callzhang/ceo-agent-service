@@ -1681,7 +1681,8 @@ def register_console_routes(
                 env = app_config.read_env_file()
                 fields = {key: env.get(key, "") for key in (
                     "CEO_CODEX_MODEL", "CEO_CODEX_MODEL_REASONING_EFFORT",
-                    "CEO_AGENT_RUNTIME_ROUTES", "CEO_CODEX_API_BASE_URL",
+                    "CEO_AGENT_RUNTIME_ROUTES", "CEO_AGENT_RUNTIME_HIDDEN_ROUTES",
+                    "CEO_CODEX_API_BASE_URL",
                     "CEO_CODEX_API_MODEL", "CEO_CODEX_API_KEY",
                     "CEO_CLAUDE_MODEL", "CEO_CLAUDE_MODEL_REASONING_EFFORT",
                     "CEO_CLAUDE_API_KEY",
@@ -1710,8 +1711,18 @@ def register_console_routes(
                     for suffix in ("KIND", "BASE_URL", "MODEL", "API_KEY"):
                         fields[f"{prefix}{suffix}"] = env.get(f"{prefix}{suffix}", "")
                     added_secrets.append(f"{prefix}API_KEY")
+                from app.friday_runtime_adapter import bundled_friday_cli
+
+                friday_cli = bundled_friday_cli()
             if payload is None:
                 payload = {"section": section, "fields": fields}
+            if section == "agent-runtime":
+                # Friday ships its CLI with the desktop app; without it the
+                # console has no Friday to offer.
+                payload["friday_cli"] = {
+                    "available": bool(friday_cli),
+                    "path": friday_cli,
+                }
             payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_CLAUDE_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN", *added_secrets] if section == "agent-runtime" else []
         return item_envelope(payload)
 
@@ -2055,6 +2066,11 @@ def register_console_routes(
                 # The submitted order is the failover order, so the console can
                 # move a route up or down.
                 "route_order": str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or ""),
+                # A built-in route the operator deleted from the console keeps
+                # its card hidden, which a disabled route does not.
+                "hidden_routes": str(
+                    fields.get("CEO_AGENT_RUNTIME_HIDDEN_ROUTES") or ""
+                ),
             }
         else:
             encoded = {str(k): str(v) for k, v in fields.items()}
