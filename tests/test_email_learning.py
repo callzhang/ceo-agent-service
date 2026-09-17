@@ -281,6 +281,11 @@ def test_latest_snapshot_projects_counts_and_provider_folder_truth(tmp_path):
         "state": "categorized",
         "category_key": "legal",
         "important": True,
+        # These fixtures carry the Important label but no raw star or flag
+        # names, so nothing is starred or flagged.
+        "important_signals": [],
+        "starred": False,
+        "important_flag": False,
         "provider_folder_id": "folder-legal",
         "provider_folder_name": "Legal",
         "observed_at": "2026-09-08T08:01:00+00:00",
@@ -357,6 +362,11 @@ def test_current_provider_truth_changes_without_freezing_another_snapshot(tmp_pa
         "state": "categorized",
         "category_key": "financing",
         "important": False,
+        # These fixtures carry the Important label but no raw star or flag
+        # names, so nothing is starred or flagged.
+        "important_signals": [],
+        "starred": False,
+        "important_flag": False,
         "provider_folder_id": "folder-financing",
         "provider_folder_name": "Financing",
         "observed_at": "2026-09-08T08:05:00+00:00",

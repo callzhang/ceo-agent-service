@@ -3231,10 +3231,21 @@ def test_confirmation_button_clicks_only_its_modelled_exact_selector() -> None:
         def click(self, **_kwargs):
             clicks.append("click")
 
+    class NoDialog:
+        def count(self):
+            return 0
+
+        def click(self, **_kwargs):
+            raise AssertionError("no dialog is present, so nothing else may be clicked")
+
     class Page:
         url = "https://news.example.com/unsubscribe"
 
         def locator(self, selector):
+            # Before clicking, the browser checks for a modal covering the
+            # control; with none present, the modelled button is the only click.
+            if selector == '[role="dialog"][aria-modal="true"]':
+                return NoDialog()
             assert selector == _unsubscribe_button_snapshot()["selector"]
             return Button()
 
