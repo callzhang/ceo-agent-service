@@ -370,6 +370,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .runtime-card { display: flex; flex-direction: column; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
 .runtime-chip { flex: none; padding: 3px 10px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--ink-soft); font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
 .runtime-chip.is-on { border-color: transparent; background: var(--accent-soft); color: var(--accent); }
+.runtime-switch { display: inline-flex; flex: none; align-items: center; gap: 8px; color: var(--ink-soft); font-size: 0.75rem; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.runtime-switch input { width: 34px; height: 20px; margin: 0; appearance: none; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-muted); cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+.runtime-switch input::after { content: ""; display: block; width: 14px; height: 14px; margin: 2px; border-radius: 999px; background: var(--ink-soft); transition: transform .15s ease, background .15s ease; }
+.runtime-switch input:checked { border-color: transparent; background: var(--accent); }
+.runtime-switch input:checked::after { background: var(--surface); transform: translateX(14px); }
+.runtime-switch input:checked + span { color: var(--accent); }
 .runtime-fields .runtime-field > span, .runtime-fields .secret-field > label, .runtime-fields .filter-control-label { color: var(--ink-soft); font-size: 0.76rem; font-weight: 700; letter-spacing: 0; text-transform: none; }
 .runtime-card-wide { grid-column: 1 / -1; }
 .runtime-card h3 { margin-bottom: 5px; font-size: 0.98rem; }

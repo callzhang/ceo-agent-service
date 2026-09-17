@@ -135,9 +135,30 @@ describe("SettingsPage", () => {
     const steps = screen.getAllByRole("listitem").map((item) => item.textContent);
     expect(steps).toEqual(["1Codex OAuth", "2Claude OAuth"]);
     expect(screen.getByText("未启用：Codex API、Claude API、Friday Runtime")).toBeInTheDocument();
-    // A route left out of the order keeps its card, marked off.
-    expect(screen.getAllByText("已启用")).toHaveLength(2);
-    expect(screen.getAllByText("未启用")).toHaveLength(2);
+    // The primary route cannot be switched off; the rest carry a switch.
+    expect(screen.getByText("始终启用")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "启用 Claude OAuth" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "启用 Codex API" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "启用 Friday Runtime" })).not.toBeChecked();
+  });
+
+  it("turns a route on from its card and keeps the canonical order", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,friday_runtime",
+    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    await user.click(await screen.findByRole("switch", { name: "启用 Codex API" }));
+
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "1Codex OAuth", "2Codex API", "3Friday Runtime",
+    ]);
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,codex_api,friday_runtime",
+    }), {});
   });
 
   it("shows the Agent Runtime validation reason without discarding the draft", async () => {
