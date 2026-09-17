@@ -279,12 +279,8 @@ class CodexRuntimeAdapter:
     def _configured_route(self, route: RuntimeRoute) -> RuntimeRoute:
         if route.runtime_kind != RuntimeKind.CODEX_CLI:
             raise ValueError("unsupported runtime route")
-        expected = {
-            "codex_oauth": CredentialMode.LOCAL_OAUTH,
-            "codex_api": CredentialMode.SERVICE_API,
-        }.get(route.name)
-        if expected is None or route.credential_mode != expected:
-            raise ValueError("unsupported runtime route")
+        # A route's credential mode comes from the configuration that built it,
+        # so an added route is as valid here as a built-in one.
         configured = next(
             (item for item in self.config.routes if item.name == route.name), None
         )

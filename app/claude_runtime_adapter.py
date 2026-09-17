@@ -453,16 +453,10 @@ class ClaudeRuntimeAdapter:
         )
         return {server.name: _mcp_transport(server, os.environ) for server in configured}
 
-    _CREDENTIAL_MODES = {
-        "claude_oauth": CredentialMode.LOCAL_OAUTH,
-        "claude_api": CredentialMode.SERVICE_API,
-    }
-
     def _configured_route(self, route: RuntimeRoute) -> RuntimeRoute:
-        if (
-            route.runtime_kind is not RuntimeKind.CLAUDE_CLI
-            or self._CREDENTIAL_MODES.get(route.name) is not route.credential_mode
-        ):
+        # A route's credential mode comes from the configuration that built it,
+        # so an added route is as valid here as a built-in one.
+        if route.runtime_kind is not RuntimeKind.CLAUDE_CLI:
             raise ValueError("unsupported runtime route")
         configured = next(
             (
