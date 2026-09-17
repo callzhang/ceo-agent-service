@@ -19,6 +19,7 @@ from app.agent_effects import IDLE_TIMEOUT_SECONDS, TOTAL_TIMEOUT_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
+    RuntimeEventType,
     RuntimeFailure,
     RuntimeFailureClass,
     RuntimeKind,
@@ -238,6 +239,26 @@ def _friday_turn_text(command_factory: CodexCommandFactory, prompt: str) -> str:
         )
     parts.append(prompt)
     return "\n\n".join(part for part in parts if part)
+
+
+def _friday_result_events(text: str) -> str:
+    """Present Friday's final message as the runtime events every parser reads.
+
+    Workload parsers read the provider-neutral event stream Codex emits and the
+    Claude adapter reproduces. Friday returns only the final message, so handed
+    over raw it matched no event and every typed result was rejected as missing.
+    """
+    return "\n".join(
+        json.dumps(event, ensure_ascii=False)
+        for event in (
+            {"type": RuntimeEventType.TURN_STARTED.value},
+            {
+                "type": RuntimeEventType.ITEM_COMPLETED.value,
+                "item": {"type": "agent_message", "text": text},
+            },
+            {"type": RuntimeEventType.TURN_COMPLETED.value},
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -1263,7 +1284,9 @@ class RoutedCodexExecution:
                         owner=self._owner,
                         now=self._now(),
                     )
-                    process = ProcessRunResult(0, friday_result.text, "")
+                    process = ProcessRunResult(
+                        0, _friday_result_events(friday_result.text), ""
+                    )
                 except FridayRuntimeError as exc:
                     if exc.thread_id:
                         observed_session_id = f"friday_thread:{exc.thread_id}"

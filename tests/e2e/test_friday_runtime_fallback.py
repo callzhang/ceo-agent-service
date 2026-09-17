@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from app.agent_result import parse_agent_text_result
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
@@ -214,7 +215,7 @@ def test_oauth_and_codex_failure_fall_back_to_friday_in_one_agent_run(
         command_factory=CodexCommandFactory.standard(
             developer_instructions="Return one integer."
         ),
-        parser=int,
+        parser=lambda raw: int(parse_agent_text_result(raw)),
         result_codec=INT_CODEC,
     )
 
@@ -561,8 +562,10 @@ def _parse_json_result(text: str) -> object:
         return value
 
 
-def _parse_json_text(text: str) -> str:
-    return json.dumps(_parse_json_result(text), separators=(",", ":"))
+def _parse_json_text(raw: str) -> str:
+    return json.dumps(
+        _parse_json_result(parse_agent_text_result(raw)), separators=(",", ":")
+    )
 
 
 def _safe_detail(value: object) -> str:

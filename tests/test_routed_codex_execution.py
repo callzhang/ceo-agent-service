@@ -26,6 +26,7 @@ from app.agent_runtime_router import (
     RoutedResultValidationRetry,
 )
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.agent_result import parse_agent_text_result, parse_typed_agent_result
 from app.friday_runtime_adapter import FridayExecutionResult, FridayRuntimeError
 from app.process_runner import ProcessRunResult
 from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AgentRole, AutoReplyStore
@@ -170,6 +171,10 @@ def make_router(store, config, *, snapshots=None):
     )
 
 
+def _friday_int(raw: str) -> int:
+    return int(parse_agent_text_result(raw))
+
+
 def _friday_config(monkeypatch, routes):
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", routes)
     monkeypatch.setenv("CEO_CODEX_API_KEY", "configured-secret")
@@ -222,7 +227,7 @@ def test_runtime_falls_back_to_friday_in_same_agent_run(tmp_path, monkeypatch):
     result = routed.execute(
         workload_kind="agent_run", workload_key=str(run_id), prompt="return 7",
         command_factory=CodexCommandFactory.standard(developer_instructions="test"),
-        parser=int, result_codec=INT_CODEC,
+        parser=_friday_int, result_codec=INT_CODEC,
     )
 
     assert result.value == 7
@@ -2077,7 +2082,7 @@ def test_friday_receives_the_instructions_and_schema_codex_gets_out_of_band(
             output_schema_path=schema_path,
             use_output_schema=True,
         ),
-        parser=int, result_codec=INT_CODEC,
+        parser=_friday_int, result_codec=INT_CODEC,
     )
 
     sent_text = friday.calls[0][0]
@@ -2114,9 +2119,48 @@ def test_friday_omits_the_schema_block_when_the_workload_uses_no_output_schema(
     routed.execute(
         workload_kind="agent_run", workload_key=str(run_id), prompt="return 7",
         command_factory=CodexCommandFactory.standard(developer_instructions="spec only"),
-        parser=int, result_codec=INT_CODEC,
+        parser=_friday_int, result_codec=INT_CODEC,
     )
 
     sent_text = friday.calls[0][0]
     assert sent_text.startswith("spec only")
     assert "Output JSON Schema" not in sent_text
+
+
+def test_a_typed_workload_parser_reads_friday_s_final_message(tmp_path, monkeypatch):
+    """Friday returns only its final message; the typed parsers read runtime events."""
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        ok: bool
+
+    store = AutoReplyStore(tmp_path / "friday-typed.sqlite3")
+    run_id = seed_agent_run_parent(store, task_id=993)
+    config = _friday_config(monkeypatch, "friday_runtime")
+    friday = FakeFridayAdapter(
+        result=FridayExecutionResult(
+            text='<think>check</think>\n{\n  "ok": true\n}',
+            thread_id="thread-1", turn_id="turn-1",
+            operation_id="operation-1", artifact={},
+        )
+    )
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=AgentRuntimeRouter(
+            routes=config.routes, store=store, snapshots=_friday_snapshots(config), now=lambda: NOW
+        ),
+        adapter=FakeAdapter(),
+        friday_adapter=friday,
+        executor=lambda *args, **kwargs: ProcessRunResult(1, "", "unused"),
+        now=lambda: NOW,
+    )
+
+    result = routed.execute(
+        workload_kind="agent_run", workload_key=str(run_id), prompt="answer",
+        command_factory=CodexCommandFactory.standard(developer_instructions="test"),
+        parser=lambda raw: parse_typed_agent_result(raw, Answer).model_dump_json(),
+        result_codec=RoutedResultCodec.text(schema_id="answer.v1"),
+    )
+
+    assert Answer.model_validate_json(result.value).ok is True
