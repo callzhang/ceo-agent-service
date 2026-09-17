@@ -1902,7 +1902,8 @@ def backfill_todo_deadlines_command(
         "backfill-todo-deadlines "
         f"dry_run={result.dry_run} inspected={result.inspected} "
         f"deadlines_set={result.deadlines_set} "
-        f"mirrors_queued={result.mirrors_queued} failed={result.failed}",
+        f"mirrors_queued={result.mirrors_queued} failed={result.failed} "
+        f"deferred={result.deferred}",
         flush=True,
     )
     return result
@@ -3768,6 +3769,28 @@ def _scheduled_task_option_service(settings: WorkerSettings, runtime_skill_snaps
     )
 
 
+def _install_bundled_business_skills_on_service_start(settings: WorkerSettings) -> None:
+    """Sync the repo's bundled ceo-* business Skills into ~/.agents/skills.
+
+    Scheduled tasks reference these by name (e.g. $ceo-work-tracking) and read
+    them from the runtime Skill root at dispatch time; this keeps that copy from
+    silently drifting behind the checked-out repo on a fresh clone or upgrade.
+    Failure degrades to a recorded error rather than aborting the rest of startup,
+    matching the runtime_refresher probe below.
+    """
+    from app.business_skills import install_bundled_business_skills
+
+    try:
+        install_bundled_business_skills(Path.home() / ".agents" / "skills")
+    except Exception as exc:  # noqa: BLE001 - startup must degrade, not abort service
+        AutoReplyStore(settings.db_path).record_error(
+            "",
+            "",
+            "bundled_business_skills_install_failed",
+            f"Bundled business Skill sync failed at startup; runtime copies may be stale: {exc}",
+        )
+
+
 def _seed_scheduled_tasks_on_service_start(
     settings: WorkerSettings, runtime_skill_snapshot
 ) -> None:
@@ -3803,6 +3826,7 @@ def run_service(
                 "agent_runtime_probe_startup_failed",
                 "Agent runtime startup probe failed; routes remain unavailable.",
             )
+    _install_bundled_business_skills_on_service_start(settings)
     _seed_scheduled_tasks_on_service_start(settings, runtime_skill_snapshot)
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_orphaned_reply_tasks_on_service_start(settings)

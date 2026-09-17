@@ -21,6 +21,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.task_models import TodoStatus, WorkProject, WorkTodo
+from app.worker import _is_runtime_outage_error
 from app.todo_sync import _deadline_to_iso, _parse_datetime
 
 TODO_DEADLINE_DECISION_SCHEMA_PATH = (
@@ -48,6 +49,7 @@ class TodoDeadlineBackfillResult:
     deadlines_set: int = 0
     mirrors_queued: int = 0
     failed: int = 0
+    deferred: int = 0
     dry_run: bool = True
     decisions: list[dict[str, object]] = field(default_factory=list)
 
@@ -261,6 +263,15 @@ def backfill_todo_deadlines(
             decision = runner.infer(todo=todo, project=project, now=effective_now)
             deadline = validate_todo_deadline(decision, now=effective_now)
         except Exception as exc:  # noqa: BLE001 - one TODO must not stop the batch
+            if _is_runtime_outage_error(exc):
+                # No route ran this TODO. The same wait applies to every TODO
+                # left, so the batch stops instead of walking the rest of the
+                # list and filing one Attention row per item.
+                result.deferred += 1
+                result.decisions.append(
+                    {"todo_id": todo.id, "deferred": "runtime_unavailable"}
+                )
+                break
             result.failed += 1
             result.decisions.append({"todo_id": todo.id, "error": str(exc)[:300]})
             if not dry_run:

@@ -230,3 +230,37 @@ def test_the_repair_prompt_names_the_rule_the_deadline_broke():
 
     assert "is not after now" in _deadline_repair_prompt(past, now=NOW)
     assert "no TodoDeadlineDecision JSON object" in _deadline_repair_prompt("抱歉", now=NOW)
+
+
+class OutageRunner:
+    """Fail the way the router does when every route is paused."""
+
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    def infer(self, *, todo, project, now):
+        from app.agent_runtime_router import RoutedCodexExecutionError
+
+        self.calls.append(todo.id)
+        raise RoutedCodexExecutionError(
+            "runtime_execution_failed", "no_eligible_route", runtime_unavailable=True
+        )
+
+
+def test_a_runtime_outage_stops_the_batch_without_filing_errors(tmp_path):
+    """Seen live: a provider outage filed one Attention row per TODO."""
+    store = _store(tmp_path)
+    project = _project(store)
+    first = _todo(store, project, "第一条")
+    _todo(store, project, "第二条")
+    runner = OutageRunner()
+
+    result = backfill_todo_deadlines(store, runner, dry_run=False, now=NOW)
+
+    assert runner.calls == [first]
+    assert result.deferred == 1 and result.failed == 0
+    with store._connect() as db:
+        count = db.execute(
+            "select count(*) from errors where kind='todo_deadline_backfill'"
+        ).fetchone()[0]
+    assert count == 0
