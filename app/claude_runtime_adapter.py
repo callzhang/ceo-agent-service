@@ -235,7 +235,10 @@ class ClaudeRuntimeAdapter:
                 str(max_turns),
                 "--verbose",
                 "--permission-mode",
-                "default",
+                # Derek 2026-09-17: run tools without approval prompts, as the
+                # Codex routes already do. Under `default` every tool call in a
+                # service turn was denied (OA task 341173, skill reads).
+                "auto",
             ]
         )
         if not selected_policy.tools_enabled:

@@ -146,7 +146,8 @@ def test_normal_command_delegates_tool_review_to_claude_runtime(
     assert "--allowedTools" not in command
     assert "--disallowedTools" not in command
     assert "--permission-prompt-tool" not in command
-    assert command[command.index("--permission-mode") + 1] == "default"
+    # A service turn has no one to answer a permission prompt.
+    assert command[command.index("--permission-mode") + 1] == "auto"
 
 
 @pytest.mark.parametrize(
