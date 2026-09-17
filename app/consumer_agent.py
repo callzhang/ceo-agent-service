@@ -753,12 +753,24 @@ def _prepare_outgoing_dingtalk_action(
     reply_text = payload[text_key]
     if not isinstance(reply_text, str) or not reply_text.strip():
         return action
-    prepared = sender.prepare(
-        channel="dingtalk",
-        delivery_key=delivery_key,
-        body=reply_text,
-        original_text=context.trigger_text,
-    )
+    try:
+        prepared = sender.prepare(
+            channel="dingtalk",
+            delivery_key=delivery_key,
+            body=reply_text,
+            original_text=context.trigger_text,
+        )
+    except ValueError as exc:
+        if str(exc) != "feedback_callback_pair_invalid":
+            raise
+        # The proposal carried feedback links the model typed itself. The
+        # service appends them, and a hand-copied pair is invalid -- run 20064
+        # failed the whole turn on it, which only sends the same body back.
+        raise ResultParseError(
+            "Do not put feedback links or a service signature in the message "
+            "body: the service appends them to every outbound message, and a "
+            "hand-typed pair is rejected. Propose the message text alone."
+        ) from exc
     prepared_payload = dict(payload)
     prepared_payload[text_key] = prepared.final_body
     return action.model_copy(update={"payload": prepared_payload})

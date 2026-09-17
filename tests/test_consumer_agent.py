@@ -2136,6 +2136,52 @@ def test_consumer_prepares_structured_dingtalk_message_postfix_before_audit(
     assert prepared.final_body == text
 
 
+def test_consumer_body_with_hand_typed_feedback_links_gets_a_correction(
+    store, task, context, monkeypatch
+):
+    """Run 20064 failed the whole turn on `feedback_callback_pair_invalid`.
+
+    The model had transcribed the feedback links into the body it proposed.
+    The service appends those links itself, so a hand-typed pair is invalid --
+    but failing the turn only sends the same body back instead of correcting it.
+    """
+    from app.agent_contracts import ProposedAction
+    from app.consumer_agent import _prepare_outgoing_dingtalk_action
+
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", "https://feedback.example.com"
+    )
+
+    action = ProposedAction.model_validate(
+        {
+            "description": "通知申请人补齐材料",
+            "action_identity": "notify-applicant",
+            "capability": "dingtalk-chat",
+            "operation": "send",
+            "target": {
+                "conversation_id": "cid-1",
+                "open_dingtalk_id": "dt-applicant",
+            },
+            "payload": {
+                "text": (
+                    "请补齐材料。\n\n反馈："
+                    "https://feedback.example.com/api/dingtalk-feedback-spike?token=abc"
+                )
+            },
+        }
+    )
+
+    with pytest.raises(ResultParseError) as caught:
+        _prepare_outgoing_dingtalk_action(
+            action,
+            sender=ServiceMessageSender(store=store),
+            delivery_key="agent-message:test",
+            context=context,
+        )
+
+    assert "feedback links" in str(caught.value)
+
+
 def test_consumer_feedback_revision_prepares_its_corrected_dingtalk_body(
     store,
     task,
