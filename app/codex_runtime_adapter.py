@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from app.agent_runtime_config import AgentRuntimeConfig
-from app.business_skills import codex_skill_exclusion_override
+from app.business_skills import codex_skill_config_override
 from app.agent_runtime_contracts import (
     CredentialMode,
     RuntimeFailure,
@@ -147,7 +147,7 @@ class CodexRuntimeAdapter:
             sandbox_mode=sandbox_mode,
             skip_git_repo_check=skip_git_repo_check,
             reasoning_effort=reasoning_effort,
-            skill_exclusion_override=codex_skill_exclusion_override(skill_names)
+            skill_exclusion_override=codex_skill_config_override(skill_names)
             if skill_names
             else "",
         )

@@ -9,7 +9,7 @@ from app.business_skills import (
     BusinessSkillInstallRollbackError,
     BusinessSkillInstallTargetError,
     BusinessSkillValidationError,
-    codex_skill_exclusion_override,
+    codex_skill_config_override,
     expand_skill_dependencies,
     install_bundled_business_skills,
     installed_runtime_skill_paths,
@@ -452,27 +452,65 @@ def test_runtime_scan_filters_to_the_requested_names(tmp_path: Path):
     assert [item.name for item in entries] == ["wanted"]
 
 
-def test_codex_exclusion_override_disables_everything_outside_the_allow_set(
+def test_codex_override_enables_the_allow_set_and_disables_everything_else(
     tmp_path: Path,
 ):
     root = tmp_path / "skills"
-    _skill_file(root, "wanted", "wanted", "Keep me.")
+    wanted = _skill_file(root, "wanted", "wanted", "Keep me.")
     unwanted = _skill_file(root, "unwanted", "unwanted", "Disable me.")
     nested = _skill_file(root, "bundle/deep", "deep", "Disable me too.")
 
-    override = codex_skill_exclusion_override({"wanted"}, target_root=root)
+    override = codex_skill_config_override(
+        {"wanted"}, target_root=root, codex_home=tmp_path / "no-codex"
+    )
 
     assert override.startswith("skills.config=[")
+    assert f'{{path="{wanted}",enabled=true}}' in override
     assert f'{{path="{unwanted}",enabled=false}}' in override
     assert f'{{path="{nested}",enabled=false}}' in override
-    assert "wanted/SKILL.md" not in override.replace("unwanted/SKILL.md", "")
 
 
-def test_codex_exclusion_override_is_empty_when_nothing_to_disable(tmp_path: Path):
+def test_codex_override_is_empty_when_there_are_no_skills(tmp_path: Path):
+    assert (
+        codex_skill_config_override(
+            {"anything"}, target_root=tmp_path / "none", codex_home=tmp_path / "none"
+        )
+        == ""
+    )
+
+
+def test_codex_override_forces_on_a_skill_the_user_config_disabled(tmp_path: Path):
+    """Production: ~/.codex/config.toml disabled dingtalk-oa-approval, and the
+    override merges with it, so the OA task's only Skill was never visible."""
     root = tmp_path / "skills"
-    _skill_file(root, "only", "only", "The only skill.")
+    oa = _skill_file(root, "dingtalk-oa-approval", "dingtalk-oa-approval", "OA.")
 
-    assert codex_skill_exclusion_override({"only"}, target_root=root) == ""
+    override = codex_skill_config_override(
+        {"dingtalk-oa-approval"}, target_root=root, codex_home=tmp_path / "codex"
+    )
+
+    assert f'{{path="{oa}",enabled=true}}' in override
+
+
+def test_codex_override_excludes_skills_in_every_codex_root(tmp_path: Path):
+    """Production: sora and imagegen live in ~/.codex/skills and were never trimmed."""
+    root = tmp_path / "agents"
+    codex_home = tmp_path / "codex"
+    _skill_file(root, "task", "task", "The task.")
+    native = _skill_file(codex_home / "skills", "sora", "sora", "Video.")
+    plugin = _skill_file(
+        codex_home / "plugins" / "cache" / "vendor" / "1.0" / "skills",
+        "figma-use",
+        "figma-use",
+        "Design.",
+    )
+
+    override = codex_skill_config_override(
+        {"task"}, target_root=root, codex_home=codex_home
+    )
+
+    assert f'{{path="{native}",enabled=false}}' in override
+    assert f'{{path="{plugin}",enabled=false}}' in override
 
 
 def _skill_with_body(root: Path, name: str, body: str) -> None:
@@ -531,8 +569,10 @@ def test_exclusion_override_keeps_the_whole_dependency_closure(tmp_path: Path):
     _skill_with_body(root, "ocr", "Leaf.")
     _skill_with_body(root, "sora", "Leaf.")
 
-    override = codex_skill_exclusion_override(["task"], target_root=root)
+    override = codex_skill_config_override(
+        ["task"], target_root=root, codex_home=tmp_path / "codex"
+    )
 
-    assert "sora/SKILL.md" in override
-    assert "ocr/SKILL.md" not in override
-    assert "task/SKILL.md" not in override
+    assert '/sora/SKILL.md",enabled=false}' in override
+    assert '/ocr/SKILL.md",enabled=true}' in override
+    assert '/task/SKILL.md",enabled=true}' in override

@@ -626,7 +626,7 @@ def test_task_skill_list_disables_every_other_runtime_skill(
 
     override = _skill_config_override(command)
     assert f'{{path="{unwanted}",enabled=false}}' in override
-    assert str(wanted) not in override
+    assert f'{{path="{wanted}",enabled=true}}' in override
 
 
 def test_run_without_a_task_skill_list_leaves_codex_skills_untouched(

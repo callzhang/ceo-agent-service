@@ -262,6 +262,25 @@ def installed_runtime_skill_paths(target_root: Path | None = None) -> tuple[Path
     return tuple(sorted(root.rglob("SKILL.md")))
 
 
+def _describe_skill_file(path: Path) -> tuple[str, str] | None:
+    """Return (name, description) from real YAML frontmatter, or None."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if not lines or lines[0].strip() != "---":
+            return None
+        frontmatter = yaml.safe_load("\n".join(lines[1 : lines.index("---", 1)]))
+    except (OSError, UnicodeError, ValueError, yaml.YAMLError):
+        return None
+    if not isinstance(frontmatter, dict):
+        return None
+    name = frontmatter.get("name")
+    description = frontmatter.get("description")
+    if not isinstance(name, str) or not isinstance(description, str):
+        return None
+    name, description = name.strip(), description.strip()
+    return (name, description) if name and description else None
+
+
 def installed_runtime_skills(
     target_root: Path | None = None, *, names: Iterable[str] | None = None
 ) -> tuple[BusinessSkillCatalogEntry, ...]:
@@ -277,23 +296,10 @@ def installed_runtime_skills(
     wanted = None if names is None else {name for name in names if name}
     entries: list[BusinessSkillCatalogEntry] = []
     for path in installed_runtime_skill_paths(target_root):
-        try:
-            content = path.read_text(encoding="utf-8")
-            lines = content.splitlines()
-            if not lines or lines[0].strip() != "---":
-                continue
-            frontmatter = yaml.safe_load("\n".join(lines[1 : lines.index("---", 1)]))
-        except (OSError, UnicodeError, ValueError, yaml.YAMLError):
+        described = _describe_skill_file(path)
+        if described is None:
             continue
-        if not isinstance(frontmatter, dict):
-            continue
-        name = frontmatter.get("name")
-        description = frontmatter.get("description")
-        if not isinstance(name, str) or not isinstance(description, str):
-            continue
-        name, description = name.strip(), description.strip()
-        if not name or not description:
-            continue
+        name, description = described
         if wanted is not None and name not in wanted:
             continue
         entries.append(
@@ -377,35 +383,59 @@ def expand_skill_dependencies(
     return tuple(resolved)
 
 
-def codex_skill_exclusion_override(
-    allowed_names: Iterable[str], *, target_root: Path | None = None
+def codex_skill_roots(
+    *, target_root: Path | None = None, codex_home: Path | None = None
+) -> tuple[Path, ...]:
+    """Every directory Codex discovers Skills in, not only the shared runtime tree."""
+    home = (
+        Path(codex_home).expanduser()
+        if codex_home is not None
+        else Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
+    )
+    return (runtime_skill_root(target_root), home / "skills", home / "plugins" / "cache")
+
+
+def codex_skill_config_override(
+    allowed_names: Iterable[str],
+    *,
+    target_root: Path | None = None,
+    codex_home: Path | None = None,
 ) -> str:
-    """Build the Codex `-c` override that disables every Skill outside the allow set.
+    """Build the Codex `-c skills.config=[...]` that shows exactly one task's Skills.
 
-    Codex always injects its own Skill catalog and offers no allow-list: the only
-    working lever is marking individual Skills `enabled = false`, verified against
-    `codex debug prompt-input`. Passing this on the command line keeps the user's
-    own ~/.codex/config.toml untouched. Trimming matters for quality, not just
-    size: over its Skill budget Codex truncates descriptions mid-sentence, which
-    is what the Agent relies on to pick the right Skill.
+    Codex injects every Skill it finds in all of its roots and offers no
+    allow-list; per-path `enabled` entries are the only lever, verified against
+    `codex debug prompt-input`. Two things follow from how that lever behaves:
 
-    Returns an empty string when nothing needs disabling, so the caller can omit
-    the flag entirely.
+    - The override is merged with the user's own ~/.codex/config.toml rather
+      than replacing it, so a Skill the user disabled there stays invisible
+      unless it is enabled here explicitly. Every Skill the task needs is
+      therefore forced on - the OA task's own Skill was disabled that way and
+      had never been visible to a Codex run.
+    - Codex also reads ~/.codex/skills and its plugin caches, so exclusion has
+      to walk those roots too, or their Skills keep crowding the budget.
+
+    Trimming matters for quality, not only size: over its Skill budget Codex
+    truncates descriptions mid-sentence, and the description is what the Agent
+    picks a Skill by. Returns an empty string when there is nothing to set.
     """
-    allowed = set(expand_skill_dependencies(allowed_names, target_root=target_root))
-    keep = {
-        entry.skill_path
-        for entry in installed_runtime_skills(target_root, names=allowed)
-    }
-    excluded = [
-        path
-        for path in installed_runtime_skill_paths(target_root)
-        if path.resolve() not in keep
+    keep_names = set(expand_skill_dependencies(allowed_names, target_root=target_root))
+    roots = codex_skill_roots(target_root=target_root, codex_home=codex_home)
+    files = sorted(
+        {path for root in roots if root.is_dir() for path in root.rglob("SKILL.md")}
+    )
+    enable: list[Path] = []
+    disable: list[Path] = []
+    for path in files:
+        described = _describe_skill_file(path)
+        if described is not None and described[0] in keep_names:
+            enable.append(path)
+        else:
+            disable.append(path)
+    items = [f'{{path="{path}",enabled=true}}' for path in enable] + [
+        f'{{path="{path}",enabled=false}}' for path in disable
     ]
-    if not excluded:
-        return ""
-    items = ",".join(f'{{path="{path}",enabled=false}}' for path in excluded)
-    return f"skills.config=[{items}]"
+    return f"skills.config=[{','.join(items)}]" if items else ""
 
 
 def load_bundled_business_skills() -> tuple[BundledBusinessSkill, ...]:
