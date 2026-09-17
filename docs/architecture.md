@@ -775,6 +775,19 @@ Claude 事件语法只把 turn item 映射成 runtime 事件。传输层遥测�
 
 未登录时 `claude_oauth` 的健康探测失败，Router 直接跳过该路由，不影响其余路由。
 
+`claude_oauth` 已登录却仍失败时，先看 403 原文：`OAuth token does not meet scope requirement`
+表示 keychain 里那份 token 没有 `user:inference`。在真实终端跑 `claude auth login` 会重新签发带推理
+scope 的 token，但同一台机器上运行的 Claude Code 桌面应用刷新自身凭据时会覆盖 keychain 里这份，
+线路随之再次失败。因此本机登录态只适合临时使用；需要稳定可用的 Claude 线路时使用 `claude_api`。
+复现服务所见的情况时必须用服务的最小环境运行 CLI（`env -i HOME=… PATH=… USER=… claude -p …`）：
+在 Claude Code 会话里直接运行 `claude -p` 会继承桌面应用自己的凭据而成功，不能证明服务可用。
+
+所有 workload（Agent turn、任务 Agent、会议、邮件分类、workbench、TODO 截止日期回填）都能路由到
+Claude。Claude 没有独立的 developer instructions 和 output schema 通道，统一由
+`app.claude_runtime_adapter.claude_input_contract` 把指令、输出 schema 与任务拼成同一条消息；
+事件流由该 adapter 的 normalizer 校验，最终消息再整理成 Codex 同形的 runtime 事件交给 workload
+的解析器，解析器不需要知道是哪条 runtime 执行的。
+
 ### Friday Runtime 路由
 
 `friday_runtime` 是与 `codex_oauth`、`codex_api`、`claude_oauth` 和 `claude_api` 并列的 Agent
@@ -804,7 +817,11 @@ codex_oauth,codex_api,claude_oauth,friday_runtime
 
 一次 fallback 始终属于同一个 Agent run：当前路由失败后，Router 选择下一条已配置且健康的
 路由，保留原任务、generation、proposal/revision 和 A/B 生命周期，不创建第二个 Consumer
-或 Audit run。Friday 的 Thread、turn、operation 和 Artifact 标识只作为该次 runtime 调用
+或 Audit run。
+
+Friday 的 turn API 只接收一条用户消息且没有 schema 字段，因此与 Claude 一样由服务把 Codex
+带外获得的 developer instructions 与输出 schema 拼进这条消息；Friday 只返回最终消息，服务同样
+把它整理成 runtime 事件后再交给 workload 解析器，否则所有 typed result 都会被判为缺失。Friday 的 Thread、turn、operation 和 Artifact 标识只作为该次 runtime 调用
 的结果事实保存，供失败重试和 History 关联。
 
 Friday 路由使用以下明确错误码：
@@ -852,10 +869,18 @@ run 才能被持久队列恢复。
 
 两类运行时失败有明确的结构化处理，而不是落入通用重试：
 
-- **模型过载**：Codex 报告所选模型 `server_overloaded`（"Selected model is at capacity"）时，
-  adapter 把它归为 `capacity` 类 `codex_provider_overloaded`：允许在同一个 Agent run 内切到下一条
-  已配置路由，并暂停过载路由（健康探测通过后自动解除）。所有路由都过载时，任务按 provider
-  恢复等待延期重试，不进入终态失败。
+- **唯一的 fallback 决策**：Agent turn（`app/agent_turn_runner.py`）与其他所有 workload
+  （`app/agent_runtime_router.py` 的 `RoutedCodexExecution`）只有一条 fallback 路径：某次 runtime attempt
+  失败后，两个执行循环都调用 `app.runtime_fallback.plan_runtime_fallback` 决定是否暂停路由、是否等待、
+  下一次在哪条路由执行；执行循环只负责按决策记录各自的 session、transcript 与回执证据。
+  两个循环也使用同一组 runtime adapter（Codex、Claude、Friday），任何 workload 都能到达任何已配置路由。
+- **模型过载（429）**：provider 报告已满（`server_overloaded`、"Selected model is at capacity"、上游 429/5xx
+  包装成的 "high demand"）时，adapter 归为 `capacity` 类且可在同路由重试的 `codex_provider_overloaded`。
+  同一路由按共享指数退避（10 秒、20 秒、40 秒）重试最多 `CAPACITY_RETRIES_ON_SAME_ROUTE`（3）次；
+  重试期间不暂停该路由，其他 workload 照常使用。3 次重试仍失败才暂停该路由并切到下一条已配置路由。
+  计数只看该路由最近一段连续的容量失败，中间出现其他失败或成功即重新计数。
+  `codex_provider_capacity_exhausted`（额度用完）不会在等待中恢复，不在同路由重试，直接暂停并切换。
+  所有路由都过载时，任务按 provider 恢复等待延期重试，不进入终态失败。
 - **路由暂不可用**：所有路由都不可用时，失败码由路由层给出的结构化原因决定，而不是从
   显示字符串里找子串：探针快照缺失/过期或路由因非认证故障被暂停 → `runtime_provider_unreachable`
   （延期重试）；全部路由缺能力 → `runtime_capability_missing`；仅认证类暂停 →
@@ -913,7 +938,7 @@ run 才能被持久队列恢复。
   决策轮次按本代已持久化的 Consumer run 推导（终态 run 推进轮次，running 保留），避免同一轮被无限重入。
 - **Provider 的通用过载包装**：Codex 会把上游 429/5xx（限流、MiniMax token plan 用尽、上游过载）
   统一包装成 "We're currently experiencing high demand"，流里不带 provider 原文；服务把它归为
-  `codex_provider_overloaded`（容量类：同路由可重试、允许 failover、暂停路由），而不是传输断开。
+  `codex_provider_overloaded`（容量类：同路由先重试 3 次，仍失败才暂停路由并 failover），而不是传输断开。
 - **模型把 JSON 包在说明文字或代码围栏里**：任务 Agent、微信 `AgentEnvelope`、会议对齐三个解析器共用
   `agent_message_json_objects`，在整段消息里逐个定位顶层 JSON 对象（穿过 ``` 围栏和说明文字），
   取最后一个满足各自 schema 的对象；只有完全找不到 JSON 时才报“未找到”。JSONL 流两侧的非 JSON 行

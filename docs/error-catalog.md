@@ -46,7 +46,8 @@ projection。对具有 `business_object_key` 的任务，当前状态由 `busine
 | `codex_result_missing` | 运行结束但没有可解析的结构化结果 | 可重试 |
 | `codex_result_invalid` | 有输出但不符合当前 typed-result schema | 可重试，修复契约后重跑 |
 | `codex_stream_invalid` | 流式事件无法解析为合法执行事件 | 可重试 |
-| `agent_result_failed` | Agent 返回正式 `failed` 结果 | 按结果中的 retryable 决定 |
+| `agent_result_failed` | Agent 返回正式 `failed` 结果 | 按服务对该错误码的政策决定 |
+| `agent_reported_failure` | Agent 报告了服务不认识的失败码；原文保存在 `source_code` | 有上限的普通重试，耗尽后失败 |
 | `agent_feedback_missing` | 修订流程缺少必要反馈 | 终止当前轮并记录失败 |
 | `consumer_retry_deferred` | Consumer 尚未达到下一次重试时间 | 调度等待 |
 | `consumer_retry_exhausted` | Consumer 已达到重试上限 | 终态失败 |
@@ -82,6 +83,11 @@ projection。对具有 `business_object_key` 的任务，当前状态由 `busine
 | `runtime_post_start_failed` | runtime 已启动但后续阶段失败 | 按同一 run 的基础设施策略重试 |
 | `codex_provider_auth_failed` | Codex provider 认证失败 | 修复认证后重试 |
 | `codex_capacity_pause` | provider 容量不足，任务进入延迟队列 | 到 retry_at 后自动重试 |
+| `codex_provider_overloaded` | provider 已满（429、模型容量不足） | 同路由退避重试 3 次，仍失败则暂停路由并切换 |
+| `codex_provider_capacity_exhausted` | provider 额度用完 | 不在同路由重试，暂停路由并切换 |
+| `claude_credentials_unavailable` | Claude 本机登录态不可用，含 token 缺少 `user:inference` scope | 终端重新登录或改用 `claude_api` |
+| `claude_runtime_unavailable` | 已选择 Claude 路由但 adapter 未配置 | 终态失败，修复服务配置 |
+| `runtime_command_build_failed` | 执行循环无法为所选路由构建命令 | 终态失败，修复路由与 adapter 接线 |
 
 ## 业务数据与 provider
 

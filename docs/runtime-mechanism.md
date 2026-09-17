@@ -577,7 +577,22 @@ provider 结果和旧错误事件不改写、不删除。旧 spec/plan 中描述
 发送 continuation；新 revision 表示业务结果版本前进，不表示必须创建新 session。只有 provider
 明确返回 session 不存在、认证上下文失效或契约不兼容时，才创建新 session。
 
-任务 Agent 的 `memory_recall_used` 是 Agent 给出的上下文记录，不是服务的工具调用验收条件。服务不得要求
+Agent 返回的错误只是它观察到的现象，含义由服务决定（`app/agent_reported_error.py`）。wire 结果里的
+`error_retryable` 与 `error_authorization_required` 不被读取；`error_code` 先统一为小写，服务认识的码
+（需要授权或确认、dry run、可自行恢复的依赖、浏览器工具回报的退订码）按服务政策决定是否重试、
+是否等人；其他任何失败码记为 `agent_reported_failure`，走有上限的普通重试，Agent 原文保存在
+`source_code` 供排查。非失败结果（`needs_human`、`no_action` 等）上的码只作为原因标签，不驱动重试
+或授权。编排层依赖的服务码（`runtime_*`、`codex_provider_*`、租约与恢复类）只能由服务写入，
+Agent 写入时一律按 `agent_reported_failure` 处理。
+
+任务 Agent 的 `memory_recall_used` 是 Agent 给出的上下文记录，不是服务的工具调用验收条件。
+
+任务 Agent 创建 TODO 时必须给出可解析的 `deadline_at`：原文写明就用原文，否则按工作量与紧急程度推断；
+缺少或无法解析时进入修正轮，不创建没有截止日期的 TODO。没有截止日期的 TODO 不会同步到钉钉待办。
+此规则之前创建的开放 TODO 由 `python -m app.cli backfill-todo-deadlines [--limit N] [--apply]`
+补齐：默认 dry run，不写数据也不写错误；`--apply` 写入晚于当前时间的截止日期，并把有
+`owner_user_id` 的 TODO 通过 `task_todo_sync_outbox` 同步到钉钉待办。推断结果不合规（无法解析或不晚于
+当前时间）时进入一次同会话修正轮，失败原因写入服务日志。服务不得要求
 `memory_recall` 工具事件、session receipt 或任何特定工具名称作为推进结构化任务决策的前置条件。
 
 ## 任务类型
@@ -595,6 +610,8 @@ provider 结果和旧错误事件不改写、不删除。旧 spec/plan 中描述
 
 - 总体 A/B 架构：`docs/architecture.md`
 - 路由失败和恢复：`docs/runtime-route-recovery.md`
+- Runtime 路由、fallback 决策与 429 重试：`docs/architecture.md` 的「Agent 失败重试」与各 Runtime 路由小节，
+  实现在 `app/runtime_fallback.py`
 - Consumer/Audit 反馈设计：`docs/superpowers/specs/2026-08-06-consumer-audit-agent-design.md`
 - OKR 领域输入和输出：`docs/superpowers/specs/2026-06-08-okr-review-runner-design.md`
 - 当前实现：`app/agent_orchestrator.py`、`app/consumer_agent.py`、`app/audit_agent.py`、`app/okr_review.py`、`app/weekly_okr_report.py`、`app/store.py`
