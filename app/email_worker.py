@@ -686,12 +686,22 @@ def run_email_classification_task_once(
         locator_payload = payload.get("provider_locator")
         if not isinstance(locator_payload, Mapping):
             raise ValueError("classification task provider locator is invalid")
+        account_for_task = email_store.get_account(
+            str(locator_payload.get("account_id") or "")
+        )
+        include_read = (
+            isinstance(account_for_task, Mapping)
+            and account_for_task.get("scan_read_state") == "all"
+        )
         if (
             current_message is None
             or current_message.get("stableMessageIdentity")
             != task.stable_message_identity
             or current_message.get("folder") != locator_payload.get("folder")
-            or current_message.get("providerUnread") is not True
+            or (
+                current_message.get("providerUnread") is not True
+                and not include_read
+            )
         ):
             outcome = {
                 "decision_status": "skipped",
@@ -3540,6 +3550,10 @@ def build_email_worker_dependencies(
                             configured_unclassified_source=(
                                 role is FolderRole.UNBOUND and not is_bound
                             ),
+                            lookback_days=int(
+                                account.get("scan_lookback_days") or 30
+                            ),
+                            include_read=account.get("scan_read_state") == "all",
                             online_runtime=current_model,
                             accept_model=lambda message, prediction, entries, model_text, model_id: (
                                 persist_model_primary_classification(

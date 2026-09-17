@@ -48,11 +48,17 @@ reverts committed work they did not author.
 | claude-todo-deadline-required | app/task_agent.py (todo create validation and prompt rule), tests/test_task_agent.py, docs/agent-claims.md | Require a concrete deadline on every TODO the task agent creates (Derek: 必须有截止日期) | 2026-09-17 |
 | claude-self-agent-echo | app/worker.py (candidate filtering only), tests/test_worker.py, docs/agent-claims.md | Identify the service's own DWS delivery by the provider's AI-send marker so a renumbered read-back stops opening a run on our own message | 2026-09-16 |
 | claude-evidence-gate-wiring | app/audit_agent.py, tests/test_audit_agent.py, docs/agent-claims.md | `989ed829` shipped `DingTalkSendEvidenceDriver` but `_parse_evidenced_result` only wrapped `parse_result` when `email_unsubscribe_tools` was truthy, so the new driver never actually ran for a DingTalk task; wire the wrap unconditionally (each driver already no-ops when out of scope) | 2026-09-16 |
-| claude-account-binding-gate | app/email_store.py (account create/update enablement + new account-binding methods only), app/email_worker.py (`_agent_classification_action_plan` junk branch and its two call sites only), app/web_api/email.py (account create/update routes and `account_response` only), frontend/src/pages/SettingsPage.tsx (EmailAccountsPanel only), frontend/src/pages/SettingsPage.test.tsx, frontend/src/api/console.ts (one optional `unverified_categories` field on EmailAccountItem, inside codex-agent-health-metrics' claim), tests/test_email_store.py (account enablement cases only), tests/test_email_worker.py (junk trash gate cases only), tests/test_email_web_api.py (account create/update cases only), docs/agent-claims.md | A new mailbox no longer disables every category, and no mail is trashed in a mailbox whose junk folder was never verified (Derek 2026-09-17: 加 Gmail 后 10 个类别被全局停用) | 2026-09-17 |
 
 
 ## Recent overlaps worth knowing
 
+- 2026-09-17, Claude session `claude-account-binding-gate`: **`EMAIL_SCHEMA_VERSION` is now 42**
+  (`_migrate_v41_to_v42` adds `scan_lookback_days` and `scan_read_state` to
+  `email_accounts`), inside `claude-email-action-skipped`'s schema-version claim, and
+  `frontend/src/api/console.ts` gained account fields inside
+  `codex-agent-health-metrics`' claim. A mailbox is now scanned only back to its
+  lookback window, and its "all" setting organizes read mail too. Adding a mailbox
+  verifies its folders and restores the categories the save paused.
 - 2026-09-17, Claude session `claude-delivery-receipt-gate`, **I edited
   `app/store.py` inside your claim, with Derek's explicit authorisation** after
   the handoff below went unanswered. The change is the three `or` branches

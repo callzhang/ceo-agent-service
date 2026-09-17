@@ -106,6 +106,8 @@ def build_email_discovery_dependencies(
                         configured_unclassified_source=(
                             role is FolderRole.UNBOUND and not is_bound
                         ),
+                        lookback_days=int(account.get("scan_lookback_days") or 30),
+                        include_read=account.get("scan_read_state") == "all",
                         # Cron discovery always queues the exact scheduled
                         # classifier task. Promoted-model acceptance remains
                         # available to explicit non-Cron scan callers.

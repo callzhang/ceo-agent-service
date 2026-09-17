@@ -1608,3 +1608,102 @@ def test_processed_model_rescan_preserves_original_authorization_snapshot(
         ).fetchone()[0]
     assert plan_history == [(first_plan["action_plan_id"], 1)]
     assert current_action_plan_id == first_plan["action_plan_id"]
+
+
+def test_the_all_setting_also_enqueues_read_mail():
+    from app.email_classifier_scan import should_enqueue_agent_classification
+    from app.email_provider_folders import FolderRole
+
+    common = dict(
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        has_stable_record=False,
+    )
+
+    assert should_enqueue_agent_classification(provider_unread=False, **common) is False
+    assert (
+        should_enqueue_agent_classification(
+            provider_unread=False, include_read=True, **common
+        )
+        is True
+    )
+    assert (
+        should_enqueue_agent_classification(
+            provider_unread=True, include_read=True, has_stable_record=True,
+            folder_role=FolderRole.INBOX, configured_unclassified_source=False,
+        )
+        is False
+    )
+
+
+def test_scan_searches_the_owners_window_and_queues_read_mail_when_set_to_all(
+    tmp_path: Path,
+) -> None:
+    from datetime import date
+
+    message = _message() | {"providerUnread": False, "date": "2026-09-10"}
+    seen_kwargs = []
+
+    class WindowSource(FakeSource):
+        def fetch_uid_batch(self, mailbox="INBOX", **kwargs):
+            seen_kwargs.append(dict(kwargs))
+            kwargs.pop("since", None)
+            return super().fetch_uid_batch(mailbox, **kwargs)
+
+    source = WindowSource([message])
+    store = EmailStore(tmp_path / "window-scan.sqlite3")
+    queued = []
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: False),
+        produce=lambda value, **context: queued.append(value),
+    )
+    context = AgentScanContext(
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": {}, "junk": {}},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+    )
+
+    scan_agent_classification_batch(
+        source,
+        store,
+        producer,
+        context,
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        lookback_days=30,
+        include_read=True,
+        today=lambda: date(2026, 9, 17),
+    )
+
+    assert seen_kwargs[0]["since"] == date(2026, 8, 18)
+    assert seen_kwargs[0]["unread_only"] is False
+    assert seen_kwargs[0]["last_seen_uid"] == 0
+    assert queued == [message]
+
+
+def test_scan_leaves_read_mail_alone_by_default(tmp_path: Path) -> None:
+    message = _message() | {"providerUnread": False, "date": "2026-09-10"}
+    source = FakeSource([message])
+    store = EmailStore(tmp_path / "unread-only-scan.sqlite3")
+    queued = []
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: False),
+        produce=lambda value, **context: queued.append(value),
+    )
+
+    scan_agent_classification_batch(
+        source,
+        store,
+        producer,
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+    )
+
+    assert queued == []

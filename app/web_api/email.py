@@ -990,6 +990,8 @@ def register_email_routes(
                 "imap_move_mode",
                 "enabled",
                 "scan_folders",
+                "scan_lookback_days",
+                "scan_read_state",
                 "created_at",
                 "updated_at",
             )

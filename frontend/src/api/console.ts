@@ -342,6 +342,10 @@ export interface EmailAccountItem {
   scan_folders: string[];
   /** Categories this mailbox has no verified folder for; they stay paused. */
   unverified_categories?: string[];
+  /** Only mail from the last N days (1-365) is scanned. */
+  scan_lookback_days?: number;
+  /** "unread" organizes only unread mail; "all" organizes read mail too. */
+  scan_read_state?: "unread" | "all";
   created_at: string;
   updated_at: string;
 }
@@ -356,6 +360,8 @@ export interface EmailAccountPayload {
   imap_secret?: string;
   enabled: boolean;
   scan_folders: string[];
+  scan_lookback_days: number;
+  scan_read_state: "unread" | "all";
 }
 export interface EmailAccountSaveResult {
   ok: boolean;

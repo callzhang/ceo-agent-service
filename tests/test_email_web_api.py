@@ -3960,3 +3960,40 @@ def test_a_mailbox_whose_folder_fails_pauses_only_that_category_and_says_so(
         if not row["enabled"]
     ]
     assert disabled == ["junk"]
+
+
+def test_account_api_saves_the_scan_window_and_rejects_one_out_of_range(
+    tmp_path: Path,
+):
+    database = tmp_path / "scan-window.sqlite3"
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(database),
+        email_env_path=tmp_path / ".env",
+        folder_binding_coordinator=_CoordinatorStub(),
+    )
+    payload = _new_account_payload("windowed") | {
+        "enabled": False,
+        "scan_lookback_days": 90,
+        "scan_read_state": "all",
+    }
+
+    with TestClient(app) as client:
+        created = client.post("/api/console/email/accounts", json=payload)
+        too_long = client.put(
+            "/api/console/email/accounts/windowed",
+            json=payload | {"scan_lookback_days": 366},
+        )
+        unknown_state = client.put(
+            "/api/console/email/accounts/windowed",
+            json=payload | {"scan_read_state": "flagged"},
+        )
+
+    assert created.status_code == 201
+    assert created.json()["item"]["scan_lookback_days"] == 90
+    assert created.json()["item"]["scan_read_state"] == "all"
+    assert too_long.status_code == 400
+    assert unknown_state.status_code == 400
+    stored = EmailStore(database).get_account("windowed")
+    assert (stored["scan_lookback_days"], stored["scan_read_state"]) == (90, "all")

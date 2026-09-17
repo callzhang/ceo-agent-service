@@ -3350,8 +3350,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_41() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 41
+def test_email_schema_version_is_42() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 42
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:
@@ -3903,7 +3903,11 @@ def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path)
                 scan_folders_json text not null check(json_valid(scan_folders_json)),
                 scan_interval_seconds integer not null check(scan_interval_seconds > 0),
                 created_at text not null,
-                updated_at text not null
+                updated_at text not null,
+                scan_lookback_days integer not null default 30
+                    check(scan_lookback_days between 1 and 365),
+                scan_read_state text not null default 'unread'
+                    check(scan_read_state in ('unread', 'all'))
             );
             drop table old_email_accounts;
             """
@@ -10301,3 +10305,29 @@ def test_a_category_whose_folder_stays_unverified_is_not_switched_back_on(
     assert store.get_category_config("work")["enabled"] is True
     assert store.get_category_config("junk")["enabled"] is False
     assert store.categories_missing_active_bindings("second") == ("junk",)
+
+
+def test_v42_gives_existing_mailboxes_a_30_day_unread_only_window(tmp_path: Path):
+    database = tmp_path / "v42-scan-window.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("primary"))
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            alter table email_accounts drop column scan_lookback_days;
+            alter table email_accounts drop column scan_read_state;
+            delete from email_schema_migrations where version=42
+                and exists (select 1 from email_schema_migrations where version=41);
+            update email_schema_migrations set version=41 where version=42;
+            """
+        )
+
+    reopened = EmailStore(database)
+
+    account = reopened.get_account("primary")
+    assert (account["scan_lookback_days"], account["scan_read_state"]) == (30, "unread")
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select max(version) from email_schema_migrations"
+        ).fetchone() == (42,)

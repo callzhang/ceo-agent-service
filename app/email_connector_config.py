@@ -49,6 +49,9 @@ class EmailAccountPayload(BaseModel):
     smtp_secret_reference: str = ""
     enabled: bool = True
     scan_folders: tuple[str, ...] = ("INBOX",)
+    # How far back mail is scanned, and whether read mail is organized too.
+    scan_lookback_days: int = Field(default=30, ge=1, le=365)
+    scan_read_state: Literal["unread", "all"] = "unread"
     allow_shared_email: bool = False
     imap_secret: SecretStr | None = Field(default=None, exclude=True)
     smtp_secret: SecretStr | None = Field(default=None, exclude=True)

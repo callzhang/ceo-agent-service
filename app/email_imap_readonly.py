@@ -15,7 +15,7 @@ import re
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from hashlib import sha256
 from typing import Any
 
@@ -431,6 +431,7 @@ class ImapReadonlyAdapter:
         limit: int = 50,
         unread_only: bool = False,
         excluded_uids: frozenset[int] = frozenset(),
+        since: date | None = None,
     ) -> ImapUidBatch:
         mailbox = mailbox.strip()
         if not mailbox:
@@ -451,6 +452,10 @@ class ImapReadonlyAdapter:
         search_after = last_seen_uid if cursor_uidvalidity == uidvalidity else 0
         first_uid = search_after + 1
         criterion = "UNSEEN" if unread_only else f"UID {first_uid}:*"
+        if since is not None:
+            # IMAP SINCE compares the server's internal date by calendar day;
+            # it is what bounds a mailbox with years of unread mail.
+            criterion = f"{criterion} SINCE {_imap_date(since)}"
         status, data = self.session.uid("SEARCH", None, criterion)
         _require_ok(status, "IMAP UID search failed")
         uids = [
@@ -1315,6 +1320,18 @@ def _addresses(values: list[str]) -> list[dict[str, str]]:
         if address.strip():
             result.append({"name": _decode_header(name), "email": address.strip()})
     return result
+
+
+_IMAP_MONTHS = (
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+)
+
+
+def _imap_date(value: date) -> str:
+    """Format a date as RFC 3501 date-text, independent of the process locale."""
+
+    return f"{value.day:02d}-{_IMAP_MONTHS[value.month - 1]}-{value.year:04d}"
 
 
 def _require_ok(status: object, message: str) -> None:

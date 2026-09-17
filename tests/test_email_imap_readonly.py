@@ -1778,3 +1778,31 @@ def test_uid_search_is_sorted_deduplicated_before_limit_and_cursor_paging(
         if call[:2] == ("uid", "FETCH") and call[3] == "(BODYSTRUCTURE)"
     ] == [b"8", b"9", b"12"]
     assert store.get_scan_cursor("account-a", "INBOX")["last_seen_uid"] == 12
+
+
+def test_imap_adapter_bounds_the_search_to_a_lookback_window():
+    """A mailbox with years of unread mail is only searched back to the window."""
+
+    from datetime import date
+
+    unread = _plain_session()
+    ImapReadonlyAdapter(unread, account_id="dingtalk-account").fetch_uid_batch(
+        "INBOX",
+        cursor_uidvalidity=42,
+        last_seen_uid=99,
+        limit=1,
+        unread_only=True,
+        since=date(2026, 9, 3),
+    )
+    everything = _plain_session()
+    ImapReadonlyAdapter(everything, account_id="dingtalk-account").fetch_uid_batch(
+        "INBOX",
+        cursor_uidvalidity=42,
+        last_seen_uid=0,
+        limit=1,
+        unread_only=False,
+        since=date(2026, 1, 17),
+    )
+
+    assert ("uid", "SEARCH", None, "UNSEEN SINCE 03-Sep-2026") in unread.calls
+    assert ("uid", "SEARCH", None, "UID 1:* SINCE 17-Jan-2026") in everything.calls

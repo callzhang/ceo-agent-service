@@ -6,7 +6,7 @@ import imaplib
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from types import MappingProxyType
 from typing import Callable, Mapping, Protocol, Sequence
@@ -138,8 +138,13 @@ def should_enqueue_agent_classification(
     folder_role: FolderRole,
     configured_unclassified_source: bool,
     has_stable_record: bool,
+    include_read: bool = False,
 ) -> bool:
-    """Apply the complete cold-start gate without any message-date condition."""
+    """Apply the cold-start gate; the date window is applied by the provider search.
+
+    `include_read` is the mailbox owner's "all" setting: read mail is organized
+    too, instead of only what is still unread.
+    """
 
     if type(provider_unread) is not bool:
         raise TypeError("provider_unread must be a strict bool")
@@ -148,7 +153,8 @@ def should_enqueue_agent_classification(
     source_is_eligible = folder_role is FolderRole.INBOX or (
         folder_role is FolderRole.UNBOUND and configured_unclassified_source
     )
-    return provider_unread and source_is_eligible and not has_stable_record
+    read_state_is_eligible = provider_unread or include_read
+    return read_state_is_eligible and source_is_eligible and not has_stable_record
 
 
 def scan_agent_classification_batch(
@@ -161,6 +167,9 @@ def scan_agent_classification_batch(
     folder_role: FolderRole,
     configured_unclassified_source: bool,
     limit: int = 50,
+    lookback_days: int | None = None,
+    include_read: bool = False,
+    today: Callable[[], date] | None = None,
     online_runtime: object | None = None,
     accept_model: Callable[
         [Mapping[str, object], object, Sequence[object], str, str], object
@@ -189,13 +198,21 @@ def scan_agent_classification_batch(
             folder=mailbox,
             uidvalidity=cursor_uidvalidity,
         )
+    window: dict[str, object] = {}
+    if lookback_days is not None:
+        current_day = (today or (lambda: datetime.now(timezone.utc).date()))()
+        window["since"] = current_day - timedelta(days=int(lookback_days))
     batch = source.fetch_uid_batch(
         mailbox,
         cursor_uidvalidity=cursor_uidvalidity,
-        last_seen_uid=last_seen_uid,
+        # Unread mail is found by UNSEEN wherever it sits; read mail has no such
+        # flag, so the "all" setting searches the whole window from the start
+        # and relies on the excluded UIDs to skip what was already handled.
+        last_seen_uid=0 if include_read else last_seen_uid,
         limit=limit,
-        unread_only=True,
+        unread_only=not include_read,
         excluded_uids=excluded_uids,
+        **window,
     )
     if not isinstance(batch, ImapUidBatch):
         raise TypeError("fetch_uid_batch must return ImapUidBatch")
@@ -214,6 +231,7 @@ def scan_agent_classification_batch(
             folder_role=folder_role,
             configured_unclassified_source=configured_unclassified_source,
             has_stable_record=has_record,
+            include_read=include_read,
         ):
             continue
         body_html = ephemeral_body_html(message)
