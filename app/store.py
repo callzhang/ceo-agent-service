@@ -9300,7 +9300,7 @@ class AutoReplyStore:
             task_id, separator, suffix = workload_key.partition(":")
             if not task_id.isdecimal() or int(task_id) <= 0:
                 raise ValueError("task workload key must start with a persisted ID")
-            if separator and suffix != "memory_backfill":
+            if separator and suffix not in {"memory_backfill", "deadline_backfill"}:
                 raise ValueError("task workload key has an unsupported suffix")
         elif workload_kind == "weekly_okr":
             parts = workload_key.split(":")

@@ -347,6 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
         "backfill-task-memory-context",
         "backfill-routine-process-todos",
         "backfill-todo-owner-ids",
+        "backfill-todo-deadlines",
         "process-okr-reviews",
         "weekly-okr-report",
         "refresh-okr-archive",
@@ -547,6 +548,18 @@ def build_parser() -> argparse.ArgumentParser:
                 "--apply",
                 action="store_true",
                 help="Apply changes. Omit for dry-run.",
+            )
+        if command == "backfill-todo-deadlines":
+            subparser.add_argument(
+                "--limit",
+                type=_positive_int,
+                default=None,
+                help="maximum open TODOs without a deadline to inspect. Omit for all.",
+            )
+            subparser.add_argument(
+                "--apply",
+                action="store_true",
+                help="Write deadlines and queue DingTalk mirrors. Omit for dry-run.",
             )
         if command == "backfill-todo-owner-ids":
             subparser.add_argument(
@@ -1858,6 +1871,40 @@ def backfill_todo_owner_ids_command(
         now=now,
     )
     _print_todo_owner_backfill_result(result)
+    return result
+
+
+def backfill_todo_deadlines_command(
+    settings: WorkerSettings,
+    *,
+    limit: int | None = None,
+    apply: bool = False,
+    now: str = "",
+):
+    from app.task_deadline_backfill import (
+        TodoDeadlineCodexRunner,
+        backfill_todo_deadlines,
+    )
+
+    store = AutoReplyStore(settings.db_path)
+    runner = TodoDeadlineCodexRunner(
+        store=store,
+        workspace=settings.workspace,
+        timeout_seconds=settings.task_codex_timeout_seconds,
+        idle_timeout_seconds=settings.task_codex_idle_timeout_seconds,
+    )
+    result = backfill_todo_deadlines(
+        store, runner, dry_run=not apply, limit=limit, now=now
+    )
+    for decision in result.decisions:
+        print(json.dumps(decision, ensure_ascii=False), flush=True)
+    print(
+        "backfill-todo-deadlines "
+        f"dry_run={result.dry_run} inspected={result.inspected} "
+        f"deadlines_set={result.deadlines_set} "
+        f"mirrors_queued={result.mirrors_queued} failed={result.failed}",
+        flush=True,
+    )
     return result
 
 
@@ -4369,6 +4416,13 @@ def main() -> None:
             settings,
             todo_ids=args.todo_id,
             reason=args.reason,
+            apply=args.apply,
+        )
+    elif args.command == "backfill-todo-deadlines":
+        initialize_agent_runtime_routes(settings)
+        backfill_todo_deadlines_command(
+            settings,
+            limit=args.limit,
             apply=args.apply,
         )
     elif args.command == "backfill-todo-owner-ids":
