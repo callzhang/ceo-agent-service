@@ -9,6 +9,10 @@ from uuid import uuid4
 
 from app.agent_context import AuditTurnContext
 from app.agent_contracts import AuditAgentResult, AuditOutcome
+from app.agent_effect_claim import (
+    EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
+    claims_external_action_without_tools,
+)
 from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
@@ -281,6 +285,15 @@ class AuditAgentRunner:
 
         def parse(raw: str) -> AuditAgentResult:
             result = parse_result(raw)
+            # A turn that called no tool cannot report a completed external
+            # action, whatever its outcome says. The evidence gate below asks
+            # a different question: whether a write backs an `executed`.
+            refreshed = self.store.get_agent_run(run.id)
+            if claims_external_action_without_tools(
+                result=result.model_dump(mode="json"),
+                tool_events=refreshed.tool_events if refreshed is not None else [],
+            ):
+                raise ResultParseError(EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT)
             if (
                 result.outcome is not AuditOutcome.EXECUTED
                 or self.domain_continuation is None

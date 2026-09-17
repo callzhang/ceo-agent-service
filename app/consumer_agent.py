@@ -14,6 +14,10 @@ from app.agent_contracts import (
     ConsumerOutcome,
     ProposedAction,
 )
+from app.agent_effect_claim import (
+    EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
+    claims_external_action_without_tools,
+)
 from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
@@ -604,7 +608,9 @@ class ConsumerAgentRunner:
                     ),
                 ),
                 configure_command=make_consumer_agent_command,
-                parse_result=_parse_consumer_result,
+                parse_result=_claim_checked_consumer_result(
+                    self.store, claim.run.id
+                ),
                 prepare_result=lambda parsed: _prepare_outgoing_dingtalk_messages(
                     parsed,
                     store=self.store,
@@ -794,6 +800,28 @@ def consumer_developer_instructions(
         )
         if part
     )
+
+
+def _claim_checked_consumer_result(store, run_id: int):
+    """Hold a result that says an external action happened to this turn's tools.
+
+    Consumer run 20016 returned `no_action` whose summary read "已按实时 OA 材料
+    核验并执行通过" after making zero tool calls; the approval was untouched and
+    the task closed `done`. A turn that called no tool cannot report a
+    completed external action, so that gets the ordinary correction turn.
+    """
+
+    def parse(raw: str):
+        result = _parse_consumer_result(raw)
+        run = store.get_agent_run(run_id)
+        if claims_external_action_without_tools(
+            result=result.model_dump(mode="json") if hasattr(result, "model_dump") else result,
+            tool_events=run.tool_events if run is not None else [],
+        ):
+            raise ResultParseError(EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT)
+        return result
+
+    return parse
 
 
 def _parse_consumer_result(raw: str):
