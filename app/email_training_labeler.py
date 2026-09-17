@@ -30,8 +30,17 @@ TARGETING_PATTERNS: Mapping[str, str] = {
         r"invoice|receipt|billing|\bbill\b|payment|charge|subscription|renew|"
         r"账单|发票|收据|扣款|付款|订单|续费"
     ),
-    "finance": r"财务|报销|对账|银行|\bbank\b|statement|\btax\b|税|finance|expense",
-    "personal": r"生日|家人|朋友|个人|personal|family|wedding|婚礼",
+    "finance": (
+        r"财务|报销|对账|银行|\bbank\b|statement|\btax\b|税|finance|expense|"
+        r"工资|薪资|薪酬|社保|公积金|审计|预算|汇款|转账|付款申请|费用|结算|"
+        r"会计|账户|资金|payroll|salary|audit|budget|accounting|remittance"
+    ),
+    "personal": (
+        r"生日|家人|朋友|个人|personal|family|wedding|婚礼|"
+        r"医院|体检|挂号|预约|学校|孩子|家长|房租|物业|快递|机票|酒店|行程|"
+        r"签证|护照|保险|健身|会员|旅行|度假|"
+        r"flight|hotel|booking|itinerary|visa|passport|insurance|school|doctor|appointment"
+    ),
 }
 
 
