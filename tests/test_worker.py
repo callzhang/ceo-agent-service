@@ -17333,3 +17333,52 @@ def test_an_audit_terminated_send_finds_its_proposal_through_the_run_lineage(tmp
     assert projection is not None
     assert projection.reply_text == "已收到，按这个安排。"
     assert projection.action_identity == "reply-1"
+
+
+def test_the_repair_sweep_selects_a_delivery_identified_only_by_its_task_handle(tmp_path):
+    """`dws chat +dm` returns an openTaskId and nothing else.
+
+    The sweep chose candidates from a list of message-id spellings, so a real
+    delivery reported only by that handle was never selected and never
+    recorded -- and an unrecorded delivery is the one a later rerun sends again.
+    """
+    store = AutoReplyStore(tmp_path / "sweep.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="Group", single_chat=False,
+        trigger_message_id="trigger-1", trigger_create_time="2026-09-17 01:00:00",
+        trigger_sender="Derek", trigger_text="请回复",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    store.complete_agent_run(consumer.id, {
+        "outcome": "proposal", "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0, "summary": "reply",
+        "proposal": {"objective": "reply", "sourced_facts": [], "authored_judgment": "",
+            "actions": [{"description": "reply", "action_identity": "reply-1",
+                "capability": "dingtalk-chat", "operation": "send",
+                "target": {"open_dingtalk_id": "open-recipient"},
+                "payload": {"content": "收到。"}}]},
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    }, owner="consumer")
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
+        operation_id="op-1", owner="audit",
+    ).run
+    _record_send_receipt(store, audit.id, "ug+Jh+8XPcnS1FFI0wAy=", owner="audit")
+    store.complete_agent_run(audit.id, {
+        "outcome": "executed", "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
+        "summary": "sent", "proposal_revision": 0, "feedback": None,
+        "external_result": {"operation_id": "op-1",
+            "live_result_reference": {"open_task_id": "ug+Jh+8XPcnS1FFI0wAy=", "success": True}},
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    }, owner="audit")
+
+    candidates = store.list_completed_audit_runs_missing_delivery_projection(limit=10)
+
+    assert [run.id for run in candidates] == [audit.id]

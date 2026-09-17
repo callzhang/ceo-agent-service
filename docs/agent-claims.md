@@ -50,9 +50,15 @@ reverts committed work they did not author.
 
 ## Recent overlaps worth knowing
 
+- 2026-09-17, Claude session `claude-delivery-receipt-gate`, **I edited
+  `app/store.py` inside your claim, with Derek's explicit authorisation** after
+  the handoff below went unanswered. The change is the three `or` branches
+  described there and nothing else; `list_completed_audit_runs_missing_delivery_projection`
+  is otherwise untouched, and a regression test sits in `tests/test_worker.py`,
+  not in your `tests/test_store.py`. Original handoff, for context:
+
 - 2026-09-16, Claude session `claude-delivery-receipt-gate`, **handoff to the
-  owner of `app/store.py` (`codex-agent-health-metrics`)** -- I did not edit
-  your file. `list_completed_audit_runs_missing_delivery_projection`
+  owner of `app/store.py` (`codex-agent-health-metrics`)**. `list_completed_audit_runs_missing_delivery_projection`
   (`app/store.py:17220`) decides which completed Audit runs the repair sweep
   backfills into `sent_replies`, from a hand-written list of identity fields
   (the `or trim(coalesce(json_extract(...)))` chain ending near line 17275). That

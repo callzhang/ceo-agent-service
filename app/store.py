@@ -17274,6 +17274,22 @@ class AutoReplyStore:
                           audit.final_result_json,
                           '$.external_result.live_result_reference.openMessageId'
                       ), ''))<>''
+                      -- A send identified only by its provider handle is still a
+                      -- delivery. `dws chat +dm` returns an openTaskId and
+                      -- nothing else, and a delivery this sweep never selects
+                      -- is one a later rerun sends again.
+                      or trim(coalesce(json_extract(
+                          audit.final_result_json,
+                          '$.external_result.live_result_reference.open_message_id'
+                      ), ''))<>''
+                      or trim(coalesce(json_extract(
+                          audit.final_result_json,
+                          '$.external_result.live_result_reference.openTaskId'
+                      ), ''))<>''
+                      or trim(coalesce(json_extract(
+                          audit.final_result_json,
+                          '$.external_result.live_result_reference.open_task_id'
+                      ), ''))<>''
                       or lower(trim(coalesce(json_extract(
                           audit.final_result_json,
                           '$.external_result.live_result_reference.delivery_status'
