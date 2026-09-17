@@ -1871,9 +1871,13 @@ class RoutedCodexExecution:
                     now=self._now(),
                 )
         except RuntimeRoutePausedError as exc:
+            # The route was paused between selection and claim: the same wait
+            # as finding every route paused, so callers defer rather than fail.
             raise RoutedCodexExecutionError(
                 "runtime_execution_failed",
                 f"{route.name}_paused",
+                retryable_external_dependency=True,
+                runtime_unavailable=True,
             ) from exc
         try:
             running = self._store.mark_agent_runtime_attempt_running_once(

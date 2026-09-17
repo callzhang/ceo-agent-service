@@ -597,7 +597,7 @@ def test_pause_opened_after_selection_prevents_attempt_and_child(store, config):
         ),
     )
 
-    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed") as info:
         routed.execute(
             workload_kind="agent_run",
             workload_key=str(run_id),
@@ -610,6 +610,10 @@ def test_pause_opened_after_selection_prevents_attempt_and_child(store, config):
             required_capabilities=CAPABILITIES,
         )
 
+    # A pause that lands between selection and claim is the same wait as every
+    # route being paused: seen live, a meeting Memory write failed for good on it.
+    assert info.value.retryable_external_dependency is True
+    assert info.value.runtime_unavailable is True
     assert calls == []
     assert store.list_agent_runtime_attempts(run_id) == []
 
