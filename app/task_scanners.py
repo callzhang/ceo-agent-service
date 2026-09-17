@@ -725,12 +725,20 @@ def scan_pending_oa_approvals(
                 "审批待办扫描发现新增或有新消息的待处理审批："
                 f"{label}\n"
                 f"[查看审批]({oa_url})\n"
-                "请按钉钉 OA 审批技能（dingtalk-misc 的 references/oa.md）审阅完整审批材料、"
-                "历史处理记录和当前节点；"
+                # The审批 rules live in our own Skill. Naming the vendor's
+                # dingtalk-misc reference here sent every turn to read that
+                # instead: run 20020 read dingtalk-oa-approval zero times and
+                # dingtalk-misc seven. Worse, `dws upgrade` overwrites the
+                # vendor Skills, so a rule written there does not survive.
+                "请先完整读取 ~/.agents/skills/dingtalk-oa-approval/SKILL.md，"
+                "并按其中的原则、风险与确信度口径、information_completeness 与 "
+                "rule_coverage 评分规则和动作选择执行；"
+                "dingtalk-misc 的 references/oa.md 只作为 dws 命令用法参考，"
+                "审批判断与动作一律以 dingtalk-oa-approval 为准。"
+                "在此前提下审阅完整审批材料、历史处理记录和当前节点；"
                 "申请人的最新明确陈述是其申请事实的权威来源；申请人说明已补充材料或已修正"
                 "关联状态后，直接以该陈述继续审批，不要求其他系统再次证明，也不以延迟或冲突的"
-                "系统状态推翻该陈述。本轮不得新增此前未提出的格式、评分细节或潜在歧义要求；"
-                "只有 OA 表单明确必填且申请人仍未说明的信息，才能继续评论要求补充。"
+                "系统状态推翻该陈述。本轮不得新增此前未提出的格式、评分细节或潜在歧义要求。"
             ),
             raw_payload={
                 "source": "oa_pending_scan",

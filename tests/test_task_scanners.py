@@ -1685,3 +1685,60 @@ def test_scan_pending_oa_approvals_starts_each_review_from_a_clean_session(tmp_p
     assert scan_pending_oa_approvals(store, dws, now=now + timedelta(days=1)) == 1
 
     assert store.get_conversation_runtime_session(conversation, "codex_oauth") is None
+
+
+def test_scan_pending_oa_approvals_points_the_turn_at_our_own_skill(tmp_path):
+    """The prompt named the vendor reference, so our Skill was never read.
+
+    Run 20020 read `dingtalk-oa-approval` zero times and `dingtalk-misc` seven,
+    which is why eight revisions of our OA rules -- revert-first, the scoring
+    rubric, the no-hand-copied-URL rule -- had no effect on the pipeline. The
+    vendor Skills are also overwritten by `dws upgrade`, so rules cannot live
+    there.
+    """
+
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [DwsOaApprovalCandidate(process_instance_id="proc-1", title="立项")]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": "task-1",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {
+                "result": {
+                    "operationRecords": [
+                        {
+                            "operationType": "ADD_REMARK",
+                            "operationTime": 1,
+                            "userId": "requester",
+                        }
+                    ]
+                }
+            }
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    now = datetime.fromisoformat("2026-09-17T19:00:00+08:00")
+
+    assert scan_pending_oa_approvals(store, FakeDws(), now=now) == 1
+
+    [task] = store.claim_reply_tasks(limit=1)
+    assert "dingtalk-oa-approval/SKILL.md" in task.trigger_text
+    # The vendor reference may still be mentioned, but only as command usage.
+    assert "审批判断与动作一律以 dingtalk-oa-approval 为准" in task.trigger_text
