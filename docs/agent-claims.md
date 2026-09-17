@@ -50,7 +50,7 @@ reverts committed work they did not author.
 | claude-todo-deadline-required | app/task_agent.py (todo create validation and prompt rule), tests/test_task_agent.py, docs/agent-claims.md | Require a concrete deadline on every TODO the task agent creates (Derek: 必须有截止日期) | 2026-09-17 |
 | claude-self-agent-echo | app/worker.py (candidate filtering only), tests/test_worker.py, docs/agent-claims.md | Identify the service's own DWS delivery by the provider's AI-send marker so a renumbered read-back stops opening a run on our own message | 2026-09-16 |
 | claude-evidence-gate-wiring | app/audit_agent.py, tests/test_audit_agent.py, docs/agent-claims.md | `989ed829` shipped `DingTalkSendEvidenceDriver` but `_parse_evidenced_result` only wrapped `parse_result` when `email_unsubscribe_tools` was truthy, so the new driver never actually ran for a DingTalk task; wire the wrap unconditionally (each driver already no-ops when out of scope) | 2026-09-16 |
-| claude-oa-pending-page-size | app/dws_client.py (list-pending page size only), app/task_scanners.py (OA scan page size only), app/org_cache.py (list-pending default only), tests/test_dws_client.py, tests/test_task_scanners.py, docs/agent-claims.md | DingTalk now rejects `dws oa approval list-pending --limit` above 20 with 400002 参数错误 (21 fails, 20 works, verified live 2026-09-17), so every OA pending scan since ~11:00 UTC failed. Cap the page size at 20. | active |
+| claude-oa-pending-page-size | app/dws_client.py (list-pending page size only), app/task_scanners.py (OA scan page size only), app/org_cache.py (list-pending default only), tests/test_dws_client.py, tests/test_task_scanners.py, docs/agent-claims.md | DingTalk now rejects `dws oa approval list-pending --limit` above 20 with 400002 参数错误 (21 fails, 20 works, verified live 2026-09-17), so every OA pending scan since ~11:00 UTC failed. Cap the page size at 20. Shipped `6b170c1b`; scan succeeded 15:42Z. | done |
 
 
 ## Recent overlaps worth knowing
@@ -310,6 +310,14 @@ reverts committed work they did not author.
   Update 09:37Z: the capture code is now committed (`3e71a801`, `c771579a`)
   and the rows keep coming — 15 open, one per service start (the latest from
   my own restart at 09:37:20Z). They are the whole of Attention right now.
+  Resolved 15:45Z: the failing Skill was only `ceo-wechat`, whose runtime file
+  (`~/.agents/skills/ceo-wechat/SKILL.md`, the Sep 11 Chinese version) predates
+  the marker. I added `managed_by: ceo-agent-service` to its metadata and
+  changed nothing else; a manual capture recorded it as revision 3 and a second
+  capture found nothing. All 23 rows are resolved. A pre-existing runtime file
+  without the marker still fails the whole capture, since
+  `_install_missing_repository_skills` never touches an existing file; that is
+  the owner's call.
 
 - 2026-09-11: three findings left open by the failed-item repair round, each
   needing an owner. They are recorded here because the evidence is perishable.
