@@ -1350,11 +1350,14 @@ def _require_supported_owner(
     )
     if not stable_id:
         raise OwnerResolutionRequired(f"{label} requires a stable owner ID")
-    _require_evidence_fields(
-        evidence,
-        label=label,
-        fields=("source", "reason", "description"),
-    )
+    try:
+        _require_evidence_fields(
+            evidence,
+            label=label,
+            fields=("source", "reason", "description"),
+        )
+    except ValueError as exc:
+        raise OwnerResolutionRequired(str(exc)) from exc
     if not owner_identity_is_supported(assigned, evidence):
         raise OwnerResolutionRequired(
             f"{label} does not support assigned owner identity"

@@ -5249,6 +5249,73 @@ def test_process_work_item_repairs_unsupported_project_owner_evidence(tmp_path):
     assert "not create a TODO or follow-up" in codex.prompts[1]
 
 
+def test_process_work_item_repairs_project_owner_evidence_missing_source(tmp_path):
+    class RepairingCodex:
+        last_session_id = "task-session-1"
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = [{"tool": "memory_recall"}]
+
+        def __init__(self):
+            self.prompts = []
+            self.decisions = [
+                {
+                    "action": "create_project",
+                    "project": {
+                        "title": "售前知识库建设",
+                        "category": "sales",
+                        "owner_user_id": "owner-1",
+                        "owner_name": "Alex",
+                        "owner_evidence": {},
+                        "memory_context": _memory_context(),
+                    },
+                    "memory_recall_used": True,
+                    "update_summary": "记录售前知识库建设。",
+                },
+                {
+                    "action": "create_project",
+                    "project": {
+                        "title": "售前知识库建设",
+                        "category": "sales",
+                        "owner_user_id": "",
+                        "owner_name": "",
+                        "owner_evidence": {},
+                        "memory_context": _memory_context(),
+                    },
+                    "memory_recall_used": True,
+                    "update_summary": "记录售前知识库建设，待确认负责人。",
+                },
+            ]
+
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
+            self.prompts.append(prompt)
+            return TaskAgentDecision.model_validate(self.decisions.pop(0))
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = RepairingCodex()
+
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+
+    # A missing evidence field goes back to the Agent like any other
+    # unsupported owner, instead of failing the work item outright.
+    assert input_row == ("done", "")
+    assert len(codex.prompts) == 2
+    assert "project.owner_evidence.source is required" in codex.prompts[1]
+
+
 def test_sparse_todo_update_preserves_existing_status_and_priority(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
