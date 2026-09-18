@@ -154,6 +154,7 @@ def scan_hourly_quality(
         _check_meetings(db, checked_now, violations, attention)
         _check_okr_reviews(db, checked_now, violations, attention)
         _check_external_delivery_queues(db, checked_now, violations, attention)
+        _check_delivery_records(db, violations)
         _check_feedback(db, violations)
         _check_scan_health(db, violations, attention)
         _check_scheduler_health(db, checked_now, violations)
@@ -829,6 +830,53 @@ def _check_external_delivery_queues(
         )
         _add(attention, source=source, code="active", count=active,
              severity="info", detail="external delivery work is active")
+
+
+def _check_delivery_records(
+    db: sqlite3.Connection,
+    violations: list[QualityIssue],
+) -> None:
+    """Report an executed send the sender never recorded.
+
+    A delivery row is written once, by the turn that performed the send, from
+    the provider's own answer. Nothing rebuilds it afterwards: the sweep that
+    used to do that wrote seven rows for sends that never happened, and it only
+    existed because the live write was broken for months. So the missing row is
+    reported here and left missing -- filling it in is how a failure to send
+    becomes a record of sending.
+    """
+    _add(violations, source="sent_replies", code="executed_without_record", count=_count(
+        db,
+        """
+        select count(*) from agent_runs audit
+        join reply_tasks task on task.id=audit.reply_task_id
+        where audit.role='audit' and audit.status='completed'
+          and task.channel='dingtalk'
+          and json_valid(audit.final_result_json)
+          and json_extract(audit.final_result_json, '$.outcome')='executed'
+          and trim(coalesce(json_extract(
+                audit.final_result_json,
+                '$.external_result.live_result_reference.open_task_id'
+              ), coalesce(json_extract(
+                audit.final_result_json,
+                '$.external_result.live_result_reference.openTaskId'
+              ), coalesce(json_extract(
+                audit.final_result_json,
+                '$.external_result.live_result_reference.sent_message_id'
+              ), coalesce(json_extract(
+                audit.final_result_json,
+                '$.external_result.live_result_reference.openMessageId'
+              ), '')))))<>''
+          and audit.completed_at >= datetime('now', '-7 days')
+          and not exists (
+            select 1 from sent_reply_observers observer
+            where observer.agent_run_id=audit.id
+          )
+        """,
+    ), severity="error", detail=(
+        "an Audit turn reported a send with a provider receipt and no delivery "
+        "record was written; investigate the live write path, do not backfill"
+    ))
 
 
 def _check_feedback(

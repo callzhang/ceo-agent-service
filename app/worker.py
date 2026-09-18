@@ -371,27 +371,6 @@ def _is_codex_provider_recovery_wait_reason(reason: str) -> bool:
     return is_codex_provider_recovery_code(reason)
 
 
-def _delivery_reconstruction_payload(payload: object) -> object:
-    """Fill the coverage fields a delivery rebuild never reads.
-
-    A delivery projection is a fact about what the provider did;
-    `_sent_reply_projection_from_result` reads only `external_result` and the
-    proposal's actions. Requiring the decision-quality judgement in order to
-    rebuild the fact let a contract change silently drop stored results from
-    the repair scan.
-
-    This mirrors the hydration policy in app/quality_gate.py: only the two
-    coverage fields are defaulted, and risk and confidence stay mandatory so an
-    old opaque result cannot acquire a fabricated judgement.
-    """
-    if not isinstance(payload, dict):
-        return payload
-    hydrated = dict(payload)
-    hydrated.setdefault("rule_coverage", 1.0)
-    hydrated.setdefault("information_completeness", 1.0)
-    return hydrated
-
-
 def _is_runtime_outage_error(exc: BaseException) -> bool:
     """Return whether the failure chain says the runtime provider is out.
 
@@ -1797,7 +1776,6 @@ class DingTalkAutoReplyWorker:
     def consume_once(self, max_tasks: int | None = None) -> int:
         if max_tasks == 0:
             return 0
-        self._repair_completed_message_delivery_projections()
         self._pass_channel_results = {}
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
@@ -2041,71 +2019,6 @@ class DingTalkAutoReplyWorker:
                 self.store.clear_codex_capacity_pause()
                 processed_tasks += 1
         return processed_tasks
-
-    def _repair_completed_message_delivery_projections(self) -> int:
-        """Rebuild current delivery projections from immutable typed results."""
-        repaired = 0
-        for audit_run in self.store.list_completed_audit_runs_missing_delivery_projection():
-            if audit_run.parent_agent_run_id is None:
-                continue
-            task = self.store.get_reply_task(audit_run.reply_task_id)
-            consumer_run = self.store.get_agent_run(audit_run.parent_agent_run_id)
-            if task is None or consumer_run is None:
-                continue
-            try:
-                audit_result = AuditAgentResult.model_validate(
-                    _delivery_reconstruction_payload(
-                        json.loads(audit_run.final_result_json)
-                    )
-                )
-                consumer_payload = json.loads(consumer_run.final_result_json)
-                proposal = consumer_payload.get("proposal")
-                actions = proposal.get("actions") if isinstance(proposal, dict) else None
-                if isinstance(actions, list):
-                    for action in actions:
-                        target = action.get("target") if isinstance(action, dict) else None
-                        if not isinstance(target, dict):
-                            continue
-                        target = dict(target)
-                        if "open_conversation_id" in target:
-                            target["conversation_id"] = target.pop("open_conversation_id")
-                        if "reply_to_message_id" in target:
-                            target["message_id"] = target.pop("reply_to_message_id")
-                        action["target"] = target
-                consumer_result = ConsumerAgentResult.model_validate(
-                    _delivery_reconstruction_payload(consumer_payload)
-                )
-            except (ValidationError, json.JSONDecodeError):
-                continue
-            result = OrchestrationResult(
-                status="executed",
-                final_run_id=audit_run.id,
-                final_role=audit_run.role,
-                summary=audit_result.summary,
-                error=audit_result.error,
-                feedback_cycles=audit_run.proposal_revision,
-                consumer_result=consumer_result,
-                audit_result=audit_result,
-            )
-            projection = self._sent_reply_projection_from_result(
-                task, result, audit_run, self.store
-            )
-            if projection is None:
-                continue
-            self.store.record_completed_agent_message_delivery(
-                agent_run_id=audit_run.id,
-                external_action_key=projection.external_action_key,
-                business_object_key=task.business_object_key,
-                action_identity=projection.action_identity,
-                operation=projection.operation,
-                target_identifiers=projection.target_identifiers,
-                conversation_id=task.conversation_id,
-                trigger_message_id=task.trigger_message_id,
-                reply_text=projection.reply_text,
-                provider_result=projection.provider_result,
-            )
-            repaired += 1
-        return repaired
 
     def _recover_stale_agent_reply_tasks(self) -> None:
         stale_tasks = self.store.list_stale_processing_reply_tasks(
@@ -2370,7 +2283,6 @@ class DingTalkAutoReplyWorker:
         # used to open every pass with the repair sweep -- is not on the
         # production path at all, so the sweep had never run in the service and
         # deliveries missing from the ledger were never recovered.
-        self._repair_completed_message_delivery_projections()
         if claim_guard is not None:
             claim_guard.assert_current(self._now().astimezone(timezone.utc))
         conversation = DingTalkConversation(
@@ -2743,11 +2655,9 @@ class DingTalkAutoReplyWorker:
             return None
         consumer_result = result.consumer_result
         if consumer_result is None:
-            # An audit-terminated orchestration carries only the Audit
-            # result, so the accepted proposal has to be read from the run
-            # lineage.  Treating its absence as "nothing was delivered"
-            # silently dropped the ledger row for every successful send,
-            # leaving the repair sweep as the only writer.
+            # An audit-terminated orchestration carries only the Audit result,
+            # so the accepted proposal is read from this run's own parent. That
+            # is the run's own lineage, not a rebuild of a past delivery.
             consumer_result = _accepted_consumer_result(store, audit_run)
         if consumer_result is None:
             return None

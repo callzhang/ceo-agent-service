@@ -383,11 +383,6 @@ def test_reply_single_item_boundary_processes_preclaimed_task_without_scanning()
     worker._process_queued_task = lambda _conversation, item: (
         seen.append(item.id) or True
     )
-    # The entry point opens with the delivery repair sweep (see
-    # test_the_dispatcher_entry_point_runs_the_delivery_repair_sweep); this case
-    # only pins that the preclaimed task itself is processed without a reclaim.
-    worker._repair_completed_message_delivery_projections = lambda: 0
-
     assert worker.process_claimed_reply_task(task) is True
     assert seen == [7]
 

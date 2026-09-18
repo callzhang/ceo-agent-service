@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from app.quality_gate import (
@@ -9,7 +10,7 @@ from app.quality_gate import (
 )
 from app.cli import WorkerSettings, quality_check_command
 from app.email_store import EmailStore
-from app.store import AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 
 
 NOW = datetime(2026, 8, 7, 1, 0, tzinfo=timezone.utc)
@@ -1181,3 +1182,50 @@ def test_quality_gate_does_not_flag_an_outbox_row_still_being_retried(tmp_path):
     assert not any(
         issue.source == "task_todo_sync_outbox" for issue in report.violations
     )
+
+
+def test_an_executed_send_with_no_delivery_record_is_reported(tmp_path):
+    """Nothing rebuilds a delivery any more, so a missing one must be visible.
+
+    The sweep that used to fill these in wrote seven rows for sends that never
+    happened, and it existed only because the live write had been broken for
+    months. The gap is reported and left alone: filling it in is how a failure
+    to send becomes a record of sending.
+    """
+    from app.quality_gate import _check_delivery_records
+
+    database = tmp_path / "delivery.sqlite3"
+    store = AutoReplyStore(database)
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="Group", single_chat=False,
+        trigger_message_id="trigger-1", trigger_create_time="2026-09-18 01:00:00",
+        trigger_sender="Derek", trigger_text="请回复",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
+        operation_id="op-1", owner="audit",
+    ).run
+    store.complete_agent_run(audit.id, {
+        "outcome": "executed", "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
+        "summary": "sent", "proposal_revision": 0, "feedback": None,
+        "external_result": {"operation_id": "op-1",
+            "live_result_reference": {"open_task_id": "openTask-1"}},
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    }, owner="audit")
+
+    with sqlite3.connect(database) as db:
+        db.row_factory = sqlite3.Row
+        violations: list = []
+        _check_delivery_records(db, violations)
+
+    assert [item.code for item in violations] == ["executed_without_record"]
+    assert violations[0].count == 1
+    assert "do not backfill" in violations[0].detail
