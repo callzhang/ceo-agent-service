@@ -442,3 +442,48 @@ def test_a_structured_report_reaches_the_archive_file(tmp_path: Path) -> None:
     text = written.read_text(encoding="utf-8")
     assert "# AI Summary\n\n> **主题**: Friday日会纪要" in text
     assert "meta_info" not in text
+
+
+def test_the_daily_service_command_archives_every_minute_the_pass_discovered(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The scheduled pass must not be capped by the queue batch size.
+
+    `CEO_MAX_BATCHES=4` used to reach `sync-minutes-once` as a per-pass item
+    cap. A minute the pass dropped fell below the newest listing page by the
+    next day and was never offered again, so the archive silently kept only
+    the four newest minutes a day.
+    """
+    from types import SimpleNamespace
+
+    from app import cli
+
+    minutes = [{"taskUuid": f"u{index}"} for index in range(9)]
+    dws = FakeDws(
+        minutes,
+        basic={
+            f"u{index}": {"title": f"会议{index}", "startTime": 1_700_000_000_000}
+            for index in range(9)
+        },
+        summary={f"u{index}": {"fullSummary": "要点"} for index in range(9)},
+        paragraphs={
+            f"u{index}": [{"startTime": 0, "nickName": "磊哥", "paragraph": "在"}]
+            for index in range(9)
+        },
+    )
+    monkeypatch.setattr(cli, "DwsClient", lambda **kwargs: dws)
+    settings = SimpleNamespace(
+        db_path=tmp_path / "minutes.sqlite3",
+        workspace=tmp_path,
+        ding_robot_code="",
+        ding_robot_name="磊哥",
+        ding_receiver_user_id="",
+        max_batches=4,
+    )
+
+    registry = cli._service_command_registry(
+        AutoReplyStore(settings.db_path), object(), settings
+    )
+
+    assert registry.run("sync-minutes-once") == "sync-minutes-once queued=9"
+    assert len(list((tmp_path / "AI听记").rglob("*.md"))) == 9

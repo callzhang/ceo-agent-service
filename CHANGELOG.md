@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- 2026-09-17: 归档新增的钉钉 AI 听记 no longer keeps only the four newest minutes
+  a day. The scheduled pass was invoked with `CEO_MAX_BATCHES` (4) as a
+  per-pass item cap, and its candidate list is the newest-first listing, so the
+  fifth and older minute of each day was dropped — and because the sync's
+  durable boundary is the archived set, a dropped minute fell below the newest
+  listing page by the next run and was never offered again. Over the eight days
+  the daily pass had run, 21 of the 41 listed minutes never reached the archive.
+  `sync-minutes-once` now takes no per-pass cap; the listing walk already stops
+  at the first known minute, so a daily pass still reads one page.
+
 - 2026-09-17: Settings / Agent Runtime is the failover order, instead of
   describing it. The separate order strip is gone: cards sit on a numbered rail
   that runs down the left, a card switched off keeps its place in the list

@@ -1009,7 +1009,7 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
             ),
             "sync-minutes-once": lambda: (
                 "sync-minutes-once "
-                f"queued={sync_minutes_once_command(settings, max_new_items=settings.max_batches)}"
+                f"queued={sync_minutes_once_command(settings)}"
             ),
             # Cron owns the timing, so the command runs on the trigger rather
             # than re-deciding whether today is its scheduled Sunday.
@@ -2198,16 +2198,20 @@ def scan_meeting_todos_once_command(
     return queued
 
 
-def sync_minutes_once_command(
-    settings: WorkerSettings,
-    *,
-    max_new_items: int | None = None,
-) -> int:
+def sync_minutes_once_command(settings: WorkerSettings) -> int:
     """Mirror new DingTalk AI minutes into the local archive.
 
     Deterministic throughout, and it sends nothing outward. A partial result
     must fail the service command so the scheduled trigger cannot be recorded
     as successfully dispatched while some minutes remain unsynchronized.
+
+    The pass takes no per-run item cap. The sync's durable boundary is the
+    archived set: a minute the pass does not archive drops below the newest
+    page on the next day's listing and is never offered again. Capping the
+    pass therefore does not defer work, it discards it -- which is what
+    ``CEO_MAX_BATCHES=4`` did, archiving the four newest minutes a day and
+    losing every earlier one. The listing walk already stops at the first
+    known minute, so a daily pass reads one page.
     """
     from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY, sync_minutes_once
 
@@ -2221,7 +2225,6 @@ def sync_minutes_once_command(
         store,
         dws,
         archive_dir=settings.workspace / MINUTES_ARCHIVE_DIRECTORY,
-        max_new_items=max_new_items,
     )
     print(f"sync-minutes-once {result.summary()}", flush=True)
     if result.failed or result.permission_pending:
@@ -4563,7 +4566,7 @@ def main() -> None:
     elif args.command == "scan-meeting-todos-once":
         scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)
     elif args.command == "sync-minutes-once":
-        sync_minutes_once_command(settings, max_new_items=settings.max_batches)
+        sync_minutes_once_command(settings)
     elif args.command == "scan-meetings-once":
         scan_meetings_once_command(settings)
     elif args.command == "scan-oa-approvals":

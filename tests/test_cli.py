@@ -4770,7 +4770,6 @@ def test_main_dispatches_email_worker_with_shared_settings(monkeypatch, tmp_path
     ("command", "function_name"),
     [
         ("scan-meeting-todos-once", "scan_meeting_todos_once_command"),
-        ("sync-minutes-once", "sync_minutes_once_command"),
         ("scan-oa-approvals", "scan_oa_approvals_command"),
     ],
 )
@@ -4843,8 +4842,7 @@ def test_sync_minutes_once_command_fails_when_sync_has_failed_items(
             WorkerSettings(
                 db_path=tmp_path / "worker.sqlite3",
                 workspace=tmp_path / "workspace",
-            ),
-            max_new_items=4,
+            )
         )
 
     assert capsys.readouterr().out == (

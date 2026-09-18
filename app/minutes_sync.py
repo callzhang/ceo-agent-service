@@ -366,7 +366,6 @@ def sync_minutes_once(
     dws,
     *,
     archive_dir: Path,
-    max_new_items: int | None = None,
     now: datetime | None = None,
 ) -> MinutesSyncResult:
     """Mirror every not-yet-archived accessible minute into ``archive_dir``."""
@@ -394,8 +393,6 @@ def sync_minutes_once(
     for task_uuid in sorted(pending):
         if task_uuid not in archived and task_uuid not in candidates:
             candidates.append(task_uuid)
-    if max_new_items is not None:
-        candidates = candidates[:max_new_items]
 
     synced = skipped = requested = still_pending = failed = 0
     for task_uuid in candidates:
