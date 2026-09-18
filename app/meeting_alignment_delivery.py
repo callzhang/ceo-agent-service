@@ -727,7 +727,13 @@ def _meeting_followup_header(source: MeetingSource) -> str:
         time_range = f"{started:%Y-%m-%d %H:%M}-{ended:%H:%M}"
     else:
         time_range = f"{started:%Y-%m-%d %H:%M}-{ended:%Y-%m-%d %H:%M}"
-    return f"【会议跟进】{source.title}（{time_range}）"
+    header = f"【会议跟进】{source.title}（{time_range}）"
+    if source.resummary:
+        # The people in this meeting already received a follow-up covering part of
+        # it. Say plainly that this one replaces it, rather than looking like a
+        # duplicate of the message they have.
+        header += "（第二次总结，已合并后续录制内容）"
+    return header
 
 
 def _find_nested_string(payload: Any, key: str) -> str:

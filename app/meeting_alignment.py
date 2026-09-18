@@ -263,7 +263,15 @@ def produce_meeting_alignment_jobs(
         )
         if sibling is not None and sibling.meeting_id != meeting_id:
             # Another recording of this same meeting already has a job. A second
-            # follow-up would reach the same people about the same meeting.
+            # follow-up would reach the same people about the same meeting, so this
+            # recording joins that one and the meeting is summarised again over all
+            # of its parts (Derek 2026-09-18: 全量重做，不是增量).
+            store.attach_meeting_alignment_segment(
+                sibling.id,
+                segment_id=meeting_id,
+                eligible_at=(ended_at + timedelta(seconds=settle_seconds)).isoformat(),
+                status="pending" if now >= ended_at + timedelta(seconds=settle_seconds) else "waiting",
+            )
             _store_meeting_discovery_terminal_job(
                 store,
                 meeting_id=meeting_id,
@@ -863,11 +871,21 @@ def _analyze_meeting_job(
         return
 
     try:
+        extra_segment_ids = payload.get("extra_segment_ids")
+        extra_segment_ids = (
+            [str(value) for value in extra_segment_ids]
+            if isinstance(extra_segment_ids, list)
+            else []
+        )
         source = read_meeting_source(
             dws,
             job.meeting_id,
             calendar_evidence=evidence,
             creator=minutes_creator_from_list_item(payload.get("minutes_list_item", {})),
+            extra_segment_ids=extra_segment_ids,
+            # Already followed up once: the people in this meeting have a message
+            # covering only the earlier part of it, so say this one replaces it.
+            resummary=bool(extra_segment_ids and (job.final_message or "").strip()),
         )
         source = resolve_meeting_creator_identity(source, dws)
     except (MeetingSourceIncomplete, DwsError) as exc:

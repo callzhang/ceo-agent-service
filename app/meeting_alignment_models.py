@@ -183,6 +183,13 @@ class MeetingSource(StrictModel):
     summary: str
     transcript: list[TranscriptLine]
     source_url: str = ""
+    # Every recording this meeting was assembled from, in order, the first being
+    # `meeting_id`. More than one means the recorder was stopped and restarted
+    # during the meeting, and the summary covers all of the parts.
+    segment_ids: list[str] = Field(default_factory=list)
+    # Set when this meeting was already followed up and a later recording arrived,
+    # so the summary is being produced again over the whole meeting.
+    resummary: bool = False
 
 
 class AlignmentView(StrictModel):

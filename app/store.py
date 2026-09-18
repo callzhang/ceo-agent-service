@@ -14493,6 +14493,49 @@ class AutoReplyStore:
     def _validate_meeting_alignment_status(status: object) -> str:
         return TypeAdapter(MeetingAlignmentQueueStatus).validate_python(status)
 
+    def attach_meeting_alignment_segment(
+        self,
+        job_id: int,
+        *,
+        segment_id: str,
+        eligible_at: str,
+        status: str,
+    ) -> bool:
+        """Record a later recording of a meeting and reopen its job to re-summarise.
+
+        Returns False when this recording is already attached, so a repeated scan
+        does not keep reopening a job that is already covering it.
+        """
+        with self._connect() as db:
+            row = db.execute(
+                "select source_json from meeting_alignment_jobs where id=?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                source = json.loads(row["source_json"] or "{}")
+            except (TypeError, ValueError):
+                source = {}
+            segments = source.get("extra_segment_ids")
+            segments = list(segments) if isinstance(segments, list) else []
+            if segment_id in segments:
+                return False
+            segments.append(segment_id)
+            source["extra_segment_ids"] = segments
+            db.execute(
+                "update meeting_alignment_jobs set source_json=?, status=?, eligible_at=?,"
+                " attempts=0, locked_at=null, available_at='', error='',"
+                " updated_at=current_timestamp where id=?",
+                (
+                    json.dumps(source, ensure_ascii=False, sort_keys=True),
+                    status,
+                    eligible_at,
+                    job_id,
+                ),
+            )
+            return True
+
     def upsert_meeting_alignment_job(
         self,
         *,

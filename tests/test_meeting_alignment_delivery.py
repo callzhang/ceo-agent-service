@@ -947,3 +947,20 @@ def test_send_transport_failure_is_an_explicit_retryable_failure():
         deliver_meeting_alignment(send_decision(), meeting_source(), dws)
 
     assert len(dws.sent) == 1
+
+
+def test_followup_header_says_when_a_meeting_is_summarised_again():
+    """The people in this meeting already have a message covering part of it.
+
+    Saying so in the header is the service's job, not the model's: a second
+    follow-up that looks identical to the first reads as a duplicate.
+    """
+    first = meeting_alignment_delivery._meeting_followup_header(meeting_source())
+    again = meeting_alignment_delivery._meeting_followup_header(
+        meeting_source().model_copy(update={"resummary": True})
+    )
+
+    assert first == "【会议跟进】上线评审（2026-07-14 09:00-10:00）"
+    assert again.startswith(first)
+    assert "第二次总结" in again
+

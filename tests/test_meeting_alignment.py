@@ -2225,6 +2225,39 @@ def test_producer_persists_conflicting_minutes_aliases_as_skipped(
         assert job.status == "skipped"
 
 
+def test_producer_attaches_a_later_recording_to_the_meeting_it_belongs_to(tmp_path):
+    """The second recording joins the first meeting's job and reopens it.
+
+    Derek 2026-09-18: merge the parts and summarise the whole meeting again,
+    marked as a second pass -- not a separate follow-up, and not a delta.
+    """
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first = ended_meeting()
+    first_end = datetime.fromisoformat(first["endTimeISO"])
+    second = ended_meeting(
+        meeting_id="minutes-2",
+        start=(first_end + timedelta(minutes=20)).isoformat(),
+        end=(first_end + timedelta(minutes=50)).isoformat(),
+    )
+    dws = FakeDws(
+        minutes_pages={
+            "": {"items": [first], "has_more": False, "next_token": ""}
+        },
+        info={"minutes-1": first},
+    )
+    produce_meeting_alignment_jobs(store, dws, now=NOW)
+    original = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert original is not None
+
+    dws.minutes_pages[""]["items"] = [first, second]
+    dws.info["minutes-2"] = second
+    produce_meeting_alignment_jobs(store, dws, now=NOW)
+
+    reopened = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert json.loads(reopened.source_json)["extra_segment_ids"] == ["minutes-2"]
+    assert reopened.status in {"pending", "waiting"}
+
+
 @pytest.mark.parametrize(
     ("gap", "expected_jobs"),
     # Twenty minutes apart is one meeting recorded twice; three hours apart is two

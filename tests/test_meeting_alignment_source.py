@@ -353,6 +353,8 @@ def test_read_meeting_source_combines_metadata_summary_transcript_and_current_us
             },
         ],
         "source_url": "https://shanji.dingtalk.com/app/transcribes/minutes-1",
+        "segment_ids": ["minutes-1"],
+        "resummary": False,
     }
     assert dws.calls == [
         ("info", "minutes-1"),
@@ -895,3 +897,45 @@ def test_read_meeting_source_converts_pagination_integrity_error_to_typed_error(
             "minutes-1",
             calendar_evidence=calendar_evidence(),
         )
+
+
+def test_read_meeting_source_joins_a_later_recording_of_the_same_meeting():
+    """A recorder stopped and restarted leaves parts; the summary covers the meeting.
+
+    Derek 2026-09-18: the second pass re-summarises the whole meeting rather than
+    appending a delta, so every part's transcript has to reach the agent.
+    """
+    dws = FakeDws()
+    single = read_meeting_source(
+        dws, "minutes-1", calendar_evidence=calendar_evidence()
+    )
+
+    joined = read_meeting_source(
+        dws,
+        "minutes-1",
+        calendar_evidence=calendar_evidence(),
+        extra_segment_ids=["minutes-2"],
+        resummary=True,
+    )
+
+    assert single.segment_ids == ["minutes-1"]
+    assert single.resummary is False
+    assert joined.segment_ids == ["minutes-1", "minutes-2"]
+    assert joined.resummary is True
+    assert "第 2 段录制" in joined.summary
+    assert len(joined.transcript) == 2 * len(single.transcript)
+    assert ("transcript", "minutes-2") in dws.calls
+
+
+def test_read_meeting_source_ignores_a_segment_that_repeats_the_first_recording():
+    dws = FakeDws()
+
+    source = read_meeting_source(
+        dws,
+        "minutes-1",
+        calendar_evidence=calendar_evidence(),
+        extra_segment_ids=["minutes-1"],
+    )
+
+    assert source.segment_ids == ["minutes-1"]
+

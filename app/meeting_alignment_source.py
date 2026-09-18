@@ -1,5 +1,6 @@
 import math
 from datetime import datetime, timezone
+from collections.abc import Sequence
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -114,7 +115,15 @@ def read_meeting_source(
     *,
     calendar_evidence: CalendarMeetingEvidence,
     creator: MeetingParticipant | None = None,
+    extra_segment_ids: Sequence[str] = (),
+    resummary: bool = False,
 ) -> MeetingSource:
+    """The meeting as one source, however many recordings it was split across.
+
+    A recorder stopped and restarted mid-meeting leaves several recordings. The
+    summary has to cover the meeting, not one part of it, so the later parts'
+    transcripts and summaries are appended to the first.
+    """
     info = dws.get_minutes_info(meeting_id)
     summary = dws.get_minutes_summary(meeting_id)
     try:
@@ -124,7 +133,7 @@ def read_meeting_source(
             f"complete transcript is unavailable: {exc}"
         ) from exc
     current_user_id = dws.get_current_user_id()
-    return normalize_meeting_source(
+    source = normalize_meeting_source(
         _merge_calendar_evidence(
             info,
             calendar_evidence,
@@ -138,6 +147,59 @@ def read_meeting_source(
         creator=_select_meeting_creator(calendar_evidence, creator),
         attendee_evidence=calendar_evidence.source,
         attendee_roster_complete=(calendar_evidence.source == "calendar"),
+    )
+    return _append_later_recordings(
+        source,
+        dws,
+        extra_segment_ids=extra_segment_ids,
+        resummary=resummary,
+    )
+
+
+def _append_later_recordings(
+    source: MeetingSource,
+    dws: MeetingSourceDws,
+    *,
+    extra_segment_ids: Sequence[str],
+    resummary: bool,
+) -> MeetingSource:
+    segment_ids = [source.meeting_id]
+    summary_parts = [source.summary] if source.summary else []
+    transcript = list(source.transcript)
+    ended_at = source.ended_at
+    for index, segment_id in enumerate(extra_segment_ids, start=2):
+        if segment_id == source.meeting_id:
+            continue
+        try:
+            segment_transcript = dws.get_all_minutes_transcription(segment_id)
+        except DwsError as exc:
+            raise MeetingSourceIncomplete(
+                f"complete transcript is unavailable for recording {segment_id}: {exc}"
+            ) from exc
+        segment_summary = _summary_text(dws.get_minutes_summary(segment_id))
+        if segment_summary:
+            summary_parts.append(f"（第 {index} 段录制）\n{segment_summary}")
+        transcript.extend(_transcript_lines(segment_transcript))
+        segment_end = _metadata_time(
+            _payload_data(dws.get_minutes_info(segment_id)),
+            "meeting end time",
+            "endTimeISO",
+            "ended_at",
+            "endedAt",
+            "endTime",
+            "end_time",
+        )
+        if segment_end > ended_at:
+            ended_at = segment_end
+        segment_ids.append(segment_id)
+    return source.model_copy(
+        update={
+            "summary": "\n\n".join(summary_parts),
+            "transcript": transcript,
+            "ended_at": ended_at,
+            "segment_ids": segment_ids,
+            "resummary": resummary,
+        }
     )
 
 
