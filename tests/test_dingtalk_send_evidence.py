@@ -465,3 +465,58 @@ def test_an_action_that_declares_nothing_is_still_held_to_evidence() -> None:
     assert "effect" not in RESPOND
     driver, task = _driver(action=RESPOND, tool_events=[], classifier=_SchemaClassifier())
     assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+
+REVERT = {
+    "description": "退回审批给发起人补充材料",
+    "action_identity": "revert-approval",
+    "capability": "dingtalk-oa-approval",
+    "operation": "approval_revert",
+    "target": {"instance_id": "UGl6QdiSRau-rm7OWXvxgQ0364"},
+    "payload": {},
+}
+
+
+class _NoSchemaClassifier:
+    """DWS publishes no runtime schema for revert-task, so it types nothing."""
+
+    def classify(self, command):
+        return None
+
+
+def test_a_revert_counts_although_dws_publishes_no_schema_for_it() -> None:
+    """Run 20070 sent the 江淮 POC back to Wayne and the task still failed.
+
+    DingTalk recorded REDIRECT_PROCESS and the approval left the pending list,
+    but `oa approval revert-task` has no runtime schema, so the classifier
+    typed nothing, the effect left no trace in the evidence, and Audit reported
+    provider_receipt_missing. The execution path already falls back to the
+    registered-write list; this gate has to use the same fallback or a real
+    irreversible action reads as unproven.
+    """
+
+    driver, task = _driver(
+        action=REVERT,
+        tool_events=[
+            _shell(
+                "dws oa approval revert-task --instance-id UGl6QdiSRau-rm7OWXvxgQ0364"
+                " --task-id 103412315620 --target-activity-id sid-startevent"
+                " --action REVERT_FOR_RESUBMIT --remark 补齐后重新提交 --yes --format json"
+            )
+        ],
+        classifier=_NoSchemaClassifier(),
+    )
+
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_an_unregistered_unschemad_command_is_still_not_evidence() -> None:
+    """The fallback is the registered-write list, not "anything unclassifiable"."""
+
+    driver, task = _driver(
+        action=REVERT,
+        tool_events=[_shell("dws oa approval tasks --instance-id UGl6QdiSRau-rm7OWXvxgQ0364")],
+        classifier=_NoSchemaClassifier(),
+    )
+
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False

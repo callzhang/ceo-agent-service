@@ -23,14 +23,17 @@ from __future__ import annotations
 
 import json
 import shlex
+from dataclasses import replace
 
 from app.agent_effect_guard import provider_receipts
+from app.agent_effects import McpToolEffectRegistry
 from app.agent_result import EffectKind
 from app.consumer_agent import dingtalk_outgoing_text_key
 from app.mcp_tool_effects import reviewed_mcp_tool_effect
 from app.native_cli_metadata import (
     NativeCliMetadataClassifier,
     NativeCliMetadataUnavailableError,
+    describe_native_command,
 )
 from app.store import AgentRole, AutoReplyStore, ReplyTask
 
@@ -141,9 +144,28 @@ class DingTalkSendEvidenceDriver:
         if self._classifier is None:
             self._classifier = NativeCliMetadataClassifier()
         try:
-            return self._classifier.classify(command)
+            classified = self._classifier.classify(command)
         except NativeCliMetadataUnavailableError:
             return None
+        if classified is not None:
+            return classified
+        # A write DWS publishes no runtime schema for is still a write. The
+        # execution path already falls back to the registered-write list for
+        # exactly this case; without the same fallback here the effect leaves
+        # no trace in the evidence, and a real action reads as unproven.
+        # Live: `oa approval revert-task` sent an approval back to its
+        # originator, DingTalk recorded REDIRECT_PROCESS and the item left the
+        # pending list, and the task still ended `failed`.
+        descriptor = describe_native_command(command)
+        if (
+            descriptor is None
+            or descriptor.cli != "dws"
+            or not McpToolEffectRegistry.default().is_registered_write_operation(
+                descriptor.command_path
+            )
+        ):
+            return None
+        return replace(descriptor, effect=EffectKind.EFFECTFUL)
 
     def _accepted_actions(self, run) -> list[dict] | None:
         """The actions of the proposal this Audit run reviewed, from its own parent.
