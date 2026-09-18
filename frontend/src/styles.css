@@ -373,6 +373,24 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .runtime-add-card { border-style: dashed; }
 .runtime-add-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 .runtime-card-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+/* The failover order is the list itself: a numbered rail runs down the left
+   and each card sits beside its own step. */
+.runtime-flow { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.runtime-flow-item { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: start; }
+.runtime-flow-item[draggable="true"] { cursor: grab; }
+.runtime-flow-item.is-dragging { opacity: 0.5; }
+.runtime-flow-rail { position: relative; display: grid; justify-items: center; align-self: stretch; padding-top: 18px; }
+.runtime-flow-rail::before { content: ""; position: absolute; top: 0; bottom: -12px; width: 1px; background: var(--line-strong); }
+.runtime-flow-item:first-child .runtime-flow-rail::before { top: 18px; }
+.runtime-flow-item:last-child .runtime-flow-rail::before { bottom: auto; height: 18px; }
+.runtime-flow-rank { position: relative; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: var(--ink); color: var(--surface); font-size: 0.74rem; font-weight: 700; }
+.runtime-flow-item.is-off .runtime-flow-rank { background: var(--surface-muted); border: 1px solid var(--line-strong); color: var(--ink-soft); }
+.runtime-flow-item.is-new .runtime-flow-rank { background: var(--surface); border: 1px dashed var(--line-strong); color: var(--ink-soft); }
+.runtime-header-actions { display: inline-flex; flex: none; gap: 8px; }
+.runtime-card-title { min-width: 0; }
+.runtime-card-title h3 { display: flex; align-items: center; gap: 6px; }
+.runtime-card-grip { color: var(--ink-soft); }
+.runtime-card-name { width: 100%; max-width: 260px; min-height: 32px; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); font-size: 0.95rem; font-weight: 700; }
 .runtime-card { display: flex; flex-direction: column; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
 .runtime-chip { flex: none; padding: 3px 10px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--ink-soft); font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
 .runtime-chip.is-on { border-color: transparent; background: var(--accent-soft); color: var(--accent); }

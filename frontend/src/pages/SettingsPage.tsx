@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Check, GripVertical, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -723,25 +723,6 @@ function routeOrder(configured: string) {
   return configured.split(",").map((name) => name.trim()).filter(Boolean);
 }
 
-function RuntimeRouteOrder({ configured, onMove }: { configured: string; onMove?: (from: number, to: number) => void }) {
-  const order = routeOrder(configured);
-  const off = Object.keys(RUNTIME_ROUTE_LABELS).filter((name) => !order.includes(name));
-  return <div className="runtime-order">
-    <p className="runtime-order-caption">故障切换顺序</p>
-    <ol className="runtime-order-list">{order.map((name, index) => <li key={name} className="runtime-order-step">
-      <span className="runtime-order-rank">{index + 1}</span>
-      {RUNTIME_ROUTE_LABELS[name] ?? name}
-      {onMove && <span className="runtime-order-move">
-        <button type="button" className="runtime-move-button" aria-label={`${RUNTIME_ROUTE_LABELS[name] ?? name} 上移`} disabled={index === 0} onClick={() => onMove(index, index - 1)}><ChevronUp size={14} aria-hidden="true" /></button>
-        <button type="button" className="runtime-move-button" aria-label={`${RUNTIME_ROUTE_LABELS[name] ?? name} 下移`} disabled={index === order.length - 1} onClick={() => onMove(index, index + 1)}><ChevronDown size={14} aria-hidden="true" /></button>
-      </span>}
-    </li>)}</ol>
-    {off.length > 0 && <p className="runtime-order-off">未启用：{off.map((name) => RUNTIME_ROUTE_LABELS[name] ?? name).join("、")}</p>}
-  </div>;
-}
-
-// The four kinds an operator can add. A CLI's own login is shared by every
-// route that uses it, so an added OAuth route differs only by its model.
 const ADDED_RUNTIME_KINDS: Array<{ value: string; label: string; hint: string; needsBaseUrl: boolean; needsToken: boolean }> = [
   { value: "codex_oauth", label: "Codex CLI · 登录", hint: "复用本机 Codex 登录，只换模型", needsBaseUrl: false, needsToken: false },
   { value: "codex_api", label: "Codex CLI · API", hint: "自带地址、模型和 Token", needsBaseUrl: true, needsToken: true },
@@ -757,7 +738,7 @@ function addedRoutePrefix(name: string) {
   return `CEO_RUNTIME_${name.toUpperCase()}_`;
 }
 
-function AddRuntimeForm({ onAdd, taken, restorable, onRestore }: { onAdd: (route: { name: string; kind: string; baseUrl: string; model: string; token: string }) => void; taken: string[]; restorable: string[]; onRestore: (name: string) => void }) {
+function AddRuntimeForm({ onAdd, onCancel, taken, restorable, onRestore }: { onAdd: (route: { name: string; kind: string; baseUrl: string; model: string; token: string }) => void; onCancel: () => void; taken: string[]; restorable: string[]; onRestore: (name: string) => void }) {
   const [name, setName] = useState("");
   // Most added routes bring their own provider, so start on that kind.
   const [kind, setKind] = useState("codex_api");
@@ -793,27 +774,41 @@ function AddRuntimeForm({ onAdd, taken, restorable, onRestore }: { onAdd: (route
       {needsToken && <SecretField id="added-runtime-token" label="新增 runtime API Token" value={token} onChange={setToken} />}
     </div>
     {error && <p className="field-error" role="alert">{error}</p>}
-    <div className="runtime-add-actions"><button type="button" className="secondary-button runtime-inline-button" onClick={submit}><Plus size={14} aria-hidden="true" />添加</button></div>
+    <div className="runtime-add-actions"><button type="button" className="secondary-button" onClick={onCancel}>取消</button><button type="button" className="secondary-button runtime-inline-button" onClick={submit}><Plus size={14} aria-hidden="true" />添加</button></div>
   </section>;
 }
 
-function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailable, onToggle, onDelete, children }: { title: string; description: string; enabled: boolean; locked?: boolean; wide?: boolean; unavailable?: string; onToggle?: (next: boolean) => void; onDelete?: () => void; children?: ReactNode }) {
+function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailable, readOnly, onToggle, onDelete, onRename, children }: { title: string; description: string; enabled: boolean; locked?: boolean; wide?: boolean; unavailable?: string; readOnly?: boolean; onToggle?: (next: boolean) => void; onDelete?: () => void; onRename?: (next: string) => void; children?: ReactNode }) {
   const blocked = Boolean(unavailable);
+  // A rename lands when the field is left, not on every keystroke: renaming
+  // per character would carry the settings through every partial name.
+  const [nameDraft, setNameDraft] = useState(title);
+  useEffect(() => { setNameDraft(title); }, [title]);
+  const commitName = () => {
+    const next = nameDraft.trim();
+    if (!next || next === title) { setNameDraft(title); return; }
+    onRename?.(next);
+  };
   return <section className={`${wide ? "runtime-card runtime-card-wide" : "runtime-card"}${blocked ? " runtime-card-unavailable" : ""}`}>
     <div className="runtime-card-head">
-      <div><h3>{title}</h3><p>{description}</p></div>
+      <div className="runtime-card-title">
+        {onRename
+          ? <input className="runtime-card-name" aria-label={`${title} 名称`} value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} onBlur={commitName} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitName(); } }} />
+          : <h3>{onDelete && <GripVertical className="runtime-card-grip" size={14} aria-hidden="true" />}{title}</h3>}
+        <p>{description}</p>
+      </div>
       {locked
         ? <span className="runtime-chip is-on" title="主路由不能关闭">始终启用</span>
         : <div className="runtime-card-actions">
             <label className="runtime-switch">
-              <input type="checkbox" role="switch" aria-label={`启用 ${title}`} checked={enabled && !blocked} disabled={blocked} onChange={(event) => onToggle?.(event.target.checked)} />
+              <input type="checkbox" role="switch" aria-label={`启用 ${title}`} checked={enabled && !blocked} disabled={blocked || !onToggle} onChange={(event) => onToggle?.(event.target.checked)} />
               <span>{blocked ? "不可用" : enabled ? "已启用" : "未启用"}</span>
             </label>
             {onDelete && <button type="button" className="secondary-button runtime-icon-button" aria-label={`删除 ${title}`} title="删除这张卡" onClick={onDelete}><Trash2 size={15} aria-hidden="true" /></button>}
           </div>}
     </div>
     {blocked && <p className="runtime-card-unavailable-reason" role="status">{unavailable}</p>}
-    {children && <fieldset className="runtime-fieldset" disabled={blocked}><div className="runtime-fields">{children}</div></fieldset>}
+    {children && <fieldset className="runtime-fieldset" disabled={blocked || readOnly}><div className="runtime-fields">{children}</div></fieldset>}
   </section>;
 }
 
@@ -873,51 +868,108 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
     CEO_AGENT_RUNTIME_ROUTES: [...routes, name].join(","),
     CEO_AGENT_RUNTIME_HIDDEN_ROUTES: hidden.filter((route) => route !== name).join(","),
   });
+  const [editing, setEditing] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [dragged, setDragged] = useState("");
+  const renameRoute = (from: string, to: string) => {
+    const before = addedRoutePrefix(from);
+    const after = addedRoutePrefix(to);
+    const carried: RecordValue = {};
+    for (const suffix of ["KIND", "BASE_URL", "MODEL", "API_KEY"]) {
+      carried[`${after}${suffix}`] = raw(`${before}${suffix}`);
+      carried[`${before}${suffix}`] = "";
+    }
+    setDraft({
+      ...draft,
+      ...carried,
+      CEO_AGENT_RUNTIME_ROUTES: routes.map((route) => (route === from ? to : route)).join(","),
+    });
+  };
+  const builtInCard = (name: string) => {
+    const common = {
+      enabled: enabled(name),
+      onToggle: editing ? (next: boolean) => toggleRoute(name, next) : undefined,
+      onDelete: editing ? () => deleteBuiltIn(name) : undefined,
+      readOnly: !editing,
+    };
+    if (name === "codex_oauth") return <RuntimeRouteCard title="Codex OAuth" description="默认的本机 OAuth 路由" enabled locked readOnly={!editing}>
+      <ModelSelect id="codex-model" label="Model" value={raw("CEO_CODEX_MODEL")} groups={[{ label: "Codex / OpenAI", options: CODEX_MODEL_OPTIONS }]} onChange={(next) => update("CEO_CODEX_MODEL", next)} />
+      {input("CEO_CODEX_MODEL_REASONING_EFFORT", "Thinking strength")}
+    </RuntimeRouteCard>;
+    if (name === "codex_api") return <RuntimeRouteCard title="Codex API" description="OAuth 不可用时的备用路由" {...common}>
+      {input("CEO_CODEX_API_BASE_URL", "API Base URL", "url")}
+      <ModelSelect id="codex-api-model" label="Fallback model" value={raw("CEO_CODEX_API_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_CODEX_API_MODEL", next)} />
+      <SecretField id="codex-api-token" label="API Token" configured={Boolean(raw("CEO_CODEX_API_KEY"))} value={raw("CEO_CODEX_API_KEY")} onChange={(next) => update("CEO_CODEX_API_KEY", next)} />
+    </RuntimeRouteCard>;
+    if (name === "claude_oauth") return <RuntimeRouteCard title="Claude OAuth" description="复用本机 Claude Code 登录的路由" {...common}>
+      {input("CEO_CLAUDE_MODEL", "Model")}
+      {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
+    </RuntimeRouteCard>;
+    if (name === "claude_api") return <RuntimeRouteCard title="Claude API" description="Claude 登录不可用时的 API 路由；模型与 Claude OAuth 共用" {...common}>
+      {input("CEO_CLAUDE_MODEL", "Model")}
+      {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
+      <SecretField id="claude-api-token" label="Claude API Token" configured={Boolean(raw("CEO_CLAUDE_API_KEY"))} value={raw("CEO_CLAUDE_API_KEY")} onChange={(next) => update("CEO_CLAUDE_API_KEY", next)} />
+    </RuntimeRouteCard>;
+    return <RuntimeRouteCard title="Friday Runtime" description="通过 Friday 自带 CLI 运行，无需配置" {...common} unavailable={fridayCliAvailable ? undefined : "未检测到 Friday 桌面版。Friday 的 CLI 随桌面版一起安装，本服务不单独安装；请先安装 Friday.app 再启用这条线路。"} />;
+  };
+  const addedCard = (name: string) => {
+    const prefix = addedRoutePrefix(name);
+    const kindLabel = addedKind(raw(`${prefix}KIND`))?.label ?? raw(`${prefix}KIND`);
+    return <RuntimeRouteCard
+      title={name}
+      description={kindLabel}
+      enabled={enabled(name)}
+      onToggle={editing ? (next: boolean) => toggleRoute(name, next) : undefined}
+      onDelete={editing ? () => removeRoute(name) : undefined}
+      onRename={editing ? (next: string) => renameRoute(name, next) : undefined}
+      readOnly={!editing}
+    >
+      {addedKind(raw(`${prefix}KIND`))?.needsBaseUrl && <label className="runtime-field"><span>API Base URL</span><input aria-label={`${name} API Base URL`} type="url" value={value(`${prefix}BASE_URL`)} onChange={(event) => update(`${prefix}BASE_URL`, event.target.value)} /></label>}
+      <label className="runtime-field"><span>模型</span><input aria-label={`${name} 模型`} value={value(`${prefix}MODEL`)} onChange={(event) => update(`${prefix}MODEL`, event.target.value)} /></label>
+      {addedKind(raw(`${prefix}KIND`))?.needsToken && <SecretField id={`added-${name}-token`} label={`${name} API Token`} configured={Boolean(raw(`${prefix}API_KEY`))} value={raw(`${prefix}API_KEY`)} onChange={(next) => update(`${prefix}API_KEY`, next)} />}
+    </RuntimeRouteCard>;
+  };
+  const offRoutes = builtIn.filter((name) => shown(name) && !routes.includes(name));
+  const listed = [...routes, ...offRoutes];
+  const dropOn = (name: string) => {
+    if (!dragged || dragged === name) return;
+    const from = routes.indexOf(dragged);
+    const to = routes.indexOf(name);
+    if (from === -1 || to === -1) return;
+    moveRoute(from, to);
+    setDragged("");
+  };
   return <SettingsCard>
     <div className="settings-card-heading">
-      <div><p className="eyebrow">Settings / Agent Runtime</p><h2>Agent Runtime</h2><p className="muted">集中管理模型路由和 fallback 凭据。保存后重启主服务，运行中的 worker 才会使用新配置。</p></div>
-      <span className="settings-path">.env backed</span>
-    </div>
-    <RuntimeRouteOrder configured={value("CEO_AGENT_RUNTIME_ROUTES")} onMove={moveRoute} />
-    <form onSubmit={(event) => event.preventDefault()}>
-      <div className="runtime-card-grid">
-        <RuntimeRouteCard title="Codex OAuth" description="默认的本机 OAuth 路由" enabled locked>
-          <ModelSelect id="codex-model" label="Model" value={raw("CEO_CODEX_MODEL")} groups={[{ label: "Codex / OpenAI", options: CODEX_MODEL_OPTIONS }]} onChange={(next) => update("CEO_CODEX_MODEL", next)} />
-          {input("CEO_CODEX_MODEL_REASONING_EFFORT", "Thinking strength")}
-        </RuntimeRouteCard>
-        {shown("codex_api") && <RuntimeRouteCard title="Codex API" description="OAuth 不可用时的备用路由" enabled={enabled("codex_api")} onToggle={(next) => toggleRoute("codex_api", next)} onDelete={() => deleteBuiltIn("codex_api")}>
-          {input("CEO_CODEX_API_BASE_URL", "API Base URL", "url")}
-          <ModelSelect id="codex-api-model" label="Fallback model" value={raw("CEO_CODEX_API_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_CODEX_API_MODEL", next)} />
-          <SecretField id="codex-api-token" label="API Token" configured={Boolean(raw("CEO_CODEX_API_KEY"))} value={raw("CEO_CODEX_API_KEY")} onChange={(next) => update("CEO_CODEX_API_KEY", next)} />
-        </RuntimeRouteCard>}
-        {shown("claude_oauth") && <RuntimeRouteCard title="Claude OAuth" description="复用本机 Claude Code 登录的路由" enabled={enabled("claude_oauth")} onToggle={(next) => toggleRoute("claude_oauth", next)} onDelete={() => deleteBuiltIn("claude_oauth")}>
-          {input("CEO_CLAUDE_MODEL", "Model")}
-          {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
-        </RuntimeRouteCard>}
-        {shown("claude_api") && <RuntimeRouteCard title="Claude API" description="Claude 登录不可用时的 API 路由；模型与 Claude OAuth 共用" enabled={enabled("claude_api")} onToggle={(next) => toggleRoute("claude_api", next)} onDelete={() => deleteBuiltIn("claude_api")}>
-          {input("CEO_CLAUDE_MODEL", "Model")}
-          {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
-          <SecretField id="claude-api-token" label="Claude API Token" configured={Boolean(raw("CEO_CLAUDE_API_KEY"))} value={raw("CEO_CLAUDE_API_KEY")} onChange={(next) => update("CEO_CLAUDE_API_KEY", next)} />
-        </RuntimeRouteCard>}
-        {shown("friday_runtime") && <RuntimeRouteCard title="Friday Runtime" description="通过 Friday 自带 CLI 运行，无需配置" enabled={enabled("friday_runtime")} onToggle={(next) => toggleRoute("friday_runtime", next)} onDelete={() => deleteBuiltIn("friday_runtime")} unavailable={fridayCliAvailable ? undefined : "未检测到 Friday 桌面版。Friday 的 CLI 随桌面版一起安装，本服务不单独安装；请先安装 Friday.app 再启用这条线路。"}>
-        </RuntimeRouteCard>}
-        {addedRoutes.map((name) => {
-          const prefix = addedRoutePrefix(name);
-          const kindLabel = addedKind(raw(`${prefix}KIND`))?.label ?? raw(`${prefix}KIND`);
-          return <section key={name} className="runtime-card">
-            <div className="runtime-card-head">
-              <div><h3>{name}</h3><p>{kindLabel}</p></div>
-              <button type="button" className="secondary-button runtime-icon-button" aria-label={`删除 ${name}`} title="删除这张卡" onClick={() => removeRoute(name)}><Trash2 size={15} aria-hidden="true" /></button>
-            </div>
-            <div className="runtime-fields">
-              {addedKind(raw(`${prefix}KIND`))?.needsBaseUrl && <label className="runtime-field"><span>API Base URL</span><input aria-label={`${name} API Base URL`} type="url" value={value(`${prefix}BASE_URL`)} onChange={(event) => update(`${prefix}BASE_URL`, event.target.value)} /></label>}
-              <label className="runtime-field"><span>模型</span><input aria-label={`${name} 模型`} value={value(`${prefix}MODEL`)} onChange={(event) => update(`${prefix}MODEL`, event.target.value)} /></label>
-              {addedKind(raw(`${prefix}KIND`))?.needsToken && <SecretField id={`added-${name}-token`} label={`${name} API Token`} configured={Boolean(raw(`${prefix}API_KEY`))} value={raw(`${prefix}API_KEY`)} onChange={(next) => update(`${prefix}API_KEY`, next)} />}
-            </div>
-          </section>;
-        })}
-        <AddRuntimeForm onAdd={addRoute} taken={routes} restorable={hidden} onRestore={restoreBuiltIn} />
+      <div><p className="eyebrow">Settings / Agent Runtime</p><h2>Agent Runtime</h2><p className="muted">按顺序尝试，前一条不可用时自动切到下一条。保存后重启主服务才会生效。</p></div>
+      <div className="runtime-header-actions">
+        {editing && <button type="button" className="secondary-button runtime-inline-button" onClick={() => setAdding(true)}><Plus size={14} aria-hidden="true" />新增 runtime</button>}
+        <button type="button" className="secondary-button runtime-inline-button" aria-label={editing ? "完成编辑" : "编辑线路"} onClick={() => { setEditing(!editing); setAdding(false); }}>{editing ? <><Check size={14} aria-hidden="true" />完成</> : <><Pencil size={14} aria-hidden="true" />编辑</>}</button>
       </div>
+    </div>
+    <form onSubmit={(event) => event.preventDefault()}>
+      <ol className="runtime-flow">
+        {listed.map((name) => {
+          const position = routes.indexOf(name);
+          const active = position >= 0;
+          return <li
+            key={name}
+            className={`runtime-flow-item${active ? "" : " is-off"}${dragged === name ? " is-dragging" : ""}`}
+            draggable={editing && active}
+            onDragStart={() => setDragged(name)}
+            onDragEnd={() => setDragged("")}
+            onDragOver={(event) => { if (editing && active) event.preventDefault(); }}
+            onDrop={(event) => { event.preventDefault(); dropOn(name); }}
+          >
+            <div className="runtime-flow-rail" aria-hidden="true"><span className="runtime-flow-rank">{active ? position + 1 : "–"}</span></div>
+            {builtIn.includes(name) ? builtInCard(name) : addedCard(name)}
+          </li>;
+        })}
+        {adding && <li className="runtime-flow-item is-new">
+          <div className="runtime-flow-rail" aria-hidden="true"><span className="runtime-flow-rank">+</span></div>
+          <AddRuntimeForm onAdd={(route) => { addRoute(route); setAdding(false); }} onCancel={() => setAdding(false)} taken={routes} restorable={hidden} onRestore={(name) => { restoreBuiltIn(name); setAdding(false); }} />
+        </li>}
+      </ol>
       <div className="runtime-save-bar"><SaveBar state={saveState} error={saveError} /></div>
     </form>
   </SettingsCard>;

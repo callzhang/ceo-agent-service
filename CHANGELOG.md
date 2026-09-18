@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-17: Settings / Agent Runtime is the failover order, instead of
+  describing it. The separate order strip is gone: cards sit on a numbered rail
+  that runs down the left, a card switched off keeps its place in the list
+  without a number, and dragging a card onto another reorders the failover. The
+  page opens read-only; 编辑 unlocks the fields, the switches, delete, drag and
+  an added route's name, and 新增 runtime moves to the header, where it opens one
+  editable card instead of a form that is always on screen.
+
 - 2026-09-17: Friday Runtime has one path and no settings. The service always
   reaches it through the CLI the desktop app ships, so the console no longer
   shows a Friday service address, a provider endpoint, model or token, or a
