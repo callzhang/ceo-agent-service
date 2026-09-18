@@ -13,24 +13,9 @@ from app.store import AutoReplyStore
 from app.task_models import WorkItem
 from app.skill_features import FeatureRegistry
 
-LOCAL_FILE_SCANNER = "local_files"
 AI_MINUTES_SCANNER = "ai_minutes"
 MEETING_TODO_SCANNER = "meeting_todos"
 OA_PENDING_SCANNER = "oa_pending"
-DEFAULT_LOCAL_FILE_EXCLUDE_PARTS = {
-    "__pycache__",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    "AI听记",
-    "build",
-    "daily frontier report",
-    "dist",
-    "node_modules",
-    "site-packages",
-    "venv",
-}
 
 
 def _utc_now() -> str:
@@ -41,15 +26,6 @@ def _scan_now(now: datetime | None = None) -> datetime:
     return now if now is not None else datetime.now().astimezone()
 
 
-def _matches_any(path: Path, patterns: tuple[str, ...]) -> bool:
-    text = str(path)
-    name = path.name
-    return any(
-        fnmatch.fnmatch(text, pattern) or fnmatch.fnmatch(name, pattern)
-        for pattern in patterns
-    )
-
-
 def _read_text_excerpt_and_digest(path: Path, limit: int = 6000) -> tuple[str, str]:
     try:
         raw = path.read_bytes()
@@ -57,144 +33,6 @@ def _read_text_excerpt_and_digest(path: Path, limit: int = 6000) -> tuple[str, s
     except UnicodeDecodeError:
         return "", ""
     return text[:limit], hashlib.sha256(raw).hexdigest()
-
-
-def _is_under_workspace(path: Path, workspace: Path) -> bool:
-    try:
-        path.relative_to(workspace)
-    except ValueError:
-        return False
-    return True
-
-
-def _has_hidden_path_part(path: Path) -> bool:
-    return any(part.startswith(".") for part in path.parts)
-
-
-def _has_default_excluded_path_part(path: Path) -> bool:
-    return any(
-        part in DEFAULT_LOCAL_FILE_EXCLUDE_PARTS
-        or part.casefold().startswith("skill-worktrees")
-        for part in path.parts
-    )
-
-
-def _local_file_source_ref(path: Path, *, digest: str, size: int) -> str:
-    return f"{path}#sha256={digest}:size={size}"
-
-
-def scan_local_workspace_files(
-    store: AutoReplyStore,
-    *,
-    workspace: Path,
-    include_globs: tuple[str, ...] = ("*.md", "*.txt"),
-    exclude_globs: tuple[str, ...] = (),
-    enqueue_existing_on_first_scan: bool = False,
-    max_new_items: int | None = None,
-    feature_registry: FeatureRegistry | None = None,
-) -> int:
-    if not (feature_registry or FeatureRegistry()).feature_enabled("work_tracking"):
-        return 0
-    workspace = workspace.expanduser().resolve()
-    if not workspace.exists() or not workspace.is_dir():
-        store.set_daily_scan_state(
-            LOCAL_FILE_SCANNER,
-            last_success_at="",
-            cursor_json="{}",
-            last_error=f"workspace missing: {workspace}",
-        )
-        return 0
-
-    state = store.get_daily_scan_state(LOCAL_FILE_SCANNER) or {}
-    try:
-        cursor = json.loads(state.get("cursor_json") or "{}")
-    except json.JSONDecodeError:
-        cursor = {}
-    previous_path_refs = dict(cursor.get("path_refs") or {})
-    first_scan = not previous_path_refs
-    path_refs: dict[str, str] = (
-        dict(previous_path_refs) if max_new_items is not None else {}
-    )
-    count = 0
-    scheduled_consumer = current_service_command_consumer_context()
-
-    for path in sorted(workspace.rglob("*")):
-        if not path.is_file():
-            continue
-        resolved = path.resolve()
-        if not _is_under_workspace(resolved, workspace):
-            continue
-        relative = resolved.relative_to(workspace)
-        if _has_hidden_path_part(relative):
-            continue
-        if _has_default_excluded_path_part(relative):
-            continue
-        if exclude_globs and _matches_any(resolved, exclude_globs):
-            continue
-        if include_globs and not _matches_any(resolved, include_globs):
-            continue
-        stat = resolved.stat()
-        mtime = stat.st_mtime
-        resolved_text = str(resolved)
-        excerpt, digest = _read_text_excerpt_and_digest(resolved)
-        if not excerpt.strip():
-            continue
-        source_ref = _local_file_source_ref(
-            resolved,
-            digest=digest,
-            size=stat.st_size,
-        )
-        path_refs[resolved_text] = source_ref
-        if previous_path_refs.get(resolved_text) == source_ref:
-            continue
-        if first_scan and not enqueue_existing_on_first_scan:
-            continue
-        if max_new_items is not None and count >= max_new_items:
-            path_refs.pop(resolved_text, None)
-            continue
-        item = WorkItem.model_validate(
-            {
-                "source": {
-                    "type": "local_file",
-                    "ref": source_ref,
-                    "title": resolved.name,
-                    "created_at": datetime.fromtimestamp(
-                        mtime,
-                        timezone.utc,
-                    ).isoformat(),
-                },
-                "summary": excerpt,
-                "project_name": resolved.stem,
-                "context": {
-                    "sender": "",
-                    "participants": [],
-                    "source_conversation_kind": "file",
-                    "source_conversation_title": resolved.name,
-                },
-                "scheduled_consumer": (
-                    scheduled_consumer.to_payload() if scheduled_consumer else {}
-                ),
-            }
-        )
-        store.enqueue_work_summary_input(
-            source_type=item.source.type.value,
-            source_ref=item.source.ref,
-            payload_json=item.model_dump_json(),
-        )
-        count += 1
-
-    store.set_daily_scan_state(
-        LOCAL_FILE_SCANNER,
-        last_success_at=_utc_now(),
-        cursor_json=json.dumps(
-            {
-                "path_refs": path_refs,
-            },
-            sort_keys=True,
-        ),
-        last_error="",
-    )
-    return count
 
 
 def scan_ai_minutes(

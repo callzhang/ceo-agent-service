@@ -3851,45 +3851,35 @@ def test_backfill_routine_process_todos_suppresses_all_followups_for_todo(
     assert remaining == []
 
 
-def test_scan_task_sources_command_scans_local_and_minutes(
-    tmp_path,
+def test_scan_task_sources_command_reads_minutes_only(
     monkeypatch,
-    capsys,
+    tmp_path,
 ):
-    from app.cli import scan_task_sources_command
+    """The workspace file sweep is gone; only AI minutes remain a source.
 
+    Derek, 2026-09-18: one Agent turn per workspace file was never reasonable,
+    and a 1475-file brainstorming folder proved it by taking 105 of 109
+    runtime attempts in an hour.
+    """
     calls = []
 
-    def fake_local_scan(store, *, workspace, max_new_items=None):
-        calls.append(("local", store.path, workspace, max_new_items))
-        return 2
-
     def fake_minutes_scan(store, dws, *, max_new_items=None):
-        calls.append(("minutes", store.path, type(dws).__name__, max_new_items))
-        return 3
+        calls.append(("minutes", max_new_items))
+        return 5
 
     class FakeDwsClient:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    monkeypatch.setattr("app.task_scanners.scan_local_workspace_files", fake_local_scan)
     monkeypatch.setattr("app.task_scanners.scan_ai_minutes", fake_minutes_scan)
     monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
-    db_path = tmp_path / "task.sqlite3"
 
-    total = scan_task_sources_command(
-        WorkerSettings(db_path=db_path, workspace=tmp_path)
+    total = cli.scan_task_sources_command(
+        WorkerSettings(db_path=tmp_path / "task.sqlite3", workspace=tmp_path)
     )
 
     assert total == 5
-    assert calls == [
-        ("local", db_path, tmp_path, None),
-        ("minutes", db_path, "FakeDwsClient", None),
-    ]
-    assert (
-        capsys.readouterr().out
-        == "scan-task-sources local_files=2 ai_minutes=3 total=5\n"
-    )
+    assert calls == [("minutes", None)]
 
 
 def test_scan_meeting_todos_once_command_reads_todos_and_honors_limit(

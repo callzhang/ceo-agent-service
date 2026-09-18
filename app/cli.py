@@ -2140,7 +2140,13 @@ def scan_task_sources_command(
     *,
     max_new_items: int | None = None,
 ) -> int:
-    from app.task_scanners import scan_ai_minutes, scan_local_workspace_files
+    # Derek, 2026-09-18: the workspace file sweep is gone. It read every .md
+    # and .txt under the workspace and spent one Agent turn per file deciding
+    # whether it held work. A 2026-09-14 brainstorming folder (1475 files)
+    # queued 564 of them, and in one hour 105 of 109 runtime attempts went to
+    # those files while interactive replies waited. It was not one of the
+    # scheduled tasks either, so it could not be seen or switched off.
+    from app.task_scanners import scan_ai_minutes
 
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
@@ -2148,28 +2154,16 @@ def scan_task_sources_command(
         ding_robot_name=settings.ding_robot_name,
         ding_receiver_user_id=settings.ding_receiver_user_id,
     )
-    local_count = scan_local_workspace_files(
-        store,
-        workspace=settings.workspace,
-        max_new_items=max_new_items,
-    )
-    remaining_minutes_items = (
-        None
-        if max_new_items is None
-        else max(0, max_new_items - local_count)
-    )
     minutes_count = scan_ai_minutes(
         store,
         dws,
-        max_new_items=remaining_minutes_items,
+        max_new_items=max_new_items,
     )
-    total = local_count + minutes_count
     print(
-        "scan-task-sources "
-        f"local_files={local_count} ai_minutes={minutes_count} total={total}",
+        f"scan-task-sources ai_minutes={minutes_count} total={minutes_count}",
         flush=True,
     )
-    return total
+    return minutes_count
 
 
 def scan_meeting_todos_once_command(
