@@ -535,18 +535,44 @@ def capture_runtime_skill_edits(
                 )
                 if digest == latest.sha256:
                     continue
-        except (OSError, UnicodeError, ManagedSkillValidationError) as exc:
+                # An edit that restores earlier content is a revert, and the
+                # history is content-addressed, so there is no new revision to
+                # write. Recording the export keeps the file tied to the
+                # revision it now matches. Without this, `ceo-minutes-sync`
+                # reverted to its first revision filed the same capture error
+                # on every service start and scan.
+                restored = next(
+                    (
+                        revision
+                        for revision in revisions
+                        if revision.sha256 == digest
+                    ),
+                    None,
+                )
+                if restored is not None:
+                    store.record_managed_skill_export(
+                        restored.id, sha256=restored.sha256, path=str(path)
+                    )
+                    continue
+            revision = store.create_managed_skill_revision(
+                skill.id,
+                content,
+                source=RUNTIME_EDIT_SOURCE,
+                require_managed_marker=not runtime_only,
+            )
+            store.record_managed_skill_export(
+                revision.id, sha256=revision.sha256, path=str(path)
+            )
+        except (
+            OSError,
+            UnicodeError,
+            ManagedSkillValidationError,
+            ValueError,
+        ) as exc:
+            # Naming the Skill matters: the capture used to raise out of the
+            # loop, and the recorded error said only what went wrong.
             problems.append(f"{name} ({path}): {exc}")
             continue
-        revision = store.create_managed_skill_revision(
-            skill.id,
-            content,
-            source=RUNTIME_EDIT_SOURCE,
-            require_managed_marker=not runtime_only,
-        )
-        store.record_managed_skill_export(
-            revision.id, sha256=revision.sha256, path=str(path)
-        )
         captured.append(
             RuntimeSkillEditCapture(
                 name=name,

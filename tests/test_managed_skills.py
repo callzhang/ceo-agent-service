@@ -1004,6 +1004,38 @@ def test_capture_runtime_skill_edits_records_an_in_place_edit(tmp_path: Path) ->
     )
 
 
+def test_capture_runtime_skill_edits_accepts_a_revert_to_earlier_content(
+    tmp_path: Path,
+) -> None:
+    """Reverting a Skill file filed a capture error on every service start.
+
+    History is content-addressed, so restoring an earlier revision has no new
+    revision to write. `ceo-minutes-sync` was reverted to its first revision on
+    2026-09-18 and the capture raised `managed Skill revision content already
+    exists` every time, three times in one hour.
+    """
+    store = AutoReplyStore(tmp_path / "skills.sqlite3")
+    import_repository_managed_skills(store)
+    name = REPOSITORY_MANAGED_SKILL_NAMES[0]
+    skill = store.get_managed_skill_by_name(name)
+    original = max(
+        store.list_managed_skill_revisions(skill.id),
+        key=lambda revision: revision.revision_number,
+    )
+    root = tmp_path / "agents-skills"
+    path = _runtime_skill_file(root, name, "a later edit")
+    assert [item.name for item in capture_runtime_skill_edits(store, skills_root=root)] == [name]
+
+    path.write_text(original.content, encoding="utf-8")
+
+    assert capture_runtime_skill_edits(store, skills_root=root) == ()
+    assert capture_runtime_skill_edits(store, skills_root=root) == ()
+    # No revision is invented for content the history already holds.
+    assert len(store.list_managed_skill_revisions(skill.id)) == 2
+    # The file is left as the revert made it.
+    assert path.read_text(encoding="utf-8") == original.content
+
+
 def test_capture_runtime_skill_edits_is_a_noop_when_content_matches(
     tmp_path: Path,
 ) -> None:
