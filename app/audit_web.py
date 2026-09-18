@@ -10549,16 +10549,26 @@ def create_audit_app(
             return _queue_attention_rows(audit_store)
 
     def read_fresh_feedback_backlog() -> dict[str, object]:
-        """Synchronously read authoritative queue counts for resolution."""
+        """Read authoritative queue counts straight from SQLite.
 
-        payload = build_worker_status_payload(
-            audit_store,
-            include_system_health=False,
-        )
-        summary = payload.get("summary")
-        if not isinstance(summary, dict):
-            raise RuntimeError("fresh worker backlog summary is unavailable")
-        return summary
+        The whole worker payload is what the background render caches, and
+        rebuilding it here would make the placeholder response wait on the
+        very refresh it exists to skip. Only the queue counts have to be
+        current, and they are one snapshot read.
+        """
+
+        with audit_store.read_snapshot():
+            queues = _queue_status_snapshots(audit_store)
+        counted = [
+            queue for queue in queues if not queue.get("_summary_projection", False)
+        ]
+        return {
+            "queue_count": len(queues),
+            "pending": sum(int(queue["pending"]) for queue in counted),
+            "processing": sum(int(queue["processing"]) for queue in counted),
+            "failed": sum(int(queue["failed"]) for queue in counted),
+            "retryable": sum(int(queue["retryable"]) for queue in counted),
+        }
 
     def render_system_health_payload() -> dict[str, object]:
         service = _launchd_service_status("com.ceo-agent-service.main")
