@@ -66,6 +66,7 @@ def test_task_agent_parser_migrates_known_legacy_project_fields():
             },
         },
         "follow_up_mode": "draft",
+        "source_conversations": [{"title": "Legacy source"}],
     }
 
     parsed = _parse_task_agent_decision(json.dumps(decision))
@@ -74,6 +75,7 @@ def test_task_agent_parser_migrates_known_legacy_project_fields():
     assert parsed.project.owner_user_id == "owner-42"
     assert parsed.project.owner_name == "Alex"
     assert parsed.project.follow_up_mode == "draft"
+    assert parsed.project.source_conversations == [{"title": "Legacy source"}]
 
 
 def test_normalize_follow_up_time_uses_business_timezone_for_aware_input():

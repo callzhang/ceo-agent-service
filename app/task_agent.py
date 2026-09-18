@@ -2087,6 +2087,9 @@ def _normalize_legacy_task_decision(candidate: object) -> object:
     top_level_follow_up_mode = normalized.pop("follow_up_mode", None)
     if top_level_follow_up_mode is not None and "follow_up_mode" not in project:
         project["follow_up_mode"] = top_level_follow_up_mode
+    top_level_sources = normalized.pop("source_conversations", None)
+    if top_level_sources is not None and "source_conversations" not in project:
+        project["source_conversations"] = top_level_sources
 
     legacy_owner = project.pop("owner", None)
     if isinstance(legacy_owner, dict):
