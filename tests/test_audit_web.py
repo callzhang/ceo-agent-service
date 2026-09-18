@@ -8150,6 +8150,39 @@ def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
+def test_resolved_failed_attempt_is_recovered_in_current_queue_projection(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "resolved-failed-attempt.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-resolved-failed",
+        conversation_title="OA reconciliation",
+        trigger_message_id="msg-resolved-failed",
+        trigger_sender="Derek OA",
+        trigger_text="The external approval is already terminal.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="failed",
+        send_error="audit_revision_exhausted",
+    )
+    assert store.resolve_failed_reply_attempt_already_settled(
+        attempt_id,
+        resolution="Live OA record is terminal; no further service action is allowed.",
+    )
+
+    payload = build_worker_status_payload(store)
+    reply_attempt_queue = next(
+        queue for queue in payload["queues"] if queue["name"] == "Reply attempts"
+    )
+
+    assert reply_attempt_queue["failed"] == 0
+    assert reply_attempt_queue["counts"]["recovered"] == 1
+
+
 @pytest.mark.parametrize("successor_status", ("done", "skipped"))
 def test_reply_attempt_queue_hides_failed_history_when_its_task_has_a_terminal_successor(
     tmp_path: Path,

@@ -2939,6 +2939,8 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
             select
                 a.*,
                 case
+                    when lower(a.send_status)='failed'
+                     and trim(coalesce(a.resolved_at, ''))<>'' then 'recovered'
                     when lower(a.send_status) in ('failed', 'blocked')
                      and exists (
                         select 1 from reply_tasks t
