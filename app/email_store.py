@@ -14898,17 +14898,36 @@ class EmailStore:
                     int(row["id"]),
                 ),
             )
+            # The stored message carries the same locator, and durable
+            # validation refuses a store where the two disagree.
+            db.execute(
+                """
+                update email_messages
+                set folder=?, uidvalidity=?, uid=?
+                where stable_message_identity=?
+                """,
+                (
+                    locator.folder,
+                    locator.uidvalidity,
+                    locator.uid,
+                    stable_message_identity,
+                ),
+            )
             self._persist_action_plan(db, action_plan, now=applied_at)
             db.execute(
                 """
                 update email_classifications
                 set action_plan_json=?, current_action_plan_id=?,
-                    legacy_processed_without_plan=0, updated_at=?
+                    config_version=?, legacy_processed_without_plan=0,
+                    updated_at=?
                 where id=?
                 """,
                 (
                     action_plan.model_dump_json(),
                     action_plan.action_plan_id,
+                    # The plan carries the category's current configuration, and
+                    # durable validation requires the row to say the same.
+                    config_version,
                     applied_at,
                     int(row["id"]),
                 ),

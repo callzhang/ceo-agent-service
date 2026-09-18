@@ -31,6 +31,7 @@ from app.email_classifier_contracts import (
     build_email_action_plan,
 )
 from app.email_store import (
+    StoredEmailLocator,
     EmailActionAttemptConflict,
     EmailActionPlanConflict,
     EmailClassificationConflict,
@@ -10409,13 +10410,29 @@ def test_a_second_copy_of_a_filed_message_gets_the_same_decision(tmp_path: Path)
     )
     _persist_scan(store, classification)
     filed = store.get_classification(classification.classification_id)
-    with sqlite3.connect(database) as db:
-        db.execute("update email_actions set status='done' where classification_id=?",
-                   (classification.classification_id,))
-        db.execute(
-            "update email_classifications set folder='工作', uid=173 where id=?",
-            (classification.classification_id,),
-        )
+    # The first copy was filed into 工作 and its move finished there.
+    first = store.claim_next_direct_action(
+        claimed_at="2026-09-18T06:00:00+00:00", account_ids=("dingtalk-account",)
+    )
+    assert first is not None
+    store.complete_direct_action_attempt(
+        first,
+        status="done",
+        provider_operation="UID MOVE",
+        provider_target=first.locator.stable_message_identity,
+        provider_result_id="moved-to-work",
+        error="",
+        finished_at="2026-09-18T06:00:05+00:00",
+        updated_locator=StoredEmailLocator(
+            account_id=first.locator.account_id,
+            folder="工作",
+            uidvalidity=int(filed["uidvalidity"]),
+            uid=173,
+            stable_message_identity=first.locator.stable_message_identity,
+            rfc_message_id=first.locator.rfc_message_id,
+            thread_id=first.locator.thread_id,
+        ),
+    )
     inbox_copy = EmailProviderLocator(
         account_id=filed["account_id"],
         folder="INBOX",
@@ -10431,6 +10448,10 @@ def test_a_second_copy_of_a_filed_message_gets_the_same_decision(tmp_path: Path)
     assert updated is not None
     assert (updated["folder"], updated["uid"]) == ("INBOX", 32777)
     assert updated["category"] == "work"
+    # The stored message and the plan must agree with the moved classification,
+    # which durable validation checks on every open.
+    reopened = EmailStore(database)
+    assert reopened.get_classification(classification.classification_id)["uid"] == 32777
     claimed = store.claim_next_direct_action(
         claimed_at="2026-09-18T07:00:00+00:00", account_ids=("dingtalk-account",)
     )
