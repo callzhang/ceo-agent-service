@@ -14799,6 +14799,126 @@ class EmailStore:
             selected_config["config_version"],
         )
 
+    def reapply_classification_to_copy(
+        self,
+        stable_message_identity: str,
+        locator: EmailProviderLocator,
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Point a settled classification at another copy of the same message.
+
+        Mail is recognised by its Message-ID, so a second copy of a message
+        already filed was treated as handled and left sitting unread in the
+        inbox forever. The decision still holds - it is the same message - so
+        this moves the classification onto the copy that is still there and
+        gives it the category's own action. Returns None when there is nothing
+        to do: no record, a copy that is already the one on file, or work still
+        in flight on the previous copy.
+        """
+
+        plan_created_at = now or datetime.now(timezone.utc)
+        if plan_created_at.tzinfo is None or plan_created_at.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        applied_at = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from email_classifications where stable_message_identity=?",
+                (stable_message_identity,),
+            ).fetchone()
+            if row is None:
+                return None
+            if (
+                row["account_id"] != locator.account_id
+                or row["status"] != EmailClassificationStatus.PROCESSED.value
+            ):
+                return None
+            if (
+                row["folder"] == locator.folder
+                and int(row["uidvalidity"]) == int(locator.uidvalidity)
+                and int(row["uid"]) == int(locator.uid)
+            ):
+                return None
+            unfinished = db.execute(
+                """
+                select 1 from email_actions
+                where classification_id=? and status in ('pending', 'processing')
+                """,
+                (row["id"],),
+            ).fetchone()
+            if unfinished is not None:
+                return None
+            category = str(row["confirmed_category"] or row["category"] or "")
+            if not category:
+                return None
+            actions, action_parameters, config_version = self._category_action_snapshot(
+                db,
+                account_id=str(row["account_id"]),
+                category=category,
+                fallback_config_version=str(row["config_version"]),
+            )
+            if not actions:
+                return None
+            current_plan = db.execute(
+                """
+                select action_plan_version from email_action_plans
+                where action_plan_id=? and classification_id=?
+                """,
+                (row["current_action_plan_id"], row["id"]),
+            ).fetchone()
+            action_plan = build_versioned_email_action_plan(
+                action_plan_version=(
+                    1 if current_plan is None else int(current_plan["action_plan_version"]) + 1
+                ),
+                classification_id=int(row["id"]),
+                account_id=str(row["account_id"]),
+                category=category,
+                classification_source=str(row["classification_source"]),
+                confidence=float(row["confidence"]),
+                model_id=str(row["model_id"]),
+                config_version=config_version,
+                actions=actions,
+                action_parameters=action_parameters,
+                created_at=plan_created_at,
+            )
+            self._assert_no_email_reply_dispatch_in_flight(db, int(row["id"]))
+            db.execute(
+                """
+                update email_classifications
+                set folder=?, uidvalidity=?, uid=?, thread_id=?, updated_at=?
+                where id=?
+                """,
+                (
+                    locator.folder,
+                    locator.uidvalidity,
+                    locator.uid,
+                    locator.thread_id,
+                    applied_at,
+                    int(row["id"]),
+                ),
+            )
+            self._persist_action_plan(db, action_plan, now=applied_at)
+            db.execute(
+                """
+                update email_classifications
+                set action_plan_json=?, current_action_plan_id=?,
+                    legacy_processed_without_plan=0, updated_at=?
+                where id=?
+                """,
+                (
+                    action_plan.model_dump_json(),
+                    action_plan.action_plan_id,
+                    applied_at,
+                    int(row["id"]),
+                ),
+            )
+            updated = db.execute(
+                "select * from email_classifications where id=?",
+                (int(row["id"]),),
+            ).fetchone()
+        return self._classification_row(updated)
+
     def append_action_plan_version(
         self,
         classification_id: int,

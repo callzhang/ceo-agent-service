@@ -1707,3 +1707,39 @@ def test_scan_leaves_read_mail_alone_by_default(tmp_path: Path) -> None:
     )
 
     assert queued == []
+
+
+def test_a_duplicate_inbox_copy_is_handed_the_existing_decision(tmp_path: Path) -> None:
+    """The copy left behind must be acted on, not skipped as already handled."""
+
+    message = _message() | {"providerUnread": True, "date": "2026-09-18"}
+    source = FakeSource([message])
+    store = EmailStore(tmp_path / "duplicate-scan.sqlite3")
+    reapplied = []
+    store.has_stable_classification = lambda _identity: True
+    store.reapply_classification_to_copy = lambda identity, locator: reapplied.append(
+        (identity, locator.folder, locator.uid)
+    )
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: True),
+        produce=lambda *_args, **_kwargs: pytest.fail("the Agent must not be asked again"),
+    )
+
+    result = scan_agent_classification_batch(
+        source,
+        store,
+        producer,
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+    )
+
+    assert result.persisted_count == 0
+    assert [(folder, uid) for _identity, folder, uid in reapplied] == [
+        (message["folder"], message["uid"])
+    ]

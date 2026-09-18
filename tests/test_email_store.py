@@ -10391,3 +10391,83 @@ def test_a_training_label_correction_never_moves_or_trashes_the_message(
     assert updated["confirmed_category"] == "junk"
     assert updated["classification_source"] == "user"
     assert updated["action_plan"]["actions"] == []
+
+
+def test_a_second_copy_of_a_filed_message_gets_the_same_decision(tmp_path: Path):
+    """A duplicate left in the inbox used to read as handled and sit there."""
+
+    database = tmp_path / "duplicate-copy.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("dingtalk-account"))
+    _enable_category_with_binding(store, "work", "dingtalk-account")
+    classification = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="duplicate",
+        category=EmailCategory.WORK,
+        actions=(EmailAction.MOVE,),
+        action_parameters={EmailAction.MOVE: {"target_folder": "work-folder"}},
+    )
+    _persist_scan(store, classification)
+    filed = store.get_classification(classification.classification_id)
+    with sqlite3.connect(database) as db:
+        db.execute("update email_actions set status='done' where classification_id=?",
+                   (classification.classification_id,))
+        db.execute(
+            "update email_classifications set folder='工作', uid=173 where id=?",
+            (classification.classification_id,),
+        )
+    inbox_copy = EmailProviderLocator(
+        account_id=filed["account_id"],
+        folder="INBOX",
+        uidvalidity=int(filed["uidvalidity"]),
+        uid=32777,
+        rfc_message_id=filed["rfc_message_id"],
+    )
+
+    updated = store.reapply_classification_to_copy(
+        filed["stable_message_identity"], inbox_copy
+    )
+
+    assert updated is not None
+    assert (updated["folder"], updated["uid"]) == ("INBOX", 32777)
+    assert updated["category"] == "work"
+    claimed = store.claim_next_direct_action(
+        claimed_at="2026-09-18T07:00:00+00:00", account_ids=("dingtalk-account",)
+    )
+    assert claimed is not None
+    assert claimed.action_type is EmailAction.MOVE
+    assert claimed.locator.folder == "INBOX" and claimed.locator.uid == 32777
+    # The same copy twice is not new work.
+    assert store.reapply_classification_to_copy(
+        filed["stable_message_identity"],
+        EmailProviderLocator(
+            account_id=filed["account_id"], folder="INBOX",
+            uidvalidity=int(filed["uidvalidity"]), uid=32777,
+            rfc_message_id=filed["rfc_message_id"],
+        ),
+    ) is None
+
+
+def test_a_copy_is_left_alone_while_the_previous_one_still_has_work(tmp_path: Path):
+    database = tmp_path / "duplicate-inflight.sqlite3"
+    store = EmailStore(database)
+    store.create_account(_task2_account_values("dingtalk-account"))
+    _enable_category_with_binding(store, "work", "dingtalk-account")
+    classification = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="inflight-duplicate",
+        category=EmailCategory.WORK,
+        actions=(EmailAction.MOVE,),
+        action_parameters={EmailAction.MOVE: {"target_folder": "work-folder"}},
+    )
+    _persist_scan(store, classification)
+    filed = store.get_classification(classification.classification_id)
+
+    assert store.reapply_classification_to_copy(
+        filed["stable_message_identity"],
+        EmailProviderLocator(
+            account_id=filed["account_id"], folder="INBOX",
+            uidvalidity=int(filed["uidvalidity"]), uid=99,
+            rfc_message_id=filed["rfc_message_id"],
+        ),
+    ) is None

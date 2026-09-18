@@ -233,6 +233,13 @@ def scan_agent_classification_batch(
             has_stable_record=has_record,
             include_read=include_read,
         ):
+            # Mail is recognised by its Message-ID, so a second copy of a
+            # message already filed reads as handled and would sit here
+            # untouched. The decision still holds, so the copy that is still
+            # here gets it, without asking the Agent again.
+            reapply = getattr(store, "reapply_classification_to_copy", None)
+            if has_record and callable(reapply):
+                reapply(stable_identity, locator)
             continue
         body_html = ephemeral_body_html(message)
         entries = extract_unsubscribe_entries(
