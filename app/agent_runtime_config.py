@@ -135,6 +135,9 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     friday_provider_model = env.get("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", "").strip()
     friday_provider_key = env.get("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", "").strip()
     claude_model = env.get("CEO_CLAUDE_MODEL", DEFAULT_CEO_CLAUDE_MODEL).strip()
+    # The API route reaches other Claude models than the local login does, so it
+    # carries its own model and falls back to the login's when unset.
+    claude_api_model = env.get("CEO_CLAUDE_API_MODEL", "").strip() or claude_model
     claude_reasoning_effort = env.get(
         "CEO_CLAUDE_MODEL_REASONING_EFFORT",
         DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT,
@@ -193,7 +196,7 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
                     name=name,
                     runtime_kind=RuntimeKind.CLAUDE_CLI,
                     credential_mode=CredentialMode.SERVICE_API,
-                    model=claude_model,
+                    model=claude_api_model,
                 )
             )
             secrets[name] = SecretStr(raw_secret)

@@ -9425,6 +9425,7 @@ def handle_agent_runtime_config_post(
     claude_enabled = parsed.get("claude_oauth_enabled", [""])[0] == "1"
     claude_api_enabled = parsed.get("claude_api_enabled", [""])[0] == "1"
     claude_api_token = parsed.get("claude_api_token", [""])[0].strip()
+    claude_api_model = parsed.get("claude_api_model", [""])[0].strip()
     try:
         added_routes = _parsed_added_routes(parsed)
     except ValueError as exc:
@@ -9603,6 +9604,8 @@ def handle_agent_runtime_config_post(
         "CEO_CODEX_MODEL_REASONING_EFFORT": reasoning_effort,
         "CEO_CLAUDE_MODEL": claude_model,
         "CEO_CLAUDE_MODEL_REASONING_EFFORT": claude_reasoning_effort,
+        "CEO_CLAUDE_API_MODEL": claude_api_model
+        or _agent_runtime_config_value("CEO_CLAUDE_API_MODEL"),
         "CEO_AGENT_RUNTIME_HIDDEN_ROUTES": ",".join(hidden_routes),
         "CEO_AGENT_RUNTIME_ROUTES": _composed_route_order(
             enabled={

@@ -672,6 +672,33 @@ const CODEX_MODEL_OPTIONS = [
   { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
 ];
 
+// The Claude CLI takes an alias or a full model id; these are the aliases the
+// service ships with. A value outside the list still shows, as "当前配置".
+const CLAUDE_MODEL_OPTIONS = [
+  { value: "opus", label: "Opus" },
+  { value: "sonnet", label: "Sonnet" },
+  { value: "haiku", label: "Haiku" },
+];
+
+// The API route addresses models by id, not by the local CLI's alias.
+const CLAUDE_API_MODEL_GROUPS = [
+  { label: "别名（跟随本机 CLI）", options: CLAUDE_MODEL_OPTIONS },
+  { label: "Claude 模型 id", options: [
+    { value: "claude-opus-5", label: "Opus 5" },
+    { value: "claude-sonnet-5", label: "Sonnet 5" },
+    { value: "claude-fable-5-1", label: "Fable 5.1" },
+    { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
+  ] },
+];
+
+// The service refuses anything outside this set, so the page offers only these.
+const REASONING_EFFORT_OPTIONS = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra high" },
+];
+
 const COMPATIBLE_MODEL_GROUPS = [
   { label: "OpenAI", options: CODEX_MODEL_OPTIONS },
   { label: "MiniMax", options: [
@@ -894,7 +921,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
     };
     if (name === "codex_oauth") return <RuntimeRouteCard title="Codex OAuth" description="默认的本机 OAuth 路由" enabled locked readOnly={!editing}>
       <ModelSelect id="codex-model" label="Model" value={raw("CEO_CODEX_MODEL")} groups={[{ label: "Codex / OpenAI", options: CODEX_MODEL_OPTIONS }]} onChange={(next) => update("CEO_CODEX_MODEL", next)} />
-      {input("CEO_CODEX_MODEL_REASONING_EFFORT", "Thinking strength")}
+      <ModelSelect id="codex-effort" label="Thinking strength" value={raw("CEO_CODEX_MODEL_REASONING_EFFORT")} groups={[{ label: "Thinking strength", options: REASONING_EFFORT_OPTIONS }]} onChange={(next) => update("CEO_CODEX_MODEL_REASONING_EFFORT", next)} />
     </RuntimeRouteCard>;
     if (name === "codex_api") return <RuntimeRouteCard title="Codex API" description="OAuth 不可用时的备用路由" {...common}>
       {input("CEO_CODEX_API_BASE_URL", "API Base URL", "url")}
@@ -902,12 +929,11 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
       <SecretField id="codex-api-token" label="API Token" configured={Boolean(raw("CEO_CODEX_API_KEY"))} value={raw("CEO_CODEX_API_KEY")} onChange={(next) => update("CEO_CODEX_API_KEY", next)} />
     </RuntimeRouteCard>;
     if (name === "claude_oauth") return <RuntimeRouteCard title="Claude OAuth" description="复用本机 Claude Code 登录的路由" {...common}>
-      {input("CEO_CLAUDE_MODEL", "Model")}
-      {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
+      <ModelSelect id="claude-model" label="Model" value={raw("CEO_CLAUDE_MODEL")} groups={[{ label: "Claude", options: CLAUDE_MODEL_OPTIONS }]} onChange={(next) => update("CEO_CLAUDE_MODEL", next)} />
+      <ModelSelect id="claude-effort" label="Thinking strength" value={raw("CEO_CLAUDE_MODEL_REASONING_EFFORT")} groups={[{ label: "Thinking strength", options: REASONING_EFFORT_OPTIONS }]} onChange={(next) => update("CEO_CLAUDE_MODEL_REASONING_EFFORT", next)} />
     </RuntimeRouteCard>;
-    if (name === "claude_api") return <RuntimeRouteCard title="Claude API" description="Claude 登录不可用时的 API 路由；模型与 Claude OAuth 共用" {...common}>
-      {input("CEO_CLAUDE_MODEL", "Model")}
-      {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
+    if (name === "claude_api") return <RuntimeRouteCard title="Claude API" description="Claude 登录不可用时的 API 路由" {...common}>
+      <ModelSelect id="claude-api-model" label="Model" value={raw("CEO_CLAUDE_API_MODEL") || raw("CEO_CLAUDE_MODEL")} groups={CLAUDE_API_MODEL_GROUPS} onChange={(next) => update("CEO_CLAUDE_API_MODEL", next)} />
       <SecretField id="claude-api-token" label="Claude API Token" configured={Boolean(raw("CEO_CLAUDE_API_KEY"))} value={raw("CEO_CLAUDE_API_KEY")} onChange={(next) => update("CEO_CLAUDE_API_KEY", next)} />
     </RuntimeRouteCard>;
     return <RuntimeRouteCard title="Friday Runtime" description="通过 Friday 自带 CLI 运行，无需配置" {...common} unavailable={fridayCliAvailable ? undefined : "未检测到 Friday 桌面版。Friday 的 CLI 随桌面版一起安装，本服务不单独安装；请先安装 Friday.app 再启用这条线路。"} />;

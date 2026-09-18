@@ -257,6 +257,31 @@ describe("SettingsPage", () => {
     }), {});
   });
 
+  it("picks Claude models from lists, and the API route keeps its own", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce(runtimeDto({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,claude_oauth,claude_api",
+      CEO_CLAUDE_MODEL: "sonnet",
+      CEO_CLAUDE_MODEL_REASONING_EFFORT: "medium",
+      CEO_CLAUDE_API_KEY: "claude-token",
+    }));
+    renderSettings("/settings?tab=agent-runtime");
+
+    await enterEditMode(user);
+    // Both are select controls, not free text, because the service refuses
+    // anything outside these sets.
+    await user.selectOptions(screen.getByLabelText("Thinking strength", { selector: "#claude-effort" }), "high");
+    await user.selectOptions(screen.getByLabelText("Model", { selector: "#claude-api-model" }), "claude-opus-5");
+
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
+      CEO_CLAUDE_MODEL: "sonnet",
+      CEO_CLAUDE_MODEL_REASONING_EFFORT: "high",
+      CEO_CLAUDE_API_MODEL: "claude-opus-5",
+    }), {});
+  });
+
   it("deletes a built-in card and offers it back, which switching off does not", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce(runtimeDto({

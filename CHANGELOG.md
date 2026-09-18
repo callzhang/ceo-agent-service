@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-17: Claude's model and thinking strength are chosen from lists, not
+  typed. Thinking strength was a free-text field although the service refuses
+  anything outside low/medium/high/xhigh, and Claude's model was free text on
+  both Claude cards. The Claude API route also carries its own model
+  (`CEO_CLAUDE_API_MODEL`, falling back to the login's) the way Codex API
+  already did, so choosing a model id there no longer changes what the local
+  Claude login runs.
+
 - 2026-09-17: 归档新增的钉钉 AI 听记 no longer keeps only the four newest minutes
   a day. The scheduled pass was invoked with `CEO_MAX_BATCHES` (4) as a
   per-pass item cap, and its candidate list is the newest-first listing, so the
