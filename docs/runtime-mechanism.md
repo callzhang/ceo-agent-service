@@ -221,6 +221,47 @@ Consumer/Audit 流程；原 `needs_human` attempt 继续作为历史事实保留
 OA 判断以当前节点的实际表单为边界：不存在于当前表单的字段不能被判为必填，后续阶段字段也
 不能提前阻塞当前审批。该规则同时进入 Consumer 候选契约和 Audit 复核契约。
 
+### OA 审批扫描与决策（2026-09-17 重写）
+
+扫描规则：
+
+- **`dws oa approval list-pending` 的行在 `result.values`。** 解析器曾只认 `list` / `items` /
+  `processInstances` / `processInstanceList`，因此每一轮都解析出空队列，而钉钉里审批仍在等待，
+  最久的挂了两个多月。cursor 里 `seen_process_instance_ids` 为空表示**解析失败**，不是"没有待办"。
+- **本人的评论不是决策。** 指纹曾在"最新一条操作记录属于本人"时判定审批已处理；分身的审阅评论
+  是以本人身份发出的，于是它自己的评论让审批对扫描器永久隐形。`ADD_REMARK` / `COMMENT`
+  不终结指纹计算。
+- **每条审批一个会话，且每次扫描都从干净会话开始。** 会话按 conversation id 复用，早期所有审批
+  共用 `oa_pending_scan`，一个会话里第二条起零工具调用、直接复述上一条的结论，其中一次谎报
+  "已执行通过"；改为一条审批一个 conversation id 后，同一条审批的重跑仍会续用自己的旧 transcript，
+  因此入队时清空该 conversation 的全部路线会话（`clear_conversation_runtime_sessions`）。
+- **唤醒条件**：已经评论过的审批不再按天唤醒，等指纹变动——指纹本就排除本人记录，所以只有他人
+  评论或操作才会叫醒它；**没有评论过的**保留每日重看，因为那种是静默丢掉的，没有别的机制能捞回来。
+- 扫描提示语必须指向 `~/.agents/skills/dingtalk-oa-approval/SKILL.md`。曾指向 dws 官方的
+  `dingtalk-misc/references/oa.md`，导致我们自己的审批规则从未进入模型；官方技能还会被
+  `dws upgrade` 覆盖，规则写在那里留不住。
+
+决策规则在 Skill 里，不在代码里：完整决策表、`information_completeness` / `rule_coverage`
+评分口径、退回优先于评论搁置、拒绝前必须先查 `revert-activities`、`--remark` 必填，都在
+`dingtalk-oa-approval` 的版本化修订中。该 Skill 只存在于运行时目录，没有仓库副本，按
+`RUNTIME_ONLY_VERSIONED_SKILL_NAMES` 版本化，**不得带 `metadata.managed_by` 标记**——
+操作 Skill 目录会拒绝带标记的文件，该 Skill 会因此从定时任务的可选清单里消失。
+
+### 没有 runtime schema 的 DWS 写操作
+
+`oa approval revert-task` 和 `revert-activities` 在 DWS 的 runtime schema 里不存在
+（上游 issue #1406），同族的 `reject`、`redirect-task` 正常。命令功能完好，但两道闸口都依赖
+schema 判断写操作，因此各自失效过一次：
+
+- **执行闸**：`_execute_reviewed` 判 `agent_cli_command_unreviewed`，退回命令到不了钉钉，
+  "退回优先"这条规则写下后一次都没执行过。修法是登记到 `config/mcp-tool-effects.json`
+  的受控写名单（`6b6b9081`）。
+- **证据闸**：`dingtalk_send_evidence` 的分类器同样认不出它，退回真的执行了、钉钉记录
+  `REDIRECT_PROCESS` 且待办减少，任务仍被判 `provider_receipt_missing`。修法是让证据闸
+  使用同一份登记表兜底（`ef6f4de4`）。
+
+**新登记一个没有 schema 的写操作时，两处都要能认出它**，否则服务会允许一个动作、然后拒绝相信它发生过。
+
 ## 外部动作幂等与依赖
 
 每个 ProposedAction 必须包含稳定的 `action_identity`。服务使用
@@ -259,9 +300,25 @@ Agent 生成的钉钉候选正文在进入 Audit 前按 `execution_generation + 
 第一版正文覆盖。这个准备键不替代跨 revision 稳定的 `external_action_key`；已有 provider 成功
 结果时仍直接复用，不得重复发送。
 
-启动修复只读取完成的 Audit result 及其 parent Consumer proposal。若历史 proposal 使用过旧的
-provider 字段名，修复过程先一次性迁移为当前 wire target，再使用与在线路径相同的动作键算法；
-重复运行不会新增第二条 provider 结果或消息记录。
+### 送达只在发送当场记录一次（`721b7f58`）
+
+**执行发送的那一轮，在当场写下这条送达，内容是 provider 的真实返回。写不成就是没发成——
+不补、不猜、不重建。** 服务里不再有任何重建路径：`_repair_completed_message_delivery_projections`、
+它的候选查询、结果再水合，以及 `provider_effect_reconcile` 模块都已删除。
+
+删除的理由是这些重建本身制造了故障：它挂在生产从不调用的 `consume_once` 上，从未在服务里运行过；
+候选 SQL 漏了 `dws chat +dm` 只返回的 `open_task_id`，真实送达永远选不中；它把模型自述的
+`delivery_status: "sent"` 当成送达，写出过七行「History 显示发过、实际没发」的幻影。
+而它存在的唯一理由，是实时写入长期不工作——`_audit_terminal` 构造的结果不带 `consumer_result`，
+投影第一道门就返回 None，直到 `de176316` 才修好。
+
+由此产生一个**有意保留的缺口**：实时写入失败就永久没有记录，没有兜底。唯一会告诉我们实时路径坏了的，
+是 quality gate 的 `executed_without_record`——它报告「报了 executed、有 provider 回执、却没有送达记录」，
+**只报告，不自动补写**。看到它报警要去查实时写入路径，不要把记录补回去：用重建填补一次本该失败的发送，
+正是那七行幻影的成因。
+
+非 Agent 发送（如 OKR 周报）由发送它的那条命令自己记录，同一原则；微信有自己的 `wechat_deliveries`。
+`sent_replies` 里 2026-09 之前的记录早于运行模型，只读保留，不迁移也不改写。
 
 这里只管理稳定身份、动作顺序和 provider 成功事实。应用层不检查 Agent 使用了哪些工具，也不建立
 read-only、unknown 或 reconciliation 状态机：回执核验是对已记录调用流的一次读取，不是新的状态机，
