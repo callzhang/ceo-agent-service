@@ -55,6 +55,12 @@ TARGETING_PATTERNS: Mapping[str, str] = {
         r"订单|发货|已送达|已签收|物流|派送|运单|购买|下单|退货|退款|"
         r"\border\b|delivered|delivery|shipment|shipped|purchase|receipt|refund|return"
     ),
+    "work": (
+        r"项目|交付|验收|需求|方案|排期|上线|客户|合作|标注|数据集|对接|"
+        r"会议|纪要|报价|采购|投标|招标|试用|样例|"
+        r"\bPOC\b|\bdemo\b|kickoff|milestone|delivery|requirement|proposal|"
+        r"meeting|partnership|integration|pilot"
+    ),
     "human_resources": (
         r"招聘|面试|简历|入职|离职|转正|offer|录用|员工|社保|公积金|绩效|考勤|"
         r"薪酬|调岗|人事|\bHR\b|候选人|"
