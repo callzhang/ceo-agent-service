@@ -74,6 +74,7 @@ reverts committed work they did not author.
 | claude-minutes-sync-batch-cap | app/minutes_sync.py (`max_new_items` removal only), app/cli.py (`sync_minutes_once_command` and its two call sites only), tests/test_minutes_sync.py, tests/test_cli.py (the two `sync-minutes-once` cases that asserted the cap only), CHANGELOG.md, docs/agent-claims.md | The daily AI 听记 pass ran with `CEO_MAX_BATCHES=4` as a per-pass item cap, so it archived only the four newest minutes a day and the rest fell below the newest listing page and were never offered again; drop the cap, backfill the missing minutes, and read every listing scope because `list all` is not complete (20 minutes live only in `shared`) | 2026-09-17 |
 
 
+| claude-delivery-ledger-collapse | docs/superpowers/specs/2026-09-18-delivery-evidence-without-a-ledger-design.md, docs/agent-claims.md | Design only, not implemented: collapse sent_replies/external_action_results into a projection derived from the run's own provider evidence (Derek 2026-09-18) | 2026-09-18 |
 ## Recent overlaps worth knowing
 
 - 2026-09-17, Claude session `ceo-agent-service-bd`, **I edited `app/runtime_fallback.py`
