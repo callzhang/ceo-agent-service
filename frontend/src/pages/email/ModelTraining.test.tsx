@@ -172,7 +172,7 @@ it("keeps the runtime header visible and opens compact setup and promotion dialo
   expect(screen.getByText("可用训练样本").parentElement).toHaveTextContent(
     "42",
   );
-  expect(screen.getByText("候选 Micro F1").parentElement).toHaveTextContent(
+  expect(screen.getByText("候选整体准确率").parentElement).toHaveTextContent(
     "88.0%",
   );
   expect(screen.getByText("候选 P95 延迟").parentElement).toHaveTextContent(
@@ -299,7 +299,8 @@ it("keeps structured effect, data coverage, and technical evidence in Chinese de
     screen.getByRole("button", { name: "查看 candidate-full-id" }),
   );
   const drawer = await screen.findByRole("dialog", { name: "模型版本详情" });
-  expect(drawer).toHaveTextContent("important 独立输出头");
+  expect(drawer).toHaveTextContent("「是否重要」判断（与分类无关的独立输出头）");
+  expect(drawer).toHaveTextContent("整体准确率（全部分类）");
   expect(drawer).toHaveTextContent("30 / 25");
   await user.click(screen.getByRole("tab", { name: "数据与参数" }));
   expect(drawer).toHaveTextContent("训练耗时");
@@ -658,4 +659,19 @@ it("offers the threshold editor once, from the header", () => {
 
   expect(screen.getAllByRole("button", { name: "晋升设置" })).toHaveLength(1);
   expect(screen.queryByRole("button", { name: "查看与编辑门槛" })).not.toBeInTheDocument();
+});
+
+it("says which scope each score covers, so 79.5% and 91.4% do not look contradictory", () => {
+  const scoped = {
+    ...learning,
+    staged_models: [{ ...learning.staged_models[0], metrics: { ...learning.staged_models[0].metrics, accuracy: 0.795, micro_f1: 0.795, important: { precision: 0.72, recall: 0.69, f1: 0.706, accepted_precision: 0.65 } } }],
+  };
+  render(
+    <ModelTraining learning={scoped} configs={[]} reload={async () => scoped} runtimeVerified onRuntimeUnverified={vi.fn()} onBusy={vi.fn()} />,
+  );
+
+  // The headline number is the whole model, including categories it will not take.
+  expect(screen.getByText("候选整体准确率").parentElement).toHaveTextContent("79.5%");
+  expect(screen.getByText("候选整体准确率").parentElement).toHaveTextContent("全部分类，含模型不接手的");
+  expect(screen.queryByText("候选 Micro F1")).not.toBeInTheDocument();
 });

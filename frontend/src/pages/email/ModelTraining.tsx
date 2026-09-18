@@ -387,9 +387,9 @@ export function ModelTraining({
           }
         />
         <Stat
-          label="候选 Micro F1"
+          label="候选整体准确率"
           value={measured(candidate?.metrics?.micro_f1)}
-          note={candidate ? `候选 ${candidate.model_id}` : "当前候选无评测"}
+          note={candidate ? "全部分类，含模型不接手的" : "当前候选无评测"}
         />
         <Stat
           label="候选 P95 延迟"
@@ -502,7 +502,7 @@ export function ModelTraining({
                   <th>状态</th>
                   <th>训练时间</th>
                   <th>样本数</th>
-                  <th>Micro F1</th>
+                  <th>整体准确率</th>
                   <th>P95</th>
                   <th>详情</th>
                 </tr>
@@ -1004,11 +1004,13 @@ function EffectDetails({ model }: { model: EmailStagedModel }) {
   return (
     <section aria-label="效果">
       <p>
-        Accuracy {measured(model.metrics?.accuracy)} · Micro F1{" "}
-        {measured(model.metrics?.micro_f1)}
+        整体准确率（全部分类）{measured(model.metrics?.accuracy)}
+      </p>
+      <p className="muted">
+        晋升检查里的 Micro F1 只统计将要上线的分类，所以会高于这个数。
       </p>
       <CategoryMetrics model={model} />
-      <h4>important 独立输出头</h4>
+      <h4>「是否重要」判断（与分类无关的独立输出头）</h4>
       {["precision", "recall", "f1", "accepted_precision"].map((key) => (
         <p key={key}>
           {key}：{measured(model.metrics?.important?.[key])}
@@ -1193,8 +1195,7 @@ function LegacyDetails({
           {model.status}
         </p>
         <p>
-          Accuracy {measured(model.accuracy)} · Micro F1{" "}
-          {measured(model.micro_f1)} · P95{" "}
+          整体准确率（全部分类）{measured(model.accuracy)} · P95{" "}
           {measured(model.prediction_latency_p95_ms, " ms")}
         </p>
         <p className="muted">

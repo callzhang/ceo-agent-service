@@ -320,7 +320,7 @@ it("renders rich model detail on demand and keeps healthy inventory visible on d
   show("/email?tab=learning");await user.click(await screen.findByRole("button",{name:"查看 embedding-full-v9"}));
   expect(await screen.findByText("详情不可用")).toBeInTheDocument();expect(screen.getByRole("table",{name:"模型版本"})).toHaveTextContent("embedding-full-v9");
   await user.click(screen.getByRole("button",{name:"重试"}));const drawer=screen.getByRole("dialog");
-  expect(await within(drawer).findByText("important 独立输出头")).toBeInTheDocument();
+  expect(await within(drawer).findByText("「是否重要」判断（与分类无关的独立输出头）")).toBeInTheDocument();
   expect(drawer).toHaveTextContent("37");expect(drawer).toHaveTextContent("99.0%");expect(drawer).toHaveTextContent("200.0 ms");expect(drawer).toHaveTextContent("digest-9");expect(drawer).toHaveTextContent("emb-7");expect(drawer).toHaveTextContent("a".repeat(64));
 });
 it("keeps junk confirmable as Trash while excluding it from business configuration",async()=>{
