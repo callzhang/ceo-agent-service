@@ -3339,6 +3339,7 @@ def _run_task_maintenance_once(
         + store.resolve_errors_recovered_by_completed_reply_tasks()
         + store.resolve_errors_recovered_by_terminal_work_summary_inputs()
         + store.resolve_errors_recovered_by_scheduled_service_command()
+        + store.resolve_errors_recovered_by_scheduled_reply_task()
         + store.resolve_closed_blocked_reply_attempts()
         + close_superseded_scheduled_reply_tasks(store)
     )

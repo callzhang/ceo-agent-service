@@ -26815,6 +26815,33 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def resolve_errors_recovered_by_scheduled_reply_task(self) -> int:
+        """Close scheduled Agent incidents after their reply task completes."""
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update errors as error_event
+                set resolved_at=current_timestamp,
+                    resolution='recovered by later successful scheduled reply task'
+                where coalesce(error_event.resolved_at, '')=''
+                  and error_event.kind='scheduled_task_execution_unavailable'
+                  and coalesce(error_event.conversation_id, '') like 'scheduled-task:%'
+                  and exists (
+                      select 1
+                      from scheduled_task_runs as run
+                      join reply_tasks as task
+                        on run.execution_kind='reply_task'
+                       and cast(run.execution_id as integer)=task.id
+                      where error_event.conversation_id =
+                            'scheduled-task:' || cast(run.scheduled_task_id as text)
+                        and run.dispatch_status='dispatched'
+                        and lower(task.status) in ('done', 'skipped')
+                        and datetime(task.updated_at) >= datetime(error_event.created_at)
+                  )
+                """
+            )
+            return cursor.rowcount
+
     def set_service_health_component(
         self,
         component: str,

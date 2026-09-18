@@ -8624,6 +8624,61 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
     assert unrelated.resolved_at == ""
 
 
+def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = store.create_scheduled_task(
+        name="Sync meeting notes",
+        prompt="$ceo-minutes-sync",
+        cron_expression="* * * * *",
+        timezone_name="UTC",
+        runtime_id="codex_api",
+    )
+    assert store.enqueue_reply_task(
+        conversation_id=f"scheduled-task:{task.id}",
+        conversation_title="Sync meeting notes",
+        single_chat=True,
+        trigger_message_id="event-success",
+        trigger_create_time="2026-09-18T12:00:00Z",
+        trigger_sender="scheduler",
+        trigger_text="sync",
+        channel="scheduled",
+    )
+    with store._connect() as db:
+        reply_task_id = db.execute(
+            "select id from reply_tasks where trigger_message_id='event-success'"
+        ).fetchone()[0]
+        db.execute(
+            "update reply_tasks set status='done', updated_at='2026-09-18 12:02:00' where id=?",
+            (reply_task_id,),
+        )
+        db.execute(
+            """
+            insert into scheduled_task_runs (
+                event_id, scheduled_task_id, trigger_kind, scheduled_for, first_scheduled_for,
+                dispatch_status, snapshot_json, execution_kind, execution_id, dispatched_at
+            ) values ('event-success', ?, 'scheduled', '2026-09-18T12:00:00Z',
+                      '2026-09-18T12:00:00Z', 'dispatched', '{}', 'reply_task', ?,
+                      '2026-09-18 12:00:32')
+            """,
+            (task.id, str(reply_task_id)),
+        )
+    store.record_error(
+        f"scheduled-task:{task.id}",
+        "event-success",
+        "scheduled_task_execution_unavailable",
+        "runtime route paused",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update errors set created_at='2026-09-18 11:59:00' where message_id='event-success'"
+        )
+
+    assert store.resolve_errors_recovered_by_scheduled_reply_task() == 1
+    [error] = store.list_errors()
+    assert error.resolved_at
+    assert error.resolution == "recovered by later successful scheduled reply task"
+
+
 def test_service_health_components_hold_current_component_state(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_service_health_component(
