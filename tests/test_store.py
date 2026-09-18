@@ -11419,3 +11419,105 @@ def test_an_attempt_that_started_a_provider_effect_is_left_alone(tmp_path: Path)
     run_status, attempt_status = _live_counts(store, run_id, attempt.id)
     assert run_status == "failed"
     assert attempt_status == "starting"
+
+
+def test_a_task_whose_approval_action_completed_ends_needs_human(tmp_path):
+    """Reply task 135612 rejected an approval in DingTalk, then ended `failed`.
+
+    The rejection is irreversible and `failed` invites a rerun, so a task whose
+    decision already reached the provider ends as work a person owns instead.
+    """
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=False,
+        trigger_message_id="oa-pending:INST:1",
+        trigger_create_time="2026-09-17 23:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+    )
+    task = store.get_reply_task_for_message("oa_pending_scan", "oa-pending:INST:1")
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='processing', locked_at=current_timestamp, "
+            "claimed_input_version=input_version, "
+            "business_object_key='oa:INST:T1' where id=?",
+            (task.id,),
+        )
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="effect-test-owner",
+    )
+    reject = {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution",
+            "status": "completed",
+            "exit_code": 0,
+            "command": (
+                "/bin/zsh -lc 'dws oa approval reject --instance-id INST "
+                "--task-id T1 --remark 材料不足 --format json'"
+            ),
+            "aggregated_output": '{"success":true}',
+        },
+    }
+    with store._connect() as db:
+        db.execute(
+            "insert into agent_run_events (agent_run_id, sequence, event_json, event_type) "
+            "values (?, 1, ?, 'item.completed')",
+            (claim.run.id, json.dumps(reject, ensure_ascii=False)),
+        )
+
+    store.fail_reply_task(
+        task.id,
+        "audit_revision_exhausted",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "needs_human"
+    assert updated.error.startswith("external_action_completed_followup_outstanding")
+
+
+def test_a_task_that_wrote_nothing_still_fails(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=False,
+        trigger_message_id="oa-pending:INST2:1",
+        trigger_create_time="2026-09-17 23:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+    )
+    task = store.get_reply_task_for_message("oa_pending_scan", "oa-pending:INST2:1")
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='processing', locked_at=current_timestamp, "
+            "claimed_input_version=input_version, "
+            "business_object_key='oa:INST2:T1' where id=?",
+            (task.id,),
+        )
+
+    store.fail_reply_task(
+        task.id,
+        "audit_revision_exhausted",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error == "audit_revision_exhausted"

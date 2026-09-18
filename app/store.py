@@ -11957,6 +11957,45 @@ class AutoReplyStore:
 
 
 
+    def _generation_completed_external_action(
+        self,
+        db,
+        *,
+        task_id: int,
+        execution_generation: str,
+        business_object_key: str,
+    ) -> bool:
+        """Whether this generation already wrote to the task's business object."""
+
+        object_key = business_object_key.strip()
+        if not object_key:
+            return False
+        from app.dingtalk_send_evidence import completed_provider_writes
+
+        rows = db.execute(
+            """
+            select events.event_json
+            from agent_run_events as events
+            join agent_runs as runs on runs.id=events.agent_run_id
+            where runs.reply_task_id=? and runs.execution_generation=?
+            """,
+            (task_id, execution_generation),
+        ).fetchall()
+        tool_events: list[dict[str, object]] = []
+        for row in rows:
+            try:
+                event = json.loads(row["event_json"] or "{}")
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict):
+                tool_events.append(event)
+        if not tool_events:
+            return False
+        return any(
+            identifier and identifier in object_key
+            for identifier in completed_provider_writes(tool_events, store=self)
+        )
+
     def fail_reply_task(
         self,
         task_id: int,
@@ -11975,6 +12014,23 @@ class AutoReplyStore:
             if row is None:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
             has_new_input = int(row["input_version"]) > int(row["claimed_input_version"])
+            terminal_status, terminal_error = "failed", error
+            if not has_new_input and self._generation_completed_external_action(
+                db,
+                task_id=task_id,
+                execution_generation=expected_execution_generation,
+                business_object_key=str(row["business_object_key"] or ""),
+            ):
+                # The decision already reached the provider; only a later step
+                # failed. `failed` invites a rerun, and reply task 135612
+                # rejected an approval in DingTalk and then burned its revision
+                # budget on the follow-up notification, ending `failed` with the
+                # rejection irreversible. A person owns what is left.
+                terminal_status = "needs_human"
+                terminal_error = (
+                    "external_action_completed_followup_outstanding: "
+                    f"{error}"[:500]
+                )
             cursor = db.execute(
                 """
                 update reply_tasks
@@ -11985,10 +12041,10 @@ class AutoReplyStore:
                 where id=? and status='processing' and execution_generation=?
                 """,
                 (
-                    "pending" if has_new_input else "failed",
+                    "pending" if has_new_input else terminal_status,
                     uuid4().hex if has_new_input else expected_execution_generation,
-                    "" if has_new_input else error,
-                    "pending" if has_new_input else "failed",
+                    "" if has_new_input else terminal_error,
+                    "pending" if has_new_input else terminal_status,
                     task_id,
                     expected_execution_generation,
                 ),

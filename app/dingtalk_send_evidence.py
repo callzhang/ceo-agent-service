@@ -208,6 +208,23 @@ def _carries_outgoing_text(action: dict) -> bool:
     return isinstance(payload, dict) and dingtalk_outgoing_text_key(payload) is not None
 
 
+def completed_provider_writes(
+    tool_events: list[dict[str, object]],
+    *,
+    store: AutoReplyStore | None = None,
+) -> set[str]:
+    """Identifiers a turn actually wrote to at the provider.
+
+    The same judgement the execution evidence gate makes, exposed for the
+    lifecycle: a task whose approval was rejected or sent back cannot end as a
+    plain failure, because `failed` invites a rerun of something irreversible.
+    """
+
+    driver = DingTalkSendEvidenceDriver(store)
+    written, _ = driver._touched_objects(tool_events)
+    return written
+
+
 def _action_identifiers(action: dict) -> set[str]:
     """Every identifier the action names, wherever the proposal put it."""
     values: set[str] = set()
