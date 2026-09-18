@@ -571,12 +571,12 @@ def test_one_failing_scope_keeps_the_others_and_still_defers_success(
     assert state["last_error"] == "mine: scope unavailable"
 
 
-def _restricted() -> DwsError:
+def _restricted(message: str = "no permission") -> DwsError:
     """How the provider refuses one minute, observed live 2026-09-18."""
     return DwsError(
         "dws minutes get info failed",
         "1",
-        business_message="no permission",
+        business_message=message,
         server_key="minutes",
     )
 
@@ -647,3 +647,31 @@ def test_a_credential_failure_is_never_read_as_one_restricted_minute(
 
     assert result.failed == 2 and result.permission_pending == 0
     assert _cursor(store).get("permission_pending_ids", []) == []
+
+
+def test_both_spellings_of_the_refusal_mean_the_same_restricted_minute(
+    tmp_path: Path,
+) -> None:
+    """The provider spells one refusal two ways over the same listing.
+
+    Matching only `no permission` left 13 of 253 minutes unrecognised, which
+    made them `failed` and so failed the whole scheduled command.
+    """
+    store = _store(tmp_path)
+    dws = FakeDws(
+        [{"taskUuid": "lower"}, {"taskUuid": "coded"}],
+        basic={
+            "lower": {"title": "他人会议", "duration": 1800000},
+            "coded": {"title": "他人会议", "duration": 1800000},
+        },
+        errors={
+            "lower": _restricted("no permission"),
+            "coded": _restricted("B_PERMISSION_NoPermission"),
+        },
+    )
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.failed == 0
+    assert result.permission_pending == 2
+    assert _cursor(store)["permission_pending_ids"] == ["coded", "lower"]

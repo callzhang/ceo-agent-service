@@ -13,7 +13,9 @@
   `DwsError` carries the provider's `message` and `server_key` so callers stop
   re-parsing formatted command text. The service still sends no access request
   of its own: `dws minutes +apply-permission` reports `requested: true` for a
-  request its owner never receives.
+  request its owner never receives. The provider spells the refusal two ways,
+  `no permission` and `B_PERMISSION_NoPermission`, and both count: matching
+  only the first left 13 of 253 minutes recorded as failures.
 
 - 2026-09-17: 归档新增的钉钉 AI 听记 reads every listing scope instead of one.
   The pass enumerated with `dws minutes list all`, whose name suggests a

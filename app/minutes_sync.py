@@ -29,9 +29,10 @@ MINUTES_ARCHIVE_DIRECTORY = "AI听记"
 RESTRICTED_MINUTE_MINIMUM_DURATION = timedelta(minutes=5)
 
 # How the provider refuses one minute we may not read, as opposed to a
-# credential failure that refuses every call.
+# credential failure that refuses every call. It uses two spellings for the
+# same refusal, both observed live on 2026-09-18 over the same listing.
 MINUTES_SERVER_KEY = "minutes"
-RESTRICTED_MINUTE_MESSAGE = "no permission"
+RESTRICTED_MINUTE_MESSAGES = frozenset({"no permission", "b_permission_nopermission"})
 
 _SOURCE_URL_PREFIX = "https://shanji.dingtalk.com/app/transcribes/"
 _MINUTES_LIST_MAX_PAGES = 100
@@ -311,9 +312,11 @@ def _is_restricted_minute_error(error: DwsError) -> bool:
     """Whether this error means *this minute* is restricted to us.
 
     The provider reports it as a business error carrying
-    ``server_key="minutes"`` and ``message="no permission"``. Observed live on
-    2026-09-18 against six minutes that the 听记 admin backend lists and the
-    read API refuses, while every other minute in the same pass read normally.
+    ``server_key="minutes"`` and one of two spellings of the same refusal,
+    ``"no permission"`` or ``"B_PERMISSION_NoPermission"``. Both were observed
+    live on 2026-09-18 over one listing of minutes the 听记 admin backend shows
+    and the read API refuses, while every other minute in the same pass read
+    normally. Matching only the first spelling left 13 of 253 unrecognised.
 
     ``DwsError.needs_authorization`` is deliberately not used here. It covers
     PAT_HIGH_RISK_NO_PERMISSION, PAT_MEDIUM_RISK_NO_PERMISSION and
@@ -323,7 +326,7 @@ def _is_restricted_minute_error(error: DwsError) -> bool:
     """
     return (
         error.server_key == MINUTES_SERVER_KEY
-        and error.business_message.casefold() == RESTRICTED_MINUTE_MESSAGE
+        and error.business_message.casefold() in RESTRICTED_MINUTE_MESSAGES
     )
 
 
