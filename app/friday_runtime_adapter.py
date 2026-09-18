@@ -355,6 +355,10 @@ class FridayRuntimeAdapter:
             raise ValueError("poll_interval_seconds must be non-negative")
         self.config = config
         self.contract = contract or FridayRuntimeContract.from_documented_api()
+        # Friday runs through the CLI its desktop app ships, which records the
+        # runtime's address. A caller that injects a transport is talking to a
+        # runtime it already resolved.
+        self._resolve_through_cli = transport is None
         self.transport = transport or UrllibFridayHttpTransport(
             config.friday_runtime_base_url
         )
@@ -387,7 +391,7 @@ class FridayRuntimeAdapter:
             if auth_disabled is None
             else auth_disabled
         )
-        if self.config.friday_runtime_desktop_managed:
+        if self._resolve_through_cli:
             base_url = ensure_desktop_friday_runtime()
             if (
                 not isinstance(self.transport, UrllibFridayHttpTransport)

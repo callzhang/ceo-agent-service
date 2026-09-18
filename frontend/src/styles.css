@@ -389,6 +389,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .runtime-fields > * { align-self: start; }
 .runtime-fields .field-help { margin: 6px 0 0; }
 .runtime-card-head p { min-height: 1.1em; }
+.runtime-card-note { grid-column: 1 / -1; margin: 0; color: var(--ink-soft); font-size: 0.76rem; }
+/* A credential cell lines up with the plain inputs beside it: same label
+   gap, same field height, and the reveal button inside the field. */
+.runtime-fields .secret-field { gap: 6px; }
+.runtime-fields .secret-field-control { position: relative; display: block; }
+.runtime-fields .secret-field-control input { width: 100%; padding-right: 40px; }
+.runtime-fields .secret-field-toggle { position: absolute; top: 50%; right: 4px; width: 30px; min-height: 30px; transform: translateY(-50%); border-color: transparent; background: transparent; }
 .runtime-field { display: grid; gap: 6px; min-width: 0; color: var(--ink-soft); font-size: 0.76rem; font-weight: 700; }
 .runtime-field input { width: 100%; min-height: 38px; padding: 7px 10px; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); font-weight: 400; }
 .runtime-field-group { grid-column: 1 / -1; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }

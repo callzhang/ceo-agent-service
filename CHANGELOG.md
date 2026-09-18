@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-17: Friday Runtime has one path and no settings. The service always
+  reaches it through the CLI the desktop app ships, so the console no longer
+  shows a Friday service address, a provider endpoint, model or token, or a
+  choice between starting Friday itself and using the desktop runtime — the
+  address comes from the CLI on every save and every turn, and the model is
+  Friday's own configuration. The ticket and session-token rules go with them.
+  A credential field now matches the plain inputs beside it, with the reveal
+  control inside the field, so a card's fields read as one row.
+
 - 2026-09-17: Settings / Agent Runtime drops what it never needed to ask or
   say. Friday's credential switch and its ticket and session-token fields are
   gone: the route this service starts runs with authentication off, and the

@@ -9553,7 +9553,6 @@ def handle_agent_runtime_config_post(
         return _invalid_agent_runtime_config(
             "Friday provider requires Base URL, model, and API Token together."
         )
-    friday_desktop = parsed.get("friday_runtime_desktop", [""])[0].strip() == "1"
     if friday_enabled:
         from app.friday_runtime_adapter import bundled_friday_cli
 
@@ -9562,18 +9561,19 @@ def handle_agent_runtime_config_post(
                 "Friday Runtime needs the Friday desktop app: it ships the CLI "
                 "this service runs. Install Friday.app, then enable the route."
             )
-        if friday_desktop:
-            from app.friday_runtime_adapter import (
-                FridayRuntimeError as _FridayRuntimeError,
-                check_desktop_friday,
-            )
+        from app.friday_runtime_adapter import (
+            FridayRuntimeError as _FridayRuntimeError,
+            check_desktop_friday,
+        )
 
-            try:
-                friday_base_url = check_desktop_friday()
-            except (_FridayRuntimeError, OSError) as exc:
-                return _invalid_agent_runtime_config(
-                    f"Friday CLI could not serve a runtime: {exc}"
-                )
+        # Friday runs through its own CLI, so a save stores the address that
+        # CLI is serving now rather than one typed into the page.
+        try:
+            friday_base_url = check_desktop_friday()
+        except (_FridayRuntimeError, OSError) as exc:
+            return _invalid_agent_runtime_config(
+                f"Friday CLI could not serve a runtime: {exc}"
+            )
         if not friday_project_id:
             # Friday owns its project ids, so provision one instead of asking
             # an operator to invent a value Friday would reject.
@@ -9598,30 +9598,6 @@ def handle_agent_runtime_config_post(
                 return _invalid_agent_runtime_config(
                     f"Friday Runtime could not provide a project: {exc}"
                 )
-        if friday_ticket and friday_session_token:
-            return _invalid_agent_runtime_config(
-                "Enter either a Friday Runtime ticket or a session token, not both."
-            )
-        # A newly entered credential replaces the other stored credential.  When
-        # both inputs are blank, retain the existing single credential.
-        if friday_ticket:
-            resulting_ticket, resulting_session = friday_ticket, ""
-        elif friday_session_token:
-            resulting_ticket, resulting_session = "", friday_session_token
-        else:
-            resulting_ticket, resulting_session = (
-                existing_friday_ticket,
-                existing_friday_session,
-            )
-        if friday_auth_disabled:
-            if friday_ticket or friday_session_token:
-                return _invalid_agent_runtime_config(
-                    "Disable authentication or clear the Friday credentials before saving."
-                )
-        elif bool(resulting_ticket) == bool(resulting_session):
-            return _invalid_agent_runtime_config(
-                "Friday Runtime requires exactly one ticket or session token."
-            )
     updates = {
         "CEO_CODEX_MODEL": model,
         "CEO_CODEX_MODEL_REASONING_EFFORT": reasoning_effort,
@@ -9647,7 +9623,6 @@ def handle_agent_runtime_config_post(
         "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": friday_provider_base_url,
         "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": friday_provider_model,
         "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1" if friday_auth_disabled else "0",
-        "CEO_FRIDAY_RUNTIME_DESKTOP": "1" if friday_desktop else "0",
     }
     if api_token:
         updates["CEO_CODEX_API_KEY"] = api_token
@@ -9669,16 +9644,10 @@ def handle_agent_runtime_config_post(
     for route_name in hidden_routes:
         for key in own_credentials.get(route_name, ()):
             updates[key] = ""
-    if friday_auth_disabled:
+    if friday_enabled:
+        # The CLI signs the runtime's own ticket, so no credential is stored.
         updates["CEO_FRIDAY_RUNTIME_TICKET"] = ""
         updates["CEO_FRIDAY_SESSION_TOKEN"] = ""
-    elif friday_enabled:
-        if friday_ticket:
-            updates["CEO_FRIDAY_RUNTIME_TICKET"] = friday_ticket
-            updates["CEO_FRIDAY_SESSION_TOKEN"] = ""
-        elif friday_session_token:
-            updates["CEO_FRIDAY_SESSION_TOKEN"] = friday_session_token
-            updates["CEO_FRIDAY_RUNTIME_TICKET"] = ""
     if friday_provider_api_key:
         updates["CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"] = friday_provider_api_key
     write_env_values(updates)

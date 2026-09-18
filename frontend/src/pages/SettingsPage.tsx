@@ -797,7 +797,7 @@ function AddRuntimeForm({ onAdd, taken, restorable, onRestore }: { onAdd: (route
   </section>;
 }
 
-function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailable, onToggle, onDelete, children }: { title: string; description: string; enabled: boolean; locked?: boolean; wide?: boolean; unavailable?: string; onToggle?: (next: boolean) => void; onDelete?: () => void; children: ReactNode }) {
+function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailable, onToggle, onDelete, children }: { title: string; description: string; enabled: boolean; locked?: boolean; wide?: boolean; unavailable?: string; onToggle?: (next: boolean) => void; onDelete?: () => void; children?: ReactNode }) {
   const blocked = Boolean(unavailable);
   return <section className={`${wide ? "runtime-card runtime-card-wide" : "runtime-card"}${blocked ? " runtime-card-unavailable" : ""}`}>
     <div className="runtime-card-head">
@@ -813,7 +813,7 @@ function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailab
           </div>}
     </div>
     {blocked && <p className="runtime-card-unavailable-reason" role="status">{unavailable}</p>}
-    <fieldset className="runtime-fieldset" disabled={blocked}><div className="runtime-fields">{children}</div></fieldset>
+    {children && <fieldset className="runtime-fieldset" disabled={blocked}><div className="runtime-fields">{children}</div></fieldset>}
   </section>;
 }
 
@@ -830,7 +830,6 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
   // the route when the CLI is missing, so do not grey the card out on a guess.
   const fridayCli = (payload as RecordValue)?.friday_cli as RecordValue | undefined;
   const fridayCliAvailable = fridayCli ? Boolean(fridayCli.available) : true;
-  const fridayDesktop = raw("CEO_FRIDAY_RUNTIME_DESKTOP") === "1";
   // The submitted order is the failover order. Enabling a built-in route puts
   // it in its canonical place among the other built-ins without disturbing an
   // order the operator has arranged.
@@ -900,17 +899,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
           {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
           <SecretField id="claude-api-token" label="Claude API Token" configured={Boolean(raw("CEO_CLAUDE_API_KEY"))} value={raw("CEO_CLAUDE_API_KEY")} onChange={(next) => update("CEO_CLAUDE_API_KEY", next)} />
         </RuntimeRouteCard>}
-        {shown("friday_runtime") && <RuntimeRouteCard title="Friday Runtime" description={fridayDesktop ? "由 Friday 自带 CLI 启动；地址、凭据、模型都归 Friday 自己管" : "本服务自己启动 Friday，并为它指定模型服务"} enabled={enabled("friday_runtime")} onToggle={(next) => toggleRoute("friday_runtime", next)} onDelete={() => deleteBuiltIn("friday_runtime")} wide unavailable={fridayCliAvailable ? undefined : "未检测到 Friday 桌面版。Friday 的 CLI 随桌面版一起安装，本服务不单独安装；请先安装 Friday.app 再启用这条线路。"}>
-          <div className="runtime-field"><span>由谁启动 Friday</span>
-            <label className="runtime-switch runtime-switch-inline">
-              <input type="checkbox" role="switch" aria-label="使用 Friday 桌面版 runtime" checked={fridayDesktop} onChange={(event) => update("CEO_FRIDAY_RUNTIME_DESKTOP", event.target.checked ? "1" : "0")} />
-              <span>{fridayDesktop ? "Friday 自带 CLI" : "本服务自己启动"}</span>
-            </label>
-          </div>
-          {!fridayDesktop && input("CEO_FRIDAY_RUNTIME_BASE_URL", "Friday 服务地址", "url")}
-          {!fridayDesktop && input("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "模型服务地址", "url")}
-          {!fridayDesktop && <ModelSelect id="friday-provider-model" label="模型" value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", next)} />}
-          {!fridayDesktop && <SecretField id="friday-provider-api-token" label="模型服务 Token" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"))} value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", next)} />}
+        {shown("friday_runtime") && <RuntimeRouteCard title="Friday Runtime" description="通过 Friday 自带 CLI 运行，无需配置" enabled={enabled("friday_runtime")} onToggle={(next) => toggleRoute("friday_runtime", next)} onDelete={() => deleteBuiltIn("friday_runtime")} unavailable={fridayCliAvailable ? undefined : "未检测到 Friday 桌面版。Friday 的 CLI 随桌面版一起安装，本服务不单独安装；请先安装 Friday.app 再启用这条线路。"}>
         </RuntimeRouteCard>}
         {addedRoutes.map((name) => {
           const prefix = addedRoutePrefix(name);

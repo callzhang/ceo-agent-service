@@ -100,18 +100,16 @@ describe("SettingsPage", () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
       CEO_CODEX_API_KEY: "codex-token",
-      CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY: "provider-token",
       CEO_FRIDAY_RUNTIME_TICKET: "runtime-ticket",
       CEO_FRIDAY_SESSION_TOKEN: "session-token",
     } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
     renderSettings("/settings?tab=agent-runtime");
 
     expect(await screen.findByLabelText("API Token")).toHaveValue("codex-token");
-    expect(screen.getByLabelText("模型服务 Token")).toHaveValue("provider-token");
-    expect(screen.getAllByRole("option", { name: "MiniMax M2.5" })).toHaveLength(2);
-    expect(screen.getAllByRole("option", { name: "MiniMax M3" })).toHaveLength(2);
-    expect(screen.getAllByRole("option", { name: "Qwen3 Max" })).toHaveLength(2);
-    expect(screen.getAllByRole("option", { name: "GLM-5" })).toHaveLength(2);
+    expect(screen.getAllByRole("option", { name: "MiniMax M2.5" })).toHaveLength(1);
+    expect(screen.getAllByRole("option", { name: "MiniMax M3" })).toHaveLength(1);
+    expect(screen.getAllByRole("option", { name: "Qwen3 Max" })).toHaveLength(1);
+    expect(screen.getAllByRole("option", { name: "GLM-5" })).toHaveLength(1);
 
     const token = screen.getByLabelText("API Token");
     await user.clear(token);
@@ -312,28 +310,16 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText("Claude API Token")).toBeInTheDocument();
   });
 
-  it("asks for nothing once Friday runs through its own desktop CLI", async () => {
-    const user = userEvent.setup();
+  it("shows no Friday fields at all, because its CLI owns every setting", async () => {
     getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
       CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,friday_runtime",
-      CEO_FRIDAY_RUNTIME_BASE_URL: "http://127.0.0.1:52628",
-      CEO_FRIDAY_RUNTIME_AUTH_DISABLED: "1",
-      CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL: "https://api.kksj.org/v1",
     }, friday_cli: { available: true, path: "/Applications/Friday.app/Contents/MacOS/friday-cli" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
     renderSettings("/settings?tab=agent-runtime");
 
-    await user.click(await screen.findByRole("switch", { name: "使用 Friday 桌面版 runtime" }));
-
-    // Friday's CLI records the address and holds the credential, and Friday's
-    // own config picks the model, so none of these belong on the card.
+    expect(await screen.findByRole("switch", { name: "启用 Friday Runtime" })).toBeChecked();
     expect(screen.queryByLabelText("Friday 服务地址")).toBeNull();
     expect(screen.queryByLabelText("模型服务地址")).toBeNull();
-
-    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
-    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
-    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
-      CEO_FRIDAY_RUNTIME_DESKTOP: "1",
-    }), {});
+    expect(screen.queryByLabelText("模型服务 Token")).toBeNull();
   });
 
   it("greys out Friday when the desktop app that ships its CLI is missing", async () => {
@@ -344,7 +330,6 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByRole("switch", { name: "启用 Friday Runtime" })).toBeDisabled();
     expect(screen.getByText(/未检测到 Friday 桌面版/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Friday 服务地址")).toBeDisabled();
   });
 
   it("shows the Agent Runtime validation reason without discarding the draft", async () => {

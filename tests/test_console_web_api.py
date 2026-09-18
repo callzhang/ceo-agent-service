@@ -2142,6 +2142,12 @@ def test_console_agent_runtime_writes_prefilled_credentials_and_compatible_model
             else:
                 os.environ[key] = value
 
+    import app.friday_runtime_adapter as friday_module
+
+    monkeypatch.setattr(friday_module, "bundled_friday_cli", lambda: "/tmp/friday-cli")
+    monkeypatch.setattr(
+        friday_module, "check_desktop_friday", lambda **_: "http://127.0.0.1:8080"
+    )
     env_path = tmp_path / ".env"
     env_path.write_text(
         "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api,friday_runtime\n"
@@ -2176,8 +2182,6 @@ def test_console_agent_runtime_writes_prefilled_credentials_and_compatible_model
                     "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "https://provider.example/v1",
                     "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": "MiniMax-M3",
                     "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "new-provider-token",
-                    "CEO_FRIDAY_RUNTIME_TICKET": "new-ticket",
-                    "CEO_FRIDAY_SESSION_TOKEN": "",
                 }},
             )
 
@@ -2186,7 +2190,8 @@ def test_console_agent_runtime_writes_prefilled_credentials_and_compatible_model
         assert "CEO_CODEX_API_MODEL=MiniMax-M2.5" in env_text
         assert "CEO_CODEX_API_KEY=new-codex-token" in env_text
         assert "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY=new-provider-token" in env_text
-        assert "CEO_FRIDAY_RUNTIME_TICKET=new-ticket" in env_text
+        # Friday's CLI signs its own ticket, so the console stores none.
+        assert 'CEO_FRIDAY_RUNTIME_TICKET=""' in env_text
     finally:
         restore_runtime_env()
 
