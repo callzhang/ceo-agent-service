@@ -1,102 +1,85 @@
-# 送达证据不再依赖独立账本
+# 送达记录只在发送当场写一次
 
 状态：设计，待 Derek 批准后实施。Derek 2026-09-18：「不需要一个账本，只要每个任务如果计划发送，
 audit agent 核实后就发送，然后记录发送成功的服务器返回码作为证据，这个发送就算完成了。」
+「不要兼容历史，一次性改好。」「78 条上 ledger 的可以手动改好。」
 
-## 现在是什么样
+## 结论先说
 
-一次成功发送之后，服务写三处：
+问题不在于有一张表，而在于这张表被**事后重建**。删掉一切重建路径，只保留「谁发送，谁在发送当场记一行」。
+表的形状不变，所以不存在历史兼容问题——旧记录和新记录是同一种东西，也不需要迁移代码。
 
-1. `agent_runs.final_result_json` 里 Audit 结果的 `external_result.live_result_reference`——provider 返回。
-2. `external_action_results`——按 `external_action_key` 存的动作台账。
-3. `sent_replies`——消息正文 + provider 返回 + 反馈 token，供 History、撤回、反馈回链使用。
+本方案的绝大部分内容是**删除**。
 
-第 1 项是运行自己的事实，第 2、3 项是它的投影。投影由 `_sent_reply_projection_from_result`
-（`app/worker.py`）生成，`record_completed_agent_message_delivery`（`app/store.py`）落库。
+## 现在的实际状况
 
-## 为什么要拆
+一次 Agent 发送成功后，记录有两条路径：
 
-2026-09-16/17 修的四个故障，全部只存在于「第二份状态」里：
+1. **实时**：`_apply_orchestration_result` 从 Audit 结果投影出一行，写 `sent_replies` 与
+   `external_action_results`。这条路直到 `de176316` 才真正能工作——在那之前 `_audit_terminal`
+   构造的结果不带 `consumer_result`，投影第一道门就返回 None。
+2. **事后重建**：`_repair_completed_message_delivery_projections` 扫描「完成但没有投影」的 Audit 运行，
+   从存下来的结果里把送达重新推导出来补写。
 
-- 实时路径从不写账本：`_audit_terminal` 构造的 `OrchestrationResult` 不带 `consumer_result`，投影第一道门
-  就返回 None。1741 次完成的 Audit 运行只产出 2068 行 `sent_replies`，而且几乎都来自事后补账（`de176316`）。
-- 补账扫描挂在 `consume_once`，而生产走 `process_claimed_reply_task`，那段代码从未在服务里运行过（`9c7e1e91`）。
-- 扫描的候选 SQL 漏了 `open_task_id` 等标识，`dws chat +dm` 这种只返回任务句柄的真实送达永远选不中（`6e97e459`）。
-- 七行幻影账本：模型自述 `delivery_status: "sent"` 被当成送达写进账本，History 显示发过、实际没有。
+第 2 条是 2026-09-16/17 那四个故障的全部来源：它挂在生产从不调用的 `consume_once` 上（`9c7e1e91`）；
+候选 SQL 漏了 `open_task_id` 这类标识（`6e97e459`）；它把模型自述的 `delivery_status: "sent"`
+当成送达写出了七行幻影。而它存在的唯一理由，是第 1 条长期不工作。
 
-同时发现账本的跨重跑去重**本来就不成立**：`external_action_key` 由 `action_identity` 参与计算，而
-`action_identity` 是 Consumer 每次重跑现写的，重跑必然换 key，查不到旧记录。真正防住重复发送的是
-Consumer 重读会话时看见自己上次发的消息，不是账本。
+第 1 条现在工作了（线上验证：2075/2076/2077 由实时路径自己写出）。第 2 条失去存在理由。
 
-结论：账本没有承担它被设计来承担的职责，却制造了一整类「两份状态不同步」的故障。
+## 目标
 
-## 目标状态
+**一次发送产生一行，由执行发送的那一方在当场写下，内容是 provider 的真实返回。**
+写不成就是没发成——不补、不猜、不重建。
 
-**唯一权威事实是运行自己的结果**：Audit 核实后发送，provider 返回码记进
-`external_result.live_result_reference`，证据闸（`app/dingtalk_send_evidence.py`）已经要求这个返回必须
-出现在运行记录的调用流里。发送到此完成。
+- Agent 发送：Audit 核实并执行后由实时路径写入。证据闸（`app/dingtalk_send_evidence.py`）已要求
+  `executed` 必须有 provider 回执出现在该运行的调用流里，写入用的就是同一份返回。
+- OKR 周报发送（`app/cli.py:2077`）：本来就是这么做的，不改。
+- 微信：有自己的 `wechat_deliveries`，与本方案无关。
 
-Agent 发送在 `sent_replies` / `external_action_results` 里的部分降级为**派生结果**，不再有独立写入路径；
-表本身保留，因为它还装着 2003 行历史和 OKR 这类直接发送的记录。
+## 要删掉的东西
 
-## 谁在写这张表（实测，2026-09-18）
+| 删除对象 | 位置 |
+|---|---|
+| 事后重建扫描 | `app/worker.py` `_repair_completed_message_delivery_projections`，及其在 `process_claimed_reply_task` 的调用 |
+| 重建用的候选查询 | `app/store.py` `list_completed_audit_runs_missing_delivery_projection`（含 09-17 刚补的字段分支） |
+| 重建用的结果再水合 | `app/worker.py` `_delivery_reconstruction_payload` 及其调用点 |
+| 无人调用的对账模块 | `app/provider_effect_reconcile.py` |
+| 相关测试 | 上述各项的测试一并删除，不保留「历史行为」用例 |
 
-| 来源 | 9 月行数 | 有运行可派生 |
-|---|---|---|
-| Agent 运行（Consumer/Audit） | 78 | 能 |
-| OKR 周报发送 `app/cli.py:2077` | 18 | **不能**：不走运行模型，但发送当场就有 provider 返回 |
-| 2026-09 之前的全部 2003 行 | — | 不能：早于运行模型，只读保留 |
+投影函数 `_sent_reply_projection_from_result` **保留**，但只剩实时路径一个调用点；它为重建加的
+`store` 兜底（`_accepted_consumer_result`，`de176316`）随之删除——实时路径手上本来就有 Consumer 结果。
 
-微信不在其中：它有自己的 `wechat_deliveries`（101 行），`sent_replies` 里微信行数为 0。
+## 历史数据
 
-所以原则统一成一句：**谁执行发送，谁在发送当场把 provider 返回记下来，只记一次，事后不再对账。**
-Agent 发送的记录者是 Audit 运行；OKR 发送的记录者是那条命令自己。
+**不写迁移代码。** 表结构不变，2099 行旧记录原样留着，它们是真实发生过的送达。
 
-## 现有读者与它们真正需要的东西
+78 行 Agent 来源的记录如果有错（七行幻影那种），**手工改**（Derek 2026-09-18）。不为它们写修复程序，
+也不为兼容它们在读取侧加分支。
 
-| 读者 | 位置 | 需要 | 来源 |
-|---|---|---|---|
-| History 显示已发消息 | `app/audit_web.py:6131` | 正文、时间、attempt 关联 | Agent：派生；直接发送：自身记录 |
-| 反馈回链（👍/👎） | `app/feedback_events.py:15` | `feedback_token` | 从正文 `extract_feedback_link_context` 得出 |
-| 撤回 | `app/audit_web.py:9831` | provider 消息 id / recall key | `live_result_reference` |
-| Quality gate | `app/quality_gate.py:343` | 该对象是否已有成功送达 | 改查带证据的 executed 运行 |
-| 定时任务恢复 | `app/scheduled_task_recovery.py:100` | 同上 | 同上 |
+## 不改的东西
 
-## 一次做完，不分阶段
+- 读者全部不动：History、撤回、反馈回链、quality gate、恢复路径。形状没变，没有「新旧两种行」。
+- `action_identity` 的生成方式不动（它导致跨重跑去重失效，是另一个问题）。
+- 邮件退订的回执机制不动。
 
-Derek 2026-09-18：分阶段更差。理由成立且与 AGENTS.md 一致——分阶段必然要让新旧两条路并存，
-那正是「为兼容旧逻辑写兼容代码」；中间还会出现「表在写但没人读」这种比两端都糟的状态；
-每一阶段都要一次部署，而部署要重启，重启现在归心跳会话且会打断运行中的轮次。
+## 会失去什么
 
-**安全机制不是分阶段部署，而是改之前的离线等价证明**：
+**实时写入失败就永久没有记录，没有兜底。** 这是有意的：缺一行意味着那次发送没有完成，而证据闸
+已经拦住「没有 provider 回执却报 executed」。用重建去填补一个本该失败的发送，正是七行幻影的成因。
 
-1. 写出派生函数 `delivery_projection(task, consumer_run, audit_run)`。
-2. **不提交任何代码**，先拿线上库把全部 78 行 Agent 来源的 `sent_replies` 跑一遍，逐字段比对
-   派生结果与表中现有行：正文、provider 返回、recall key、feedback token、attempt 关联。
-   不一致的逐条查清，而不是调派生函数去迁就表——表里可能本来就有错行（已知七行幻影已删）。
-3. 等价证明通过后，一次改完：读者切到派生、停止写入、删除 `record_completed_agent_message_delivery`
-   与 `_repair_completed_message_delivery_projections` 及其候选 SQL、OKR 路径改为记录自身发送证据。
-4. 一次部署（交心跳会话重启）。
+代价：如果实时路径将来再次悄悄失效（`de176316` 之前那样），不会有扫描兜底，缺失会一直积累到有人发现。
+缓解靠监控而不是重建，见验收第 4 条。
 
-## 会失去什么，必须明说
+## 实施
 
-1. **跨 business object 的「这条消息发过没有」查询变慢**：现在是一次索引查表，之后要扫该对象的运行并
-   解析 JSON。History 列表页要注意 N+1。
-2. **没有强制的唯一约束**：`external_action_key` 的唯一索引消失后，防重复只剩证据闸和 Consumer 的上下文
-   判断。鉴于跨重跑去重本就失效，这不是新风险，但要在文档里写清楚现状。
-3. **老格式运行结果解析不了**：172 条早于 `310234e8` 的结果不满足当前契约。派生失败时 History 显示
-   「该运行的送达记录不可读」，不要伪造，也不要吞掉。
-
-## 不做什么
-
-- 不迁移历史 `sent_replies`。
-- 不改 `action_identity` 的生成方式（跨重跑稳定标识是另一个问题，不在本方案内）。
-- 不动邮件退订的回执机制，它有自己的领域证据。
+一次改完，一次部署（交心跳会话重启）。以删除为主，形状与读者都不变，唯一的行为变化是「不再事后补写」，
+因此不需要分阶段，也不需要离线等价证明。
 
 ## 验收
 
-- 线上任意一条已发消息，History、撤回入口、反馈回链的表现与拆之前一致。
-- 新的 Agent 发送不再写 `sent_replies`，而 History 仍然显示它；OKR 发送仍有自己的记录。
-- `grep -rn "record_completed_agent_message_delivery\|_repair_completed_message_delivery_projections" app/`
-  无结果。
-- 证据闸的回放结果不变（当前：286 条 9 月运行，222 放行 / 64 拦下）。
+1. 全量测试通过；上述删除项 `grep` 无残留。
+2. 线上发一条真实消息，确认实时路径写出该行，且 History、撤回入口、反馈回链正常。
+3. 证据闸回放结果不变（当前：286 条 9 月运行，222 放行 / 64 拦下）。
+4. 新增一条只读校验：定期比对「带 provider 回执的 executed 运行」与 `sent_replies` 中对应行，
+   数量不一致时在 Status 上可见。**只报告，不自动补写**——这是对上节风险的监控，不是把重建换个名字放回来。
