@@ -28,14 +28,28 @@ the other owners before you restart.
 
 ## Who restarts the service
 
-Derek, 2026-09-17: restarting `com.ceo-agent-service.main` is the heartbeat
-session's job (`CEO 服务错误检查与修复`). Other sessions do not restart it
-under normal circumstances. Push your commit, tell that session, and it
-restarts and reads back the new PID, healthz, queues, Attention and
-History. Restarting deploys the whole working tree, so a single owner
-keeps one session's half-written code from going live under another's
-commit. Restarts go through `launchctl kickstart`; there is no Friday
-runtime restart path.
+Derek, 2026-09-17, reaffirmed 2026-09-18: restarting
+`com.ceo-agent-service.main` is the heartbeat session's job
+(`CEO 服务错误检查与修复`). No other session runs `launchctl kickstart`,
+`launchctl kill` or any other restart of that label. After you commit, send
+that session a message naming your commit and the files that need the
+restart; it checks the queue is idle and the tree imports, restarts, and
+reads back the new PID, healthz, queues, Attention and History.
+
+Three things go wrong when a session restarts on its own:
+
+- A restart deploys the entire working tree, including another session's
+  half-written edits, under your commit.
+- A restart kills whatever Agent turn is running. Reply task 98194 lost a
+  turn that way on 2026-09-17, and there were 558 queued work-summary items
+  the following night, each one a turn that a restart would discard.
+- Nobody can tell afterwards who restarted. Two restarts on the night of
+  2026-09-17 cost real time to trace, and all three sessions asked had to
+  deny them in turn.
+
+If the heartbeat session does not answer and the restart cannot wait, tell
+Derek and let him decide, rather than restarting yourself. Restarts go
+through `launchctl kickstart`; there is no Friday runtime restart path.
 
 ## Local Service Reload
 
