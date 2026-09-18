@@ -855,10 +855,14 @@ def _pooled_category_metrics(*, category, scored, threshold):
     precision, recall, f1, _ = precision_recall_fscore_support(
         expected, predicted, labels=[category], zero_division=0
     )
+    # Acceptance is measured at the threshold the candidate will run with.
+    # Measuring each fold at its own calibration threshold graded a model that
+    # never ships and carried that calibration's noise into the result: two
+    # runs a dozen labels apart reported 419 and 209 accepted junk messages.
     accepted = [
         index
-        for index, (_row, item, fold_threshold) in enumerate(scored)
-        if item.category == category and item.category_probability >= fold_threshold
+        for index, (_row, item, _fold_threshold) in enumerate(scored)
+        if item.category == category and item.category_probability >= threshold
     ]
     hits = [index for index in accepted if expected[index] == category]
     return {
@@ -882,8 +886,8 @@ def _pooled_important_metrics(*, scored, threshold):
     metrics = _important_acceptance_metrics(rows=rows, predictions=predictions, threshold=threshold)
     accepted = [
         index
-        for index, (_row, item, fold_threshold) in enumerate(scored)
-        if item.important_probability >= fold_threshold
+        for index, (_row, item, _fold_threshold) in enumerate(scored)
+        if item.important_probability >= threshold
     ]
     hits = [index for index in accepted if bool(rows[index]["important"])]
     return {
