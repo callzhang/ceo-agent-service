@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- 2026-09-18: A new `request-minutes-access` service command asks each minute's
+  owner for the access the read API refuses. The read API lists only minutes
+  this account already has, so a minute nobody shared stays invisible and can
+  never be archived; the 听记 admin console is the only place it appears, and
+  the minute's own page the only place a request can be sent. The pass reads
+  the console, asks the provider which of its minutes are refused, submits one
+  request per minute, and counts it only when the page reads the request back —
+  `dws minutes +apply-permission` answers `requested: true` for a request its
+  owner never receives. A minute is asked for once, a cleaned minute is never
+  asked for, and an expired console session fails the command instead of
+  reporting an empty pass. The session lasts about a month and the command
+  prints how long is left.
+
 - 2026-09-17: The 听记 sync can finally tell one restricted minute from a broken
   credential. The provider refuses a single minute with a business error
   carrying `server_key: "minutes"` and `message: "no permission"` — observed

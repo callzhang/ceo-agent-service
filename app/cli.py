@@ -36,6 +36,7 @@ from app.config import (
     repository_upgrade_enabled,
     repository_upgrade_remote,
     profile_evidence_dir,
+    minutes_console_storage_state,
     worker_db_path,
     work_profile_path,
 )
@@ -354,6 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh-okr-archive",
         "scan-task-sources",
         "scan-meeting-todos-once",
+        "request-minutes-access",
         "sync-minutes-once",
         "scan-meetings-once",
         "scan-oa-approvals",
@@ -1010,6 +1012,10 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
             "process-follow-ups": lambda: (
                 "process-follow-ups "
                 f"sent={process_follow_ups_command(settings, refresh_evidence=False, limit=50)}"
+            ),
+            "request-minutes-access": lambda: (
+                "request-minutes-access "
+                f"requested={request_minutes_access_command(settings)}"
             ),
             "sync-minutes-once": lambda: (
                 "sync-minutes-once "
@@ -2228,6 +2234,44 @@ def sync_minutes_once_command(settings: WorkerSettings) -> int:
     if result.failed or result.permission_pending:
         raise RuntimeError(f"sync-minutes-once incomplete: {result.summary()}")
     return result.synced
+
+
+def request_minutes_access_command(settings: WorkerSettings) -> int:
+    """Ask each minute's owner for the access the read API refuses us.
+
+    Deterministic throughout: the console says which minutes exist, the read
+    API says which of them we may not read, and a request counts only when the
+    minute's page reads it back. It needs a signed-in console session, which is
+    the one thing it cannot make for itself, so an expired session fails the
+    command rather than reporting an empty pass.
+    """
+    from app.minutes_access import request_minutes_access
+    from app.minutes_console_browser import signed_in_console
+
+    storage_state = minutes_console_storage_state()
+    store = AutoReplyStore(settings.db_path)
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+    )
+    with signed_in_console(storage_state) as console:
+        result = request_minutes_access(
+            store,
+            dws,
+            console,
+            storage_state_path=storage_state,
+        )
+    print(f"request-minutes-access {result.summary()}", flush=True)
+    if result.failed:
+        raise RuntimeError(f"request-minutes-access incomplete: {result.summary()}")
+    if result.session_needs_renewal:
+        print(
+            "request-minutes-access session-renewal-required "
+            f"days_left={result.session_expires_in_days:.1f}",
+            flush=True,
+        )
+    return result.requested
 
 
 def scan_oa_approvals_command(
@@ -4608,6 +4652,8 @@ def main() -> None:
         scan_task_sources_command(settings)
     elif args.command == "scan-meeting-todos-once":
         scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)
+    elif args.command == "request-minutes-access":
+        request_minutes_access_command(settings)
     elif args.command == "sync-minutes-once":
         sync_minutes_once_command(settings)
     elif args.command == "scan-meetings-once":

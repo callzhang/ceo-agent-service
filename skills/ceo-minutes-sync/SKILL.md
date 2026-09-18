@@ -1,40 +1,82 @@
 ---
 name: ceo-minutes-sync
-description: Use when a scheduled or manual CEO Agent task must synchronize new, changed, or newly accessible DingTalk AI minutes into durable local work data.
+description: Use when a scheduled or manual CEO Agent task must bring the DingTalk AI minutes archive up to date, including asking for access to minutes this account cannot read yet.
 metadata:
   managed_by: ceo-agent-service
 ---
 
 # CEO Minutes Sync
 
-Synchronize what DingTalk returns without inventing remote-version evidence.
+Bring the local AI 听记 archive up to date in two ordered steps, then report what
+each one actually did. Both steps are service commands: run them, read their
+receipts, and do not re-implement what they do.
 
-**REQUIRED SUB-SKILL:** Use `dingtalk-minutes` for current read and pagination contracts.
+## Why two steps
 
-**CONDITIONAL SUB-SKILL:** Use `dingtalk-minutes-access-request` only under the decision below; restriction alone never authorizes a request.
+The read API lists only minutes this account already has access to. A minute
+nobody shared stays invisible there, so it can never be archived until its owner
+grants access. The 听记 admin console is the only place those minutes appear,
+and the minute's own page is the only place a request can be sent. Asking first
+means a minute approved since the last run is archived by the same pass.
 
-## Durable state
+## Step 1 — ask for the access we do not have
 
-In `<working-directory>/data/ai-minutes-sync/`, keep per-`taskUuid` directories, an archived manifest, and atomic `content-cursor.json`. Record exact bytes, each `artifact_sha256`, `fetched_at`, outcome, and permission state. Preserve source-returned, artifact-specific `source_version` or `source_updated_at` as optional evidence; never require or synthesize it.
+```bash
+ceo-agent request-minutes-access
+```
 
-## One run
+Reads the console, asks the provider which of its minutes this account may not
+read, and submits a view request on each such minute's page. It prints one line:
 
-1. Load the cursor. Discover with `--page-all`; the list is complete only when items come from `data.minutes`, `data.complete=true`, and `meta.pagination.endpoint_exhausted=true`. Follow `meta.pagination.next_token` while present. Retry saved `permission_pending` IDs even if absent from the list.
-2. Fresh-read every relevant item needing content. The detail is the top-level envelope: permission failures enter the restricted-item decision first; otherwise require `complete=true`, `failureCount=0`, and successful `basic.result` plus `summary.result`. The transcript outer envelope must be successful and its pagination must reach both `data.complete=true` and `meta.pagination.endpoint_exhausted=true`. Other partial, failed, missing, repeated-cursor, or incomplete results are `failed` with `freshness_unknown`; retain the prior item cursor.
-3. Archive `basic.result`, `summary.result`, and transcript `data.paragraphList` as UTF-8 JSON with sorted keys, compact `,`/`:` separators, unescaped Unicode, and no trailing newline; hash those exact archived bytes. Store hashes and `fetched_at` in the manifest. This proves only what was fetched then; it does not establish a remote revision or continued currency after that fetch.
-4. New/different complete bytes are `synced`/`fresh_fetch`; complete bytes matching the verified manifest are `skipped`/`unchanged_fetched`. Both may advance the item cursor after the complete fetch.
-5. Clear `permission_pending` only after recovery completes that sequence.
+```
+request-minutes-access discovered=N requested=N already_requested=N readable=N unresolved=N failed=N session_expires_in_days=N
+```
 
-## Restricted-item decision
+- A minute is asked for **once**. The command keeps the asked-for set, because a
+  repeat request notifies the same colleague again.
+- `unresolved` means the console had not resolved an owner to ask yet. Those are
+  retried on the next run; nothing is wrong.
+- `session_expires_in_days` counts down the signed-in console session. When the
+  command prints `session-renewal-required`, tell Derek to sign in again — the
+  session lasts about a month and only he can renew it.
+- **A failed step 1 does not cancel step 2.** Access is an improvement to the
+  next pass; archiving what we can already read is the job. Run step 2, then
+  report the step 1 failure.
 
-Use trusted visible title, owner, participants, time, and source context:
+## Step 2 — archive everything not archived yet
 
-- CEO-relevant: request only when necessary and explicitly authorized; otherwise `permission_pending`.
-- Clearly out-of-scope: no request; `skipped` with auditable metadata, and record the out-of-scope decision in the item cursor.
-- Relevance unknown: no request; `permission_pending`/`needs_review`, blocking success.
+```bash
+ceo-agent sync-minutes-once
+```
 
-A submitted access request remains `permission_pending`; submission is not synchronized content.
+Lists every scope the provider offers (`all`, `mine`, `shared` — none of them is
+complete on its own), fetches summary and transcript for each minute not already
+archived, and writes it under the workspace's `AI听记` directory. It prints:
 
-## Result ledger
+```
+sync-minutes-once discovered=N synced=N skipped=N permission_requested=N permission_pending=N failed=N
+```
 
-The run scope is new list items plus saved pending IDs; `discovered` means that scope. Assign each `taskUuid` exactly one outcome and report evidence so `synced + skipped + permission_pending + failed = discovered`. Success requires complete discovery, verified outcomes, cursor write, and zero pending/failed; process or request success is insufficient.
+`permission_pending` is a minute whose access was asked for and not granted yet.
+It is not a failure and needs no action.
+
+## What to report
+
+One short paragraph: how many minutes were archived, how many access requests
+went out, and anything that needs Derek. Escalate only these:
+
+- the console session needs renewing (only he can sign in)
+- `sync-minutes-once` failed, with its printed line
+- the same minute has failed to archive on several consecutive runs
+
+Do not report a clean run item by item, and do not list minute titles.
+
+## Boundaries
+
+- Never send an access request any other way. `dws minutes +apply-permission`
+  answers `requested: true` for a request its owner never receives; only the
+  minute's page, read back afterwards, is evidence.
+- Never write archive files yourself. `sync-minutes-once` owns the layout, the
+  cursor and the deduplication.
+- Reading a minute's content for other work goes through `dingtalk-minutes`,
+  not this Skill.

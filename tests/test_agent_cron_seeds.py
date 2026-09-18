@@ -1352,6 +1352,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
                 "scan-meeting-todos-once": (
                     lambda: produced.append("scan-meeting-todos-once") or "queued=0"
                 ),
+                "request-minutes-access": (
+                    lambda: produced.append("request-minutes-access") or "requested=0"
+                ),
                 "sync-minutes-once": (
                     lambda: produced.append("sync-minutes-once") or "queued=0"
                 ),
