@@ -569,3 +569,81 @@ def test_one_failing_scope_keeps_the_others_and_still_defers_success(
     state = store.get_daily_scan_state(MINUTES_SYNC_SCANNER) or {}
     assert state["last_success_at"] == ""
     assert state["last_error"] == "mine: scope unavailable"
+
+
+def _restricted() -> DwsError:
+    """How the provider refuses one minute, observed live 2026-09-18."""
+    return DwsError(
+        "dws minutes get info failed",
+        "1",
+        business_message="no permission",
+        server_key="minutes",
+    )
+
+
+def test_a_minute_the_provider_refuses_is_pending_not_a_failure(
+    tmp_path: Path,
+) -> None:
+    """`server_key=minutes` + `message=no permission` refuses one minute.
+
+    Before the signal was known every such minute counted as `failed`, which
+    makes the whole scheduled command raise, so one unreadable minute could
+    fail the daily archive for every other minute in the pass.
+    """
+    store = _store(tmp_path)
+    dws = FakeDws(
+        [{"taskUuid": "readable"}, {"taskUuid": "restricted"}],
+        basic={
+            "readable": {"title": "周会", "startTime": 1789025858000},
+            "restricted": {"title": "他人会议", "duration": 1800000},
+        },
+        summary={"readable": {"fullSummary": "要点"}},
+        paragraphs={"readable": [{"startTime": 0, "paragraph": "内容"}]},
+        errors={"restricted": _restricted()},
+    )
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.synced == 1
+    assert result.failed == 0
+    assert result.permission_pending == 1
+    assert _cursor(store)["permission_pending_ids"] == ["restricted"]
+
+
+def test_the_service_never_sends_an_access_request_of_its_own(
+    tmp_path: Path,
+) -> None:
+    """`dws minutes +apply-permission` returns a receipt for nothing sent.
+
+    85 minutes were "requested" through it on 2026-09-18 and every page still
+    offered `Send Application` afterwards, so a request only counts when a
+    signed-in browser reads back `Applied, waiting for processing`.
+    """
+    store = _store(tmp_path)
+    dws = FakeDws(
+        [{"taskUuid": "restricted"}],
+        basic={"restricted": {"title": "他人会议", "duration": 3600000}},
+        errors={"restricted": _restricted()},
+    )
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert dws.permission_requests == []
+    assert result.permission_requested == 0
+    assert result.permission_pending == 1
+
+
+def test_a_credential_failure_is_never_read_as_one_restricted_minute(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    dws = FakeDws(
+        [{"taskUuid": "a"}, {"taskUuid": "b"}],
+        basic={"a": {"duration": 3600000}, "b": {"duration": 3600000}},
+        errors={"a": _denied(), "b": _denied()},
+    )
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.failed == 2 and result.permission_pending == 0
+    assert _cursor(store).get("permission_pending_ids", []) == []

@@ -126,10 +126,18 @@ class DwsError(RuntimeError):
         required_scopes: list[str] | tuple[str, ...] = (),
         retryable_external_dependency: bool = False,
         idempotency_duplicate: bool = False,
+        business_message: str = "",
+        server_key: str = "",
     ):
         super().__init__(message)
         self.code = code
         self.idempotency_duplicate = idempotency_duplicate
+        # The provider reports per-resource refusals as a business error whose
+        # ``code`` is the generic ``1``; only ``message`` and ``server_key``
+        # say which resource refused and why, so they are carried rather than
+        # re-parsed out of the formatted text by every caller.
+        self.business_message = business_message
+        self.server_key = server_key
         self.required_scopes = tuple(
             scope.strip()
             for scope in required_scopes
@@ -3526,6 +3534,7 @@ class DwsClient:
                     command,
                     result,
                 ),
+                **self._structured_business_error(result.stdout, result.stderr),
             )
             raise error
 
@@ -3560,6 +3569,25 @@ class DwsClient:
             ):
                 return True
         return False
+
+    @classmethod
+    def _structured_business_error(cls, stdout: str, stderr: str) -> dict[str, str]:
+        """Return the provider's own ``message``/``server_key`` for this error."""
+        for raw_output in (stderr, stdout):
+            try:
+                payload = json.loads(raw_output)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not cls._is_structured_error_payload(payload):
+                continue
+            error = payload["error"]
+            message = error.get("message")
+            server_key = error.get("server_key")
+            return {
+                "business_message": message.strip() if isinstance(message, str) else "",
+                "server_key": server_key.strip() if isinstance(server_key, str) else "",
+            }
+        return {"business_message": "", "server_key": ""}
 
     @staticmethod
     def _is_structured_error_payload(payload: object) -> bool:

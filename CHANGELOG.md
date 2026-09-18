@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- 2026-09-17: The 听记 sync can finally tell one restricted minute from a broken
+  credential. The provider refuses a single minute with a business error
+  carrying `server_key: "minutes"` and `message: "no permission"` — observed
+  live against six minutes the 听记 admin backend lists and the read API
+  refuses, while every other minute in the same pass read normally. Such a
+  minute is now recorded `permission_pending` and retried instead of counting
+  as `failed`, which used to raise the whole scheduled command, so one
+  unreadable minute could fail that day's archive for every other minute.
+  `DwsError` carries the provider's `message` and `server_key` so callers stop
+  re-parsing formatted command text. The service still sends no access request
+  of its own: `dws minutes +apply-permission` reports `requested: true` for a
+  request its owner never receives.
+
 - 2026-09-17: 归档新增的钉钉 AI 听记 reads every listing scope instead of one.
   The pass enumerated with `dws minutes list all`, whose name suggests a
   complete listing and is not one: measured live, `shared` held 20 minutes that

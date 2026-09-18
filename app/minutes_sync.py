@@ -28,6 +28,11 @@ MINUTES_ARCHIVE_DIRECTORY = "AI听记"
 # fires when the duration is known and above the threshold.
 RESTRICTED_MINUTE_MINIMUM_DURATION = timedelta(minutes=5)
 
+# How the provider refuses one minute we may not read, as opposed to a
+# credential failure that refuses every call.
+MINUTES_SERVER_KEY = "minutes"
+RESTRICTED_MINUTE_MESSAGE = "no permission"
+
 _SOURCE_URL_PREFIX = "https://shanji.dingtalk.com/app/transcribes/"
 _MINUTES_LIST_MAX_PAGES = 100
 
@@ -305,17 +310,21 @@ def should_request_access(duration: timedelta | None) -> bool:
 def _is_restricted_minute_error(error: DwsError) -> bool:
     """Whether this error means *this minute* is restricted to us.
 
-    Not implemented on purpose.  ``DwsError.needs_authorization`` covers
+    The provider reports it as a business error carrying
+    ``server_key="minutes"`` and ``message="no permission"``. Observed live on
+    2026-09-18 against six minutes that the 听记 admin backend lists and the
+    read API refuses, while every other minute in the same pass read normally.
+
+    ``DwsError.needs_authorization`` is deliberately not used here. It covers
     PAT_HIGH_RISK_NO_PERMISSION, PAT_MEDIUM_RISK_NO_PERMISSION and
     AGENT_CODE_NOT_EXISTS, which are credential-level failures affecting every
-    call -- not per-minute access.  Treating them as "restricted" would fire an
-    access request at every minute in the list the moment the credential broke,
-    which is exactly the mass-request behaviour the sync must never produce.
-    Until the provider's real per-minute denial code is observed and recorded
-    here, no error is classified as restricted, so no access request is sent.
+    call. Treating those as "restricted" would mark the whole listing pending
+    the moment the credential broke.
     """
-    del error
-    return False
+    return (
+        error.server_key == MINUTES_SERVER_KEY
+        and error.business_message.casefold() == RESTRICTED_MINUTE_MESSAGE
+    )
 
 
 def _task_uuid(item: dict[str, Any]) -> str:
@@ -451,9 +460,15 @@ def sync_minutes_once(
                 skipped += 1
                 pending.discard(task_uuid)
                 continue
-            # Reaching here needs a verified per-minute denial code; see
-            # _is_restricted_minute_error.  Until then the item is recorded for
-            # a later pass rather than mailing its owner a request.
+            # The service still sends no access request of its own. The only
+            # API for it, `dws minutes +apply-permission`, reports
+            # `requested: true, success: true` for a request its owner never
+            # receives: 85 minutes were "requested" that way on 2026-09-18 and
+            # every one of their pages still offered `Send Application`
+            # afterwards. A request is only real when the minute's page reads
+            # back `Applied, waiting for processing`, which needs a signed-in
+            # browser this command does not have. So the minute is recorded as
+            # pending and retried, and asking its owner stays a human step.
             still_pending += 1
             pending.add(task_uuid)
             continue

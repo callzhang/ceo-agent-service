@@ -6624,3 +6624,40 @@ def test_download_oa_process_attachment_uses_shared_exponential_backoff(
         == b"docx-bytes"
     )
     assert sleeps == [0.25, 0.5]
+
+
+def test_a_business_error_carries_the_provider_message_and_server_key(
+    monkeypatch, tmp_path
+) -> None:
+    """A per-resource refusal is a generic `code: 1`.
+
+    Only `message` and `server_key` say which resource refused, so the
+    exception carries them instead of leaving every caller to re-parse the
+    formatted command output.
+    """
+    payload = json.dumps(
+        {
+            "error": {
+                "category": "api",
+                "code": 1,
+                "message": "no permission",
+                "reason": "business_error",
+                "server_key": "minutes",
+                "operation": "tools/call",
+            }
+        }
+    )
+    monkeypatch.setattr(
+        "app.dws_client.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["dws"], returncode=1, stdout=payload, stderr=""
+        ),
+    )
+    client = DwsClient(dws_bin="dws")
+
+    with pytest.raises(DwsError) as raised:
+        client.run_json(["dws", "minutes", "get", "info", "--id", "u1"])
+
+    assert raised.value.business_message == "no permission"
+    assert raised.value.server_key == "minutes"
+    assert raised.value.needs_authorization is False
