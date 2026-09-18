@@ -7,8 +7,12 @@ final Artifact message; it does not implement audit or effect policy.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import os
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -148,6 +152,155 @@ def bundled_friday_cli() -> str:
     return ""
 
 
+FRIDAY_ENDPOINT_RECORD = Path.home() / ".friday" / "runtime" / "default.json"
+FRIDAY_AUTH_RECORD = Path.home() / ".friday" / "runtime" / "runtime-auth.json"
+FRIDAY_TICKET_LIFETIME_SECONDS = 300
+
+
+def desktop_friday_endpoint() -> str:
+    """Return the base URL Friday recorded for its running runtime."""
+
+    try:
+        record = json.loads(FRIDAY_ENDPOINT_RECORD.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    base_url = str(record.get("base_url") or "").strip()
+    if base_url:
+        return base_url.rstrip("/")
+    host = str(record.get("host") or "").strip()
+    port = record.get("port")
+    if host and isinstance(port, int):
+        return f"http://{host}:{port}"
+    return ""
+
+
+def mint_friday_ticket(*, subject: str = "ceo-agent-service") -> str:
+    """Sign a short-lived RuntimeTicket from the local Friday auth record.
+
+    Friday's own CLI trusts this file the same way, so a machine with Friday
+    installed needs no credential typed into this service.
+    """
+
+    try:
+        record = json.loads(FRIDAY_AUTH_RECORD.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise FridayRuntimeError(
+            "friday_runtime_auth_failed",
+            "Friday has no local authentication record",
+            retryable=False,
+        ) from exc
+    secret = str(record.get("shared_secret") or "")
+    issuer = str(record.get("issuer") or "")
+    audience = str(record.get("audience") or "")
+    if not secret or not issuer or not audience:
+        raise FridayRuntimeError(
+            "friday_runtime_auth_failed",
+            "Friday's local authentication record is incomplete",
+            retryable=False,
+        )
+    issued_at = int(time.time())
+    claims = {
+        "iss": issuer,
+        "aud": audience,
+        "sub": subject,
+        "iat": issued_at,
+        "exp": issued_at + FRIDAY_TICKET_LIFETIME_SECONDS,
+    }
+    header = _base64url(
+        json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
+    payload = _base64url(
+        json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
+    signature = hmac.new(
+        secret.encode("utf-8"), f"{header}.{payload}".encode("ascii"), hashlib.sha256
+    ).digest()
+    return f"{header}.{payload}.{_base64url(signature)}"
+
+
+def _base64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def ensure_desktop_friday_runtime(*, timeout_seconds: float = 60.0) -> str:
+    """Return the desktop Friday runtime's address, starting it when needed.
+
+    Friday's CLI starts or reuses the shared headless runtime, so the desktop
+    app does not have to be open.
+    """
+
+    running = desktop_friday_endpoint()
+    if running:
+        return running
+    cli = bundled_friday_cli()
+    if not cli:
+        raise FridayRuntimeError(
+            "friday_runtime_unavailable",
+            "Friday desktop app is not installed, so it ships no CLI to run",
+            retryable=False,
+        )
+    try:
+        completed = subprocess.run(
+            [cli, "runtime", "start", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise FridayRuntimeError(
+            "friday_runtime_unreachable",
+            "Friday CLI could not start the runtime",
+            retryable=True,
+        ) from exc
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except ValueError:
+        payload = {}
+    base_url = str(payload.get("base_url") or "").strip().rstrip("/")
+    if not base_url:
+        raise FridayRuntimeError(
+            "friday_runtime_unreachable",
+            _sanitize_error_detail(completed.stderr or completed.stdout or "")
+            or "Friday CLI reported no runtime address",
+            retryable=True,
+        )
+    return base_url
+
+
+def check_desktop_friday(
+    *, transport: FridayHttpTransport | None = None, timeout_seconds: float = 20.0
+) -> str:
+    """Prove the desktop Friday is reachable with a locally minted ticket.
+
+    Saving the route runs this so a stored configuration is one that answered,
+    rather than one that only looked complete.
+    """
+
+    base_url = ensure_desktop_friday_runtime()
+    client = transport or UrllibFridayHttpTransport(base_url)
+    response = client.request(
+        "GET",
+        "/v1/projects",
+        headers={"Authorization": f"Bearer {mint_friday_ticket()}"},
+        timeout_seconds=timeout_seconds,
+    )
+    if response.status_code == 401 or response.status_code == 403:
+        raise FridayRuntimeError(
+            "friday_runtime_auth_failed",
+            "Friday refused the locally minted ticket",
+            retryable=False,
+        )
+    if response.status_code >= 400:
+        raise FridayRuntimeError(
+            "friday_runtime_unreachable",
+            _safe_response_detail(
+                response.payload if isinstance(response.payload, Mapping) else {}
+            ),
+            retryable=True,
+        )
+    return base_url
+
+
 def ensure_friday_project(
     config: AgentRuntimeConfig,
     *,
@@ -234,6 +387,21 @@ class FridayRuntimeAdapter:
             if auth_disabled is None
             else auth_disabled
         )
+        if self.config.friday_runtime_desktop_managed:
+            base_url = ensure_desktop_friday_runtime()
+            if (
+                not isinstance(self.transport, UrllibFridayHttpTransport)
+                or self.transport.base_url != base_url
+            ):
+                self.transport = UrllibFridayHttpTransport(base_url)
+            return self._execute_resolved(
+                prompt,
+                project_id=effective_project,
+                timeout_seconds=timeout_seconds,
+                runtime_ticket=mint_friday_ticket(),
+                friday_session_token=None,
+                auth_disabled=False,
+            )
         credential = self._configured_credential()
         ticket = runtime_ticket
         session = friday_session_token
@@ -242,6 +410,33 @@ class FridayRuntimeAdapter:
                 session = credential
             else:
                 ticket = credential
+        return self._execute_resolved(
+            prompt,
+            project_id=effective_project,
+            timeout_seconds=timeout_seconds,
+            runtime_ticket=ticket,
+            friday_session_token=session,
+            auth_disabled=effective_auth_disabled,
+            credential=credential,
+        )
+
+    def _execute_resolved(
+        self,
+        prompt: str,
+        *,
+        project_id: str,
+        timeout_seconds: float,
+        runtime_ticket: str | None,
+        friday_session_token: str | None,
+        auth_disabled: bool,
+        credential: str | None = None,
+    ) -> FridayExecutionResult:
+        """Run one turn with the address and credential already resolved."""
+
+        ticket = runtime_ticket
+        session = friday_session_token
+        effective_project = project_id
+        effective_auth_disabled = auth_disabled
         request_credential = ticket or session or credential
         try:
             execution = FridayExecutionInput(

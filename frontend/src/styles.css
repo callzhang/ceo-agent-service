@@ -398,6 +398,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .runtime-fieldset:disabled { opacity: 0.55; }
 .runtime-card-actions { display: inline-flex; flex: none; align-items: center; gap: 10px; }
 .runtime-restore-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; font-size: 0.78rem; }
+.runtime-icon-button { display: inline-grid; place-items: center; width: 32px; height: 32px; min-height: 32px; padding: 0; }
+.runtime-icon-button svg, .runtime-inline-button svg { flex: none; }
+.runtime-inline-button { display: inline-flex; align-items: center; gap: 6px; }
 .runtime-field .runtime-switch-inline { min-height: 38px; }
 .runtime-field .runtime-switch-inline input { width: 34px; min-height: 0; height: 20px; padding: 0; border-radius: 999px; }
 .runtime-save-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }

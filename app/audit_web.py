@@ -9553,6 +9553,7 @@ def handle_agent_runtime_config_post(
         return _invalid_agent_runtime_config(
             "Friday provider requires Base URL, model, and API Token together."
         )
+    friday_desktop = parsed.get("friday_runtime_desktop", [""])[0].strip() == "1"
     if friday_enabled:
         from app.friday_runtime_adapter import bundled_friday_cli
 
@@ -9561,6 +9562,18 @@ def handle_agent_runtime_config_post(
                 "Friday Runtime needs the Friday desktop app: it ships the CLI "
                 "this service runs. Install Friday.app, then enable the route."
             )
+        if friday_desktop:
+            from app.friday_runtime_adapter import (
+                FridayRuntimeError as _FridayRuntimeError,
+                check_desktop_friday,
+            )
+
+            try:
+                friday_base_url = check_desktop_friday()
+            except (_FridayRuntimeError, OSError) as exc:
+                return _invalid_agent_runtime_config(
+                    f"Friday CLI could not serve a runtime: {exc}"
+                )
         if not friday_project_id:
             # Friday owns its project ids, so provision one instead of asking
             # an operator to invent a value Friday would reject.
@@ -9634,6 +9647,7 @@ def handle_agent_runtime_config_post(
         "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": friday_provider_base_url,
         "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": friday_provider_model,
         "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1" if friday_auth_disabled else "0",
+        "CEO_FRIDAY_RUNTIME_DESKTOP": "1" if friday_desktop else "0",
     }
     if api_token:
         updates["CEO_CODEX_API_KEY"] = api_token

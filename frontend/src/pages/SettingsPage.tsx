@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -783,7 +783,7 @@ function AddRuntimeForm({ onAdd, taken, restorable, onRestore }: { onAdd: (route
     <div className="runtime-card-head"><div><h3>新增 runtime</h3><p>{selected?.hint ?? "同一种类型可以添加多条，各自独立配置"}</p></div></div>
     {restorable.length > 0 && <div className="runtime-restore-row">
       <span className="muted">删除过的内置线路：</span>
-      {restorable.map((name) => <button key={name} type="button" className="secondary-button" aria-label={`恢复 ${RUNTIME_ROUTE_LABELS[name] ?? name}`} onClick={() => onRestore(name)}>恢复 {RUNTIME_ROUTE_LABELS[name] ?? name}</button>)}
+      {restorable.map((name) => <button key={name} type="button" className="secondary-button runtime-inline-button" aria-label={`恢复 ${RUNTIME_ROUTE_LABELS[name] ?? name}`} onClick={() => onRestore(name)}><RotateCcw size={14} aria-hidden="true" />{RUNTIME_ROUTE_LABELS[name] ?? name}</button>)}
     </div>}
     <div className="runtime-fields">
       <label className="runtime-field"><span>名称</span><input aria-label="新增 runtime 名称" value={name} placeholder="例如 qwen_gpu4" onChange={(event) => setName(event.target.value)} /></label>
@@ -793,7 +793,7 @@ function AddRuntimeForm({ onAdd, taken, restorable, onRestore }: { onAdd: (route
       {needsToken && <SecretField id="added-runtime-token" label="新增 runtime API Token" value={token} onChange={setToken} />}
     </div>
     {error && <p className="field-error" role="alert">{error}</p>}
-    <div className="runtime-add-actions"><button type="button" className="secondary-button" onClick={submit}>添加</button></div>
+    <div className="runtime-add-actions"><button type="button" className="secondary-button runtime-inline-button" onClick={submit}><Plus size={14} aria-hidden="true" />添加</button></div>
   </section>;
 }
 
@@ -809,7 +809,7 @@ function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailab
               <input type="checkbox" role="switch" aria-label={`启用 ${title}`} checked={enabled && !blocked} disabled={blocked} onChange={(event) => onToggle?.(event.target.checked)} />
               <span>{blocked ? "不可用" : enabled ? "已启用" : "未启用"}</span>
             </label>
-            {onDelete && <button type="button" className="secondary-button" aria-label={`删除 ${title}`} onClick={onDelete}>删除</button>}
+            {onDelete && <button type="button" className="secondary-button runtime-icon-button" aria-label={`删除 ${title}`} title="删除这张卡" onClick={onDelete}><Trash2 size={15} aria-hidden="true" /></button>}
           </div>}
     </div>
     {blocked && <p className="runtime-card-unavailable-reason" role="status">{unavailable}</p>}
@@ -869,6 +869,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
   // the route when the CLI is missing, so do not grey the card out on a guess.
   const fridayCli = (payload as RecordValue)?.friday_cli as RecordValue | undefined;
   const fridayCliAvailable = fridayCli ? Boolean(fridayCli.available) : true;
+  const fridayDesktop = raw("CEO_FRIDAY_RUNTIME_DESKTOP") === "1";
   // The submitted order is the failover order. Enabling a built-in route puts
   // it in its canonical place among the other built-ins without disturbing an
   // order the operator has arranged.
@@ -939,15 +940,23 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
           <SecretField id="claude-api-token" label="Claude API Token" configured={Boolean(raw("CEO_CLAUDE_API_KEY"))} value={raw("CEO_CLAUDE_API_KEY")} onChange={(next) => update("CEO_CLAUDE_API_KEY", next)} />
         </RuntimeRouteCard>}
         {shown("friday_runtime") && <RuntimeRouteCard title="Friday Runtime" description="本机 Friday Runtime 服务和它自己调用的模型服务" enabled={enabled("friday_runtime")} onToggle={(next) => toggleRoute("friday_runtime", next)} onDelete={() => deleteBuiltIn("friday_runtime")} wide unavailable={fridayCliAvailable ? undefined : "未检测到 Friday 桌面版。Friday 的 CLI 随桌面版一起安装，本服务不单独安装；请先安装 Friday.app 再启用这条线路。"}>
-          <RuntimeFieldGroup caption="连接 Friday 服务" hint="要换成另一个 Friday（例如桌面版自带的那个），改上面的服务地址；开关只决定请求里带不带身份凭据。本机自启的 Friday 关闭了校验，所以不需要。">
-            {input("CEO_FRIDAY_RUNTIME_BASE_URL", "服务地址", "url")}
-            <FridayAuthFields raw={raw} update={update} setDraft={setDraft} draft={draft} />
+          <RuntimeFieldGroup caption="怎么连 Friday" hint={fridayDesktop
+            ? "Friday 桌面版自带 CLI：地址每次启动都不同，由它自己记录，凭据也由本机自动签发，所以这里不用填。Friday 用哪个模型由 Friday 自己的配置决定。"
+            : "本服务自己启动 Friday：地址固定在下面，模型服务也由本服务提供。"}>
+            <div className="runtime-field"><span>使用 Friday 桌面版</span>
+              <label className="runtime-switch runtime-switch-inline">
+                <input type="checkbox" role="switch" aria-label="使用 Friday 桌面版 runtime" checked={fridayDesktop} onChange={(event) => update("CEO_FRIDAY_RUNTIME_DESKTOP", event.target.checked ? "1" : "0")} />
+                <span>{fridayDesktop ? "是，交给 Friday CLI" : "否，本服务自己启动"}</span>
+              </label>
+            </div>
+            {!fridayDesktop && input("CEO_FRIDAY_RUNTIME_BASE_URL", "服务地址", "url")}
+            {!fridayDesktop && <FridayAuthFields raw={raw} update={update} setDraft={setDraft} draft={draft} />}
           </RuntimeFieldGroup>
-          <RuntimeFieldGroup caption="Friday 自己调用的模型服务">
+          {!fridayDesktop && <RuntimeFieldGroup caption="Friday 自己调用的模型服务">
             {input("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "模型服务地址", "url")}
             <ModelSelect id="friday-provider-model" label="模型" value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", next)} />
             <SecretField id="friday-provider-api-token" label="模型服务 Token" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"))} value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", next)} />
-          </RuntimeFieldGroup>
+          </RuntimeFieldGroup>}
         </RuntimeRouteCard>}
         {addedRoutes.map((name) => {
           const prefix = addedRoutePrefix(name);
@@ -955,7 +964,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
           return <section key={name} className="runtime-card">
             <div className="runtime-card-head">
               <div><h3>{name}</h3><p>{kindLabel}</p></div>
-              <button type="button" className="secondary-button" aria-label={`删除 ${name}`} onClick={() => removeRoute(name)}>删除</button>
+              <button type="button" className="secondary-button runtime-icon-button" aria-label={`删除 ${name}`} title="删除这张卡" onClick={() => removeRoute(name)}><Trash2 size={15} aria-hidden="true" /></button>
             </div>
             <div className="runtime-fields">
               {addedKind(raw(`${prefix}KIND`))?.needsBaseUrl && <label className="runtime-field"><span>API Base URL</span><input aria-label={`${name} API Base URL`} type="url" value={value(`${prefix}BASE_URL`)} onChange={(event) => update(`${prefix}BASE_URL`, event.target.value)} /></label>}

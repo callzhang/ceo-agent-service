@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- 2026-09-17: Friday Runtime can run through the CLI its desktop app ships, and
+  then asks for nothing: `friday runtime start` starts or reuses the shared
+  headless runtime, the service reads the address Friday records in
+  `~/.friday/runtime/default.json`, and signs a short-lived RuntimeTicket from
+  the local auth record, the way Friday's own CLI trusts it. The model is
+  Friday's own configuration in that mode, so the provider fields disappear.
+  Saving the route verifies it: the CLI has to serve a runtime that accepts the
+  minted ticket, or the save is refused. Delete is a trash icon now, and the
+  runtime cards' buttons share one icon style.
+
 - 2026-09-17: Settings / Agent Runtime tells a switched-off route from a
   deleted one. Switching a route off keeps its card and its settings; deleting
   it hides the card, records the name in `CEO_AGENT_RUNTIME_HIDDEN_ROUTES` and

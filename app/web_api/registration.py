@@ -1691,6 +1691,7 @@ def register_console_routes(
                     "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL",
                     "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY",
                     "CEO_FRIDAY_RUNTIME_AUTH_DISABLED",
+                    "CEO_FRIDAY_RUNTIME_DESKTOP",
                     "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN",
                 )}
                 # An added route describes itself, so the console reads and
@@ -2060,6 +2061,9 @@ def register_console_routes(
                 "friday_runtime_ticket": str(fields.get("friday_runtime_ticket") or fields.get("CEO_FRIDAY_RUNTIME_TICKET") or ""),
                 "friday_session_token": str(fields.get("friday_session_token") or fields.get("CEO_FRIDAY_SESSION_TOKEN") or ""),
                 "friday_runtime_auth_disabled": str(friday_auth_disabled),
+                "friday_runtime_desktop": str(
+                    fields.get("CEO_FRIDAY_RUNTIME_DESKTOP") or "0"
+                ),
                 "added_routes_json": json.dumps(
                     _added_route_payloads(fields, routes), ensure_ascii=False
                 ),

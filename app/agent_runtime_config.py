@@ -65,6 +65,7 @@ class AgentRuntimeConfig(BaseModel):
     claude_reasoning_effort: str
     friday_runtime_model: str
     friday_runtime_auth_disabled: bool
+    friday_runtime_desktop_managed: bool
     friday_runtime_auth_mode: str
     friday_runtime_provider_base_url: str
     friday_runtime_provider_model: str
@@ -129,6 +130,9 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     friday_runtime_project_id = env.get("CEO_FRIDAY_RUNTIME_PROJECT_ID", "").strip()
     friday_runtime_model = env.get("CEO_FRIDAY_RUNTIME_MODEL", "default").strip()
     friday_auth_disabled = env.get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED", "").strip() == "1"
+    # Friday's desktop install owns its runtime: the CLI starts it, records its
+    # address and holds the local credential, so nothing is typed in here.
+    friday_desktop_managed = env.get("CEO_FRIDAY_RUNTIME_DESKTOP", "").strip() == "1"
     friday_provider_base_url = normalize_optional_provider_base_url(
         env.get("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "")
     )
@@ -248,6 +252,7 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
         friday_runtime_model=friday_runtime_model,
         friday_runtime_auth_disabled=friday_auth_disabled,
         friday_runtime_auth_mode=friday_auth_mode,
+        friday_runtime_desktop_managed=friday_desktop_managed,
         friday_runtime_provider_base_url=friday_provider_base_url,
         friday_runtime_provider_model=friday_provider_model,
         friday_runtime_provider_api_key=(

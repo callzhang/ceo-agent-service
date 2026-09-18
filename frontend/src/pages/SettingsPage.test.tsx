@@ -316,6 +316,31 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText("Claude API Token")).toBeInTheDocument();
   });
 
+  it("asks for nothing once Friday runs through its own desktop CLI", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,friday_runtime",
+      CEO_FRIDAY_RUNTIME_BASE_URL: "http://127.0.0.1:52628",
+      CEO_FRIDAY_RUNTIME_AUTH_DISABLED: "1",
+      CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL: "https://api.kksj.org/v1",
+    }, friday_cli: { available: true, path: "/Applications/Friday.app/Contents/MacOS/friday-cli" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    await user.click(await screen.findByRole("switch", { name: "使用 Friday 桌面版 runtime" }));
+
+    // Friday's CLI records the address and holds the credential, and Friday's
+    // own config picks the model, so none of these belong on the card.
+    expect(screen.queryByLabelText("服务地址")).toBeNull();
+    expect(screen.queryByLabelText("模型服务地址")).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Friday Runtime 需要鉴权" })).toBeNull();
+
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
+      CEO_FRIDAY_RUNTIME_DESKTOP: "1",
+    }), {});
+  });
+
   it("greys out Friday when the desktop app that ships its CLI is missing", async () => {
     getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
       CEO_AGENT_RUNTIME_ROUTES: "codex_oauth",
