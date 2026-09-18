@@ -744,6 +744,33 @@ MCP 注入证明。需要 Xiaoqing、Memory、Exa、Lark 等 MCP 时，Consumer/
 session 中的对应 MCP 工具；只有直接工具调用或 provider 操作失败，才形成可持久化依赖失败。
 `<server>_mcp_not_injected` 这种自报注入状态是 wire result 契约错误，进入修正轮而不是任务终态。
 
+### Agent Runtime 路由模型
+
+`CEO_AGENT_RUNTIME_ROUTES` 是一个有序的路由名列表，**顺序就是故障切换顺序**：前一条不可用时
+Router 取下一条已配置且健康的路由。列表里出现的名字分两类：
+
+- **内置路由**：`codex_oauth`、`codex_api`、`claude_oauth`、`claude_api`、`friday_runtime`
+  （常量 `SUPPORTED_RUNTIME_ROUTES`）。它们使用各自固定的环境变量，其中有些键被别的功能共用，
+  例如 `CEO_CODEX_API_BASE_URL` 也被邮件分类器读取。
+- **新增路由**：列表里任何其它名字（小写字母、数字、下划线，字母开头）都是运维自己加的路由，
+  由它自己名下的 `CEO_RUNTIME_<大写名>_KIND` / `_BASE_URL` / `_MODEL` / `_API_KEY` 描述。
+  `KIND` 取 `codex_oauth`、`codex_api`、`claude_oauth`、`claude_api` 之一
+  （常量 `ADDED_ROUTE_KINDS`）；OAuth 两种复用本机 CLI 登录，只需要模型、不需要 Token
+  （`ADDED_ROUTE_KINDS_WITH_KEY` 之外）。因此同一种 provider 可以配置多条，各自指向不同地址
+  和模型——`RuntimeRoute.base_url` 就是为此存在，Codex adapter 用的是**该路由自己的**地址，
+  而不是某个全局配置。
+
+控制台的 Settings / Agent Runtime 直接编辑这份列表：拖动卡片改顺序，开关决定该路由是否在列表
+里，删除则把名字记进 `CEO_AGENT_RUNTIME_HIDDEN_ROUTES` 并只清除该路由**独有**的凭据（共用的
+设置保留）。被删除的内置路由可以从「新增 runtime」恢复，恢复后仍用原来的固定键名。
+
+健康探测（`app/agent_runtime_probe.py`）与真实 turn 走同一条 provider 路径，因此超时按一条真实
+turn 的长度给：`PROBE_TOTAL_TIMEOUT_SECONDS` 和 `PROBE_IDLE_TIMEOUT_SECONDS` 都是 300 秒，
+服务读取这两个常量作为 `CEO_RUNTIME_PROBE_TIMEOUT_SECONDS` / `CEO_RUNTIME_PROBE_IDLE_TIMEOUT_SECONDS`
+的默认值——两处不同的默认值曾把一条健康的路由判成不可达。`probe-agent-runtimes --route` 接受
+任何已配置的路由名（含新增路由），并且**不采纳其它进程的快照**：显式探测必须给出本进程自己的
+结果，否则运维看到的可能是服务几十秒前的结论。
+
 ### Claude Runtime 路由
 
 Claude CLI 有两条并列路由，共用 `CEO_CLAUDE_MODEL`（默认 `sonnet`）和
@@ -799,30 +826,43 @@ Claude。Claude 没有独立的 developer instructions 和 output schema 通道�
 
 ### Friday Runtime 路由
 
-`friday_runtime` 是与 `codex_oauth`、`codex_api`、`claude_oauth` 和 `claude_api` 并列的 Agent
-Runtime 路由。它通过 Friday Runtime 的 HTTP 接口创建一个 Thread、提交一个 turn、等待
-operation 完成，再读取该 Thread 的最终 Artifact；CEO Agent 不直接调用 MiniMax 或其他
-provider 的 API，也不把 Friday CLI 当作 Codex CLI 执行。Friday 项目负责 provider、模型、
-凭证和 provider 协议（包括 MiniMax 的 Chat Completions 兼容），CEO Agent 只接收 Friday
-返回的最终文本或结构化 Artifact。启用该路由时，CEO Agent 使用独立的
-`CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL` / `CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY` /
-`CEO_FRIDAY_RUNTIME_PROVIDER_MODEL` 生成 Friday launcher 可用的
-`FRIDAY_LLM_BASE_URL` / `FRIDAY_LLM_API_KEY` / `FRIDAY_LLM_MODEL`；这些 provider 配置不与
-Codex API 配置共享。
-Friday Runtime HTTP 的 RuntimeTicket/session token 仍是独立的服务认证，不与 provider key 混用。
+`friday_runtime` 是与 `codex_oauth`、`codex_api`、`claude_oauth` 和 `claude_api` 并列的内置
+Agent Runtime 路由。它通过 Friday Runtime 的 HTTP 接口创建一个 Thread、提交一个 turn、等待
+operation 完成，再读取该 Thread 的最终 Artifact；CEO Agent 不直接调用 provider 的 API。
 
-路由顺序由 `CEO_AGENT_RUNTIME_ROUTES` 按配置顺序决定，例如：
+**Friday 由它自己的 CLI 运行，本服务不安装也不启动 Friday。** CLI 随 Friday 桌面版一起安装，
+路径取自 Friday 的安装记录（`~/.friday/install.json` 的 `cli_executable_path`，通常是
+`/Applications/Friday.app/Contents/MacOS/friday-cli`）。没有检测到该 CLI 时，控制台把这条路由
+置灰，保存也会被拒绝——没有 Friday 桌面版就没有可调用的 Friday。
+
+一次调用按以下顺序解析，全部不需要人工配置：
+
+1. **地址**：`friday runtime start` 启动或复用共享的无界面 runtime（不需要打开桌面版应用），
+   Friday 把地址写进 `~/.friday/runtime/default.json`，服务每次读取。该端口是动态的，每次启动
+   都不同，因此地址不能写死或缓存。
+2. **凭据**：服务用 `~/.friday/runtime/runtime-auth.json` 里的共享密钥签一个短期
+   RuntimeTicket（HS256，claims 为 `iss`/`aud`/`sub`/`iat`/`exp`），与 Friday 自己的 CLI 信任
+   方式相同。控制台不再提供 ticket 或 session token 输入，服务也不存储任何 Friday 凭据。
+3. **项目**：Friday 只接受它自己签发的 project id（未知 id 直接返回 `project not found`）。
+   `CEO_FRIDAY_RUNTIME_PROJECT_ID` 为空时，保存会调用 Friday 的 `POST /v1/projects` 申请一个
+   并存下来。
+4. **模型**：由 Friday 自己的配置（`~/.friday/config/runtime.yaml`）决定。CLI 启动的 runtime
+   不读本服务注入的 `FRIDAY_LLM_*` 环境变量，所以控制台不提供 Friday 的 provider 配置入口。
+
+保存这条路由时会做真实验证：CLI 必须能提供一个接受本机签发 ticket 的 runtime，否则保存被拒绝
+并给出原因，不会存下一份看起来完整却不可用的配置。
+
+**同一台机器只能有一个 Friday runtime 在跑。** `~/.friday/runtime/friday_runtime.db` 被所有
+Friday runtime 共用，谁先 claim 到 operation 就由谁执行，并使用它自己的 provider 配置。历史上
+本服务用 launchd 任务 `com.friday-runtime.main` 另起过一个 Friday，结果与桌面版 sidecar 互相
+抢任务，错误里出现的是另一个进程的 provider 地址，排查方向完全被带偏。该 launchd 任务已停用，
+不要在 CLI 管理的 runtime 之外再起第二个。
+
+路由顺序由 `CEO_AGENT_RUNTIME_ROUTES` 的书写顺序决定，例如：
 
 ```text
 codex_oauth,codex_api,claude_oauth,friday_runtime
 ```
-
-启用 `friday_runtime` 必须同时提供 `CEO_FRIDAY_RUNTIME_PROJECT_ID`，并选择一种认证方式：
-`CEO_FRIDAY_RUNTIME_TICKET` 或 `CEO_FRIDAY_SESSION_TOKEN`；也可以显式设置
-`CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1` 用于本地无认证测试。服务只把认证信息放在 HTTP
-请求头，不写入提示词、结果、History 或日志。Friday 的 provider/model 选择不由
-`CEO_CODEX_MODEL` 或 `CEO_CLAUDE_MODEL` 覆盖；`CEO_FRIDAY_RUNTIME_MODEL` 仅保留为
-路由元数据，实际模型选择归 Friday 项目配置。
 
 一次 fallback 始终属于同一个 Agent run：当前路由失败后，Router 选择下一条已配置且健康的
 路由，保留原任务、generation、proposal/revision 和 A/B 生命周期，不创建第二个 Consumer
@@ -837,11 +877,17 @@ Friday 路由使用以下明确错误码：
 
 | 错误码 | 含义 | 是否可重试 |
 | --- | --- | --- |
-| `friday_runtime_unreachable` | Friday Runtime 网络不可达或 operation 超时 | 是 |
-| `friday_runtime_auth_failed` | Runtime ticket/session token 无效或被拒绝 | 否，需修复 Friday 认证配置 |
+| `friday_runtime_unreachable` | Friday Runtime 网络不可达、CLI 起不来或 operation 超时 | 是 |
+| `friday_runtime_auth_failed` | 本机 Friday 认证记录缺失/不完整，或签出的 ticket 被拒绝 | 否，需修复本机 Friday 安装 |
 | `friday_runtime_result_invalid` | Friday 返回不是约定 JSON、缺少 operation/Artifact，或结果为空 | 否，需修复契约/实现 |
 | `friday_runtime_failed` | Friday operation 或其 provider 最终失败 | 是，按任务重试策略处理 |
-| `friday_runtime_unavailable` | 已选择 Friday 路由但 adapter 未注入/未配置 | 否，需修复服务配置 |
+| `friday_runtime_unavailable` | 未安装 Friday 桌面版，或已选择 Friday 路由但 adapter 未注入 | 否，需修复本机安装或服务配置 |
+| `friday_runtime_project_create_failed` | 自动申请 project 失败 | 是 |
+
+已知契约边界：Friday 只接受纯文字的最终回复。模型返回的内容如果是（或包含）JSON 对象，
+Friday 会把它当成自己的结构化信封解析，找不到回复正文时报
+`invalid_conversation_reply:empty_reply`。本服务的所有 workload 都要求带类型的 JSON 结果，
+因此这条路由能否承接真实任务取决于 Friday 侧是否接受 JSON 回复。
 
 健康探测使用同一 Friday HTTP 契约和配置，但只提交合成 prompt，不访问业务数据、不调用业务
 工具、不执行外部写入。`tests/e2e/test_runtime_failover_live.py` 默认运行合成路由契约测试；

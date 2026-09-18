@@ -31,6 +31,22 @@ eligible route for a full additional probe interval. Early renewal changes only
 the health evidence; route selection still rejects unhealthy, paused, or
 capability-incomplete routes.
 
+## Probe timeout
+
+A probe runs the same provider path as a real turn, so it is allowed the same
+time: `PROBE_TOTAL_TIMEOUT_SECONDS` and `PROBE_IDLE_TIMEOUT_SECONDS` are one
+300s constant each, and the service reads them as the defaults behind
+`CEO_RUNTIME_PROBE_TIMEOUT_SECONDS` and
+`CEO_RUNTIME_PROBE_IDLE_TIMEOUT_SECONDS`. A shorter ceiling reports a healthy
+route as unreachable and pauses it: a Friday turn answering the probe prompt
+measured 62-102s, which the former 60s class default cut off.
+
+An explicit probe — `probe-agent-runtimes` — does not adopt another process's
+snapshot. Sibling adoption exists so a fresh worker does not re-probe a busy
+provider, but an operator asking whether a route works now must get this
+process's own result; adopting made the command answer "healthy" in 0.4s
+without calling the route at all.
+
 ## Verification
 
 Regression coverage exercises both Consumer and Audit paths: a safely reopened
