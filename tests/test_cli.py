@@ -8540,6 +8540,7 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
         "scan-oa-approvals",
         "scan-meeting-todos-once",
         "request-minutes-access",
+        "update-minutes-archive",
         "sync-minutes-once",
         "weekly-okr-report",
         "process-follow-ups",
@@ -8850,3 +8851,47 @@ def test_only_the_lease_conflict_code_is_treated_as_a_conflict():
         )
         is False
     )
+
+
+def test_update_minutes_archive_archives_even_when_the_access_step_fails(
+    monkeypatch, tmp_path
+) -> None:
+    """Asking for access improves the next pass; archiving is the job.
+
+    The console session expires about once a month and only a person can renew
+    it, so a failure there must not stop the archive that needs no browser.
+    """
+    calls: list[str] = []
+
+    def failing_access(settings):
+        calls.append("access")
+        raise RuntimeError("the 听记 console session expired")
+
+    def archive(settings):
+        calls.append("archive")
+        return 7
+
+    monkeypatch.setattr(cli, "request_minutes_access_command", failing_access)
+    monkeypatch.setattr(cli, "sync_minutes_once_command", archive)
+    settings = SimpleNamespace(db_path=tmp_path / "w.sqlite3")
+
+    with pytest.raises(RuntimeError, match="access step failed"):
+        cli.update_minutes_archive_command(settings)
+
+    assert calls == ["access", "archive"]
+
+
+def test_update_minutes_archive_asks_before_it_archives(monkeypatch, tmp_path) -> None:
+    """A minute approved since the last run is archived by the same pass."""
+    calls: list[str] = []
+    monkeypatch.setattr(
+        cli, "request_minutes_access_command", lambda _s: calls.append("access") or 3
+    )
+    monkeypatch.setattr(
+        cli, "sync_minutes_once_command", lambda _s: calls.append("archive") or 5
+    )
+
+    synced = cli.update_minutes_archive_command(SimpleNamespace())
+
+    assert calls == ["access", "archive"]
+    assert synced == 5

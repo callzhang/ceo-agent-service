@@ -10,6 +10,7 @@ from app.store import AutoReplyStore
 
 
 MINUTES_SYNC_MIGRATION_KEY = "ceo-minutes-sync-daily-v1"
+MINUTES_SERVICE_COMMAND = "update-minutes-archive"
 WEEKLY_OKR_MIGRATION_KEY = "weekly-okr-report-sunday-v1"
 WEEKLY_OKR_SERVICE_COMMAND = "weekly-okr-report"
 DINGTALK_MESSAGE_MIGRATION_KEY = "dingtalk-message-check-v1"
@@ -724,7 +725,7 @@ def _seed_minutes_task(
     del options, working_directory
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
-        command="sync-minutes-once",
+        command=MINUTES_SERVICE_COMMAND,
         seed_enabled=True,
         seed_description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
         now=now,
@@ -735,7 +736,7 @@ def _seed_minutes_task(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
         name=_default_copy(MINUTES_SYNC_MIGRATION_KEY).name,
         description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
-        command="sync-minutes-once",
+        command=MINUTES_SERVICE_COMMAND,
         cron_expression="0 0 20 * * *",
         timezone_name="Asia/Shanghai",
         enabled=True,

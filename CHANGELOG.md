@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-18: 归档新增的钉钉 AI 听记 now asks for access before it archives, still
+  as one service command with no model in the loop. `update-minutes-archive`
+  runs `request-minutes-access` then `sync-minutes-once`, so a minute approved
+  since the last run is archived by the same pass. A failed access step does
+  not cancel the archive — the console session expires about once a month and
+  only a person can renew it — and the run still ends as a failure so the
+  reason is visible. Both steps are fixed rules, so an Agent would add a model
+  call and a runtime dependency without adding a decision.
+
 - 2026-09-18: A new `request-minutes-access` service command asks each minute's
   owner for the access the read API refuses. The read API lists only minutes
   this account already has, so a minute nobody shared stays invisible and can

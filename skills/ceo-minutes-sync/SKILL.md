@@ -7,9 +7,10 @@ metadata:
 
 # CEO Minutes Sync
 
-Bring the local AI 听记 archive up to date in two ordered steps, then report what
-each one actually did. Both steps are service commands: run them, read their
-receipts, and do not re-implement what they do.
+Bring the local AI 听记 archive up to date. Every step is a fixed rule over what
+the provider returns, so the scheduled task runs this as one service command,
+`update-minutes-archive`, with no model in the loop. This Skill is the written
+contract for that command and for anyone running the steps by hand.
 
 ## Why two steps
 
@@ -18,6 +19,15 @@ nobody shared stays invisible there, so it can never be archived until its owner
 grants access. The 听记 admin console is the only place those minutes appear,
 and the minute's own page is the only place a request can be sent. Asking first
 means a minute approved since the last run is archived by the same pass.
+
+## Running it
+
+```bash
+ceo-agent update-minutes-archive
+```
+
+Runs step 1 then step 2. A failed step 1 does not cancel step 2, and the run
+still ends as a failure so the reason is visible.
 
 ## Step 1 — ask for the access we do not have
 
@@ -40,8 +50,7 @@ request-minutes-access discovered=N requested=N already_requested=N readable=N u
   command prints `session-renewal-required`, tell Derek to sign in again — the
   session lasts about a month and only he can renew it.
 - **A failed step 1 does not cancel step 2.** Access is an improvement to the
-  next pass; archiving what we can already read is the job. Run step 2, then
-  report the step 1 failure.
+  next pass; archiving what we can already read is the job.
 
 ## Step 2 — archive everything not archived yet
 
@@ -60,16 +69,12 @@ sync-minutes-once discovered=N synced=N skipped=N permission_requested=N permiss
 `permission_pending` is a minute whose access was asked for and not granted yet.
 It is not a failure and needs no action.
 
-## What to report
+## What needs a person
 
-One short paragraph: how many minutes were archived, how many access requests
-went out, and anything that needs Derek. Escalate only these:
-
-- the console session needs renewing (only he can sign in)
-- `sync-minutes-once` failed, with its printed line
+- the console session needs renewing — only Derek can sign in, and the command
+  prints `session-renewal-required` while there is still time
+- `sync-minutes-once` failed, which fails the whole run
 - the same minute has failed to archive on several consecutive runs
-
-Do not report a clean run item by item, and do not list minute titles.
 
 ## Boundaries
 

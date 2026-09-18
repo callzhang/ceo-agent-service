@@ -258,7 +258,7 @@ def test_reseed_upgrades_each_untouched_default_copy_field_independently(
         migration_key="ceo-minutes-sync-daily-v1",
         name=name,
         description=description,
-        command="sync-minutes-once",
+        command="update-minutes-archive",
         cron_expression="0 17 4 * * *",
         timezone_name="America/Los_Angeles",
         enabled=False,
@@ -896,7 +896,7 @@ def test_every_fixed_discovery_check_is_a_service_command(
     # browser reads and Agent analysis under one tracked service run.
     assert all(task.command for task in tasks)
     minutes = _task_by_key(tasks, "ceo-minutes-sync-daily-v1")
-    assert minutes.command == "sync-minutes-once"
+    assert minutes.command == "update-minutes-archive"
     assert minutes.skill_refs == ()
     okr = _task_by_key(tasks, "weekly-okr-report-sunday-v1")
     assert okr.command == "weekly-okr-report"
@@ -1355,6 +1355,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
                 "request-minutes-access": (
                     lambda: produced.append("request-minutes-access") or "requested=0"
                 ),
+                "update-minutes-archive": (
+                    lambda: produced.append("update-minutes-archive") or "synced=0"
+                ),
                 "sync-minutes-once": (
                     lambda: produced.append("sync-minutes-once") or "queued=0"
                 ),
@@ -1386,7 +1389,7 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         "scan-meeting-todos-once",
         "scan-meetings-once",
         "scan-oa-approvals",
-        "sync-minutes-once",
+        "update-minutes-archive",
         "wechat-produce-once",
         "weekly-okr-report",
     ]
@@ -1462,7 +1465,7 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
         assert task.command, task.migration_key
         assert task.enabled is True
         if task.command in {
-            "sync-minutes-once",
+            "update-minutes-archive",
             "weekly-okr-report",
             "process-follow-ups",
         }:

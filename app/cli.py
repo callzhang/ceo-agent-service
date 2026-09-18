@@ -356,6 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
         "scan-task-sources",
         "scan-meeting-todos-once",
         "request-minutes-access",
+        "update-minutes-archive",
         "sync-minutes-once",
         "scan-meetings-once",
         "scan-oa-approvals",
@@ -1016,6 +1017,10 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
             "request-minutes-access": lambda: (
                 "request-minutes-access "
                 f"requested={request_minutes_access_command(settings)}"
+            ),
+            "update-minutes-archive": lambda: (
+                "update-minutes-archive "
+                f"synced={update_minutes_archive_command(settings)}"
             ),
             "sync-minutes-once": lambda: (
                 "sync-minutes-once "
@@ -2200,6 +2205,30 @@ def scan_meeting_todos_once_command(
         raise RuntimeError(f"scan-meeting-todos-once incomplete: {scan_error}")
     print(f"scan-meeting-todos-once queued={queued}", flush=True)
     return queued
+
+
+def update_minutes_archive_command(settings: WorkerSettings) -> int:
+    """Ask for the access we lack, then archive everything not archived yet.
+
+    Two fixed steps in one run, because a minute approved since the last run
+    should be archived by the same pass. Asking is an improvement to the next
+    pass, not a precondition: a failure there -- most often a console session
+    that needs a person to renew it -- is reported and the archive still runs.
+    """
+    access_error = ""
+    try:
+        requested = request_minutes_access_command(settings)
+    except Exception as exc:
+        requested = 0
+        access_error = f"{type(exc).__name__}: {exc}"
+        print(f"update-minutes-archive access-step-failed {access_error}", flush=True)
+    synced = sync_minutes_once_command(settings)
+    print(
+        f"update-minutes-archive requested={requested} synced={synced}", flush=True
+    )
+    if access_error:
+        raise RuntimeError(f"update-minutes-archive access step failed: {access_error}")
+    return synced
 
 
 def sync_minutes_once_command(settings: WorkerSettings) -> int:
@@ -4655,6 +4684,8 @@ def main() -> None:
         scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)
     elif args.command == "request-minutes-access":
         request_minutes_access_command(settings)
+    elif args.command == "update-minutes-archive":
+        update_minutes_archive_command(settings)
     elif args.command == "sync-minutes-once":
         sync_minutes_once_command(settings)
     elif args.command == "scan-meetings-once":
