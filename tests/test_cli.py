@@ -7069,6 +7069,9 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         resolve_closed_blocked_reply_attempts=lambda: (
             calls.append("resolve-blocked") or 0
         ),
+        recover_stale_processing_reply_tasks=lambda: (
+            calls.append("recover-stale") or []
+        ),
     )
     monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
     monkeypatch.setattr(
@@ -7134,6 +7137,17 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         (
             "resolve-kind",
             "task_maintenance_resolve_recovered_errors",
+            {"resolution": "recovered by a later successful maintenance cycle"},
+        ),
+        "recover-stale",
+        (
+            "health",
+            "task_maintenance.recover_stale_processing_tasks",
+            {"state": "healthy"},
+        ),
+        (
+            "resolve-kind",
+            "task_maintenance_recover_stale_processing_tasks",
             {"resolution": "recovered by a later successful maintenance cycle"},
         ),
         "completion-check",
