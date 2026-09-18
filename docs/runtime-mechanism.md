@@ -34,6 +34,9 @@ pending -> running -> done
 - `done`：逻辑完成且结果已持久化。
 - `sent`：历史兼容名称；新任务以 `done` 表示完成，provider 发送结果保存在 trace。
 - `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；技术读取或 provider 失败使用 `failed`。
+  另外，**本代次已经对该业务对象完成过写操作**的任务，即使后续步骤失败也收口为 `needs_human`
+  而不是 `failed`（`fail_reply_task`，2026-09-18）：`failed` 意味着可以重跑，而重跑一个
+  已经拒绝或已经退回的审批不可逆。判据与执行证据闸口相同——本代次是否存在已完成的写操作。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
 ## 功能机制开关与任务生产
@@ -116,7 +119,7 @@ pending recovery 排除，ask-back 不计 `needs_human`。
                   -> 超过内容反馈上限：failed
 ```
 
-反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和 provider 结果标识之间的关系。同一任务最多允许三个内容反馈周期；基础设施失败不消耗内容反馈周期。内容反馈耗尽表示自动闭环失败，终态为 `failed`；只有 Audit 自身返回信息完整且满足 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 的结构化结果时，任务才进入 `needs_human`。
+反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和 provider 结果标识之间的关系。同一任务最多允许三个内容反馈周期；基础设施失败不消耗内容反馈周期。内容反馈耗尽表示自动闭环失败，终态为 `failed`（若本代次已经完成过外部写操作，则为 `needs_human`，见上）；只有 Audit 自身返回信息完整且满足 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 的结构化结果时，任务才进入 `needs_human`。
 
 Consumer 与 Audit 之间自然流逝的时间不是候选事实冲突。当前执行时间只用于判断动作是否过期或上下文是否变旧；Audit 不得要求候选复述精确执行时间，也不得仅因自己的执行时间晚于 Consumer 而拒绝其他方面可执行的候选。
 
@@ -455,6 +458,13 @@ pytest --run-live -q -m live tests/test_email_folder_classifier_e2e.py tests/tes
 ```
 
 ## DingTalk / WeChat 统一外发后缀
+### 只能发服务准备好的正文
+
+Derek，2026-09-18：外发消息的正文必须是服务为该动作准备好的那一份。Agent 自己编正文发出去
+会绕过签名、反馈链接、幂等键和投递台账——实测它把提示词里的反馈链接手抄进正文并抄坏了编码，
+同一条修复又抄坏一次。执行轮发送时若正文不是服务准备的，按结果契约违规处理，走普通纠正轮
+（`app/outbound_text_authority.py`）。提案正文里也不得自带反馈链接或签名，服务会自己追加。
+
 
 所有服务所有的 DingTalk、WeChat 人员可见文本，在 provider 调用前都必须由
 `ServiceMessageSender` 生成并持久化 `PreparedOutboundMessage`。持久化键是
@@ -495,6 +505,23 @@ Consumer 修订版可以原样复用上一 revision 中已持久化的服务反�
 Google Workspace 邮件使用的 `c.gle` 短入口只允许桥接到 `google.com` provider family；该精确映射不能作为通用短链放行规则。
 Google 退订页面只允许从 `google.com` 和 `gstatic.com` provider dependency family 加载 HTTPS 公网资源；页面中的普通跨站链接不进入许可集合，仍在请求发出前拒绝。
 Consumer 或 Audit 在同一 proposal revision 内耗尽统一重试 ceiling 后，编排结果不得返回 `failed_retryable` 让外层重新进入同一 generation 并无限增加 `turn_attempt`。普通执行/依赖失败进入 `failed_terminal` 并保留最后一个 run 的真实根因；如果 Audit 的内容反馈轮次耗尽且最后一次 Audit 保留了具体修改意见，编排结果进入 `needs_human`，提供“按审计意见修订”或“停止不执行”两个明确选择，避免把可继续处理的审计修订误投影为 opaque failed。
+
+## 周期性工作的归属
+
+Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制台里可见、可开关。不允许把
+干活的循环藏在服务进程里，也不允许靠手工 CLI 命令批量灌入。
+
+- 被删除：工作区文件全量扫描。它把工作区里每个 `.md`/`.txt` 当作工作材料、每个文件跑一次
+  Agent；一个 1475 文件的头脑风暴目录排了 564 条，一小时里 109 次运行调用有 105 次在读这些
+  过程稿。`scan-task-sources` 现在只读 AI 听记。
+- 并入定时任务「同步会议结论与管理者视角」：会议 Memory 写入的**执行**（入队本来就在这里），
+  以及内部维护（错误自动收口、僵死任务锁回收、待办完成核查）。
+- 独立定时任务「投递到期的跟进事项」（每 5 分钟）：原先是每 60 秒的隐藏循环。
+- 仍为常驻循环的只有 `meeting-delivery`：它只投递已审核通过的会议结论，10 秒一轮就是它的意义；
+  以及备份、cron 调度/派发、探针等不产生业务判断的基础设施。
+
+任务卡死的回收有两条路径：服务启动时回收所有仍标 `processing` 的任务（启动时本进程什么都没在跑，
+这类任务必然是孤儿），以及维护步骤每分钟回收锁超过 15 分钟且没有活运行的任务。
 
 ## 进程、租约和恢复
 

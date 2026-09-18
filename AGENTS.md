@@ -26,6 +26,24 @@ your claim row. Restarting the service deploys the entire working tree,
 including other agents' unfinished edits, so verify the tree imports and tell
 the other owners before you restart.
 
+## Keep the documents true
+
+Derek, 2026-09-18: when you change how the service behaves, update the
+document that describes that behaviour in the same commit. `docs/architecture.md`
+and `docs/runtime-mechanism.md` are read by every agent before it works here,
+so a stale line there is not a documentation debt — it is the next agent acting
+on something that is no longer true.
+
+What counts: task lifecycle and terminal states, what runs periodically and
+where it lives, result contracts and the checks that enforce them, outbound
+message rules, recovery behaviour, route and fallback policy.
+
+On 2026-09-18 the runtime document still said a task whose feedback cycles run
+out ends `failed`, after a completed external action had been made to end
+`needs_human`; it described neither the removal of the workspace file sweep nor
+the three loops that became scheduled tasks. All of that shipped the same day.
+Write the line when you make the change, not when someone notices.
+
 ## Who restarts the service
 
 Derek, 2026-09-17, reaffirmed 2026-09-18: restarting
