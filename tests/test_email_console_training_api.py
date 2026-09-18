@@ -811,3 +811,34 @@ def test_category_history_projects_only_description_configuration(
     assert response.status_code == 200
     assert response.json()["items"][0]["config"]["core_description"]
     assert "private-" not in response.text
+
+
+def test_training_refuses_others_when_every_category_is_selected(tmp_path):
+    """others is the leftover mail; with everything selected there is none."""
+
+    from app.email_classifier_contracts import INITIAL_EMAIL_CATEGORY_KEYS
+
+    database = tmp_path / "others-selection.sqlite3"
+    store = EmailStore(database)
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: store,
+        email_learning_factory=lambda: SimpleNamespace(
+            registry=EmailModelRegistry(tmp_path / "models"),
+            retrain_state_path=tmp_path / "models" / "retrain-state.json",
+        ),
+    )
+
+    with TestClient(app) as client:
+        refused = client.post(
+            "/api/console/email/training",
+            json={
+                "sources": ["agent_auto_label"],
+                "categories": [*INITIAL_EMAIL_CATEGORY_KEYS, "others"],
+            },
+        )
+
+    assert refused.status_code == 400
+    assert refused.json()["code"] == "invalid_training_selection"
+    assert "others" in refused.json()["message"]

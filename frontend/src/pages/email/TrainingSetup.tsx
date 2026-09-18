@@ -33,25 +33,30 @@ export function initialTrainingSelection(
       (trainableByCategory.get(row.category) || 0) + count,
     );
   });
+  const selectedCategories = unique(
+    supported
+      .filter(
+        (row) =>
+          (trainableByCategory.get(row.category) || 0) >=
+          DEFAULT_CATEGORY_MINIMUM_SAMPLES,
+      )
+      .map((row) => row.category),
+  );
+  // others is the mail left out of the selection. With every category selected
+  // there is none, and training refuses the run, so it is only offered when
+  // something is actually left over.
+  const leftOver = supported.some(
+    (row) => !selectedCategories.includes(row.category),
+  );
   return {
     sources: unique(supported.map((row) => row.source)),
     // A category must meet the agreed cold-start floor before it is selected
     // by default. Keep sparse data visible and selectable for deliberate
     // experiments, while preventing a new training drawer from failing on
     // categories that cannot yet support an independent evaluation.
-    categories: unique([
-      ...supported
-        .filter(
-          (row) =>
-            (trainableByCategory.get(row.category) || 0) >=
-            DEFAULT_CATEGORY_MINIMUM_SAMPLES,
-        )
-        .map((row) => row.category),
-      // Everything left out trains as one others class, so the model can say a
-      // message is outside its scope instead of forcing it into the nearest
-      // category. Deselect it when that leftover mail is too thin to split.
-      OTHERS_CATEGORY,
-    ]),
+    categories: leftOver
+      ? [...selectedCategories, OTHERS_CATEGORY]
+      : selectedCategories,
     modelFamilies: unique(
       families
         .filter((row) => row.supported && row.configured)

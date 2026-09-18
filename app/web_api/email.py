@@ -1547,6 +1547,21 @@ def register_email_routes(
         request_selection = payload.model_dump() if payload is not None else None
         try:
             if payload is not None:
+                # others is the mail the selection leaves out. Selecting every
+                # configured category leaves none, and training only discovers
+                # that after freezing a snapshot and failing the run.
+                configured_categories = {
+                    str(row["category_key"])
+                    for row in require_store().list_category_configs()
+                }
+                if MODEL_OTHERS_CATEGORY_KEY in payload.categories and not (
+                    configured_categories - set(payload.categories)
+                ):
+                    return error_response(
+                        "invalid_training_selection",
+                        "已选择全部分类时不能再选 others：others 指未选中的邮件，此时没有剩余邮件可训练",
+                        400,
+                    )
                 catalog = training_source_catalog(require_store())
                 family_catalog = {row["family"]: row for row in model_family_catalog()}
                 unknown_families = sorted(

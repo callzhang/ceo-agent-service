@@ -675,3 +675,15 @@ it("says which scope each score covers, so 79.5% and 91.4% do not look contradic
   expect(screen.getByText("候选整体准确率").parentElement).toHaveTextContent("全部分类，含模型不接手的");
   expect(screen.queryByText("候选 Micro F1")).not.toBeInTheDocument();
 });
+
+it("does not offer others when every category is already selected", () => {
+  const all = ["work", "junk", "notification"].map((category) => ({
+    source: "agent_auto_label", category, sample_count: 40, unique_trainable_count: 40, provenance: {},
+  }));
+
+  expect(initialTrainingSelection(all, []).categories).toEqual(["work", "junk", "notification"]);
+
+  const thin = [...all, { source: "agent_auto_label", category: "legal", sample_count: 2, unique_trainable_count: 2, provenance: {} }];
+  // legal falls under the floor, so its mail trains as others.
+  expect(initialTrainingSelection(thin, []).categories).toEqual(["work", "junk", "notification", "others"]);
+});
