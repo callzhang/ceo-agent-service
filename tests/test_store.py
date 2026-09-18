@@ -11605,3 +11605,99 @@ def test_a_task_with_a_live_run_keeps_its_lock(tmp_path):
     updated = store.get_reply_task(task.id)
     assert updated is not None
     assert updated.status == "processing"
+
+
+def test_a_seeded_command_task_migrates_to_an_agent_workflow(tmp_path: Path) -> None:
+    """Minutes upkeep is two commands in order, so the Agent drives the Skill.
+
+    The mirror of `adopt_scheduled_task_service_command`: name, Cron and
+    timezone stay the user's, and reseeding the same shape changes nothing.
+    """
+    store = AutoReplyStore(tmp_path / "adopt.sqlite3")
+    created = store.create_scheduled_task(
+        migration_key="ceo-minutes-sync-daily-v1",
+        name="我的听记归档",
+        description="我的说明",
+        command="sync-minutes-once",
+        cron_expression="0 30 21 * * *",
+        timezone_name="Asia/Shanghai",
+        enabled=True,
+    )
+    from app.agent_cron.models import ScheduledTaskSkillRef
+    from app.managed_skills import import_repository_managed_skills
+
+    import_repository_managed_skills(store)
+    skill = store.get_managed_skill_by_name("ceo-minutes-sync")
+    assert skill is not None
+    revision = store.list_managed_skill_revisions(skill.id)[-1]
+    refs = (
+        ScheduledTaskSkillRef(
+            skill_source="managed",
+            skill_name="ceo-minutes-sync",
+            managed_skill_id=skill.id,
+            managed_revision_id=revision.id,
+            position=0,
+        ),
+    )
+
+    adopted = store.adopt_scheduled_task_agent_workflow(
+        migration_key="ceo-minutes-sync-daily-v1",
+        prompt="按 $ceo-minutes-sync 先申请权限再归档",
+        runtime_id="claude_api",
+        skill_refs=refs,
+        seed_enabled=True,
+    )
+
+    assert adopted is not None
+    assert adopted.id == created.id
+    assert adopted.command == ""
+    assert adopted.runtime_id == "claude_api"
+    assert [ref.skill_name for ref in adopted.skill_refs] == ["ceo-minutes-sync"]
+    assert adopted.name == created.name
+    assert adopted.cron_expression == created.cron_expression
+    assert adopted.timezone_name == created.timezone_name
+
+    repeated = store.adopt_scheduled_task_agent_workflow(
+        migration_key="ceo-minutes-sync-daily-v1",
+        prompt="按 $ceo-minutes-sync 先申请权限再归档",
+        runtime_id="claude_api",
+        skill_refs=refs,
+        seed_enabled=True,
+    )
+
+    assert repeated == adopted
+
+
+def test_an_agent_workflow_adoption_needs_a_runtime(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "adopt-runtime.sqlite3")
+    store.create_scheduled_task(
+        migration_key="ceo-minutes-sync-daily-v1",
+        name="听记",
+        command="sync-minutes-once",
+        cron_expression="0 0 20 * * *",
+        timezone_name="Asia/Shanghai",
+    )
+
+    with pytest.raises(ValueError):
+        store.adopt_scheduled_task_agent_workflow(
+            migration_key="ceo-minutes-sync-daily-v1",
+            prompt="按 $ceo-minutes-sync 执行",
+            runtime_id="",
+            skill_refs=(),
+            seed_enabled=True,
+        )
+
+
+def test_an_unknown_migration_key_adopts_nothing(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "adopt-missing.sqlite3")
+
+    assert (
+        store.adopt_scheduled_task_agent_workflow(
+            migration_key="not-seeded",
+            prompt="按 $ceo-minutes-sync 执行",
+            runtime_id="claude_api",
+            skill_refs=(),
+            seed_enabled=True,
+        )
+        is None
+    )

@@ -713,6 +713,15 @@ def _seed_follow_up_delivery_task(
     )
 
 
+MINUTES_SYNC_PROMPT = (
+    "按 $ceo-minutes-sync 把本地 AI 听记归档更新到最新：先执行 "
+    "`ceo-agent request-minutes-access` 申请本账号读不到的听记权限，再执行 "
+    "`ceo-agent sync-minutes-once` 归档所有尚未归档的听记。第一步失败不取消第二步。"
+    "只在登录态需要续期、归档命令失败、或同一条听记连续多轮归档失败时上报，"
+    "其余情况简述归档数量与申请数量即可。"
+)
+
+
 def _seed_minutes_task(
     *,
     store: AutoReplyStore,
@@ -720,11 +729,30 @@ def _seed_minutes_task(
     working_directory: Path,
     now: datetime | None,
 ) -> ScheduledTask:
-    """Seed AI minutes synchronization as a deterministic service command."""
-    del options, working_directory
-    adopted = store.adopt_scheduled_task_service_command(
+    """Seed AI minutes upkeep as one Agent workflow over two service commands.
+
+    Asking for access and archiving are separate commands run in a fixed
+    order, so the task drives the Skill instead of one service command:
+    a minute approved since the last run is archived by the same pass.
+    """
+    del working_directory
+    skill_refs = _consumer_skill_refs(options, managed=("ceo-minutes-sync",))
+    runtime_options = options.list_runtime_options()
+    if not runtime_options:
+        raise ValueError("no runtime is configured for the minutes workflow")
+    # The configured failover order is the operator's. The workflow takes the
+    # first route that reports itself available, and the head of the order when
+    # none does, so a fleet that is down cannot leave the seed bound to a route
+    # the scheduler will refuse to start.
+    runtime_id = next(
+        (option.route_name for option in runtime_options if option.available),
+        runtime_options[0].route_name,
+    )
+    adopted = store.adopt_scheduled_task_agent_workflow(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
-        command="sync-minutes-once",
+        prompt=MINUTES_SYNC_PROMPT,
+        runtime_id=runtime_id,
+        skill_refs=skill_refs,
         seed_enabled=True,
         seed_description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
         now=now,
@@ -735,9 +763,11 @@ def _seed_minutes_task(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
         name=_default_copy(MINUTES_SYNC_MIGRATION_KEY).name,
         description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
-        command="sync-minutes-once",
+        prompt=MINUTES_SYNC_PROMPT,
+        runtime_id=runtime_id,
         cron_expression="0 0 20 * * *",
         timezone_name="Asia/Shanghai",
+        skill_refs=skill_refs,
         enabled=True,
         now=now,
     )

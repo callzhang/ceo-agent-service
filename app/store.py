@@ -6035,6 +6035,122 @@ class AutoReplyStore:
             assert updated_row is not None
             return self._scheduled_task_from_row(db, updated_row)
 
+    def adopt_scheduled_task_agent_workflow(
+        self,
+        *,
+        migration_key: str,
+        prompt: str,
+        runtime_id: str,
+        skill_refs: Sequence[ScheduledTaskSkillRef],
+        seed_enabled: bool,
+        seed_description: str = "",
+        now: datetime | None = None,
+    ) -> ScheduledTask | None:
+        """Adopt a repository seed into an Agent workflow it drives itself.
+
+        The mirror of :meth:`adopt_scheduled_task_service_command`, for a task
+        whose work is several commands in a fixed order rather than one
+        trigger: the Agent runs the Skill, not a single service command. Name,
+        Cron and timezone stay user-owned, and a task the user edited keeps the
+        enabled state they chose.
+        """
+        migration_key = self._require_scheduled_task_text(
+            migration_key, field="scheduled task migration key"
+        )
+        prompt = self._require_scheduled_task_text(
+            prompt, field="scheduled task prompt"
+        )
+        runtime_id = self._require_scheduled_task_text(
+            runtime_id, field="scheduled task runtime"
+        )
+        if not isinstance(seed_description, str):
+            raise ValueError("scheduled task seed description must be text")
+        seed_description = seed_description.strip()
+        if not isinstance(seed_enabled, bool):
+            raise ValueError("scheduled task seed enabled must be a boolean")
+        now_text = self._scheduled_task_time_text(
+            now or datetime.now(timezone.utc), field="scheduled task now"
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if row is None:
+                return None
+            current = self._scheduled_task_from_row(db, row)
+            if current.deleted_at is not None:
+                return current
+            target_description = (
+                seed_description
+                if seed_description and current.description.strip() == current.name.strip()
+                else current.description
+            )
+            def signature(refs: Sequence[ScheduledTaskSkillRef]) -> tuple:
+                # Refs read back from the database carry their task id, so they
+                # are compared on what identifies the Skill revision instead.
+                return tuple(
+                    (
+                        ref.skill_source,
+                        ref.skill_name,
+                        ref.managed_skill_id,
+                        ref.managed_revision_id,
+                        ref.position,
+                    )
+                    for ref in refs
+                )
+
+            if (
+                not current.command
+                and current.prompt == prompt
+                and current.runtime_id == runtime_id
+                and signature(skill_refs) == signature(current.skill_refs)
+                and target_description == current.description
+            ):
+                return current
+            validated_refs = self._validate_scheduled_task_skill_refs(
+                db,
+                skill_refs,
+                scheduled_task_id=current.id,
+            )
+            self._validate_scheduled_task_execution(
+                command="",
+                prompt=prompt,
+                runtime_id=runtime_id,
+                runtime_options_json="{}",
+                required_runtime_capabilities_json="[]",
+                working_directory="",
+                skill_refs=validated_refs,
+            )
+            enabled = seed_enabled if current.version == 1 else current.enabled
+            db.execute(
+                """
+                update scheduled_tasks
+                   set description=?, command='', prompt=?, runtime_id=?,
+                       runtime_options_json='{}',
+                       required_runtime_capabilities_json='[]', working_directory='',
+                       enabled=?, version=version + 1, updated_at=?
+                 where id=?
+                """,
+                (
+                    target_description,
+                    prompt,
+                    runtime_id,
+                    int(enabled),
+                    now_text,
+                    current.id,
+                ),
+            )
+            self._replace_scheduled_task_skill_refs(db, current.id, validated_refs)
+            updated_row = db.execute(
+                f"select {self._scheduled_task_columns()} "
+                "from scheduled_tasks where id=?",
+                (current.id,),
+            ).fetchone()
+            assert updated_row is not None
+            return self._scheduled_task_from_row(db, updated_row)
+
     def upgrade_scheduled_task_default_copy(
         self,
         task_id: int,
