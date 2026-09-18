@@ -330,36 +330,45 @@ def test_incomplete_minutes_pagination_does_not_claim_success(tmp_path: Path) ->
     assert cursor["archived_ids"] == ["u1"]
 
 
-def test_incremental_sync_stops_at_first_already_accounted_page(
+def test_the_walk_does_not_stop_at_an_already_archived_minute(
     tmp_path: Path,
 ) -> None:
+    """Minutes are not archived in listing order.
+
+    A minute whose owner grants access days later is archived long after the
+    minutes above it. Stopping the walk at the first already-archived minute
+    left every older unarchived minute below that boundary, and the boundary
+    only moves further from them, so they were never offered again.
+    """
     store = _store(tmp_path)
     dws = PaginatedFakeDws(
         {
             "": {
-                "items": [{"taskUuid": "u2"}, {"taskUuid": "u1"}],
+                "items": [{"taskUuid": "new"}, {"taskUuid": "archived"}],
                 "has_more": True,
                 "next_token": "page-2",
             },
-            "page-2": RuntimeError("older page must not be fetched"),
+            "page-2": {
+                "items": [{"taskUuid": "granted-late"}],
+                "has_more": False,
+                "next_token": "",
+            },
         }
     )
     store.set_daily_scan_state(
         MINUTES_SYNC_SCANNER,
         last_success_at="2026-09-10T00:00:00+00:00",
-        cursor_json=json.dumps({"archived_ids": ["u1"]}),
+        cursor_json=json.dumps({"archived_ids": ["archived"]}),
     )
-    dws._basic = {"u2": {"title": "新会议", "startTime": 1789025858000}}
-    dws._paragraphs = {"u2": [{"startTime": 0, "paragraph": "内容"}]}
+    for task_uuid in ("new", "granted-late"):
+        dws._basic[task_uuid] = {"title": task_uuid, "startTime": 1789025858000}
+        dws._paragraphs[task_uuid] = [{"startTime": 0, "paragraph": "内容"}]
 
     result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
 
-    assert result.discovered == 1
-    assert result.synced == 1
-    assert dws.calls == [("all", ""), ("mine", ""), ("shared", "")]
-    state = store.get_daily_scan_state(MINUTES_SYNC_SCANNER) or {}
-    assert state["last_error"] == ""
-    assert json.loads(state["cursor_json"])["archived_ids"] == ["u1", "u2"]
+    assert result.discovered == 2 and result.synced == 2
+    assert _cursor(store)["archived_ids"] == ["archived", "granted-late", "new"]
+    assert ("all", "page-2") in dws.calls
 
 
 INSIGHT_REPORT = {

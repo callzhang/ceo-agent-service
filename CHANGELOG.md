@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-18: The 听记 archive walk no longer stops at the first
+  already-archived minute. That boundary assumed minutes are archived in
+  listing order; they are not. A minute whose owner grants access days later is
+  archived long after the minutes above it, so it sits below the boundary while
+  the boundary only moves further away — it would never be offered again. Now
+  every page of every scope is read and deduplicated against the archived set,
+  which costs one listing walk a day and cannot skip a minute.
+
 - 2026-09-18: 归档新增的钉钉 AI 听记 now asks for access before it archives, still
   as one service command with no model in the loop. `update-minutes-archive`
   runs `request-minutes-access` then `sync-minutes-once`, so a minute approved

@@ -35,7 +35,10 @@ MINUTES_SERVER_KEY = "minutes"
 RESTRICTED_MINUTE_MESSAGES = frozenset({"no permission", "b_permission_nopermission"})
 
 _SOURCE_URL_PREFIX = "https://shanji.dingtalk.com/app/transcribes/"
-_MINUTES_LIST_MAX_PAGES = 100
+# A full walk of one scope, not a bound on how far back the pass looks: `all`
+# alone was 112 pages on 2026-09-18. Reaching it means the listing did not end,
+# which is reported rather than silently treated as the end.
+_MINUTES_LIST_MAX_PAGES = 600
 
 # The provider has no single listing that returns every accessible minute.
 # Measured live on 2026-09-17: `shared` held 20 minutes that `all` never
@@ -337,10 +340,16 @@ def _task_uuid(item: dict[str, Any]) -> str:
 def _list_minutes_scope(
     list_page,
     scope: str,
-    *,
-    known_ids: set[str],
 ) -> tuple[list[dict[str, Any]], str]:
-    """Read one listing scope, returning a deferred error if it ended partial."""
+    """Read one listing scope whole, returning a deferred error if it ended partial.
+
+    The walk does not stop at the first already-archived minute. That boundary
+    assumed minutes are archived in listing order, and they are not: a minute
+    whose owner grants access days later is archived long after the minutes
+    above it, so it sits below the boundary and would never be offered again.
+    Reading every page and deduplicating against the archived set costs one
+    listing walk a day and cannot skip a minute.
+    """
     items: list[dict[str, Any]] = []
     cursor = ""
     seen_cursors: set[str] = set()
@@ -354,16 +363,7 @@ def _list_minutes_scope(
         page_items = page.get("items")
         if not isinstance(page_items, list):
             return items, "invalid minutes list page items"
-        typed_items = [item for item in page_items if isinstance(item, dict)]
-        items.extend(typed_items)
-        page_ids = {_task_uuid(item) for item in typed_items}
-        page_ids.discard("")
-        # The provider orders this listing newest-first. The first known item
-        # is the durable boundary from a previous successful pass; older pages
-        # cannot contain newer work. This keeps the daily sync incremental and
-        # avoids a 100-page walk through already-accounted history.
-        if page_ids and page_ids.intersection(known_ids):
-            return items, ""
+        items.extend(item for item in page_items if isinstance(item, dict))
         has_more = page.get("has_more")
         next_token = str(page.get("next_token") or "")
         if has_more is False:
@@ -393,12 +393,12 @@ def _list_all_minutes(
     if list_page is None:
         return dws.parse_minutes_list(dws.list_minutes()), ""
 
-    known_ids = archived_ids | permission_pending_ids
+    del archived_ids, permission_pending_ids
     items: list[dict[str, Any]] = []
     seen_uuids: set[str] = set()
     errors: list[str] = []
     for scope in MINUTES_LIST_SCOPES:
-        scope_items, error = _list_minutes_scope(list_page, scope, known_ids=known_ids)
+        scope_items, error = _list_minutes_scope(list_page, scope)
         for item in scope_items:
             task_uuid = _task_uuid(item)
             if task_uuid:
