@@ -2053,6 +2053,7 @@ def _validate_task_decision_candidates(
     problems: list[str] = []
     # The last complete decision wins over an earlier draft.
     for candidate in reversed(_task_decision_candidates(raw)):
+        candidate = _normalize_legacy_task_decision(candidate)
         try:
             return TaskAgentDecision.model_validate(candidate), []
         except ValidationError as exc:
@@ -2065,6 +2066,43 @@ def _validate_task_decision_candidates(
                     for error in exc.errors()[:TASK_DECISION_PROBLEM_LIMIT]
                 ]
     return None, problems
+
+
+def _normalize_legacy_task_decision(candidate: object) -> object:
+    """Move the two known pre-schema field placements into the current shape.
+
+    Some provider/runtime combinations continue to emit an older decision
+    shape after the prompt schema has changed.  Only these explicit aliases
+    are migrated; all other unknown fields remain rejected by the strict
+    Pydantic models below.
+    """
+    if not isinstance(candidate, dict):
+        return candidate
+    normalized = dict(candidate)
+    project_value = normalized.get("project")
+    if not isinstance(project_value, dict):
+        return normalized
+
+    project = dict(project_value)
+    top_level_follow_up_mode = normalized.pop("follow_up_mode", None)
+    if top_level_follow_up_mode is not None and "follow_up_mode" not in project:
+        project["follow_up_mode"] = top_level_follow_up_mode
+
+    legacy_owner = project.pop("owner", None)
+    if isinstance(legacy_owner, dict):
+        if "owner_user_id" not in project and "user_id" in legacy_owner:
+            project["owner_user_id"] = legacy_owner["user_id"]
+        if "owner_name" not in project:
+            owner_name = legacy_owner.get("name", legacy_owner.get("display_name"))
+            if owner_name is not None:
+                project["owner_name"] = owner_name
+        if "owner_evidence" not in project:
+            evidence = legacy_owner.get("evidence")
+            if isinstance(evidence, dict):
+                project["owner_evidence"] = evidence
+
+    normalized["project"] = project
+    return normalized
 
 
 def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:

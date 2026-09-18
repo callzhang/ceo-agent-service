@@ -54,6 +54,28 @@ def test_task_agent_parser_uses_valid_result_after_failed_tool_event():
     assert _parse_task_agent_decision(raw) == TaskAgentDecision.model_validate(decision)
 
 
+def test_task_agent_parser_migrates_known_legacy_project_fields():
+    decision = {
+        "action": "update_project",
+        "project": {
+            "id": 42,
+            "title": "Legacy project",
+            "owner": {
+                "user_id": "owner-42",
+                "name": "Alex",
+            },
+        },
+        "follow_up_mode": "draft",
+    }
+
+    parsed = _parse_task_agent_decision(json.dumps(decision))
+
+    assert parsed.project is not None
+    assert parsed.project.owner_user_id == "owner-42"
+    assert parsed.project.owner_name == "Alex"
+    assert parsed.project.follow_up_mode == "draft"
+
+
 def test_normalize_follow_up_time_uses_business_timezone_for_aware_input():
     assert _normalize_follow_up_time("2026-08-30T09:30:00-07:00") == (
         "2026-08-31T09:00:00+08:00"
