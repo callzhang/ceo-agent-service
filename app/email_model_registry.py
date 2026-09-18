@@ -154,6 +154,9 @@ class PromotionThresholds:
         )
 
 
+# A run keeps a category when it retains this much of the previous evidence.
+EVIDENCE_RETENTION = 0.9
+
 # Evidence staged before thresholds were recorded was judged by these.
 LEGACY_PROMOTION_THRESHOLDS = PromotionThresholds(precision_min=0.95, samples_min=20)
 
@@ -291,9 +294,13 @@ def assess_whole_model_readiness(
     current_metrics = (*current.category_eligibility.values(), current.important_eligibility)
 
     def regressed(previous_item, current_item) -> bool:
+        # Cross-validated counts move a little between runs even when nothing
+        # changed; 581 accepted messages after 585 is the same evidence, not a
+        # category losing its case. Only a material drop counts.
         return (
-            current_item.accepted_hits < previous_item.accepted_hits
-            or current_item.independent_groups < previous_item.independent_groups
+            current_item.accepted_hits < previous_item.accepted_hits * EVIDENCE_RETENTION
+            or current_item.independent_groups
+            < previous_item.independent_groups * EVIDENCE_RETENTION
         )
 
     # Evidence that shrank only holds back the category it belongs to:

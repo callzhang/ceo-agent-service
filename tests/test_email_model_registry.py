@@ -1098,3 +1098,23 @@ def test_readiness_fails_only_when_every_category_regressed() -> None:
     )
 
     assert assess_whole_model_readiness((first, second)).reason == "evaluation_evidence_regressed"
+
+
+def test_a_few_messages_fewer_is_not_a_regression() -> None:
+    """Cross-validated counts wobble; 581 after 585 is the same evidence."""
+
+    first = _with_eligibility(
+        _maturity("candidate-1"),
+        work=HistoricalEligibility(precision=0.95, accepted_hits=585, independent_groups=500),
+    )
+    second = _with_eligibility(
+        _maturity("candidate-2"),
+        work=HistoricalEligibility(precision=0.95, accepted_hits=581, independent_groups=498),
+    )
+    collapsed = _with_eligibility(
+        _maturity("candidate-2"),
+        work=HistoricalEligibility(precision=0.95, accepted_hits=300, independent_groups=250),
+    )
+
+    assert "work" in assess_whole_model_readiness((first, second)).promoted_categories
+    assert "work" not in assess_whole_model_readiness((first, collapsed)).promoted_categories

@@ -1095,7 +1095,12 @@ def _attachments(value: object) -> list[dict[str, object]]:
 
 def _bounded_body(value: object) -> str:
     body = _normalized_text(value, "body", preserve_lines=True)
-    return body[:MAX_BODY_CHARACTERS]
+    # Normalization strips trailing whitespace, so a cut that lands on a space
+    # produced text that no longer rebuilds to itself: the benchmark read that
+    # as training and serving disagreeing and refused to measure latency.
+    return _normalized_text(
+        body[:MAX_BODY_CHARACTERS], "body", preserve_lines=True
+    )
 
 
 def _subject_template(value: str) -> str:

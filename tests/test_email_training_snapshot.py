@@ -1022,3 +1022,25 @@ def test_explicit_split_with_zero_train_category_is_rejected_as_untrainable():
             ],
             proposed_splits={"work": "train", "legal": "test"},
         )
+
+
+def test_a_body_cut_on_whitespace_rebuilds_to_itself():
+    """The benchmark refuses to measure when the same message rebuilds differently."""
+
+    from app.email_training_snapshot import MAX_BODY_CHARACTERS, canonical_model_input
+
+    fields = {
+        "sender": {"name": "Reporter", "email": "reporter@example.test"},
+        "to_recipients": [{"name": "Owner", "email": "owner@example.test"}],
+        "cc_recipients": [],
+        "subject": "monitor",
+        # The character at the cut is a space, which normalization drops.
+        "body": "a " * MAX_BODY_CHARACTERS,
+        "headers": {"message-id": "<cut@example.test>"},
+        "attachments": [],
+    }
+
+    once = canonical_model_input(fields)
+    twice = canonical_model_input({**json.loads(once), "unsubscribe_features": json.loads(once)["unsubscribe"]})
+
+    assert once == twice
