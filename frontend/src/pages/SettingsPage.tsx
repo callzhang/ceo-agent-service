@@ -817,45 +817,6 @@ function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailab
   </section>;
 }
 
-function RuntimeFieldGroup({ caption, hint, children }: { caption: string; hint?: string; children: ReactNode }) {
-  return <div className="runtime-field-group">
-    <p className="runtime-field-group-caption">{caption}</p>
-    <div className="runtime-fields runtime-fields-nested">{children}</div>
-    {hint && <p className="runtime-field-group-hint">{hint}</p>}
-  </div>;
-}
-
-function FridayAuthFields({ raw, update, setDraft, draft }: { raw: (key: string) => string; update: (key: string, value: string) => void; setDraft: (value: RecordValue) => void; draft: RecordValue }) {
-  // The local Friday Runtime starts with authentication switched off, and the
-  // service refuses a credential in that mode. Only ask for one when it is on,
-  // and only for the one credential Friday accepts.
-  const required = raw("CEO_FRIDAY_RUNTIME_AUTH_DISABLED") !== "1";
-  const stored: "ticket" | "session" = raw("CEO_FRIDAY_SESSION_TOKEN") ? "session" : "ticket";
-  const [kind, setKind] = useState<"ticket" | "session">(stored);
-  const setRequired = (next: boolean) => {
-    if (next) { update("CEO_FRIDAY_RUNTIME_AUTH_DISABLED", "0"); return; }
-    setDraft({ ...draft, CEO_FRIDAY_RUNTIME_AUTH_DISABLED: "1", CEO_FRIDAY_RUNTIME_TICKET: "", CEO_FRIDAY_SESSION_TOKEN: "" });
-  };
-  const chooseKind = (next: "ticket" | "session") => {
-    setKind(next);
-    setDraft({ ...draft, CEO_FRIDAY_RUNTIME_TICKET: "", CEO_FRIDAY_SESSION_TOKEN: "" });
-  };
-  return <>
-    <div className="runtime-field"><span>这个 Friday 要不要身份凭据</span>
-      <label className="runtime-switch runtime-switch-inline">
-        <input type="checkbox" role="switch" aria-label="Friday Runtime 需要鉴权" checked={required} onChange={(event) => setRequired(event.target.checked)} />
-        <span>{required ? "要，用下面填的凭据" : "不要，直接调用"}</span>
-      </label>
-    </div>
-    {required && <SelectField id="friday-auth-kind" label="凭据类型" value={kind} onChange={(next) => chooseKind(next === "session" ? "session" : "ticket")}>
-      <option value="ticket">Runtime ticket</option>
-      <option value="session">Session token</option>
-    </SelectField>}
-    {required && kind === "ticket" && <SecretField id="friday-runtime-ticket" label="Runtime ticket" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_TICKET"))} value={raw("CEO_FRIDAY_RUNTIME_TICKET")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_TICKET", next)} />}
-    {required && kind === "session" && <SecretField id="friday-session-token" label="Session token" configured={Boolean(raw("CEO_FRIDAY_SESSION_TOKEN"))} value={raw("CEO_FRIDAY_SESSION_TOKEN")} onChange={(next) => update("CEO_FRIDAY_SESSION_TOKEN", next)} />}
-  </>;
-}
-
 function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error"; saveError: string }) {
   const value = (key: string) => displayValue(draft[key] ?? fieldsOf(payload)[key]);
   const raw = (key: string) => rawValue(draft, payload, key);
@@ -934,29 +895,22 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
           {input("CEO_CLAUDE_MODEL", "Model")}
           {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
         </RuntimeRouteCard>}
-        {shown("claude_api") && <RuntimeRouteCard title="Claude API" description="本机 Claude 登录不可用时的 API 路由" enabled={enabled("claude_api")} onToggle={(next) => toggleRoute("claude_api", next)} onDelete={() => deleteBuiltIn("claude_api")}>
-          {input("CEO_CLAUDE_MODEL", "Model（与 Claude OAuth 共用）")}
-          {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength（与 Claude OAuth 共用）")}
+        {shown("claude_api") && <RuntimeRouteCard title="Claude API" description="Claude 登录不可用时的 API 路由；模型与 Claude OAuth 共用" enabled={enabled("claude_api")} onToggle={(next) => toggleRoute("claude_api", next)} onDelete={() => deleteBuiltIn("claude_api")}>
+          {input("CEO_CLAUDE_MODEL", "Model")}
+          {input("CEO_CLAUDE_MODEL_REASONING_EFFORT", "Thinking strength")}
           <SecretField id="claude-api-token" label="Claude API Token" configured={Boolean(raw("CEO_CLAUDE_API_KEY"))} value={raw("CEO_CLAUDE_API_KEY")} onChange={(next) => update("CEO_CLAUDE_API_KEY", next)} />
         </RuntimeRouteCard>}
-        {shown("friday_runtime") && <RuntimeRouteCard title="Friday Runtime" description="本机 Friday Runtime 服务和它自己调用的模型服务" enabled={enabled("friday_runtime")} onToggle={(next) => toggleRoute("friday_runtime", next)} onDelete={() => deleteBuiltIn("friday_runtime")} wide unavailable={fridayCliAvailable ? undefined : "未检测到 Friday 桌面版。Friday 的 CLI 随桌面版一起安装，本服务不单独安装；请先安装 Friday.app 再启用这条线路。"}>
-          <RuntimeFieldGroup caption="怎么连 Friday" hint={fridayDesktop
-            ? "Friday 桌面版自带 CLI：地址每次启动都不同，由它自己记录，凭据也由本机自动签发，所以这里不用填。Friday 用哪个模型由 Friday 自己的配置决定。"
-            : "本服务自己启动 Friday：地址固定在下面，模型服务也由本服务提供。"}>
-            <div className="runtime-field"><span>使用 Friday 桌面版</span>
-              <label className="runtime-switch runtime-switch-inline">
-                <input type="checkbox" role="switch" aria-label="使用 Friday 桌面版 runtime" checked={fridayDesktop} onChange={(event) => update("CEO_FRIDAY_RUNTIME_DESKTOP", event.target.checked ? "1" : "0")} />
-                <span>{fridayDesktop ? "是，交给 Friday CLI" : "否，本服务自己启动"}</span>
-              </label>
-            </div>
-            {!fridayDesktop && input("CEO_FRIDAY_RUNTIME_BASE_URL", "服务地址", "url")}
-            {!fridayDesktop && <FridayAuthFields raw={raw} update={update} setDraft={setDraft} draft={draft} />}
-          </RuntimeFieldGroup>
-          {!fridayDesktop && <RuntimeFieldGroup caption="Friday 自己调用的模型服务">
-            {input("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "模型服务地址", "url")}
-            <ModelSelect id="friday-provider-model" label="模型" value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", next)} />
-            <SecretField id="friday-provider-api-token" label="模型服务 Token" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"))} value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", next)} />
-          </RuntimeFieldGroup>}
+        {shown("friday_runtime") && <RuntimeRouteCard title="Friday Runtime" description={fridayDesktop ? "由 Friday 自带 CLI 启动；地址、凭据、模型都归 Friday 自己管" : "本服务自己启动 Friday，并为它指定模型服务"} enabled={enabled("friday_runtime")} onToggle={(next) => toggleRoute("friday_runtime", next)} onDelete={() => deleteBuiltIn("friday_runtime")} wide unavailable={fridayCliAvailable ? undefined : "未检测到 Friday 桌面版。Friday 的 CLI 随桌面版一起安装，本服务不单独安装；请先安装 Friday.app 再启用这条线路。"}>
+          <div className="runtime-field"><span>由谁启动 Friday</span>
+            <label className="runtime-switch runtime-switch-inline">
+              <input type="checkbox" role="switch" aria-label="使用 Friday 桌面版 runtime" checked={fridayDesktop} onChange={(event) => update("CEO_FRIDAY_RUNTIME_DESKTOP", event.target.checked ? "1" : "0")} />
+              <span>{fridayDesktop ? "Friday 自带 CLI" : "本服务自己启动"}</span>
+            </label>
+          </div>
+          {!fridayDesktop && input("CEO_FRIDAY_RUNTIME_BASE_URL", "Friday 服务地址", "url")}
+          {!fridayDesktop && input("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "模型服务地址", "url")}
+          {!fridayDesktop && <ModelSelect id="friday-provider-model" label="模型" value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", next)} />}
+          {!fridayDesktop && <SecretField id="friday-provider-api-token" label="模型服务 Token" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"))} value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", next)} />}
         </RuntimeRouteCard>}
         {addedRoutes.map((name) => {
           const prefix = addedRoutePrefix(name);
@@ -975,7 +929,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
         })}
         <AddRuntimeForm onAdd={addRoute} taken={routes} restorable={hidden} onRestore={restoreBuiltIn} />
       </div>
-      <div className="runtime-save-bar"><span className="muted">已保存凭据会回填；可直接编辑后保存。</span><SaveBar state={saveState} error={saveError} /></div>
+      <div className="runtime-save-bar"><SaveBar state={saveState} error={saveError} /></div>
     </form>
   </SettingsCard>;
 }

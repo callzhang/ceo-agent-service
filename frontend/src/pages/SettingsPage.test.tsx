@@ -108,10 +108,6 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByLabelText("API Token")).toHaveValue("codex-token");
     expect(screen.getByLabelText("模型服务 Token")).toHaveValue("provider-token");
-    // Friday accepts exactly one credential, so the card offers one at a time.
-    expect(screen.getByLabelText("Session token")).toHaveValue("session-token");
-    expect(screen.queryByLabelText("Runtime ticket")).toBeNull();
-    expect(screen.getAllByText(/已保存的凭据已回填/)).toHaveLength(3);
     expect(screen.getAllByRole("option", { name: "MiniMax M2.5" })).toHaveLength(2);
     expect(screen.getAllByRole("option", { name: "MiniMax M3" })).toHaveLength(2);
     expect(screen.getAllByRole("option", { name: "Qwen3 Max" })).toHaveLength(2);
@@ -330,9 +326,8 @@ describe("SettingsPage", () => {
 
     // Friday's CLI records the address and holds the credential, and Friday's
     // own config picks the model, so none of these belong on the card.
-    expect(screen.queryByLabelText("服务地址")).toBeNull();
+    expect(screen.queryByLabelText("Friday 服务地址")).toBeNull();
     expect(screen.queryByLabelText("模型服务地址")).toBeNull();
-    expect(screen.queryByRole("switch", { name: "Friday Runtime 需要鉴权" })).toBeNull();
 
     saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
     fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
@@ -349,49 +344,7 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByRole("switch", { name: "启用 Friday Runtime" })).toBeDisabled();
     expect(screen.getByText(/未检测到 Friday 桌面版/)).toBeInTheDocument();
-    expect(screen.getByLabelText("服务地址")).toBeDisabled();
-  });
-
-  it("hides the Friday credentials while the local runtime needs no authentication", async () => {
-    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
-      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,friday_runtime",
-      CEO_FRIDAY_RUNTIME_AUTH_DISABLED: "1",
-    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
-    renderSettings("/settings?tab=agent-runtime");
-
-    expect(await screen.findByRole("switch", { name: "Friday Runtime 需要鉴权" })).not.toBeChecked();
-    expect(screen.queryByLabelText("Runtime ticket")).toBeNull();
-    expect(screen.queryByLabelText("Session token")).toBeNull();
-    expect(screen.queryByLabelText("凭据类型")).toBeNull();
-  });
-
-  it("asks for exactly one Friday credential once authentication is on", async () => {
-    const user = userEvent.setup();
-    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
-      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,friday_runtime",
-      CEO_FRIDAY_RUNTIME_AUTH_DISABLED: "1",
-      CEO_FRIDAY_RUNTIME_BASE_URL: "http://127.0.0.1:52628",
-      CEO_FRIDAY_RUNTIME_PROJECT_ID: "ceo",
-    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
-    renderSettings("/settings?tab=agent-runtime");
-
-    await user.click(await screen.findByRole("switch", { name: "Friday Runtime 需要鉴权" }));
-    await user.type(screen.getByLabelText("Runtime ticket"), "ticket-123");
-    expect(screen.queryByLabelText("Session token")).toBeNull();
-
-    // Switching the credential type clears the other one, which the service
-    // refuses to store alongside it.
-    await user.selectOptions(screen.getByLabelText("凭据类型"), "session");
-    expect(screen.queryByLabelText("Runtime ticket")).toBeNull();
-    await user.type(screen.getByLabelText("Session token"), "session-123");
-
-    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
-    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
-    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
-      CEO_FRIDAY_RUNTIME_AUTH_DISABLED: "0",
-      CEO_FRIDAY_RUNTIME_TICKET: "",
-      CEO_FRIDAY_SESSION_TOKEN: "session-123",
-    }), {});
+    expect(screen.getByLabelText("Friday 服务地址")).toBeDisabled();
   });
 
   it("shows the Agent Runtime validation reason without discarding the draft", async () => {

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-17: Settings / Agent Runtime drops what it never needed to ask or
+  say. Friday's credential switch and its ticket and session-token fields are
+  gone: the route this service starts runs with authentication off, and the
+  desktop CLI path signs its own ticket, so neither mode has a credential to
+  type. The Friday card is one flat row of fields instead of two nested boxes,
+  a card's description is one line, field cells align to the top of the row,
+  and "已保存的凭据已回填" no longer repeats under every filled credential and
+  again at the bottom of the card — a filled field already shows that.
+
 - 2026-09-17: Friday Runtime can run through the CLI its desktop app ships, and
   then asks for nothing: `friday runtime start` starts or reuses the shared
   headless runtime, the service reads the address Friday records in
