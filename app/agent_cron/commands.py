@@ -178,13 +178,6 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
         consumer_prompt_enabled=False,
     ),
     ServiceCommandOption(
-        name="update-minutes-archive",
-        display_name="更新听记归档",
-        description="先为本账号读不到的听记提交查看权限申请，再把所有尚未归档的钉钉 AI 听记归档到工作区；申请失败不影响归档。",
-        channel="work_summary",
-        consumer_prompt_enabled=False,
-    ),
-    ServiceCommandOption(
         name="sync-minutes-once",
         display_name="同步听记到工作区",
         description="归档尚未归档且可访问的钉钉 AI 听记，把可用摘要和逐字稿保存到工作区；权限受限或内容不可读时保留同步状态。",

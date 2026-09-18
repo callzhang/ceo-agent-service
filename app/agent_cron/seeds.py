@@ -10,7 +10,7 @@ from app.store import AutoReplyStore
 
 
 MINUTES_SYNC_MIGRATION_KEY = "ceo-minutes-sync-daily-v1"
-MINUTES_SERVICE_COMMAND = "update-minutes-archive"
+MINUTES_ACCESS_MIGRATION_KEY = "ceo-minutes-access-daily-v1"
 WEEKLY_OKR_MIGRATION_KEY = "weekly-okr-report-sunday-v1"
 WEEKLY_OKR_SERVICE_COMMAND = "weekly-okr-report"
 DINGTALK_MESSAGE_MIGRATION_KEY = "dingtalk-message-check-v1"
@@ -51,6 +51,12 @@ SCHEDULED_TASK_DEFAULT_COPY = {
     EMAIL_MESSAGE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="分类新邮件",
         description="发现已配置未分类入口中的新未读邮件后，由 Agent 按邮件分类规则判断业务类别和重要性；分类结果再由现有执行队列按邮箱策略处理。",
+        old_name="",
+        old_description="",
+    ),
+    MINUTES_ACCESS_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="申请读不到的钉钉 AI 听记",
+        description="读取听记管理后台，对本账号读不到的听记逐条在其页面提交查看权限申请；对方同意后由听记下载任务归档。需要组织管理员身份和一份已登录的后台会话。",
         old_name="",
         old_description="",
     ),
@@ -290,6 +296,9 @@ def seed_scheduled_tasks(
         working_directory=working_directory,
         now=now,
     )
+    minutes_access = _seed_minutes_access_task(
+        store=store, options=options, working_directory=working_directory, now=now
+    )
     minutes = _seed_minutes_task(
         store=store,
         options=options,
@@ -308,6 +317,7 @@ def seed_scheduled_tasks(
             oa,
             meeting_todos,
             weekly_okr,
+            minutes_access,
             minutes,
             follow_up_delivery,
         )
@@ -725,7 +735,7 @@ def _seed_minutes_task(
     del options, working_directory
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
-        command=MINUTES_SERVICE_COMMAND,
+        command="sync-minutes-once",
         seed_enabled=True,
         seed_description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
         now=now,
@@ -736,8 +746,48 @@ def _seed_minutes_task(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
         name=_default_copy(MINUTES_SYNC_MIGRATION_KEY).name,
         description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
-        command=MINUTES_SERVICE_COMMAND,
+        command="sync-minutes-once",
         cron_expression="0 0 20 * * *",
+        timezone_name="Asia/Shanghai",
+        enabled=True,
+        now=now,
+    )
+
+
+def _seed_minutes_access_task(
+    *,
+    store: AutoReplyStore,
+    options: ScheduledTaskOptionService,
+    working_directory: Path,
+    now: datetime | None,
+) -> ScheduledTask:
+    """Seed asking for minutes access as its own deterministic command.
+
+    Separate from the archive task on purpose: it needs a signed-in console
+    session and the organisation's admin role, which the archive needs neither
+    of. Kept as one task, a console this account cannot open would have to be
+    told apart from an archive failure inside the command; as two, each task's
+    state says which one is unhappy, and an account without the role simply
+    turns this one off.
+    """
+    del options, working_directory
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key=MINUTES_ACCESS_MIGRATION_KEY,
+        command="request-minutes-access",
+        seed_enabled=True,
+        seed_description=_default_copy(MINUTES_ACCESS_MIGRATION_KEY).description,
+        now=now,
+    )
+    if adopted is not None:
+        return adopted
+    return store.create_scheduled_task(
+        migration_key=MINUTES_ACCESS_MIGRATION_KEY,
+        name=_default_copy(MINUTES_ACCESS_MIGRATION_KEY).name,
+        description=_default_copy(MINUTES_ACCESS_MIGRATION_KEY).description,
+        command="request-minutes-access",
+        # Half an hour before the archive, so a minute granted during the day
+        # is asked for and archived on the same evening.
+        cron_expression="0 30 19 * * *",
         timezone_name="Asia/Shanghai",
         enabled=True,
         now=now,

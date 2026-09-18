@@ -49,6 +49,17 @@ class MinutesBrowserSessionExpired(RuntimeError):
     """The saved browser session can no longer reach the 听记 admin console."""
 
 
+class MinutesConsoleUnavailable(RuntimeError):
+    """The session signed in, but the console served no minutes listing.
+
+    Distinct from an expired session on purpose. The console is the 听记
+    organisation's management view, so an account without that role reaches it
+    and gets no table -- and no amount of signing in again will change that.
+    Reporting it as an expired session would ask a person, every day, to renew
+    a session that is already valid.
+    """
+
+
 @dataclass(frozen=True)
 class MinutesAccessResult:
     """Every candidate lands in exactly one outcome."""

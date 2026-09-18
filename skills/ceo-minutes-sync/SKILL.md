@@ -20,16 +20,25 @@ grants access. The 听记 admin console is the only place those minutes appear,
 and the minute's own page is the only place a request can be sent. Asking first
 means a minute approved since the last run is archived by the same pass.
 
-## Running it
+## Two scheduled tasks, not one
 
-```bash
-ceo-agent update-minutes-archive
-```
+They are separate on purpose. Asking needs a signed-in console session and the
+organisation's 听记 admin role; archiving needs neither. Kept as one command, a
+console this account cannot open would have to be told apart from an archive
+failure inside it; as two tasks, each one's state says which is unhappy, and an
+account without the role simply turns the asking task off.
 
-Runs step 1 then step 2. A failed step 1 does not cancel step 2, and the run
-still ends as a failure so the reason is visible.
+| Task | Command | When |
+| --- | --- | --- |
+| 申请读不到的钉钉 AI 听记 | `request-minutes-access` | 19:30 |
+| 下载新增的钉钉 AI 听记 | `sync-minutes-once` | 20:00 |
 
-## Step 1 — ask for the access we do not have
+Asking runs first, so a minute granted during the day is archived the same
+evening. Approval is a person's decision and takes hours or days, so the half
+hour between them is not what makes it work — the ordering only avoids waiting
+a further day.
+
+## 申请 — ask for the access we do not have
 
 ```bash
 ceo-agent request-minutes-access
@@ -49,18 +58,23 @@ request-minutes-access discovered=N requested=N already_requested=N readable=N u
 - `session_expires_in_days` counts down the signed-in console session. When the
   command prints `session-renewal-required`, tell Derek to sign in again — the
   session lasts about a month and only he can renew it.
-- **A failed step 1 does not cancel step 2.** Access is an improvement to the
-  next pass; archiving what we can already read is the job.
+- Asking failing never stops the archive: they are separate tasks.
+- Without the 听记 admin role the console serves no listing and this task cannot
+  work at all. That is reported as its own failure, distinct from an expired
+  session, because signing in again would not change it — turn the task off.
 
-## Step 2 — archive everything not archived yet
+## 下载 — archive everything not archived yet
 
 ```bash
 ceo-agent sync-minutes-once
 ```
 
-Lists every scope the provider offers (`all`, `mine`, `shared` — none of them is
-complete on its own), fetches summary and transcript for each minute not already
-archived, and writes it under the workspace's `AI听记` directory. It prints:
+Reads every page of every scope the provider offers (`all`, `mine`, `shared` —
+none of them is complete on its own), fetches summary and transcript for each
+minute not already archived, and writes it under the workspace's `AI听记`
+directory. The walk never stops early at an already-archived minute: minutes
+are not archived in listing order, so a minute granted access late sits below
+any such boundary and would never be offered again. It prints:
 
 ```
 sync-minutes-once discovered=N synced=N skipped=N permission_requested=N permission_pending=N failed=N

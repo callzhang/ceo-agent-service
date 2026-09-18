@@ -259,3 +259,16 @@ def test_session_expiry_is_unknown_when_there_is_no_session_file(
 def test_every_candidate_lands_in_exactly_one_outcome() -> None:
     with pytest.raises(ValueError):
         MinutesAccessResult(discovered=2, requested=1)
+
+
+def test_a_console_without_the_admin_role_is_not_an_expired_session() -> None:
+    """Two different remedies, so they must be two different failures.
+
+    An expired session is renewed by a person signing in. A console this
+    account may not open cannot be fixed by signing in at all, so reporting it
+    as an expired session would ask for a renewal every day, forever.
+    """
+    from app.minutes_access import MinutesConsoleUnavailable
+
+    assert not issubclass(MinutesConsoleUnavailable, MinutesBrowserSessionExpired)
+    assert not issubclass(MinutesBrowserSessionExpired, MinutesConsoleUnavailable)

@@ -15,6 +15,7 @@ from app.minutes_access import (
     MINUTES_CONSOLE_HOST,
     MinutesAccessRequest,
     MinutesBrowserSessionExpired,
+    MinutesConsoleUnavailable,
 )
 
 
@@ -130,9 +131,17 @@ class PlaywrightMinutesConsole:
         self._page.goto(HISTORY_URL, wait_until="domcontentloaded")
         state = self._settle_table()
         if state is None:
-            raise MinutesBrowserSessionExpired(
-                "the 听记 console did not render its table; "
-                f"landed on {self._page.url}"
+            # Which of the two it is, is decided by where the browser ended up,
+            # not by guessing at page text: sent back to the sign-in host means
+            # the session; still on the console with no listing means this
+            # account cannot see one.
+            if LOGIN_HOST in self._page.url:
+                raise MinutesBrowserSessionExpired(
+                    "the 听记 console sent us back to sign in; renew the session"
+                )
+            raise MinutesConsoleUnavailable(
+                "the 听记 console served no minutes listing to this account; "
+                f"at {self._page.url}: {self._page_head()}"
             )
         if state["current_page"] != 1:
             # A previous walk can leave the console on its last page, where
@@ -202,6 +211,15 @@ class PlaywrightMinutesConsole:
             panel["owner"],
             "the page never read the request back",
         )
+
+    def _page_head(self) -> str:
+        """The console's own words, so the report does not invent a reason."""
+        try:
+            return str(
+                self._page.evaluate("() => (document.body.innerText || '').trim()")
+            )[:200]
+        except Exception:
+            return ""
 
     def _settle_table(self, previous_rows: list[dict] | None = None) -> dict | None:
         previous_first = ""
