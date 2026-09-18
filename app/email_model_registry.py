@@ -155,7 +155,12 @@ class PromotionThresholds:
 
 
 # A run keeps a category when it retains this much of the previous evidence.
-EVIDENCE_RETENTION = 0.9
+# Grouped cross-validation re-fits every fold, so the accepted count for one
+# category moved between 379 and 113 across adjacent runs a dozen labels
+# apart while its precision stayed above the target. The band is here to
+# catch a category losing its case (585 accepted, then 4), not that jitter;
+# precision and the samples floor are what keep quality honest.
+EVIDENCE_RETENTION = 0.6
 
 # Evidence staged before thresholds were recorded was judged by these.
 LEGACY_PROMOTION_THRESHOLDS = PromotionThresholds(precision_min=0.95, samples_min=20)
