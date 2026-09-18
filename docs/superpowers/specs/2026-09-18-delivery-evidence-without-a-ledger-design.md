@@ -36,40 +36,47 @@ Consumer 重读会话时看见自己上次发的消息，不是账本。
 `external_result.live_result_reference`，证据闸（`app/dingtalk_send_evidence.py`）已经要求这个返回必须
 出现在运行记录的调用流里。发送到此完成。
 
-`sent_replies` 与 `external_action_results` 降级为**只读投影**，从 (task, consumer run, audit run) 派生，
-不再有独立写入路径。
+Agent 发送在 `sent_replies` / `external_action_results` 里的部分降级为**派生结果**，不再有独立写入路径；
+表本身保留，因为它还装着 2003 行历史和 OKR 这类直接发送的记录。
+
+## 谁在写这张表（实测，2026-09-18）
+
+| 来源 | 9 月行数 | 有运行可派生 |
+|---|---|---|
+| Agent 运行（Consumer/Audit） | 78 | 能 |
+| OKR 周报发送 `app/cli.py:2077` | 18 | **不能**：不走运行模型，但发送当场就有 provider 返回 |
+| 2026-09 之前的全部 2003 行 | — | 不能：早于运行模型，只读保留 |
+
+微信不在其中：它有自己的 `wechat_deliveries`（101 行），`sent_replies` 里微信行数为 0。
+
+所以原则统一成一句：**谁执行发送，谁在发送当场把 provider 返回记下来，只记一次，事后不再对账。**
+Agent 发送的记录者是 Audit 运行；OKR 发送的记录者是那条命令自己。
 
 ## 现有读者与它们真正需要的东西
 
-| 读者 | 位置 | 需要 | 能否从运行派生 |
+| 读者 | 位置 | 需要 | 来源 |
 |---|---|---|---|
-| History 显示已发消息 | `app/audit_web.py:6131` | 正文、时间、attempt 关联 | 能：正文在 Consumer 提案 payload，时间/关联在 run |
-| 反馈回链（👍/👎） | `app/feedback_events.py:15` | `feedback_token` | 能：token 本就是从正文里 `extract_feedback_link_context` 出来的 |
-| 撤回 | `app/audit_web.py:9831` | provider 消息 id / recall key | 能：在 `live_result_reference` 里 |
-| Quality gate | `app/quality_gate.py:343` | 「这条失败记录是否已有成功送达」 | 能：改为查该 business object 有无带证据的 executed 运行 |
+| History 显示已发消息 | `app/audit_web.py:6131` | 正文、时间、attempt 关联 | Agent：派生；直接发送：自身记录 |
+| 反馈回链（👍/👎） | `app/feedback_events.py:15` | `feedback_token` | 从正文 `extract_feedback_link_context` 得出 |
+| 撤回 | `app/audit_web.py:9831` | provider 消息 id / recall key | `live_result_reference` |
+| Quality gate | `app/quality_gate.py:343` | 该对象是否已有成功送达 | 改查带证据的 executed 运行 |
 | 定时任务恢复 | `app/scheduled_task_recovery.py:100` | 同上 | 同上 |
-| 微信路径 | `app/cli.py:2077` | `record_sent_reply` 直接写 | **不能**：微信不走 Agent 运行，见下 |
 
-`external_action_results` 目前只有 `store.py` 内部和恢复路径读，去重语义如上所述已经失效。
+## 一次做完，不分阶段
 
-## 分四步做，每步独立可回滚
+Derek 2026-09-18：分阶段更差。理由成立且与 AGENTS.md 一致——分阶段必然要让新旧两条路并存，
+那正是「为兼容旧逻辑写兼容代码」；中间还会出现「表在写但没人读」这种比两端都糟的状态；
+每一阶段都要一次部署，而部署要重启，重启现在归心跳会话且会打断运行中的轮次。
 
-**第一步：把投影变成派生函数，不改存储。**
-抽出 `delivery_projection(task, consumer_run, audit_run)`，让现有写入路径和所有读者都经过它。
-此时行为不变，但「怎么从运行得到一条送达」只有一处定义。可独立提交与验证。
+**安全机制不是分阶段部署，而是改之前的离线等价证明**：
 
-**第二步：读者改为按需派生，不再查表。**
-History、反馈、撤回、quality gate、恢复路径逐个切到第一步的函数。每切一个，用线上数据对比
-「表里的行」与「派生结果」必须逐字段一致——不一致先查清楚再继续。这一步结束时，表还在写，但没人读。
-
-**第三步：停止写入，删掉补账扫描。**
-移除 `record_completed_agent_message_delivery` 的调用、`_repair_completed_message_delivery_projections`
-及其候选 SQL。这三样正是前述四个故障的来源。
-
-**第四步：处理微信和历史数据。**
-微信回复不经过 Consumer/Audit 运行，`app/cli.py:2077` 直接写 `sent_replies`。两个选择：让微信保留自己的
-送达记录表，或把微信发送也纳入运行模型。这一步需要单独决定，不阻塞前三步。
-历史表保留只读，不迁移、不删除——它是已发生事实的记录。
+1. 写出派生函数 `delivery_projection(task, consumer_run, audit_run)`。
+2. **不提交任何代码**，先拿线上库把全部 78 行 Agent 来源的 `sent_replies` 跑一遍，逐字段比对
+   派生结果与表中现有行：正文、provider 返回、recall key、feedback token、attempt 关联。
+   不一致的逐条查清，而不是调派生函数去迁就表——表里可能本来就有错行（已知七行幻影已删）。
+3. 等价证明通过后，一次改完：读者切到派生、停止写入、删除 `record_completed_agent_message_delivery`
+   与 `_repair_completed_message_delivery_projections` 及其候选 SQL、OKR 路径改为记录自身发送证据。
+4. 一次部署（交心跳会话重启）。
 
 ## 会失去什么，必须明说
 
@@ -89,7 +96,7 @@ History、反馈、撤回、quality gate、恢复路径逐个切到第一步的�
 ## 验收
 
 - 线上任意一条已发消息，History、撤回入口、反馈回链的表现与拆之前一致。
-- 新发送不再写 `sent_replies`，而 History 仍然显示它。
+- 新的 Agent 发送不再写 `sent_replies`，而 History 仍然显示它；OKR 发送仍有自己的记录。
 - `grep -rn "record_completed_agent_message_delivery\|_repair_completed_message_delivery_projections" app/`
   无结果。
 - 证据闸的回放结果不变（当前：286 条 9 月运行，222 放行 / 64 拦下）。
