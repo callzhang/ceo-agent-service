@@ -3563,6 +3563,13 @@ def run_task_maintenance_loop(
             ),
         )
         run_step(
+            # A task can keep its lock after its turn fails, and nothing
+            # between restarts noticed: reply task 384388 sat processing for 49
+            # minutes with no run and no scheduled retry.
+            "recover_stale_processing_tasks",
+            lambda: len(store.recover_stale_processing_reply_tasks()),
+        )
+        run_step(
             # Delivery-state confirmation is an internal maintenance mechanism.
             # It does not scan messages, meetings, OA, or other new work sources.
             "confirm_external_todo_completions",

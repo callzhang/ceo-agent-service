@@ -11479,6 +11479,69 @@ class AutoReplyStore:
             ).fetchall()
             return [self._reply_task_from_row(row) for row in rows]
 
+    def recover_stale_processing_reply_tasks(
+        self,
+        *,
+        stale_after_seconds: int = 900,
+        limit: int = 100,
+    ) -> list[ReplyTask]:
+        """Requeue a task holding a lock no run is working on any more.
+
+        A turn can fail without releasing its task: reply task 384388 held its
+        lock for 49 minutes after Audit run 20079 failed, with nothing running
+        and nothing scheduled to pick it up. Restart recovery cleared that
+        shape, but only at startup, so between restarts such a task simply
+        stopped. Attention shows errors rather than states, so it was invisible
+        there; only the quality gate's `processing_stale` count named it.
+        """
+
+        if limit <= 0:
+            return []
+        if stale_after_seconds <= 0:
+            raise ValueError("stale_after_seconds must be positive")
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and trim(coalesce(tasks.locked_at, ''))<>''
+                  and datetime(tasks.locked_at) < datetime('now', ?)
+                  and not exists (
+                      select 1 from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and runs.status in ('running', 'starting')
+                  )
+                  and not exists (
+                      select 1
+                      from agent_runtime_attempts as attempts
+                      join agent_runs as runs on runs.id=attempts.agent_run_id
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and attempts.status in ('running', 'starting')
+                  )
+                order by tasks.id
+                limit ?
+                """,
+                (f"-{int(stale_after_seconds)} seconds", limit),
+            ).fetchall()
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', locked_at=null, available_at='',
+                        error='stale_lease_recovered', updated_at=current_timestamp
+                    where id=? and status='processing'
+                      and execution_generation=?
+                    """,
+                    (int(row["id"]), str(row["execution_generation"])),
+                )
+                if cursor.rowcount == 1:
+                    recovered.append(self._reply_task_from_row(row))
+            return recovered
+
     def recover_orphaned_processing_reply_tasks(
         self,
         *,

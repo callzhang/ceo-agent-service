@@ -11521,3 +11521,87 @@ def test_a_task_that_wrote_nothing_still_fails(tmp_path):
     assert updated is not None
     assert updated.status == "failed"
     assert updated.error == "audit_revision_exhausted"
+
+
+def test_a_task_holding_a_lock_with_no_live_run_is_requeued(tmp_path):
+    """Reply task 384388 held its lock for 49 minutes after its Audit run failed.
+
+    Nothing between restarts picked it up, and Attention shows errors rather
+    than states, so only the quality gate's `processing_stale` named it.
+    """
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-stale",
+        conversation_title="产研管理群",
+        single_chat=False,
+        trigger_message_id="msg-stale",
+        trigger_create_time="2026-09-18 00:58:00",
+        trigger_sender="张晓民",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+    )
+    task = store.get_reply_task_for_message("cid-stale", "msg-stale")
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='processing', "
+            "locked_at=datetime('now','-45 minutes') where id=?",
+            (task.id,),
+        )
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="stale-test-owner",
+    )
+    with store._connect() as db:
+        db.execute("update agent_runs set status='failed' where id=?", (claim.run.id,))
+
+    recovered = store.recover_stale_processing_reply_tasks(stale_after_seconds=900)
+
+    assert [item.id for item in recovered] == [task.id]
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "pending"
+    assert updated.error == "stale_lease_recovered"
+
+
+def test_a_task_with_a_live_run_keeps_its_lock(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-live",
+        conversation_title="产研管理群",
+        single_chat=False,
+        trigger_message_id="msg-live",
+        trigger_create_time="2026-09-18 00:58:00",
+        trigger_sender="张晓民",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+    )
+    task = store.get_reply_task_for_message("cid-live", "msg-live")
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='processing', "
+            "locked_at=datetime('now','-45 minutes') where id=?",
+            (task.id,),
+        )
+    store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="live-test-owner",
+    )
+
+    assert store.recover_stale_processing_reply_tasks(stale_after_seconds=900) == []
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "processing"
