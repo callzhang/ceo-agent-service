@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -71,3 +72,91 @@ def important_effective(
     return category != "junk" and (
         provider_signals.provider_important or model_important
     )
+
+
+_OWNER_ACTION_CATEGORIES = frozenset({
+    "work",
+    "human_resources",
+    "legal",
+    "financing",
+    "finance",
+    "external_billing",
+    "personal",
+})
+
+_BULK_SENDER_NAMES = (
+    "noreply",
+    "no-reply",
+    "no.reply",
+    "donotreply",
+    "do-not-reply",
+    "notification",
+    "notifications",
+    "notify",
+    "alert",
+    "alerts",
+    "mailer",
+    "mail",
+    "bounce",
+    "postmaster",
+    "automated",
+    "robot",
+    "news",
+    "newsletter",
+    "update",
+    "updates",
+    "digest",
+    "info",
+    "hello",
+    "team",
+    "support",
+    "service",
+    "services",
+    "billing",
+    "invoice",
+    "invoices",
+    "receipt",
+    "receipts",
+    "payment",
+    "payments",
+    "memberservices",
+    "marketing",
+    "promo",
+    "promotions",
+    "sales",
+    "statements",
+)
+
+
+def bulk_sender(sender: str) -> bool:
+    """Say whether an address sends broadcasts rather than correspondence."""
+
+    if type(sender) is not str:
+        raise TypeError("sender must be an exact string")
+    local, separator, domain = sender.strip().casefold().rpartition("@")
+    if not separator:
+        local, domain = sender.strip().casefold(), ""
+    if "+acct_" in local or local.startswith("upcoming-invoice"):
+        return True
+    parts = [part for part in re.split(r"[.\-_+]", local) if part]
+    if any(part in _BULK_SENDER_NAMES for part in parts):
+        return True
+    return domain.startswith("notify.") or domain.startswith("alert.")
+
+
+def important_training_label(*, category: str, sender: str) -> bool:
+    """Important means the owner still owes this message an action.
+
+    The Agent's own flag was the training label until 2026-09-18, and it
+    disagreed with itself: 116 of 232 work messages carried it with no
+    readable difference between the two halves, and a label correction
+    replaces the ActionPlan, silently dropping the flag. Mail that asks
+    something of the owner is mail a person sent him about his own
+    business; broadcasts never are, whatever they are about.
+    """
+
+    if type(category) is not str or not category or category != category.strip():
+        raise ValueError("category must be an exact non-blank string")
+    if type(sender) is not str:
+        raise TypeError("sender must be an exact string")
+    return category in _OWNER_ACTION_CATEGORIES and not bulk_sender(sender)

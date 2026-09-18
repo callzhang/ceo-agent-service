@@ -13459,22 +13459,7 @@ class EmailStore:
                        messages.sender, messages.recipients_json, messages.subject,
                        messages.normalized_text, messages.attachment_metadata_json,
                        messages.rfc_message_id, messages.in_reply_to,
-                       messages.references_json,
-                       -- Important means the owner still has to do something.
-                       -- Filed-and-skimmed mail never does, however the Agent
-                       -- flagged it: 355 of 840 notifications carried the flag,
-                       -- which is what the important head was learning from.
-                       (
-                         exists(
-                           select 1 from email_actions as actions
-                           where actions.action_plan_id=classifications.current_action_plan_id
-                             and actions.action_type='flag_important'
-                         )
-                         and coalesce(
-                           nullif(classifications.confirmed_category, ''),
-                           classifications.category
-                         ) not in ('notification', 'shopping', 'junk')
-                       ) as important
+                       messages.references_json
                 from email_classifications as classifications
                 join email_messages as messages
                   on messages.stable_message_identity=classifications.stable_message_identity
@@ -13491,6 +13476,7 @@ class EmailStore:
                 order by classifications.id asc
                 """
             ).fetchall()
+        from app.email_important import important_training_label
         from app.email_training_snapshot import canonical_model_input
 
         def stored_address(value: object) -> dict[str, str]:
@@ -13547,7 +13533,14 @@ class EmailStore:
                     if row["classification_source"] == "agent"
                     else row["confirmed_category"]
                 ),
-                "important": bool(row["important"]),
+                "important": important_training_label(
+                    category=str(
+                        row["category"]
+                        if row["classification_source"] == "agent"
+                        else row["confirmed_category"]
+                    ),
+                    sender=str(row["sender"] or ""),
+                ),
                 "label_recorded_at": str(
                     row["confirmed_at"] or row["updated_at"]
                 ),
