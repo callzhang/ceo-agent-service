@@ -31,6 +31,13 @@ RESTRICTED_MINUTE_MINIMUM_DURATION = timedelta(minutes=5)
 _SOURCE_URL_PREFIX = "https://shanji.dingtalk.com/app/transcribes/"
 _MINUTES_LIST_MAX_PAGES = 100
 
+# The provider has no single listing that returns every accessible minute.
+# Measured live on 2026-09-17: `shared` held 20 minutes that `all` never
+# returned, and `all` is the only scope that reaches beyond both. Reading one
+# scope therefore loses minutes silently, so the pass reads all three and
+# merges them by taskUuid.
+MINUTES_LIST_SCOPES = ("all", "mine", "shared")
+
 
 @dataclass(frozen=True)
 class MinutesSyncResult:
@@ -311,23 +318,23 @@ def _is_restricted_minute_error(error: DwsError) -> bool:
     return False
 
 
-def _list_all_minutes(
-    dws,
-    *,
-    archived_ids: set[str],
-    permission_pending_ids: set[str],
-) -> tuple[list[dict[str, Any]], str]:
-    """Read the complete minutes listing, returning a deferred error if partial."""
-    list_page = getattr(dws, "list_minutes_page", None)
-    if list_page is None:
-        return dws.parse_minutes_list(dws.list_minutes()), ""
+def _task_uuid(item: dict[str, Any]) -> str:
+    return str(item.get("taskUuid") or item.get("minutesId") or "").strip()
 
+
+def _list_minutes_scope(
+    list_page,
+    scope: str,
+    *,
+    known_ids: set[str],
+) -> tuple[list[dict[str, Any]], str]:
+    """Read one listing scope, returning a deferred error if it ended partial."""
     items: list[dict[str, Any]] = []
     cursor = ""
     seen_cursors: set[str] = set()
     for _ in range(_MINUTES_LIST_MAX_PAGES):
         try:
-            page = list_page(cursor=cursor)
+            page = list_page(scope=scope, cursor=cursor)
         except Exception as exc:
             return items, str(exc)
         if not isinstance(page, dict):
@@ -337,16 +344,13 @@ def _list_all_minutes(
             return items, "invalid minutes list page items"
         typed_items = [item for item in page_items if isinstance(item, dict)]
         items.extend(typed_items)
-        page_ids = {
-            str(item.get("taskUuid") or item.get("minutesId") or "").strip()
-            for item in typed_items
-        }
+        page_ids = {_task_uuid(item) for item in typed_items}
         page_ids.discard("")
         # The provider orders this listing newest-first. The first known item
         # is the durable boundary from a previous successful pass; older pages
         # cannot contain newer work. This keeps the daily sync incremental and
         # avoids a 100-page walk through already-accounted history.
-        if page_ids and page_ids.intersection(archived_ids | permission_pending_ids):
+        if page_ids and page_ids.intersection(known_ids):
             return items, ""
         has_more = page.get("has_more")
         next_token = str(page.get("next_token") or "")
@@ -359,6 +363,40 @@ def _list_all_minutes(
         seen_cursors.add(next_token)
         cursor = next_token
     return items, f"minutes list pagination exceeded {_MINUTES_LIST_MAX_PAGES} pages"
+
+
+def _list_all_minutes(
+    dws,
+    *,
+    archived_ids: set[str],
+    permission_pending_ids: set[str],
+) -> tuple[list[dict[str, Any]], str]:
+    """Merge every listing scope, returning a deferred error if any ended partial.
+
+    A scope that fails does not discard the scopes that succeeded: its items
+    are kept and its error is reported, so the pass archives what it did see
+    and still refuses to record the run as a complete discovery.
+    """
+    list_page = getattr(dws, "list_minutes_page", None)
+    if list_page is None:
+        return dws.parse_minutes_list(dws.list_minutes()), ""
+
+    known_ids = archived_ids | permission_pending_ids
+    items: list[dict[str, Any]] = []
+    seen_uuids: set[str] = set()
+    errors: list[str] = []
+    for scope in MINUTES_LIST_SCOPES:
+        scope_items, error = _list_minutes_scope(list_page, scope, known_ids=known_ids)
+        for item in scope_items:
+            task_uuid = _task_uuid(item)
+            if task_uuid:
+                if task_uuid in seen_uuids:
+                    continue
+                seen_uuids.add(task_uuid)
+            items.append(item)
+        if error:
+            errors.append(f"{scope}: {error}")
+    return items, "; ".join(errors)
 
 
 def sync_minutes_once(
@@ -385,7 +423,7 @@ def sync_minutes_once(
 
     candidates: list[str] = []
     for item in listed:
-        task_uuid = str(item.get("taskUuid") or item.get("minutesId") or "").strip()
+        task_uuid = _task_uuid(item)
         if task_uuid and task_uuid not in archived and task_uuid not in candidates:
             candidates.append(task_uuid)
     # A minute whose access was requested earlier is retried even once it has

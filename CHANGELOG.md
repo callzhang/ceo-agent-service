@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-17: 归档新增的钉钉 AI 听记 reads every listing scope instead of one.
+  The pass enumerated with `dws minutes list all`, whose name suggests a
+  complete listing and is not one: measured live, `shared` held 20 minutes that
+  `all` never returned. The pass now walks `all`, `mine` and `shared`, merges
+  them by taskUuid, and keeps the per-scope early exit at the first known
+  minute, so a daily run still reads one page per scope. A scope that fails
+  no longer discards the scopes that succeeded — their minutes are archived
+  and the failure still holds back the run's success marker.
+
 - 2026-09-17: Claude's model and thinking strength are chosen from lists, not
   typed. Thinking strength was a free-text field although the service refuses
   anything outside low/medium/high/xhigh, and Claude's model was free text on

@@ -66,9 +66,9 @@ class PaginatedFakeDws(FakeDws):
         self.pages = pages
         self.calls: list[str] = []
 
-    def list_minutes_page(self, *, cursor="", **kwargs):
+    def list_minutes_page(self, *, scope="all", cursor="", **kwargs):
         del kwargs
-        self.calls.append(cursor)
+        self.calls.append((scope, cursor))
         page = self.pages.get(cursor)
         if isinstance(page, Exception):
             raise page
@@ -322,7 +322,11 @@ def test_incomplete_minutes_pagination_does_not_claim_success(tmp_path: Path) ->
     assert "temporary page failure" in state["last_error"]
     cursor = json.loads(state["cursor_json"])
     assert cursor["pagination_deferred"] is True
-    assert cursor["pagination_error"] == "temporary page failure"
+    assert cursor["pagination_error"] == (
+        "all: temporary page failure; "
+        "mine: temporary page failure; "
+        "shared: temporary page failure"
+    )
     assert cursor["archived_ids"] == ["u1"]
 
 
@@ -352,7 +356,7 @@ def test_incremental_sync_stops_at_first_already_accounted_page(
 
     assert result.discovered == 1
     assert result.synced == 1
-    assert dws.calls == [""]
+    assert dws.calls == [("all", ""), ("mine", ""), ("shared", "")]
     state = store.get_daily_scan_state(MINUTES_SYNC_SCANNER) or {}
     assert state["last_error"] == ""
     assert json.loads(state["cursor_json"])["archived_ids"] == ["u1", "u2"]
@@ -487,3 +491,81 @@ def test_the_daily_service_command_archives_every_minute_the_pass_discovered(
 
     assert registry.run("sync-minutes-once") == "sync-minutes-once queued=9"
     assert len(list((tmp_path / "AI听记").rglob("*.md"))) == 9
+
+
+class ScopedFakeDws(FakeDws):
+    """A provider whose scopes return different minutes, as the live one does."""
+
+    def __init__(self, pages_by_scope):
+        super().__init__([])
+        self.pages_by_scope = pages_by_scope
+        self.calls: list[tuple[str, str]] = []
+
+    def list_minutes_page(self, *, scope="all", cursor="", **kwargs):
+        del kwargs
+        self.calls.append((scope, cursor))
+        page = self.pages_by_scope.get(scope, {}).get(cursor)
+        if isinstance(page, Exception):
+            raise page
+        return page or {"items": [], "has_more": False, "next_token": ""}
+
+
+def _one_page(*task_uuids: str) -> dict:
+    return {
+        "": {
+            "items": [{"taskUuid": task_uuid} for task_uuid in task_uuids],
+            "has_more": False,
+            "next_token": "",
+        }
+    }
+
+
+def _readable(dws: FakeDws, *task_uuids: str) -> None:
+    for task_uuid in task_uuids:
+        dws._basic[task_uuid] = {"title": f"会议{task_uuid}", "startTime": 1789025858000}
+        dws._paragraphs[task_uuid] = [{"startTime": 0, "paragraph": "内容"}]
+
+
+def test_a_minute_only_the_shared_scope_lists_still_reaches_the_archive(
+    tmp_path: Path,
+) -> None:
+    """`all` is not the union of the scopes.
+
+    Measured live 2026-09-17: 20 minutes appeared in `shared` that `all` never
+    returned, so a pass that reads only `all` loses them with no error.
+    """
+    store = _store(tmp_path)
+    dws = ScopedFakeDws(
+        {
+            "all": _one_page("u1"),
+            "mine": _one_page("u1"),
+            "shared": _one_page("u1", "u2"),
+        }
+    )
+    _readable(dws, "u1", "u2")
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.discovered == 2 and result.synced == 2
+    assert _cursor(store)["archived_ids"] == ["u1", "u2"]
+
+
+def test_one_failing_scope_keeps_the_others_and_still_defers_success(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    dws = ScopedFakeDws(
+        {
+            "all": _one_page("u1"),
+            "mine": {"": DwsError("scope unavailable", "NETWORK_ERROR")},
+            "shared": _one_page("u2"),
+        }
+    )
+    _readable(dws, "u1", "u2")
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.synced == 2
+    state = store.get_daily_scan_state(MINUTES_SYNC_SCANNER) or {}
+    assert state["last_success_at"] == ""
+    assert state["last_error"] == "mine: scope unavailable"
