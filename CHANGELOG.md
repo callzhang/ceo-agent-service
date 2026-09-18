@@ -2,17 +2,6 @@
 
 ## Unreleased
 
-- 2026-09-18: 归档新增的钉钉 AI 听记 becomes one Agent workflow over two service
-  commands instead of a single command. Minutes upkeep is now two steps that
-  must run in order — ask for the access the read API refuses, then archive —
-  so a minute approved since the last run is archived by the same pass. The
-  task carries the `ceo-minutes-sync` Skill and a prompt naming both commands;
-  the commands still do the work, so nothing is reimplemented from prose.
-  `adopt_scheduled_task_agent_workflow` migrates the persisted task in place,
-  keeping its name, Cron, timezone and the enabled state the user chose, and
-  binds the first runtime that reports itself available so a seed cannot land
-  on a route the scheduler would refuse to start.
-
 - 2026-09-18: A new `request-minutes-access` service command asks each minute's
   owner for the access the read API refuses. The read API lists only minutes
   this account already has, so a minute nobody shared stays invisible and can

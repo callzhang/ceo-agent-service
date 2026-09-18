@@ -280,14 +280,12 @@ def test_reseed_upgrades_each_untouched_default_copy_field_independently(
     )
     assert reseeded.cron_expression == original.cron_expression
     assert reseeded.timezone_name == original.timezone_name
-    # Reseeding also migrates the execution form: minutes upkeep is two
-    # commands in a fixed order, so the task drives the Skill.
-    assert reseeded.command == ""
-    assert "request-minutes-access" in reseeded.prompt
-    assert "sync-minutes-once" in reseeded.prompt
-    assert [ref.skill_name for ref in reseeded.skill_refs] == ["ceo-minutes-sync"]
-    assert reseeded.runtime_id
+    assert reseeded.command == original.command
+    assert reseeded.prompt == original.prompt
+    assert reseeded.skill_refs == original.skill_refs
+    assert reseeded.runtime_id == original.runtime_id
     assert reseeded.runtime_options == original.runtime_options
+    assert reseeded.enabled is original.enabled
 
 
 @pytest.mark.parametrize("runtime_id", ("codex_oauth", "claude_api"))
@@ -894,24 +892,15 @@ def test_every_fixed_discovery_check_is_a_service_command(
         ]
         assert task.enabled is True
 
-    # Every discovery check is a service command. The weekly command owns its
+    # Every seeded task is a service command. The weekly command owns its
     # browser reads and Agent analysis under one tracked service run.
+    assert all(task.command for task in tasks)
     minutes = _task_by_key(tasks, "ceo-minutes-sync-daily-v1")
-    assert all(
-        task.command for task in tasks if task.migration_key != minutes.migration_key
-    )
+    assert minutes.command == "sync-minutes-once"
+    assert minutes.skill_refs == ()
     okr = _task_by_key(tasks, "weekly-okr-report-sunday-v1")
     assert okr.command == "weekly-okr-report"
     assert okr.skill_refs == ()
-
-    # The minutes upkeep is the one seeded Agent workflow: asking for access
-    # and archiving are separate commands that must run in that order, so the
-    # Agent drives the Skill instead of one service command (Derek 2026-09-18).
-    assert minutes.command == ""
-    assert minutes.runtime_id
-    assert [ref.skill_name for ref in minutes.skill_refs] == ["ceo-minutes-sync"]
-    assert "request-minutes-access" in minutes.prompt
-    assert "sync-minutes-once" in minutes.prompt
 
 
 def test_seed_creates_wechat_existing_producer_every_fifteen_seconds(
@@ -1397,12 +1386,10 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         "scan-meeting-todos-once",
         "scan-meetings-once",
         "scan-oa-approvals",
+        "sync-minutes-once",
         "wechat-produce-once",
         "weekly-okr-report",
     ]
-    # The minutes workflow is an Agent task, so its Cron run is not a service
-    # command trigger and produces nothing here.
-    assert "sync-minutes-once" not in produced
     for task in tasks:
         runs = store.list_scheduled_task_runs(task.id)
         assert len(runs) == 1
@@ -1419,13 +1406,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         assert reply.channel == "scheduled"
         assert reply.trigger_text == task.prompt
         assert task.name in reply.trigger_message_json
-    # Every seed but the minutes workflow is a service command running
-    # in-process on its own trigger, so a Cron tick creates exactly one
-    # scheduled reply task: the Agent turn that drives the two minutes
-    # commands in order.
-    scheduled = store.list_reply_tasks(channel="scheduled")
-    minutes = _task_by_key(tasks, "ceo-minutes-sync-daily-v1")
-    assert [task.trigger_text for task in scheduled] == [minutes.prompt]
+    # Every seed is a service command, so a Cron tick creates no scheduled
+    # reply task at all: the commands run in-process on their own triggers.
+    assert store.list_reply_tasks(channel="scheduled") == []
 
 
 def test_seed_is_idempotent_and_preserves_user_edits(tmp_path: Path) -> None:
@@ -1460,14 +1443,12 @@ def test_seed_is_idempotent_and_preserves_user_edits(tmp_path: Path) -> None:
 
 
 def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
-    """No seed is disabled by an unhealthy fleet.
+    """No seed needs a Runtime, so an unhealthy fleet cannot disable one.
 
-    The weekly OKR report was the last seed that bound a Runtime and was
-    seeded disabled with a written reason whenever no route was healthy.  A
-    service command runs in this process, so its Cron keeps working while
-    every model route is down, and the one Agent workflow takes the head of
-    the configured failover order without asking whether it is healthy —
-    health is the runtime router's decision at execution time, not the seed's.
+    The weekly OKR report was the last seed that bound a Runtime, and it was
+    seeded disabled with a written reason whenever no route was healthy.  As a
+    service command it runs in this process, so the Cron keeps working while
+    every model route is down.
     """
     store = AutoReplyStore(tmp_path / "disabled.sqlite3")
     options = _options(tmp_path, store, healthy_routes=set())
@@ -1478,15 +1459,15 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
 
     assert len(tasks) == 11
     for task in tasks:
+        assert task.command, task.migration_key
         assert task.enabled is True
-        if task.command in {"weekly-okr-report", "process-follow-ups"}:
+        if task.command in {
+            "sync-minutes-once",
+            "weekly-okr-report",
+            "process-follow-ups",
+        }:
             assert task.prompt == "" and task.skill_refs == ()
-        elif task.command:
+        else:
             assert task.prompt and task.skill_refs
-            assert task.runtime_id == ""
+        assert task.runtime_id == ""
         assert store.list_scheduled_task_runs(task.id) == ()
-    minutes = _task_by_key(tasks, "ceo-minutes-sync-daily-v1")
-    assert minutes.command == "" and minutes.runtime_id
-    assert all(
-        task.command for task in tasks if task.migration_key != minutes.migration_key
-    )
