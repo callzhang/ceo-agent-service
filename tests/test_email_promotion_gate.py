@@ -9,7 +9,12 @@ def evidence():
     return {
         "model_id": "candidate",
         "compatibility": {"enabled_categories": ["work"], "description_version": "d1"},
-        "metrics": {"categories": {"work": {"precision": .98, "recall": .97, "f1": .97, "support": 25}}},
+        "metrics": {
+            "categories": {"work": {"precision": .98, "recall": .97, "f1": .97, "support": 25}},
+            # The important head decides flagging and is gated like a category.
+            "important": {"precision": .97, "recall": .95, "f1": .96, "sample_count": 120,
+                          "accepted_precision": .96, "accepted_hits": 60},
+        },
         "end_to_end_latency_ms": measured_latency(),
     }
 
@@ -267,3 +272,20 @@ def test_too_few_accepted_messages_keeps_a_category_with_the_agent():
     )
 
     assert assess(row)["promoted_categories"] == []
+
+
+def test_the_important_head_is_held_to_the_same_bar_as_a_category():
+    """It decides flagging on promoted mail, so a weak head blocks promotion."""
+
+    row = evidence()
+    row["metrics"]["important"] = {
+        **row["metrics"]["important"], "accepted_precision": .65, "accepted_hits": 58,
+    }
+    weak = assess(row)
+    row["metrics"]["important"]["accepted_precision"] = .96
+    strong = assess(row)
+
+    assert next(c for c in weak["checks"] if c["key"] == "important_precision")["passed"] is False
+    assert weak["promotion_eligible"] is False
+    assert next(c for c in strong["checks"] if c["key"] == "important_precision")["passed"] is True
+    assert strong["promotion_eligible"] is True

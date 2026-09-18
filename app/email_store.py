@@ -13460,10 +13460,20 @@ class EmailStore:
                        messages.normalized_text, messages.attachment_metadata_json,
                        messages.rfc_message_id, messages.in_reply_to,
                        messages.references_json,
-                       exists(
-                         select 1 from email_actions as actions
-                         where actions.action_plan_id=classifications.current_action_plan_id
-                           and actions.action_type='flag_important'
+                       -- Important means the owner still has to do something.
+                       -- Filed-and-skimmed mail never does, however the Agent
+                       -- flagged it: 355 of 840 notifications carried the flag,
+                       -- which is what the important head was learning from.
+                       (
+                         exists(
+                           select 1 from email_actions as actions
+                           where actions.action_plan_id=classifications.current_action_plan_id
+                             and actions.action_type='flag_important'
+                         )
+                         and coalesce(
+                           nullif(classifications.confirmed_category, ''),
+                           classifications.category
+                         ) not in ('notification', 'shopping', 'junk')
                        ) as important
                 from email_classifications as classifications
                 join email_messages as messages

@@ -494,6 +494,23 @@ def assess_online_promotion_gate(
         if promoted_categories else None,
         config["micro_f1_min"],
     )
+    # The important head decides whether promoted mail gets flagged, so it is
+    # held to the same bar as a category (Derek 2026-09-18).
+    important = mapping(mapping(row.get("metrics")).get("important"))
+    important_accepted = "accepted_precision" in important and "accepted_hits" in important
+    check(
+        "important_precision",
+        _finite_evidence_number(
+            important.get("accepted_precision" if important_accepted else "precision")
+        ),
+        config["category_precision_min"],
+    )
+    important_samples = important.get("accepted_hits" if important_accepted else "sample_count")
+    check(
+        "important_samples",
+        important_samples if type(important_samples) is int and important_samples >= 0 else None,
+        config["category_validation_samples_min"],
+    )
     latency = measured_end_to_end_latency(row.get("end_to_end_latency_ms"))
     check("p95_latency", latency["p95"] if latency else None, config["p95_latency_max_ms"], "<=")
     categories = compatibility.get("enabled_categories")

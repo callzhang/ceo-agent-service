@@ -5526,7 +5526,9 @@ def test_agent_correction_persists_its_durable_agent_result(tmp_path: Path):
     assert len(training_records) == 1
     training_input = json.loads(training_records[0]["normalized_model_input"])
     assert training_records[0]["source"] == "agent_auto_label"
-    assert training_records[0]["important"] is True
+    # A notification is filed and skimmed, so it is never important evidence
+    # even when the Agent flagged it.
+    assert training_records[0]["important"] is False
     assert training_input["input_schema_version"] == "email-folder-model-input-v3"
     assert training_input["subject"] == "Need a decision"
     assert training_input["body"] == "__subject__need a decision"
@@ -10492,3 +10494,66 @@ def test_a_copy_is_left_alone_while_the_previous_one_still_has_work(tmp_path: Pa
             rfc_message_id=filed["rfc_message_id"],
         ),
     ) is None
+
+
+def test_work_mail_keeps_its_important_flag_as_training_evidence(tmp_path: Path):
+    """Mail that needs a decision stays important; notifications do not."""
+
+    from app.email_classifier_agent import DurableAgentClassificationResult
+
+    database = tmp_path / "important-work-label.sqlite3"
+    store = EmailStore(database)
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(store, classification)
+    assert classification.action_plan is not None
+    created_at = classification.action_plan.created_at + timedelta(minutes=2)
+    agent_result = DurableAgentClassificationResult(
+        category="work",
+        important=True,
+        certainty="certain",
+        confidence=classification.action_plan.confidence,
+        reason="A customer is waiting on a decision.",
+        unsubscribe_candidate_index=None,
+        unsubscribe_candidate_source=None,
+        unsubscribe_candidate_digest=None,
+        unsubscribe_candidate_reference=None,
+    )
+    plan = EmailActionPlan.model_validate(
+        {
+            "action_plan_id": _action_plan_identity(
+                action_plan_version=2,
+                classification_id=classification.classification_id,
+                account_id=classification.action_plan.account_id,
+                category=EmailCategory.WORK,
+                classification_source="agent",
+                confidence=classification.action_plan.confidence,
+                model_id="email-classifier-agent:v1",
+                config_version="email-agent-correction-v1",
+                actions=(EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
+                action_parameters={EmailAction.MOVE: {"target_folder": "工作"}},
+                created_at=created_at,
+            ),
+            "action_plan_version": 2,
+            "classification_id": classification.classification_id,
+            "account_id": classification.action_plan.account_id,
+            "category": EmailCategory.WORK,
+            "classification_source": "agent",
+            "confidence": classification.action_plan.confidence,
+            "model_id": "email-classifier-agent:v1",
+            "config_version": "email-agent-correction-v1",
+            "actions": (EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
+            "action_parameters": {EmailAction.MOVE: {"target_folder": "工作"}},
+            "created_at": created_at,
+        }
+    )
+    store.append_action_plan_version(
+        classification.classification_id,
+        plan,
+        confirmed_category=EmailCategory.WORK,
+        agent_result=agent_result,
+    )
+
+    records = store.list_selected_training_records()
+
+    assert [row["category_key"] for row in records] == ["work"]
+    assert records[0]["important"] is True
