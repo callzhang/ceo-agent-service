@@ -748,13 +748,13 @@ def test_producer_passes_bounded_minutes_discovery_window(tmp_path):
     ]
 
 
-def test_producer_defaults_to_fourteen_day_discovery_window(tmp_path):
+def test_producer_defaults_to_one_week_discovery_window(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = FakeDws()
 
     produce_meeting_alignment_jobs(store, dws, now=NOW)
 
-    assert dws.minutes_calls[0]["start"] == "2026-06-30T10:10:00+08:00"
+    assert dws.minutes_calls[0]["start"] == "2026-07-07T10:10:00+08:00"
     assert dws.minutes_calls[0]["end"] == "2026-07-14T10:10:00+08:00"
 
 
@@ -863,7 +863,7 @@ def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_p
         {
             "limit": 2,
             "cursor": "",
-            "start": "2026-06-30T10:10:00+08:00",
+            "start": "2026-07-07T10:10:00+08:00",
             "end": "2026-07-14T10:10:00+08:00",
         }
     ]
@@ -2225,8 +2225,53 @@ def test_producer_persists_conflicting_minutes_aliases_as_skipped(
         assert job.status == "skipped"
 
 
-@pytest.mark.parametrize("status", ["processing", "unknown"])
-def test_producer_requires_explicit_status_to_be_ended(tmp_path, status):
+@pytest.mark.parametrize(
+    ("gap", "expected_jobs"),
+    # Twenty minutes apart is one meeting recorded twice; three hours apart is two
+    # meetings that happen to share a title, such as a recurring stand-up.
+    [(timedelta(minutes=20), 1), (timedelta(hours=3), 2)],
+)
+def test_producer_treats_a_nearby_recording_of_the_same_title_as_one_meeting(
+    tmp_path, gap, expected_jobs
+):
+    """A stopped and restarted recorder makes two provider ids for one meeting.
+
+    Sending a follow-up per recording reaches the same people twice about the
+    same meeting. Derek 2026-09-18: same title within two hours is one meeting;
+    the gap decides, not the calendar day.
+    """
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first = ended_meeting()
+    first_end = datetime.fromisoformat(first["endTimeISO"])
+    second = ended_meeting(
+        meeting_id="minutes-2",
+        start=(first_end + gap).isoformat(),
+        end=(first_end + gap + timedelta(minutes=30)).isoformat(),
+    )
+    dws = FakeDws(
+        minutes_pages={
+            "": {"items": [first, second], "has_more": False, "next_token": ""}
+        },
+        info={"minutes-1": first, "minutes-2": second},
+    )
+
+    produce_meeting_alignment_jobs(store, dws, now=NOW)
+
+    second_job = store.get_meeting_alignment_job_by_meeting_id("minutes-2")
+    assert second_job is not None
+    joined = "already tracked" in (second_job.error or "")
+    assert joined is (expected_jobs == 1)
+
+
+@pytest.mark.parametrize("status", [4, 2, "processing", "unknown"])
+def test_producer_keeps_meetings_whatever_status_the_provider_reports(tmp_path, status):
+    """The provider's status vocabulary is not ours to gate on.
+
+    DingTalk started reporting numeric codes on 2026-09-18; 2 and 4 both appear on
+    recordings that have finished. Requiring the literal "ended" dropped every
+    meeting without leaving a row, so the loss was invisible. A recording still in
+    progress never reaches the list endpoint, so there is nothing to filter here.
+    """
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     meeting = ended_meeting()
     meeting["status"] = status
@@ -2241,8 +2286,8 @@ def test_producer_requires_explicit_status_to_be_ended(tmp_path, status):
         info={"minutes-1": meeting},
     )
 
-    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
-    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is not None
 
 
 @pytest.mark.parametrize(

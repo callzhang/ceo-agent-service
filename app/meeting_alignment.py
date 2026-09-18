@@ -68,7 +68,11 @@ from app.worker import (
 DISCOVERY_PAGE_LIMIT = 100
 DISCOVERY_PAGE_SIZE = 50
 REPLAY_PAGE_SIZE_LIMIT = 100
-DEFAULT_MEETING_DISCOVERY_LOOKBACK = timedelta(days=14)
+# One week. A meeting followed up long after it ended is noise to the people who
+# were in it, and a wider window turns any change in what the provider returns
+# into a bulk re-send: on 2026-09-18 newly readable minutes for meetings already
+# followed up days earlier arrived as brand-new meetings across the whole window.
+DEFAULT_MEETING_DISCOVERY_LOOKBACK = timedelta(days=7)
 MINIMUM_MEETING_DURATION = timedelta(minutes=5)
 
 
@@ -86,6 +90,13 @@ def _meeting_identity_status() -> str:
 TERMINAL_STATUSES = frozenset(
     {"no_action", "sent", "failed", "skipped", "needs_human"}
 )
+# One meeting can be recorded in several parts: the recorder is stopped and
+# started again, and each part arrives with its own provider id. Same title
+# within this gap is the same meeting, not a new one. Derek 2026-09-18: the gap
+# decides, not the calendar day, so a meeting crossing midnight stays whole.
+# Measured on nine such meetings: the parts to join were all within twenty
+# minutes, and genuinely separate meetings sat at three hours and beyond.
+MEETING_SEGMENT_MAX_GAP = timedelta(hours=2)
 DEFAULT_MEETING_RETRY_DELAY = timedelta(minutes=1)
 DEFAULT_MEETING_MAX_ATTEMPTS = 3
 # The provider-outage wait code shared with the DingTalk and WeChat workers:
@@ -202,8 +213,11 @@ def produce_meeting_alignment_jobs(
             continue
         if metadata.meeting_id != meeting_id:
             continue
-        if metadata.status and metadata.status != "ended":
-            continue
+        # No status check. The vocabulary here was "ended", but DingTalk reports
+        # numeric codes -- 2 and 4 both appear on recordings that have finished --
+        # so every meeting fell through this branch and was dropped without a row.
+        # A recording still in progress never reaches the list endpoint at all, so
+        # there is nothing for this guard to catch.
         started_at = datetime.fromisoformat(metadata.started_at)
         ended_at = datetime.fromisoformat(metadata.ended_at)
         if started_at >= ended_at:
@@ -241,6 +255,34 @@ def produce_meeting_alignment_jobs(
             if existing is None:
                 created += 1
             continue
+        sibling = store.find_meeting_alignment_job_for_segment(
+            title=metadata.title,
+            started_at=metadata.started_at,
+            ended_at=metadata.ended_at,
+            max_gap=MEETING_SEGMENT_MAX_GAP,
+        )
+        if sibling is not None and sibling.meeting_id != meeting_id:
+            # Another recording of this same meeting already has a job. A second
+            # follow-up would reach the same people about the same meeting.
+            _store_meeting_discovery_terminal_job(
+                store,
+                meeting_id=meeting_id,
+                title=metadata.title,
+                list_item=list_item,
+                info=info,
+                status="skipped",
+                error=_error_json(
+                    "meeting_segment",
+                    "another recording of this meeting is already tracked as "
+                    f"{sibling.meeting_id}",
+                ),
+                now=now,
+                ended_at=ended_at,
+            )
+            if existing is None:
+                created += 1
+            continue
+
         if activated_at is not None and ended_at < activated_at:
             continue
 

@@ -608,6 +608,31 @@ RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
         "workbench",
     }
 )
+def _meeting_alignment_job_span(
+    job: "MeetingAlignmentJob",
+) -> tuple[datetime | None, datetime | None]:
+    """A stored job's own start and end, read back from the source it was built from."""
+    end = _parse_optional_datetime(job.ended_at)
+    start = None
+    try:
+        source = json.loads(job.source_json or "{}")
+    except (TypeError, ValueError):
+        source = {}
+    discovery = source.get("discovery")
+    if isinstance(discovery, dict):
+        start = _parse_optional_datetime(discovery.get("started_at"))
+    return start, end
+
+
+def _parse_optional_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
 MEETING_ALIGNMENT_RUN_TERMINAL_STATUSES = frozenset(
     {"failed", "retry", "no_action", "ready_to_send"}
 )
@@ -14537,6 +14562,37 @@ class AutoReplyStore:
             if row is None:
                 raise ValueError(f"meeting alignment job not found: {job_id}")
             return self._meeting_alignment_job_from_row(row)
+
+    def find_meeting_alignment_job_for_segment(
+        self,
+        *,
+        title: str,
+        started_at: str,
+        ended_at: str,
+        max_gap: timedelta,
+    ) -> MeetingAlignmentJob | None:
+        """The job for the meeting this recording belongs to, if one exists.
+
+        One meeting can be recorded in several parts, and each part arrives with
+        its own provider id, so the id alone cannot tell two recordings of one
+        meeting apart from two meetings. Same title within `max_gap` of an
+        existing job's own span is the same meeting.
+        """
+        segment_start = datetime.fromisoformat(started_at)
+        segment_end = datetime.fromisoformat(ended_at)
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from meeting_alignment_jobs where title=? order by ended_at desc limit 50",
+                (title,),
+            ).fetchall()
+        for row in rows:
+            job = self._meeting_alignment_job_from_row(row)
+            other_start, other_end = _meeting_alignment_job_span(job)
+            if other_start is None or other_end is None:
+                continue
+            if segment_start - other_end <= max_gap and other_start - segment_end <= max_gap:
+                return job
+        return None
 
     def get_meeting_alignment_job_by_meeting_id(
         self,

@@ -72,18 +72,15 @@ def normalize_minutes_discovery_metadata(
     status = _same_metadata_value(
         "meeting status", listed["status"], detailed["status"]
     )
-    started_at = _same_metadata_value(
-        "meeting start time",
-        listed["started_at"],
-        detailed["started_at"],
-        signature=_time_signature,
-    )
-    ended_at = _same_metadata_value(
-        "meeting end time",
-        listed["ended_at"],
-        detailed["ended_at"],
-        signature=_time_signature,
-    )
+    # The two endpoints describe the same recording differently, so their times are
+    # not a consistency signal. DingTalk removed the list endpoint's endTime on
+    # 2026-09-18, leaving an ISO string on one side and a millisecond epoch derived
+    # elsewhere on the other; they now drift from one second to forty-one minutes.
+    # Nothing downstream needs second-level agreement: the times gate a five-minute
+    # duration floor, a settle delay, a four-hour calendar window, and a title line.
+    # The detail endpoint reports the processed recording, so it wins.
+    started_at = detailed["started_at"] or listed["started_at"]
+    ended_at = detailed["ended_at"] or listed["ended_at"]
     if not meeting_id:
         raise MeetingSourceIncomplete("meeting id is missing")
     if not title:

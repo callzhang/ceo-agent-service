@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -120,8 +120,6 @@ def test_transcript_roster_evidence_accepts_current_user_who_did_not_speak():
     [
         {"taskUuid": "minutes-other"},
         {"title": "另一个会议"},
-        {"startTimeISO": "2026-07-14T09:01:00+08:00"},
-        {"endTimeISO": "2026-07-14T10:01:00+08:00"},
         {"status": "running"},
     ],
 )
@@ -131,6 +129,26 @@ def test_discovery_metadata_rejects_cross_source_conflicts(info_override):
             discovery_list_item(),
             discovery_info(**info_override),
         )
+
+
+@pytest.mark.parametrize("drift_seconds", [2, 41 * 60])
+def test_discovery_metadata_takes_the_detail_time_when_the_list_disagrees(drift_seconds):
+    """The two endpoints describe the same recording, so their times are not a check.
+
+    DingTalk removed the list endpoint's endTime on 2026-09-18; the remaining
+    values now drift from seconds to tens of minutes, and requiring agreement
+    dropped every meeting that day.
+    """
+    drifted = datetime.fromisoformat("2026-07-14T10:00:00+08:00") + timedelta(
+        seconds=drift_seconds
+    )
+
+    metadata = normalize_minutes_discovery_metadata(
+        discovery_list_item(endTime=drifted.isoformat()),
+        discovery_info(),
+    )
+
+    assert metadata.ended_at == "2026-07-14T10:00:00+08:00"
 
 
 @pytest.mark.parametrize(
