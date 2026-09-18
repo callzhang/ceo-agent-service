@@ -27,6 +27,15 @@ def project_attempt_status(attempt: Any, task: Any, runs: list[Any]) -> str:
         if not generation
         or str(getattr(run, "execution_generation", "") or "").strip() == generation
     ]
+    # A closed task outranks a run that failed inside it. Attempt 9136 is the
+    # live case: reply task 383933 was closed `skipped` on 2026-09-15 because a
+    # later weekly OKR report succeeded, while its last run stayed `failed`
+    # from 2026-09-12 (the runtime route was paused). The detail page therefore
+    # called it failed forever, while the History list read the stored
+    # `skipped` -- so the item looked failed to a reader and resolved to every
+    # check that walks the list.
+    if task_status in _TERMINAL_TASK_STATES:
+        return task_status
     if current_runs:
         last_run = max(
             current_runs,
@@ -39,8 +48,6 @@ def project_attempt_status(attempt: Any, task: Any, runs: list[Any]) -> str:
         run_status = str(getattr(last_run, "status", "") or "").strip()
         if run_status in {"pending", "running", "failed"}:
             return run_status
-    if task_status in _TERMINAL_TASK_STATES:
-        return task_status
     if task_status in {"pending", "processing", "running"}:
         return "running" if task_status == "processing" else task_status
     return fallback
