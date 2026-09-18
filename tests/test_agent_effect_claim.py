@@ -94,3 +94,18 @@ def test_every_tool_event_shape_counts_as_a_tool_call() -> None:
     ):
         assert run_made_tool_calls([event])
     assert not run_made_tool_calls([{"type": "item.completed", "item": {"type": "agent_message"}}])
+
+
+def test_the_email_channel_is_not_judged_by_tool_events() -> None:
+    """The audited unsubscribe drives a browser and records its own receipts.
+
+    Judging that turn here failed the whole two-page unsubscribe e2e: the Audit
+    result legitimately reports an executed action while the generation holds no
+    tool event at all.
+    """
+    from app.agent_effect_claim import channel_is_judged_by_tool_events
+
+    assert channel_is_judged_by_tool_events("dingtalk")
+    assert channel_is_judged_by_tool_events("wechat")
+    assert channel_is_judged_by_tool_events("scheduled")
+    assert not channel_is_judged_by_tool_events("email")

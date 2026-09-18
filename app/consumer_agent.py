@@ -16,6 +16,7 @@ from app.agent_contracts import (
 )
 from app.agent_effect_claim import (
     EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
+    channel_is_judged_by_tool_events,
     claims_external_action_without_tools,
     generation_tool_events,
 )
@@ -650,7 +651,7 @@ class ConsumerAgentRunner:
                 ),
                 configure_command=make_consumer_agent_command,
                 parse_result=_claim_checked_consumer_result(
-                    self.store, claim.run.id
+                    self.store, claim.run.id, task.channel
                 ),
                 prepare_result=lambda parsed: _prepare_outgoing_dingtalk_messages(
                     parsed,
@@ -855,7 +856,7 @@ def consumer_developer_instructions(
     )
 
 
-def _claim_checked_consumer_result(store, run_id: int):
+def _claim_checked_consumer_result(store, run_id: int, channel: str = ""):
     """Hold a result that says an external action happened to this turn's tools.
 
     Consumer run 20016 returned `no_action` whose summary read "已按实时 OA 材料
@@ -866,6 +867,8 @@ def _claim_checked_consumer_result(store, run_id: int):
 
     def parse(raw: str):
         result = _parse_consumer_result(raw)
+        if not channel_is_judged_by_tool_events(channel):
+            return result
         run = store.get_agent_run(run_id)
         if run is not None and claims_external_action_without_tools(
             result=result.model_dump(mode="json") if hasattr(result, "model_dump") else result,

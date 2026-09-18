@@ -14,6 +14,7 @@ from app.agent_effect_claim import (
     claims_external_action_without_tools,
     generation_tool_events,
 )
+from app.agent_effect_claim import channel_is_judged_by_tool_events as _channel_judged
 from app.outbound_text_authority import (
     UNPREPARED_SEND_REQUIREMENT,
     provider_send_texts,
@@ -321,13 +322,17 @@ class AuditAgentRunner:
                 )
                 if unprepared:
                     raise ResultParseError(UNPREPARED_SEND_REQUIREMENT)
-            if refreshed is not None and claims_external_action_without_tools(
+            if (
+                refreshed is not None
+                and _channel_judged(task.channel)
+                and claims_external_action_without_tools(
                 result=result.model_dump(mode="json"),
-                tool_events=generation_tool_events(
-                    self.store,
-                    reply_task_id=refreshed.reply_task_id,
-                    execution_generation=refreshed.execution_generation,
-                ),
+                    tool_events=generation_tool_events(
+                        self.store,
+                        reply_task_id=refreshed.reply_task_id,
+                        execution_generation=refreshed.execution_generation,
+                    ),
+                )
             ):
                 raise ResultParseError(EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT)
             if (

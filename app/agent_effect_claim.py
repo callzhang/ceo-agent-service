@@ -93,6 +93,19 @@ def generation_tool_events(store, *, reply_task_id: int, execution_generation: s
     return events
 
 
+# Channels whose effects are visible as tool events. The email unsubscribe
+# flow drives a browser through its own audited driver and records receipts of
+# its own, so a turn there legitimately reports an executed action with no tool
+# event at all -- and judging it here failed the whole e2e flow.
+TOOL_EVENT_EVIDENCE_CHANNELS = frozenset({"dingtalk", "wechat", "scheduled", ""})
+
+
+def channel_is_judged_by_tool_events(channel: str | None) -> bool:
+    """Whether a turn on this channel shows its external effects as tool events."""
+
+    return str(channel or "").strip().casefold() in TOOL_EVENT_EVIDENCE_CHANNELS
+
+
 def claims_external_action_without_tools(
     *, result: object, tool_events: Iterable[object]
 ) -> bool:
