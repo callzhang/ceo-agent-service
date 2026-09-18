@@ -194,6 +194,10 @@ READABLE_BUILTIN_COPY = {
         "补查遗漏的钉钉消息和日历更新",
         "扩大读取范围，找回常规检查遗漏的单聊、群聊 @ 消息和原地更新的日历邀请；发现后由 Agent 按对应的消息或日程规则处理。",
     ),
+    "follow-up-delivery-v1": (
+        "投递到期的跟进事项",
+        "把已到期的跟进事项按既有投递规则发出；只投递已生成的内容，不产生新的判断。Derek 2026-09-18 要求它作为定时任务可见可开关，而不是隐藏的常驻循环。",
+    ),
 }
 
 
@@ -1354,6 +1358,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
                 "weekly-okr-report": (
                     lambda: produced.append("weekly-okr-report") or "status=sent"
                 ),
+                "process-follow-ups": (
+                    lambda: produced.append("process-follow-ups") or "sent=0"
+                ),
             }
         ),
     )
@@ -1370,6 +1377,7 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
     assert sorted(produced) == [
         "calendar-invites-once",
         "email-message-check-once",
+        "process-follow-ups",
         "produce-once",
         "recover-recent-messages",
         "scan-meeting-todos-once",
@@ -1446,11 +1454,15 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
         store=store, options=options, working_directory=tmp_path, now=NOW
     )
 
-    assert len(tasks) == 10
+    assert len(tasks) == 11
     for task in tasks:
         assert task.command, task.migration_key
         assert task.enabled is True
-        if task.command in {"sync-minutes-once", "weekly-okr-report"}:
+        if task.command in {
+            "sync-minutes-once",
+            "weekly-okr-report",
+            "process-follow-ups",
+        }:
             assert task.prompt == "" and task.skill_refs == ()
         else:
             assert task.prompt and task.skill_refs

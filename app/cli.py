@@ -1007,6 +1007,10 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
                 "scan-meeting-todos-once "
                 f"queued={scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)}"
             ),
+            "process-follow-ups": lambda: (
+                "process-follow-ups "
+                f"sent={process_follow_ups_command(settings, refresh_evidence=False, limit=50)}"
+            ),
             "sync-minutes-once": lambda: (
                 "sync-minutes-once "
                 f"queued={sync_minutes_once_command(settings)}"
@@ -3237,12 +3241,66 @@ def scan_meetings_once_command(
         settle_seconds=600,
     )
     memory_writes_queued = enqueue_sent_meeting_memory_writes(store)
+    # Derek, 2026-09-18: queueing a Memory write and performing it are one
+    # task, not two, and internal maintenance belongs to the same scheduled
+    # run rather than to a loop nobody can see or switch off.
+    memory_writes_done = _process_meeting_memory_writes_once(settings, store)
+    maintained = _run_task_maintenance_once(settings, store)
     print(
         "scan-meetings-once "
-        f"queued={created} memory_writes_queued={memory_writes_queued}",
+        f"queued={created} memory_writes_queued={memory_writes_queued} "
+        f"memory_writes_done={memory_writes_done} maintained={maintained}",
         flush=True,
     )
     return created
+
+
+def _process_meeting_memory_writes_once(
+    settings: WorkerSettings,
+    store: AutoReplyStore,
+) -> int:
+    """Run the queued Memory writes once, with the production runtime."""
+
+    from app.agent_runtime_production import (
+        build_production_routed_codex_execution,
+    )
+
+    routed_execution = build_production_routed_codex_execution(
+        store=store,
+        workspace=settings.workspace,
+        total_timeout_seconds=settings.codex_timeout_seconds,
+        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+    )
+    outcome = process_meeting_memory_writes(
+        store,
+        routed_execution=routed_execution,
+        workspace=settings.workspace,
+        limit=20 if settings.max_batches is None else settings.max_batches,
+        lease_seconds=meeting_memory_write_lease_seconds(
+            settings.codex_timeout_seconds,
+            settings.codex_idle_timeout_seconds,
+        ),
+    )
+    return int(getattr(outcome, "completed", 0) or 0)
+
+
+def _run_task_maintenance_once(
+    settings: WorkerSettings,
+    store: AutoReplyStore,
+) -> int:
+    """One maintenance pass: resolve recovered errors, free stale task locks."""
+
+    resolved = (
+        store.resolve_errors_recovered_by_reply_attempts()
+        + store.resolve_errors_recovered_by_completed_reply_tasks()
+        + store.resolve_errors_recovered_by_terminal_work_summary_inputs()
+        + store.resolve_errors_recovered_by_scheduled_service_command()
+        + store.resolve_closed_blocked_reply_attempts()
+        + close_superseded_scheduled_reply_tasks(store)
+    )
+    recovered = len(store.recover_stale_processing_reply_tasks())
+    checked = check_follow_up_completions_command(settings, limit=1)
+    return resolved + recovered + int(checked or 0)
 
 
 def run_meeting_producer_loop(
@@ -3948,30 +4006,14 @@ def run_service(
                 runtime_refresher=runtime_refresher,
             ),
         ),
-        (
-            "task-maintenance",
-            lambda: run_task_maintenance_loop(
-                settings,
-                network_ready=dependency_gate.ready,
-            ),
-        ),
+        # Derek, 2026-09-18: task-maintenance and meeting-memory-write now run
+        # inside the scheduled meeting task, and follow-up delivery is its own
+        # scheduled task, so all three are visible and switchable. Meeting
+        # delivery stays a loop: it only sends what is already approved, and a
+        # ten-second cadence is the point of it.
         (
             "meeting-delivery",
             lambda: run_meeting_delivery_loop(
-                settings,
-                network_ready=dependency_gate.ready,
-            ),
-        ),
-        (
-            "meeting-memory-write",
-            lambda: run_meeting_memory_write_loop(
-                settings,
-                network_ready=dependency_gate.ready,
-            ),
-        ),
-        (
-            "follow-up-delivery",
-            lambda: run_follow_up_delivery_loop(
                 settings,
                 network_ready=dependency_gate.ready,
             ),

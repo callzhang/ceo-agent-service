@@ -164,6 +164,13 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
         consumer_prompt_enabled=True,
     ),
     ServiceCommandOption(
+        name="process-follow-ups",
+        display_name="投递到期的跟进事项",
+        description="把已到期的跟进事项按既有投递规则发出；只投递已生成的内容，不做新的业务判断。",
+        channel="work_summary",
+        consumer_prompt_enabled=False,
+    ),
+    ServiceCommandOption(
         name="sync-minutes-once",
         display_name="同步听记到工作区",
         description="归档尚未归档且可访问的钉钉 AI 听记，把可用摘要和逐字稿保存到工作区；权限受限或内容不可读时保留同步状态。",

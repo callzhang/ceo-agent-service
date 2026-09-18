@@ -7678,26 +7678,20 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         ),
         ("start", "ceo-agent-service-agent-cron-dispatcher", True),
         ("agent-cron-dispatcher", tmp_path / "worker.sqlite3", True, True, True),
-        ("start", "ceo-agent-service-task-maintenance", True),
-        ("task-maintenance", True),
+        # Derek, 2026-09-18: maintenance and Memory writes run inside the
+        # scheduled meeting task now, and follow-up delivery is its own
+        # scheduled task, so the meeting sender is the only loop left.
         ("start", "ceo-agent-service-meeting-delivery", True),
         ("meeting-delivery", True),
-        ("start", "ceo-agent-service-meeting-memory-write", True),
-        ("meeting-memory-write", True),
-        ("start", "ceo-agent-service-follow-up-delivery", True),
-        ("follow-up-delivery", True),
         ("wait",),
     ]
     assert failures == [
         ("database-backup", "stop database-backup"),
         ("agent-cron-scheduler", "stop agent-cron-scheduler"),
         ("agent-cron-dispatcher", "stop agent-cron-dispatcher"),
-        ("task-maintenance", "stop task-maintenance"),
         ("meeting-delivery", "stop meeting-delivery"),
-        ("meeting-memory-write", "stop meeting-memory-write"),
-        ("follow-up-delivery", "stop follow-up-delivery"),
     ]
-    assert exits == [1, 1, 1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1]
 
 
 def test_service_component_failure_persists_scheduler_error_health(
@@ -8547,6 +8541,7 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
         "scan-meeting-todos-once",
         "sync-minutes-once",
         "weekly-okr-report",
+        "process-follow-ups",
     }
     assert registry.run("produce-once") == "produce-once queued=3"
     assert registry.run("calendar-invites-once") == "calendar-invites-once queued=3"

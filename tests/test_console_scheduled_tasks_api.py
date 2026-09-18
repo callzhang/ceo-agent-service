@@ -1049,6 +1049,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "scan-meetings-once",
         "scan-oa-approvals",
         "scan-meeting-todos-once",
+        "process-follow-ups",
         "sync-minutes-once",
         "weekly-okr-report",
         "recover-recent-messages",
@@ -1061,6 +1062,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "读取已结束会议",
         "读取待审批 OA",
         "读取会议行动项",
+        "投递到期的跟进事项",
         "同步听记到工作区",
         "生成并发送 OKR 周报",
         "补查近期钉钉消息",
@@ -1208,6 +1210,7 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
         meeting,
         oa,
         work_sources,
+        follow_ups,
         minutes,
         okr,
         recovery,
@@ -1240,7 +1243,19 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
     )
     assert [
         entry["consumer_prompt_enabled"] for entry in payload["service_command_options"]
-    ] == [True, True, True, True, True, True, True, False, False, True]
+    ] == [
+        True,
+        True,
+        True,
+        True,
+        True,
+        True,
+        True,
+        False,
+        False,
+        False,
+        True,
+    ]
     assert all(
         "downstream" not in entry for entry in payload["service_command_options"]
     )
