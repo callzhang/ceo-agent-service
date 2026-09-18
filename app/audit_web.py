@@ -10628,6 +10628,13 @@ def create_audit_app(
         # next background status-cache render.
         attention_rows = read_cached_attention_rows()
         summary = dict(payload.get("summary") or {})
+        # Queue counts are the user-facing source of truth for current work.
+        # The worker payload is intentionally cached while slow connector
+        # probes refresh in the background, but serving its queue counts can
+        # leave completed leases visible as processing. Read the authoritative
+        # SQLite summary synchronously so status and Attention do not drift.
+        fresh_summary = read_fresh_feedback_backlog()
+        summary.update(fresh_summary)
         summary["attention"] = sum(
             max(0, int(row.get("count") or 1))
             for row in attention_rows
