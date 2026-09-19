@@ -749,10 +749,7 @@ def test_component_chain_folder_classifier_lifecycle_uses_sequential_fallback_an
         (_maturity("email-embedding-mlp-v1"), _maturity("email-embedding-mlp-v2"))
     )
     assert readiness.ready is True
-    assert readiness.passing_model_ids == (
-        "email-embedding-mlp-v1",
-        "email-embedding-mlp-v2",
-    )
+    assert readiness.passing_model_ids == ("email-embedding-mlp-v2",)
 
     historical = DeterministicEmailActionExecutor(provider).execute(
         _action(

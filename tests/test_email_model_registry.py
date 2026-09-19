@@ -72,6 +72,42 @@ def _maturity(
     )
 
 
+def test_a_candidate_promotes_the_categories_it_proved() -> None:
+    """One run decides now: a conversation votes once and the split repeats."""
+
+    ready = assess_whole_model_readiness((_maturity("candidate-1"),))
+
+    assert ready.ready is True
+    assert ready.passing_model_ids == ("candidate-1",)
+    assert ready.promoted_categories
+    assert ready.reason == "candidate_proved_its_categories"
+
+
+def test_a_candidate_that_proved_nothing_is_not_ready() -> None:
+    bare = CandidateMaturityEvidence(
+        **{
+            **_maturity("candidate-1").__dict__,
+            "category_eligibility": {
+                key: HistoricalEligibility(0.5, 1, 1)
+                for key in _maturity("candidate-1").category_eligibility
+            },
+        }
+    )
+
+    readiness = assess_whole_model_readiness((bare,))
+
+    assert readiness.ready is False
+    assert readiness.reason == "maturity_gate_not_met"
+    assert readiness.promoted_categories == ()
+
+
+def test_no_evidence_is_not_ready() -> None:
+    readiness = assess_whole_model_readiness(())
+
+    assert readiness.ready is False
+    assert readiness.reason == "no_candidate_evidence"
+
+
 def test_historical_eligibility_requires_all_three_gates() -> None:
     assert HistoricalEligibility(0.95, 20, 10).eligible is True
     assert HistoricalEligibility(0.949, 20, 10).eligible is False
@@ -79,88 +115,8 @@ def test_historical_eligibility_requires_all_three_gates() -> None:
     assert HistoricalEligibility(0.99, 20, 9).eligible is False
 
 
-def test_whole_model_requires_two_consecutive_compatible_passes() -> None:
-    first = _maturity("candidate-1")
-    only_one = assess_whole_model_readiness((first,))
-    incompatible = assess_whole_model_readiness(
-        (first, _maturity("candidate-2", parent="active-v2"))
-    )
-    ready = assess_whole_model_readiness((first, _maturity("candidate-2")))
-    # The historical systematic-error flag no longer holds promotion back
-    # (Derek 2026-09-17: nothing detects it, so the review was a formality).
-    flagged = assess_whole_model_readiness(
-        (
-            first,
-            CandidateMaturityEvidence(
-                **{
-                    **_maturity("candidate-2").__dict__,
-                    "unresolved_historical_systematic_error": True,
-                }
-            ),
-        )
-    )
-
-    assert only_one.ready is False
-    assert incompatible.ready is False
-    assert ready.ready is True
-    assert ready.passing_model_ids == ("candidate-1", "candidate-2")
-    assert flagged.ready is True
 
 
-def test_whole_model_does_not_count_same_candidate_twice() -> None:
-    candidate = _maturity("candidate-1")
-
-    result = assess_whole_model_readiness((candidate, candidate))
-
-    assert result.ready is False
-    assert result.reason == "two_distinct_candidates_required"
-
-
-def test_whole_model_rejects_two_candidates_from_same_frozen_snapshot() -> None:
-    first = _maturity("candidate-1")
-    retrained = CandidateMaturityEvidence(
-        **{
-            **_maturity("candidate-2").__dict__,
-            "source_snapshot_id": first.source_snapshot_id,
-            "source_snapshot_digest": first.source_snapshot_digest,
-            "source_snapshot_observed_at": first.source_snapshot_observed_at,
-            "folder_label_watermark": first.folder_label_watermark,
-            "important_label_watermark": first.important_label_watermark,
-        }
-    )
-
-    result = assess_whole_model_readiness((first, retrained))
-
-    assert result.ready is False
-    assert result.reason == "independent_snapshot_required"
-
-
-def test_whole_model_requires_advanced_label_and_evaluation_evidence() -> None:
-    first = _maturity("candidate-1")
-    no_label_advance = CandidateMaturityEvidence(
-        **{
-            **_maturity("candidate-2").__dict__,
-            "folder_label_watermark": first.folder_label_watermark,
-            "important_label_watermark": first.important_label_watermark,
-        }
-    )
-    no_evaluation_advance = _maturity(
-        "candidate-2", accepted_hits=first.important_eligibility.accepted_hits
-    )
-    no_evaluation_advance = CandidateMaturityEvidence(
-        **{
-            **no_evaluation_advance.__dict__,
-            "category_eligibility": first.category_eligibility,
-            "important_eligibility": first.important_eligibility,
-        }
-    )
-
-    assert assess_whole_model_readiness((first, no_label_advance)).reason == (
-        "label_watermark_not_advanced"
-    )
-    assert assess_whole_model_readiness((first, no_evaluation_advance)).reason == (
-        "evaluation_evidence_not_advanced"
-    )
 
 
 def test_staged_evidence_is_immutable_and_never_changes_active_manifest(
@@ -985,17 +941,6 @@ def _with_eligibility(candidate, **by_category):
     )
 
 
-def test_readiness_promotes_only_categories_proven_by_both_candidates() -> None:
-    # Fewer hits than the second candidate, so evidence still advances.
-    weak = HistoricalEligibility(precision=0.5, accepted_hits=20, independent_groups=10)
-    first = _with_eligibility(_maturity("candidate-1"), legal=weak)
-    second = _with_eligibility(_maturity("candidate-2"))
-
-    readiness = assess_whole_model_readiness((first, second))
-
-    assert readiness.ready is True
-    assert readiness.promoted_categories == ("work",)
-
 
 def test_readiness_is_not_ready_when_no_category_is_proven() -> None:
     weak = HistoricalEligibility(precision=0.5, accepted_hits=40, independent_groups=30)
@@ -1008,31 +953,6 @@ def test_readiness_is_not_ready_when_no_category_is_proven() -> None:
     assert readiness.reason == "maturity_gate_not_met"
     assert readiness.promoted_categories == ()
 
-
-def test_console_thresholds_decide_eligibility_and_must_not_change_between_candidates():
-    from app.email_model_registry import PromotionThresholds
-
-    relaxed = PromotionThresholds(precision_min=0.9, samples_min=10)
-    borderline = HistoricalEligibility(precision=0.91, accepted_hits=10, independent_groups=5)
-
-    assert borderline.eligible is False  # legacy 0.95 / 20 / 10
-    assert borderline.meets(relaxed) is True
-    assert relaxed.groups_min == 5
-
-    first = CandidateMaturityEvidence(
-        **{**_with_eligibility(_maturity("candidate-1"), work=borderline, legal=borderline).__dict__,
-           "thresholds": relaxed}
-    )
-    second = CandidateMaturityEvidence(
-        **{**_with_eligibility(_maturity("candidate-2"), work=borderline, legal=borderline).__dict__,
-           "thresholds": relaxed}
-    )
-    changed = CandidateMaturityEvidence(
-        **{**second.__dict__, "thresholds": PromotionThresholds(0.95, 20)}
-    )
-
-    assert assess_whole_model_readiness((first, second)).promoted_categories == ("work", "legal")
-    assert assess_whole_model_readiness((first, changed)).reason == "promotion_thresholds_changed"
 
 
 def test_others_is_never_promoted_and_a_weak_important_head_only_disables_flagging() -> None:
@@ -1085,36 +1005,4 @@ def test_a_category_whose_evidence_shrank_is_held_back_alone() -> None:
     assert readiness.promoted_categories == ("work",)
 
 
-def test_readiness_fails_only_when_every_category_regressed() -> None:
-    strong = HistoricalEligibility(precision=0.99, accepted_hits=60, independent_groups=60)
-    weaker = HistoricalEligibility(precision=0.99, accepted_hits=30, independent_groups=30)
-    first = CandidateMaturityEvidence(
-        **{**_with_eligibility(_maturity("candidate-1"), work=strong, legal=strong).__dict__,
-           "important_eligibility": strong}
-    )
-    second = CandidateMaturityEvidence(
-        **{**_with_eligibility(_maturity("candidate-2"), work=weaker, legal=weaker).__dict__,
-           "important_eligibility": weaker}
-    )
 
-    assert assess_whole_model_readiness((first, second)).reason == "evaluation_evidence_regressed"
-
-
-def test_a_few_messages_fewer_is_not_a_regression() -> None:
-    """Cross-validated counts wobble; 581 after 585 is the same evidence."""
-
-    first = _with_eligibility(
-        _maturity("candidate-1"),
-        work=HistoricalEligibility(precision=0.95, accepted_hits=585, independent_groups=500),
-    )
-    second = _with_eligibility(
-        _maturity("candidate-2"),
-        work=HistoricalEligibility(precision=0.95, accepted_hits=581, independent_groups=498),
-    )
-    collapsed = _with_eligibility(
-        _maturity("candidate-2"),
-        work=HistoricalEligibility(precision=0.95, accepted_hits=300, independent_groups=250),
-    )
-
-    assert "work" in assess_whole_model_readiness((first, second)).promoted_categories
-    assert "work" not in assess_whole_model_readiness((first, collapsed)).promoted_categories

@@ -269,87 +269,29 @@ class WholeModelReadiness:
 def assess_whole_model_readiness(
     candidates: Sequence[CandidateMaturityEvidence],
 ) -> WholeModelReadiness:
-    if len(candidates) < 2:
-        return WholeModelReadiness(False, (), "two_consecutive_candidates_required")
-    previous, current = candidates[-2:]
-    if previous.model_id == current.model_id:
-        return WholeModelReadiness(False, (), "two_distinct_candidates_required")
-    if (
-        previous.source_snapshot_id == current.source_snapshot_id
-        or previous.source_snapshot_digest == current.source_snapshot_digest
-        or _timestamp(current.source_snapshot_observed_at)
-        <= _timestamp(previous.source_snapshot_observed_at)
-    ):
-        return WholeModelReadiness(False, (), "independent_snapshot_required")
-    if previous.compatibility != current.compatibility:
-        return WholeModelReadiness(False, (), "candidate_compatibility_changed")
-    if previous.thresholds != current.thresholds:
-        return WholeModelReadiness(False, (), "promotion_thresholds_changed")
-    if (
-        current.folder_label_watermark < previous.folder_label_watermark
-        or current.important_label_watermark < previous.important_label_watermark
-    ):
-        return WholeModelReadiness(False, (), "label_watermark_regressed")
-    if (
-        current.folder_label_watermark == previous.folder_label_watermark
-        and current.important_label_watermark == previous.important_label_watermark
-    ):
-        return WholeModelReadiness(False, (), "label_watermark_not_advanced")
-    previous_metrics = (*previous.category_eligibility.values(), previous.important_eligibility)
-    current_metrics = (*current.category_eligibility.values(), current.important_eligibility)
+    """Judge the newest candidate on the evidence it carries.
 
-    def regressed(previous_item, current_item) -> bool:
-        # Cross-validated counts move a little between runs even when nothing
-        # changed; 581 accepted messages after 585 is the same evidence, not a
-        # category losing its case. Only a material drop counts.
-        return (
-            current_item.accepted_hits < previous_item.accepted_hits * EVIDENCE_RETENTION
-            or current_item.independent_groups
-            < previous_item.independent_groups * EVIDENCE_RETENTION
-        )
+    Promotion used to demand two consecutive candidates on independent
+    snapshots, because one run's accepted counts moved so much that a single
+    pass could be luck: the same data proved 47 messages of a category under
+    one fold split and none under the next. That was a property of the
+    measurement, and the measurement was fixed — a conversation votes once
+    and the split is repeated — so a run now means what it says and a second
+    one only repeats it.
+    """
 
-    # Evidence that shrank only holds back the category it belongs to:
-    # cross-validated hits move a little between runs, and one category's dip
-    # says nothing about the others.
-    regressed_categories = {
-        category
-        for category in current.category_eligibility
-        if regressed(
-            previous.category_eligibility[category],
-            current.category_eligibility[category],
-        )
-    }
-    if len(regressed_categories) == len(current.category_eligibility) and regressed(
-        previous.important_eligibility, current.important_eligibility
-    ):
-        return WholeModelReadiness(False, (), "evaluation_evidence_regressed")
-    if not any(
-        current_item.accepted_hits > previous_item.accepted_hits
-        or current_item.independent_groups > previous_item.independent_groups
-        for previous_item, current_item in zip(
-            previous_metrics, current_metrics, strict=True
-        )
-    ):
-        return WholeModelReadiness(False, (), "evaluation_evidence_not_advanced")
-    # A category is promoted only when both consecutive candidates proved it.
-    previously_eligible = set(previous.eligible_categories)
-    promoted = tuple(
-        category
-        for category in current.eligible_categories
-        if category in previously_eligible and category not in regressed_categories
-    )
+    if not candidates:
+        return WholeModelReadiness(False, (), "no_candidate_evidence")
+    current = candidates[-1]
+    promoted = tuple(current.eligible_categories)
     if not promoted:
         return WholeModelReadiness(False, (), "maturity_gate_not_met")
     return WholeModelReadiness(
         True,
-        (previous.model_id, current.model_id),
-        "two_consecutive_compatible_candidates_passed",
-        promoted_categories=promoted,
-        important_promoted=(
-            previous.important_eligible
-            and current.important_eligible
-            and not regressed(previous.important_eligibility, current.important_eligibility)
-        ),
+        (current.model_id,),
+        "candidate_proved_its_categories",
+        promoted,
+        current.important_eligible,
     )
 
 

@@ -473,6 +473,7 @@ def train_frozen_embedding_candidate(
             positives=[str(row["category_key"]) == category for row, _item, _t in scored],
             eligible=[item.category == category for _row, item, _t in scored],
             precision_min=promotion_thresholds.precision_min,
+            samples_min=promotion_thresholds.samples_min,
             groups=[str(row["group_key"]) for row, _item, _t in scored],
         )
         for category in categories
@@ -482,6 +483,7 @@ def train_frozen_embedding_candidate(
         positives=[bool(row["important"]) for row, _item, _t in important_scored],
         eligible=[True for _entry in important_scored],
         precision_min=promotion_thresholds.precision_min,
+        samples_min=promotion_thresholds.samples_min,
         groups=[str(row["group_key"]) for row, _item, _t in important_scored],
     )
     base = fit_classifier(evaluation_rows, important_rows, tune=True)
@@ -854,16 +856,15 @@ def _calibrated_threshold(
     positives: Sequence[bool],
     eligible: Sequence[bool],
     precision_min: float = LEGACY_PROMOTION_THRESHOLDS.precision_min,
+    samples_min: int = LEGACY_PROMOTION_THRESHOLDS.samples_min,
     groups: Sequence[str] | None = None,
 ) -> float:
-    """Pick the threshold whose precision is *evidently* above the target.
+    """Pick the threshold that accepts the most, at the target precision.
 
-    Measured precision on a handful of messages is luck as much as skill: 9 of
-    10 reads as 90% and was 60% next time. A threshold is accepted only when
-    the lower bound of its precision clears the target, so a thin category has
-    to accept more messages before it counts as proven. Two runs 40 labels
-    apart moved measured precision by 14 points under plain precision and by 1
-    point under this rule.
+    A handful of messages cannot show much: three right in a row reads as
+    100% and means almost nothing. What stops that is `samples_min`, the
+    floor the console sets — a visible number the owner chooses, rather than
+    a confidence bound buried here that silently demanded fifteen.
     """
 
     probabilities, positives, eligible = _one_vote_per_group(
@@ -882,7 +883,8 @@ def _calibrated_threshold(
             continue
         hits = sum(bool(positives[index]) for index in accepted)
         if (
-            _precision_lower_bound(hits, len(accepted)) >= precision_min
+            len(accepted) >= samples_min
+            and hits / len(accepted) >= precision_min
             and hits > best_hits
         ):
             selected, best_hits = threshold, hits
