@@ -27008,6 +27008,20 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def resolve_errors_recovered_by_scheduled_task_seed(self) -> int:
+        """Close startup seed incidents after a later full seed succeeds."""
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update errors
+                set resolved_at=current_timestamp,
+                    resolution='recovered by later successful scheduled task seed'
+                where coalesce(resolved_at, '')=''
+                  and kind='scheduled_task_seed_failed'
+                """
+            )
+            return cursor.rowcount
+
     def set_service_health_component(
         self,
         component: str,

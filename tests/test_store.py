@@ -8683,6 +8683,30 @@ def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
     assert error.resolution == "recovered by later successful scheduled reply task"
 
 
+def test_resolve_errors_recovered_by_scheduled_task_seed(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error(
+        "",
+        "",
+        "scheduled_task_seed_failed",
+        "scheduled consumer managed Skill unavailable: ceo-weekly-report",
+    )
+    store.record_error("", "", "reply_task", "unrelated failure")
+
+    assert store.resolve_errors_recovered_by_scheduled_task_seed() == 1
+
+    errors = store.list_errors()
+    recovered = next(
+        error for error in errors if error.kind == "scheduled_task_seed_failed"
+    )
+    unrelated = next(error for error in errors if error.kind == "reply_task")
+    assert recovered.resolved_at
+    assert recovered.resolution == (
+        "recovered by later successful scheduled task seed"
+    )
+    assert unrelated.resolved_at == ""
+
+
 def test_service_health_components_hold_current_component_state(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_service_health_component(
