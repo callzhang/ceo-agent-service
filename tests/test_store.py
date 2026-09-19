@@ -12000,3 +12000,68 @@ def test_a_shell_send_ends_the_task_needs_human_not_failed(tmp_path: Path):
     )
 
     assert store.get_reply_task(task.id).status == "needs_human"
+
+
+def test_a_task_that_already_acted_is_handed_over_not_left_failed(tmp_path: Path):
+    """Re-running it is the one thing that must not happen.
+
+    A task that failed before the completed-action rule covered its shape
+    stays `failed` forever, and the only recovery anyone reaches for is a
+    retry -- which sends the message a second time.
+    """
+    store = AutoReplyStore(tmp_path / "already-acted.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="Group", single_chat=False,
+        trigger_message_id="msg-1", trigger_create_time="2026-09-19 10:00:00",
+        trigger_sender="Derek", trigger_text="handle this",
+        execution_generation="gen-1",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    claim = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="test",
+    )
+    store.append_agent_run_event(
+        claim.run.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "exit_code": 0,
+                "status": "completed",
+                "command": (
+                    "/bin/zsh -lc 'dws chat +messages-send --group cid-1 "
+                    "--text \"已处理\"'"
+                ),
+                "aggregated_output": '{"success":true}',
+            },
+        },
+        owner="test",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='failed', error='agent_reported_failure'")
+
+    assert store.close_failed_reply_tasks_that_completed_an_external_action() == 1
+
+    closed = store.get_reply_task(task.id)
+    assert closed.status == "needs_human"
+    assert closed.error.startswith("external_action_completed")
+    # Idempotent: a second sweep finds nothing left to hand over.
+    assert store.close_failed_reply_tasks_that_completed_an_external_action() == 0
+
+
+def test_a_failed_task_that_never_acted_stays_failed(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "never-acted.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="Group", single_chat=False,
+        trigger_message_id="msg-1", trigger_create_time="2026-09-19 10:00:00",
+        trigger_sender="Derek", trigger_text="handle this",
+        execution_generation="gen-1",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='failed', error='codex_result_missing'")
+
+    assert store.close_failed_reply_tasks_that_completed_an_external_action() == 0
+    assert store.get_reply_task(task.id).status == "failed"

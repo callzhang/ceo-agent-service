@@ -21536,6 +21536,48 @@ class AutoReplyStore:
                 reconciled += cursor.rowcount
             return reconciled
 
+    def close_failed_reply_tasks_that_completed_an_external_action(self) -> int:
+        """Hand over a failed task whose generation already reached a person.
+
+        `fail_reply_task` makes this decision when the failure happens, but a
+        task that failed before that rule covered its shape stays `failed`
+        forever, and re-running it is exactly what must not happen: the action
+        is already done and cannot be taken back. Derek's rule is needs_human
+        -- a person decides, and nothing re-runs an irreversible action.
+        """
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                """
+                select id, execution_generation, business_object_key
+                from reply_tasks where status='failed'
+                """
+            ).fetchall()
+            closed = 0
+            for row in rows:
+                if not self._generation_completed_external_action(
+                    db,
+                    task_id=int(row["id"]),
+                    execution_generation=str(row["execution_generation"]),
+                    business_object_key=str(row["business_object_key"] or ""),
+                ):
+                    continue
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='needs_human', available_at='', locked_at=null,
+                        error=case
+                            when trim(coalesce(error, ''))=''
+                            then 'external_action_completed'
+                            else 'external_action_completed:' || error
+                        end,
+                        updated_at=current_timestamp
+                    where id=? and status='failed' and execution_generation=?
+                    """,
+                    (row["id"], row["execution_generation"]),
+                )
+                closed += cursor.rowcount
+            return closed
+
     def skip_failed_reply_tasks_with_terminal_no_action_run(self) -> int:
         """Close failures whose final run already proves no action remains."""
         with self._immediate_write_transaction() as db:
