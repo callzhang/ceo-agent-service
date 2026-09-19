@@ -21575,7 +21575,23 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update reply_attempts as attempts
-                set send_status='needs_human', updated_at=current_timestamp
+                set send_status='needs_human',
+                    -- An answer recorded before the task was handed over is
+                    -- stale: the question was reopened after it. Leaving it
+                    -- makes the attempt read `recovered`, which is how a
+                    -- reopened question disappears from the page again.
+                    resolved_at=case
+                        when exists (
+                            select 1
+                            from agent_runs as runs
+                            join reply_tasks as tasks on tasks.id=runs.reply_task_id
+                            where runs.id=attempts.agent_run_id
+                              and datetime(tasks.updated_at)
+                                  > datetime(coalesce(attempts.resolved_at, ''))
+                        ) then ''
+                        else attempts.resolved_at
+                    end,
+                    updated_at=current_timestamp
                 where attempts.send_status='failed'
                   and exists (
                       select 1
