@@ -355,6 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh-okr-archive",
         "scan-task-sources",
         "scan-meeting-todos-once",
+        "renew-minutes-session",
         "request-minutes-access",
         "sync-minutes-once",
         "scan-meetings-once",
@@ -2236,6 +2237,41 @@ def sync_minutes_once_command(settings: WorkerSettings) -> int:
     return result.synced
 
 
+def renew_minutes_session_command(settings: WorkerSettings) -> int:
+    """Renew the 听记 console session a person alone can create.
+
+    Opens a visible browser on its own profile at the console, waits for the
+    sign-in, and saves the session where the access pass reads it. Everything
+    afterwards runs headless until the session expires, about a month later.
+    """
+    del settings
+    from app.minutes_access import session_expiry
+    from app.minutes_console_browser import (
+        CONSOLE_SIGN_IN_PORT,
+        carry_signed_in_session,
+        open_console_for_sign_in,
+        wait_for_console_sign_in,
+    )
+
+    storage_state = minutes_console_storage_state()
+    open_console_for_sign_in()
+    print(
+        "renew-minutes-session waiting for sign-in in the opened browser",
+        flush=True,
+    )
+    wait_for_console_sign_in()
+    carried = carry_signed_in_session(
+        f"http://127.0.0.1:{CONSOLE_SIGN_IN_PORT}", storage_state
+    )
+    expires_at = session_expiry(storage_state)
+    print(
+        f"renew-minutes-session carried={carried} "
+        f"expires_at={expires_at.isoformat() if expires_at else 'unknown'}",
+        flush=True,
+    )
+    return carried
+
+
 def request_minutes_access_command(settings: WorkerSettings) -> int:
     """Ask each minute's owner for the access the read API refuses us.
 
@@ -4010,6 +4046,8 @@ def _seed_scheduled_tasks_on_service_start(
             "scheduled_task_seed_failed",
             f"Scheduled tasks were not seeded on this start: {exc}",
         )
+    else:
+        store.resolve_errors_recovered_by_scheduled_task_seed()
 
 
 def run_service(
@@ -4674,6 +4712,8 @@ def main() -> None:
         scan_task_sources_command(settings)
     elif args.command == "scan-meeting-todos-once":
         scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)
+    elif args.command == "renew-minutes-session":
+        renew_minutes_session_command(settings)
     elif args.command == "request-minutes-access":
         request_minutes_access_command(settings)
     elif args.command == "sync-minutes-once":

@@ -272,3 +272,40 @@ def test_a_console_without_the_admin_role_is_not_an_expired_session() -> None:
 
     assert not issubclass(MinutesConsoleUnavailable, MinutesBrowserSessionExpired)
     assert not issubclass(MinutesBrowserSessionExpired, MinutesConsoleUnavailable)
+
+
+def test_the_sign_in_wait_accepts_only_the_signed_in_console(monkeypatch) -> None:
+    """The console redirects to the sign-in host until a person signs in.
+
+    Waiting on the tab merely existing would save a session that cannot read
+    anything, which is the failure this whole flow exists to avoid.
+    """
+    import app.minutes_console_browser as browser
+
+    seen = iter(
+        [
+            "https://login.dingtalk.com/oauth2/challenge.htm",
+            "https://login.dingtalk.com/oauth2/challenge.htm",
+            "https://shanji-admin.dingtalk.com/history",
+        ]
+    )
+    monkeypatch.setattr(browser, "_console_tab_url", lambda endpoint: next(seen))
+    monkeypatch.setattr(browser.time if hasattr(browser, "time") else __import__("time"), "sleep", lambda _s: None)
+
+    assert browser.wait_for_console_sign_in(timeout_seconds=30).endswith("/history")
+
+
+def test_the_sign_in_wait_gives_up_instead_of_saving_a_signed_out_session(
+    monkeypatch,
+) -> None:
+    import app.minutes_console_browser as browser
+
+    monkeypatch.setattr(
+        browser,
+        "_console_tab_url",
+        lambda endpoint: "https://login.dingtalk.com/oauth2/challenge.htm",
+    )
+    monkeypatch.setattr(__import__("time"), "sleep", lambda _s: None)
+
+    with pytest.raises(MinutesBrowserSessionExpired):
+        browser.wait_for_console_sign_in(timeout_seconds=1)

@@ -275,6 +275,77 @@ def signed_in_console(storage_state_path: Path):
             browser.close()
 
 
+CONSOLE_SIGN_IN_PORT = 19222
+_SIGN_IN_POLL_SECONDS = 3
+
+
+def _console_tab_url(cdp_endpoint: str) -> str:
+    from urllib.request import urlopen
+
+    tabs = json.loads(urlopen(f"{cdp_endpoint}/json/list", timeout=5).read())
+    page = next((tab for tab in tabs if tab.get("type") == "page"), None)
+    return str((page or {}).get("url") or "")
+
+
+def open_console_for_sign_in(
+    *, port: int = CONSOLE_SIGN_IN_PORT, chrome_bin: str = "", profile_dir: Path | None = None
+) -> int:
+    """Open a visible browser at the console so a person can sign in.
+
+    Its own profile and debugging port, not the person's everyday Chrome, so
+    signing in here changes nothing about their browser.
+    """
+    import subprocess
+    from urllib.error import URLError
+
+    binary = chrome_bin or "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    directory = profile_dir or (
+        Path.home() / "Documents" / "dingtalk-minutes-access-request" / ".chrome-profile"
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        _console_tab_url(f"http://127.0.0.1:{port}")
+        return 0
+    except (URLError, OSError, ValueError, StopIteration):
+        pass
+    process = subprocess.Popen(
+        [
+            binary,
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={directory}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            HISTORY_URL,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return process.pid
+
+
+def wait_for_console_sign_in(
+    *, port: int = CONSOLE_SIGN_IN_PORT, timeout_seconds: int = 300
+) -> str:
+    """Block until the signed-in console is open in that browser."""
+    import time
+    from urllib.error import URLError
+
+    deadline = time.monotonic() + timeout_seconds
+    url = ""
+    while time.monotonic() < deadline:
+        try:
+            url = _console_tab_url(f"http://127.0.0.1:{port}")
+        except (URLError, OSError, ValueError):
+            url = ""
+        if url and MINUTES_CONSOLE_HOST in url and LOGIN_HOST not in url:
+            return url
+        time.sleep(_SIGN_IN_POLL_SECONDS)
+    raise MinutesBrowserSessionExpired(
+        f"the 听记 console was not signed in within {timeout_seconds}s; last at {url!r}"
+    )
+
+
 def carry_signed_in_session(cdp_endpoint: str, storage_state_path: Path) -> int:
     """Save the session from a browser a person just signed in to.
 
