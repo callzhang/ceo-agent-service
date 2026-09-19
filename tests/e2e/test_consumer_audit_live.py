@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from app.business_skills import bundled_business_skills_root
 from app.agent_context import AgentTaskContext, MaterialReference
 from app.agent_orchestrator import AgentOrchestrator
 from app.audit_agent import AuditAgentRunner
@@ -490,7 +491,7 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     repository_root = Path(__file__).resolve().parents[2]
     skill_contents = {
         "ceo-calendar-invite": (
-            repository_root / "skills" / "ceo-calendar-invite" / "SKILL.md"
+            bundled_business_skills_root() / "ceo-calendar-invite" / "SKILL.md"
         ).read_text(encoding="utf-8"),
         "dingtalk-shared": SHARED_SKILL,
         "dingtalk-calendar": CALENDAR_SKILL,
@@ -607,7 +608,7 @@ def test_deterministic_silent_meeting_reads_material_then_accepts(
     repository_root = Path(__file__).resolve().parents[2]
     skill_contents = {
         "ceo-calendar-invite": (
-            repository_root / "skills" / "ceo-calendar-invite" / "SKILL.md"
+            bundled_business_skills_root() / "ceo-calendar-invite" / "SKILL.md"
         ).read_text(encoding="utf-8"),
         "dingtalk-shared": SHARED_SKILL,
         "dingtalk-calendar": CALENDAR_SKILL,
