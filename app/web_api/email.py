@@ -158,6 +158,18 @@ def _safe_exact_evidence_value(value: object, field: str, expected: str) -> str:
     return expected
 
 
+def _safe_head_format(value: object) -> str:
+    """Project either published head without conflating them.
+
+    Candidates trained before the surface model was added are still readable
+    evidence; they simply describe a different shape of model.
+    """
+
+    if value not in {"description-mlp-v1", CANDIDATE_HEAD_FORMAT}:
+        raise ValueError("head_format is invalid")
+    return str(value)
+
+
 def _safe_model_input_schema_version(value: object) -> str:
     """Project either immutable, published input schema without conflating them."""
 
@@ -279,11 +291,7 @@ def _project_staged_model_evidence(
             "embedding_revision",
             "configured-external-revision",
         ),
-        "head_format": _safe_exact_evidence_value(
-            maturity.compatibility.head_format,
-            "head_format",
-            CANDIDATE_HEAD_FORMAT,
-        ),
+        "head_format": _safe_head_format(maturity.compatibility.head_format),
         "parent_model_id": (
             None
             if maturity.compatibility.parent_model_id is None
@@ -444,9 +452,7 @@ def _project_staged_model_evidence(
                 else None
             ),
             "head_format": (
-                _safe_exact_evidence_value(
-                    parameters["head_format"], "head_format", CANDIDATE_HEAD_FORMAT
-                )
+                _safe_head_format(parameters["head_format"])
                 if parameters.get("head_format") is not None
                 else None
             ),
