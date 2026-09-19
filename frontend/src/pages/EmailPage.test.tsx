@@ -314,6 +314,18 @@ it("only updates model switch after server readback and allows disabling active 
   await user.click(toggle);await user.click(screen.getByRole("button",{name:"确认切换"}));
   expect(api.saveEmailRuntimeMode).toHaveBeenLastCalledWith(expect.objectContaining({mode:"agent_primary",model_id:null,expected_mode:"model_primary",expected_model_id:"model-v2"}));
 });
+it("starting a newer version while one runs does not read as a revert",async()=>{
+  const user=userEvent.setup();
+  api.listEmailLearning.mockResolvedValue({learning:learning({
+    runtime:{mode:"model_primary",active_model_id:"model-v1",candidate_model_id:"model-v2",candidate_ready:true,toggle_enabled:true},
+    staged_models:[candidateRow,{...candidateRow,model_id:"model-v1",status:"candidate",trained_at:"2026-08-01T12:00:00Z"}],
+  })});
+  show("/email?tab=learning");
+  await user.click(await screen.findByRole("button",{name:"让这一版上线 model-v2"}));
+  expect(screen.getByRole("alertdialog",{name:"确认运行模式"})).toHaveTextContent("开始判新邮件");
+  await user.click(screen.getByRole("button",{name:"确认切换"}));
+  expect(api.saveEmailRuntimeMode).toHaveBeenCalledWith(expect.objectContaining({mode:"model_primary",model_id:"model-v2"}));
+});
 it("renders rich model detail on demand and keeps healthy inventory visible on detail failure",async()=>{
   const user=userEvent.setup();const model={model_id:"embedding-full-v9",status:"candidate",trained_at:"2026-09-08T00:00:00Z",metrics:{accuracy:.97,micro_f1:.96,categories:{work:{precision:.99,recall:.94,f1:.96,support:37,accepted_precision:.98,accepted_hits:30,independent_groups:25,threshold:.95}},important:{precision:.98,recall:.97,f1:.97,accepted_precision:.99}},evaluation:{protocol:"email-folder-heldout-v1",test_digest:"digest-9",comparability_key:"key-9"},head_timing_percentiles_ms:{p50:1,p95:2,p99:3},end_to_end_latency_ms:{p50:100,p95:200,p99:300},artifact_sha256:"a".repeat(64),compatibility:{enabled_categories:["work"],description_version:"d1",embedding_revision_reference:"emb-7"},split_counts:{train:80,validation:30,test:37},failure_reason:""};
   api.listEmailLearning.mockResolvedValue({learning:learning({staged_models:[model],registry_issues:[{model_id:"broken-v8",integrity_error:"artifact_digest_mismatch"}]})});

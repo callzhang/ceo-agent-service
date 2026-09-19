@@ -56,7 +56,12 @@ export function ModelTraining({
 }) {
   const runtime = learning.runtime;
   const models = learning.staged_models || [];
-  const [confirm, setConfirm] = useState<EmailRuntime | null>(null);
+  // Which version the question is about: an id to start running, or null to
+  // go back to the Agent. Without it the switch only knew how to toggle, so
+  // starting a newer version while one was running read as "revert".
+  const [confirm, setConfirm] = useState<
+    (EmailRuntime & { target: string | null }) | null
+  >(null);
   const [switchError, setSwitchError] = useState("");
   const [switching, setSwitching] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
@@ -216,11 +221,10 @@ export function ModelTraining({
     setSwitchError("");
     onBusy(true);
     try {
-      const mode =
-        confirm.mode === "model_primary" ? "agent_primary" : "model_primary";
+      const mode = confirm.target ? "model_primary" : "agent_primary";
       const result = await saveEmailRuntimeMode({
         mode,
-        model_id: mode === "model_primary" ? confirm.candidate_model_id : null,
+        model_id: confirm.target,
         request_id: requestId.current,
         expected_mode: confirm.mode,
         expected_model_id: confirm.active_model_id,
@@ -549,7 +553,7 @@ export function ModelTraining({
                           disabled={switching}
                           onClick={() => {
                             requestId.current = crypto.randomUUID();
-                            setConfirm({ ...runtime });
+                            setConfirm({ ...runtime, target: null });
                             setSwitchError("");
                           }}
                         >
@@ -574,7 +578,7 @@ export function ModelTraining({
                           }
                           onClick={() => {
                             requestId.current = crypto.randomUUID();
-                            setConfirm({ ...runtime });
+                            setConfirm({ ...runtime, target: item.model.model_id });
                             setSwitchError("");
                           }}
                         >
@@ -696,20 +700,16 @@ export function ModelTraining({
           aria-describedby="training-confirm-text"
         >
           <p id="training-confirm-text">
-            {confirm.mode === "model_primary"
-              ? "改回 Agent 判新邮件，模型退回影子模式。"
-              : "让 " +
-                shortModelId(confirm.candidate_model_id || "") +
-                " 开始判新邮件，它没把握的仍然交给 Agent。"}
+            {confirm.target
+              ? "让 " +
+                shortModelId(confirm.target) +
+                " 开始判新邮件，它没把握的仍然交给 Agent。"
+              : "改回 Agent 判新邮件，模型退回影子模式。"}
           </p>
           <div>
             <button
               type="button"
-              className={
-                confirm.mode === "model_primary"
-                  ? "danger-button"
-                  : "primary-button"
-              }
+              className={confirm.target ? "primary-button" : "danger-button"}
               disabled={switching}
               onClick={() => void switchMode()}
             >
