@@ -27631,6 +27631,25 @@ class AutoReplyStore:
                     'Reply' as category,
                     action as action,
                     case
+                        -- A failed attempt whose own task was handed to Derek
+                        -- reads `needs_human`, not `recovered`. The task and
+                        -- the attempt are two projections of one piece of
+                        -- work, and only the task was updated: /attempts/9670
+                        -- showed a failure for work already handed over, and
+                        -- History listed no needs_human at all while four
+                        -- tasks sat in it. The attempt row itself is left
+                        -- alone -- it carries no structured decision, and
+                        -- inventing one would be fabricating an answer.
+                        when send_status='failed' and exists (
+                            select 1
+                            from agent_runs as handed_over_runs
+                            join reply_tasks as handed_over_tasks
+                              on handed_over_tasks.id=handed_over_runs.reply_task_id
+                            where handed_over_runs.id=reply_attempts.agent_run_id
+                              and handed_over_tasks.status='needs_human'
+                              and handed_over_runs.execution_generation
+                                  =handed_over_tasks.execution_generation
+                        ) then 'needs_human'
                         when send_status='failed' and (
                             exists (
                                 select 1
