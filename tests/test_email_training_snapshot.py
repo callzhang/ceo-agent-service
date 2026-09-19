@@ -1114,3 +1114,58 @@ def test_a_snapshot_frozen_under_an_earlier_schema_is_still_readable(monkeypatch
     # Training on it is a different matter: the runtime would build v4 input.
     with pytest.raises(module.FolderTrainingSnapshotError):
         module.validate_folder_training_snapshot(older)
+
+
+def test_a_bounded_list_rebuilds_from_its_own_input():
+    """The benchmark refuses to measure when the same message rebuilds differently."""
+
+    from app.email_training_snapshot import (
+        MAX_LISTED_ADDRESSES,
+        canonical_model_input,
+    )
+
+    fields = {
+        "sender": {"name": "Announcements", "email": "news@example.test"},
+        "to_recipients": [
+            {"name": "", "email": f"reader{index}@example.test"} for index in range(497)
+        ],
+        "cc_recipients": [],
+        "subject": "quarterly numbers",
+        "body": "detail",
+        "headers": {"message-id": "<crowd@example.test>"},
+        "attachments": [],
+    }
+
+    once = canonical_model_input(fields)
+    payload = json.loads(once)
+    twice = canonical_model_input(
+        {**payload, "unsubscribe_features": payload["unsubscribe"]}
+    )
+
+    assert once == twice
+    # Counting what survived the cut would call 497 recipients eight.
+    assert json.loads(twice)["to_recipient_count"] == 497
+    assert len(json.loads(twice)["to_recipients"]) == MAX_LISTED_ADDRESSES
+
+
+def test_a_count_smaller_than_the_list_it_describes_is_refused():
+    from app.email_training_snapshot import (
+        FolderTrainingSnapshotError,
+        canonical_model_input,
+    )
+
+    with pytest.raises(FolderTrainingSnapshotError):
+        canonical_model_input(
+            {
+                "sender": {"name": "", "email": "news@example.test"},
+                "to_recipients": [
+                    {"name": "", "email": f"r{index}@example.test"} for index in range(4)
+                ],
+                "cc_recipients": [],
+                "subject": "s",
+                "body": "b",
+                "headers": {},
+                "attachments": [],
+                "to_recipient_count": 2,
+            }
+        )

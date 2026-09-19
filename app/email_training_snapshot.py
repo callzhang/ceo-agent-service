@@ -957,12 +957,18 @@ def _model_input(value: Mapping[str, object]) -> tuple[str, str, str | None]:
         "input_schema_version": MODEL_INPUT_SCHEMA_VERSION,
         "sender": sender,
         "subject": subject,
-        "to_recipient_count": len(to_recipients),
+        "to_recipient_count": _declared_count(
+            value.get("to_recipient_count"), to_recipients, "to_recipient_count"
+        ),
         "to_recipients": to_recipients[:MAX_LISTED_ADDRESSES],
-        "cc_recipient_count": len(cc_recipients),
+        "cc_recipient_count": _declared_count(
+            value.get("cc_recipient_count"), cc_recipients, "cc_recipient_count"
+        ),
         "cc_recipients": cc_recipients[:MAX_LISTED_ADDRESSES],
         "unsubscribe": unsubscribe,
-        "attachment_count": len(attachments),
+        "attachment_count": _declared_count(
+            value.get("attachment_count"), attachments, "attachment_count"
+        ),
         "attachments": attachments[:MAX_LISTED_ATTACHMENTS],
         "headers": headers,
         "body": body,
@@ -977,6 +983,22 @@ def _model_input(value: Mapping[str, object]) -> tuple[str, str, str | None]:
     if sender_key and subject_template:
         signature = deterministic_payload_digest([sender_key, subject_template])
     return _model_input_json(payload), body_digest, signature
+
+
+def _declared_count(declared: object, listed: Sequence[object], field: str) -> int:
+    """Keep the real size of a list this input only shows the first entries of.
+
+    Rebuilding an input from its own stored JSON must reproduce it exactly, or
+    the benchmark reads training and serving as disagreeing and refuses to
+    measure latency. Counting the entries that survived the cut would turn a
+    497-recipient mailing into an 8-recipient one on the way back.
+    """
+
+    if declared is None:
+        return len(listed)
+    if type(declared) is not int or declared < len(listed):
+        raise FolderTrainingSnapshotError(f"{field} is invalid")
+    return declared
 
 
 def _model_input_json(payload: Mapping[str, object]) -> str:
