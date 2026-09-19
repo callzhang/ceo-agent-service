@@ -12,6 +12,7 @@ import uuid
 from hashlib import sha256
 
 from app.email_classifier_contracts import (
+    CANDIDATE_HEAD_FORMAT,
     MODEL_OTHERS_CATEGORY_KEY,
     EmailCategory,
 )
@@ -339,6 +340,10 @@ class EmailClassifierLearningService:
             else ["embedding-mlp"]
         )
         canonical["model_families"] = model_families
+        # Two runs are the same run only when the same model is trained on the
+        # same mail: a changed head is a different candidate, however familiar
+        # the labels are.
+        canonical["head_format"] = CANDIDATE_HEAD_FORMAT
         request_fingerprint = {
             **canonical,
             "provenance": [

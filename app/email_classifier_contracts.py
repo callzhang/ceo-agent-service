@@ -38,6 +38,10 @@ INITIAL_EMAIL_CATEGORY_KEYS = (
     "shopping",
     "junk",
 )
+
+
+# What a trained candidate is: its feature views and head, not its data.
+CANDIDATE_HEAD_FORMAT = "description-mlp-ngram-v1"
 RESERVED_EMAIL_CATEGORY_KEYS = frozenset(
     {"important", "subscription", "other", "billing"}
 )

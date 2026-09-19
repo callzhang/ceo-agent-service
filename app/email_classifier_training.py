@@ -22,6 +22,7 @@ import numpy as np
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
 from app.email_classifier_contracts import (
+    CANDIDATE_HEAD_FORMAT,
     EmailAction,
     EmailCategory,
     EmailCategoryKey,
@@ -499,7 +500,7 @@ def train_frozen_embedding_candidate(
         input_schema_version=input_schema,
         embedding_model_id=embedding_model_id,
         embedding_revision=embedding_revision,
-        head_format="description-mlp-ngram-v1",
+        head_format=CANDIDATE_HEAD_FORMAT,
         parent_model_id=parent_model_id,
     )
     maturity = CandidateMaturityEvidence(
@@ -683,7 +684,7 @@ def train_frozen_embedding_candidate(
             "beta": classifier.beta,
             "category_thresholds": thresholds,
             "important_threshold": important_threshold,
-            "head_format": "description-mlp-ngram-v1",
+            "head_format": CANDIDATE_HEAD_FORMAT,
             "hidden_layer_sizes": [8],
             "solver": "lbfgs",
             "regularization_alpha": 0.001,
