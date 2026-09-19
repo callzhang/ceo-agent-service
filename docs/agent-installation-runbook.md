@@ -74,7 +74,6 @@ Write chosen values to `.env` from `.env.example`. Keep user-specific values in
 4. Create or refresh the Python environment:
 
    ```sh
-   python3 -m venv .venv
    "$HOME/miniforge3/bin/python" -m pip install -e '.[dev]'
    ```
 
@@ -200,7 +199,7 @@ web access, plugins, apps, memories, browser features, and dynamic tool search
 disabled. Run the operator probe from the same service account and environment:
 
 ```sh
-.venv/bin/ceo-agent probe-agent-runtimes \
+"$HOME/miniforge3/bin/python" -m app.cli probe-agent-runtimes \
   --db "$CEO_WORKER_DB" --workspace "$CEO_WORKSPACE"
 ```
 
@@ -274,7 +273,7 @@ and creates no business-side effect by itself.
 Run the default, no-network contract test with:
 
 ```sh
-.venv/bin/pytest -q tests/e2e/test_friday_runtime_fallback.py
+"$HOME/miniforge3/bin/python" -m pytest -q tests/e2e/test_friday_runtime_fallback.py
 ```
 
 The test uses a temporary HTTP server and SQLite database. It must pass before

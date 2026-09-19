@@ -122,7 +122,7 @@ Agent 必须如实返回动作结果；只有诊断、没有完成用户要求�
 运维人员可在不消费业务队列的情况下刷新两条路由的独立健康状态：
 
 ```sh
-.venv/bin/ceo-agent probe-agent-runtimes \
+"$HOME/miniforge3/bin/python" -m app.cli probe-agent-runtimes \
   --db "$CEO_WORKER_DB" --workspace "$CEO_WORKSPACE"
 ```
 
@@ -265,7 +265,6 @@ Lark 可通过 `LARK_CLI_INSTALL_COMMAND` 覆盖默认 npm 安装命令。
 ### 2. 安装本地服务
 
 ```bash
-python3 -m venv .venv
 "$HOME/miniforge3/bin/python" -m pip install -e '.[dev]'
 npm install --prefix frontend
 npm run test:workbench
@@ -314,7 +313,7 @@ cp .env.example .env
 Friday Runtime fallback 的默认契约测试不访问网络或真实 provider：
 
 ```bash
-.venv/bin/pytest -q tests/e2e/test_friday_runtime_fallback.py
+"$HOME/miniforge3/bin/python" -m pytest -q tests/e2e/test_friday_runtime_fallback.py
 ```
 
 它会在临时 HTTP server 中验证 `codex_oauth`、`codex_api` 失败后，

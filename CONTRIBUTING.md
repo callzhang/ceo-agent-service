@@ -5,11 +5,13 @@ Thanks for considering a contribution.
 ## Development
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
+"$HOME/miniforge3/bin/python" -m pip install -e '.[dev]'
 cd /path/to/ceo-agent-service
-.venv/bin/pytest -q
+"$HOME/miniforge3/bin/python" -m pytest -q
 ```
+
+The repository does not create or depend on a private `.venv`; every Python
+entry point runs on the one shared interpreter.
 
 ## Rules
 
