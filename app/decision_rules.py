@@ -26,6 +26,7 @@ from __future__ import annotations
 import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 
 # `rule_coverage` required to decide at each risk level. `ic` must be 1.0 and
 # `confidence` above 0.9 at every level. Derek set these on 2026-09-17: there
@@ -34,15 +35,25 @@ from dataclasses import dataclass
 RULE_COVERAGE_BANDS = {"low": 0.8, "medium": 0.9, "high": 1.0}
 
 
+class DecisionTier(StrEnum):
+    """How far an action reaches, which is what decides the rules it answers to."""
+
+    #: Ends the matter for the other party, who cannot reopen it themselves.
+    TERMINAL = "terminal"
+    #: Reaches a real person but they can respond or it can be undone.
+    REACHES_PERSON = "reaches_person"
+    #: Touches no external party.
+    INTERNAL = "internal"
+
+
 @dataclass(frozen=True)
 class DecisionAction:
-    """One command that decides something on the principal's behalf."""
+    """One command, and how far it reaches."""
 
     path: tuple[str, ...]
-    #: Ends the matter for the other party, who cannot reopen it themselves.
-    terminal: bool
+    tier: DecisionTier
     #: Flag that must carry a human-readable reason, "" when the command has none.
-    reason_flag: str
+    reason_flag: str = ""
     #: Read that establishes whether a reversible route exists. A terminal
     #: action must not be taken without consulting it.
     reversible_check: tuple[str, ...] | None = None
@@ -50,33 +61,92 @@ class DecisionAction:
     reversible_name: str = ""
 
 
+def _terminal(
+    *path: str,
+    reason_flag: str = "",
+    reversible_check: tuple[str, ...] | None = None,
+    reversible_name: str = "",
+) -> DecisionAction:
+    return DecisionAction(
+        path=path,
+        tier=DecisionTier.TERMINAL,
+        reason_flag=reason_flag,
+        reversible_check=reversible_check,
+        reversible_name=reversible_name,
+    )
+
+
+def _reaches_person(*path: str, reason_flag: str = "") -> DecisionAction:
+    return DecisionAction(
+        path=path, tier=DecisionTier.REACHES_PERSON, reason_flag=reason_flag
+    )
+
+
+def _internal(*path: str) -> DecisionAction:
+    return DecisionAction(path=path, tier=DecisionTier.INTERNAL)
+
+
 DECISION_ACTIONS: tuple[DecisionAction, ...] = (
-    # DingTalk OA approvals.
-    DecisionAction(
-        path=("oa", "approval", "approve"),
-        terminal=True,
+    # Terminal: the other party cannot reopen these.
+    _terminal(
+        "oa", "approval", "approve",
         reason_flag="--remark",
     ),
-    DecisionAction(
-        path=("oa", "approval", "reject"),
-        terminal=True,
+    _terminal(
+        "oa", "approval", "reject",
         reason_flag="--remark",
         reversible_check=("oa", "approval", "revert-activities"),
         reversible_name="退回（revert-task）",
     ),
-    DecisionAction(
-        path=("oa", "approval", "revert-task"),
-        terminal=False,
+    _terminal(
+        # Withdrawing an approval ends it for everyone waiting on it. Not seen
+        # in thirty days of production, which is exactly why it is classified
+        # now rather than after it first runs.
+        "oa", "approval", "revoke",
         reason_flag="--remark",
     ),
-    # Calendar responses decide attendance for the principal and cannot be
-    # taken back by the organiser; the provider has no reason field.
-    DecisionAction(
-        path=("calendar", "event", "respond"),
-        terminal=True,
-        reason_flag="",
+    _terminal(
+        # Handing the task to someone else ends the principal's part of it and
+        # the applicant cannot undo the reassignment.
+        "oa", "approval", "redirect-task",
+        reason_flag="--remark",
     ),
+    _terminal("calendar", "event", "respond"),
+    _terminal("todo", "task", "delete"),
+    # Reaches a person, but answerable or undoable. The prepared-text rule
+    # governs these; they do not answer to the score band.
+    _reaches_person("chat", "+messages-reply"),
+    _reaches_person("chat", "+messages-send"),
+    _reaches_person("chat", "+send-to-group"),
+    _reaches_person("chat", "+dm"),
+    _reaches_person("chat", "message", "send"),
+    _reaches_person("chat", "message", "reply"),
+    _reaches_person("chat", "message", "edit"),
+    _reaches_person("chat", "message", "recall"),
+    _reaches_person("oa", "approval", "oa-comments"),
+    _reaches_person("oa", "approval", "comment"),
+    # A revert carries the gap the applicant has to close; without it they
+    # are handed the matter back with no idea what to fix.
+    _reaches_person("oa", "approval", "revert-task", reason_flag="--remark"),
+    _reaches_person("doc", "+comment-create"),
+    _reaches_person("doc", "+comment-reply"),
+    _reaches_person("doc", "+comment-update"),
+    _reaches_person("doc", "+comment-delete"),
+    _reaches_person("doc", "+update"),
+    _reaches_person("mail", "message", "reply"),
+    _reaches_person("todo", "+create"),
+    _reaches_person("todo", "task", "create"),
+    _reaches_person("todo", "task", "update"),
+    _reaches_person("todo", "+remind"),
+    _reaches_person("calendar", "event", "update"),
+    # Touches no external party.
+    _internal("doc", "+move"),
+    _internal("chat", "message", "reaction", "add"),
+    _internal("chat", "+messages-add-emoji"),
+    _internal("chat", "message", "add-emoji"),
 )
+
+DECISION_ACTION_BY_PATH = {action.path: action for action in DECISION_ACTIONS}
 
 _READ_PATHS: tuple[tuple[str, ...], ...] = tuple(
     action.reversible_check
@@ -102,13 +172,26 @@ def decision_violations(
     costs nothing on the turns that only read or only send.
     """
     ran = _commands_run(tool_events)
-    decided = [(action, argv) for action, argv in ran if action is not None]
-    if not decided:
+    # Only a terminal action answers to these rules. A message or a comment
+    # reaches a person too, but they can answer it; those are governed by the
+    # prepared-text rule, and holding them to a score band would stop the very
+    # thing the rules tell a turn to do when its scores are low.
+    registered = [(action, argv) for action, argv in ran if action is not None]
+    if not registered:
         return ()
+    decided = [
+        (action, argv)
+        for action, argv in registered
+        if action.tier is DecisionTier.TERMINAL
+    ]
     violations: list[DecisionViolation] = []
-    violations.extend(_band_violations(result, [action for action, _ in decided]))
+    if decided:
+        violations.extend(_band_violations(result, [action for action, _ in decided]))
     violations.extend(_reversible_violations(decided, ran))
-    violations.extend(_reason_violations(decided))
+    # A reason is owed by every action that declares a field for one, whatever
+    # its tier: a revert without one hands the matter back with no idea what to
+    # fix.
+    violations.extend(_reason_violations(registered))
     return tuple(violations)
 
 
@@ -160,7 +243,7 @@ def _reversible_violations(
     consulted = {_path_of(argv) for _, argv in ran}
     violations: list[DecisionViolation] = []
     for action, _argv in decided:
-        if not action.terminal or action.reversible_check is None:
+        if action.reversible_check is None:
             continue
         if action.reversible_check in consulted:
             continue

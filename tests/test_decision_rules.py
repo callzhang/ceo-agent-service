@@ -293,3 +293,65 @@ def test_a_generation_that_only_sends_or_reads_costs_nothing():
         )
         == ()
     )
+
+
+def test_a_message_is_not_held_to_the_score_band():
+    """A chat send reaches a person but they can answer it.
+
+    Holding these to the band would punish the very behaviour the rules ask
+    for: when scores are low the turn is told to propose or ask rather than
+    decide, and asking is a message.
+    """
+
+    assert (
+        decision_violations(
+            result={"risk": "high", "confidence": 0.4, "rule_coverage": 0.2},
+            tool_events=[_shell("dws chat +messages-send --group cid-1 --text 请补充验收标准")],
+        )
+        == ()
+    )
+
+
+def test_every_registered_write_is_classified():
+    """Adding a capability must force a decision about how far it reaches.
+
+    This is the forcing function instead of refusing unclassified writes at
+    runtime: whoever adds one cannot merge without classifying it, rather than
+    whoever is on shift discovering it at the gate.
+    """
+
+    import json
+    from pathlib import Path
+
+    from app.decision_rules import DECISION_ACTION_BY_PATH
+
+    registry = json.loads(
+        (Path(__file__).resolve().parents[1] / "config" / "mcp-tool-effects.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    writes: set[str] = set()
+
+    def walk(value):
+        if isinstance(value, dict):
+            write = value.get("write")
+            if isinstance(write, str):
+                writes.add(write)
+            for nested in value.values():
+                walk(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                walk(nested)
+
+    walk(registry)
+    unclassified = sorted(
+        write
+        for write in writes
+        if tuple(write.split()) not in DECISION_ACTION_BY_PATH
+        and not write.startswith("app.cli ")
+    )
+
+    assert unclassified == [], (
+        "每个受审写操作都必须在 DECISION_ACTIONS 里明确分档："
+        f"{unclassified}"
+    )
