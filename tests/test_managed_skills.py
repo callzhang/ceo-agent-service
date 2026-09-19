@@ -397,6 +397,71 @@ def test_repository_import_appends_changed_bytes_after_settings_revision(
     assert store.list_runtime_skill_bindings(config_before.id) == bindings_before
 
 
+def test_a_settings_revision_does_not_block_binding_the_next_repository_skill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 2026-09-18 crash loop started here.
+
+    `ceo-message-triage` sat at a `settings` revision in the active
+    configuration, so binding was skipped for every repository Skill imported
+    afterwards. `ceo-weekly-report` was imported and never bound, the scheduled
+    task naming it could not resolve its Skill, and seeding raised out of
+    service start.
+    """
+    store = AutoReplyStore(tmp_path / "settings-then-new-skill.sqlite3")
+    repository = dict(managed_skills_module._repository_managed_skills())
+    edited_content = repository["ceo-minutes-sync"]
+    new_content = repository["ceo-wechat"]
+    monkeypatch.setattr(
+        managed_skills_module,
+        "_repository_managed_skills",
+        lambda: (("ceo-minutes-sync", edited_content),),
+    )
+    import_repository_managed_skills(store)
+    edited = store.get_managed_skill_by_name("ceo-minutes-sync")
+    assert edited is not None
+    settings_revision = store.create_managed_skill_revision(
+        edited.id,
+        edited_content.replace("# CEO Minutes Sync", "# Edited in settings", 1),
+        source="settings",
+    )
+    config = store.get_pending_or_active_runtime_skill_config()
+    assert config is not None
+    store.create_runtime_skill_config(
+        [
+            {
+                "skill_id": edited.id,
+                "revision_id": settings_revision.id,
+                "enabled": True,
+                "load_order": 0,
+                "purpose": "feedback_iteration",
+            }
+        ],
+        expected_parent_id=config.id,
+    )
+    monkeypatch.setattr(
+        managed_skills_module,
+        "_repository_managed_skills",
+        lambda: (
+            ("ceo-minutes-sync", edited_content),
+            ("ceo-wechat", new_content),
+        ),
+    )
+
+    import_repository_managed_skills(store)
+
+    current = store.get_pending_or_active_runtime_skill_config()
+    assert current is not None
+    bindings = {
+        binding.skill_id: binding
+        for binding in store.list_runtime_skill_bindings(current.id)
+    }
+    added = store.get_managed_skill_by_name("ceo-wechat")
+    assert added is not None
+    assert added.id in bindings
+    assert bindings[edited.id].revision_id == settings_revision.id
+
+
 def test_repository_import_reconciles_partial_service_owned_records_into_initial_config(
     tmp_path: Path,
 ) -> None:

@@ -395,23 +395,17 @@ def _import_repository_managed_skills_locked(
                 )
                 for name, revision in imported
             )
-        repository_owned_config = all(
-            (revision := store.get_managed_skill_revision(binding.revision_id))
-            is not None
-            and revision.source == REPOSITORY_IMPORT_SOURCE
-            for binding in bindings
-        )
-        if not repository_owned_config:
-            return tuple(
-                RepositoryManagedSkillImport(
-                    name=name,
-                    revision_id=revision.id,
-                    revision_number=revision.revision_number,
-                    sha256=revision.sha256,
-                    source=revision.source,
-                )
-                for name, revision in imported
-            )
+        # A Skill that has no binding at all is bound here whoever owns the
+        # rest of the configuration. Only additions happen below -- every
+        # existing binding is carried over verbatim -- so a configuration that
+        # someone has edited is not overwritten by adding a Skill beside it.
+        #
+        # This used to require that *every* existing binding still pointed at a
+        # repository revision. One Skill edited in settings therefore disabled
+        # binding for every repository Skill imported afterwards: on
+        # 2026-09-18 `ceo-message-triage` sat at a `settings` revision, so the
+        # freshly imported `ceo-weekly-report` was never bound, the scheduled
+        # task naming it could not resolve its Skill, and seeding raised.
         bound = {binding.skill_id for binding in bindings}
         missing = [
             (name, revision)
