@@ -38,7 +38,9 @@ TARGETING_PATTERNS: Mapping[str, str] = {
     "personal": (
         r"生日|家人|朋友|个人|personal|family|wedding|婚礼|"
         r"医院|体检|挂号|预约|学校|孩子|家长|房租|物业|快递|机票|酒店|行程|"
-        r"签证|护照|保险|健身|会员|旅行|度假|"
+        r"签证|护照|结婚证|公证|户口|身份证|出生证|移民|绿卡|\bi-?94\b|"
+        r"marriage certificate|birth certificate|notariz|green card|"
+        r"保险|健身|会员|旅行|度假|"
         r"flight|hotel|booking|itinerary|visa|passport|insurance|school|doctor|appointment"
     ),
     "financing": (

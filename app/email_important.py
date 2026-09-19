@@ -128,6 +128,21 @@ _BULK_SENDER_NAMES = (
 )
 
 
+# The domains the owner's own people write from.
+OWN_DOMAINS = ("stardust.ai", "preseen.ai")
+
+
+def internal_sender(sender: str) -> bool:
+    """Say whether a colleague sent this, rather than the outside world."""
+
+    if type(sender) is not str:
+        raise TypeError("sender must be an exact string")
+    _local, separator, domain = sender.strip().casefold().rpartition("@")
+    return bool(separator) and any(
+        domain == item or domain.endswith("." + item) for item in OWN_DOMAINS
+    )
+
+
 def bulk_sender(sender: str) -> bool:
     """Say whether an address sends broadcasts rather than correspondence."""
 

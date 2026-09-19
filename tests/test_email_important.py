@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from importlib import import_module
 
 import pytest
@@ -110,3 +111,43 @@ def test_standard_imap_star_and_provider_important_flags_form_one_union() -> Non
         raw_signal_names=("\\Flagged", "$Important"),
         provider_important=True,
     )
+
+
+@pytest.mark.parametrize(
+    ("sender", "expected"),
+    (
+        ("hans@stardust.ai", True),
+        ("Hans@Stardust.AI", True),
+        ("bot@mail.stardust.ai", True),
+        ("hello@preseen.ai", True),
+        ("sales@notstardust.ai", False),
+        ("stardust.ai@gmail.com", False),
+        ("no-at-sign", False),
+        ("", False),
+    ),
+)
+def test_a_colleague_is_told_apart_from_the_outside_world(
+    sender: str, expected: bool
+) -> None:
+    """A colleague's note was being read as a cold pitch and filed as junk."""
+
+    from app.email_important import internal_sender
+
+    assert internal_sender(sender) is expected
+
+
+def test_the_surface_text_says_who_wrote_it() -> None:
+    """The domain is a handful of characters among a thousand; spell it out."""
+
+    from app.email_embedding_classifier import ngram_text
+
+    def surface(address: str) -> str:
+        return ngram_text(
+            json.dumps(
+                {"sender": {"email": address}, "subject": "mento", "body": "ping"},
+                ensure_ascii=False,
+            )
+        )
+
+    assert surface("hans@stardust.ai").startswith("__colleague__ ")
+    assert surface("deals@example.test").startswith("__outsider__ ")

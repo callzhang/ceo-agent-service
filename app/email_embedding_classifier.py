@@ -24,6 +24,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 
 from app.email_classifier_contracts import validate_email_category_key
+from app.email_important import internal_sender
 from app.email_embedding_client import EmbeddingResult, EmbeddingTiming
 
 
@@ -873,9 +874,15 @@ def ngram_text(normalized_model_input: str) -> str:
         return normalized_model_input
     sender = payload.get("sender")
     address = sender.get("email") if isinstance(sender, Mapping) else sender
+    # Who wrote it is in the address already, but as a handful of characters
+    # among a thousand. A colleague's mail was being read as a cold pitch, so
+    # the fact is spelled out as its own word for the surface model to weigh.
+    origin = (
+        "__colleague__" if internal_sender(str(address or "")) else "__outsider__"
+    )
     return " ".join(
         str(part or "")
-        for part in (address, payload.get("subject"), payload.get("body"))
+        for part in (origin, address, payload.get("subject"), payload.get("body"))
     )
 
 
