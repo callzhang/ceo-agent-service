@@ -486,7 +486,9 @@ def test_later_snapshot_does_not_mutate_earlier_observation(tmp_path: Path):
     assert state is not None
     assert state["snapshot_id"] == "snapshot-after-move"
     assert state["folder_label_watermark"] == 2
-    assert state["important_label_watermark"] == 2
+    # Moving mail between two categories the owner has to act on does not
+    # change whether it asks anything of him.
+    assert state["important_label_watermark"] == 1
     assert state["minimum_ready"] is False
 
 

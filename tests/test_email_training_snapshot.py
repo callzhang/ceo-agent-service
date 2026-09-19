@@ -121,7 +121,13 @@ def test_production_snapshot_job_builds_persists_and_triggers_with_real_store(
             important_signals=ImportantSignals(
                 ("STARRED",) if index % 2 else (), bool(index % 2)
             ),
-            sender={"name": f"Sender {index}", "email": f"sender-{index}@example.test"},
+            # Half the mail comes from a person and half from a mailer, which
+            # is what decides the important label now.
+            sender=(
+                {"name": f"Sender {index}", "email": f"sender-{index}@example.test"}
+                if index % 2
+                else {"name": "Mailer", "email": f"noreply-{index}@example.test"}
+            ),
             subject=f"Unique junk token {chr(65 + index % 26)}-{index}",
         )
         for index in range(100)
@@ -279,7 +285,7 @@ def test_pending_trigger_crash_replay_keeps_one_snapshot_and_one_durable_trigger
         ).fetchone() == (1,)
 
 
-def test_observation_event_publishes_folder_important_and_description_changes(
+def test_observation_event_publishes_folder_and_description_changes(
     tmp_path,
 ):
     published = []
@@ -337,8 +343,9 @@ def test_observation_event_publishes_folder_important_and_description_changes(
         now=OBSERVED_AT + timedelta(minutes=3),
     )
 
+    # The third call only adds a star, which is not training input, so it
+    # publishes nothing; the fourth changes the descriptions and does.
     assert [item.description_version for item in published] == [
-        "descriptions-v1",
         "descriptions-v1",
         "descriptions-v1",
         "descriptions-v2",
@@ -781,15 +788,26 @@ def test_observed_at_is_canonical_utc_and_changes_signed_snapshot_digest():
     "change",
     (
         {"provider_folder_name": "Renamed Work"},
-        {"important_signals": ImportantSignals(("STARRED",), True)},
         {"body": "changed input"},
     ),
 )
-def test_folder_star_or_input_change_produces_new_digest(change):
+def test_folder_filing_or_input_change_produces_new_digest(change):
     first = _snapshot([_message("message-1")], snapshot_id="snapshot-a")
     second = _snapshot([_message("message-1", **change)], snapshot_id="snapshot-b")
 
     assert first.snapshot_digest != second.snapshot_digest
+
+
+def test_a_star_is_not_training_input():
+    """A star records what the owner flagged, not what the message asks of him."""
+
+    first = _snapshot([_message("message-1")], snapshot_id="snapshot-a")
+    starred = _snapshot(
+        [_message("message-1", important_signals=ImportantSignals(("STARRED",), True))],
+        snapshot_id="snapshot-b",
+    )
+
+    assert first.snapshot_digest == starred.snapshot_digest
 
 
 def test_junk_training_is_downsampled_without_duplicate_bodies():

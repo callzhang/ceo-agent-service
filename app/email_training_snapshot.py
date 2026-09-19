@@ -21,7 +21,11 @@ from app.email_folder_truth import (
     EmailFolderTruthState,
     resolve_email_folder_truth,
 )
-from app.email_important import ImportantSignals, important_effective
+from app.email_important import (
+    ImportantSignals,
+    important_effective,
+    important_training_label,
+)
 from app.email_provider_folders import FolderRole, ProviderFolder
 
 
@@ -832,10 +836,13 @@ def _candidate(value: Mapping[str, object], *, observed_at: str) -> _Candidate |
         provider_folder_id=provider_folder_id,
         provider_folder_name=provider_folder_name,
         category_key=category,
-        important=important_effective(
+        # One meaning of important across every source: mail from a person, in
+        # a category whose mail the owner has to act on. Provider stars say
+        # what the owner once flagged, which is a different question and made
+        # folder-derived rows disagree with the rest of the training set.
+        important=important_training_label(
             category=category or "unclassified",
-            provider_signals=signals,
-            model_important=False,
+            sender=_sender_address(value.get("sender")),
         ),
         normalized_model_input=model_input,
         normalized_model_input_hash=sha256(model_input.encode("utf-8")).hexdigest(),
@@ -1091,6 +1098,14 @@ def _attachments(value: object) -> list[dict[str, object]]:
             }
         )
     return sorted(result, key=_canonical_json)
+
+
+def _sender_address(value: object) -> str:
+    """The sender's address, however the provider shaped the field."""
+
+    if isinstance(value, Mapping):
+        return str(value.get("email") or value.get("name") or "")
+    return str(value or "")
 
 
 def _bounded_body(value: object) -> str:

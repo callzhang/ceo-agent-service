@@ -1491,7 +1491,9 @@ def test_membership_reconciliation_refreshes_existing_uid_important_flags(tmp_pa
         seed=20260905,
         proposed_splits={"message-1": "train"},
     )
-    assert starred_snapshot.observations[0].important is True
+    # A star is what the owner once flagged; the training label is whether the
+    # message asks him to act. The runtime still honours the star.
+    assert starred_snapshot.observations[0].important is False
     assert unstarred_snapshot.observations[0].important is False
 
 
