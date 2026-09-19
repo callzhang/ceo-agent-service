@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from app.agent_context import AuditTurnContext
 from app.agent_contracts import AuditAgentResult, AuditOutcome
-from app.oa_decision_rules import oa_decision_violations
+from app.decision_rules import decision_violations
 from app.agent_effect_claim import (
     EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
     claims_external_action_without_tools,
@@ -341,16 +341,17 @@ class AuditAgentRunner:
                 )
             ):
                 raise ResultParseError(EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT)
-            # An OA decision the rules do not allow is a correction, not a
-            # result. The rules live with the OA domain; this gate only asks
-            # them and passes their wording back to the turn.
-            oa_violations = oa_decision_violations(
+            # A decision the rules do not allow is a correction, not a
+            # result. The rules are domain-neutral and their registry says
+            # which commands decide; this gate only asks them and passes their
+            # wording back to the turn.
+            decision_rule_violations = decision_violations(
                 result=result.model_dump(mode="json"),
                 tool_events=generation_events,
             )
-            if oa_violations:
+            if decision_rule_violations:
                 raise ResultParseError(
-                    "\n\n".join(violation.detail for violation in oa_violations)
+                    "\n\n".join(violation.detail for violation in decision_rule_violations)
                 )
             if (
                 result.outcome is not AuditOutcome.EXECUTED
