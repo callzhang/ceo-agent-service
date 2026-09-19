@@ -264,11 +264,17 @@ def train_frozen_embedding_candidate(
     )
     validation = tuple(row for row in rows if row["split"] == "validation")
     test = tuple(row for row in rows if row["split"] == "test")
-    important_training = tuple(row for row in all_rows if row["split"] == "train")
+    # Where a message is filed says which category it belongs to; it says
+    # nothing about whether its owner still has to act on it. Only mail some
+    # judgement passed over teaches the important head.
+    judged = tuple(
+        row for row in all_rows if str(row["source"]) in _JUDGED_TRAINING_SOURCES
+    ) or all_rows
+    important_training = tuple(row for row in judged if row["split"] == "train")
     important_validation = tuple(
-        row for row in all_rows if row["split"] == "validation"
+        row for row in judged if row["split"] == "validation"
     )
-    important_test = tuple(row for row in all_rows if row["split"] == "test")
+    important_test = tuple(row for row in judged if row["split"] == "test")
     if not training or not validation or not test:
         raise TrainingNotReady(
             "frozen snapshot requires train, validation, and test rows"
@@ -804,6 +810,9 @@ def _precision_lower_bound(hits: int, accepted: int) -> float:
     )
     return (centre - margin) / denominator
 
+
+# Sources where someone decided what the message was, not where it sits.
+_JUDGED_TRAINING_SOURCES = frozenset({"agent_auto_label", "user_feedback"})
 
 CROSS_VALIDATION_FOLDS = 5
 CROSS_VALIDATION_PROTOCOL = "email-folder-grouped-cv-v1"
