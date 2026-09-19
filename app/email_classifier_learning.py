@@ -13,6 +13,7 @@ from hashlib import sha256
 
 from app.email_classifier_contracts import (
     CANDIDATE_HEAD_FORMAT,
+    TRAINING_RECIPE_VERSION,
     MODEL_OTHERS_CATEGORY_KEY,
     EmailCategory,
 )
@@ -349,6 +350,7 @@ class EmailClassifierLearningService:
         # same mail: a changed head is a different candidate, however familiar
         # the labels are.
         canonical["head_format"] = CANDIDATE_HEAD_FORMAT
+        canonical["training_recipe"] = TRAINING_RECIPE_VERSION
         request_fingerprint = {
             **canonical,
             "provenance": [

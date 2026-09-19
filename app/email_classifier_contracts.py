@@ -42,6 +42,11 @@ INITIAL_EMAIL_CATEGORY_KEYS = (
 
 # What a trained candidate is: its feature views and head, not its data.
 CANDIDATE_HEAD_FORMAT = "description-mlp-ngram-v1"
+
+# How a candidate is trained: which rows teach which head, how folds are cut.
+# Bump it when that changes, so a rerun is not dismissed as a repeat of the
+# run before it. Unlike the head format, this does not change compatibility.
+TRAINING_RECIPE_VERSION = "judged-important-rows-v1"
 RESERVED_EMAIL_CATEGORY_KEYS = frozenset(
     {"important", "subscription", "other", "billing"}
 )
