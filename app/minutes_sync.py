@@ -58,6 +58,13 @@ class MinutesSyncResult:
     permission_requested: int = 0
     permission_pending: int = 0
     failed: int = 0
+    #: Why each failure failed, as (task_uuid, reason). `failed=19` on its own
+    #: says nothing anyone can act on: the four failure branches are a DWS
+    #: error, an unreadable summary shape, a minute with neither summary nor
+    #: transcript, and an unrenderable archive, and they need different
+    #: answers. 2026-09-19: the daily pass reported 19 failures out of 784 and
+    #: there was no way to learn which minutes or why.
+    failures: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         accounted = (
@@ -76,7 +83,17 @@ class MinutesSyncResult:
             f"skipped={self.skipped} "
             f"permission_requested={self.permission_requested} "
             f"permission_pending={self.permission_pending} failed={self.failed}"
+            + self._failure_detail()
         )
+
+    def _failure_detail(self) -> str:
+        if not self.failures:
+            return ""
+        shown = "; ".join(
+            f"{task_uuid}:{reason}" for task_uuid, reason in self.failures[:5]
+        )
+        more = "" if len(self.failures) <= 5 else f" (+{len(self.failures) - 5} more)"
+        return f" failures={shown}{more}"
 
 
 def _timecode(offset_ms: object) -> str:
@@ -445,6 +462,7 @@ def sync_minutes_once(
             candidates.append(task_uuid)
 
     synced = skipped = requested = still_pending = failed = 0
+    failures: list[tuple[str, str]] = []
     for task_uuid in candidates:
         try:
             basic_payload = dws.get_minutes_info(task_uuid)
@@ -457,6 +475,7 @@ def sync_minutes_once(
         except DwsError as exc:
             if not _is_restricted_minute_error(exc):
                 failed += 1
+                failures.append((task_uuid, f"dws_error:{exc}"[:200]))
                 continue
             duration = _read_duration_for_restricted(dws, task_uuid)
             if not should_request_access(duration):
@@ -480,6 +499,7 @@ def sync_minutes_once(
             rendered_summary = summary_markdown(summary)
         except MinutesSummaryShapeUnknown:
             failed += 1
+            failures.append((task_uuid, "summary_shape_unknown"))
             continue
         # DingTalk can publish a usable summary before it exposes transcript
         # paragraphs. Archive that summary now instead of turning a readable
@@ -487,6 +507,7 @@ def sync_minutes_once(
         # remains a genuine failure and will be retried on a later pass.
         if not paragraphs and not rendered_summary.strip():
             failed += 1
+            failures.append((task_uuid, "no_summary_and_no_transcript"))
             continue
         path = _archive_path(
             archive_dir,
@@ -499,6 +520,7 @@ def sync_minutes_once(
             )
         except MinutesSummaryShapeUnknown:
             failed += 1
+            failures.append((task_uuid, "archive_render_failed"))
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
@@ -537,6 +559,7 @@ def sync_minutes_once(
         permission_requested=requested,
         permission_pending=still_pending,
         failed=failed,
+        failures=tuple(failures),
     )
 
 

@@ -684,3 +684,46 @@ def test_both_spellings_of_the_refusal_mean_the_same_restricted_minute(
     assert result.failed == 0
     assert result.permission_pending == 2
     assert _cursor(store)["permission_pending_ids"] == ["coded", "lower"]
+
+
+def test_a_failure_says_which_minute_and_why() -> None:
+    """`failed=19` on its own is not something anyone can act on.
+
+    The four failure branches -- a DWS error, an unreadable summary shape, a
+    minute with neither summary nor transcript, and an unrenderable archive --
+    need different answers, and on 2026-09-19 the daily pass reported 19
+    failures out of 784 with no way to learn which minutes or why.
+    """
+    from app.minutes_sync import MinutesSyncResult
+
+    result = MinutesSyncResult(
+        discovered=3,
+        synced=1,
+        failed=2,
+        failures=(
+            ("uuid-a", "summary_shape_unknown"),
+            ("uuid-b", "no_summary_and_no_transcript"),
+        ),
+    )
+
+    summary = result.summary()
+    assert "failed=2" in summary
+    assert "uuid-a:summary_shape_unknown" in summary
+    assert "uuid-b:no_summary_and_no_transcript" in summary
+
+
+def test_a_clean_pass_says_nothing_extra() -> None:
+    from app.minutes_sync import MinutesSyncResult
+
+    assert "failures=" not in MinutesSyncResult(discovered=1, synced=1).summary()
+
+
+def test_many_failures_are_summarised_not_dumped() -> None:
+    from app.minutes_sync import MinutesSyncResult
+
+    failures = tuple((f"uuid-{index}", "dws_error:boom") for index in range(9))
+    result = MinutesSyncResult(discovered=9, failed=9, failures=failures)
+
+    summary = result.summary()
+    assert "uuid-0:dws_error:boom" in summary
+    assert "(+4 more)" in summary
