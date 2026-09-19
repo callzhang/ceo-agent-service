@@ -12161,10 +12161,8 @@ class AutoReplyStore:
     ) -> bool:
         """Whether this generation already wrote to the task's business object."""
 
-        object_key = business_object_key.strip()
-        if not object_key:
-            return False
         from app.dingtalk_send_evidence import completed_provider_writes
+        from app.outbound_text_authority import shell_send_commands
 
         rows = db.execute(
             """
@@ -12184,6 +12182,17 @@ class AutoReplyStore:
             if isinstance(event, dict):
                 tool_events.append(event)
         if not tool_events:
+            return False
+        # A send the turn ran in its own shell reached a person just as surely
+        # as a recorded one, and leaves no delivery key to recognise it by, so
+        # a retry would send it again. It counts here whether or not the task
+        # has a business object: on 2026-09-19 task 384446 shell-sent, then
+        # returned `invalid_execution_path` five times over and failed, with
+        # the message already on the recipient's phone.
+        if shell_send_commands(tool_events):
+            return True
+        object_key = business_object_key.strip()
+        if not object_key:
             return False
         return any(
             identifier and identifier in object_key

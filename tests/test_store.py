@@ -11940,3 +11940,63 @@ def test_a_resume_that_never_stops_is_allowed_to_fail(tmp_path: Path):
 
     assert statuses[0] == "pending"
     assert statuses[-1] == "failed"
+
+
+def test_a_shell_send_ends_the_task_needs_human_not_failed(tmp_path: Path):
+    """The message reached a person, so a retry would send it twice.
+
+    On 2026-09-19 task 384446 shell-sent, was corrected, then returned
+    `invalid_execution_path` five times and failed -- with the message already
+    on the recipient's phone and nothing in the task saying so. A shell send
+    leaves no delivery key to recognise, so it has to count as a completed
+    external action on its own.
+    """
+    store = AutoReplyStore(tmp_path / "shell-send-needs-human.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="Group", single_chat=False,
+        trigger_message_id="msg-1", trigger_create_time="2026-09-19 10:00:00",
+        trigger_sender="Derek", trigger_text="handle this",
+        execution_generation="gen-1",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    claim = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="test",
+    )
+    store.append_agent_run_event(
+        claim.run.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "exit_code": 0,
+                "status": "completed",
+                "command": (
+                    "/bin/zsh -lc 'dws chat +messages-send --group cid-1 "
+                    "--text \"已处理\"'"
+                ),
+                "aggregated_output": '{"success":true}',
+            },
+        },
+        owner="test",
+    )
+    store.fail_agent_run(
+        claim.run.id,
+        {
+            "code": "agent_reported_failure",
+            "retryable": True,
+            "authorization_required": False,
+            "detail": "invalid_execution_path",
+            "session_continuable": False,
+        },
+        owner="test",
+    )
+
+    store.fail_reply_task(
+        task.id,
+        "agent_reported_failure",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    assert store.get_reply_task(task.id).status == "needs_human"
