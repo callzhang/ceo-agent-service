@@ -582,9 +582,16 @@ def sync_minutes_once(
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
-        archived.add(task_uuid)
         if transcript_error:
+            # The summary is saved so the minute is readable now, but the
+            # minute is deliberately not marked archived: the transcript
+            # failed on the provider's side, and that is worth asking again.
+            # Marking it done here would freeze a half-archived minute
+            # forever. A later pass rewrites the same file and finishes it
+            # once the transcript answers.
             skips.append((task_uuid, transcript_error))
+        else:
+            archived.add(task_uuid)
         pending.discard(task_uuid)
         synced += 1
 

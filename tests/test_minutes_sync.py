@@ -830,3 +830,40 @@ def test_a_page_that_keeps_failing_still_reports(tmp_path: Path) -> None:
 
     assert items == []
     assert "openSearchMinutesByKeywordAndTimeRange" in error
+
+
+def test_a_minute_missing_its_transcript_is_asked_again(tmp_path: Path) -> None:
+    """A provider-side transcript failure is worth retrying, not freezing.
+
+    Archiving the summary and marking the minute done would leave it
+    half-archived forever. It stays on the list so a later pass can finish it.
+    """
+    store = _store(tmp_path)
+
+    class TranscriptFails(FakeDws):
+        def get_all_minutes_transcription(self, task_uuid):
+            raise DwsError("B_QUERY_MINUTES_PARAGRAPH_LIST_FAILED")
+
+    dws = TranscriptFails(
+        [{"taskUuid": "u1"}],
+        basic={"u1": {"title": "OpenAI合作交流", "startTime": 1778266926000}},
+        summary={"u1": {"fullSummary": "要点"}},
+    )
+
+    first = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+    assert first.synced == 1
+    assert "u1" not in set(_cursor(store).get("archived_ids") or [])
+
+    # The transcript answers on a later pass and the minute is finished.
+    working = FakeDws(
+        [{"taskUuid": "u1"}],
+        basic={"u1": {"title": "OpenAI合作交流", "startTime": 1778266926000}},
+        summary={"u1": {"fullSummary": "要点"}},
+        paragraphs={"u1": [{"startTime": 0, "nickName": "张静", "paragraph": "开始"}]},
+    )
+    second = sync_minutes_once(store, working, archive_dir=tmp_path / "AI听记")
+
+    assert second.synced == 1
+    assert "u1" in set(_cursor(store).get("archived_ids") or [])
+    [written] = list((tmp_path / "AI听记").rglob("*.md"))
+    assert "开始" in written.read_text(encoding="utf-8")
