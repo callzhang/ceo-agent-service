@@ -449,6 +449,41 @@ def test_store_rejects_observation_metadata_tampering(tmp_path: Path):
         store.persist_training_snapshot(forged)
 
 
+def test_correcting_a_label_back_does_not_lower_the_watermark(tmp_path: Path):
+    """A watermark counts changes, and undoing a change is another change."""
+
+    store = EmailStore(tmp_path / "watermark-history.sqlite3")
+    store.persist_training_snapshot(_frozen_training_snapshot("snapshot-one"))
+    moved = build_folder_training_snapshot(
+        [
+            _frozen_training_observation(
+                provider_folder_id="folder-legal",
+                provider_folder_name="Legal",
+                bound_category_key="legal",
+            )
+        ],
+        snapshot_id="snapshot-two",
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 19, 0, tzinfo=timezone.utc),
+        seed=17,
+    )
+    store.persist_training_snapshot(moved)
+    after_move = store.latest_training_snapshot_state()["folder_label_watermark"]
+
+    store.persist_training_snapshot(
+        build_folder_training_snapshot(
+            [_frozen_training_observation()],
+            snapshot_id="snapshot-three",
+            description_version="description-v3",
+            observed_at=datetime(2026, 9, 7, 20, 0, tzinfo=timezone.utc),
+            seed=17,
+        )
+    )
+    after_undo = store.latest_training_snapshot_state()["folder_label_watermark"]
+
+    assert after_undo > after_move
+
+
 def test_later_snapshot_does_not_mutate_earlier_observation(tmp_path: Path):
     store = EmailStore(tmp_path / "training-snapshot-history.sqlite3")
     first = _frozen_training_snapshot("snapshot-before-move")

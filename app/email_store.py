@@ -13580,7 +13580,22 @@ class EmailStore:
                 loaded = self._get_training_snapshot(db, snapshot.snapshot_id)
                 assert loaded is not None
                 return loaded
+            # A watermark counts the label changes this snapshot adds to the
+            # ones before it, so it must be measured against the last snapshot
+            # of its own kind. Measured against a different kind, correcting a
+            # label back to what that snapshot already said read as a smaller
+            # number, and promotion refused the run for "regressing".
             previous_snapshot = db.execute(
+                """
+                select snapshot_id, folder_label_watermark,
+                       important_label_watermark
+                from email_training_snapshots
+                where frozen=1 and snapshot_version=?
+                order by observed_at desc, snapshot_id desc
+                limit 1
+                """,
+                (snapshot.snapshot_version,),
+            ).fetchone() or db.execute(
                 """
                 select snapshot_id, folder_label_watermark,
                        important_label_watermark
