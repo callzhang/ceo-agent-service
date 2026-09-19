@@ -79,6 +79,30 @@ def block_real_notifications_in_tests(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
+def block_real_memory_writes_in_tests(monkeypatch):
+    """A test must never reach the real Memory connector.
+
+    The write path spawns a runtime whose MCP configuration is Derek's own, so a
+    fixture that slips past its stub lands in his Memory as a real entry. Seven
+    copies of one meeting fixture arrived there on 2026-09-18 that way. Failing
+    loudly here costs a test author one line; the alternative costs Derek an
+    unexplained entry he has to find and delete.
+    """
+
+    def refuse(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError(
+            "a test reached the real memory writer: pass routed_execution= or "
+            "memory_writer= so the write stays inside the test"
+        )
+
+    for module_name in ("app.codex_memory_write", "app.meeting_memory_write"):
+        module = sys.modules.get(module_name)
+        if module is not None:
+            monkeypatch.setattr(module, "run_codex_memory_write", refuse, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def isolate_service_mcp_manifest(tmp_path, monkeypatch):
     manifest = tmp_path / "service-mcp.json"
     manifest.write_text(
