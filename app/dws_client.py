@@ -2718,6 +2718,27 @@ class DwsClient:
             raise DwsError("invalid minutes summary response")
         return payload
 
+    def resolve_sent_message_reference(self, open_task_id: str) -> dict[str, str]:
+        """Where a sent message landed, resolved from its send receipt.
+
+        DingTalk accepts a send asynchronously and answers with an ``openTaskId``
+        only. The conversation and message ids -- what a notification needs to
+        open the conversation, and what a withdrawal needs to name the message --
+        come from asking about that task.
+        """
+        normalized = open_task_id.strip()
+        if not normalized:
+            return {}
+        status = self.run_json(self.build_message_send_status_command(normalized))
+        reference = status.get("messageRef") if isinstance(status, dict) else None
+        if not isinstance(reference, dict):
+            return {}
+        conversation_id = str(reference.get("openConversationId") or "").strip()
+        message_id = str(reference.get("openMessageId") or "").strip()
+        if not conversation_id or not message_id:
+            return {}
+        return {"openConversationId": conversation_id, "openMessageId": message_id}
+
     def recall_sent_message(self, open_task_id: str) -> bool:
         """Withdraw a message this service sent, identified by its send receipt.
 
@@ -2725,15 +2746,9 @@ class DwsClient:
         ids needed to withdraw it are resolved from that. Returns False when the
         provider declines, which the caller treats as "the reader keeps it".
         """
-        normalized = open_task_id.strip()
-        if not normalized:
-            return False
-        status = self.run_json(self.build_message_send_status_command(normalized))
-        reference = status.get("messageRef") if isinstance(status, dict) else None
-        if not isinstance(reference, dict):
-            return False
-        conversation_id = str(reference.get("openConversationId") or "").strip()
-        message_id = str(reference.get("openMessageId") or "").strip()
+        reference = self.resolve_sent_message_reference(open_task_id)
+        conversation_id = reference.get("openConversationId", "")
+        message_id = reference.get("openMessageId", "")
         if not conversation_id or not message_id:
             return False
         payload = self.run_json(

@@ -1,6 +1,8 @@
 import json
 from datetime import datetime, timedelta
 
+from types import SimpleNamespace
+
 import pytest
 
 import app.meeting_alignment as meeting_alignment
@@ -291,6 +293,18 @@ class FakeDws:
         return self.calendar_pages[cursor]
 
 
+def _fake_resolve_sent_message_reference(self, open_task_id: str) -> dict:
+    """Answer where a send landed, the way the provider's status call does."""
+    self.__dict__.setdefault("resolved", []).append(open_task_id)
+    return {
+        "openConversationId": f"cid-for-{open_task_id}",
+        "openMessageId": f"msg-for-{open_task_id}",
+    }
+
+
+FakeDws.resolve_sent_message_reference = _fake_resolve_sent_message_reference
+
+
 def _fake_recall_sent_message(self, open_task_id: str) -> bool:
     """Record what the service asked to withdraw, and say the provider took it."""
     self.__dict__.setdefault("recalled", []).append(open_task_id)
@@ -312,9 +326,12 @@ class ConsumerDws(FakeDws):
         )
         self.send_calls: list[dict] = []
         self.verify_calls: list[dict] = []
+        # What DingTalk actually answers a send with: a task handle and nothing
+        # else. The conversation and message ids have to be asked for separately,
+        # which is why the stored receipt used to carry neither.
         self.send_result = {
             "success": True,
-            "result": {"openMessageId": "msg-1"},
+            "result": {"openTaskId": "task-1"},
         }
         self.verification_states = ["sent"]
         self.calendar_update_calls: list[dict] = []
@@ -1632,7 +1649,12 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     assert job.target_kind == "group"
     assert job.target_id == "cid-first"
     assert json.loads(job.decision_json)["action"] == "send"
-    assert json.loads(job.send_result_json)["status"] == "sent"
+    receipt = json.loads(job.send_result_json)
+    assert receipt["status"] == "sent"
+    # The desktop notification opens this conversation when Derek clicks it, and a
+    # later withdrawal names the message; the send itself answers with neither.
+    assert receipt["send_result"]["openConversationId"]
+    assert receipt["send_result"]["openMessageId"]
     assert job.calendar_summary_status == "updated"
     calendar_receipt = json.loads(job.calendar_summary_result_json)
     assert calendar_receipt["event_id"] == "event-1"
@@ -2232,6 +2254,37 @@ def test_producer_persists_conflicting_minutes_aliases_as_skipped(
         assert created == 1
         assert job is not None
         assert job.status == "skipped"
+
+
+def test_delivery_records_the_conversation_the_follow_up_reached():
+    """The notification Derek clicks needs a conversation, and the send gives none.
+
+    DingTalk answers with an openTaskId only, so the receipt used to carry no
+    conversation id and the desktop notification had nothing to open.
+    """
+    dws = FakeDws()
+    delivery = SimpleNamespace(
+        send_result={"data": {"result": {"openTaskId": "task-1"}}},
+        sensitive_private_delivery=None,
+    )
+
+    meeting_alignment._record_where_the_message_landed(dws, delivery)
+
+    assert delivery.send_result["openConversationId"] == "cid-for-task-1"
+    assert delivery.send_result["openMessageId"] == "msg-for-task-1"
+
+
+def test_delivery_does_not_ask_twice_for_a_conversation_it_already_has():
+    dws = FakeDws()
+    delivery = SimpleNamespace(
+        send_result={"openTaskId": "task-1", "openConversationId": "cid-known"},
+        sensitive_private_delivery=None,
+    )
+
+    meeting_alignment._record_where_the_message_landed(dws, delivery)
+
+    assert delivery.send_result["openConversationId"] == "cid-known"
+    assert dws.__dict__.get("resolved") is None
 
 
 def test_delivery_withdraws_the_follow_up_it_replaces():

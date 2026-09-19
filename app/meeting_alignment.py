@@ -1416,6 +1416,7 @@ def _write_meeting_summary_to_calendar_or_retry(
     # Captured before the job records this send: it points at the follow-up the
     # people in this meeting are already holding, which a re-summary replaces.
     superseded_send_result = job.send_result_json or ""
+    _record_where_the_message_landed(dws, delivery)
     summary = (job.final_message or delivery.message_text).strip()
     if not summary:
         _fail_job(
@@ -1858,6 +1859,30 @@ def _resolve_transcript_speaker(
 
 def _canonical_name(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+def _record_where_the_message_landed(dws: Any, delivery: MeetingDeliveryResult) -> None:
+    """Resolve the conversation this follow-up reached, into its own receipt.
+
+    DingTalk answers a send with an ``openTaskId`` and nothing else, so the
+    stored receipt had no conversation id -- which is what the desktop
+    notification needs to open the conversation when Derek clicks it, and what a
+    later withdrawal needs to name the message. Resolving it once here means
+    neither has to ask again. A provider that cannot answer leaves the receipt as
+    it was: the follow-up itself was delivered either way.
+    """
+    for receipt in (delivery.send_result, getattr(delivery.sensitive_private_delivery, "send_result", None)):
+        if not isinstance(receipt, dict):
+            continue
+        open_task_id = _find_nested_value(receipt, "openTaskId")
+        if not open_task_id or _find_nested_value(receipt, "openConversationId"):
+            continue
+        try:
+            reference = dws.resolve_sent_message_reference(open_task_id)
+        except DwsError:
+            continue
+        if reference:
+            receipt.update(reference)
 
 
 def _withdraw_superseded_follow_up(dws: Any, previous_send_result_json: str) -> None:
