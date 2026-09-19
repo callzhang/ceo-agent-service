@@ -477,7 +477,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--service-pid", type=int, required=False, help="pid of the running service, to reuse its loaded classifier Skill")
     parser.add_argument("--account", help="with --gmail-query: the account to search; it may be disabled")
     parser.add_argument("--gmail-query", help="Gmail search (X-GM-RAW), e.g. category:purchases")
-    parser.add_argument("--target", default="", help="with --gmail-query: the category this search aims at, for the report")
+    parser.add_argument("--folder", default="INBOX", help="mailbox to search")
+    parser.add_argument("--target", default="", help="with a search: the category this search aims at, for the report")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     load_env_file()
@@ -507,6 +508,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             targeted_category=args.target,
             classified_identities=classified,
             limit=args.limit_per_category,
+            folder=args.folder,
         )
         candidates = [candidate for candidate, _message in found]
         fetched = {candidate.stable_message_identity: message for candidate, message in found}
