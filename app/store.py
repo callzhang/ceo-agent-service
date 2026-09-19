@@ -12002,14 +12002,33 @@ class AutoReplyStore:
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
-    @staticmethod
-    def _failure_is_resumable(structured_error_json: str | None) -> bool:
-        """Whether this failure left the turn able to carry on where it was.
+    #: Retryable failures in which no turn ran at all. They report
+    #: `session_continuable: False` because no new session was opened, but
+    #: nothing was consumed either, and the generation's earlier session is
+    #: still there for the next claim to reuse. Over thirty days these are the
+    #: two largest failure classes by far: 7597 `runtime_provider_unreachable`
+    #: and 417 `runtime_route_unavailable`, against 92 provider overloads.
+    NOTHING_RAN_FAILURE_CODES = frozenset(
+        {
+            "runtime_provider_unreachable",
+            "runtime_route_unavailable",
+            "service_restart_before_effect",
+        }
+    )
+    #: How many times a task may be resumed before it is allowed to fail. A
+    #: resume that never stops is worse than a closed task: it hides a
+    #: permanent fault behind an endless queue.
+    RESUMABLE_MAX_ATTEMPTS = 5
 
-        Both halves matter. `retryable` alone would requeue a turn whose
-        session is gone, which starts the work again from nothing; the
-        provider reports `session_continuable` when the conversation can be
-        resumed, and only then is requeueing cheaper than closing.
+    @classmethod
+    def _failure_is_resumable(cls, structured_error_json: str | None) -> bool:
+        """Whether this failure left work that can be carried on.
+
+        Two shapes qualify. A turn that ran and can continue its session: the
+        provider reports `session_continuable`, and `retryable` alone would
+        not do, because requeueing a turn whose session is gone starts the
+        work again from nothing. And a turn that never ran at all, where
+        nothing was consumed and the generation's earlier session is intact.
         """
         try:
             payload = json.loads(structured_error_json or "{}")
@@ -12017,9 +12036,18 @@ class AutoReplyStore:
             return False
         if not isinstance(payload, dict):
             return False
-        return bool(payload.get("retryable")) and bool(
-            payload.get("session_continuable")
-        )
+        if not payload.get("retryable"):
+            return False
+        if payload.get("session_continuable"):
+            return True
+        return str(payload.get("code") or "") in cls.NOTHING_RAN_FAILURE_CODES
+
+    @staticmethod
+    def _resume_available_at(attempts: int, now_value: datetime) -> str:
+        """Back off before the next claim, doubling to a fifteen-minute ceiling."""
+
+        delay = min(60 * (2 ** max(int(attempts) - 1, 0)), 900)
+        return (now_value + timedelta(seconds=delay)).strftime("%Y-%m-%d %H:%M:%S")
 
     def complete_reply_task(
         self,
@@ -12060,16 +12088,29 @@ class AutoReplyStore:
                 # the turn. A retryable failure whose session can be resumed
                 # goes back to `pending` on the same generation, so the next
                 # claim continues that session instead of starting over.
-                if self._failure_is_resumable(latest_run["structured_error_json"]):
+                attempts = int(row["attempts"] or 0)
+                if (
+                    attempts < self.RESUMABLE_MAX_ATTEMPTS
+                    and self._failure_is_resumable(
+                        latest_run["structured_error_json"]
+                    )
+                ):
                     cursor = db.execute(
                         """
                         update reply_tasks
-                        set status='pending', locked_at=null, available_at='',
+                        set status='pending', locked_at=null, available_at=?,
                             error=?, updated_at=current_timestamp
                         where id=? and status='processing'
                           and execution_generation=?
                         """,
-                        (failure_code, task_id, expected_execution_generation),
+                        (
+                            self._resume_available_at(
+                                attempts, datetime.now(timezone.utc)
+                            ),
+                            failure_code,
+                            task_id,
+                            expected_execution_generation,
+                        ),
                     )
                     if cursor.rowcount != 1:
                         raise AgentRunLeaseLostError(

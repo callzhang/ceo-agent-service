@@ -11829,3 +11829,90 @@ def test_a_failure_that_cannot_be_resumed_still_fails_the_task(tmp_path: Path):
     )
 
     assert store.get_reply_task(task.id).status == "failed"
+
+
+def _fail_task_turn(store: AutoReplyStore, task, payload: dict) -> None:
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=store.next_agent_run_turn_attempt(
+            task.id, task.execution_generation, role=AgentRole.CONSUMER,
+            proposal_revision=0,
+        ),
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="test",
+    )
+    store.fail_agent_run(claim.run.id, payload, owner="test")
+
+
+def test_a_turn_that_never_ran_resumes_too(tmp_path: Path):
+    """No route was available, so nothing was consumed and nothing is lost.
+
+    These report `session_continuable: False` only because no new session was
+    opened; the generation's earlier session is still there. Over thirty days
+    they are the two largest failure classes by far -- 7597
+    `runtime_provider_unreachable` and 417 `runtime_route_unavailable`,
+    against 92 provider overloads.
+    """
+    store = AutoReplyStore(tmp_path / "nothing-ran.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="Scheduled", single_chat=False,
+        trigger_message_id="msg-1", trigger_create_time="2026-09-19 12:00:00",
+        trigger_sender="Derek", trigger_text="weekly report",
+        execution_generation="gen-1",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    _fail_task_turn(
+        store,
+        task,
+        {
+            "code": "runtime_provider_unreachable",
+            "retryable": True,
+            "authorization_required": False,
+            "detail": "no_eligible_route",
+            "session_continuable": False,
+        },
+    )
+
+    store.complete_reply_task(
+        task.id, expected_execution_generation=task.execution_generation
+    )
+
+    assert store.get_reply_task(task.id).status == "pending"
+
+
+def test_a_resume_that_never_stops_is_allowed_to_fail(tmp_path: Path):
+    """A permanent fault must surface, not hide behind an endless queue."""
+    store = AutoReplyStore(tmp_path / "resume-ceiling.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="Scheduled", single_chat=False,
+        trigger_message_id="msg-1", trigger_create_time="2026-09-19 12:00:00",
+        trigger_sender="Derek", trigger_text="weekly report",
+        execution_generation="gen-1",
+    )
+    overloaded = {
+        "code": "codex_provider_overloaded",
+        "retryable": True,
+        "authorization_required": False,
+        "detail": "Selected model is at capacity.",
+        "session_continuable": True,
+    }
+    statuses = []
+    for _ in range(AutoReplyStore.RESUMABLE_MAX_ATTEMPTS + 1):
+        with store._connect() as db:
+            db.execute("update reply_tasks set available_at=''")
+        claimed = store.claim_reply_tasks(limit=1)
+        if not claimed:
+            break
+        task = claimed[0]
+        _fail_task_turn(store, task, overloaded)
+        store.complete_reply_task(
+            task.id, expected_execution_generation=task.execution_generation
+        )
+        statuses.append(store.get_reply_task(task.id).status)
+
+    assert statuses[0] == "pending"
+    assert statuses[-1] == "failed"
