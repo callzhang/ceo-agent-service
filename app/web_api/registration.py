@@ -414,8 +414,17 @@ def register_console_routes(
             source_tables=visible_source_tables,
         )
         all_items = [*queue_items, *(history_log_item(row) for row in rows)]
+        # Anything waiting on Derek sits at the top, newest first, whatever
+        # its date. Sorted by time alone, an item handed to him slides down
+        # the page as ordinary work lands above it -- which is the opposite of
+        # what the status means: it is the only status that needs him to read
+        # it, and the only one that never resolves itself.
         all_items.sort(
-            key=lambda item: str(item.get("occurred_at") or ""), reverse=True
+            key=lambda item: (
+                str(item.get("status") or "").strip().lower() == "needs_human",
+                str(item.get("occurred_at") or ""),
+            ),
+            reverse=True,
         )
         total = log_total + len(queue_items)
         start = (page - 1) * page_size
