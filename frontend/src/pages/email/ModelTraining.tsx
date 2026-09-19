@@ -329,25 +329,28 @@ export function ModelTraining({
             </button>
           </div>
           {runtimeVerified ? (
-            <label className="training-toggle">
-              <span>
-                {runtime?.candidate_ready ? "候选模型已达标" : "候选模型未达标"}
-              </span>
-              <input
-                role="switch"
-                aria-label="主模型"
-                aria-describedby="email-mode-help"
-                type="checkbox"
-                checked={runtime?.mode === "model_primary"}
-                disabled={!runtime?.toggle_enabled || switching}
-                onChange={() => {
-                  requestId.current = crypto.randomUUID();
-                  setConfirm({ ...runtime });
-                  setSwitchError("");
-                }}
-              />
-              <b>主模型</b>
-            </label>
+            <button
+              type="button"
+              aria-label="主模型"
+              aria-describedby="email-mode-help"
+              className={
+                runtime?.mode === "model_primary"
+                  ? "danger-button training-promote"
+                  : "primary-button training-promote"
+              }
+              disabled={!runtime?.toggle_enabled || switching}
+              onClick={() => {
+                requestId.current = crypto.randomUUID();
+                setConfirm({ ...runtime });
+                setSwitchError("");
+              }}
+            >
+              {runtime?.mode === "model_primary"
+                ? "改回 Agent 判断"
+                : switching
+                  ? "正在上线…"
+                  : "让模型上线"}
+            </button>
           ) : (
             <button
               className="compact-button"
@@ -361,10 +364,12 @@ export function ModelTraining({
       </header>
       <p id="email-mode-help" className="muted training-mode-help">
         {!runtimeVerified
-          ? "当前状态未确认，已暂停显示模式开关。"
-          : runtime?.toggle_enabled
-            ? "切换需要确认，以服务器读取结果为准。"
-            : "服务器尚未允许切换；请查看晋升检查和完整性证据。"}
+          ? "当前状态未确认，已暂停显示上线按钮。"
+          : runtime?.mode === "model_primary"
+            ? "模型正在判新邮件；改回 Agent 后它只做影子判断。"
+            : runtime?.toggle_enabled
+              ? "候选已达标，点按钮上线；点完还要确认一次。"
+              : "候选还没达标，下面的晋升检查里写着差哪一项。"}
       </p>
       {trainingStatus && (
         <p className="training-request-status" role="status">

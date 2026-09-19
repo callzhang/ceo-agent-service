@@ -1133,6 +1133,7 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-consumer-metric-bad { border-left-color: var(--status-danger-line); }
 .attempt-consumer-metric-bad strong { color: var(--status-danger-ink); }
 .attempt-consumer-metric-neutral strong { color: var(--ink-soft); }
+.attempt-review-side .attempt-metadata-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .attempt-primary-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); gap: 16px; align-items: start; }
 .attempt-primary-grid > div { display: grid; gap: 16px; min-width: 0; }
 .attempt-detail-section { min-width: 0; }
@@ -1778,3 +1779,7 @@ h1, h2, h3, p { margin-top: 0; }
   .scheduled-task-history li div { min-width: 0; flex-wrap: wrap; }
   .scheduled-task-history li > span, .scheduled-task-history li p { overflow-wrap: anywhere; }
 }
+
+/* Turning the model on is the decision this page exists for. */
+.training-promote { min-height: 42px; padding: 0 22px; font-size: 15px; font-weight: 700; }
+.training-promote:disabled { cursor: not-allowed; opacity: 0.45; }
