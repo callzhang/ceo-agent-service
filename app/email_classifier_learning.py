@@ -218,6 +218,9 @@ def _selection_provenance(
     return {
         "sources": sources,
         "categories": categories,
+        # Which source wins a message decides what is actually trained on, so
+        # it belongs to the identity of a training run.
+        "precedence": list(precedence),
         "provenance": provenance,
         # The run file is private durable execution evidence.  This list is
         # intentionally removed from the console response below.
