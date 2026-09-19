@@ -331,7 +331,14 @@ class AuditAgentRunner:
             # prepared-text check because its correction is the stronger one:
             # the message is already delivered, so the turn is told not to
             # send it again rather than to re-propose it.
-            if shell_send_commands(generation_events):
+            #
+            # Scoped to this turn's own tool events, never the generation's.
+            # A send that already happened is in the generation's history
+            # forever, so judging the generation rejected every later turn for
+            # something no later turn could undo: on 2026-09-19 task 384445
+            # was corrected three times for one send and then failed, with no
+            # result a turn could have returned to satisfy it.
+            if refreshed is not None and shell_send_commands(refreshed.tool_events):
                 raise ResultParseError(SHELL_SEND_REQUIREMENT)
             if refreshed is not None:
                 unprepared = unprepared_send_texts(

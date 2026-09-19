@@ -189,6 +189,108 @@ def test_external_action_identity_is_stable_without_run_or_revision_state():
     assert "argv" not in first
 
 
+def test_an_earlier_turns_send_does_not_reject_this_one(setup):
+    """The correction must be satisfiable, and a past send never can be.
+
+    A send stays in the generation's history forever. Judging the generation
+    rejected every later turn for something no later turn could undo: on
+    2026-09-19 task 384445 was corrected three times for one send by an
+    earlier turn, and then failed, with no result a turn could have returned.
+    """
+    from app.agent_contracts import AuditAgentResult
+
+    store, task, audit_context, parent = setup
+    first = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=audit_context.operation_id,
+        owner="audit-test",
+    )
+    store.append_agent_run_event(
+        first.run.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "exit_code": 0,
+                "status": "completed",
+                "command": (
+                    "/bin/zsh -lc 'dws chat +messages-send --group cid-agent "
+                    "--text \"已处理\"'"
+                ),
+                "aggregated_output": '{"success":true}',
+            },
+        },
+        owner="audit-test",
+    )
+    store.fail_agent_run(
+        first.run.id,
+        {
+            "code": "codex_result_invalid",
+            "retryable": True,
+            "authorization_required": False,
+            "detail": "corrected for the shell send",
+            "session_continuable": True,
+        },
+        owner="audit-test",
+    )
+    retry = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=1,
+        parent_agent_run_id=parent.id,
+        operation_id=audit_context.operation_id,
+        owner="audit-test",
+    )
+    assert retry.claimed
+    reported = AuditAgentResult.model_validate(
+        {
+            "outcome": "needs_human",
+            "summary": "上一轮已自行发送，本轮不重复发送，交由人确认。",
+            "proposal_revision": 0,
+            "feedback": None,
+            "external_result": None,
+            "decision_options": [
+                {
+                    "key": "option_1",
+                    "label": "确认已送达",
+                    "instruction": "确认上一轮已发出的消息就是要发的内容。",
+                    "consequence": "本事项收口，不再发送。",
+                },
+                {
+                    "key": "option_2",
+                    "label": "由服务重发",
+                    "instruction": "按服务准备好的文案重新发送一次。",
+                    "consequence": "对方会收到第二条消息。",
+                },
+            ],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+            "risk": "high",
+            "confidence": 0.4,
+            "rule_coverage": 0.5,
+            "information_completeness": 0.5,
+        }
+    )
+    runner = AuditAgentRunner(
+        store=store, workspace=Path("/workspace"), owner="audit-test"
+    )
+    parse = runner._parse_evidenced_result(
+        task, retry.run, parse_result=lambda _raw: reported
+    )
+
+    assert parse("{}") is reported
+
+
 def test_a_send_the_turn_ran_itself_is_corrected_without_resending(setup):
     """Sending is the service's to do, and the correction must not cause a second send.
 
