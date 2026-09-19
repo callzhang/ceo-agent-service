@@ -686,28 +686,45 @@ export function ModelTraining({
         onClose={() => setPromotionOpen(false)}
       />
       {confirm && (
-        <EmailDrawer
-          title="确认运行模式"
-          locked={switching}
-          onClose={() => setConfirm(null)}
+        // A drawer is for reading a thing; this is one question with two
+        // answers, so it asks in place.
+        <div
+          className="training-confirm"
+          role="alertdialog"
+          aria-modal="true"
+          aria-label="确认运行模式"
+          aria-describedby="training-confirm-text"
         >
-          <div className="email-drawer-content">
-            <p>
-              {confirm.mode === "model_primary"
-                ? "恢复 Agent 主分类，模型回到影子模式。"
-                : "将候选模型 " +
-                  confirm.candidate_model_id +
-                  " 切换为新邮件的主分类模型。"}
-            </p>
+          <p id="training-confirm-text">
+            {confirm.mode === "model_primary"
+              ? "改回 Agent 判新邮件，模型退回影子模式。"
+              : "让 " +
+                shortModelId(confirm.candidate_model_id || "") +
+                " 开始判新邮件，它没把握的仍然交给 Agent。"}
+          </p>
+          <div>
             <button
-              className="primary-button"
+              type="button"
+              className={
+                confirm.mode === "model_primary"
+                  ? "danger-button"
+                  : "primary-button"
+              }
               disabled={switching}
               onClick={() => void switchMode()}
             >
               {switching ? "正在切换…" : "确认切换"}
             </button>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={switching}
+              onClick={() => setConfirm(null)}
+            >
+              取消
+            </button>
           </div>
-        </EmailDrawer>
+        </div>
       )}
       {selected && (
         <EmailDrawer title="模型版本详情" onClose={() => setSelected("")}>

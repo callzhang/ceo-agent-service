@@ -1783,3 +1783,8 @@ h1, h2, h3, p { margin-top: 0; }
 /* Turning the model on is the decision this page exists for. */
 .training-promote { min-height: 42px; padding: 0 22px; font-size: 15px; font-weight: 700; }
 .training-promote:disabled { cursor: not-allowed; opacity: 0.45; }
+
+/* One question with two answers, asked where it was raised. */
+.training-confirm { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 14px 0; padding: 13px 14px; border: 1px solid var(--accent); border-radius: 10px; background: var(--accent-soft); }
+.training-confirm p { margin: 0; font-weight: 600; }
+.training-confirm > div { display: flex; gap: 8px; flex: 0 0 auto; }
