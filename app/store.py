@@ -12002,6 +12002,25 @@ class AutoReplyStore:
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
+    @staticmethod
+    def _failure_is_resumable(structured_error_json: str | None) -> bool:
+        """Whether this failure left the turn able to carry on where it was.
+
+        Both halves matter. `retryable` alone would requeue a turn whose
+        session is gone, which starts the work again from nothing; the
+        provider reports `session_continuable` when the conversation can be
+        resumed, and only then is requeueing cheaper than closing.
+        """
+        try:
+            payload = json.loads(structured_error_json or "{}")
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        return bool(payload.get("retryable")) and bool(
+            payload.get("session_continuable")
+        )
+
     def complete_reply_task(
         self,
         task_id: int,
@@ -12032,6 +12051,31 @@ class AutoReplyStore:
                 failure_code = self._agent_run_failure_code(
                     latest_run["structured_error_json"]
                 )
+                # A provider that is merely busy has not ended the task. The
+                # weekly report's first occurrence, 2026-09-19, lost a whole
+                # week this way: its third turn hit
+                # `codex_provider_overloaded` -- retryable, and the provider
+                # itself said the session could continue -- and the seven
+                # minutes of evidence gathering before it were closed out with
+                # the turn. A retryable failure whose session can be resumed
+                # goes back to `pending` on the same generation, so the next
+                # claim continues that session instead of starting over.
+                if self._failure_is_resumable(latest_run["structured_error_json"]):
+                    cursor = db.execute(
+                        """
+                        update reply_tasks
+                        set status='pending', locked_at=null, available_at='',
+                            error=?, updated_at=current_timestamp
+                        where id=? and status='processing'
+                          and execution_generation=?
+                        """,
+                        (failure_code, task_id, expected_execution_generation),
+                    )
+                    if cursor.rowcount != 1:
+                        raise AgentRunLeaseLostError(
+                            f"reply task superseded: {task_id}"
+                        )
+                    return
                 cursor = db.execute(
                     """
                     update reply_tasks

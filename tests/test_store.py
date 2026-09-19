@@ -11730,3 +11730,98 @@ def test_a_finished_task_without_a_memory_decision_is_counted(tmp_path: Path):
     with store._connect() as db:
         db.execute("update task_memory_write_events set status='skipped'")
     assert store.count_finished_tasks_without_memory_decision(finished_before=later) == 0
+
+
+def test_a_busy_provider_does_not_end_the_task(tmp_path: Path):
+    """The weekly report lost a week to a provider that was merely busy.
+
+    Its first occurrence, 2026-09-19, spent seven minutes gathering evidence,
+    then its third turn hit `codex_provider_overloaded` -- retryable, and the
+    provider itself reported the session could continue. The task was closed
+    on that turn, and since it runs once a week there was nothing to retry.
+    """
+    store = AutoReplyStore(tmp_path / "resumable.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Scheduled",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-09-19 12:00:00",
+        trigger_sender="Derek",
+        trigger_text="weekly report",
+        execution_generation="gen-1",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="test",
+    )
+    store.fail_agent_run(
+        claim.run.id,
+        {
+            "code": "codex_provider_overloaded",
+            "retryable": True,
+            "authorization_required": False,
+            "detail": "Selected model is at capacity.",
+            "session_continuable": True,
+        },
+        owner="test",
+    )
+
+    store.complete_reply_task(
+        task.id, expected_execution_generation=task.execution_generation
+    )
+
+    reopened = store.get_reply_task(task.id)
+    assert reopened.status == "pending"
+    # The generation is kept, so the next claim resumes the same session
+    # rather than repeating the work already done in it.
+    assert reopened.execution_generation == task.execution_generation
+
+
+def test_a_failure_that_cannot_be_resumed_still_fails_the_task(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "not-resumable.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Scheduled",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-09-19 12:00:00",
+        trigger_sender="Derek",
+        trigger_text="weekly report",
+        execution_generation="gen-1",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="test",
+    )
+    store.fail_agent_run(
+        claim.run.id,
+        {
+            "code": "codex_result_invalid",
+            "retryable": True,
+            "authorization_required": False,
+            "detail": "bad result",
+            "session_continuable": False,
+        },
+        owner="test",
+    )
+
+    store.complete_reply_task(
+        task.id, expected_execution_generation=task.execution_generation
+    )
+
+    assert store.get_reply_task(task.id).status == "failed"
