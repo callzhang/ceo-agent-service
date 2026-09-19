@@ -871,7 +871,9 @@ class OnlineEmbeddingPredictor:
                     timing=EmbeddingTiming(0.0, 0.0, 0.0, 0.0, 0.0),
                 )
             head_started_at = float(self._clock())
-            timed = self.classifier.predict_result(embedded, index=0)
+            timed = self.classifier.predict_result(
+                embedded, index=0, text=value.normalized_text
+            )
             timing = timed.timing
             finished_at = float(self._clock())
             self.latency.record(

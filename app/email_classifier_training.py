@@ -363,6 +363,7 @@ def train_frozen_embedding_candidate(
                 [vector_for(row) for row in important_fit_rows]
             ),
             tuning_folds=_category_tuning_folds(fit_rows) if tune else (),
+            texts=[str(row["normalized_model_input"]) for row in fit_rows],
         )
 
     dimension = int(vector_for(evaluation_rows[0]).shape[0])
@@ -392,10 +393,12 @@ def train_frozen_embedding_candidate(
             continue
         fold_model = fit_classifier(fit_rows, important_fit, tune=True)
         fold_predictions[fold] = [
-            (row, fold_model.predict(vector_for(row))) for row in score_rows
+            (row, fold_model.predict(vector_for(row), str(row["normalized_model_input"])))
+            for row in score_rows
         ]
         fold_important[fold] = [
-            (row, fold_model.predict(vector_for(row))) for row in important_score
+            (row, fold_model.predict(vector_for(row), str(row["normalized_model_input"])))
+            for row in important_score
         ]
 
     def calibrated_on(entries, category):
@@ -466,7 +469,8 @@ def train_frozen_embedding_candidate(
         scored=important_scored, threshold=important_threshold
     )
     important_test_predictions = tuple(
-        classifier.predict(vector_for(row)) for row in important_test
+        classifier.predict(vector_for(row), str(row["normalized_model_input"]))
+        for row in important_test
     )
     head_latencies = [float(item.head_ms) for item in important_test_predictions]
     head_latency_ms = {
@@ -495,7 +499,7 @@ def train_frozen_embedding_candidate(
         input_schema_version=input_schema,
         embedding_model_id=embedding_model_id,
         embedding_revision=embedding_revision,
-        head_format="description-mlp-v1",
+        head_format="description-mlp-ngram-v1",
         parent_model_id=parent_model_id,
     )
     maturity = CandidateMaturityEvidence(
@@ -679,7 +683,7 @@ def train_frozen_embedding_candidate(
             "beta": classifier.beta,
             "category_thresholds": thresholds,
             "important_threshold": important_threshold,
-            "head_format": "description-mlp-v1",
+            "head_format": "description-mlp-ngram-v1",
             "hidden_layer_sizes": [8],
             "solver": "lbfgs",
             "regularization_alpha": 0.001,

@@ -51,7 +51,7 @@ class Classifier:
     def __init__(self, clock):
         self.clock = clock
 
-    def predict_result(self, embedded, index=0):
+    def predict_result(self, embedded, index=0, text=None):
         self.clock.now += 0.01
         # A declined classification is still a completed timing measurement.
         return SimpleNamespace(

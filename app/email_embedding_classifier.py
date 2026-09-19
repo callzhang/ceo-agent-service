@@ -19,6 +19,8 @@ from pathlib import Path
 from types import MappingProxyType
 
 import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 
 from app.email_classifier_contracts import validate_email_category_key
@@ -30,6 +32,17 @@ ARTIFACT_FRAME_VERSION = 1
 _ARTIFACT_HEADER = struct.Struct(">16sHQ32s")
 _ARTIFACT_SCHEMA = "email-description-mlp-npz-v1"
 _MAX_ARTIFACT_PAYLOAD_BYTES = 64 * 1024 * 1024
+
+# Eight hidden units could not separate the categories that share vocabulary:
+# finance, legal and work each proved nothing at all, and the cross-validated
+# accuracy was 87.8% against 88.9% at thirty-two. Older artifacts still load.
+CATEGORY_HIDDEN_UNITS = 32
+SUPPORTED_HIDDEN_UNITS = frozenset({8, 32})
+
+# The surface model reads the same message the embedding does, as plain text.
+NGRAM_MAX_FEATURES = 200_000
+NGRAM_RANGE = (2, 4)
+NGRAM_MIN_DOCUMENT_FREQUENCY = 2
 _MAX_ARTIFACT_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
 _MAX_MANIFEST_BYTES = 1024 * 1024
 _ZIP_LOCAL_MAGIC = b"PK\x03\x04"
@@ -144,6 +157,7 @@ class DescriptionAwareEmailClassifier:
         )
         self._category_head: MLPClassifier | None = None
         self._important_head: MLPClassifier | None = None
+        self._surface_head: _SurfaceHead | None = None
         self.artifact_checksum = ""
 
     def fit(
@@ -154,6 +168,7 @@ class DescriptionAwareEmailClassifier:
         *,
         important_embeddings: np.ndarray | None = None,
         tuning_folds: Sequence[tuple[np.ndarray, np.ndarray]] = (),
+        texts: Sequence[str] | None = None,
     ) -> "DescriptionAwareEmailClassifier":
         matrix = self._matrix(embeddings)
         important_matrix = (
@@ -180,6 +195,10 @@ class DescriptionAwareEmailClassifier:
             )
         self._category_head = self._new_head().fit(matrix, labels)
         self._important_head = self._new_head().fit(important_matrix, important)
+        if texts is not None:
+            if len(texts) != len(labels):
+                raise ValueError("model inputs must align with category labels")
+            self._surface_head = _fit_surface_head(texts, labels)
         return self
 
     def mlp_logits(self, embedding: np.ndarray) -> np.ndarray:
@@ -213,11 +232,24 @@ class DescriptionAwareEmailClassifier:
     def category_logits(self, embedding: np.ndarray) -> np.ndarray:
         return self.mlp_logits(embedding) + self.description_adjustment(embedding)
 
-    def predict(self, embedding: np.ndarray) -> EmbeddingModelPrediction:
+    def predict(
+        self, embedding: np.ndarray, text: str | None = None
+    ) -> EmbeddingModelPrediction:
         started = self._clock()
         logits = self.category_logits(embedding)
         shifted = logits - float(np.max(logits))
         probabilities = np.exp(shifted) / float(np.exp(shifted).sum())
+        if self._surface_head is not None:
+            if text is None:
+                raise ValueError("this model scores the message text as well")
+            surface = self._surface_head.probabilities(text)
+            probabilities = np.asarray(
+                [
+                    (float(probabilities[index]) + surface.get(category, 0.0)) / 2.0
+                    for index, category in enumerate(self.enabled_categories)
+                ],
+                dtype=np.float64,
+            )
         top = int(np.argmax(probabilities))
         category = self.enabled_categories[top]
         important_head = self._require_important_head()
@@ -244,13 +276,17 @@ class DescriptionAwareEmailClassifier:
         )
 
     def predict_result(
-        self, embedding_result: EmbeddingResult, *, index: int = 0
+        self,
+        embedding_result: EmbeddingResult,
+        *,
+        index: int = 0,
+        text: str | None = None,
     ) -> TimedEmbeddingModelPrediction:
         if isinstance(index, bool) or not isinstance(index, int):
             raise TypeError("index must be an integer")
         if index < 0 or index >= len(embedding_result.vectors):
             raise IndexError("embedding result index is out of range")
-        prediction = self.predict(embedding_result.vectors[index])
+        prediction = self.predict(embedding_result.vectors[index], text)
         timing = embedding_result.timing
         return TimedEmbeddingModelPrediction(
             prediction=prediction,
@@ -335,6 +371,24 @@ class DescriptionAwareEmailClassifier:
                 "beta",
                 "category_head",
                 "important_head",
+                "surface_head",
+            }
+            if "surface_head" in manifest
+            else {
+                "schema",
+                "format_version",
+                "enabled_categories",
+                "category_thresholds",
+                "important_threshold",
+                "descriptions",
+                "dimension",
+                "input_schema_version",
+                "embedding_model_id",
+                "embedding_revision",
+                "alpha",
+                "beta",
+                "category_head",
+                "important_head",
             },
             "artifact manifest",
         )
@@ -369,11 +423,20 @@ class DescriptionAwareEmailClassifier:
             dimension=dimension,
             expected_classes=(False, True),
         )
+        surface_head: _SurfaceHead | None = None
+        surface_keys: frozenset[str] = frozenset()
+        if manifest.get("surface_head") is not None:
+            surface_head, surface_keys = _load_surface_head(
+                manifest["surface_head"],
+                arrays,
+                expected_classes=enabled_categories,
+            )
         expected_array_keys = {
             "manifest",
             *description_keys,
             *category_keys,
             *important_keys,
+            *surface_keys,
         }
         if set(arrays) != expected_array_keys or len(arrays) != len(
             expected_array_keys
@@ -404,6 +467,7 @@ class DescriptionAwareEmailClassifier:
         )
         result._category_head = category_head
         result._important_head = important_head
+        result._surface_head = surface_head
         result.artifact_checksum = checksum
         return result
 
@@ -441,6 +505,12 @@ class DescriptionAwareEmailClassifier:
         )
         arrays.update(category_arrays)
         arrays.update(important_arrays)
+        surface_head: dict[str, object] | None = None
+        if self._surface_head is not None:
+            surface_head, surface_arrays = _serialize_surface_head(
+                self._surface_head, expected_classes=self.enabled_categories
+            )
+            arrays.update(surface_arrays)
         return (
             {
                 "schema": _ARTIFACT_SCHEMA,
@@ -457,6 +527,7 @@ class DescriptionAwareEmailClassifier:
                 "beta": self.beta,
                 "category_head": category_head,
                 "important_head": important_head,
+                "surface_head": surface_head,
             },
             arrays,
         )
@@ -606,9 +677,11 @@ class DescriptionAwareEmailClassifier:
         return row.reshape(1, -1)
 
     @staticmethod
-    def _new_head() -> MLPClassifier:
+    def _new_head(hidden_units: int = CATEGORY_HIDDEN_UNITS) -> MLPClassifier:
+        if hidden_units not in SUPPORTED_HIDDEN_UNITS:
+            raise ValueError("hidden width is unsupported")
         return MLPClassifier(
-            hidden_layer_sizes=(8,),
+            hidden_layer_sizes=(hidden_units,),
             solver="lbfgs",
             alpha=0.001,
             max_iter=1000,
@@ -757,6 +830,75 @@ def _strict_json_object(encoded: bytes) -> dict[str, object]:
     return value
 
 
+@dataclass(frozen=True)
+class _SurfaceHead:
+    """A character n-gram model of the same message the embedding reads.
+
+    The embedding understands what a message is about and blurs how it is
+    worded; this reads the wording and understands nothing. They fail on
+    different mail — of 3129 labelled messages only 190 defeat both — so a
+    confident mistake by one is usually outvoted by the other.
+    """
+
+    vectorizer: TfidfVectorizer
+    classes: tuple[str, ...]
+    coefficients: np.ndarray
+    intercepts: np.ndarray
+
+    def probabilities(self, text: str) -> dict[str, float]:
+        features = self.vectorizer.transform([ngram_text(text)])
+        scores = np.asarray(features @ self.coefficients.T).ravel() + self.intercepts
+        if len(self.classes) == 2:
+            positive = 1.0 / (1.0 + math.exp(-float(scores[0])))
+            values = np.asarray([1.0 - positive, positive], dtype=np.float64)
+        else:
+            shifted = scores - float(np.max(scores))
+            exponentials = np.exp(shifted)
+            values = exponentials / float(exponentials.sum())
+        return {key: float(value) for key, value in zip(self.classes, values)}
+
+
+def ngram_text(normalized_model_input: str) -> str:
+    """The sender, subject and body of one canonical model input, as plain text."""
+
+    if type(normalized_model_input) is not str or not normalized_model_input.strip():
+        raise ValueError("model input must be non-empty text")
+    try:
+        payload = json.loads(normalized_model_input)
+    except json.JSONDecodeError:
+        # Anything that is not the canonical model input is read as it stands;
+        # this model only ever needed the message as text.
+        return normalized_model_input
+    if not isinstance(payload, Mapping):
+        return normalized_model_input
+    sender = payload.get("sender")
+    address = sender.get("email") if isinstance(sender, Mapping) else sender
+    return " ".join(
+        str(part or "")
+        for part in (address, payload.get("subject"), payload.get("body"))
+    )
+
+
+def _fit_surface_head(texts: Sequence[str], labels: Sequence[str]) -> _SurfaceHead:
+    vectorizer = TfidfVectorizer(
+        analyzer="char_wb",
+        ngram_range=NGRAM_RANGE,
+        min_df=NGRAM_MIN_DOCUMENT_FREQUENCY,
+        max_features=NGRAM_MAX_FEATURES,
+        sublinear_tf=True,
+    )
+    matrix = vectorizer.fit_transform([ngram_text(item) for item in texts])
+    model = LogisticRegression(
+        max_iter=1500, C=2.0, class_weight="balanced"
+    ).fit(matrix, list(labels))
+    return _SurfaceHead(
+        vectorizer=vectorizer,
+        classes=tuple(str(item) for item in model.classes_),
+        coefficients=np.asarray(model.coef_, dtype=np.float64),
+        intercepts=np.asarray(model.intercept_, dtype=np.float64).ravel(),
+    )
+
+
 def _serialize_mlp_head(
     head: MLPClassifier,
     *,
@@ -765,7 +907,9 @@ def _serialize_mlp_head(
     dimension: int,
 ) -> tuple[dict[str, object], dict[str, np.ndarray]]:
     classes = _validated_head_classes(head.classes_, expected_classes)
-    hidden_units = 8
+    hidden_units = int(head.hidden_layer_sizes[0])
+    if hidden_units not in SUPPORTED_HIDDEN_UNITS:
+        raise ValueError("MLP head hidden width is unsupported")
     output_width = 1 if len(classes) == 2 else len(classes)
     expected_coefficient_shapes = (
         (dimension, hidden_units),
@@ -821,6 +965,117 @@ def _serialize_mlp_head(
     )
 
 
+def _serialize_surface_head(
+    head: _SurfaceHead, *, expected_classes: Sequence[str]
+) -> tuple[dict[str, object], dict[str, np.ndarray]]:
+    # The surface model orders its own classes; probabilities are read by name.
+    if set(head.classes) != set(expected_classes) or len(head.classes) != len(
+        set(head.classes)
+    ):
+        raise ValueError("surface head classes must match enabled categories")
+    vocabulary = head.vectorizer.vocabulary_
+    terms = [term for term, _ in sorted(vocabulary.items(), key=lambda item: item[1])]
+    if any("\n" in term for term in terms):
+        raise ValueError("surface head vocabulary is not line separable")
+    encoded = "\n".join(terms).encode("utf-8")
+    width = len(terms)
+    # Two classes share one set of weights, as a logistic model always does.
+    rows = 1 if len(head.classes) == 2 else len(head.classes)
+    if head.coefficients.shape != (rows, width) or head.intercepts.shape != (rows,):
+        raise ValueError("surface head coefficients have an invalid shape")
+    return (
+        {
+            "analyzer": "char_wb",
+            "ngram_range": list(NGRAM_RANGE),
+            "sublinear_tf": True,
+            "classes": list(head.classes),
+            "vocabulary_size": width,
+        },
+        {
+            "surface_vocabulary": np.frombuffer(encoded, dtype=np.uint8),
+            "surface_idf": np.asarray(head.vectorizer.idf_, dtype=np.float32),
+            "surface_coef": np.asarray(head.coefficients, dtype=np.float32),
+            "surface_intercept": np.asarray(head.intercepts, dtype=np.float32),
+        },
+    )
+
+
+def _load_surface_head(
+    value: object,
+    arrays: Mapping[str, np.ndarray],
+    *,
+    expected_classes: Sequence[str],
+) -> tuple[_SurfaceHead, frozenset[str]]:
+    _validate_exact_keys(
+        value,
+        {"analyzer", "ngram_range", "sublinear_tf", "classes", "vocabulary_size"},
+        "surface head manifest",
+    )
+    assert isinstance(value, Mapping)
+    ngram_range = value["ngram_range"]
+    if (
+        value["analyzer"] != "char_wb"
+        or value["sublinear_tf"] is not True
+        or not isinstance(ngram_range, list)
+        or [int(item) for item in ngram_range] != list(NGRAM_RANGE)
+    ):
+        raise ValueError("surface head configuration is unsupported")
+    stored = value["classes"]
+    if (
+        not isinstance(stored, list)
+        or any(type(item) is not str for item in stored)
+        or set(stored) != set(expected_classes)
+        or len(stored) != len(set(stored))
+    ):
+        raise ValueError("surface head classes are invalid")
+    classes = tuple(str(item) for item in stored)
+    width = _manifest_positive_int(value["vocabulary_size"], "vocabulary_size")
+    encoded = arrays.get("surface_vocabulary")
+    if (
+        encoded is None
+        or encoded.dtype != np.uint8
+        or encoded.ndim != 1
+        or not encoded.size
+    ):
+        raise ValueError("surface head vocabulary is invalid")
+    terms = encoded.tobytes().decode("utf-8").split("\n")
+    if len(terms) != width or len(set(terms)) != width:
+        raise ValueError("surface head vocabulary is inconsistent")
+    idf = _artifact_float_array(
+        arrays, "surface_idf", expected_dtype=np.float32, expected_shape=(width,)
+    )
+    rows = 1 if len(classes) == 2 else len(classes)
+    coefficients = _artifact_float_array(
+        arrays,
+        "surface_coef",
+        expected_dtype=np.float32,
+        expected_shape=(rows, width),
+    )
+    intercepts = _artifact_float_array(
+        arrays,
+        "surface_intercept",
+        expected_dtype=np.float32,
+        expected_shape=(rows,),
+    )
+    vectorizer = TfidfVectorizer(
+        analyzer="char_wb",
+        ngram_range=NGRAM_RANGE,
+        sublinear_tf=True,
+        vocabulary={term: index for index, term in enumerate(terms)},
+    )
+    vectorizer._validate_vocabulary()
+    vectorizer.idf_ = np.asarray(idf, dtype=np.float64)
+    head = _SurfaceHead(
+        vectorizer=vectorizer,
+        classes=classes,
+        coefficients=np.asarray(coefficients, dtype=np.float64),
+        intercepts=np.asarray(intercepts, dtype=np.float64),
+    )
+    return head, frozenset(
+        {"surface_vocabulary", "surface_idf", "surface_coef", "surface_intercept"}
+    )
+
+
 def _load_mlp_head(
     value: object,
     arrays: Mapping[str, np.ndarray],
@@ -856,7 +1111,7 @@ def _load_mlp_head(
         raise ValueError(f"{prefix} MLP class type is invalid")
     classes = _validated_head_classes(value["classes"], expected_classes)
     hidden_units = _manifest_positive_int(value["hidden_units"], "hidden_units")
-    if hidden_units != 8:
+    if hidden_units not in SUPPORTED_HIDDEN_UNITS:
         raise ValueError(f"{prefix} MLP hidden width is unsupported")
     output_width = 1 if len(classes) == 2 else len(classes)
     if (
@@ -891,7 +1146,7 @@ def _load_mlp_head(
     n_iter = _manifest_positive_int(value["n_iter"], "n_iter")
     t_value = _manifest_non_negative_int(value["t"], "t")
     loss = _manifest_finite_float(value["loss"], "loss")
-    head = DescriptionAwareEmailClassifier._new_head()
+    head = DescriptionAwareEmailClassifier._new_head(hidden_units)
     head.classes_ = np.asarray(
         classes, dtype=np.bool_ if expected_class_type == "boolean" else np.str_
     )

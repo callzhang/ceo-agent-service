@@ -404,7 +404,7 @@ class _OnlineHead:
     embedding_model_id = "jina"
     embedding_revision = "r17"
 
-    def predict_result(self, result, *, index=0):
+    def predict_result(self, result, *, index=0, text=None):
         assert index == 0
         assert result.vectors.shape == (1, 2)
         prediction = EmbeddingModelPrediction(
@@ -1079,7 +1079,7 @@ def test_online_predictor_mixed_head_failure_isolated_and_agent_fallback_sequent
             )
 
     class Head(_OnlineHead):
-        def predict_result(self, result, *, index=0):
+        def predict_result(self, result, *, index=0, text=None):
             if float(result.vectors[index][0]) < 0:
                 raise RuntimeError("one head failed")
             return super().predict_result(result, index=index)
@@ -2348,7 +2348,7 @@ def test_controller_restart_keeps_known_live_pid_running_past_stale_timeout(
 
 
 class _OthersHead(_OnlineHead):
-    def predict_result(self, result, *, index=0):
+    def predict_result(self, result, *, index=0, text=None):
         return TimedEmbeddingModelPrediction(
             prediction=EmbeddingModelPrediction(
                 category="others",
@@ -2394,7 +2394,7 @@ def test_confident_others_prediction_is_handed_to_the_agent():
 
 
 class _ConfidentLegalHead(_OnlineHead):
-    def predict_result(self, result, *, index=0):
+    def predict_result(self, result, *, index=0, text=None):
         return TimedEmbeddingModelPrediction(
             prediction=EmbeddingModelPrediction(
                 category="legal",
