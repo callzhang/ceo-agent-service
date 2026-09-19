@@ -286,11 +286,26 @@ def test_both_roles_are_reminded_to_write_what_is_durable() -> None:
     nothing: most tasks have nothing durable in them, and a Memory full of
     routine replies buries the entries that matter.
     """
-    from app.audit_rules import MEMORY_WRITE_REMINDER, render_audit_rules
+    from app.audit_rules import memory_write_reminder, render_audit_rules
     from app.store import AgentRole
 
+    reminder = memory_write_reminder()
     for role in (AgentRole.CONSUMER, AgentRole.AUDIT):
         rendered = render_audit_rules(role)
-        assert MEMORY_WRITE_REMINDER in rendered
-        assert rendered.rstrip().endswith(MEMORY_WRITE_REMINDER)
-    assert "finish normally and write nothing" in MEMORY_WRITE_REMINDER
+        assert reminder in rendered
+        assert rendered.rstrip().endswith(reminder)
+    assert "finish normally and write nothing" in reminder
+
+
+def test_the_memory_reminder_names_the_configured_principal(monkeypatch) -> None:
+    """The reminder asks for an entry about a named person, so the name has to
+    be the configured one: hard-coding it made every other installation ask
+    its agents to write about somebody who is not their principal."""
+    from app.audit_rules import memory_write_reminder
+
+    monkeypatch.setenv("USER_ALIAS", "Alex")
+    reminder = memory_write_reminder()
+
+    assert "a decision Alex stated" in reminder
+    assert "naming Alex rather than" in reminder
+    assert "Derek" not in reminder

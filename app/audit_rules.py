@@ -32,19 +32,27 @@ AUDIT_RULE_WRAPPER = (
 # written back. Derek, 2026-09-19: make it a reminder at the end of a task,
 # with the wording the Memory hook already uses, and let most tasks write
 # nothing.
-MEMORY_WRITE_REMINDER = (
+# The principal is named twice because the reminder asks for an entry written
+# about a person, not about "the user"; both readings come from the configured
+# name, so an installation whose principal is not Derek reads its own.
+_MEMORY_WRITE_REMINDER_TEMPLATE = (
     "Before you finish, check whether anything durable came out of this task: "
-    "a preference or a decision Derek stated, a reusable convention or an "
-    "accepted rule, a stable fact about a person, a project or a system that "
-    "this task's own record would not tell you later, or a short continuation "
-    "point for work left unfinished. If there is, call `memory_write` once "
-    "with one or two sentences about that one thing, naming Derek rather than "
-    "\"the user\". Skip routine replies, logs, command output, one-off errors, "
-    "unconfirmed guesses, secrets, and anything Memory already holds. If "
-    "nothing durable came out of it, finish normally and write nothing: most "
-    "tasks have nothing worth writing, and an entry that is not worth keeping "
-    "makes the rest harder to find."
+    "a preference or a decision {principal} stated, a reusable convention or "
+    "an accepted rule, a stable fact about a person, a project or a system "
+    "that this task's own record would not tell you later, or a short "
+    "continuation point for work left unfinished. If there is, call "
+    "`memory_write` once with one or two sentences about that one thing, "
+    "naming {principal} rather than \"the user\". Skip routine replies, logs, "
+    "command output, one-off errors, unconfirmed guesses, secrets, and "
+    "anything Memory already holds. If nothing durable came out of it, finish "
+    "normally and write nothing: most tasks have nothing worth writing, and "
+    "an entry that is not worth keeping makes the rest harder to find."
 )
+
+
+def memory_write_reminder() -> str:
+    """The end-of-turn reminder, naming the configured principal."""
+    return _MEMORY_WRITE_REMINDER_TEMPLATE.format(principal=_principal_name())
 EMPTY_AUDIT_RULES = "No additional configurable Audit Rules."
 RESERVED_CORE_SECTION_TITLES = frozenset(
     {
@@ -157,7 +165,7 @@ def render_audit_rules(role: AgentRole, path: Path | None = None) -> str:
         if role is AgentRole.CONSUMER
         else AUDIT_RULE_WRAPPER
     )
-    return f"{wrapper}\n\n{custom}\n\n{MEMORY_WRITE_REMINDER}"
+    return f"{wrapper}\n\n{custom}\n\n{memory_write_reminder()}"
 
 
 def _render_audit_variables(body: str) -> str:
@@ -167,9 +175,13 @@ def _render_audit_variables(body: str) -> str:
             raise DeveloperPromptTemplateError(
                 f"unsupported Audit Rules variable: {name}"
             )
-        return principal_display_name().strip() or "the principal"
+        return _principal_name()
 
     return _AUDIT_VARIABLE_RE.sub(replace, body)
+
+
+def _principal_name() -> str:
+    return principal_display_name().strip() or "the principal"
 
 
 def validate_audit_rules_text(text: str) -> None:
