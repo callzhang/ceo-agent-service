@@ -3032,3 +3032,24 @@ def test_decision_quality_gate_defines_how_to_score_the_coverage_fields():
 
     # The scores must agree with the summary that accompanies them.
     assert "must agree with your own summary" in text
+
+
+def test_the_protocol_names_the_send_commands_it_forbids():
+    """The abstract rule existed and 80% of sending generations broke it.
+
+    Over fourteen days, 473 of 590 generations that sent anything ran a
+    provider send themselves instead of proposing it, with the prompt already
+    saying not to. Naming the commands turns a principle into a list the turn
+    can check itself against.
+    """
+
+    protocol = consumer_agent.CONSUMER_ROLE_BOUNDARY
+
+    for command in (
+        "dws chat +dm",
+        "dws chat +messages-send",
+        "dws chat +send-to-group",
+        "dws mail send|reply|forward",
+    ):
+        assert command in protocol
+    assert "Reading is unrestricted" in protocol

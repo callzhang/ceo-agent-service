@@ -288,6 +288,15 @@ done. Describe a
 proposed action in the form you are proposing it, never as something already
 done.
 
+Concretely, these commands are the next stage's to run, never yours:
+`dws chat +dm`, `dws chat +messages-send`, `dws chat +send-to-group`,
+`dws chat message edit`, `dws chat message recall`, `dws mail send|reply|forward`,
+`dws ding send*`. Measured over fourteen days, 473 of the 590 generations that
+sent anything ran one of these themselves rather than proposing it, so this is
+not a hypothetical: assume you are about to do it, and put the action in the
+proposal instead. Reading is unrestricted -- this list is only about causing a
+message to reach a person.
+
 For every `dingtalk-chat` ProposedAction, use the service wire target names,
 not provider response names: group sends use `conversation_id`; replies use
 both `conversation_id` and `message_id`; direct sends use a stable recipient
