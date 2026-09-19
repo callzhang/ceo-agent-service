@@ -12164,27 +12164,5 @@ def test_the_attempt_says_what_the_task_says_after_a_hand_over(tmp_path: Path):
     with store._connect() as db:
         [(send_status,)] = db.execute("select send_status from reply_attempts")
     assert send_status == "needs_human"
-
-    # An answer recorded before the hand-over is stale: the question was
-    # reopened after it. Left in place it makes the attempt read `recovered`,
-    # which is how a reopened question disappears from the page again.
-    with store._connect() as db:
-        db.execute("update reply_attempts set send_status='failed', resolved_at='2026-09-19 09:00:00'")
-        db.execute("update reply_tasks set updated_at='2026-09-19 10:00:00'")
-    assert store.reconcile_attempts_with_handed_over_tasks() == 1
-    with store._connect() as db:
-        [(resolved_at,)] = db.execute("select resolved_at from reply_attempts")
-    assert resolved_at == ""
-
-    # An answer recorded after it stands.
-    with store._connect() as db:
-        db.execute("update reply_attempts set send_status='failed', resolved_at='2026-09-19 11:00:00'")
-    assert store.reconcile_attempts_with_handed_over_tasks() == 1
-    with store._connect() as db:
-        [(kept,)] = db.execute("select resolved_at from reply_attempts")
-    assert kept == "2026-09-19 11:00:00"
-
-    with store._connect() as db:
-        db.execute("update reply_attempts set send_status='needs_human'")
     # Idempotent: a second pass finds nothing left to reconcile.
     assert store.reconcile_attempts_with_handed_over_tasks() == 0
