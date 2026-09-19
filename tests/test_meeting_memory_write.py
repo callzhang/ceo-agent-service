@@ -1166,3 +1166,41 @@ def test_a_retry_after_a_turn_that_never_completed_keeps_its_operation(tmp_path:
 
     with store._connect() as db:
         assert db.execute("select execution_generation from meeting_memory_write_events").fetchone()[0] == generation
+
+
+def test_a_memory_pass_is_not_capped_by_the_queue_batch_size(monkeypatch, tmp_path):
+    """`max_batches` is how many queue items a worker pass takes.
+
+    Applied to Memory writes it capped them at four per ten-minute meeting
+    scan, so an already-delivered conclusion could wait over an hour to be
+    recorded — and a paused route's backlog drained at that same rate.
+    """
+    from types import SimpleNamespace
+
+    from app import cli
+    from app.meeting_memory_write import MEETING_MEMORY_WRITE_PASS_LIMIT
+
+    seen: dict[str, object] = {}
+
+    def fake_process(store, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(completed=0)
+
+    monkeypatch.setattr(cli, "process_meeting_memory_writes", fake_process)
+    monkeypatch.setattr(
+        cli,
+        "build_production_routed_codex_execution",
+        lambda **kwargs: seen.setdefault("timeouts", kwargs) and None,
+        raising=False,
+    )
+    settings = SimpleNamespace(
+        workspace=tmp_path,
+        max_batches=4,
+        codex_timeout_seconds=1200,
+        codex_idle_timeout_seconds=900,
+    )
+
+    cli._process_meeting_memory_writes_once(settings, object())
+
+    assert seen["limit"] == MEETING_MEMORY_WRITE_PASS_LIMIT
+    assert seen["limit"] > 4

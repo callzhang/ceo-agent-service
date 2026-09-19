@@ -28,6 +28,15 @@ MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS = 15 * 60
 # back once the dependency is fixed.
 MEETING_MEMORY_WRITE_MAX_ATTEMPTS = 20
 MEETING_MEMORY_TITLE_LIMIT = 80
+# One write calls a single connector tool with arguments already decided when
+# the event was queued. Measured against the live connector it takes 74-95
+# seconds, so the generic runtime ceiling of twenty minutes only decides how
+# long a stuck one holds its worker.
+MEETING_MEMORY_WRITE_TIMEOUT_SECONDS = 300
+MEETING_MEMORY_WRITE_IDLE_TIMEOUT_SECONDS = 120
+# How many due writes one pass drains. High enough to clear a backlog a paused
+# route left behind, bounded so a pass still ends.
+MEETING_MEMORY_WRITE_PASS_LIMIT = 200
 MEETING_MEMORY_START_STALL_SECONDS = 60
 MEETING_MEMORY_WRITE_LEASE_SECONDS = 45 * 60
 MEETING_MEMORY_WRITE_LEASE_GRACE_SECONDS = 5 * 60

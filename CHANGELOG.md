@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- 2026-09-18: Meeting Memory writes stop being capped by the queue batch size.
+  They run inside the ten-minute meeting scan, and the pass took
+  `settings.max_batches` items — `CEO_MAX_BATCHES=4` — so at most four
+  already-delivered conclusions reached Memory every ten minutes, and a backlog
+  a paused route left behind drained at that same rate: thirty writes took over
+  an hour. A pass now drains the due writes. The per-write runtime ceiling also
+  drops from the generic twenty minutes to five, measured against writes that
+  take 74-95 seconds, so a stuck one stops holding its worker for the rest of
+  the scan interval.
+
 - 2026-09-19: 会议跟进的桌面通知现在点得开对应的钉钉会话。钉钉接受发送后只回一个
   `openTaskId`，会话和消息 id 要另外问一次，所以存下来的回执两者都没有，通知也就没有
   可点的目标。投递时解析一次并写进回执，通知和后续撤回都不必再问。测试替身此前返回的是

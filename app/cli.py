@@ -3345,20 +3345,36 @@ def _process_meeting_memory_writes_once(
         build_production_routed_codex_execution,
     )
 
+    from app.meeting_memory_write import (
+        MEETING_MEMORY_WRITE_IDLE_TIMEOUT_SECONDS,
+        MEETING_MEMORY_WRITE_PASS_LIMIT,
+        MEETING_MEMORY_WRITE_TIMEOUT_SECONDS,
+    )
+
+    total_timeout = min(
+        settings.codex_timeout_seconds, MEETING_MEMORY_WRITE_TIMEOUT_SECONDS
+    )
+    idle_timeout = min(
+        settings.codex_idle_timeout_seconds,
+        MEETING_MEMORY_WRITE_IDLE_TIMEOUT_SECONDS,
+    )
     routed_execution = build_production_routed_codex_execution(
         store=store,
         workspace=settings.workspace,
-        total_timeout_seconds=settings.codex_timeout_seconds,
-        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+        total_timeout_seconds=total_timeout,
+        idle_timeout_seconds=idle_timeout,
     )
+    # Not `max_batches`: that is how many queue items a worker pass takes, and
+    # applying it here capped Memory to four writes per ten-minute scan, so a
+    # meeting's conclusion could sit unwritten for over an hour. A due write is
+    # one already-delivered conclusion; the pass drains them.
     outcome = process_meeting_memory_writes(
         store,
         routed_execution=routed_execution,
         workspace=settings.workspace,
-        limit=20 if settings.max_batches is None else settings.max_batches,
+        limit=MEETING_MEMORY_WRITE_PASS_LIMIT,
         lease_seconds=meeting_memory_write_lease_seconds(
-            settings.codex_timeout_seconds,
-            settings.codex_idle_timeout_seconds,
+            total_timeout, idle_timeout
         ),
     )
     return int(getattr(outcome, "completed", 0) or 0)
