@@ -7575,10 +7575,15 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         )
         stop("meeting-consumer")
 
+    def heartbeat_loop(store_factory, **_kwargs):
+        calls.append(("service-heartbeat",))
+        stop("service-heartbeat")
+
     monkeypatch.setattr(cli, "run_producer_loop", producer_loop)
     monkeypatch.setattr(cli, "run_consumer_loop", consumer_loop)
     monkeypatch.setattr(cli, "run_meeting_producer_loop", meeting_producer_loop)
     monkeypatch.setattr(cli, "run_meeting_consumer_loop", meeting_consumer_loop)
+    monkeypatch.setattr(cli, "run_service_heartbeat_loop", heartbeat_loop)
     monkeypatch.setattr(
         cli,
         "run_database_backup_loop",
@@ -7691,6 +7696,9 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
 
     assert calls == [
         ("meeting-recovery", tmp_path / "worker.sqlite3"),
+        # First, so the watcher exists before the components it watches.
+        ("start", "ceo-agent-service-service-heartbeat", True),
+        ("service-heartbeat",),
         ("start", "ceo-agent-service-database-backup", True),
         ("database-backup", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-agent-cron-scheduler", True),
@@ -7711,12 +7719,13 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         ("wait",),
     ]
     assert failures == [
+        ("service-heartbeat", "stop service-heartbeat"),
         ("database-backup", "stop database-backup"),
         ("agent-cron-scheduler", "stop agent-cron-scheduler"),
         ("agent-cron-dispatcher", "stop agent-cron-dispatcher"),
         ("meeting-delivery", "stop meeting-delivery"),
     ]
-    assert exits == [1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1]
 
 
 def test_service_component_failure_persists_scheduler_error_health(

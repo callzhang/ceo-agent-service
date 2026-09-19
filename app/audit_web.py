@@ -2378,11 +2378,17 @@ def _service_component_snapshots(
         {"name": "database-backup", "role": "sqlite backup", "cadence": "periodic"},
         {"name": "agent-cron-scheduler", "role": "business trigger scheduling", "cadence": "task configured"},
         {"name": "agent-cron-dispatcher", "role": f"queue dispatch x{consumer_worker_count()}", "cadence": "internal"},
-        {"name": "task-maintenance", "role": "error recovery and completion checks", "cadence": "internal"},
-        {"name": "follow-up-delivery", "role": "scheduled follow-up delivery", "cadence": "internal"},
         {"name": "meeting-delivery", "role": "meeting conclusion delivery", "cadence": "internal"},
         {"name": "meeting-memory-write", "role": "meeting conclusion Memory write", "cadence": "internal"},
+        {"name": "runtime-probe", "role": "runtime route health", "cadence": "internal"},
+        {"name": "service-heartbeat", "role": "component liveness", "cadence": "internal"},
     ]
+    # `task-maintenance` and `follow-up-delivery` are gone. Their work moved
+    # into scheduled tasks on 2026-09-18, and what remains reports under other
+    # names (`task_maintenance.<step>`), so those two rows could only ever
+    # read `unknown` -- indistinguishable from a component that has died.
+    # `meeting-memory-write` stays: the scheduled meeting task still reports
+    # it by that name.
     return [
         {
             **component,
