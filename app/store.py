@@ -2761,6 +2761,27 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_meeting_memory_write_events_due
                     on meeting_memory_write_events(status, available_at, id);
+                create table if not exists task_memory_write_events (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null unique,
+                    execution_generation text not null,
+                    status text not null default 'pending',
+                    attempts integer not null default 0,
+                    available_at text not null default '',
+                    error text not null default '',
+                    memory_id text not null default '',
+                    skip_reason text not null default '',
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    started_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(reply_task_id) references reply_tasks(id)
+                );
+                create index if not exists idx_task_memory_write_events_due
+                    on task_memory_write_events(status, available_at, id);
+                create index if not exists idx_task_memory_write_events_lease
+                    on task_memory_write_events(status, lease_expires_at, id);
                 create table if not exists reply_tasks (
                     id integer primary key autoincrement,
                     channel text not null default 'dingtalk',
@@ -14706,6 +14727,72 @@ class AutoReplyStore:
                 (meeting_job_id, uuid4().hex, "{}", meeting_job_id),
             )
         return cursor.rowcount == 1
+
+    #: Task outcomes worth considering for Memory. A task that never reached a
+    #: conclusion has nothing to remember; the other three all do, including a
+    #: skip (why we decided not to act is the part that is forgotten first).
+    TASK_MEMORY_TERMINAL_STATES = ("done", "skipped", "needs_human")
+
+    def enqueue_finished_task_memory_write_events(self) -> int:
+        """Queue every finished task that has not been considered for Memory.
+
+        Writing used to depend on the turn choosing to call the Memory tool,
+        and it decayed to nothing: the last agent-written memory is dated
+        2026-07-26, and over the fourteen days to 2026-09-19 no turn called the
+        tool at all, while the meeting pipeline -- which queues its work
+        instead of asking -- kept writing. Derek, 2026-09-19: writing to Memory
+        is a check the system performs when a task ends, not something an agent
+        may skip silently.
+
+        The anti-join runs inside an immediate write transaction so repeated
+        idle sweeps do not execute an ignored insert, which would still advance
+        SQLite's AUTOINCREMENT sequence.
+        """
+        placeholders = ", ".join("?" for _ in self.TASK_MEMORY_TERMINAL_STATES)
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                f"""
+                insert into task_memory_write_events (
+                    reply_task_id, execution_generation
+                )
+                select tasks.id, lower(hex(randomblob(16)))
+                from reply_tasks as tasks
+                where tasks.status in ({placeholders})
+                  and not exists (
+                      select 1
+                      from task_memory_write_events as events
+                      where events.reply_task_id=tasks.id
+                  )
+                """,
+                self.TASK_MEMORY_TERMINAL_STATES,
+            )
+        return cursor.rowcount
+
+    def count_finished_tasks_without_memory_decision(
+        self, *, finished_before: str
+    ) -> int:
+        """Finished tasks that still have no Memory decision recorded.
+
+        This is the check itself: a task is not finished with until the system
+        has either written what it learned or said in writing why there was
+        nothing to write.
+        """
+        placeholders = ", ".join("?" for _ in self.TASK_MEMORY_TERMINAL_STATES)
+        with self._connect() as db:
+            row = db.execute(
+                f"""
+                select count(*) from reply_tasks as tasks
+                where tasks.status in ({placeholders})
+                  and datetime(tasks.updated_at) < datetime(?)
+                  and not exists (
+                      select 1 from task_memory_write_events as events
+                      where events.reply_task_id=tasks.id
+                        and events.status in ('written', 'skipped')
+                  )
+                """,
+                (*self.TASK_MEMORY_TERMINAL_STATES, finished_before),
+            ).fetchone()
+        return int(row[0])
 
     def enqueue_sent_meeting_memory_write_events(self) -> int:
         """Queue every delivered conclusion without conflict-writing old rows.

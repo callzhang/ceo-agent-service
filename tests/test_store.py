@@ -11660,3 +11660,73 @@ def test_a_task_with_a_live_run_keeps_its_lock(tmp_path):
     updated = store.get_reply_task(task.id)
     assert updated is not None
     assert updated.status == "processing"
+
+
+def test_every_finished_task_is_queued_for_a_memory_decision(tmp_path: Path):
+    """Writing to Memory is a system check at the end of a task, not a choice.
+
+    It used to depend on the turn calling the Memory tool, and it decayed to
+    nothing: the last agent-written memory is dated 2026-07-26 and over the
+    following weeks no turn called the tool at all, while the meeting pipeline
+    -- which queues its work instead of asking -- kept writing.
+    """
+    store = AutoReplyStore(tmp_path / "task-memory.sqlite3")
+    for index, status in enumerate(("done", "skipped", "needs_human", "processing")):
+        store.enqueue_reply_task(
+            conversation_id=f"cid-{index}",
+            conversation_title="Group",
+            single_chat=False,
+            trigger_message_id=f"msg-{index}",
+            trigger_create_time="2026-09-19 10:00:00",
+            trigger_sender="Derek",
+            trigger_text="text",
+            execution_generation=f"gen-{index}",
+        )
+        with store._connect() as db:
+            db.execute(
+                "update reply_tasks set status=? where trigger_message_id=?",
+                (status, f"msg-{index}"),
+            )
+
+    queued = store.enqueue_finished_task_memory_write_events()
+
+    assert queued == 3
+    with store._connect() as db:
+        statuses = {
+            row[0]
+            for row in db.execute(
+                """select tasks.status from task_memory_write_events as events
+                   join reply_tasks as tasks on tasks.id=events.reply_task_id"""
+            )
+        }
+    assert statuses == {"done", "skipped", "needs_human"}
+    # The sweep is idempotent: a second pass queues nothing again.
+    assert store.enqueue_finished_task_memory_write_events() == 0
+
+
+def test_a_finished_task_without_a_memory_decision_is_counted(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task-memory-check.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Group",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-09-19 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="text",
+        execution_generation="gen-1",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='done', updated_at='2026-09-19 10:00:00'"
+        )
+    later = "2026-09-19 12:00:00"
+
+    assert store.count_finished_tasks_without_memory_decision(finished_before=later) == 1
+
+    store.enqueue_finished_task_memory_write_events()
+    assert store.count_finished_tasks_without_memory_decision(finished_before=later) == 1
+
+    with store._connect() as db:
+        db.execute("update task_memory_write_events set status='skipped'")
+    assert store.count_finished_tasks_without_memory_decision(finished_before=later) == 0
