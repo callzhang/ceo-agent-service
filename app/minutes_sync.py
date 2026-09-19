@@ -9,6 +9,7 @@ Skill asked for judgement -- whether to request access to a restricted minute
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import sleep as _sleep
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -361,6 +362,13 @@ def _task_uuid(item: dict[str, Any]) -> str:
     return str(item.get("taskUuid") or item.get("minutesId") or "").strip()
 
 
+#: How many times one listing page is asked for before the scope gives up,
+#: and the first backoff between attempts. The upstream search fails
+#: intermittently and answers the same cursor correctly moments later.
+_MINUTES_LIST_PAGE_ATTEMPTS = 3
+_MINUTES_LIST_RETRY_SECONDS = 2.0
+
+
 def _list_minutes_scope(
     list_page,
     scope: str,
@@ -378,10 +386,26 @@ def _list_minutes_scope(
     cursor = ""
     seen_cursors: set[str] = set()
     for _ in range(_MINUTES_LIST_MAX_PAGES):
-        try:
-            page = list_page(scope=scope, cursor=cursor)
-        except Exception as exc:
-            return items, str(exc)
+        page = None
+        last_error: Exception | None = None
+        # DingTalk's search behind this listing fails intermittently on a
+        # cursor it answers perfectly a minute later: on 2026-09-19 the
+        # `shared` scope stopped on `openSearchMinutesByKeywordAndTimeRange
+        # error`, and the identical command with the identical cursor
+        # succeeded on the next attempt. One failed page abandoned the rest of
+        # the scope and left an unresolved scanner error behind it, so a
+        # transient answer became a standing one.
+        for attempt in range(_MINUTES_LIST_PAGE_ATTEMPTS):
+            try:
+                page = list_page(scope=scope, cursor=cursor)
+                last_error = None
+                break
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                last_error = exc
+                if attempt + 1 < _MINUTES_LIST_PAGE_ATTEMPTS:
+                    _sleep(_MINUTES_LIST_RETRY_SECONDS * (2**attempt))
+        if last_error is not None:
+            return items, str(last_error)
         if not isinstance(page, dict):
             return items, "invalid minutes list page"
         page_items = page.get("items")

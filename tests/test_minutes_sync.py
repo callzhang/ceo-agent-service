@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from app import minutes_sync
 from app.dws_client import DwsError
 from app.minutes_sync import (
     MINUTES_SYNC_SCANNER,
@@ -77,6 +78,13 @@ class PaginatedFakeDws(FakeDws):
 
 def _denied() -> DwsError:
     return DwsError("no permission", "PAT_HIGH_RISK_NO_PERMISSION")
+
+
+@pytest.fixture(autouse=True)
+def _no_listing_backoff(monkeypatch):
+    """The listing retry waits between attempts; a test must not."""
+
+    monkeypatch.setattr(minutes_sync, "_sleep", lambda _seconds: None)
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
@@ -784,3 +792,41 @@ def test_a_failing_transcript_does_not_discard_a_summary_that_read_fine(
     assert any("transcript_unavailable" in reason for _, reason in result.skips)
     [written] = list((tmp_path / "AI听记").rglob("*.md"))
     assert "要点" in written.read_text(encoding="utf-8")
+
+
+def test_a_listing_page_that_fails_once_is_asked_again(tmp_path: Path) -> None:
+    """The upstream search answers the same cursor correctly moments later.
+
+    On 2026-09-19 the `shared` scope stopped on
+    `openSearchMinutesByKeywordAndTimeRange error`, and the identical command
+    with the identical cursor succeeded on the next attempt. One failed page
+    abandoned the rest of the scope and left a standing scanner error behind
+    a transient answer.
+    """
+    from app.minutes_sync import _list_minutes_scope
+
+    attempts: list[str] = []
+
+    def list_page(*, scope: str, cursor: str):
+        attempts.append(cursor)
+        if len(attempts) == 1:
+            raise RuntimeError("openSearchMinutesByKeywordAndTimeRange error")
+        return {"items": [{"taskUuid": "u1"}], "has_more": False}
+
+    items, error = _list_minutes_scope(list_page, "shared")
+
+    assert error == ""
+    assert [item["taskUuid"] for item in items] == ["u1"]
+    assert len(attempts) == 2
+
+
+def test_a_page_that_keeps_failing_still_reports(tmp_path: Path) -> None:
+    from app.minutes_sync import _list_minutes_scope
+
+    def list_page(*, scope: str, cursor: str):
+        raise RuntimeError("openSearchMinutesByKeywordAndTimeRange error")
+
+    items, error = _list_minutes_scope(list_page, "shared")
+
+    assert items == []
+    assert "openSearchMinutesByKeywordAndTimeRange" in error
