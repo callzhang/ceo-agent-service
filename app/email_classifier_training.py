@@ -378,64 +378,92 @@ def train_frozen_embedding_candidate(
     # after, so each fold's can be set on the other four folds' predictions:
     # ~80% of the data instead of a thin slice, and still never on the
     # messages it will be scored on.
-    fold_predictions: dict[int, list[tuple[Mapping[str, object], object]]] = {}
-    fold_important: dict[int, list[tuple[Mapping[str, object], object]]] = {}
-    for fold in range(CROSS_VALIDATION_FOLDS):
-        in_fold = lambda row: fold_of_group[str(row["group_key"])] == fold
-        fit_rows = [row for row in evaluation_rows if not in_fold(row)]
-        score_rows = [row for row in evaluation_rows if in_fold(row)]
-        important_fit = [row for row in important_rows if not in_fold(row)]
-        important_score = [row for row in important_rows if in_fold(row)]
-        missing = set(categories) - {str(row["category_key"]) for row in fit_rows}
-        if missing:
-            raise TrainingNotReady(
-                f"cross-validation fold {fold + 1} has no training mail for "
-                + ", ".join(sorted(missing))
-            )
-        if {bool(row["important"]) for row in important_fit} != {False, True}:
-            raise TrainingNotReady(
-                f"cross-validation fold {fold + 1} does not cover both important labels"
-            )
-        if not score_rows and not important_score:
-            continue
-        fold_model = fit_classifier(fit_rows, important_fit, tune=True)
-        fold_predictions[fold] = [
-            (row, fold_model.predict(vector_for(row), str(row["normalized_model_input"])))
-            for row in score_rows
-        ]
-        fold_important[fold] = [
-            (row, fold_model.predict(vector_for(row), str(row["normalized_model_input"])))
-            for row in important_score
-        ]
+    category_totals: dict[int, dict[str, float]] = {}
+    important_totals: dict[int, float] = {}
+    category_seen: dict[int, int] = {}
+    important_seen: dict[int, int] = {}
+    scored_rows_by_id: dict[int, Mapping[str, object]] = {}
+    important_rows_by_id: dict[int, Mapping[str, object]] = {}
+    for repeat in range(CROSS_VALIDATION_REPEATS):
+        fold_of_group = _group_folds(evaluation_rows, important_rows, repeat)
+        for fold in range(CROSS_VALIDATION_FOLDS):
+            in_fold = lambda row: fold_of_group[str(row["group_key"])] == fold
+            fit_rows = [row for row in evaluation_rows if not in_fold(row)]
+            score_rows = [row for row in evaluation_rows if in_fold(row)]
+            important_fit = [row for row in important_rows if not in_fold(row)]
+            important_score = [row for row in important_rows if in_fold(row)]
+            missing = set(categories) - {str(row["category_key"]) for row in fit_rows}
+            if missing:
+                raise TrainingNotReady(
+                    f"cross-validation fold {fold + 1} has no training mail for "
+                    + ", ".join(sorted(missing))
+                )
+            if {bool(row["important"]) for row in important_fit} != {False, True}:
+                raise TrainingNotReady(
+                    f"cross-validation fold {fold + 1} does not cover both "
+                    "important labels"
+                )
+            if not score_rows and not important_score:
+                continue
+            fold_model = fit_classifier(fit_rows, important_fit, tune=True)
+            for row in score_rows:
+                prediction = fold_model.predict(
+                    vector_for(row), str(row["normalized_model_input"])
+                )
+                identity = id(row)
+                scored_rows_by_id[identity] = row
+                totals = category_totals.setdefault(
+                    identity, {category: 0.0 for category in categories}
+                )
+                for category in categories:
+                    totals[category] += float(
+                        prediction.category_probabilities[category]
+                    )
+                category_seen[identity] = category_seen.get(identity, 0) + 1
+            for row in important_score:
+                prediction = fold_model.predict(
+                    vector_for(row), str(row["normalized_model_input"])
+                )
+                identity = id(row)
+                important_rows_by_id[identity] = row
+                important_totals[identity] = important_totals.get(
+                    identity, 0.0
+                ) + float(prediction.important_probability)
+                important_seen[identity] = important_seen.get(identity, 0) + 1
 
-    def calibrated_on(entries, category):
-        return _calibrated_threshold(
-            probabilities=[item.category_probabilities[category] for _row, item in entries],
-            positives=[str(row["category_key"]) == category for row, _item in entries],
-            eligible=[item.category == category for _row, item in entries],
-            precision_min=promotion_thresholds.precision_min,
-        )
-
-    def important_calibrated_on(entries):
-        return _calibrated_threshold(
-            probabilities=[item.important_probability for _row, item in entries],
-            positives=[bool(row["important"]) for row, _item in entries],
-            eligible=[True for _entry in entries],
-            precision_min=promotion_thresholds.precision_min,
-        )
-
+    # Every message now carries the average of the repeats that scored it,
+    # none of which had ever seen it.
     scored: list[tuple[Mapping[str, object], object, float]] = []
+    for identity, row in scored_rows_by_id.items():
+        seen = category_seen[identity]
+        probabilities = {
+            category: category_totals[identity][category] / seen
+            for category in categories
+        }
+        important_mean = (
+            important_totals.get(identity, 0.0) / important_seen[identity]
+            if important_seen.get(identity)
+            else 0.0
+        )
+        scored.append((row, _MeanPrediction(probabilities, important_mean), 0.0))
     important_scored: list[tuple[Mapping[str, object], object, float]] = []
-    for fold, entries in fold_predictions.items():
-        others = [entry for other, rest in fold_predictions.items() if other != fold for entry in rest]
-        fold_thresholds = {category: calibrated_on(others, category) for category in categories}
-        for row, prediction in entries:
-            scored.append((row, prediction, fold_thresholds[prediction.category]))
-    for fold, entries in fold_important.items():
-        others = [entry for other, rest in fold_important.items() if other != fold for entry in rest]
-        fold_important_threshold = important_calibrated_on(others)
-        for row, prediction in entries:
-            important_scored.append((row, prediction, fold_important_threshold))
+    for identity, row in important_rows_by_id.items():
+        seen = important_seen[identity]
+        probabilities = (
+            {
+                category: category_totals[identity][category] / category_seen[identity]
+                for category in categories
+            }
+            if identity in category_totals
+            else {category: 0.0 for category in categories}
+        )
+        important_scored.append(
+            (
+                row,
+                _MeanPrediction(probabilities, important_totals[identity] / seen),
+                0.0,
+            )
+        )
 
     # The candidate's own thresholds come from every out-of-fold prediction,
     # which is far more evidence than any one fold's calibration slice.
@@ -445,6 +473,7 @@ def train_frozen_embedding_candidate(
             positives=[str(row["category_key"]) == category for row, _item, _t in scored],
             eligible=[item.category == category for _row, item, _t in scored],
             precision_min=promotion_thresholds.precision_min,
+            groups=[str(row["group_key"]) for row, _item, _t in scored],
         )
         for category in categories
     }
@@ -453,6 +482,7 @@ def train_frozen_embedding_candidate(
         positives=[bool(row["important"]) for row, _item, _t in important_scored],
         eligible=[True for _entry in important_scored],
         precision_min=promotion_thresholds.precision_min,
+        groups=[str(row["group_key"]) for row, _item, _t in important_scored],
     )
     base = fit_classifier(evaluation_rows, important_rows, tune=True)
     classifier = fit_classifier(
@@ -755,12 +785,76 @@ def train_frozen_embedding_candidate(
     )
 
 
+@dataclass(frozen=True)
+class _MeanPrediction:
+    """One message's score, averaged over the repeats that scored it."""
+
+    category_probabilities: Mapping[str, float]
+    important_probability: float
+
+    @property
+    def category(self) -> str:
+        return max(self.category_probabilities, key=self.category_probabilities.get)
+
+    @property
+    def category_probability(self) -> float:
+        return float(self.category_probabilities[self.category])
+
+    @property
+    def important(self) -> bool:
+        return self.important_probability >= 0.5
+
+
+def _accepted_conversations(entries: Sequence[tuple[str, float, int]]) -> list[int]:
+    """One accepted message per conversation: the one it was most sure of."""
+
+    best: dict[str, tuple[float, int]] = {}
+    for group, probability, index in entries:
+        current = best.get(group)
+        if current is None or probability > current[0]:
+            best[group] = (probability, index)
+    return sorted(index for _probability, index in best.values())
+
+
+def _one_vote_per_group(
+    probabilities: Sequence[float],
+    positives: Sequence[bool],
+    eligible: Sequence[bool],
+    groups: Sequence[str] | None,
+) -> tuple[list[float], list[bool], list[bool]]:
+    """Keep each conversation's most confident message and drop the rest.
+
+    Ten replies about one share transfer are one piece of evidence, not ten.
+    Left whole they filled the head of the queue, and which of them a fold
+    happened to score decided whether the category could prove anything at
+    all: the same data proved 47 messages under one fold split and none under
+    another.
+    """
+
+    if groups is None:
+        return list(probabilities), list(positives), list(eligible)
+    best: dict[str, int] = {}
+    for index, group in enumerate(groups):
+        if not eligible[index]:
+            continue
+        current = best.get(str(group))
+        if current is None or probabilities[index] > probabilities[current]:
+            best[str(group)] = index
+    kept = sorted(best.values())
+    return (
+        [probabilities[index] for index in kept],
+        [positives[index] for index in kept],
+        [True for _index in kept],
+    )
+
+
 def _calibrated_threshold(
     *,
     probabilities: Sequence[float],
     positives: Sequence[bool],
     eligible: Sequence[bool],
     precision_min: float = LEGACY_PROMOTION_THRESHOLDS.precision_min,
+    groups: Sequence[str] | None = None,
 ) -> float:
     """Pick the threshold whose precision is *evidently* above the target.
 
@@ -772,6 +866,9 @@ def _calibrated_threshold(
     point under this rule.
     """
 
+    probabilities, positives, eligible = _one_vote_per_group(
+        probabilities, positives, eligible, groups
+    )
     candidates = sorted({float(item) for item in probabilities}, reverse=True)
     selected = 1.0
     best_hits = -1
@@ -815,10 +912,14 @@ def _precision_lower_bound(hits: int, accepted: int) -> float:
 _JUDGED_TRAINING_SOURCES = frozenset({"agent_auto_label", "user_feedback"})
 
 CROSS_VALIDATION_FOLDS = 5
-CROSS_VALIDATION_PROTOCOL = "email-folder-grouped-cv-v1"
+# One split is one sample of how the conversations fall. Averaging a few
+# splits is what stops a thin category proving 47 messages one run and none
+# the next on identical data.
+CROSS_VALIDATION_REPEATS = 3
+CROSS_VALIDATION_PROTOCOL = "email-folder-grouped-repeated-cv-v2"
 
 
-def _group_folds(category_rows, important_rows) -> dict[str, int]:
+def _group_folds(category_rows, important_rows, repeat: int = 0) -> dict[str, int]:
     """Assign every conversation group to one fold, spreading each category.
 
     Categories are dealt smallest first, and each group goes to the fold that
@@ -833,6 +934,15 @@ def _group_folds(category_rows, important_rows) -> dict[str, int]:
         groups = groups_by_category.setdefault(str(row["category_key"]), [])
         if key not in groups:
             groups.append(key)
+    if repeat:
+        # A repeat deals the same conversations in a different order, so the
+        # split itself stops deciding what a thin category can prove.
+        for groups in groups_by_category.values():
+            groups.sort(
+                key=lambda item: sha256(
+                    f"{repeat}:{item}".encode("utf-8")
+                ).hexdigest()
+            )
     fold_of_group: dict[str, int] = {}
     load = [0] * CROSS_VALIDATION_FOLDS
     for _category, groups in sorted(
@@ -858,7 +968,8 @@ def _group_folds(category_rows, important_rows) -> dict[str, int]:
         key = str(row["group_key"])
         if key not in fold_of_group:
             fold_of_group[key] = (
-                int(sha256(key.encode("utf-8")).hexdigest(), 16) % CROSS_VALIDATION_FOLDS
+                int(sha256(f"{repeat}:{key}".encode("utf-8")).hexdigest(), 16)
+                % CROSS_VALIDATION_FOLDS
             )
     return fold_of_group
 
@@ -873,11 +984,13 @@ def _pooled_category_metrics(*, category, scored, threshold):
     # Measuring each fold at its own calibration threshold graded a model that
     # never ships and carried that calibration's noise into the result: two
     # runs a dozen labels apart reported 419 and 209 accepted junk messages.
-    accepted = [
-        index
-        for index, (_row, item, _fold_threshold) in enumerate(scored)
-        if item.category == category and item.category_probability >= threshold
-    ]
+    accepted = _accepted_conversations(
+        [
+            (str(row["group_key"]), float(item.category_probability), index)
+            for index, (row, item, _fold_threshold) in enumerate(scored)
+            if item.category == category and item.category_probability >= threshold
+        ]
+    )
     hits = [index for index in accepted if expected[index] == category]
     return {
         "support": sum(value == category for value in expected),
@@ -898,11 +1011,13 @@ def _pooled_important_metrics(*, scored, threshold):
     rows = [row for row, _item, _t in scored]
     predictions = [item for _row, item, _t in scored]
     metrics = _important_acceptance_metrics(rows=rows, predictions=predictions, threshold=threshold)
-    accepted = [
-        index
-        for index, (_row, item, _fold_threshold) in enumerate(scored)
-        if item.important_probability >= threshold
-    ]
+    accepted = _accepted_conversations(
+        [
+            (str(row["group_key"]), float(item.important_probability), index)
+            for index, (row, item, _fold_threshold) in enumerate(scored)
+            if item.important_probability >= threshold
+        ]
+    )
     hits = [index for index in accepted if bool(rows[index]["important"])]
     return {
         **metrics,

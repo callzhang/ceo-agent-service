@@ -1358,7 +1358,7 @@ def test_frozen_snapshot_embedding_training_stages_metrics_without_activation(
         assert persisted["metrics"]["categories"][category]["support"] == 8
         assert persisted["metrics"]["categories"][category]["test_independent_groups"] == 8
     assert persisted["evaluation"]["category_keys"] == ["work", "legal"]
-    assert persisted["evaluation"]["protocol"] == "email-folder-grouped-cv-v1"
+    assert persisted["evaluation"]["protocol"] == "email-folder-grouped-repeated-cv-v2"
     assert persisted["evaluation"]["folds"] == 5
     assert persisted["split_counts"]["cross_validation_scored"] == 16
     assert dict(result.head_latency_ms) == persisted["head_latency_ms"]
