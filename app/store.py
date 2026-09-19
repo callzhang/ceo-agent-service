@@ -21561,34 +21561,6 @@ class AutoReplyStore:
                 reconciled += cursor.rowcount
             return reconciled
 
-    def reconcile_attempts_with_handed_over_tasks(self) -> int:
-        """Make the attempt say what the task says when the task was handed over.
-
-        The task and its attempt are two projections of one piece of work, and
-        only the task was updated when it became needs_human. The attempt kept
-        reading `failed`, which is the page a person actually opens: on
-        2026-09-19 Derek opened /attempts/9670 and saw a failure for work that
-        had already been handed to him, and History listed no needs_human at
-        all while four tasks sat in it.
-        """
-        with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                """
-                update reply_attempts as attempts
-                set send_status='needs_human', updated_at=current_timestamp
-                where attempts.send_status='failed'
-                  and exists (
-                      select 1
-                      from agent_runs as runs
-                      join reply_tasks as tasks on tasks.id=runs.reply_task_id
-                      where runs.id=attempts.agent_run_id
-                        and tasks.status='needs_human'
-                        and runs.execution_generation=tasks.execution_generation
-                  )
-                """
-            )
-            return cursor.rowcount
-
     def close_failed_reply_tasks_that_completed_an_external_action(self) -> int:
         """Hand over a failed task whose generation already reached a person.
 
