@@ -727,3 +727,29 @@ def test_many_failures_are_summarised_not_dumped() -> None:
     summary = result.summary()
     assert "uuid-0:dws_error:boom" in summary
     assert "(+4 more)" in summary
+
+
+def test_a_minute_with_nothing_to_archive_is_skipped_not_failed() -> None:
+    """A condition no run can clear must not be reported as a daily failure.
+
+    A minute with neither summary nor transcript is most often a recording
+    still in progress, which the read APIs cannot see. Counting it as a
+    failure made the daily task report an error every day -- 14 of them on
+    2026-09-19 -- and a daily error nobody can act on is how a real one gets
+    missed. It is rediscovered and retried on every later pass either way.
+    """
+    from app.minutes_sync import MinutesSyncResult
+
+    result = MinutesSyncResult(
+        discovered=2,
+        synced=1,
+        skipped=1,
+        skips=(("uuid-a", "no_summary_and_no_transcript_yet"),),
+    )
+
+    assert result.failed == 0
+    assert "skipped=1" in result.summary()
+    assert "skips=uuid-a:no_summary_and_no_transcript_yet" in result.summary()
+    # A skip is never shown as a failure: that is what made the first version
+    # of this unclear, with fourteen skips filling a list labelled failures.
+    assert "failures=" not in result.summary()
