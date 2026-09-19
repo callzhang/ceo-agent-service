@@ -1788,3 +1788,7 @@ h1, h2, h3, p { margin-top: 0; }
 .training-confirm { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 14px 0; padding: 13px 14px; border: 1px solid var(--accent); border-radius: 10px; background: var(--accent-soft); }
 .training-confirm p { margin: 0; font-weight: 600; }
 .training-confirm > div { display: flex; gap: 8px; flex: 0 0 auto; }
+
+/* A column header that needs a sentence to be honest about what it counts. */
+.metric-hint { width: 15px; height: 15px; margin-left: 5px; padding: 0; border: 1px solid var(--line-strong, var(--line)); border-radius: 999px; color: var(--ink-soft); background: var(--surface); cursor: help; font-size: .62rem; font-weight: 700; line-height: 1; vertical-align: middle; }
+.metric-hint:hover { color: var(--on-accent); border-color: var(--accent); background: var(--accent); }

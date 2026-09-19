@@ -765,6 +765,14 @@ function Stat({
     </article>
   );
 }
+function Hint({ text }: { text: string }) {
+  return (
+    <button type="button" className="metric-hint" title={text} aria-label={text}>
+      ?
+    </button>
+  );
+}
+
 function shortModelId(modelId: string) {
   return modelId.length <= 26
     ? modelId
@@ -1190,13 +1198,34 @@ function CategoryMetrics({ model }: { model: EmailStagedModel }) {
         <thead>
           <tr>
             <th>类别</th>
-            <th>Precision</th>
-            <th>Recall</th>
-            <th>F1</th>
-            <th>support</th>
-            <th>接受准确率</th>
-            <th>接受数量 / 独立事项组</th>
-            <th>阈值</th>
+            <th>
+              Precision
+              <Hint text="逼它对每封邮件都表态时，它说属于这一类的邮件里有多少判对。" />
+            </th>
+            <th>
+              Recall
+              <Hint text="这一类真实的邮件里，它认出了多少。认不出的不是判错，是它没把握、退给 Agent。" />
+            </th>
+            <th>
+              F1
+              <Hint text="Precision 和 Recall 的调和平均。它把「没把握而退回」也算成扣分，所以会明显低于接受准确率。" />
+            </th>
+            <th>
+              support
+              <Hint text="这一类在这次评估里一共有多少封邮件。" />
+            </th>
+            <th>
+              接受准确率
+              <Hint text="英文 accepted precision，也就是「带弃权的预测」里的选择性精度：只算它有把握、自己拍板的那些邮件，其中有多少判对；没把握的退给 Agent，不进这个分母。所以一个分类可以「大部分不会，但会的都很准」——legal 的 F1 只有 59%（80 封里它认出不到一半），拍板的 25 件却有 92.6% 是对的。上线看的就是这个数。" />
+            </th>
+            <th>
+              接受数量 / 独立事项组
+              <Hint text="它拍板了多少件事。同一条邮件线程只算一件——十封来回讨论同一份合同是一个证据，不是十个。" />
+            </th>
+            <th>
+              阈值
+              <Hint text="把握超过这个分数才自己拍板，低于就退给 Agent。阈值是训练时挑出来的：在保证接受准确率达标的前提下，尽量多接。" />
+            </th>
           </tr>
         </thead>
         <tbody>
