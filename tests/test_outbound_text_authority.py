@@ -131,3 +131,39 @@ def test_the_reviewed_tool_is_the_sanctioned_path_and_is_not_flagged() -> None:
     happen, so flagging it would leave the turn nowhere to go.
     """
     assert shell_send_commands([_mcp(["dws", "chat", "+dm", "--to", "A", "--content", "x"])]) == []
+
+
+def _shell_result(command: str, *, exit_code: int, output: str) -> dict:
+    return {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution",
+            "exit_code": exit_code,
+            "status": "completed",
+            "command": "/bin/zsh -lc '" + command + "'",
+            "aggregated_output": output,
+        },
+    }
+
+
+def test_a_send_that_ran_and_failed_delivered_nothing() -> None:
+    """Trying to send and reaching someone are different questions.
+
+    The correction asks the first; whether a retry would send the message
+    twice depends on the second. A piped command exits with the last stage's
+    status, so exit code 0 does not mean the provider accepted anything --
+    DWS's own failure envelope is the signal.
+    """
+    from app.outbound_text_authority import delivered_shell_send_commands
+
+    sent = 'dws chat +messages-send --group cid-1 --text "x"'
+    refused = _shell_result(sent, exit_code=0, output='{"ok":false,"error":"--content is required"}')
+    crashed = _shell_result(sent, exit_code=1, output="")
+    delivered = _shell_result(sent, exit_code=0, output='{"success":true,"messageId":"m-1"}')
+
+    # All three are still sends the turn ran, so all three are corrected.
+    assert len(shell_send_commands([refused, crashed, delivered])) == 3
+    # Only the accepted one means a person has the message.
+    assert delivered_shell_send_commands([refused, crashed]) == []
+    assert len(delivered_shell_send_commands([delivered])) == 1
+    assert len(delivered_shell_send_commands([refused, crashed, delivered])) == 1

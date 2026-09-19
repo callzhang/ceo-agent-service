@@ -264,6 +264,12 @@ def _completed_native_command(event: object) -> dict[str, object] | None:
     return None
 
 
+def command_reports_failure(output: object) -> bool:
+    """Public name for the failure-envelope check; see `_reports_failure`."""
+
+    return _reports_failure(output)
+
+
 def _reports_failure(output: object) -> bool:
     """Whether the call printed DWS's own failure envelope.
 

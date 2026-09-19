@@ -12065,3 +12065,60 @@ def test_a_failed_task_that_never_acted_stays_failed(tmp_path: Path):
 
     assert store.close_failed_reply_tasks_that_completed_an_external_action() == 0
     assert store.get_reply_task(task.id).status == "failed"
+
+
+def test_the_second_failure_path_hands_over_too(tmp_path: Path):
+    """A turn's failure travels two paths, and only one knew the rule.
+
+    Task 384447 shell-sent, was corrected, then failed five more turns on the
+    missing receipt and ended `failed` -- with the message already delivered.
+    `fail_reply_task` had the completed-action rule; `complete_reply_task`,
+    the path that failure actually took, did not.
+    """
+    store = AutoReplyStore(tmp_path / "second-path.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="Group", single_chat=False,
+        trigger_message_id="msg-1", trigger_create_time="2026-09-19 10:00:00",
+        trigger_sender="Derek", trigger_text="handle this",
+        execution_generation="gen-1",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    claim = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="test",
+    )
+    store.append_agent_run_event(
+        claim.run.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "exit_code": 0,
+                "status": "completed",
+                "command": (
+                    "/bin/zsh -lc 'dws chat +messages-send --group cid-1 "
+                    "--text \"已处理\"'"
+                ),
+                "aggregated_output": '{"success":true,"messageId":"m-1"}',
+            },
+        },
+        owner="test",
+    )
+    store.fail_agent_run(
+        claim.run.id,
+        {
+            "code": "agent_reported_failure",
+            "retryable": True,
+            "authorization_required": False,
+            "detail": "provider_receipt_missing",
+            "session_continuable": False,
+        },
+        owner="test",
+    )
+
+    store.complete_reply_task(
+        task.id, expected_execution_generation=task.execution_generation
+    )
+
+    assert store.get_reply_task(task.id).status == "needs_human"

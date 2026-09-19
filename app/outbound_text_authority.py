@@ -208,6 +208,40 @@ def shell_send_commands(tool_events: Iterable[object]) -> list[str]:
     return found
 
 
+def delivered_shell_send_commands(tool_events: Iterable[object]) -> list[str]:
+    """The shell sends that the provider actually accepted.
+
+    `shell_send_commands` answers "did this turn try to send", which is the
+    question the correction asks. This one answers "did a message reach
+    someone", which is the question that decides whether a retry would send it
+    twice -- and those differ, because a send can run and fail.
+
+    A piped command (`dws ... | head`) exits with the last stage's status, so
+    exit code 0 does not mean the provider accepted anything; DWS's own
+    failure envelope in the output is the reliable signal, and it is the same
+    one the execution-evidence gate reads.
+    """
+
+    from app.dingtalk_send_evidence import command_reports_failure
+
+    delivered: list[str] = []
+    for event in tool_events:
+        if not isinstance(event, Mapping):
+            continue
+        item = event.get("item")
+        if not isinstance(item, Mapping):
+            continue
+        if not shell_send_commands([event]):
+            continue
+        exit_code = item.get("exit_code")
+        if isinstance(exit_code, int) and exit_code != 0:
+            continue
+        if command_reports_failure(item.get("aggregated_output")):
+            continue
+        delivered.extend(shell_send_commands([event]))
+    return delivered
+
+
 SHELL_SEND_REQUIREMENT = (
     "This turn sent a message from its own shell. Sending is the service's "
     "to do: it applies the signature and the feedback links, records the "

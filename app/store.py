@@ -12117,14 +12117,34 @@ class AutoReplyStore:
                             f"reply task superseded: {task_id}"
                         )
                     return
+                # A generation that already reached a person is handed over,
+                # not failed: retrying it sends the message a second time.
+                # `fail_reply_task` has made this call since 444b2e2f, but
+                # this is the other path a turn's failure travels, and it did
+                # not -- task 384447 shell-sent, then failed five more turns
+                # on the missing receipt and ended `failed` with the message
+                # already delivered.
+                terminal_status = "failed"
+                if self._generation_completed_external_action(
+                    db,
+                    task_id=task_id,
+                    execution_generation=expected_execution_generation,
+                    business_object_key=str(row["business_object_key"] or ""),
+                ):
+                    terminal_status = "needs_human"
                 cursor = db.execute(
                     """
                     update reply_tasks
-                    set status='failed', locked_at=null, available_at='', error=?,
+                    set status=?, locked_at=null, available_at='', error=?,
                         updated_at=current_timestamp
                     where id=? and status='processing' and execution_generation=?
                     """,
-                    (failure_code, task_id, expected_execution_generation),
+                    (
+                        terminal_status,
+                        failure_code,
+                        task_id,
+                        expected_execution_generation,
+                    ),
                 )
                 if cursor.rowcount != 1:
                     raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
@@ -12162,7 +12182,7 @@ class AutoReplyStore:
         """Whether this generation already wrote to the task's business object."""
 
         from app.dingtalk_send_evidence import completed_provider_writes
-        from app.outbound_text_authority import shell_send_commands
+        from app.outbound_text_authority import delivered_shell_send_commands
 
         rows = db.execute(
             """
@@ -12189,7 +12209,12 @@ class AutoReplyStore:
         # has a business object: on 2026-09-19 task 384446 shell-sent, then
         # returned `invalid_execution_path` five times over and failed, with
         # the message already on the recipient's phone.
-        if shell_send_commands(tool_events):
+        #
+        # Only a send the provider accepted counts. A send that ran and failed
+        # delivered nothing, so handing it to a person would cost a retry that
+        # is safe to make. DWS's own failure envelope is the signal, because a
+        # piped command exits with the last stage's status.
+        if delivered_shell_send_commands(tool_events):
             return True
         object_key = business_object_key.strip()
         if not object_key:
