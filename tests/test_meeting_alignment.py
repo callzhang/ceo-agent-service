@@ -291,6 +291,15 @@ class FakeDws:
         return self.calendar_pages[cursor]
 
 
+def _fake_recall_sent_message(self, open_task_id: str) -> bool:
+    """Record what the service asked to withdraw, and say the provider took it."""
+    self.__dict__.setdefault("recalled", []).append(open_task_id)
+    return True
+
+
+FakeDws.recall_sent_message = _fake_recall_sent_message
+
+
 class ConsumerDws(FakeDws):
     def __init__(self):
         super().__init__()
@@ -2223,6 +2232,28 @@ def test_producer_persists_conflicting_minutes_aliases_as_skipped(
         assert created == 1
         assert job is not None
         assert job.status == "skipped"
+
+
+def test_delivery_withdraws_the_follow_up_it_replaces():
+    """The earlier follow-up is taken back only after the replacement is sent.
+
+    Derek 2026-09-19: recall the old message before the second summary lands and
+    a failure to produce the new one would leave the reader with nothing.
+    """
+    dws = FakeDws()
+    previous = json.dumps({"send_result": {"data": {"result": {"openTaskId": "task-1"}}}})
+
+    meeting_alignment._withdraw_superseded_follow_up(dws, previous)
+
+    assert dws.__dict__.get("recalled") == ["task-1"]
+
+
+def test_delivery_withdraws_nothing_on_a_first_follow_up():
+    dws = FakeDws()
+
+    meeting_alignment._withdraw_superseded_follow_up(dws, "")
+
+    assert dws.__dict__.get("recalled") is None
 
 
 def test_producer_attaches_a_later_recording_to_the_meeting_it_belongs_to(tmp_path):

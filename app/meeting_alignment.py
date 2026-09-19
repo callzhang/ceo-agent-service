@@ -1413,6 +1413,9 @@ def _write_meeting_summary_to_calendar_or_retry(
     retry_delay: timedelta,
     max_attempts: int,
 ) -> None:
+    # Captured before the job records this send: it points at the follow-up the
+    # people in this meeting are already holding, which a re-summary replaces.
+    superseded_send_result = job.send_result_json or ""
     summary = (job.final_message or delivery.message_text).strip()
     if not summary:
         _fail_job(
@@ -1441,6 +1444,7 @@ def _write_meeting_summary_to_calendar_or_retry(
             calendar_summary_result_json=receipt,
             error="",
         )
+        _withdraw_superseded_follow_up(dws, superseded_send_result)
         _notify_meeting_sent(job, delivery)
         return
     creator = evidence.creator
@@ -1467,6 +1471,7 @@ def _write_meeting_summary_to_calendar_or_retry(
             calendar_summary_result_json=receipt,
             error="",
         )
+        _withdraw_superseded_follow_up(dws, superseded_send_result)
         _notify_meeting_sent(job, delivery)
         return
     try:
@@ -1521,6 +1526,7 @@ def _write_meeting_summary_to_calendar_or_retry(
                 calendar_summary_result_json=receipt,
                 error="",
             )
+            _withdraw_superseded_follow_up(dws, superseded_send_result)
             _notify_meeting_sent(job, delivery)
             return
         receipt = json.dumps(
@@ -1559,6 +1565,7 @@ def _write_meeting_summary_to_calendar_or_retry(
         calendar_summary_result_json=receipt,
         error="",
     )
+    _withdraw_superseded_follow_up(dws, superseded_send_result)
     _notify_meeting_sent(job, delivery)
 
 
@@ -1851,6 +1858,47 @@ def _resolve_transcript_speaker(
 
 def _canonical_name(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+def _withdraw_superseded_follow_up(dws: Any, previous_send_result_json: str) -> None:
+    """Take back the follow-up this one replaces, once the new one has landed.
+
+    Order matters: the replacement is sent first, so a failure to produce it
+    leaves the reader holding the earlier message rather than nothing. A provider
+    that declines the withdrawal is not a failure of this meeting -- the reader
+    keeps both, and the header already says the later one is a second pass
+    (Derek 2026-09-19).
+    """
+    if not previous_send_result_json.strip():
+        return
+    try:
+        payload = json.loads(previous_send_result_json)
+    except (TypeError, ValueError):
+        return
+    open_task_id = _find_nested_value(payload, "openTaskId")
+    if not open_task_id:
+        return
+    try:
+        dws.recall_sent_message(open_task_id)
+    except DwsError:
+        return
+
+
+def _find_nested_value(payload: Any, key: str) -> str:
+    if isinstance(payload, dict):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        for nested in payload.values():
+            found = _find_nested_value(nested, key)
+            if found:
+                return found
+    elif isinstance(payload, list):
+        for nested in payload:
+            found = _find_nested_value(nested, key)
+            if found:
+                return found
+    return ""
 
 
 def _notify_meeting_sent(job: Any, result: MeetingDeliveryResult) -> None:

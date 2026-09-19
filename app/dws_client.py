@@ -1407,6 +1407,34 @@ class DwsClient:
             "json",
         ]
 
+    def build_message_send_status_command(self, open_task_id: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "chat",
+            "+messages-query-send-status",
+            "--open-task-id",
+            open_task_id,
+            "--format",
+            "json",
+        ]
+
+    def build_message_recall_command(
+        self, *, conversation_id: str, message_id: str
+    ) -> list[str]:
+        return [
+            self.dws_bin,
+            "chat",
+            "message",
+            "recall",
+            "--conversation-id",
+            conversation_id,
+            "--msg-id",
+            message_id,
+            "-y",
+            "--format",
+            "json",
+        ]
+
     def build_minutes_summary_command(self, task_uuid: str) -> list[str]:
         return [
             self.dws_bin,
@@ -2689,6 +2717,34 @@ class DwsClient:
         if not isinstance(payload, dict):
             raise DwsError("invalid minutes summary response")
         return payload
+
+    def recall_sent_message(self, open_task_id: str) -> bool:
+        """Withdraw a message this service sent, identified by its send receipt.
+
+        The send response records an ``openTaskId``; the conversation and message
+        ids needed to withdraw it are resolved from that. Returns False when the
+        provider declines, which the caller treats as "the reader keeps it".
+        """
+        normalized = open_task_id.strip()
+        if not normalized:
+            return False
+        status = self.run_json(self.build_message_send_status_command(normalized))
+        reference = status.get("messageRef") if isinstance(status, dict) else None
+        if not isinstance(reference, dict):
+            return False
+        conversation_id = str(reference.get("openConversationId") or "").strip()
+        message_id = str(reference.get("openMessageId") or "").strip()
+        if not conversation_id or not message_id:
+            return False
+        payload = self.run_json(
+            self.build_message_recall_command(
+                conversation_id=conversation_id, message_id=message_id
+            )
+        )
+        result = payload.get("result") if isinstance(payload, dict) else None
+        if not isinstance(result, dict):
+            return False
+        return str(result.get("recallStatus") or "").upper() == "SUCCESS"
 
     def get_minutes_todos(self, task_uuid: str) -> dict[str, Any]:
         payload = self.run_json(self.build_minutes_todos_command(task_uuid))
