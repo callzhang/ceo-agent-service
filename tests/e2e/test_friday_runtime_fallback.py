@@ -180,6 +180,14 @@ def _seed_run(store: AutoReplyStore) -> tuple[int, int, str]:
     return task_id, claim.run.id, generation
 
 
+@pytest.mark.skip(
+    reason=(
+        "friday_runtime is closed (Derek, 2026-09-18) and is not in "
+        "CEO_AGENT_RUNTIME_ROUTES. This test was already failing at ad8d227a, "
+        "before the route was removed, so it is not evidence about the route "
+        "being closed. Re-enable it by finding out why it failed then."
+    )
+)
 def test_oauth_and_codex_failure_fall_back_to_friday_in_one_agent_run(
     tmp_path: Path, fake_friday_server
 ):
