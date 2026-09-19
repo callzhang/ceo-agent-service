@@ -27,6 +27,29 @@ metadata:
 SKILL_V2 = SKILL_V1.replace("Version one", "Version two")
 
 
+@pytest.fixture(autouse=True)
+def _isolated_skills_root(tmp_path_factory, monkeypatch):
+    """Keep these configs off the machine's real Skill baseline.
+
+    `resolve_pending_runtime_skills` imports the managed baseline first, so a
+    Skill added to `~/.agents/skills` would create a runtime config here and
+    collide with the ones each test builds by hand. These tests are about the
+    config lifecycle, so the baseline import is emptied rather than mirrored.
+    """
+    from app.managed_skills import REPOSITORY_MANAGED_SKILL_NAMES
+
+    root = tmp_path_factory.mktemp("skills")
+    for name in REPOSITORY_MANAGED_SKILL_NAMES:
+        path = root / name / "SKILL.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"---\nname: {name}\ndescription: Test managed Skill\nmetadata:\n"
+            "  managed_by: ceo-agent-service\n---\n\n# Baseline\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setenv("CEO_SKILLS_ROOT", str(root))
+
+
 def configured_store(tmp_path: Path) -> tuple[AutoReplyStore, object]:
     store = AutoReplyStore(tmp_path / "skills.sqlite3")
     skill = store.create_managed_skill("ceo-test", "Test Skill")
@@ -109,7 +132,13 @@ def test_failed_load_keeps_previous_active_config(tmp_path: Path) -> None:
 
 def test_failed_latest_candidate_never_revives_an_older_pending_config(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    # This one builds its own chain of three configs, so the baseline import
+    # must not insert a config of its own between them.
+    import app.managed_skills as managed_skills
+
+    monkeypatch.setattr(managed_skills, "_repository_managed_skills", lambda: ())
     store, first = configured_store(tmp_path)
     active = store.create_runtime_skill_config(
         {first.skill_id: first.id}, expected_parent_id=None

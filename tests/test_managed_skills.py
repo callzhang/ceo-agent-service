@@ -14,6 +14,7 @@ import app.store as store_module
 from app.business_skills import load_bundled_business_skills
 from app.agent_cron.models import ScheduledTaskSkillRef
 from app.email_classifier_agent import EmailClassifierAgent
+from app.business_skills import bundled_business_skills_root
 from app.managed_skills import (
     EMAIL_CLASSIFIER_SKILL_NAME,
     ManagedSkillValidationError,
@@ -62,10 +63,7 @@ metadata:
 
 def _repository_classifier_content() -> str:
     return (
-        Path(__file__).resolve().parents[1]
-        / "skills"
-        / EMAIL_CLASSIFIER_SKILL_NAME
-        / "SKILL.md"
+        bundled_business_skills_root() / EMAIL_CLASSIFIER_SKILL_NAME / "SKILL.md"
     ).read_text(encoding="utf-8")
 
 
@@ -221,10 +219,7 @@ def test_minutes_sync_repository_import_preserves_exact_bytes_and_revision(
 ) -> None:
     store = AutoReplyStore(tmp_path / "minutes-sync.sqlite3")
     expected = (
-        Path(__file__).resolve().parents[1]
-        / "skills"
-        / "ceo-minutes-sync"
-        / "SKILL.md"
+        bundled_business_skills_root() / "ceo-minutes-sync" / "SKILL.md"
     ).read_text(encoding="utf-8")
 
     import_repository_managed_skills(store)

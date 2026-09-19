@@ -4,9 +4,13 @@ import importlib.util
 import json
 from pathlib import Path
 
+from app.business_skills import bundled_business_skills_root
+
+SKILLS_ROOT = bundled_business_skills_root()
+
 
 ROOT = Path(__file__).parents[1]
-SKILL_ROOT = ROOT / "skills" / "ceo-wechat"
+SKILL_ROOT = SKILLS_ROOT / "ceo-wechat"
 
 
 def _load(name: str):

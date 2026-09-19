@@ -22,6 +22,7 @@ from app.external_retry import ExternalDependencyError
 from app.agent_result import agent_message_json_objects
 from app.routed_result_privacy import audit_references_from_full_events
 from app.store import AutoReplyStore, RecentFollowUpCandidate
+from app.business_skills import bundled_business_skills_root
 from app.structured_agent import load_skill_text
 from app.task_models import (
     FollowUpDraftChange,
@@ -59,7 +60,9 @@ RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
 FOLLOW_UP_WORK_START_HOUR = 9
 FOLLOW_UP_WORK_END_HOUR = 18
 FOLLOW_UP_WORK_TZ = ZoneInfo("Asia/Shanghai")
-WORK_TRACKING_SKILL_PATH = repo_root() / "skills" / "ceo-work-tracking" / "SKILL.md"
+WORK_TRACKING_SKILL_PATH = (
+    bundled_business_skills_root() / "ceo-work-tracking" / "SKILL.md"
+)
 TASK_RUNTIME_CAPABILITIES = frozenset(
     {
         "structured_output",

@@ -598,11 +598,14 @@ def test_service_command_catalog_exposes_only_editable_trigger_metadata(
         "scan-oa-approvals",
         "scan-meeting-todos-once",
         "process-follow-ups",
+        "request-minutes-access",
         "sync-minutes-once",
         "weekly-okr-report",
         "recover-recent-messages",
     ]
     assert all(option.description for option in options)
+    # request-minutes-access and sync-minutes-once run to completion in this
+    # process, so neither hands anything to a downstream Consumer Agent.
     assert [option.consumer_prompt_enabled for option in options] == [
         True,
         True,
@@ -611,6 +614,7 @@ def test_service_command_catalog_exposes_only_editable_trigger_metadata(
         True,
         True,
         True,
+        False,
         False,
         False,
         False,

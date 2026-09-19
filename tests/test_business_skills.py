@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.business_skills import (
+    bundled_business_skills_root,
     BUNDLED_BUSINESS_SKILL_NAMES,
     BusinessSkillInstallConflict,
     BusinessSkillInstallRollbackError,
@@ -234,7 +235,7 @@ def test_skill_install_upgrades_service_managed_skill_deterministically(
 
     assert target.read_bytes() == first_content
     assert first_content == (
-        Path("skills") / EXPECTED_NAMES[0] / "SKILL.md"
+        bundled_business_skills_root() / EXPECTED_NAMES[0] / "SKILL.md"
     ).read_bytes()
 
 
@@ -618,3 +619,27 @@ def test_default_catalog_offers_only_the_newest_memory_plugin_version(tmp_path: 
         "memory-connector:remember",
     ]
     assert catalog[0].skill_path == newest.resolve()
+
+
+def test_the_baseline_is_read_from_the_installed_skills_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`~/.agents/skills` is the source of truth for installed Skills.
+
+    A second copy in this repository meant an edit could land in the one
+    nothing loads — which is how an update to a Skill was written to the copy a
+    publish would later overwrite.
+    """
+    monkeypatch.setenv("CEO_SKILLS_ROOT", str(tmp_path))
+
+    assert bundled_business_skills_root() == tmp_path
+
+
+def test_the_installed_skills_root_defaults_to_the_agents_directory(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("CEO_SKILLS_ROOT", raising=False)
+
+    assert bundled_business_skills_root() == (
+        Path.home() / ".agents" / "skills"
+    )

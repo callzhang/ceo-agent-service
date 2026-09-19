@@ -1,9 +1,13 @@
 from pathlib import Path
 import re
 
+from app.business_skills import bundled_business_skills_root
+
+SKILLS_ROOT = bundled_business_skills_root()
+
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_PATH = ROOT / "skills" / "ceo-feedback-processing" / "SKILL.md"
+SKILL_PATH = SKILLS_ROOT / "ceo-feedback-processing" / "SKILL.md"
 OLD_PRESSURE_EVIDENCE_PATH = SKILL_PATH.parent / "pressure-test-evidence.md"
 PRESSURE_EVIDENCE_PATH = ROOT / "tests" / "evidence" / "feedback_reopen_skill_pressure.md"
 

@@ -619,9 +619,15 @@ Skill，CEO Skill 只负责识别需要委派的场景，不复制专业规则�
 业务领域分类，因此不会用关键词把文档或人员 Skill 拆成独立路由；这些 Skill 仍由通用消息
 Consumer 在完整上下文中按需发现。
 
-Settings 编辑的权威来源是仓库内 `skills/*/SKILL.md`。保存会校验 frontmatter、以 SHA
-防止并发覆盖，并同步 service-managed 的运行时副本；源文件和运行时副本未同时成功时，保存
-失败并保留原内容。用户、系统或插件目录中的外部 operation Skill 不在该页面的编辑范围内。
+Skill 的唯一权威来源是 `~/.agents/skills/<name>/SKILL.md`（可用 `CEO_SKILLS_ROOT`
+覆盖，仅用于测试）。仓库不再保存第二份副本：两份并存时，改动可能落在没有被加载的那一份，
+而且不会报错。服务启动时从该目录导入受管基线并做版本管理；发布到共享 Skill 库是单独的
+对外动作，方向是从该目录出去，不是回来。Settings 编辑同样以该目录为准，保存会校验
+frontmatter 并以 SHA 防止并发覆盖。用户、系统或插件目录中的外部 operation Skill 不在
+该页面的编辑范围内。
+
+因此本仓库的 `scripts/bootstrap-local-components.sh` 不再安装业务 Skill，只校验它们是否
+存在；新机器从共享 Skill 库安装。
 
 ### Consumer Agent A
 

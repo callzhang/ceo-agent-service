@@ -763,10 +763,29 @@ def _scenario_digest(case: EvalCase) -> str:
 
 
 def _skill_path(value: str) -> Path | None:
+    """Resolve a recorded Skill path against where the Skills now live.
+
+    Fixtures record the path the runtime reported when they were captured,
+    which was inside this repository. The Skills are authored in
+    `~/.agents/skills` now, so a recorded relative path is resolved by its
+    Skill name under the current root rather than being rejected -- the digest
+    check below is what actually holds the fixture to the recorded content.
+    """
+    from app.business_skills import bundled_business_skills_root
+
+    skills_root = bundled_business_skills_root().resolve()
     candidate = Path(value)
-    resolved = (candidate if candidate.is_absolute() else ROOT / candidate).resolve()
-    skills_root = (ROOT / "skills").resolve()
-    return resolved if resolved == skills_root or skills_root in resolved.parents else None
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    elif candidate.parts and candidate.parts[0] == "skills":
+        resolved = (skills_root / Path(*candidate.parts[1:])).resolve()
+    else:
+        resolved = (skills_root / candidate).resolve()
+    return (
+        resolved
+        if resolved == skills_root or skills_root in resolved.parents
+        else None
+    )
 
 
 def _failed_result(

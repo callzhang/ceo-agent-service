@@ -20,6 +20,10 @@ from app.managed_skills import (
     RuntimeSkillSnapshot,
 )
 
+from app.business_skills import bundled_business_skills_root
+
+SKILLS_ROOT = bundled_business_skills_root()
+
 
 ALLOWED = (
     "work",
@@ -229,9 +233,8 @@ def test_routed_backend_persists_redacted_result_and_rehydrates_ephemeral_url() 
 
 def test_classifier_skill_closes_baseline_pressure_failures() -> None:
     path = (
-        Path(__file__).resolve().parents[1]
-        / "skills"
-        / "ceo-email-classifier"
+        SKILLS_ROOT
+    / "ceo-email-classifier"
         / "SKILL.md"
     )
     text = path.read_text(encoding="utf-8")

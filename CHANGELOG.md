@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- 2026-09-18: `~/.agents/skills` is the single source of truth for Skills, and
+  this repository no longer keeps a second copy. Two copies meant an edit could
+  land in the one nothing loads, and a publish to the shared Skills library
+  could overwrite it — which is exactly what happened to an update written into
+  the installed copy. The service imports its managed baseline from there
+  (`CEO_SKILLS_ROOT` overrides it for tests), `skills/` is deleted, and
+  `scripts/bootstrap-local-components.sh` reports whether the Skills are present
+  instead of installing a repository copy that no longer exists: a fresh machine
+  gets them from the shared Skills library.
+
+- 2026-09-18: `ceo-weekly-report` becomes a managed Skill, and 准备 CEO 管理周报
+  runs it every Saturday at 12:00 Asia/Shanghai. Unlike the minutes upkeep this
+  is judgement throughout — which meetings matter, what the evidence supports,
+  which deviation needs a decision — so it is an Agent task. It prepares and
+  stops: the Skill requires Derek's explicit authorization before the DingTalk
+  document is written, so the run ends with a draft and what needs him.
+
 - 2026-09-18: The 听记 archive walk no longer stops at the first
   already-archived minute. That boundary assumed minutes are archived in
   listing order; they are not. A minute whose owner grants access days later is

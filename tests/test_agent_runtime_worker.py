@@ -29,6 +29,10 @@ from app.runtime_environment import central_python
 from app.worker import ORCHESTRATION_ATTEMPT_STATUS, DingTalkAutoReplyWorker
 from tests.support.image_bytes import TINY_PNG
 
+from app.business_skills import bundled_business_skills_root
+
+SKILLS_ROOT = bundled_business_skills_root()
+
 
 NOW = datetime(2026, 7, 29, 9, 0, tzinfo=timezone.utc)
 
@@ -4028,7 +4032,7 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
         path = skills_root / name / "SKILL.md"
         path.parent.mkdir(parents=True)
         content = (
-            (Path("skills") / name / "SKILL.md").read_text(encoding="utf-8")
+            (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
             if name == "ceo-calendar-invite"
             else _calendar_operation_skill_fixture(name)
         )
@@ -4102,7 +4106,7 @@ def _task4_installed_skill_paths(
         path = skills_root / name / "SKILL.md"
         path.parent.mkdir(parents=True)
         content = (
-            (Path("skills") / name / "SKILL.md").read_text(encoding="utf-8")
+            (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
             if name == business_skill
             else (
                 _triage_operation_skill_fixture(name)
@@ -4127,7 +4131,7 @@ def _provided_skill_paths(
         path = skills_root / name / "SKILL.md"
         path.parent.mkdir(parents=True)
         if name == "ceo-personnel-communication":
-            content = (Path("skills") / name / "SKILL.md").read_text(
+            content = (SKILLS_ROOT / name / "SKILL.md").read_text(
                 encoding="utf-8"
             )
         elif name == "dingtalk-chat":
@@ -4205,7 +4209,7 @@ def test_direct_clarification_uses_native_business_and_operation_skill_receipts(
         path = skills_root / name / "SKILL.md"
         path.parent.mkdir(parents=True)
         content = (
-            (Path("skills") / name / "SKILL.md").read_text(encoding="utf-8")
+            (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
             if name == "ceo-message-triage"
             else _triage_operation_skill_fixture(name)
         )
@@ -4284,7 +4288,7 @@ def test_document_read_uses_exact_commands_and_native_skill_receipts(
         path = skills_root / name / "SKILL.md"
         path.parent.mkdir(parents=True)
         content = (
-            (Path("skills") / name / "SKILL.md").read_text(encoding="utf-8")
+            (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
             if name == "ceo-document-review"
             else _document_operation_skill_fixture(name)
         )
@@ -4921,7 +4925,7 @@ def _authorized_mail_skill_paths(tmp_path: Path, monkeypatch) -> dict[str, Path]
     skills_root = tmp_path / "installed-skills"
     fixtures = {
         "ceo-mail-review": (
-            Path("skills/ceo-mail-review/SKILL.md").read_text(encoding="utf-8")
+            (SKILLS_ROOT / "ceo-mail-review" / "SKILL.md").read_text(encoding="utf-8")
         ),
         "dingtalk-shared": _triage_operation_skill_fixture("dingtalk-shared"),
         "dingtalk-mail": """---
@@ -4951,7 +4955,7 @@ and verify the returned `internetMessageId` with `message verify`.
 def _meeting_receipt_skill_paths(tmp_path: Path, monkeypatch) -> dict[str, Path]:
     skills_root = tmp_path / "installed-skills"
     fixtures = {
-        "ceo-meeting-work": Path("skills/ceo-meeting-work/SKILL.md").read_text(
+        "ceo-meeting-work": (SKILLS_ROOT / "ceo-meeting-work" / "SKILL.md").read_text(
             encoding="utf-8"
         ),
         "dingtalk-minutes": """---

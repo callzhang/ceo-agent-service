@@ -39,6 +39,10 @@ from app.consumer_agent import (
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS
 from tests.prompt_structure import validate_prompt_structure
 
+from app.business_skills import bundled_business_skills_root
+
+SKILLS_ROOT = bundled_business_skills_root()
+
 
 def test_consumer_oa_work_is_completed_by_agent_instead_of_generic_handoff():
     assert "Do not stop at a generic" in AGENT_CAPABILITY_INSTRUCTIONS
@@ -54,8 +58,7 @@ CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会�
 ![image](https://gw.alicdn.com/imgextra/i4/O1CN01DXenu91IyBR0wQXk9_!!6000000000961-2-tps-148-72.png)
 [https://alidocs.dingtalk.com/i/nodes/vy20BglGWOKXmP5zs0OGQn6DWA7depqY?corpId=ding8ffc70a4ef94915f35c2f4657eb6378f&utm_medium=im_card&utm_source=im](https://alidocs.dingtalk.com/i/nodes/vy20BglGWOKXmP5zs0OGQn6DWA7depqY?corpId=ding8ffc70a4ef94915f35c2f4657eb6378f&utm_medium=im_card&utm_source=im)"""
 PERSONNEL_SKILL_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
+    SKILLS_ROOT
     / "ceo-personnel-communication"
     / "SKILL.md"
 )

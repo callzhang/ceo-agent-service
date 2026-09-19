@@ -4,9 +4,13 @@ from pathlib import Path
 
 import pytest
 
+from app.business_skills import bundled_business_skills_root
+
+SKILLS_ROOT = bundled_business_skills_root()
+
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_PATH = ROOT / "skills" / "ceo-sales-weekly-report" / "SKILL.md"
+SKILL_PATH = SKILLS_ROOT / "ceo-sales-weekly-report" / "SKILL.md"
 FEATURES_PATH = ROOT / "data" / "config" / "skill-features.json"
 
 

@@ -11,6 +11,7 @@ from app.store import AutoReplyStore
 
 MINUTES_SYNC_MIGRATION_KEY = "ceo-minutes-sync-daily-v1"
 MINUTES_ACCESS_MIGRATION_KEY = "ceo-minutes-access-daily-v1"
+WEEKLY_REPORT_MIGRATION_KEY = "ceo-weekly-report-saturday-v1"
 WEEKLY_OKR_MIGRATION_KEY = "weekly-okr-report-sunday-v1"
 WEEKLY_OKR_SERVICE_COMMAND = "weekly-okr-report"
 DINGTALK_MESSAGE_MIGRATION_KEY = "dingtalk-message-check-v1"
@@ -51,6 +52,12 @@ SCHEDULED_TASK_DEFAULT_COPY = {
     EMAIL_MESSAGE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="分类新邮件",
         description="发现已配置未分类入口中的新未读邮件后，由 Agent 按邮件分类规则判断业务类别和重要性；分类结果再由现有执行队列按邮箱策略处理。",
+        old_name="",
+        old_description="",
+    ),
+    WEEKLY_REPORT_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="准备 CEO 管理周报",
+        description="按本周的听记、群消息和四条业务线来源报告整理 CEO 管理周报草稿，核对上期未结问题，产出可校验的报告数据；发布到钉钉文档需要 Derek 明确授权，本任务不自行发布。",
         old_name="",
         old_description="",
     ),
@@ -296,6 +303,9 @@ def seed_scheduled_tasks(
         working_directory=working_directory,
         now=now,
     )
+    weekly_report = _seed_weekly_report_task(
+        store=store, options=options, working_directory=working_directory, now=now
+    )
     minutes_access = _seed_minutes_access_task(
         store=store, options=options, working_directory=working_directory, now=now
     )
@@ -317,6 +327,7 @@ def seed_scheduled_tasks(
             oa,
             meeting_todos,
             weekly_okr,
+            weekly_report,
             minutes_access,
             minutes,
             follow_up_delivery,
@@ -749,6 +760,58 @@ def _seed_minutes_task(
         command="sync-minutes-once",
         cron_expression="0 0 20 * * *",
         timezone_name="Asia/Shanghai",
+        enabled=True,
+        now=now,
+    )
+
+
+WEEKLY_REPORT_PROMPT = (
+    "按 $ceo-weekly-report 准备本周的 CEO 管理周报：建立本期运行目录，盘点本周可访问的 "
+    "$dingtalk-minutes 听记与 $dingtalk-chat 群消息，读取四条业务线来源报告，核对上期未结问题，"
+    "起草七段式报告数据并跑通校验。发布到钉钉文档需要 Derek 明确授权，本轮只准备到可发布状态并"
+    "汇报缺失证据与需要他决策的事项，不要执行写入。"
+)
+
+
+def _seed_weekly_report_task(
+    *,
+    store: AutoReplyStore,
+    options: ScheduledTaskOptionService,
+    working_directory: Path,
+    now: datetime | None,
+) -> ScheduledTask:
+    """Seed the weekly CEO management report as an Agent task.
+
+    Unlike the minutes upkeep, this is judgement throughout: which meetings
+    matter, what the evidence supports, which deviation needs a decision. It
+    prepares and stops, because the Skill requires Derek's explicit
+    authorization before the DingTalk document is written.
+    """
+    del working_directory
+    existing = _existing_task(store, WEEKLY_REPORT_MIGRATION_KEY, now=now)
+    if existing is not None:
+        return existing
+    skill_refs = _consumer_skill_refs(
+        options,
+        managed=("ceo-weekly-report",),
+        operation=("dingtalk-minutes", "dingtalk-chat"),
+    )
+    runtime_options = options.list_runtime_options()
+    if not runtime_options:
+        raise ValueError("no runtime is configured for the weekly report")
+    runtime_id = next(
+        (option.route_name for option in runtime_options if option.available),
+        runtime_options[0].route_name,
+    )
+    return store.create_scheduled_task(
+        migration_key=WEEKLY_REPORT_MIGRATION_KEY,
+        name=_default_copy(WEEKLY_REPORT_MIGRATION_KEY).name,
+        description=_default_copy(WEEKLY_REPORT_MIGRATION_KEY).description,
+        prompt=WEEKLY_REPORT_PROMPT,
+        runtime_id=runtime_id,
+        cron_expression="0 0 12 * * 6",
+        timezone_name="Asia/Shanghai",
+        skill_refs=skill_refs,
         enabled=True,
         now=now,
     )

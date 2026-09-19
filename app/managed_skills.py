@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from pathlib import Path
 
 from app.business_skills import (
+    bundled_business_skills_root,
     BUNDLED_BUSINESS_SKILL_NAMES,
     MANAGED_BY,
     BusinessSkillValidationError,
@@ -124,12 +125,14 @@ FEEDBACK_ITERATION_SKILL_NAME = "ceo-feedback-iteration"
 WECHAT_SKILL_NAME = "ceo-wechat"
 EMAIL_CLASSIFIER_SKILL_NAME = "ceo-email-classifier"
 MINUTES_SYNC_SKILL_NAME = "ceo-minutes-sync"
+WEEKLY_REPORT_SKILL_NAME = "ceo-weekly-report"
 REPOSITORY_MANAGED_SKILL_NAMES = (
     *BUNDLED_BUSINESS_SKILL_NAMES,
     FEEDBACK_ITERATION_SKILL_NAME,
     WECHAT_SKILL_NAME,
     EMAIL_CLASSIFIER_SKILL_NAME,
     MINUTES_SYNC_SKILL_NAME,
+    WEEKLY_REPORT_SKILL_NAME,
 )
 
 # Skills the service depends on that live only in the runtime tree: they have no
@@ -153,7 +156,7 @@ def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
     business = tuple(
         (skill.name, skill.content) for skill in load_bundled_business_skills()
     )
-    repository_skills_root = Path(__file__).resolve().parents[1] / "skills"
+    repository_skills_root = bundled_business_skills_root()
 
     def load_runtime_skill(name: str) -> str:
         source_path = repository_skills_root / name / "SKILL.md"
@@ -175,6 +178,7 @@ def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
         (WECHAT_SKILL_NAME, load_runtime_skill(WECHAT_SKILL_NAME)),
         (EMAIL_CLASSIFIER_SKILL_NAME, load_runtime_skill(EMAIL_CLASSIFIER_SKILL_NAME)),
         (MINUTES_SYNC_SKILL_NAME, load_runtime_skill(MINUTES_SYNC_SKILL_NAME)),
+        (WEEKLY_REPORT_SKILL_NAME, load_runtime_skill(WEEKLY_REPORT_SKILL_NAME)),
     )
 
 

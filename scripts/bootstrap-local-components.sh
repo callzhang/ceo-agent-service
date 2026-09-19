@@ -230,6 +230,9 @@ ensure_nvwa() {
 }
 
 ensure_ceo_business_skills() {
+  # ~/.agents/skills is where the Skills are authored, so there is no
+  # repository copy to install from any more. A fresh machine gets them from
+  # the shared Skills library; this step reports whether they are present.
   local detail
   if [[ ! -x "${CEO_PYTHON}" ]]; then
     record "ceo-business-skills" "failed" "missing central Conda Python interpreter: ${CEO_PYTHON}"
@@ -240,18 +243,25 @@ ensure_ceo_business_skills() {
     return
   fi
   if detail="$(
-    PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" "${CEO_PYTHON}" - "${HOME}/.agents/skills" 2>&1 <<'PY'
-from pathlib import Path
-import sys
+    PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" "${CEO_PYTHON}" - 2>&1 <<'SKILLCHECK'
+from app.business_skills import (
+    BUNDLED_BUSINESS_SKILL_NAMES,
+    bundled_business_skills_root,
+)
 
-from app.business_skills import BusinessSkillError, install_bundled_business_skills
-
-try:
-    installed = install_bundled_business_skills(Path(sys.argv[1]))
-except BusinessSkillError as exc:
-    raise SystemExit(str(exc))
-print("installed " + ", ".join(item.name for item in installed))
-PY
+root = bundled_business_skills_root()
+missing = [
+    name
+    for name in BUNDLED_BUSINESS_SKILL_NAMES
+    if not (root / name / "SKILL.md").is_file()
+]
+if missing:
+    raise SystemExit(
+        f"missing business Skills in {root}: " + ", ".join(missing)
+        + "; install them from the shared Skills library"
+    )
+print(f"present in {root}: " + ", ".join(BUNDLED_BUSINESS_SKILL_NAMES))
+SKILLCHECK
   )"; then
     record "ceo-business-skills" "done" "${detail}"
   else

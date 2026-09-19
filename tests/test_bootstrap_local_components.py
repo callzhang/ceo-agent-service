@@ -12,9 +12,25 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "bootstrap-local-components.sh"
 
 
+
+def _seed_business_skills(home: Path) -> None:
+    """Put the Skills where they are authored: ~/.agents/skills."""
+    from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES
+
+    root = home / ".agents" / "skills"
+    for name in BUNDLED_BUSINESS_SKILL_NAMES:
+        path = root / name / "SKILL.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"---\nname: {name}\ndescription: test\nmetadata:\n"
+            "  managed_by: ceo-agent-service\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+
 def test_bootstrap_business_skill_selector_installs_only_business_skills(
     tmp_path: Path,
 ):
+    _seed_business_skills(tmp_path)
     env = _controlled_env(tmp_path, tmp_path / "bin")
 
     completed = subprocess.run(
@@ -33,12 +49,15 @@ def test_bootstrap_business_skill_selector_installs_only_business_skills(
         "ceo-business-skills"
     ]
     assert "terminal-notifier" not in completed.stdout
-    installed = tmp_path / ".agents" / "skills"
-    assert len(list(installed.glob("ceo-*/SKILL.md"))) == 8
+    # The Skills are authored in ~/.agents/skills, so the step reports whether
+    # they are present rather than installing a repository copy that no longer
+    # exists. A machine without them is told to install the Skills library.
+    assert "present in" in payload["components"][0]["detail"]
     assert not (tmp_path / ".codex" / "skills").exists()
 
 
 def test_bootstrap_default_json_uses_controlled_components(tmp_path: Path):
+    _seed_business_skills(tmp_path)
     bin_dir = tmp_path / "bin"
     env = _controlled_env(tmp_path, bin_dir)
     _write_executable(bin_dir / "terminal-notifier", "#!/bin/sh\nexit 0\n")
@@ -71,9 +90,14 @@ def test_bootstrap_default_json_uses_controlled_components(tmp_path: Path):
 
 
 def test_bootstrap_business_skill_conflict_fails_closed(tmp_path: Path):
+    """A machine missing the Skills is told where to get them.
+
+    They are authored in ~/.agents/skills and no longer copied from this
+    repository, so the step can only report their absence.
+    """
+    _seed_business_skills(tmp_path)
     target = tmp_path / ".agents" / "skills" / "ceo-calendar-invite" / "SKILL.md"
-    target.parent.mkdir(parents=True)
-    target.write_text("user-owned content\n", encoding="utf-8")
+    target.unlink()
     env = _controlled_env(tmp_path, tmp_path / "bin")
 
     completed = subprocess.run(
@@ -90,7 +114,7 @@ def test_bootstrap_business_skill_conflict_fails_closed(tmp_path: Path):
     assert payload["status"] == "failed"
     assert payload["components"][0]["name"] == "ceo-business-skills"
     assert "ceo-calendar-invite" in payload["components"][0]["detail"]
-    assert target.read_text(encoding="utf-8") == "user-owned content\n"
+    assert "shared Skills library" in payload["components"][0]["detail"]
 
 
 @pytest.mark.parametrize(
@@ -201,7 +225,9 @@ printf 'installed controlled skills\n'
     assert completed.returncode == 0, completed.stderr
     invocations = log_path.read_text(encoding="utf-8").splitlines()
     assert invocations[0].startswith("-c ")
-    assert invocations[1] == f"- {home / '.agents' / 'skills'}"
+    # The check reads the Skills root itself; it is no longer given a target
+    # directory to install into.
+    assert invocations[1] == "-"
 
 
 def test_bootstrap_json_retains_complete_multiline_failure(tmp_path: Path):
@@ -242,6 +268,7 @@ exit 1
 def test_bootstrap_json_uses_configured_conda_python_without_python3_on_path(
     tmp_path: Path,
 ):
+    _seed_business_skills(tmp_path / "home")
     env = _shell_only_env(tmp_path / "home", tmp_path / "bin")
     env["CEO_PYTHON"] = sys.executable
 

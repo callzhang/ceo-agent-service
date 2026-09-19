@@ -1969,8 +1969,10 @@ def test_scheduled_service_trigger_persists_consumer_context_on_new_reply_task(
                 "scan-meetings-once",
                 "scan-oa-approvals",
                 "scan-meeting-todos-once",
+                "request-minutes-access",
                 "sync-minutes-once",
                 "weekly-okr-report",
+                "process-follow-ups",
             )
         }
     )

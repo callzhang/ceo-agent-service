@@ -6,14 +6,19 @@ import pytest
 from app.task_agent import build_task_agent_prompt
 from app.task_models import TaskAgentDecision, TodoChange
 from tests.e2e.test_task7_work_tracking_semantics_live import (
+
     _assert_assigned_owners_are_supported,
     _verify_bound_follow_up,
     _verify_speaker_not_owner,
 )
 
+from app.business_skills import bundled_business_skills_root
+
+SKILLS_ROOT = bundled_business_skills_root()
+
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_PATH = ROOT / "skills" / "ceo-work-tracking" / "SKILL.md"
+SKILL_PATH = SKILLS_ROOT / "ceo-work-tracking" / "SKILL.md"
 
 
 def _skill_text() -> str:

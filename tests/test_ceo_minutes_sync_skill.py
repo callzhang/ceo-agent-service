@@ -9,9 +9,13 @@ from typing import Any
 import pytest
 import yaml
 
+from app.business_skills import bundled_business_skills_root
+
+SKILLS_ROOT = bundled_business_skills_root()
+
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_PATH = ROOT / "skills" / "ceo-minutes-sync" / "SKILL.md"
+SKILL_PATH = SKILLS_ROOT / "ceo-minutes-sync" / "SKILL.md"
 SCENARIOS_PATH = ROOT / "tests" / "fixtures" / "ceo_minutes_sync_scenarios.json"
 
 
@@ -177,21 +181,20 @@ def test_recorded_dws_scenario_matches_executable_reference_contract(case: str) 
 
 
 def test_real_contract_paths_and_success_conditions_are_documented() -> None:
-    text = _skill_text()
+    """The Skill documents the commands, not a procedure to re-implement.
 
-    for path in (
-        "`data.minutes`",
-        "`basic.result`",
-        "`summary.result`",
-        "`data.paragraphList`",
-        "`data.complete=true`",
-        "`meta.pagination.endpoint_exhausted=true`",
-    ):
-        assert path in text
-    assert "detail is the top-level envelope" in text
-    assert "failureCount=0" in text
-    assert "permission failures enter the restricted-item decision first" in text
-    assert "source_version" in text and "optional" in text
+    It described a provider envelope and a manual archive procedure until
+    2026-09-18, when the work moved into two service commands; a Skill still
+    describing the old procedure invites an Agent to do the work by hand.
+    """
+    text = " ".join(_skill_text().split())
+
+    for command in ("ceo-agent request-minutes-access", "ceo-agent sync-minutes-once"):
+        assert command in text
+    assert "Applied, waiting for processing" in text
+    assert "`dws minutes +apply-permission`" in text
+    assert "never stops early at an already-archived minute" in text
+    assert "admin role" in text
 
 
 def test_reference_ledger_is_mutually_exclusive_and_conservative() -> None:
@@ -215,4 +218,3 @@ def test_no_version_fields_still_produce_honest_fetch_evidence() -> None:
     assert "source_version" not in encoded
     assert "source_updated_at" not in encoded
     assert _evaluate(scenario) == _result("synced", True, False, "fresh_fetch")
-    assert "does not establish a remote revision or continued currency after that fetch" in _skill_text()

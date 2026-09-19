@@ -11,11 +11,16 @@ from app.business_skills import (
     sync_bundled_skill,
 )
 from app.skill_files import (
+
     SkillFileConflict,
     SkillFileService,
     SkillFileSyncError,
     SkillFileValidationError,
 )
+
+from app.business_skills import bundled_business_skills_root
+
+SKILLS_ROOT = bundled_business_skills_root()
 
 
 def _write_skill(root: Path, name: str, *, content: str | None = None) -> Path:
@@ -209,7 +214,7 @@ def test_sync_installs_the_whole_skill_package_but_not_caches_or_links(tmp_path:
 def test_sync_installs_the_real_wechat_package_with_its_scripts(tmp_path: Path):
     """Production: ceo-wechat's SKILL.md tells the Agent to run scripts that the
     installer never copied, so an installed package lacked its own commands."""
-    repository = Path(__file__).resolve().parents[1] / "skills" / "ceo-wechat"
+    repository = SKILLS_ROOT /  "ceo-wechat"
     runtime_root = tmp_path / "runtime"
 
     sync_bundled_skill(

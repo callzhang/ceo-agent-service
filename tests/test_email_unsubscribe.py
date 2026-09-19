@@ -34,6 +34,7 @@ from app.email_browser_profile import (
 )
 from app.store import ReplyTask
 from app.email_unsubscribe import (
+
     ConnectedMailboxOtp,
     EmailOtpChallenge,
     EmailUnsubscribeEffect,
@@ -76,6 +77,10 @@ from app.email_unsubscribe import (
     _terminal_result,
     _validated_restored_audit_session,
 )
+
+from app.business_skills import bundled_business_skills_root
+
+SKILLS_ROOT = bundled_business_skills_root()
 
 
 def test_connected_mailbox_otp_requires_exact_recipient_site_context_and_window() -> None:
@@ -1778,7 +1783,7 @@ def test_redacted_receipt_rejects_credentials_and_urls(
 
 def test_mail_review_skill_keeps_review_boundaries_and_adds_unsubscribe_rules() -> None:
     skill = (
-        Path(__file__).resolve().parents[1] / "skills" / "ceo-mail-review" / "SKILL.md"
+        SKILLS_ROOT /  "ceo-mail-review" / "SKILL.md"
     ).read_text(encoding="utf-8")
     prose = " ".join(skill.split())
 

@@ -253,7 +253,18 @@ def _rollback_swap(
 
 
 def bundled_business_skills_root() -> Path:
-    return Path(__file__).resolve().parents[1] / "skills"
+    """Where the business Skills are authored.
+
+    `~/.agents/skills` is the source of truth for installed Skills on this
+    machine, so the service reads its baseline from there rather than keeping a
+    second copy in this repository. Two copies meant an edit could land in the
+    one nothing loads, and a publish to the shared Skills library could
+    overwrite it.
+    """
+    return Path(
+        os.environ.get("CEO_SKILLS_ROOT", "").strip()
+        or Path.home() / ".agents" / "skills"
+    ).expanduser()
 
 
 def installed_business_skill_catalog(
@@ -568,6 +579,17 @@ def install_bundled_business_skills(
     target_root = Path(target_root).expanduser()
     _validate_install_target(target_root)
     skills = load_bundled_business_skills()
+    source_root = bundled_business_skills_root()
+    if target_root.resolve(strict=False) == source_root.resolve(strict=False):
+        # The Skills are authored where they are installed, so installing them
+        # into their own directory would copy each file onto itself. Report
+        # what is there instead of staging a swap that can only lose data.
+        return tuple(
+            InstalledBusinessSkill(
+                name=skill.name, install_path=target_root / skill.name / "SKILL.md"
+            )
+            for skill in skills
+        )
     target_root_existed = target_root.exists()
 
     # Ownership and symlink checks happen before staging creates anything.

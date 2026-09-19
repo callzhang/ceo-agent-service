@@ -154,6 +154,10 @@ FIXED_DISCOVERY_KEYS = frozenset(
 
 
 READABLE_BUILTIN_COPY = {
+    "ceo-weekly-report-saturday-v1": (
+        "准备 CEO 管理周报",
+        "按本周的听记、群消息和四条业务线来源报告整理 CEO 管理周报草稿，核对上期未结问题，产出可校验的报告数据；发布到钉钉文档需要 Derek 明确授权，本任务不自行发布。",
+    ),
     "ceo-minutes-access-daily-v1": (
         "申请读不到的钉钉 AI 听记",
         "读取听记管理后台，对本账号读不到的听记逐条在其页面提交查看权限申请；对方同意后由听记下载任务归档。需要组织管理员身份和一份已登录的后台会话。",
@@ -896,9 +900,22 @@ def test_every_fixed_discovery_check_is_a_service_command(
         ]
         assert task.enabled is True
 
-    # Every seeded task is a service command. The weekly command owns its
-    # browser reads and Agent analysis under one tracked service run.
-    assert all(task.command for task in tasks)
+    # Every discovery check is a service command. The weekly management report
+    # is the one Agent task: which meetings matter and what the evidence
+    # supports is judgement, not a fixed rule.
+    weekly_report = _task_by_key(tasks, "ceo-weekly-report-saturday-v1")
+    assert all(
+        task.command
+        for task in tasks
+        if task.migration_key != weekly_report.migration_key
+    )
+    assert weekly_report.command == "" and weekly_report.runtime_id
+    assert weekly_report.cron_expression == "0 0 12 * * 6"
+    assert [ref.skill_name for ref in weekly_report.skill_refs] == [
+        "ceo-weekly-report",
+        "dingtalk-minutes",
+        "dingtalk-chat",
+    ]
     minutes = _task_by_key(tasks, "ceo-minutes-sync-daily-v1")
     assert minutes.command == "sync-minutes-once"
     assert minutes.skill_refs == ()
@@ -1411,9 +1428,12 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         assert reply.channel == "scheduled"
         assert reply.trigger_text == task.prompt
         assert task.name in reply.trigger_message_json
-    # Every seed is a service command, so a Cron tick creates no scheduled
-    # reply task at all: the commands run in-process on their own triggers.
-    assert store.list_reply_tasks(channel="scheduled") == []
+    # Every discovery check is a service command running in-process on its own
+    # trigger, so a Cron tick creates exactly one scheduled reply task: the
+    # Agent turn that prepares the weekly management report.
+    weekly_report = _task_by_key(tasks, "ceo-weekly-report-saturday-v1")
+    scheduled = store.list_reply_tasks(channel="scheduled")
+    assert [task.trigger_text for task in scheduled] == [weekly_report.prompt]
 
 
 def test_seed_is_idempotent_and_preserves_user_edits(tmp_path: Path) -> None:
@@ -1462,10 +1482,13 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
         store=store, options=options, working_directory=tmp_path, now=NOW
     )
 
-    assert len(tasks) == 12
+    assert len(tasks) == 13
+    weekly_report = _task_by_key(tasks, "ceo-weekly-report-saturday-v1")
     for task in tasks:
-        assert task.command, task.migration_key
         assert task.enabled is True
+        if task.migration_key == weekly_report.migration_key:
+            continue
+        assert task.command, task.migration_key
         if task.command in {
             "sync-minutes-once",
             "request-minutes-access",
