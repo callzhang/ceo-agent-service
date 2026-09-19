@@ -3155,7 +3155,11 @@ def test_failed_reply_task_follows_latest_terminal_trigger_attempt(
     updated = store.get_reply_task(task.id)
     assert updated is not None
     assert updated.status == expected_task_status
-    assert updated.error == ""
+    # The outcome is settled, but why it failed on the way is kept. Clearing
+    # it is what made the weekly report's lost week unreadable: the task ended
+    # `skipped` with an empty error and nothing said a provider overload had
+    # cut it short.
+    assert updated.error == "reconciled_from_failed:codex_result_missing"
 
 
 def test_skip_failed_reply_task_with_terminal_no_action_run(tmp_path: Path) -> None:

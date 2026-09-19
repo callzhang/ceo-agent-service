@@ -21463,10 +21463,21 @@ class AutoReplyStore:
                 task_status = TERMINAL_REPLY_ATTEMPT_TASK_STATUSES[
                     str(row["send_status"])
                 ]
+                # Keep why it failed. Clearing the error here is what made
+                # the weekly report's lost week unreadable: the task ended
+                # `skipped` with an empty error, and nothing in its record
+                # said a provider overload had cut it short. The outcome is
+                # settled either way; the reason is the only thing that tells
+                # anyone whether it settled the way it should have.
                 cursor = db.execute(
                     """
                     update reply_tasks
-                    set status=?, error='', available_at='', locked_at=null,
+                    set status=?, available_at='', locked_at=null,
+                        error=case
+                            when trim(coalesce(error, ''))=''
+                            then ''
+                            else 'reconciled_from_failed:' || error
+                        end,
                         updated_at=current_timestamp
                     where id=? and status='failed' and execution_generation=?
                     """,
