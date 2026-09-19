@@ -422,12 +422,14 @@ def test_sent_and_draft_are_absent(folder_role):
     assert snapshot.observations == ()
 
 
-def test_ordinary_category_requires_service_processing_even_when_folder_is_truth():
+def test_a_bound_folder_labels_mail_the_service_never_processed():
+    """The binding is the owner's filing rule, whoever moved the message."""
+
     snapshot = _snapshot(
         [_message("unprocessed-work", processed_by_email_service=False)]
     )
 
-    assert snapshot.observations == ()
+    assert snapshot.observations[0].category_key == "work"
 
 
 def test_inactive_folder_binding_has_no_category_label():

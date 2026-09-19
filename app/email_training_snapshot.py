@@ -813,10 +813,11 @@ def _candidate(value: Mapping[str, object], *, observed_at: str) -> _Candidate |
     if truth.state is EmailFolderTruthState.JUNK:
         category = "junk"
     elif truth.state is EmailFolderTruthState.CATEGORIZED:
-        # Ordinary labels only cover mail this service processed; all-date junk is
-        # the deliberate exception because the Agent processes unread mail only.
-        if value.get("processed_by_email_service") is not True:
-            return None
+        # A folder bound to a category is the owner's own filing rule, so mail
+        # sitting in it is evidence of that category whoever moved it there.
+        # The daily spam digest is the case that forced this: 109 of them sit
+        # in the notification folder, none had ever reached the training set,
+        # and the model called them junk because their body is a list of spam.
         category = truth.category_key
     else:
         category = None
