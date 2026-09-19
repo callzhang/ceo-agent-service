@@ -1064,3 +1064,37 @@ def test_a_body_cut_on_whitespace_rebuilds_to_itself():
     twice = canonical_model_input({**json.loads(once), "unsubscribe_features": json.loads(once)["unsubscribe"]})
 
     assert once == twice
+
+
+def test_a_crowded_mailing_still_shows_its_sender_and_subject():
+    """A 497-recipient mailing once pushed both out of the embedding budget."""
+
+    from app.email_embedding_cache import EMBEDDING_INPUT_MAX_CHARS, embedding_input_text
+    from app.email_training_snapshot import (
+        MAX_BODY_CHARACTERS,
+        MAX_LISTED_ADDRESSES,
+        canonical_model_input,
+    )
+
+    fields = {
+        "sender": {"name": "Announcements", "email": "news@example.test"},
+        "to_recipients": [
+            {"name": "", "email": f"reader{index}@example.test"} for index in range(497)
+        ],
+        "cc_recipients": [],
+        "subject": "quarterly numbers",
+        "body": "detail " * MAX_BODY_CHARACTERS,
+        "headers": {"message-id": "<crowd@example.test>"},
+        "attachments": [],
+    }
+
+    embedded = embedding_input_text(canonical_model_input(fields))
+    payload = json.loads(embedded)
+
+    assert len(embedded) <= EMBEDDING_INPUT_MAX_CHARS
+    assert payload["sender"]["email"] == "news@example.test"
+    assert payload["subject"] == "quarterly numbers"
+    # The crowd is still legible as a count, without spelling out every address.
+    assert payload["to_recipient_count"] == 497
+    assert len(payload["to_recipients"]) == MAX_LISTED_ADDRESSES
+    assert len(payload["body"]) == MAX_BODY_CHARACTERS

@@ -14,7 +14,11 @@ from pathlib import Path
 import numpy as np
 
 
-EMBEDDING_INPUT_MAX_CHARS = 2_000
+# The single budget for embedded text. A model input is built to fit inside it
+# (see MAX_BODY_CHARACTERS), so this cut is a backstop rather than the reason
+# any field goes missing: a blind cut used to drop whatever sorted after the
+# body, which cost a third of the corpus its sender and subject.
+EMBEDDING_INPUT_MAX_CHARS = 4_096
 
 
 def embedding_input_text(value: str) -> str:

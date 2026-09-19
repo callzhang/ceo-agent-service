@@ -171,9 +171,13 @@ def _safe_head_format(value: object) -> str:
 
 
 def _safe_model_input_schema_version(value: object) -> str:
-    """Project either immutable, published input schema without conflating them."""
+    """Project any immutable, published input schema without conflating them."""
 
-    if value not in {"email-folder-model-input-v2", "email-folder-model-input-v3"}:
+    if value not in {
+        "email-folder-model-input-v2",
+        "email-folder-model-input-v3",
+        "email-folder-model-input-v4",
+    }:
         raise ValueError("input_schema_version is invalid")
     return str(value)
 

@@ -14,6 +14,7 @@ import pytest
 
 import app.email_store as email_store_module
 from app.email_training_snapshot import (
+    MODEL_INPUT_SCHEMA_VERSION,
     build_folder_training_snapshot,
     build_selected_training_snapshot,
 )
@@ -5566,7 +5567,7 @@ def test_agent_correction_persists_its_durable_agent_result(tmp_path: Path):
     # A notification is filed and skimmed, so it is never important evidence
     # even when the Agent flagged it.
     assert training_records[0]["important"] is False
-    assert training_input["input_schema_version"] == "email-folder-model-input-v3"
+    assert training_input["input_schema_version"] == MODEL_INPUT_SCHEMA_VERSION
     assert training_input["subject"] == "Need a decision"
     assert training_input["body"] == "__subject__need a decision"
     assert training_input["attachments"] == [

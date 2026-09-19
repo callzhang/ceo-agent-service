@@ -26,10 +26,11 @@ from app.email_important import (
     important_effective,
     important_training_label,
 )
+from app.email_embedding_cache import EMBEDDING_INPUT_MAX_CHARS
 from app.email_provider_folders import FolderRole, ProviderFolder
 
 
-MODEL_INPUT_SCHEMA_VERSION = "email-folder-model-input-v3"
+MODEL_INPUT_SCHEMA_VERSION = "email-folder-model-input-v4"
 TRAINING_SNAPSHOT_VERSION = "email-folder-training-snapshot-v1"
 SELECTED_TRAINING_SNAPSHOT_VERSION = "email-selected-training-snapshot-v1"
 FOLDER_SNAPSHOT_ID_PREFIX = "email-folder-snapshot-"
@@ -43,6 +44,11 @@ TRAINING_SNAPSHOT_ID_PATTERN = re.compile(
     + r")[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{12}"
 )
 MAX_BODY_CHARACTERS = 2_048
+# One mailing carried 497 recipients: spelled out, the list alone ran past the
+# whole embedding budget and left no room for the body. The count is the signal
+# there, not the addresses, so the list is bounded and the count kept beside it.
+MAX_LISTED_ADDRESSES = 8
+MAX_LISTED_ATTACHMENTS = 8
 FOLDER_TRAINING_CATEGORY_SAMPLE_LIMIT = 500
 _APPROVED_HEADERS = frozenset(
     {
@@ -919,18 +925,25 @@ def _model_input(value: Mapping[str, object]) -> tuple[str, str, str | None]:
     )
     if not meaningful:
         raise FolderTrainingSnapshotError("model input is empty")
+    # Declared shortest-and-strongest first, with the body last, because the
+    # embedding budget is spent in this order: whatever a cut reaches is the
+    # tail of the body rather than the sender or the subject.
     payload = {
         "input_schema_version": MODEL_INPUT_SCHEMA_VERSION,
         "sender": sender,
-        "to_recipients": to_recipients,
-        "cc_recipients": cc_recipients,
         "subject": subject,
-        "body": body,
-        "headers": headers,
+        "to_recipient_count": len(to_recipients),
+        "to_recipients": to_recipients[:MAX_LISTED_ADDRESSES],
+        "cc_recipient_count": len(cc_recipients),
+        "cc_recipients": cc_recipients[:MAX_LISTED_ADDRESSES],
         "unsubscribe": unsubscribe,
         "attachment_count": len(attachments),
-        "attachments": attachments,
+        "attachments": attachments[:MAX_LISTED_ATTACHMENTS],
+        "headers": headers,
+        "body": body,
     }
+    body = _body_within_budget(payload, body)
+    payload["body"] = body
     canonical_body = " ".join(body.split()).casefold()
     body_digest = sha256(canonical_body.encode("utf-8")).hexdigest()
     sender_key = sender["email"].casefold() or sender["name"].casefold()
@@ -938,7 +951,24 @@ def _model_input(value: Mapping[str, object]) -> tuple[str, str, str | None]:
     signature = None
     if sender_key and subject_template:
         signature = deterministic_payload_digest([sender_key, subject_template])
-    return _canonical_json(payload), body_digest, signature
+    return _model_input_json(payload), body_digest, signature
+
+
+def _model_input_json(payload: Mapping[str, object]) -> str:
+    """Serialize in declared order, so the field priority survives a cut."""
+    return json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    )
+
+
+def _body_within_budget(payload: Mapping[str, object], body: str) -> str:
+    """Shrink the body until the whole input fits the one embedding budget."""
+    overflow = len(_model_input_json(payload)) - EMBEDDING_INPUT_MAX_CHARS
+    if overflow <= 0:
+        return body
+    return _normalized_text(
+        body[: max(0, len(body) - overflow)], "body", preserve_lines=True
+    )
 
 
 def _address(value: object, field: str) -> dict[str, str]:
