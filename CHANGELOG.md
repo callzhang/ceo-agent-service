@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- 2026-09-19: A delivered meeting conclusion reaches Memory in about three
+  seconds instead of ninety. Recording one calls a single connector tool with
+  arguments the service already decided, and running that through an Agent turn
+  cost 74-95 seconds each and made Memory depend on a model route — when the
+  route paused, conclusions stopped being recorded for reasons unrelated to
+  Memory. The service now calls the connector directly, authenticated by its own
+  OAuth client: the connector issues no API keys, so `authorize-memory-connector`
+  registers a public client once and keeps its refresh token. It never borrows
+  another tool's credential, which expires on that tool's schedule. Missing
+  authorization fails the event immediately, because retrying cannot create a
+  credential.
+
 - 2026-09-18: Meeting Memory writes stop being capped by the queue batch size.
   They run inside the ten-minute meeting scan, and the pass took
   `settings.max_batches` items — `CEO_MAX_BATCHES=4` — so at most four

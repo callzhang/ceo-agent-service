@@ -65,6 +65,7 @@ from app.feedback_spike import (
 )
 from app.external_retry import is_external_dependency_error
 from app.message_split import split_dingtalk_text
+from app.service_heartbeat import run_service_heartbeat_loop
 from app.service_message_sender import ServiceMessageSender
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.notification import send_macos_notification
@@ -355,6 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh-okr-archive",
         "scan-task-sources",
         "scan-meeting-todos-once",
+        "authorize-memory-connector",
         "renew-minutes-session",
         "request-minutes-access",
         "sync-minutes-once",
@@ -2237,6 +2239,78 @@ def sync_minutes_once_command(settings: WorkerSettings) -> int:
     return result.synced
 
 
+def authorize_memory_connector_command(settings: WorkerSettings) -> int:
+    """Authorize this service with the Memory connector, once.
+
+    The connector issues no API keys, so the service registers its own public
+    OAuth client and keeps its own refresh token. It never borrows the
+    credential another tool holds: that one expires on that tool's schedule and
+    is refreshed by it.
+    """
+    del settings
+    import http.server
+    import secrets
+    import threading
+    from urllib.parse import parse_qs, urlparse
+
+    from app.memory_connector_client import (
+        authorization_url,
+        credential_path,
+        exchange_code,
+        pkce_pair,
+        register_client,
+        save_credential,
+    )
+
+    received: dict[str, str] = {}
+
+    class Callback(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - http.server's own spelling
+            query = parse_qs(urlparse(self.path).query)
+            received["code"] = (query.get("code") or [""])[0]
+            received["state"] = (query.get("state") or [""])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write("Authorized. You can close this tab.".encode("utf-8"))
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Callback)
+    redirect_uri = f"http://127.0.0.1:{server.server_address[1]}/callback"
+    client_id = register_client(redirect_uri=redirect_uri)
+    verifier, challenge = pkce_pair()
+    state = secrets.token_urlsafe(16)
+    print("authorize-memory-connector open this URL to authorize:", flush=True)
+    print(
+        authorization_url(
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_challenge=challenge,
+            state=state,
+        ),
+        flush=True,
+    )
+    thread = threading.Thread(target=server.handle_request, daemon=True)
+    thread.start()
+    thread.join(timeout=300)
+    server.server_close()
+    if received.get("state") != state or not received.get("code"):
+        raise RuntimeError(
+            "authorize-memory-connector received no matching authorization code"
+        )
+    credential = exchange_code(
+        client_id=client_id,
+        code=received["code"],
+        code_verifier=verifier,
+        redirect_uri=redirect_uri,
+    )
+    path = save_credential(credential)
+    print(f"authorize-memory-connector saved={path}", flush=True)
+    return 0
+
+
 def renew_minutes_session_command(settings: WorkerSettings) -> int:
     """Renew the 听记 console session a person alone can create.
 
@@ -4106,6 +4180,15 @@ def run_service(
     dependency_gate = NetworkDependencyGate()
     components = (
         (
+            # Watches the other component threads and records that they are
+            # alive. Without it a healthy component writes nothing, so the
+            # console cannot tell "running fine" from "never started".
+            "service-heartbeat",
+            lambda: run_service_heartbeat_loop(
+                lambda: AutoReplyStore(settings.db_path)
+            ),
+        ),
+        (
             "database-backup",
             lambda: run_database_backup_loop(settings.db_path),
         ),
@@ -4728,6 +4811,8 @@ def main() -> None:
         scan_task_sources_command(settings)
     elif args.command == "scan-meeting-todos-once":
         scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)
+    elif args.command == "authorize-memory-connector":
+        authorize_memory_connector_command(settings)
     elif args.command == "renew-minutes-session":
         renew_minutes_session_command(settings)
     elif args.command == "request-minutes-access":

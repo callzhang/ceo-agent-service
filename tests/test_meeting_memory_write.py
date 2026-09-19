@@ -22,27 +22,69 @@ from app.agent_runtime_router import RoutedCodexExecutionError
 from app.store import AutoReplyStore
 
 
+from app.memory_connector_client import (
+    MemoryConnectorError,
+    MemoryConnectorNotAuthorized,
+    MemoryWriteReceipt,
+)
+
+
+class _FakeWriter:
+    """The connector call the write now makes, recorded."""
+
+    def __init__(self, error: Exception | None = None, *, errors: list | None = None):
+        self.calls: list[dict[str, object]] = []
+        self._error = error
+        self._errors = list(errors or [])
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        if self._errors:
+            raised = self._errors.pop(0)
+            if raised is not None:
+                raise raised
+        elif self._error is not None:
+            raise self._error
+        return MemoryWriteReceipt(
+            episode_uuid="meeting-memory-7", processing_status="pending"
+        )
+
+
+class _BlockingWriter:
+    """Counts how many writes overlap, to check bounded concurrency."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.active = 0
+        self.max_active = 0
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, **kwargs):
+        with self._lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            self.calls.append(kwargs)
+        try:
+            time.sleep(0.04)
+            return MemoryWriteReceipt(
+                episode_uuid="meeting-memory-7", processing_status="pending"
+            )
+        finally:
+            with self._lock:
+                self.active -= 1
+
+
 class _FakeRoutedExecution:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def execute(self, **kwargs):
+    def __call__(self, **kwargs):
         self.calls.append(kwargs)
-        return SimpleNamespace(
-            value=json.dumps(
-                {
-                    "status": "success",
-                    "memory_id": "meeting-memory-7",
-                    "retryable": False,
-                    "source_code": "",
-                    "detail": "",
-                }
-            )
-        )
+        return MemoryWriteReceipt(episode_uuid="meeting-memory-7", processing_status="pending")
 
 
 class _ActiveMemoryRuntime:
-    def execute(self, **kwargs):
+    def __call__(self, **kwargs):
         raise RoutedCodexExecutionError("runtime_attempt_active")
 
 
@@ -50,7 +92,7 @@ class _InvalidMemoryResultRuntime:
     def __init__(self, failure_code: str) -> None:
         self.failure_code = failure_code
 
-    def execute(self, **kwargs):
+    def __call__(self, **kwargs):
         raise RoutedCodexExecutionError(
             "runtime_execution_failed",
             "result_parse",
@@ -59,7 +101,7 @@ class _InvalidMemoryResultRuntime:
 
 
 class _UnexpectedMemoryRuntime:
-    def execute(self, **kwargs):
+    def __call__(self, **kwargs):
         raise AttributeError("runtime output was missing source_code")
 
 
@@ -105,24 +147,14 @@ class _BlockingMemoryRuntime:
         self.max_active = 0
         self.workload_keys: list[str] = []
 
-    def execute(self, **kwargs):
+    def __call__(self, **kwargs):
         with self._lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
             self.workload_keys.append(str(kwargs["workload_key"]))
         try:
             time.sleep(0.04)
-            return SimpleNamespace(
-                value=json.dumps(
-                    {
-                        "status": "success",
-                        "memory_id": f"memory-{kwargs['workload_key']}",
-                        "retryable": False,
-                        "source_code": "",
-                        "detail": "",
-                    }
-                )
-            )
+            return MemoryWriteReceipt(episode_uuid="memory-1", processing_status="pending")
         finally:
             with self._lock:
                 self.active -= 1
@@ -241,21 +273,19 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
     assert event["execution_generation"]
     assert event["payload_json"] == "{}"
 
-    routed = _FakeRoutedExecution()
+    writer = _FakeWriter()
     processed = process_meeting_memory_writes(
         store,
         workspace=tmp_path,
-        routed_execution=routed,
+        memory_writer=writer,
     )
 
     assert processed.processed == 1
-    assert routed.calls[0]["workload_key"] == (
-        f"meeting_memory_write_event:{event['id']}:"
-        f"{event['execution_generation']}"
-    )
-    assert (
-        'source_description set to the exact literal "本周先完成客户验证".'
-    ) in routed.calls[0]["prompt"]
+    # The connector is called with the exact payload the event carried; there
+    # is no prompt in between to restate it.
+    assert writer.calls[0]["source_description"] == "本周先完成客户验证"
+    assert writer.calls[0]["type"] == "text"
+    assert "本周先完成客户验证" in str(writer.calls[0]["data"])
     with store._connect() as db:
         written = db.execute(
             "select status, memory_id from meeting_memory_write_events where id=?",
@@ -476,7 +506,7 @@ def test_meeting_memory_processing_uses_the_configured_long_runtime_lease(
         def __init__(self) -> None:
             self.intruder_claim_count = -1
 
-        def execute(self, **_kwargs):
+        def __call__(self, **_kwargs):
             nonlocal current_time
             current_time += timedelta(seconds=3000)
             self.intruder_claim_count = len(
@@ -487,30 +517,20 @@ def test_meeting_memory_processing_uses_the_configured_long_runtime_lease(
                     lease_seconds=30,
                 )
             )
-            return SimpleNamespace(
-                value=json.dumps(
-                    {
-                        "status": "success",
-                        "memory_id": "long-runtime-memory",
-                        "retryable": False,
-                        "source_code": "",
-                        "detail": "",
-                    }
-                )
-            )
+            return MemoryWriteReceipt(episode_uuid="long-runtime-memory", processing_status="pending")
 
-    runtime = _LongRunningRuntime()
+    writer = _LongRunningRuntime()
     outcome = process_meeting_memory_writes(
         store,
         workspace=tmp_path,
-        routed_execution=runtime,
+        memory_writer=writer,
         lease_seconds=meeting_memory_write_lease_seconds(3600, 60),
         clock=clock,
     )
 
     assert outcome.completed == 1
     assert outcome.lost_lease == 0
-    assert runtime.intruder_claim_count == 0
+    assert writer.intruder_claim_count == 0
 
 
 def test_meeting_memory_lease_renewal_blocks_reclaim_during_a_long_write(
@@ -553,7 +573,7 @@ def test_meeting_memory_lease_renewal_blocks_reclaim_during_a_long_write(
         def __init__(self) -> None:
             self.intruder_claim_count = -1
 
-        def execute(self, **_kwargs):
+        def __call__(self, **_kwargs):
             advance(8)
             assert renewed.wait(timeout=1)
             advance(4)
@@ -565,23 +585,13 @@ def test_meeting_memory_lease_renewal_blocks_reclaim_during_a_long_write(
                     lease_seconds=10,
                 )
             )
-            return SimpleNamespace(
-                value=json.dumps(
-                    {
-                        "status": "success",
-                        "memory_id": "renewed-memory",
-                        "retryable": False,
-                        "source_code": "",
-                        "detail": "",
-                    }
-                )
-            )
+            return MemoryWriteReceipt(episode_uuid="renewed-memory", processing_status="pending")
 
-    runtime = _LongRunningRuntime()
+    writer = _LongRunningRuntime()
     outcome = process_meeting_memory_writes(
         store,
         workspace=tmp_path,
-        routed_execution=runtime,
+        memory_writer=writer,
         lease_seconds=10,
         lease_heartbeat_interval_seconds=0.01,
         lease_renewer=renewer,
@@ -590,7 +600,7 @@ def test_meeting_memory_lease_renewal_blocks_reclaim_during_a_long_write(
 
     assert outcome.completed == 1
     assert outcome.lost_lease == 0
-    assert runtime.intruder_claim_count == 0
+    assert writer.intruder_claim_count == 0
     assert renewal_results == [True]
     time.sleep(0.03)
     assert renewal_results == [True]
@@ -618,24 +628,14 @@ def test_meeting_memory_worker_does_not_settle_after_lease_renewal_fails(
         return False
 
     class _WaitForRenewalRuntime:
-        def execute(self, **_kwargs):
+        def __call__(self, **_kwargs):
             assert renewal_failed.wait(timeout=1)
-            return SimpleNamespace(
-                value=json.dumps(
-                    {
-                        "status": "success",
-                        "memory_id": "must-not-settle",
-                        "retryable": False,
-                        "source_code": "",
-                        "detail": "",
-                    }
-                )
-            )
+            return MemoryWriteReceipt(episode_uuid="must-not-settle", processing_status="pending")
 
     outcome = process_meeting_memory_writes(
         store,
         workspace=tmp_path,
-        routed_execution=_WaitForRenewalRuntime(),
+        memory_writer=_WaitForRenewalRuntime(),
         lease_seconds=30,
         lease_heartbeat_interval_seconds=0.01,
         lease_renewer=failed_renewer,
@@ -687,12 +687,12 @@ def test_meeting_memory_processing_uses_bounded_parallelism_and_returns_outcome(
     store = AutoReplyStore(tmp_path / "store.sqlite3")
     for index in range(3):
         _store_sent_job(store, meeting_id=f"minutes-parallel-{index}")
-    runtime = _BlockingMemoryRuntime()
+    writer = _BlockingWriter()
 
     outcome = process_meeting_memory_writes(
         store,
         workspace=tmp_path,
-        routed_execution=runtime,
+        memory_writer=writer,
         limit=3,
         concurrency=2,
     )
@@ -702,9 +702,8 @@ def test_meeting_memory_processing_uses_bounded_parallelism_and_returns_outcome(
     assert outcome.retried == 0
     assert outcome.failed == 0
     assert outcome.processed == 3
-    assert runtime.max_active == 2
-    assert len(runtime.workload_keys) == 3
-    assert len(set(runtime.workload_keys)) == 3
+    assert writer.max_active == 2
+    assert len(writer.calls) == 3
 
 
 def test_meeting_memory_does_not_claim_a_later_wave_before_it_can_start(
@@ -718,7 +717,7 @@ def test_meeting_memory_does_not_claim_a_later_wave_before_it_can_start(
         def __init__(self) -> None:
             self.statuses_while_running: list[list[str]] = []
 
-        def execute(self, **kwargs):
+        def __call__(self, **kwargs):
             with store._connect() as db:
                 self.statuses_while_running.append(
                     [
@@ -728,29 +727,19 @@ def test_meeting_memory_does_not_claim_a_later_wave_before_it_can_start(
                         )
                     ]
                 )
-            return SimpleNamespace(
-                value=json.dumps(
-                    {
-                        "status": "success",
-                        "memory_id": f"memory-{kwargs['workload_key']}",
-                        "retryable": False,
-                        "source_code": "",
-                        "detail": "",
-                    }
-                )
-            )
+            return MemoryWriteReceipt(episode_uuid="memory-1", processing_status="pending")
 
-    runtime = _InspectingRuntime()
+    writer = _InspectingRuntime()
     outcome = process_meeting_memory_writes(
         store,
         workspace=tmp_path,
-        routed_execution=runtime,
+        memory_writer=writer,
         limit=3,
         concurrency=1,
     )
 
     assert outcome.completed == 3
-    assert runtime.statuses_while_running[0] == ["processing", "pending", "pending"]
+    assert writer.statuses_while_running[0] == ["processing", "pending", "pending"]
 
 
 def test_later_meeting_memory_wave_leases_from_its_actual_start_time(
@@ -770,7 +759,7 @@ def test_later_meeting_memory_wave_leases_from_its_actual_start_time(
             self.second_wave_lease = ""
             self.intruder_claim_count = -1
 
-        def execute(self, **kwargs):
+        def __call__(self, **kwargs):
             nonlocal current_time
             self.calls += 1
             if self.calls == 1:
@@ -791,23 +780,13 @@ def test_later_meeting_memory_wave_leases_from_its_actual_start_time(
                         lease_seconds=30,
                     )
                 )
-            return SimpleNamespace(
-                value=json.dumps(
-                    {
-                        "status": "success",
-                        "memory_id": f"memory-{kwargs['workload_key']}",
-                        "retryable": False,
-                        "source_code": "",
-                        "detail": "",
-                    }
-                )
-            )
+            return MemoryWriteReceipt(episode_uuid="memory-1", processing_status="pending")
 
-    runtime = _AdvancingRuntime()
+    writer = _AdvancingRuntime()
     outcome = process_meeting_memory_writes(
         store,
         workspace=tmp_path,
-        routed_execution=runtime,
+        memory_writer=writer,
         clock=clock,
         limit=2,
         concurrency=1,
@@ -815,8 +794,8 @@ def test_later_meeting_memory_wave_leases_from_its_actual_start_time(
 
     assert outcome.completed == 2
     assert outcome.lost_lease == 0
-    assert runtime.second_wave_lease == "2026-09-15T11:29:59+00:00"
-    assert runtime.intruder_claim_count == 0
+    assert writer.second_wave_lease == "2026-09-15T11:29:59+00:00"
+    assert writer.intruder_claim_count == 0
 
 
 def test_meeting_memory_retry_delay_starts_when_the_worker_finishes(
@@ -829,16 +808,15 @@ def test_meeting_memory_retry_delay_starts_when_the_worker_finishes(
     def clock() -> datetime:
         return current_time
 
-    class _LateRetryRuntime:
-        def execute(self, **kwargs):
-            nonlocal current_time
-            current_time += timedelta(seconds=120)
-            raise RoutedCodexExecutionError("runtime_attempt_active")
+    def _late_failing_write(**kwargs):
+        nonlocal current_time
+        current_time += timedelta(seconds=120)
+        raise MemoryConnectorError("connector unreachable")
 
     outcome = process_meeting_memory_writes(
         store,
         workspace=tmp_path,
-        routed_execution=_LateRetryRuntime(),
+        memory_writer=_late_failing_write,
         clock=clock,
     )
 
@@ -904,58 +882,6 @@ def test_failed_meeting_memory_write_can_be_requeued_only_for_sent_conclusion(
     assert event["execution_generation"] != original_generation
 
 
-def test_active_meeting_memory_runtime_defers_instead_of_failing(tmp_path: Path) -> None:
-    store = AutoReplyStore(tmp_path / "store.sqlite3")
-    job_id = _store_sent_job(store)
-    assert enqueue_sent_meeting_memory_writes(store) == 1
-
-    assert process_meeting_memory_writes(
-        store,
-        workspace=tmp_path,
-        routed_execution=_ActiveMemoryRuntime(),
-    ).processed == 1
-
-    with store._connect() as db:
-        event = db.execute(
-            "select status, attempts, error, available_at from meeting_memory_write_events "
-            "where meeting_job_id=?",
-            (job_id,),
-        ).fetchone()
-    assert event is not None
-    assert event["status"] == "pending"
-    assert event["attempts"] == 1
-    assert event["error"].startswith("runtime_attempt_active:")
-    assert event["available_at"]
-
-
-@pytest.mark.parametrize(
-    "failure_code",
-    ["runtime_result_invalid", "friday_runtime_result_invalid"],
-)
-def test_invalid_memory_result_defers_instead_of_failing(
-    tmp_path: Path, failure_code: str
-) -> None:
-    store = AutoReplyStore(tmp_path / "store.sqlite3")
-    job_id = _store_sent_job(store)
-    assert enqueue_sent_meeting_memory_writes(store) == 1
-
-    assert process_meeting_memory_writes(
-        store,
-        workspace=tmp_path,
-        routed_execution=_InvalidMemoryResultRuntime(failure_code),
-    ).processed == 1
-
-    with store._connect() as db:
-        event = db.execute(
-            "select status, attempts, error, available_at from meeting_memory_write_events "
-            "where meeting_job_id=?",
-            (job_id,),
-        ).fetchone()
-    assert event is not None
-    assert event["status"] == "pending"
-    assert event["attempts"] == 1
-    assert event["error"].startswith(f"{failure_code}:")
-    assert event["available_at"]
 
 
 def test_unexpected_memory_runtime_error_defers_one_event(tmp_path: Path) -> None:
@@ -966,7 +892,7 @@ def test_unexpected_memory_runtime_error_defers_one_event(tmp_path: Path) -> Non
     assert process_meeting_memory_writes(
         store,
         workspace=tmp_path,
-        routed_execution=_UnexpectedMemoryRuntime(),
+        memory_writer=_FakeWriter(MemoryConnectorError('unexpected connector failure')),
     ).processed == 1
 
     with store._connect() as db:
@@ -979,8 +905,7 @@ def test_unexpected_memory_runtime_error_defers_one_event(tmp_path: Path) -> Non
     assert event["status"] == "pending"
     assert event["attempts"] == 1
     assert event["error"] == (
-        "meeting_memory_runtime_error: AttributeError: "
-        "runtime output was missing source_code"
+        "memory_connector: unexpected connector failure"
     )
     assert event["available_at"]
 
@@ -1050,13 +975,13 @@ def test_a_retryable_dependency_that_never_recovers_stops_at_the_ceiling(
         )
 
     class _NeverRecoveringDependency:
-        def execute(self, **kwargs):
+        def __call__(self, **kwargs):
             raise RoutedCodexExecutionError("runtime_attempt_active")
 
     outcome = process_meeting_memory_writes(
         store,
         workspace=tmp_path,
-        routed_execution=_NeverRecoveringDependency(),
+        memory_writer=_FakeWriter(MemoryConnectorError("connector unreachable")),
         clock=lambda: datetime.fromisoformat("2026-09-16T11:00:00+00:00"),
     )
 
@@ -1069,7 +994,7 @@ def test_a_retryable_dependency_that_never_recovers_stops_at_the_ceiling(
     assert row["status"] == "failed"
     assert row["available_at"] == ""
     assert "meeting_memory_retry_exhausted" in str(row["error"])
-    assert "runtime_attempt_active" in str(row["error"])
+    assert "memory_connector" in str(row["error"])
 
 
 def test_a_retryable_dependency_still_retries_below_the_ceiling(
@@ -1079,14 +1004,10 @@ def test_a_retryable_dependency_still_retries_below_the_ceiling(
     _store_sent_job(store)
     assert enqueue_sent_meeting_memory_writes(store) == 1
 
-    class _TransientDependency:
-        def execute(self, **kwargs):
-            raise RoutedCodexExecutionError("runtime_attempt_active")
-
     outcome = process_meeting_memory_writes(
         store,
         workspace=tmp_path,
-        routed_execution=_TransientDependency(),
+        memory_writer=_FakeWriter(MemoryConnectorError("connector unreachable")),
         clock=lambda: datetime.fromisoformat("2026-09-16T11:00:00+00:00"),
     )
 
@@ -1099,51 +1020,6 @@ def test_a_retryable_dependency_still_retries_below_the_ceiling(
     assert row["attempts"] == 1
 
 
-def test_a_retry_after_a_completed_failing_turn_runs_a_new_turn(tmp_path: Path) -> None:
-    """Seen live on event 295278: a completed turn reported a failing Memory
-    connection, and 16 retries handed that stored result back without running."""
-    store = AutoReplyStore(tmp_path / "store.sqlite3")
-    _store_sent_job(store)
-    assert enqueue_sent_meeting_memory_writes(store) == 1
-    with store._connect() as db:
-        event = db.execute("select id, execution_generation from meeting_memory_write_events").fetchone()
-    first_key = f"meeting_memory_write_event:{event['id']}:{event['execution_generation']}"
-
-    from app.codex_memory_write import MEMORY_WRITE_RESULT_CODEC
-
-    class _CompletedFailingTurn:
-        def execute(self, *, workload_key, **kwargs):
-            value = json.dumps({
-                "status": "failed", "retryable": True, "memory_id": None,
-                "source_code": "mcp_connection_error",
-                "detail": "memory_connector: Protected resource does not match",
-            })
-            # The router stores this completed turn under the operation key.
-            attempt = store.claim_runtime_operation_attempt(
-                "memory", workload_key, "codex_api", "codex_cli", "service_api", "m",
-                owner="runtime",
-            )
-            store.complete_agent_runtime_attempt(
-                attempt.id, "", "", 0, 0, owner="runtime",
-                result_schema_id=MEMORY_WRITE_RESULT_CODEC.schema_id,
-                result_envelope_json=MEMORY_WRITE_RESULT_CODEC.encode(value),
-            )
-            return SimpleNamespace(value=value)
-
-    outcome = process_meeting_memory_writes(
-        store,
-        workspace=tmp_path,
-        routed_execution=_CompletedFailingTurn(),
-        clock=lambda: datetime.fromisoformat("2026-09-16T11:00:00+00:00"),
-    )
-
-    assert outcome.retried == 1
-    with store._connect() as db:
-        row = db.execute("select status, execution_generation from meeting_memory_write_events").fetchone()
-    assert row["status"] == "pending"
-    assert row["execution_generation"] != event["execution_generation"]
-    assert store.list_runtime_operation_attempts("memory", first_key)
-
 
 def test_a_retry_after_a_turn_that_never_completed_keeps_its_operation(tmp_path: Path) -> None:
     """A deferral must resume the same operation, never start a second turn."""
@@ -1154,7 +1030,7 @@ def test_a_retry_after_a_turn_that_never_completed_keeps_its_operation(tmp_path:
         generation = db.execute("select execution_generation from meeting_memory_write_events").fetchone()[0]
 
     class _Deferred:
-        def execute(self, **kwargs):
+        def __call__(self, **kwargs):
             raise RoutedCodexExecutionError("runtime_attempt_active")
 
     process_meeting_memory_writes(
@@ -1204,3 +1080,68 @@ def test_a_memory_pass_is_not_capped_by_the_queue_batch_size(monkeypatch, tmp_pa
 
     assert seen["limit"] == MEETING_MEMORY_WRITE_PASS_LIMIT
     assert seen["limit"] > 4
+
+
+def test_a_missing_credential_fails_the_event_instead_of_retrying(tmp_path: Path):
+    """Retrying cannot create a credential.
+
+    The connector issues no API keys, so a service without an authorization
+    stays without one until a person runs `authorize-memory-connector`.
+    Retrying twenty times first only hides that for five hours.
+    """
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+
+    outcome = process_meeting_memory_writes(
+        store,
+        workspace=tmp_path,
+        memory_writer=_FakeWriter(
+            MemoryConnectorNotAuthorized("no Memory connector credential")
+        ),
+    )
+
+    assert outcome.failed == 1 and outcome.retried == 0
+    with store._connect() as db:
+        row = db.execute(
+            "select status, error from meeting_memory_write_events"
+        ).fetchone()
+    assert row["status"] == "failed"
+    assert row["error"].startswith("memory_connector_not_authorized:")
+
+
+def test_the_write_carries_the_payload_the_event_was_queued_with(tmp_path: Path):
+    """No prompt sits between the queued payload and the connector."""
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+    writer = _FakeWriter()
+
+    process_meeting_memory_writes(store, workspace=tmp_path, memory_writer=writer)
+
+    [call] = writer.calls
+    assert set(call) == {"data", "type", "created_at", "source_description"}
+    assert call["source_description"] == "本周先完成客户验证"
+
+
+def test_a_write_without_an_injected_writer_is_refused_in_tests(tmp_path: Path):
+    """The guardrail must bite on the seam the write actually uses.
+
+    It stubbed the Codex entry point, which stopped being on the path when the
+    write started calling the connector directly. A fixture that no longer
+    covers the live seam still passes, so this asserts the refusal rather than
+    the stub.
+    """
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    _store_sent_job(store)
+    assert enqueue_sent_meeting_memory_writes(store) == 1
+
+    outcome = process_meeting_memory_writes(store, workspace=tmp_path)
+
+    assert outcome.completed == 0
+    with store._connect() as db:
+        row = db.execute(
+            "select status, error from meeting_memory_write_events"
+        ).fetchone()
+    assert row["status"] != "done"
+    assert "reached the real memory writer" in str(row["error"])

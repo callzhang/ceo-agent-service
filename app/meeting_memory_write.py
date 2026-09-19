@@ -13,8 +13,13 @@ from typing import Any
 from uuid import uuid4
 
 from app.agent_runtime_router import RoutedCodexExecution
-from app.codex_memory_write import CodexMemoryWriteFailed, execute_codex_memory_write
+from app.codex_memory_write import CodexMemoryWriteFailed
 from app.external_retry import retry_delay_seconds
+from app.memory_connector_client import (
+    MemoryConnectorError,
+    MemoryConnectorNotAuthorized,
+    write_meeting_memory,
+)
 from app.store import AutoReplyStore, MeetingMemoryWriteEvent
 
 
@@ -184,7 +189,8 @@ def process_meeting_memory_writes(
     store: AutoReplyStore,
     *,
     workspace: Path,
-    routed_execution: RoutedCodexExecution,
+    routed_execution: RoutedCodexExecution | None = None,
+    memory_writer: Callable[..., Any] | None = None,
     limit: int = 1,
     concurrency: int = 1,
     lease_seconds: int = MEETING_MEMORY_WRITE_LEASE_SECONDS,
@@ -230,6 +236,7 @@ def process_meeting_memory_writes(
             event,
             workspace=workspace,
             routed_execution=routed_execution,
+            memory_writer=memory_writer,
             owner=owner,
             lease_seconds=lease_seconds,
             lease_heartbeat_interval_seconds=heartbeat_interval_seconds,
@@ -275,7 +282,8 @@ def _process_event(
     event: MeetingMemoryWriteEvent,
     *,
     workspace: Path,
-    routed_execution: RoutedCodexExecution,
+    routed_execution: RoutedCodexExecution | None,
+    memory_writer: Callable[..., Any] | None,
     owner: str,
     lease_seconds: int,
     lease_heartbeat_interval_seconds: float,
@@ -301,21 +309,63 @@ def _process_event(
             payload = meeting_memory_payload(
                 store.get_meeting_alignment_job(event.meeting_job_id)
             )
-            result = execute_codex_memory_write(
-                workspace=workspace,
-                store=store,
-                workload_key=(
-                    f"meeting_memory_write_event:{event.id}:"
-                    f"{event.execution_generation}"
-                ),
+            # The connector is called directly. Every argument was decided
+            # when the event was queued, so an Agent turn here added 74-95
+            # seconds a write and made Memory stop whenever a model route
+            # paused, for reasons that had nothing to do with Memory.
+            # Resolved here, not bound as a default: a default captures the
+            # function at import time, so a test stubbing this module's name
+            # would be ignored and the write would reach the real connector.
+            writer = memory_writer or write_meeting_memory
+            result = writer(
                 data=_required_payload_text(payload, "data"),
                 type=_payload_type(payload),
                 created_at=_required_payload_text(payload, "created_at"),
                 source_description=_required_payload_text(payload, "source_description"),
-                routed_execution=routed_execution,
             )
         finally:
             heartbeat.stop()
+    except MemoryConnectorNotAuthorized as exc:
+        # No credential is not a transient dependency: retrying cannot create
+        # one, so the event waits visibly for `authorize-memory-connector`.
+        if heartbeat.lost_lease:
+            return "lost_lease"
+        settled = store.fail_meeting_memory_write_event(
+            event.id,
+            owner=owner,
+            error=f"memory_connector_not_authorized: {exc}",
+            now=_meeting_memory_current_time(clock),
+        )
+        return "failed" if settled else "lost_lease"
+    except MemoryConnectorError as exc:
+        if heartbeat.lost_lease:
+            return "lost_lease"
+        settled_at = _meeting_memory_current_time(clock)
+        if event.attempts + 1 >= MEETING_MEMORY_WRITE_MAX_ATTEMPTS:
+            settled = store.fail_meeting_memory_write_event(
+                event.id,
+                owner=owner,
+                error=f"meeting_memory_retry_exhausted: memory_connector: {exc}",
+                now=settled_at,
+            )
+            return "failed" if settled else "lost_lease"
+        settled = store.retry_meeting_memory_write_event(
+            event.id,
+            owner=owner,
+            error=f"memory_connector: {exc}",
+            available_at=(
+                settled_at
+                + timedelta(
+                    seconds=retry_delay_seconds(
+                        MEETING_MEMORY_WRITE_RETRY_BASE_SECONDS,
+                        event.attempts,
+                        max_delay_seconds=MEETING_MEMORY_WRITE_MAX_DELAY_SECONDS,
+                    )
+                )
+            ).isoformat(),
+            now=settled_at,
+        )
+        return "retried" if settled else "lost_lease"
     except CodexMemoryWriteFailed as exc:
         if heartbeat.lost_lease:
             return "lost_lease"
