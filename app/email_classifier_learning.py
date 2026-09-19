@@ -204,9 +204,11 @@ def _selection_provenance(
                     "dataset_digest": digest,
                 }
             )
-    # One frozen sample per message: folder placement remains the label
-    # authority when selected, then explicit user feedback, then the Agent.
-    precedence = ("folder_snapshot", "user_feedback", "agent_auto_label")
+    # One frozen sample per message. A correction the owner made outranks the
+    # folder: these folders were filled by the Agent moving mail, so folder
+    # placement is the Agent's own earlier verdict, and letting it win threw
+    # away every label the owner had since fixed.
+    precedence = ("user_feedback", "folder_snapshot", "agent_auto_label")
     selected_records: dict[str, dict[str, object]] = {}
     for source in precedence:
         for row in selected_by_source.get(source, []):
