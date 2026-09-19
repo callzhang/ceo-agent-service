@@ -31,6 +31,10 @@ History 一致”；它不解释 Agent 如何调用命令，也不维护外部�
 | `feedback_events` | 未记录 `resolved_at` 的反馈 | 无 |
 | `daily_scan_state` / `wechat_read_state` | scanner `last_error` 或 reader 不可用 | 无待处理工作时 reader 未就绪 |
 | `errors` | 关联到 `conversation_id` 或 `message_id`，且最近 4 小时新建、未解决并没有活动重试路径的错误 | Codex 容量暂停期间的共享事件 |
+| `email_classifier_runtime_samples` | 最近 24 小时有 `failure` 样本：已上线的邮件模型在抛错而不是在判断 | 最近 24 小时判出率低于一半：模型在把大部分邮件推回 Agent |
+
+没有样本不算发现：样本表为空时，"没有新邮件进来"和"模型根本没被问过"长得一模一样，闸门只
+对模型确实看过的邮件下结论。
 
 旧数据库中的 `unknown`、`reconciled`、`side_effect_state` 和 `pending_reconciliation` 仅作为历史
 字段展示，不构成当前 violation，也不会触发特殊队列。当前代码只创建 `failed`、`needs_feedback`、

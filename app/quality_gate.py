@@ -39,7 +39,11 @@ REQUIRED_SOURCES = (
     "wechat_read_state",
     "errors",
 )
-OPTIONAL_QUEUE_SOURCES = ("email_agent_classification_tasks", "task_todo_sync_outbox")
+OPTIONAL_QUEUE_SOURCES = (
+    "email_agent_classification_tasks",
+    "email_classifier_runtime_samples",
+    "task_todo_sync_outbox",
+)
 
 REPLY_PROCESSING_STALE_SECONDS = 30 * 60
 WORK_ITEM_PROCESSING_STALE_SECONDS = 21 * 60
@@ -47,6 +51,10 @@ PENDING_STALE_SECONDS = 15 * 60
 MEETING_PROCESSING_STALE_SECONDS = 21 * 60
 OKR_PROCESSING_STALE_SECONDS = 21 * 60
 RECENT_ERROR_WINDOW_SECONDS = 4 * 60 * 60
+MODEL_RUNTIME_WINDOW_SECONDS = 24 * 60 * 60
+# Below this share of decisions actually taken, the model is live in name
+# only and the Agent is doing the work it was promoted to take over.
+MODEL_DECIDED_SHARE_FLOOR = 0.5
 AGENT_CRON_SCHEDULER_STALE_SECONDS = 5 * 60
 RECOVERED_REPLY_ATTEMPT_STATUSES = (
     "calendar",
@@ -150,6 +158,8 @@ def scan_hourly_quality(
         _check_work_items(db, checked_now, violations, attention)
         if "email_agent_classification_tasks" in existing:
             _check_email_classification_tasks(db, checked_now, violations)
+        if "email_classifier_runtime_samples" in existing:
+            _check_email_model_runtime(db, checked_now, violations, attention)
         _check_follow_ups(db, checked_now, violations, attention)
         _check_meetings(db, checked_now, violations, attention)
         _check_okr_reviews(db, checked_now, violations, attention)
@@ -701,6 +711,55 @@ def _check_email_classification_tasks(
         severity="error",
         detail="email classification remained due without being claimed",
     )
+
+
+def _check_email_model_runtime(
+    db: sqlite3.Connection,
+    now: datetime,
+    violations: list[QualityIssue],
+    attention: list[QualityIssue],
+) -> None:
+    """Say when a promoted email model stops deciding what it was promoted for.
+
+    An empty sample table reads the same whether no mail arrived or the model
+    was never asked, so silence is not a finding here. What the samples can
+    say is what happened to the mail the model did see.
+    """
+
+    cutoff = _cutoff(now, MODEL_RUNTIME_WINDOW_SECONDS)
+    counts = {
+        str(row["outcome"]): int(row["total"])
+        for row in db.execute(
+            """select outcome, count(*) as total
+               from email_classifier_runtime_samples
+               where recorded_at >= ?
+               group by outcome""",
+            (cutoff,),
+        )
+    }
+    considered = sum(counts.values())
+    if not considered:
+        return
+    # A failure is the model erroring, not the model being unsure: it means
+    # every message takes the slow path for a reason nobody chose.
+    _add(
+        violations,
+        source="email_classifier_runtime_samples",
+        code="model_failing",
+        count=counts.get("failure", 0),
+        severity="error",
+        detail="the promoted email model raised instead of deciding",
+    )
+    decided = counts.get("success", 0)
+    if decided / considered < MODEL_DECIDED_SHARE_FLOOR and not counts.get("failure", 0):
+        _add(
+            attention,
+            source="email_classifier_runtime_samples",
+            code="model_rarely_decides",
+            count=considered - decided,
+            severity="info",
+            detail="the promoted email model handed most mail back to the Agent",
+        )
 
 
 def _check_follow_ups(

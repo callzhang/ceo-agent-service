@@ -1229,3 +1229,96 @@ def test_an_executed_send_with_no_delivery_record_is_reported(tmp_path):
     assert [item.code for item in violations] == ["executed_without_record"]
     assert violations[0].count == 1
     assert "do not backfill" in violations[0].detail
+
+
+def _runtime_sample(store, *, outcome, recorded_at, fallback_code=""):
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            """insert into email_classifier_runtime_samples (
+                   model_id, outcome, fallback_code, cache_hit, runtime_warm,
+                   queue_ms, http_ms, embedding_ms, head_ms, total_ms, recorded_at
+               ) values ('email-model-1', ?, ?, 1, 1, 0, 0, 0, 1.0, 1.0, ?)""",
+            (outcome, fallback_code, recorded_at),
+        )
+
+
+def test_an_email_model_that_raises_instead_of_deciding_is_a_violation(tmp_path):
+    """A schema the runtime cannot read sent every message to the Agent silently."""
+
+    store = AutoReplyStore(tmp_path / "model-failing.sqlite3")
+    EmailStore(store.path)
+    recent = (NOW - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(3):
+        _runtime_sample(store, outcome="failure", recorded_at=recent,
+                        fallback_code="ValueError")
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    failing = [
+        issue for issue in report.violations
+        if issue.source == "email_classifier_runtime_samples"
+    ]
+    assert len(failing) == 1
+    assert failing[0].code == "model_failing"
+    assert failing[0].count == 3
+    assert report.ok is False
+
+
+def test_an_email_model_that_mostly_defers_is_attention_not_a_violation(tmp_path):
+    """Handing unsure mail back is the design; doing it for most mail is news."""
+
+    store = AutoReplyStore(tmp_path / "model-unsure.sqlite3")
+    EmailStore(store.path)
+    recent = (NOW - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(7):
+        _runtime_sample(store, outcome="rejected", recorded_at=recent,
+                        fallback_code="model_rejected")
+    for _ in range(3):
+        _runtime_sample(store, outcome="success", recorded_at=recent)
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(
+        issue.source == "email_classifier_runtime_samples"
+        for issue in report.violations
+    )
+    deferred = [
+        issue for issue in report.attention
+        if issue.source == "email_classifier_runtime_samples"
+    ]
+    assert len(deferred) == 1
+    assert deferred[0].code == "model_rarely_decides"
+    assert deferred[0].count == 7
+
+
+def test_a_model_deciding_most_of_its_mail_is_not_reported(tmp_path):
+    store = AutoReplyStore(tmp_path / "model-healthy.sqlite3")
+    EmailStore(store.path)
+    recent = (NOW - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(8):
+        _runtime_sample(store, outcome="success", recorded_at=recent)
+    for _ in range(2):
+        _runtime_sample(store, outcome="rejected", recorded_at=recent,
+                        fallback_code="model_rejected")
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(
+        issue.source == "email_classifier_runtime_samples"
+        for issue in (*report.violations, *report.attention)
+    )
+
+
+def test_an_idle_email_model_is_not_mistaken_for_a_broken_one(tmp_path):
+    """No samples means no mail was seen, which is not a finding."""
+
+    store = AutoReplyStore(tmp_path / "model-idle.sqlite3")
+    EmailStore(store.path)
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert "email_classifier_runtime_samples" in report.checked_sources
+    assert not any(
+        issue.source == "email_classifier_runtime_samples"
+        for issue in (*report.violations, *report.attention)
+    )
