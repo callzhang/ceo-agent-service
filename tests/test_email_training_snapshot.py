@@ -1098,3 +1098,19 @@ def test_a_crowded_mailing_still_shows_its_sender_and_subject():
     assert payload["to_recipient_count"] == 497
     assert len(payload["to_recipients"]) == MAX_LISTED_ADDRESSES
     assert len(payload["body"]) == MAX_BODY_CHARACTERS
+
+
+def test_a_snapshot_frozen_under_an_earlier_schema_is_still_readable(monkeypatch):
+    """Bumping the input schema must not make a past run's evidence corrupt."""
+
+    from app import email_training_snapshot as module
+
+    monkeypatch.setattr(module, "MODEL_INPUT_SCHEMA_VERSION", "email-folder-model-input-v3")
+    older = _snapshot([_message("message-1")])
+    monkeypatch.undo()
+
+    assert older.input_schema_version == "email-folder-model-input-v3"
+    module.validate_folder_training_snapshot(older, restored=True)
+    # Training on it is a different matter: the runtime would build v4 input.
+    with pytest.raises(module.FolderTrainingSnapshotError):
+        module.validate_folder_training_snapshot(older)

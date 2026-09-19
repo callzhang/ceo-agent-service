@@ -14345,7 +14345,9 @@ class EmailStore:
                 snapshot_digest=snapshot["snapshot_digest"],
                 _manifest_json=snapshot["manifest_json"],
             )
-            validate_folder_training_snapshot(restored, allow_legacy_manifest=True)
+            validate_folder_training_snapshot(
+                restored, restored=True, allow_legacy_manifest=True
+            )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise EmailPersistenceCorruption(
                 "persisted training snapshot does not match its manifest"

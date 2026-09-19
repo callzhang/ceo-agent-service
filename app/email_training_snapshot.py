@@ -31,6 +31,15 @@ from app.email_provider_folders import FolderRole, ProviderFolder
 
 
 MODEL_INPUT_SCHEMA_VERSION = "email-folder-model-input-v4"
+# Frozen evidence from an earlier schema stays readable, so a past run's
+# numbers can still be traced. Only the builders above stamp the current one.
+PUBLISHED_MODEL_INPUT_SCHEMA_VERSIONS = frozenset(
+    {
+        "email-folder-model-input-v2",
+        "email-folder-model-input-v3",
+        MODEL_INPUT_SCHEMA_VERSION,
+    }
+)
 TRAINING_SNAPSHOT_VERSION = "email-folder-training-snapshot-v1"
 SELECTED_TRAINING_SNAPSHOT_VERSION = "email-selected-training-snapshot-v1"
 FOLDER_SNAPSHOT_ID_PREFIX = "email-folder-snapshot-"
@@ -494,6 +503,7 @@ def build_folder_training_snapshot(
         seed=seed,
         observed_at=observed_timestamp,
         conflicts=conflicts,
+        input_schema_version=MODEL_INPUT_SCHEMA_VERSION,
     )
     digest = deterministic_payload_digest(manifest_without_digest)
     manifest = {**manifest_without_digest, "overall_sha256": digest}
@@ -613,6 +623,7 @@ def build_selected_training_snapshot(
         seed=seed,
         observed_at=observed_timestamp,
         conflicts=conflicts,
+        input_schema_version=MODEL_INPUT_SCHEMA_VERSION,
     )
     digest = deterministic_payload_digest(manifest_without_digest)
     snapshot = FolderTrainingSnapshot(
@@ -652,9 +663,14 @@ def selected_training_snapshot_blockers(
 
 
 def validate_folder_training_snapshot(
-    snapshot: object, *, allow_legacy_manifest: bool = False
+    snapshot: object, *, restored: bool = False, allow_legacy_manifest: bool = False
 ) -> None:
-    """Reject any in-memory mutation or inconsistent frozen evidence."""
+    """Reject any in-memory mutation or inconsistent frozen evidence.
+
+    `restored` marks a snapshot read back from storage rather than one just
+    built: it may carry an earlier published input schema, which is evidence
+    to read, not a shape to train on.
+    """
 
     if type(snapshot) is not FolderTrainingSnapshot:
         raise TypeError("snapshot must be a FolderTrainingSnapshot")
@@ -663,7 +679,12 @@ def validate_folder_training_snapshot(
         SELECTED_TRAINING_SNAPSHOT_VERSION,
     }:
         raise FolderTrainingSnapshotError("unsupported training snapshot version")
-    if snapshot.input_schema_version != MODEL_INPUT_SCHEMA_VERSION:
+    accepted_schemas = (
+        PUBLISHED_MODEL_INPUT_SCHEMA_VERSIONS
+        if restored
+        else {MODEL_INPUT_SCHEMA_VERSION}
+    )
+    if snapshot.input_schema_version not in accepted_schemas:
         raise FolderTrainingSnapshotError("unsupported model input schema version")
     _validate_timestamp_text(snapshot.observed_at, "observed_at")
     actual_manifest = snapshot.manifest
@@ -711,6 +732,7 @@ def validate_folder_training_snapshot(
             seed=snapshot.seed,
             observed_at=snapshot.observed_at,
             include_counts="observation_count" in actual_manifest,
+            input_schema_version=snapshot.input_schema_version,
         )
         expected_digest = deterministic_payload_digest(expected_manifest)
         if actual_manifest != {
@@ -738,6 +760,7 @@ def validate_folder_training_snapshot(
         seed=snapshot.seed,
         observed_at=snapshot.observed_at,
         conflicts=conflicts,
+        input_schema_version=snapshot.input_schema_version,
     )
     expected_digest = deterministic_payload_digest(expected_manifest)
     if actual_manifest != {
@@ -756,6 +779,7 @@ def _legacy_manifest(
     seed: int,
     observed_at: str,
     include_counts: bool,
+    input_schema_version: str,
 ) -> dict[str, object]:
     current = _manifest(
         observations,
@@ -763,6 +787,7 @@ def _legacy_manifest(
         seed=seed,
         observed_at=observed_at,
         conflicts=_training_conflicts(observations),
+        input_schema_version=input_schema_version,
     )
     current.pop("observed_at")
     if not include_counts:
@@ -1375,6 +1400,7 @@ def _manifest(
     seed: int,
     observed_at: str,
     conflicts: Sequence[Mapping[str, object]],
+    input_schema_version: str,
 ) -> dict[str, object]:
     source_counts: dict[str, int] = defaultdict(int)
     training_source_counts: dict[str, int] = defaultdict(int)
@@ -1393,7 +1419,7 @@ def _manifest(
     return {
         "snapshot_version": TRAINING_SNAPSHOT_VERSION,
         "description_version": description_version,
-        "input_schema_version": MODEL_INPUT_SCHEMA_VERSION,
+        "input_schema_version": input_schema_version,
         "seed": seed,
         "observed_at": observed_at,
         "observation_count": len(observations),
