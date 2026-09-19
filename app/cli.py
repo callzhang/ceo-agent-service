@@ -3982,13 +3982,34 @@ def _prepare_runtime_skills_on_service_start(settings: WorkerSettings) -> None:
 def _seed_scheduled_tasks_on_service_start(
     settings: WorkerSettings, runtime_skill_snapshot
 ) -> None:
+    """Seed the scheduled tasks, and never take the service down doing it.
+
+    Seeding resolves each task's Skills against the runtime snapshot, so a
+    Skill the snapshot does not carry raises here. On 2026-09-18 that killed
+    the whole worker: a newly added task named a managed Skill with no binding
+    in the active runtime config, seeding raised, and the worker crash-looped
+    every two seconds for 48 minutes while audit-web stayed up -- so healthz,
+    Attention and the queues all read healthy while nothing ran at all.
+
+    A task that cannot be seeded is a configuration problem for that task. It
+    is recorded as a service error and the service starts without it.
+    """
     from app.agent_cron.seeds import seed_scheduled_tasks
 
-    seed_scheduled_tasks(
-        store=AutoReplyStore(settings.db_path),
-        options=_scheduled_task_option_service(settings, runtime_skill_snapshot),
-        working_directory=settings.workspace,
-    )
+    store = AutoReplyStore(settings.db_path)
+    try:
+        seed_scheduled_tasks(
+            store=store,
+            options=_scheduled_task_option_service(settings, runtime_skill_snapshot),
+            working_directory=settings.workspace,
+        )
+    except Exception as exc:  # noqa: BLE001 - startup must degrade, not abort service
+        store.record_error(
+            "",
+            "",
+            "scheduled_task_seed_failed",
+            f"Scheduled tasks were not seeded on this start: {exc}",
+        )
 
 
 def run_service(

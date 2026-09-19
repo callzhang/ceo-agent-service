@@ -845,6 +845,31 @@ def test_run_service_probes_before_starting_shared_refresh_component(
     assert calls[-1] == ("wait",)
 
 
+def test_a_task_that_cannot_be_seeded_does_not_stop_the_service(tmp_path, monkeypatch):
+    """The 2026-09-18 crash loop: one unseedable task killed the whole worker.
+
+    A newly added scheduled task named a managed Skill with no binding in the
+    active runtime config. Seeding raised, the worker exited 1 and restarted
+    every two seconds for 48 minutes -- while audit-web stayed up, so healthz,
+    Attention and the queues all read healthy and nothing ran.
+    """
+    from app.cli import _seed_scheduled_tasks_on_service_start
+
+    def explode(**kwargs):
+        del kwargs
+        raise ValueError("scheduled consumer managed Skill unavailable: ceo-weekly-report")
+
+    monkeypatch.setattr("app.agent_cron.seeds.seed_scheduled_tasks", explode)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+
+    _seed_scheduled_tasks_on_service_start(settings, None)
+
+    errors = AutoReplyStore(settings.db_path).list_errors()
+    seed_errors = [error for error in errors if error.kind == "scheduled_task_seed_failed"]
+    assert len(seed_errors) == 1
+    assert "ceo-weekly-report" in seed_errors[0].detail
+
+
 def test_run_service_starts_components_when_initial_runtime_refresh_raises(
     tmp_path, monkeypatch
 ):
