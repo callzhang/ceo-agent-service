@@ -753,3 +753,34 @@ def test_a_minute_with_nothing_to_archive_is_skipped_not_failed() -> None:
     # A skip is never shown as a failure: that is what made the first version
     # of this unclear, with fourteen skips filling a list labelled failures.
     assert "failures=" not in result.summary()
+
+
+def test_a_failing_transcript_does_not_discard_a_summary_that_read_fine(
+    tmp_path: Path,
+) -> None:
+    """Five minutes failed every daily pass with a complete summary behind them.
+
+    DingTalk answers `B_QUERY_MINUTES_PARAGRAPH_LIST_FAILED` for some older
+    minutes however often it is asked. Fetching the transcript inside the same
+    try as the summary threw the summary away with it, so a minute that could
+    have been archived was reported as a failure, every day, forever.
+    """
+    store = _store(tmp_path)
+
+    class TranscriptFails(FakeDws):
+        def get_all_minutes_transcription(self, task_uuid):
+            raise DwsError("B_QUERY_MINUTES_PARAGRAPH_LIST_FAILED")
+
+    dws = TranscriptFails(
+        [{"taskUuid": "u1"}],
+        basic={"u1": {"title": "OpenAI合作交流", "startTime": 1778266926000}},
+        summary={"u1": {"fullSummary": "要点"}},
+    )
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.synced == 1
+    assert result.failed == 0
+    assert any("transcript_unavailable" in reason for _, reason in result.skips)
+    [written] = list((tmp_path / "AI听记").rglob("*.md"))
+    assert "要点" in written.read_text(encoding="utf-8")

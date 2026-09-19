@@ -472,14 +472,28 @@ def sync_minutes_once(
     failures: list[tuple[str, str]] = []
     skips: list[tuple[str, str]] = []
     for task_uuid in candidates:
+        transcript_error = ""
         try:
             basic_payload = dws.get_minutes_info(task_uuid)
             basic = (basic_payload or {}).get("result") or {}
             summary_payload = dws.get_minutes_summary(task_uuid)
             summary = (summary_payload or {}).get("result") or {}
-            paragraphs = (
-                dws.get_all_minutes_transcription(task_uuid) or {}
-            ).get("paragraphs") or []
+            try:
+                paragraphs = (
+                    dws.get_all_minutes_transcription(task_uuid) or {}
+                ).get("paragraphs") or []
+            except DwsError as transcript_exc:
+                # The transcript is fetched on its own so its failure cannot
+                # discard a summary that read fine. DingTalk returns
+                # `B_QUERY_MINUTES_PARAGRAPH_LIST_FAILED` for some older
+                # minutes however often it is asked: five of them failed every
+                # daily pass, each with a complete published summary sitting
+                # behind the same error. A restricted transcript is a
+                # permission question and still goes down that path.
+                if _is_restricted_minute_error(transcript_exc):
+                    raise
+                paragraphs = []
+                transcript_error = f"transcript_unavailable:{transcript_exc}"[:200]
         except DwsError as exc:
             if not _is_restricted_minute_error(exc):
                 failed += 1
@@ -522,7 +536,12 @@ def sync_minutes_once(
         # rediscovered and retried on every later pass either way.
         if not paragraphs and not rendered_summary.strip():
             skipped += 1
-            skips.append((task_uuid, "no_summary_and_no_transcript_yet"))
+            skips.append(
+                (
+                    task_uuid,
+                    transcript_error or "no_summary_and_no_transcript_yet",
+                )
+            )
             continue
         path = _archive_path(
             archive_dir,
@@ -540,6 +559,8 @@ def sync_minutes_once(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
         archived.add(task_uuid)
+        if transcript_error:
+            skips.append((task_uuid, transcript_error))
         pending.discard(task_uuid)
         synced += 1
 
