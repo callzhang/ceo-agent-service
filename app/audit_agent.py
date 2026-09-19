@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from app.agent_context import AuditTurnContext
 from app.agent_contracts import AuditAgentResult, AuditOutcome
+from app.oa_decision_rules import oa_decision_violations
 from app.agent_effect_claim import (
     EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
     claims_external_action_without_tools,
@@ -322,19 +323,35 @@ class AuditAgentRunner:
                 )
                 if unprepared:
                     raise ResultParseError(UNPREPARED_SEND_REQUIREMENT)
+            generation_events: list[object] = []
+            if refreshed is not None:
+                generation_events = list(
+                    generation_tool_events(
+                        self.store,
+                        reply_task_id=refreshed.reply_task_id,
+                        execution_generation=refreshed.execution_generation,
+                    )
+                )
             if (
                 refreshed is not None
                 and _channel_judged(task.channel)
                 and claims_external_action_without_tools(
-                result=result.model_dump(mode="json"),
-                    tool_events=generation_tool_events(
-                        self.store,
-                        reply_task_id=refreshed.reply_task_id,
-                        execution_generation=refreshed.execution_generation,
-                    ),
+                    result=result.model_dump(mode="json"),
+                    tool_events=generation_events,
                 )
             ):
                 raise ResultParseError(EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT)
+            # An OA decision the rules do not allow is a correction, not a
+            # result. The rules live with the OA domain; this gate only asks
+            # them and passes their wording back to the turn.
+            oa_violations = oa_decision_violations(
+                result=result.model_dump(mode="json"),
+                tool_events=generation_events,
+            )
+            if oa_violations:
+                raise ResultParseError(
+                    "\n\n".join(violation.detail for violation in oa_violations)
+                )
             if (
                 result.outcome is not AuditOutcome.EXECUTED
                 or self.domain_continuation is None
