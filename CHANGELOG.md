@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- 2026-09-19: 会议跟进不再因为 provider 改动而整天静默丢失，也不再对同一场会议发两次。
+  钉钉在 2026-09-18 移除了听记列表的 `endTime` 并新增 `status`，两个写给旧载荷的判断
+  各自否决了当天全部十七场会议：一个要求列表与详情报出相同的结束时间（两者描述的是同一段
+  录制，从不是一致性信号，现在相差一秒到四十一分钟），另一个要求状态读作 `ended`（钉钉改
+  报数字码，已结束的录制上 2 和 4 都出现过）。后者不留记录，所以直到丢失变成全量才被发现。
+  两个判断都已删除，发现窗口从两周收到一周。
+
+  解除拦截后暴露出被静默掩盖的问题：此前读不到的听记正在变为可读，每一份都带新的 taskUuid，
+  于是几天前已经跟进过的会议又以新会议的身份回来。现在同名且相邻录制间隔不超过两小时算同一
+  场会议（按间隔而非自然日，跨零点的会议保持完整），后到的录制并入已有任务并对整场会议重新
+  生成总结，标题标注「第二次总结」，发送成功后撤回它替代的旧消息。
+
 - 2026-09-18: `~/.agents/skills` is the single source of truth for Skills, and
   this repository no longer keeps a second copy. Two copies meant an edit could
   land in the one nothing loads, and a publish to the shared Skills library
