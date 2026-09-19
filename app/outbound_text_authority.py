@@ -140,3 +140,81 @@ UNPREPARED_SEND_REQUIREMENT = (
     "prepared body for the accepted action, or return feedback so the message "
     "is proposed and prepared through the service first."
 )
+# A send the turn runs itself, matched by the *shape* of the command rather
+# than a list of known spellings. Over thirty days production turns reached
+# for `chat send`, `im send`, `dingtalk send-to-user`, `misc oa approve` and
+# a dozen other names that are not real commands; a rule keyed to the exact
+# spellings we already know would not see any of them, and a send under an
+# invented name is still an attempt to reach a person.
+_SEND_SHAPED_TOKEN = re.compile(
+    r"^\+?(?:dm|send(?:-to-\w+)?|reply|forward|\w*-send|\w*-reply)$"
+)
+# `+messages-query-send-status` and `chat message query-send-status` read what
+# a send did; they are not sends.
+_STATUS_TOKEN = re.compile(r"-status$")
+
+
+def _command_path(payload: str) -> tuple[str, ...]:
+    """The dws subcommand words of one command, without flags or arguments."""
+
+    try:
+        argv = shlex.split(payload)
+    except ValueError:
+        argv = payload.split()
+    words = [part for part in argv if not part.startswith("-")]
+    if not words or words[0].rsplit("/", 1)[-1] != "dws":
+        return ()
+    path: list[str] = []
+    for word in words[1:5]:
+        if re.fullmatch(r"\+?[a-z][a-z0-9-]*", word):
+            path.append(word)
+        else:
+            break
+    return tuple(path)
+
+
+def shell_send_commands(tool_events: Iterable[object]) -> list[str]:
+    """Sends this turn ran in its own shell instead of through the service.
+
+    Only shell commands count. The reviewed tool carries the same argv and is
+    the sanctioned path: over the fourteen days to 2026-09-18, 473 generations
+    shelled a send out directly and 133 went through the reviewed tool, so the
+    alternative demonstrably works.
+    """
+
+    found: list[str] = []
+    for event in tool_events:
+        if not isinstance(event, Mapping):
+            continue
+        item = event.get("item")
+        if not isinstance(item, Mapping):
+            continue
+        if item.get("type") != "command_execution":
+            continue
+        command = str(item.get("command") or "")
+        payload = _first_stage(_shell_payload(command))
+        if "--help" in payload or "--dry-run" in payload:
+            continue
+        path = _command_path(payload)
+        # `dws schema chat +messages-send json` and `dws shortcut schema ...`
+        # ask what a send command looks like; they send nothing.
+        if not path or "schema" in path:
+            continue
+        if any(
+            _SEND_SHAPED_TOKEN.match(word) and not _STATUS_TOKEN.search(word)
+            for word in path
+        ):
+            found.append(" ".join(path))
+    return found
+
+
+SHELL_SEND_REQUIREMENT = (
+    "This turn sent a message from its own shell. Sending is the service's "
+    "to do: it applies the signature and the feedback links, records the "
+    "delivery under a key that cannot be sent twice, and survives a retry of "
+    "this turn. A shell send has none of that.\n\n"
+    "The message has already reached the recipient -- do not send it again, "
+    "by any route. Report what was sent and to whom, and propose the action "
+    "so the service can record it. If more has to be said, propose that as a "
+    "new action and let the service deliver it."
+)

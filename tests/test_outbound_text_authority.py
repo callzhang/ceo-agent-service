@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.outbound_text_authority import (
     provider_send_texts,
+    shell_send_commands,
     unprepared_send_texts,
 )
 
@@ -77,3 +78,56 @@ def test_a_piped_send_is_still_a_send() -> None:
     events = [_shell('dws chat +dm --to "A" --content "five" --yes 2>&1 | head -20')]
 
     assert provider_send_texts(events) == ["five"]
+
+
+def _mcp(argv: list[str]) -> dict:
+    return {
+        "type": "item.completed",
+        "item": {"type": "mcp_tool_call", "arguments": {"argv": argv}},
+    }
+
+
+def test_every_send_spelling_is_caught_by_shape_not_by_a_list() -> None:
+    """Turns invent command names, and an invented send still reaches a person.
+
+    Over thirty days production turns ran `chat send`, `im send`,
+    `dingtalk send-to-user` and a dozen other names that are not real
+    commands. A rule keyed to the spellings we already know sees none of them.
+    """
+    for command in (
+        "dws chat +dm --to A --content x",
+        "dws chat +messages-send --group g --text x",
+        "dws chat +send-to-group --group g --content x",
+        "dws chat +messages-reply --text x",
+        "dws chat message send --content x",
+        "dws chat send --content x",
+        "dws im send --content x",
+        "dws dingtalk send-to-user --content x",
+        "dws mail message reply --body x",
+    ):
+        assert shell_send_commands([_shell(command)]), command
+
+
+def test_reading_what_a_send_did_is_not_a_send() -> None:
+    for command in (
+        "dws chat +messages-query-send-status --id 1",
+        "dws chat message query-send-status --id 1",
+        "dws chat +messages-send-status --id 1",
+        "dws schema chat +messages-send json",
+        "dws shortcut schema chat +messages-reply",
+        "dws chat +dm --help",
+        "dws chat +dm --to A --content x --dry-run",
+        "dws oa approval approve --instance-id 1 --remark ok",
+        "dws chat +messages-add-emoji --id 1",
+        "dws doc +comment-create --text x",
+    ):
+        assert shell_send_commands([_shell(command)]) == [], command
+
+
+def test_the_reviewed_tool_is_the_sanctioned_path_and_is_not_flagged() -> None:
+    """Only a shell send is the turn going around the service.
+
+    The reviewed tool carries the same argv and is how a send is supposed to
+    happen, so flagging it would leave the turn nowhere to go.
+    """
+    assert shell_send_commands([_mcp(["dws", "chat", "+dm", "--to", "A", "--content", "x"])]) == []

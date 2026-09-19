@@ -189,6 +189,82 @@ def test_external_action_identity_is_stable_without_run_or_revision_state():
     assert "argv" not in first
 
 
+def test_a_send_the_turn_ran_itself_is_corrected_without_resending(setup):
+    """Sending is the service's to do, and the correction must not cause a second send.
+
+    Over fourteen days most sends were shelled out directly rather than run
+    through the service, so none of them carried the signature, the feedback
+    links, or a delivery key that cannot be used twice. The message is already
+    delivered by the time this gate sees it, so the correction tells the turn
+    not to send it again.
+    """
+    from app.agent_contracts import AuditAgentResult
+
+    store, task, audit_context, parent = setup
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=audit_context.operation_id,
+        owner="audit-test",
+    )
+    assert claim.claimed
+    store.append_agent_run_event(
+        claim.run.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "exit_code": 0,
+                "status": "completed",
+                "command": (
+                    "/bin/zsh -lc 'dws chat +messages-send --group cid-agent "
+                    "--text \"已处理\"'"
+                ),
+                "aggregated_output": '{"success":true}',
+            },
+        },
+        owner="audit-test",
+    )
+    executed = AuditAgentResult.model_validate(
+        {
+            "outcome": "executed",
+            "summary": "已发送",
+            "proposal_revision": 0,
+            "feedback": None,
+            "external_result": {
+                "operation_id": audit_context.operation_id,
+                "live_result_reference": {"message_id": "m-1"},
+            },
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+        }
+    )
+    runner = AuditAgentRunner(
+        store=store, workspace=Path("/workspace"), owner="audit-test"
+    )
+    parse = runner._parse_evidenced_result(
+        task, claim.run, parse_result=lambda _raw: executed
+    )
+
+    with pytest.raises(ResultParseError) as caught:
+        parse("{}")
+
+    correction = str(caught.value)
+    assert "do not send it again" in correction
+
+
 def test_an_oa_decision_that_breaks_its_own_rules_is_corrected(setup):
     """The OA rules reach the gate, and their own wording is the correction.
 

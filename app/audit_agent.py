@@ -17,7 +17,9 @@ from app.agent_effect_claim import (
 )
 from app.agent_effect_claim import channel_is_judged_by_tool_events as _channel_judged
 from app.outbound_text_authority import (
+    SHELL_SEND_REQUIREMENT,
     UNPREPARED_SEND_REQUIREMENT,
+    shell_send_commands,
     provider_send_texts,
     unprepared_send_texts,
 )
@@ -316,13 +318,6 @@ class AuditAgentRunner:
             # action, whatever its outcome says. The evidence gate below asks
             # a different question: whether a write backs an `executed`.
             refreshed = self.store.get_agent_run(run.id)
-            if refreshed is not None:
-                unprepared = unprepared_send_texts(
-                    provider_send_texts(refreshed.tool_events),
-                    self._prepared_bodies(delivery_keys),
-                )
-                if unprepared:
-                    raise ResultParseError(UNPREPARED_SEND_REQUIREMENT)
             generation_events: list[object] = []
             if refreshed is not None:
                 generation_events = list(
@@ -332,6 +327,19 @@ class AuditAgentRunner:
                         execution_generation=refreshed.execution_generation,
                     )
                 )
+            # Sending is the service's to do. This is asked before the
+            # prepared-text check because its correction is the stronger one:
+            # the message is already delivered, so the turn is told not to
+            # send it again rather than to re-propose it.
+            if shell_send_commands(generation_events):
+                raise ResultParseError(SHELL_SEND_REQUIREMENT)
+            if refreshed is not None:
+                unprepared = unprepared_send_texts(
+                    provider_send_texts(refreshed.tool_events),
+                    self._prepared_bodies(delivery_keys),
+                )
+                if unprepared:
+                    raise ResultParseError(UNPREPARED_SEND_REQUIREMENT)
             if (
                 refreshed is not None
                 and _channel_judged(task.channel)
