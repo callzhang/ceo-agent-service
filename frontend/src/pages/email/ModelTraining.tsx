@@ -328,30 +328,7 @@ export function ModelTraining({
               新建训练
             </button>
           </div>
-          {runtimeVerified ? (
-            <button
-              type="button"
-              aria-label="主模型"
-              aria-describedby="email-mode-help"
-              className={
-                runtime?.mode === "model_primary"
-                  ? "danger-button training-promote"
-                  : "primary-button training-promote"
-              }
-              disabled={!runtime?.toggle_enabled || switching}
-              onClick={() => {
-                requestId.current = crypto.randomUUID();
-                setConfirm({ ...runtime });
-                setSwitchError("");
-              }}
-            >
-              {runtime?.mode === "model_primary"
-                ? "改回 Agent 判断"
-                : switching
-                  ? "正在上线…"
-                  : "让模型上线"}
-            </button>
-          ) : (
+          {runtimeVerified ? null : (
             <button
               className="compact-button"
               disabled={switching}
@@ -368,8 +345,8 @@ export function ModelTraining({
           : runtime?.mode === "model_primary"
             ? "模型正在判新邮件；改回 Agent 后它只做影子判断。"
             : runtime?.toggle_enabled
-              ? "候选已达标，点按钮上线；点完还要确认一次。"
-              : "候选还没达标，下面的晋升检查里写着差哪一项。"}
+              ? "下面的模型版本表里，达标的那一版有上线按钮。"
+              : "还没有达标的版本，晋升检查里写着差哪一项。"}
       </p>
       {trainingStatus && (
         <p className="training-request-status" role="status">
@@ -509,6 +486,7 @@ export function ModelTraining({
                   <th>样本数</th>
                   <th>整体准确率</th>
                   <th>P95</th>
+                  <th>上线</th>
                   <th>详情</th>
                 </tr>
               </thead>
@@ -560,6 +538,49 @@ export function ModelTraining({
                               : item.model.prediction_latency_p95_ms,
                             " ms",
                           )}
+                    </td>
+                    <td>
+                      {item.kind !== "staged" || !runtimeVerified ? null : runtime
+                          ?.active_model_id === item.model.model_id ? (
+                        <button
+                          type="button"
+                          className="danger-button compact-button"
+                          aria-label={"改回 Agent " + item.model.model_id}
+                          disabled={switching}
+                          onClick={() => {
+                            requestId.current = crypto.randomUUID();
+                            setConfirm({ ...runtime });
+                            setSwitchError("");
+                          }}
+                        >
+                          改回 Agent
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="primary-button compact-button"
+                          aria-label={"让这一版上线 " + item.model.model_id}
+                          title={
+                            runtime?.candidate_model_id !== item.model.model_id
+                              ? "只有最新达标的版本能上线"
+                              : runtime?.toggle_enabled
+                                ? "点了还要确认一次"
+                                : "这一版还没达标，看下面的晋升检查"
+                          }
+                          disabled={
+                            switching ||
+                            !runtime?.toggle_enabled ||
+                            runtime?.candidate_model_id !== item.model.model_id
+                          }
+                          onClick={() => {
+                            requestId.current = crypto.randomUUID();
+                            setConfirm({ ...runtime });
+                            setSwitchError("");
+                          }}
+                        >
+                          {switching ? "正在上线…" : "上线"}
+                        </button>
+                      )}
                     </td>
                     <td>
                       {item.kind === "run" ? (

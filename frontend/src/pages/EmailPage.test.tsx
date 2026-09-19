@@ -10,7 +10,8 @@ const config = { category_key: "work", display_name: "工作", core_description:
 const row = (id: string, status = "pending_feedback") => ({ id, sender: "sender@example.com", subject: "邮件" + id, preview: "生成的摘要不应出现在列表", message_text: "原始邮件正文前段 " + id, category: "work", confidence: .7, margin: .2, probabilities: {work:.7}, status, classification_source: "agent", model_version: "model-full-v1", config_version: "c1", attachment_metadata: [], action_plan: {}, current_action_plan_id: null, received_at: "", updated_at: "" });
 const runtime = {mode:"agent_primary", active_model_id:null, candidate_model_id:"model-v2", candidate_ready:true, toggle_enabled:true};
 const gateConfig = {micro_f1_min:.95, category_precision_min:.95, category_validation_samples_min:20, p95_latency_max_ms:500, config_version:"p1"};
-function learning(overrides = {}) { return {runtime, promotion_gate:{config:gateConfig, promotion_eligible:true, checks:[]}, mode_transitions:[], models:[], staged_models:[], registry_issues:[], pending_examples:2, ...overrides}; }
+const candidateRow = {model_id:"model-v2", status:"candidate", trained_at:"2026-09-01T12:00:00Z", metrics:null, evaluation:null, split_counts:{train:4,validation:2,test:1}, end_to_end_latency_ms:null};
+function learning(overrides = {}) { return {runtime, promotion_gate:{config:gateConfig, promotion_eligible:true, checks:[]}, mode_transitions:[], models:[], staged_models:[candidateRow], registry_issues:[], pending_examples:2, ...overrides}; }
 function Location() {return <output aria-label="URL">{useLocation().search}</output>;}
 function show(path = "/email") {return render(<MemoryRouter initialEntries={[path]}><Location/><EmailPage/></MemoryRouter>);}
 function deferred<T>() {let resolve!: (value:T)=>void; let reject!: (error:Error)=>void; const promise=new Promise<T>((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
@@ -178,15 +179,15 @@ it("uses dynamic categories and three-field versioned saves with failure preserv
 });
 it("keeps mode server-controlled and retains ready marker on rejected switch",async()=>{
   const user=userEvent.setup();api.saveEmailRuntimeMode.mockRejectedValue(new Error("切换失败，请重试"));show("/email?tab=learning");
-  const toggle=await screen.findByRole("button",{name:"主模型"});expect(toggle).toHaveTextContent("让模型上线");await user.click(toggle);
+  const toggle=await screen.findByRole("button",{name:/让这一版上线|改回 Agent/});expect(toggle).toHaveTextContent("上线");await user.click(toggle);
   expect(api.saveEmailRuntimeMode).not.toHaveBeenCalled();await user.click(screen.getByRole("button",{name:"确认切换"}));
   expect(api.saveEmailRuntimeMode).toHaveBeenCalledWith(expect.objectContaining({mode:"model_primary",model_id:"model-v2",expected_mode:"agent_primary",expected_model_id:null,request_id:expect.any(String)}));
-  expect(await screen.findByRole("alert")).toHaveTextContent("切换失败");expect(toggle).toHaveTextContent("让模型上线");
+  expect(await screen.findByRole("alert")).toHaveTextContent("切换失败");expect(toggle).toHaveTextContent("上线");
   expect(screen.getByRole("tab",{name:/模型训练.*候选模型已达标/})).toBeInTheDocument();
 });
 it("never enables a switch from client metric estimates",async()=>{
   api.listEmailLearning.mockResolvedValue({learning:learning({runtime:{...runtime,toggle_enabled:false,candidate_ready:false}})});show("/email?tab=learning");
-  expect(await screen.findByRole("button",{name:"主模型"})).toBeDisabled();
+  expect(await screen.findByRole("button",{name:/让这一版上线|改回 Agent/})).toBeDisabled();
 });
 it("does not present a legacy registry active model as the realtime primary",async()=>{
   const user=userEvent.setup();
@@ -305,11 +306,11 @@ it("creates category with folder target and all semantic fields, and renders ser
 });
 it("only updates model switch after server readback and allows disabling active model",async()=>{
   const user=userEvent.setup(),readback=deferred<unknown>();api.saveEmailRuntimeMode.mockResolvedValue({ok:true,runtime:{...runtime,mode:"model_primary",active_model_id:"model-v2"}});
-  show("/email?tab=learning");const toggle=await screen.findByRole("button",{name:"主模型"});await user.click(toggle);
+  show("/email?tab=learning");const toggle=await screen.findByRole("button",{name:/让这一版上线|改回 Agent/});await user.click(toggle);
   api.listEmailLearning.mockReturnValueOnce(readback.promise);
   await user.click(screen.getByRole("button",{name:"确认切换"}));expect(toggle).toHaveTextContent("正在上线…");
   await act(async()=>readback.resolve({learning:learning({runtime:{...runtime,mode:"model_primary",active_model_id:"model-v2",candidate_ready:false}})}));
-  await waitFor(()=>expect(toggle).toHaveTextContent("改回 Agent 判断"));expect(screen.queryByLabelText("候选模型已达标")).not.toBeInTheDocument();
+  await waitFor(()=>expect(toggle).toHaveTextContent("改回 Agent"));expect(screen.queryByLabelText("候选模型已达标")).not.toBeInTheDocument();
   await user.click(toggle);await user.click(screen.getByRole("button",{name:"确认切换"}));
   expect(api.saveEmailRuntimeMode).toHaveBeenLastCalledWith(expect.objectContaining({mode:"agent_primary",model_id:null,expected_mode:"model_primary",expected_model_id:"model-v2"}));
 });
@@ -372,6 +373,7 @@ it("selects only executable training sources and records a narrowed folder scope
   const category=screen.getByRole("checkbox",{name:"legal"});expect(category).not.toBeChecked();
   await waitFor(()=>expect(screen.getByRole("button",{name:"开始训练"})).toBeEnabled());
   await user.click(screen.getByRole("button",{name:"开始训练"}));
+  // legal is offered and left unchecked, so its mail falls to others.
   expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work","others"],model_families:["embedding-mlp"]});
   expect(await screen.findByText(/训练状态：/)).toHaveTextContent("running");
 });
@@ -395,11 +397,12 @@ it("shows model family support and submits the selected family",async()=>{
   expect(screen.getByRole("checkbox",{name:"fastText（当前不可用）"})).toBeDisabled();
   await waitFor(()=>expect(screen.getByRole("button",{name:"开始训练"})).toBeEnabled());
   await user.click(screen.getByRole("button",{name:"开始训练"}));
-  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work","others"],model_families:["embedding-mlp"]});
+  // work is the only source offered, so nothing is left over for others.
+  expect(api.requestEmailTraining).toHaveBeenCalledWith({sources:["folder_snapshot"],categories:["work"],model_families:["embedding-mlp"]});
 });
 it("reuses a mode request ID on retry and prevents duplicate submissions",async()=>{
   const user=userEvent.setup(),pending=deferred<unknown>();api.saveEmailRuntimeMode.mockReturnValueOnce(pending.promise).mockRejectedValueOnce(new Error("重试失败"));show("/email?tab=learning");
-  await user.click(await screen.findByRole("button",{name:"主模型"}));const button=screen.getByRole("button",{name:"确认切换"});
+  await user.click(await screen.findByRole("button",{name:/让这一版上线|改回 Agent/}));const button=screen.getByRole("button",{name:"确认切换"});
   fireEvent.click(button);fireEvent.click(button);expect(api.saveEmailRuntimeMode).toHaveBeenCalledTimes(1);
   await act(async()=>pending.reject(new Error("连接中断")));await user.click(screen.getByRole("button",{name:"确认切换"}));
   expect(api.saveEmailRuntimeMode.mock.calls[1][0].request_id).toBe(api.saveEmailRuntimeMode.mock.calls[0][0].request_id);
@@ -407,7 +410,7 @@ it("reuses a mode request ID on retry and prevents duplicate submissions",async(
 it("ignores an aborted learning rejection after a newer tab request succeeds",async()=>{
   const user=userEvent.setup(),first=deferred<unknown>();api.listEmailLearning.mockReturnValueOnce(first.promise);
   show();await screen.findByRole("button",{name:"打开邮件 邮件1"});
-  await user.click(screen.getByRole("tab",{name:/模型训练/}));await screen.findByRole("button",{name:"主模型"});
+  await user.click(screen.getByRole("tab",{name:/模型训练/}));await screen.findByRole("button",{name:/让这一版上线|改回 Agent/});
   await act(async()=>first.reject(new Error("STALE learning error")));
   expect(screen.queryByText("STALE learning error")).not.toBeInTheDocument();expect(screen.queryByRole("button",{name:"重新加载模型训练"})).not.toBeInTheDocument();
 });
@@ -418,21 +421,21 @@ it("includes evidence summaries in drawer keyboard traversal",async()=>{
 });
 it("reconciles a lost switch response from server mode before claiming current state",async()=>{
   const user=userEvent.setup();api.saveEmailRuntimeMode.mockRejectedValueOnce(new Error("切换响应丢失"));show("/email?tab=learning");
-  await user.click(await screen.findByRole("button",{name:"主模型"}));
+  await user.click(await screen.findByRole("button",{name:/让这一版上线|改回 Agent/}));
   api.listEmailLearning.mockResolvedValue({learning:learning({runtime:{...runtime,mode:"model_primary",active_model_id:"model-v2",candidate_ready:false}})});
   await user.click(screen.getByRole("button",{name:"确认切换"}));
-  await waitFor(()=>expect(screen.getByRole("button",{name:"主模型"})).toHaveTextContent("改回 Agent 判断"));
+  await waitFor(()=>expect(screen.getByRole("button",{name:/让这一版上线|改回 Agent/})).toHaveTextContent("改回 Agent"));
   expect(screen.queryByRole("dialog",{name:"确认运行模式"})).not.toBeInTheDocument();expect(screen.queryByLabelText("候选模型已达标")).not.toBeInTheDocument();
 });
 it("marks mode unverified if both command and readback fail, then retries readback",async()=>{
   const user=userEvent.setup();api.saveEmailRuntimeMode.mockRejectedValueOnce(new Error("切换连接失败"));show("/email?tab=learning");
-  await user.click(await screen.findByRole("button",{name:"主模型"}));api.listEmailLearning.mockRejectedValueOnce(new Error("读取失败"));
+  await user.click(await screen.findByRole("button",{name:/让这一版上线|改回 Agent/}));api.listEmailLearning.mockRejectedValueOnce(new Error("读取失败"));
   await user.click(screen.getByRole("button",{name:"确认切换"}));
-  expect(await screen.findByRole("heading",{name:"运行模式未确认"})).toBeInTheDocument();expect(screen.queryByRole("button",{name:"主模型"})).not.toBeInTheDocument();
+  expect(await screen.findByRole("heading",{name:"运行模式未确认"})).toBeInTheDocument();expect(screen.queryByRole("button",{name:/让这一版上线|改回 Agent/})).not.toBeInTheDocument();
   expect(screen.queryByRole("dialog",{name:"确认运行模式"})).not.toBeInTheDocument();
   api.listEmailLearning.mockResolvedValue({learning:learning({runtime:{...runtime,mode:"model_primary",active_model_id:"model-v2",candidate_ready:false}})});
   await user.click(screen.getByRole("button",{name:"重新读取运行模式"}));
-  expect(await screen.findByRole("button",{name:"主模型"})).toHaveTextContent("改回 Agent 判断");
+  expect(await screen.findByRole("button",{name:/让这一版上线|改回 Agent/})).toHaveTextContent("改回 Agent");
 });
 it.each(["","-0.01","1.01"])("does not submit invalid category threshold %j",async(value)=>{
   const user=userEvent.setup();show("/email?tab=config");const input=await screen.findByLabelText("自动处理阈值");

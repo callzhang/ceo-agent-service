@@ -24,10 +24,10 @@ MODEL_FAMILY_CATALOG: Final[tuple[dict[str, object], ...]] = (
     },
     {
         "family": "embedding-mlp",
-        "display_name": "Embedding + MLP",
+        "display_name": "语义嵌入 + 字片模型",
         "supported": True,
         "configured": True,
-        "reason": "当前 durable staged controller 已接入 Embedding + MLP executor",
+        "reason": "两种读法各判一次再取平均：语义嵌入读这封信在讲什么，字片模型读它是怎么写的",
     },
 )
 MODEL_FAMILY_BY_KEY: Final[dict[str, dict[str, object]]] = {
