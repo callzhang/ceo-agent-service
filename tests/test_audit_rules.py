@@ -275,3 +275,22 @@ def test_atomic_save_preserves_valid_file_when_replace_fails(
 
     assert path.read_text(encoding="utf-8") == "Keep this rule."
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_both_roles_are_reminded_to_write_what_is_durable() -> None:
+    """Reading was instructed from the start; writing never was.
+
+    Over the fourteen days to 2026-09-19 the agents called `memory_recall` 174
+    times and `memory_write` not once -- and `memory_write` appeared in no
+    prompt at all. The reminder is deliberately permissive about writing
+    nothing: most tasks have nothing durable in them, and a Memory full of
+    routine replies buries the entries that matter.
+    """
+    from app.audit_rules import MEMORY_WRITE_REMINDER, render_audit_rules
+    from app.store import AgentRole
+
+    for role in (AgentRole.CONSUMER, AgentRole.AUDIT):
+        rendered = render_audit_rules(role)
+        assert MEMORY_WRITE_REMINDER in rendered
+        assert rendered.rstrip().endswith(MEMORY_WRITE_REMINDER)
+    assert "finish normally and write nothing" in MEMORY_WRITE_REMINDER

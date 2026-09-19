@@ -25,6 +25,26 @@ AUDIT_RULE_WRAPPER = (
     "candidate exactly as authored. If business meaning must change, return concrete "
     "feedback; do not rewrite the candidate yourself."
 )
+# Asked of both roles, at the end of the turn. Reading from Memory was always
+# instructed and is healthy -- 144 Consumer recalls and 30 Audit recalls over
+# the fourteen days to 2026-09-19 -- but nothing ever asked a turn to write,
+# and `memory_write` was never named in any prompt, so nothing was ever
+# written back. Derek, 2026-09-19: make it a reminder at the end of a task,
+# with the wording the Memory hook already uses, and let most tasks write
+# nothing.
+MEMORY_WRITE_REMINDER = (
+    "Before you finish, check whether anything durable came out of this task: "
+    "a preference or a decision Derek stated, a reusable convention or an "
+    "accepted rule, a stable fact about a person, a project or a system that "
+    "this task's own record would not tell you later, or a short continuation "
+    "point for work left unfinished. If there is, call `memory_write` once "
+    "with one or two sentences about that one thing, naming Derek rather than "
+    "\"the user\". Skip routine replies, logs, command output, one-off errors, "
+    "unconfirmed guesses, secrets, and anything Memory already holds. If "
+    "nothing durable came out of it, finish normally and write nothing: most "
+    "tasks have nothing worth writing, and an entry that is not worth keeping "
+    "makes the rest harder to find."
+)
 EMPTY_AUDIT_RULES = "No additional configurable Audit Rules."
 RESERVED_CORE_SECTION_TITLES = frozenset(
     {
@@ -137,7 +157,7 @@ def render_audit_rules(role: AgentRole, path: Path | None = None) -> str:
         if role is AgentRole.CONSUMER
         else AUDIT_RULE_WRAPPER
     )
-    return f"{wrapper}\n\n{custom}"
+    return f"{wrapper}\n\n{custom}\n\n{MEMORY_WRITE_REMINDER}"
 
 
 def _render_audit_variables(body: str) -> str:
