@@ -40,6 +40,7 @@ from app.email_category_config import (
 )
 from app.email_connector_config import EmailAccountPayload, resolve_secret
 from app.email_classifier_retrain import load_retrain_state
+from app.email_classifier_contracts import CANDIDATE_HEAD_FORMAT
 from app.email_classifier_runtime import (
     ONLINE_ACTIVATION_FILENAME,
     EmailClassifierRuntimeMode,
@@ -281,7 +282,7 @@ def _project_staged_model_evidence(
         "head_format": _safe_exact_evidence_value(
             maturity.compatibility.head_format,
             "head_format",
-            "description-mlp-v1",
+            CANDIDATE_HEAD_FORMAT,
         ),
         "parent_model_id": (
             None
@@ -444,7 +445,7 @@ def _project_staged_model_evidence(
             ),
             "head_format": (
                 _safe_exact_evidence_value(
-                    parameters["head_format"], "head_format", "description-mlp-v1"
+                    parameters["head_format"], "head_format", CANDIDATE_HEAD_FORMAT
                 )
                 if parameters.get("head_format") is not None
                 else None
