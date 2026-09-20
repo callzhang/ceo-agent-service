@@ -969,7 +969,23 @@ class DingTalkAutoReplyWorker:
         except (json.JSONDecodeError, TypeError):
             payload = None
         references = [task.oa_url]
-        references.extend(DingTalkAutoReplyWorker._task_reference_strings(payload))
+        # Only inspect fields that carry the trigger's business material.  The
+        # persisted task also contains the injected prompt and managed Skill
+        # receipts; scanning that text makes documentation examples such as a
+        # larkoffice.com URL look like a real dependency of a DingTalk task.
+        if isinstance(payload, dict):
+            for field in (
+                "content",
+                "quoted_content",
+                "raw_payload",
+                "references",
+                "materials",
+            ):
+                references.extend(
+                    DingTalkAutoReplyWorker._task_reference_strings(
+                        payload.get(field)
+                    )
+                )
         for value in references:
             for token in value.split():
                 candidate = token.strip("()[]{}<>\"',.;，。；：")
