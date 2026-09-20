@@ -1548,3 +1548,68 @@ def test_the_action_identity_prompt_points_at_the_operation_skill():
 
     assert "dingtalk-chat" in prompt
     assert "Read the operation Skill named by an action's `capability`" in prompt
+
+
+def test_a_conclusion_sent_on_thin_material_is_corrected(setup):
+    """The message may ask; it may not conclude.
+
+    Attempt 9695 scored its material 68% complete and asked which repository
+    was meant rather than guessing an address. That was the turn's own good
+    judgement and nothing required it.
+    """
+    from app.agent_contracts import AuditAgentResult
+
+    store, task, audit_context, parent = setup
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id=audit_context.operation_id,
+        owner="audit-test",
+    )
+    assert claim.claimed
+    store.append_agent_run_event(
+        claim.run.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call",
+                "arguments": {
+                    "argv": ["dws", "chat", "+dm", "--to", "A", "--content", "仓库地址是 github.com/x/y。"]
+                },
+            },
+        },
+        owner="audit-test",
+    )
+    executed = AuditAgentResult.model_validate(
+        {
+            "outcome": "executed",
+            "summary": "已发送仓库地址",
+            "proposal_revision": 0,
+            "feedback": None,
+            "external_result": {
+                "operation_id": audit_context.operation_id,
+                "live_result_reference": {"message_id": "m-1"},
+            },
+            "decision_options": [],
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+            "risk": "low",
+            "confidence": 0.95,
+            "rule_coverage": 1.0,
+            "information_completeness": 0.68,
+        }
+    )
+    runner = AuditAgentRunner(
+        store=store, workspace=Path("/workspace"), owner="audit-test"
+    )
+    parse = runner._parse_evidenced_result(
+        task, claim.run, parse_result=lambda _raw: executed
+    )
+
+    with pytest.raises(ResultParseError) as caught:
+        parse("{}")
+
+    assert "may ask and may not conclude" in str(caught.value)

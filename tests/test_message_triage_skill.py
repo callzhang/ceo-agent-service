@@ -80,15 +80,15 @@ def test_message_triage_skill_defines_complete_judgment_workflow():
         assert required in text
 
 
-def test_message_triage_skill_discovers_repository_before_asking_for_disambiguation():
+def test_message_triage_skill_verifies_external_target_before_asking_for_disambiguation():
     text = _skill_text()
 
     for required in (
-        "repository, source code, or link request",
-        "available read-only repository or Git hosting records",
-        "unique matching repository",
+        "identifying or verifying an external object, fact, or target",
+        "available read-only capabilities and current context",
+        "exactly one match",
         "Only after that search remains ambiguous or empty",
-        "never guess a repository",
+        "never guess the target",
     ):
         assert required in text
 

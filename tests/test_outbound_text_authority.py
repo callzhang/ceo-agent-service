@@ -167,3 +167,37 @@ def test_a_send_that_ran_and_failed_delivered_nothing() -> None:
     assert delivered_shell_send_commands([refused, crashed]) == []
     assert len(delivered_shell_send_commands([delivered])) == 1
     assert len(delivered_shell_send_commands([refused, crashed, delivered])) == 1
+
+
+def test_thin_material_may_ask_but_may_not_conclude() -> None:
+    """Attempt 9695 did the right thing unprompted; nothing required it.
+
+    The turn scored its own material 68% complete and asked which repository
+    was meant instead of guessing an address. Sending is deliberately not held
+    to the score band -- that would only teach a turn to score itself lower --
+    but what it may say is.
+
+    Measured over thirty days of Consumer results: 86.5% score 1.0 and 7.2%
+    score 0.9, so the line at 0.9 catches the 6.3% that genuinely lacked
+    material without forcing a question in ordinary work.
+    """
+    from app.outbound_text_authority import sends_a_conclusion_on_thin_material
+
+    thin = {"information_completeness": 0.68}
+
+    assert sends_a_conclusion_on_thin_material(thin, ["仓库地址是 github.com/x/y。"])
+    assert not sends_a_conclusion_on_thin_material(
+        thin, ["你说的是哪次演示、哪个仓库？确认后我再发准确地址。"]
+    )
+    # Complete material may state a conclusion.
+    assert not sends_a_conclusion_on_thin_material(
+        {"information_completeness": 1.0}, ["仓库地址是 github.com/x/y。"]
+    )
+    # The line itself is allowed through.
+    assert not sends_a_conclusion_on_thin_material(
+        {"information_completeness": 0.9}, ["结论"]
+    )
+    # Nothing was sent, so there is nothing to hold to it.
+    assert not sends_a_conclusion_on_thin_material(thin, [])
+    # A result with no score is not judged here.
+    assert not sends_a_conclusion_on_thin_material({}, ["结论"])

@@ -252,3 +252,79 @@ SHELL_SEND_REQUIREMENT = (
     "so the service can record it. If more has to be said, propose that as a "
     "new action and let the service deliver it."
 )
+def every_send_text(tool_events: Iterable[object]) -> list[str]:
+    """Message bodies sent by either route, shell or the reviewed tool.
+
+    Kept apart from `provider_send_texts`, which answers "did this turn send
+    around the service" and must stay blind to the sanctioned path. A rule
+    about what a message may *say* has to hold on both, and folding the two
+    questions together made the prepared-text check fire on every reviewed
+    send -- a far larger change than the one being made, and eleven tests
+    said so.
+    """
+
+    texts = list(provider_send_texts(tool_events))
+    for event in tool_events:
+        if not isinstance(event, Mapping):
+            continue
+        item = event.get("item")
+        if not isinstance(item, Mapping) or item.get("type") != "mcp_tool_call":
+            continue
+        arguments = item.get("arguments")
+        argv = arguments.get("argv") if isinstance(arguments, Mapping) else None
+        if not isinstance(argv, list) or not all(isinstance(part, str) for part in argv):
+            continue
+        payload = " ".join(shlex.quote(part) for part in argv)
+        if not _SEND_COMMAND.search(payload):
+            continue
+        if "--help" in payload or "--dry-run" in payload:
+            continue
+        texts.extend(_text_arguments(payload))
+    return texts
+
+
+#: Below this, a message that reaches a person may ask but may not conclude.
+#: Measured over thirty days of Consumer results: 86.5% score 1.0 and 7.2%
+#: score 0.9, so a line at 0.9 catches the 6.3% that genuinely lacked
+#: material without forcing a question in ordinary work.
+ASKING_ONLY_COMPLETENESS = 0.9
+
+_QUESTION_MARKS = ("？", "?")
+
+
+def sends_a_conclusion_on_thin_material(
+    result: object, sent_texts: Iterable[str]
+) -> bool:
+    """A message sent on incomplete material that does not ask anything.
+
+    Derek, 2026-09-20: sending is not held to the score band -- that would
+    only teach a turn to score itself lower -- but what it may *say* is. On
+    attempt 9695 the turn scored its own material 68% and did the right thing
+    unprompted: it asked which repository was meant instead of guessing an
+    address. Nothing required that; it was luck of the draw.
+
+    The check is narrow. It fires only when the score is below the line and
+    the text asks nothing at all, and its correction is to ask rather than to
+    conclude -- never to withhold the message.
+    """
+
+    if not isinstance(result, Mapping):
+        return False
+    completeness = result.get("information_completeness")
+    if not isinstance(completeness, (int, float)):
+        return False
+    if float(completeness) >= ASKING_ONLY_COMPLETENESS:
+        return False
+    texts = [text for text in sent_texts if str(text).strip()]
+    if not texts:
+        return False
+    return not any(mark in text for text in texts for mark in _QUESTION_MARKS)
+
+
+ASKING_ONLY_REQUIREMENT = (
+    "This turn scored its own material below "
+    f"{ASKING_ONLY_COMPLETENESS:.0%} complete and still sent a conclusion. "
+    "On material that thin the message may ask and may not conclude: state "
+    "what is missing and ask for it, so the person can answer instead of "
+    "acting on a guess. Send the question, not the answer."
+)

@@ -17,8 +17,11 @@ from app.agent_effect_claim import (
 )
 from app.agent_effect_claim import channel_is_judged_by_tool_events as _channel_judged
 from app.outbound_text_authority import (
+    ASKING_ONLY_REQUIREMENT,
     SHELL_SEND_REQUIREMENT,
     UNPREPARED_SEND_REQUIREMENT,
+    every_send_text,
+    sends_a_conclusion_on_thin_material,
     shell_send_commands,
     provider_send_texts,
     unprepared_send_texts,
@@ -341,12 +344,21 @@ class AuditAgentRunner:
             if refreshed is not None and shell_send_commands(refreshed.tool_events):
                 raise ResultParseError(SHELL_SEND_REQUIREMENT)
             if refreshed is not None:
+                sent_texts = provider_send_texts(refreshed.tool_events)
                 unprepared = unprepared_send_texts(
-                    provider_send_texts(refreshed.tool_events),
-                    self._prepared_bodies(delivery_keys),
+                    sent_texts, self._prepared_bodies(delivery_keys)
                 )
                 if unprepared:
                     raise ResultParseError(UNPREPARED_SEND_REQUIREMENT)
+                # On material this thin the message may ask and may not
+                # conclude. Sending is deliberately not held to the score
+                # band -- that would only teach a turn to score itself lower
+                # -- but what it may say is.
+                if sends_a_conclusion_on_thin_material(
+                    result.model_dump(mode="json"),
+                    every_send_text(refreshed.tool_events),
+                ):
+                    raise ResultParseError(ASKING_ONLY_REQUIREMENT)
             if (
                 refreshed is not None
                 and _channel_judged(task.channel)
