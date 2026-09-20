@@ -1773,7 +1773,8 @@ def _build_meeting_roster_evidence(
     current_user_id: str,
 ) -> CalendarMeetingEvidence:
     try:
-        return build_calendar_meeting_evidence(info, events, current_user_id)
+        evidence = build_calendar_meeting_evidence(info, events, current_user_id)
+        return _hydrate_calendar_participant_identities(dws, evidence)
     except MeetingSourceIncomplete:
         try:
             transcription = dws.get_all_minutes_transcription(
@@ -1817,6 +1818,78 @@ def _build_meeting_roster_evidence(
             raise MeetingSourceIncomplete(
                 f"calendar roster unavailable and transcript roster unavailable: {exc}"
             ) from exc
+
+
+def _hydrate_calendar_participant_identities(
+    dws: MeetingProducerDws,
+    evidence: CalendarMeetingEvidence,
+) -> CalendarMeetingEvidence:
+    """Fill missing calendar attendee IDs from one exact directory match.
+
+    Calendar responses reliably identify the current user but may provide only a
+    display name for other attendees. Meeting delivery needs a stable user ID for
+    a direct recipient, so preserve the roster while enriching only unambiguous
+    directory matches.
+    """
+    participants: list[MeetingParticipant] = []
+    for participant in evidence.participants:
+        if participant.user_id.strip():
+            participants.append(participant)
+            continue
+        try:
+            profiles = dws.search_user_profiles(participant.name)
+        except DwsError:
+            participants.append(participant)
+            continue
+        wanted = _canonical_name(participant.name)
+        matches = [
+            profile
+            for profile in profiles
+            if wanted
+            in {
+                _canonical_name(profile.name),
+                _canonical_name(profile.nick),
+            }
+            and profile.user_id.strip()
+        ]
+        if len(matches) != 1:
+            participants.append(participant)
+            continue
+        profile = matches[0]
+        participants.append(
+            participant.model_copy(
+                update={
+                    "user_id": profile.user_id.strip(),
+                    "open_dingtalk_id": (
+                        participant.open_dingtalk_id.strip()
+                        or (profile.open_dingtalk_id or "").strip()
+                    ),
+                }
+            )
+        )
+
+    creator = evidence.creator
+    if creator is not None:
+        creator_match = next(
+            (
+                participant
+                for participant in participants
+                if _canonical_name(participant.name)
+                == _canonical_name(creator.name)
+            ),
+            None,
+        )
+        if creator_match is not None:
+            creator = creator.model_copy(
+                update={
+                    "user_id": creator.user_id.strip() or creator_match.user_id,
+                    "open_dingtalk_id": (
+                        creator.open_dingtalk_id.strip()
+                        or creator_match.open_dingtalk_id
+                    ),
+                }
+            )
+    return evidence.model_copy(update={"participants": participants, "creator": creator})
 
 
 def _resolve_transcript_speaker(

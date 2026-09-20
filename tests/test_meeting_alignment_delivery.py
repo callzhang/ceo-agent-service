@@ -196,6 +196,7 @@ class FakeDws:
         self.sent: list[dict] = []
         self.status_queries: list[str] = []
         self.search_queries: list[str] = []
+        self.hr_user_ids: set[str] = set()
 
     def get_conversation_info(self, conversation_id):
         assert conversation_id == "cid-first"
@@ -209,6 +210,9 @@ class FakeDws:
     def search_user_profiles(self, query):
         self.search_queries.append(query)
         return list(self.profiles.get(query, []))
+
+    def is_hr_user(self, user_id):
+        return user_id in self.hr_user_ids
 
     def read_recent_messages(self, conversation, limit=50):
         assert conversation.open_conversation_id == "cid-first"
@@ -325,6 +329,52 @@ def test_mixed_recruiting_summary_sends_sanitized_group_message_and_private_hr_n
     assert "管理成熟度" in dws.sent[1]["text"]
     assert replay.send_result == result.send_result
     assert len(dws.sent) == 2
+
+
+def test_business_summary_to_hr_merges_sensitive_content_into_one_message(tmp_path):
+    dws = FakeDws()
+    dws.hr_user_ids.add("u-a")
+    sender = ServiceMessageSender(
+        store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws
+    )
+    payload = send_decision(mention_names=[]).model_dump()
+    payload["target"] = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "u-a",
+        "title": "A",
+        "candidates": [],
+    }
+    payload["final_message"] = "招聘事项已确认，后续按流程推进。"
+    payload["sensitive_private_message"] = {
+        "target": {
+            "kind": "direct",
+            "conversation_id": "",
+            "direct_user_id": "u-derek",
+            "title": "Derek",
+            "candidates": [],
+        },
+        "message": "人员评价：候选人的管理成熟度仍需进一步验证。",
+        "reason": "HR 可直接接收该招聘判断。",
+        "recipient_evidence": ["A 是本次会议中负责招聘事项的 HR"],
+    }
+    decision = MeetingAlignmentDecision.model_validate(payload)
+
+    result = deliver_meeting_alignment(
+        decision,
+        meeting_source(),
+        dws,
+        message_sender=sender,
+        delivery_key="meeting-alignment:recruiting:hr-primary",
+    )
+
+    assert result.sensitive_private_delivery is None
+    assert result.sensitive_private_merged is True
+    assert len(dws.sent) == 1
+    assert dws.sent[0]["conversation_id"] is None
+    assert dws.sent[0]["user_id"] == "u-a"
+    assert payload["final_message"] in dws.sent[0]["text"]
+    assert "管理成熟度" in dws.sent[0]["text"]
 
 
 def test_private_retry_reuses_successful_group_delivery(tmp_path):
@@ -963,4 +1013,3 @@ def test_followup_header_says_when_a_meeting_is_summarised_again():
     assert first == "【会议跟进】上线评审（2026-07-14 09:00-10:00）"
     assert again.startswith(first)
     assert "第二次总结" in again
-

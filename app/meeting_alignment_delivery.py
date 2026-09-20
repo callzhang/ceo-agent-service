@@ -41,6 +41,7 @@ class MeetingDeliveryResult(BaseModel):
     send_result: dict[str, Any]
     message_text: str = ""
     sensitive_private_delivery: SensitivePrivateDeliveryResult | None = None
+    sensitive_private_merged: bool = False
 
 
 class MeetingDeliveryRetry(RuntimeError):
@@ -92,6 +93,8 @@ class MeetingDeliveryDws(Protocol):
     def verify_message_send_result(
         self, send_result: dict[str, Any]
     ) -> dict[str, Any]: ...
+
+    def is_hr_user(self, user_id: str) -> bool: ...
 
 
 def resolve_meeting_creator_identity(
@@ -254,10 +257,19 @@ def deliver_meeting_alignment(
     for mention in resolved_mentions:
         embedded_name = _embedded_mention_name(final_message, mention)
         mention_display_names.append(embedded_name or mention.display_name)
+    hr_primary = _is_hr_primary_recipient(
+        dws,
+        target_kind=target_kind,
+        direct_user_id=direct_user_id,
+    )
     message_text = meeting_followup_message(
         decision,
         source,
-        final_message=final_message,
+        final_message=_primary_message_content(
+            final_message,
+            decision.sensitive_private_message,
+            is_hr_primary=hr_primary,
+        ),
     )
     if not delivery_key.strip():
         raise ValueError("meeting delivery key is required")
@@ -291,13 +303,18 @@ def deliver_meeting_alignment(
             ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         raise MeetingDeliveryRetry("meeting send failed") from exc
-    sensitive_delivery = _deliver_sensitive_private_message(
-        decision.sensitive_private_message,
-        decision,
-        source,
-        message_sender=message_sender,
-        delivery_key=f"{delivery_key}:sensitive",
-    )
+    sensitive_delivery = None
+    sensitive_private_merged = False
+    if decision.sensitive_private_message is not None and not hr_primary:
+        sensitive_delivery = _deliver_sensitive_private_message(
+            decision.sensitive_private_message,
+            decision,
+            source,
+            message_sender=message_sender,
+            delivery_key=f"{delivery_key}:sensitive",
+        )
+    elif decision.sensitive_private_message is not None:
+        sensitive_private_merged = True
     return MeetingDeliveryResult(
         target_kind=target_kind,
         target_id=target_id,
@@ -307,7 +324,33 @@ def deliver_meeting_alignment(
         send_result=send_result,
         message_text=message_text,
         sensitive_private_delivery=sensitive_delivery,
+        sensitive_private_merged=sensitive_private_merged,
     )
+
+
+def _is_hr_primary_recipient(
+    dws: MeetingDeliveryDws,
+    *,
+    target_kind: str,
+    direct_user_id: str,
+) -> bool:
+    if target_kind != "direct" or not direct_user_id.strip():
+        return False
+    try:
+        return bool(dws.is_hr_user(direct_user_id.strip()))
+    except DwsError as exc:
+        raise MeetingDeliveryRetry("primary recipient HR identity check failed") from exc
+
+
+def _primary_message_content(
+    final_message: str,
+    private_message: SensitivePrivateMessage | None,
+    *,
+    is_hr_primary: bool,
+) -> str:
+    if not is_hr_primary or private_message is None:
+        return final_message
+    return f"{final_message.strip()}\n\n{private_message.message.strip()}"
 
 
 def _deliver_sensitive_private_message(

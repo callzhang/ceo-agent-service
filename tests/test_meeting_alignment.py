@@ -260,6 +260,7 @@ class FakeDws:
         self.minutes_calls: list[dict] = []
         self.calendar_calls: list[str] = []
         self.info_calls: list[str] = []
+        self.profiles: dict[str, list[DwsUserProfile]] = {}
 
     def list_minutes_page(
         self, *, limit: int, cursor: str, start: str, end: str
@@ -281,7 +282,10 @@ class FakeDws:
         raise DwsError("transcript roster unavailable")
 
     def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
-        return []
+        return list(self.profiles.get(query, []))
+
+    def is_hr_user(self, user_id: str) -> bool:
+        return False
 
     def list_calendar_events_page(
         self, *, start: str, end: str, limit: int, cursor: str
@@ -291,6 +295,31 @@ class FakeDws:
         assert limit == 50
         self.calendar_calls.append(cursor)
         return self.calendar_pages[cursor]
+
+
+def test_producer_hydrates_missing_calendar_attendee_identity(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    event = matching_calendar_event()
+    event.attendee_details[1] = DwsCalendarAttendee(display_name="A")
+    dws = FakeDws(
+        calendar_pages={
+            "": {"events": [event], "has_more": False, "next_cursor": ""}
+        }
+    )
+    dws.profiles["A"] = [
+        DwsUserProfile(user_id="u-a", name="A", open_dingtalk_id="open-a")
+    ]
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    participants = json.loads(job.source_json)["calendar_evidence"]["participants"]
+    assert participants[1] == {
+        "name": "A",
+        "user_id": "u-a",
+        "open_dingtalk_id": "open-a",
+    }
 
 
 def _fake_resolve_sent_message_reference(self, open_task_id: str) -> dict:
