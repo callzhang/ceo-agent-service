@@ -704,6 +704,40 @@ def test_quality_gate_accepts_service_generated_uncertain_unsubscribe_options(tm
     )
 
 
+def test_quality_gate_accepts_explicit_local_needs_human_boundary_without_model_result(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    attempt_id = _insert_needs_human_projection(
+        store,
+        result={"outcome": "proposal"},
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_error=(
+            "needs_human:provider_receipt_missing: external write was not "
+            "safe to replay"
+        ),
+        human_decision_options_json="[]",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update agent_runs set final_result_json='' where id=("
+            "select agent_run_id from reply_attempts where id=?"
+            ")",
+            (attempt_id,),
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert ("reply_attempts", "needs_human", 1) in {
+        (item.source, item.code, item.count) for item in report.attention
+    }
+    assert not any(
+        item.code == "invalid_needs_human_result" for item in report.violations
+    )
+
+
 def test_quality_gate_rejects_audit_revision_failure_as_human_decision(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     attempt_id = _insert_needs_human_projection(

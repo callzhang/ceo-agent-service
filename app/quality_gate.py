@@ -535,6 +535,12 @@ def _service_generated_needs_human_classification(
 ) -> str:
     """Recognize service-generated decisions without replacing run evidence."""
     error_code = str(send_error or "").strip()
+    # A local recovery may deliberately create a human boundary after an
+    # external action was read back outside the service, or when an external
+    # write was not safe to replay.  These are not model claims and therefore
+    # must not be forced through the Consumer decision-options contract.
+    if error_code.startswith(("needs_human:", "external_action_completed:")):
+        return "needs_human"
     # Email uncertainty deliberately keeps the original Consumer/Audit result
     # as historical evidence. The current attempt projection is the new
     # service-generated human boundary, so a non-human final result is
