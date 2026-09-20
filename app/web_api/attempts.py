@@ -496,6 +496,9 @@ def _action_links(
     }
 
 
+from app.attempt_what_happened import build_what_happened
+
+
 def build_attempt_detail(
     store: Any, attempt_id: int, *, email_store: Any = None
 ) -> tuple[int, dict[str, Any] | None]:
@@ -687,6 +690,9 @@ def build_attempt_detail(
         "quality_warnings": [normalize_display_value(item) for item in _quality_warnings(attempt)],
         "context_only_info": normalize_display_value(_attempt_info_tooltip(attempt)),
         "tool_uses": tool_uses,
+        # The three questions a person opens this page with, answered from
+        # the generation's own record rather than any one channel's fields.
+        "what_happened": build_what_happened(agent_runs, store=store),
         "agent_execution_record": bool(agent_runs or attempt.codex_session_id),
         "revision_count": len({getattr(run, "proposal_revision", "") for run in agent_runs if getattr(run, "role", None) and getattr(run, "proposal_revision", "")}),
         "oa": {
