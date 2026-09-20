@@ -560,12 +560,29 @@ def sync_minutes_once(
         # rediscovered and retried on every later pass either way.
         if not paragraphs and not rendered_summary.strip():
             skipped += 1
-            skips.append(
-                (
-                    task_uuid,
-                    transcript_error or "no_summary_and_no_transcript_yet",
+            duration = _duration(basic)
+            if (
+                duration is not None
+                and duration < RESTRICTED_MINUTE_MINIMUM_DURATION
+            ):
+                # Too short to be worth chasing, ever. Derek, 2026-09-19: use
+                # the same five minutes that already decides whether a
+                # restricted minute is worth asking its owner about. Without a
+                # floor these came back on every pass -- a 0.6-minute
+                # "Meeting Recording" and a 1.7-minute "Voice call" among
+                # them -- and never became anything. Recorded as seen so the
+                # pass stops offering them; a longer one with nothing yet is
+                # still retried, because it is usually a recording in
+                # progress.
+                archived.add(task_uuid)
+                skips.append((task_uuid, "too_short_to_archive"))
+            else:
+                skips.append(
+                    (
+                        task_uuid,
+                        transcript_error or "no_summary_and_no_transcript_yet",
+                    )
                 )
-            )
             continue
         path = _archive_path(
             archive_dir,

@@ -867,3 +867,30 @@ def test_a_minute_missing_its_transcript_is_asked_again(tmp_path: Path) -> None:
     assert "u1" in set(_cursor(store).get("archived_ids") or [])
     [written] = list((tmp_path / "AI听记").rglob("*.md"))
     assert "开始" in written.read_text(encoding="utf-8")
+
+
+def test_a_recording_too_short_to_matter_is_not_chased_forever(tmp_path: Path) -> None:
+    """The five-minute floor now decides archiving too, not only access.
+
+    Without it a 0.6-minute "Meeting Recording" and a 1.7-minute "Voice call"
+    came back on every daily pass and never became anything.
+    """
+    store = _store(tmp_path)
+    dws = FakeDws(
+        [{"taskUuid": "short"}, {"taskUuid": "long"}],
+        basic={
+            "short": {"title": "Voice call", "startTime": 1789025858000, "duration": 103169},
+            "long": {"title": "会议录制：标注培训", "startTime": 1789025858000, "duration": 3400233},
+        },
+        summary={"short": {}, "long": {}},
+    )
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.skipped == 2
+    reasons = dict(result.skips)
+    assert reasons["short"] == "too_short_to_archive"
+    assert reasons["long"] == "no_summary_and_no_transcript_yet"
+    seen = set(_cursor(store).get("archived_ids") or [])
+    # The short one is not offered again; the long one still is.
+    assert "short" in seen and "long" not in seen
