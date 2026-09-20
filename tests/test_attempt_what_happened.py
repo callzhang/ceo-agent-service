@@ -211,3 +211,70 @@ def test_the_shown_scores_are_the_ones_the_action_was_taken_on() -> None:
     assert shown["information_completeness"] == "100%"
     assert shown["confidence"] == "96%"
     assert shown["from_run_id"] == 20305
+
+
+def test_a_turn_reporting_its_own_failure_still_gives_a_reason() -> None:
+    """`agent_reported_failure; audit retry attempts exhausted` is not a reason.
+
+    That is what /attempts/9695 offered as the explanation for asking Derek to
+    decide something. A turn that reports its own failure carries a
+    `source_code` and no written detail, and saying the code back is still
+    specific; saying nothing is what made the page unreadable.
+    """
+    runs = [
+        Run(
+            1,
+            "audit",
+            "failed",
+            structured_error_json=json.dumps(
+                {
+                    "code": "agent_reported_failure",
+                    "source": "agent",
+                    "source_code": "provider_receipt_missing",
+                }
+            ),
+        )
+    ]
+
+    stopped = build_what_happened(runs)["stopped_because"]
+
+    assert stopped["kind"] == "agent"
+    assert stopped["code"] == "provider_receipt_missing"
+    assert "回执" in stopped["sentence"]
+
+
+def test_the_page_can_show_what_the_turn_wrote() -> None:
+    """"No generated reply recorded" was shown for a turn that had written one.
+
+    It had composed a clarifying question -- the right answer at 68% complete
+    information -- and already sent it.
+    """
+    proposal = json.dumps(
+        {
+            "outcome": "proposal",
+            "information_completeness": 0.68,
+            "proposal": {
+                "actions": [
+                    {
+                        "operation": "direct_message_send",
+                        "payload": {"content": "你说的是哪次演示、哪个仓库？"},
+                    }
+                ]
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    answer = build_what_happened([Run(1, "consumer", "completed", final_result_json=proposal)])
+
+    assert answer["proposed_text"] == "你说的是哪次演示、哪个仓库？"
+
+
+def test_an_unknown_source_code_is_shown_rather_than_hidden() -> None:
+    runs = [
+        Run(1, "audit", "failed", structured_error_json=json.dumps(
+            {"code": "agent_reported_failure", "source_code": "something_new"}
+        ))
+    ]
+
+    assert build_what_happened(runs)["stopped_because"]["sentence"] == "something_new"

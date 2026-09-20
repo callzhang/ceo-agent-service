@@ -49,6 +49,20 @@ ENVIRONMENT_FAILURE_CODES = frozenset(
 
 _SCORE_FIELDS = ("risk", "confidence", "rule_coverage", "information_completeness")
 
+#: Plain sentences for the reasons a turn reports about itself. Without these
+#: the page showed `agent_reported_failure; audit retry attempts exhausted` as
+#: the explanation for asking Derek to decide something, which is not a reason
+#: anyone can act on.
+AGENT_REASON_SENTENCES = {
+    "provider_receipt_missing": "动作执行了，但没拿到供应商回执，无法证明它真的生效。",
+    "service_managed_send_required": "这条消息必须由服务发送，不能由本轮自己发。",
+    "invalid_execution_path": "本轮找不到一条可执行的路径来完成这件事。",
+    "xiaoqing_interview_capability_unavailable": (
+        "面试系统不可用，读不到候选人的面试记录，因此不做判断。"
+    ),
+    "audit_revision_exhausted": "修订次数用完，仍未得到符合契约的结果。",
+}
+
 
 def _loads(raw: object) -> dict[str, Any]:
     if isinstance(raw, dict):
@@ -110,6 +124,16 @@ def stopped_because(runs: Sequence[Any]) -> dict[str, str]:
             }
         if detail:
             return {"kind": "rule", "code": code, "sentence": detail}
+        # A turn that reports its own failure carries a `source_code` and no
+        # written detail. Saying the code back is still specific; saying
+        # nothing is what made this page unreadable.
+        source_code = str(payload.get("source_code") or "").strip()
+        if source_code:
+            return {
+                "kind": "agent",
+                "code": source_code,
+                "sentence": AGENT_REASON_SENTENCES.get(source_code, source_code),
+            }
         return {"kind": "unknown", "code": code, "sentence": ""}
     return {"kind": "none", "code": "", "sentence": ""}
 
@@ -166,6 +190,32 @@ def acting_run_id(runs: Sequence[Any], *, store: Any = None) -> int | None:
     return None
 
 
+def proposed_text(runs: Sequence[Any]) -> str:
+    """What the turn actually wrote, when it wrote something.
+
+    The page said "No generated reply recorded" for a turn that had composed
+    a clarifying question and sent it. The text lives in the proposal's own
+    action payload, whatever the channel calls the action.
+    """
+
+    for run in reversed(list(runs)):
+        result = _loads(getattr(run, "final_result_json", ""))
+        proposal = result.get("proposal")
+        if not isinstance(proposal, dict):
+            continue
+        for action in proposal.get("actions") or []:
+            if not isinstance(action, dict):
+                continue
+            payload = action.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            for field in ("content", "text", "message", "body", "remark"):
+                value = payload.get(field)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return ""
+
+
 def build_what_happened(
     runs: Iterable[Any], *, store: Any = None
 ) -> dict[str, Any]:
@@ -181,6 +231,7 @@ def build_what_happened(
         "acted_in_run_id": acted_in,
         "stopped_because": stopped,
         "deciding_scores": deciding_scores(ordered, acting_run_id=acted_in),
+        "proposed_text": proposed_text(ordered),
         # An action already completed is not a question. Only say a person is
         # needed when something is genuinely still undecided.
         "open_for_human": not actions and stopped["kind"] != "none",

@@ -730,7 +730,16 @@ def build_attempt_detail(
             "text": normalize_display_value(f"{attempt.trigger_sender}: {attempt.trigger_text}"),
         },
         "audit_explanation": {"title": "审计说明", "text": normalize_display_value(audit_explanation)},
-        "generated_reply": {"title": "生成回复", "text": normalize_display_value(_attempt_detail_reply_text(attempt, sent_reply))},
+        # Say what the turn wrote when it wrote something. "No generated reply
+        # recorded" was shown for a turn that had composed a clarifying
+        # question and already sent it.
+        "generated_reply": {
+            "title": "生成回复",
+            "text": normalize_display_value(
+                what_happened.get("proposed_text")
+                or _attempt_detail_reply_text(attempt, sent_reply)
+            ),
+        },
         "email": _email_payload(attempt, reply_task, email_store),
         "references": _references_payload(attempt),
         "feedback": {
