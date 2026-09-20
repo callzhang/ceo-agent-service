@@ -12122,3 +12122,79 @@ def test_the_second_failure_path_hands_over_too(tmp_path: Path):
     )
 
     assert store.get_reply_task(task.id).status == "needs_human"
+
+
+def test_the_oa_finalize_path_hands_over_too(tmp_path: Path):
+    """The third path a failure travels, and the one the OA channel takes.
+
+    Claire's two leave approvals executed correctly on 2026-09-20 and each
+    sent her exactly one notification, and both tasks still ended `failed`:
+    this path never asked whether the generation had already reached a person.
+    """
+    store = AutoReplyStore(tmp_path / "oa-finalize.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="审批待办", single_chat=False,
+        trigger_message_id="msg-1", trigger_create_time="2026-09-20 10:00:00",
+        trigger_sender="Derek", trigger_text="leave approval",
+        execution_generation="gen-1",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    claim = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="test",
+    )
+    store.append_agent_run_event(
+        claim.run.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "exit_code": 0,
+                "status": "completed",
+                "command": (
+                    "/bin/zsh -lc \"dws chat +messages-send --open-dingtalk-id "
+                    "DVPP --text '你的年假申请已同意'\""
+                ),
+                "aggregated_output": '{"ok":true,"result":{"errorCode":null}}',
+            },
+        },
+        owner="test",
+    )
+
+    store.fail_agent_run(
+        claim.run.id,
+        {
+            "code": "codex_result_invalid",
+            "retryable": True,
+            "authorization_required": False,
+            "detail": "sent from its own shell",
+            "session_continuable": False,
+        },
+        owner="test",
+    )
+
+    store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=claim.run.id,
+        task_status="failed",
+        task_error="codex_result_invalid",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="",
+        send_status="failed",
+        send_error="codex_result_invalid",
+        channel=task.channel,
+    )
+
+    assert store.get_reply_task(task.id).status == "needs_human"

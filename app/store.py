@@ -21205,6 +21205,18 @@ class AutoReplyStore:
                 attempt_id,
                 audit_tool_events_json,
             )
+            # The third path a failure travels, and the one the OA channel
+            # actually takes. Claire's two leave approvals executed correctly
+            # on 2026-09-20, each sent her exactly one notification, and both
+            # tasks still ended `failed` -- because this path never asked
+            # whether the generation had already reached a person.
+            if task_status == "failed" and self._generation_completed_external_action(
+                db,
+                task_id=task_id,
+                execution_generation=expected_execution_generation,
+                business_object_key="",
+            ):
+                task_status = "needs_human"
             if task_status != "unchanged":
                 cursor = db.execute(
                     """
