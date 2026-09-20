@@ -471,6 +471,7 @@ def _check_structured_needs_human(
             left join agent_runs r on r.id=a.agent_run_id
             where a.ordinal=1 and lower(a.send_status)='needs_human'
               and a.reviewed_at is null
+              and trim(coalesce(a.resolved_at, ''))=''
               and not exists (
                   select 1
                   from reply_tasks as historical_task

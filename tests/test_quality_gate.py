@@ -639,6 +639,32 @@ def test_quality_gate_excludes_reviewed_needs_human_attempt(tmp_path):
     assert store.count_current_unresolved_problem_attempts() == 0
 
 
+def test_quality_gate_excludes_resolved_needs_human_attempt(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    attempt_id = _insert_needs_human_projection(
+        store,
+        result={"outcome": "proposal"},
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set send_status='needs_human', "
+            "resolved_at=?, resolution=? where id=?",
+            (
+                "2026-08-07 01:00:00",
+                "Live provider state reached a terminal outcome.",
+                attempt_id,
+            ),
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(
+        item.source == "reply_attempts"
+        and item.code in {"needs_human", "invalid_needs_human_result"}
+        for item in [*report.attention, *report.violations]
+    )
+
+
 def test_quality_gate_reports_needs_human_projection_when_queue_task_is_done(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     _insert_needs_human_projection(store, result=_structured_needs_human_result())
