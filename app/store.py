@@ -22091,10 +22091,21 @@ class AutoReplyStore:
             )
             if cursor.rowcount != 1:
                 return False
+            # The attempt has to leave `failed` too. A reconciliation sweep
+            # projects the task from its attempt, so a task closed here with
+            # the attempt still reading `failed` was put straight back to
+            # failed by the next pass -- 384446 and 384447 reopened one minute
+            # after they were answered.
             db.execute(
                 """
                 update reply_attempts
-                set reviewer_feedback=?, reviewed_at=current_timestamp,
+                set send_status=case
+                        when send_status in ('failed', 'needs_human')
+                        then 'decision_selected'
+                        else send_status
+                    end,
+                    send_error='',
+                    reviewer_feedback=?, reviewed_at=current_timestamp,
                     resolved_at=current_timestamp, updated_at=current_timestamp
                 where agent_run_id in (
                     select id from agent_runs where reply_task_id=?

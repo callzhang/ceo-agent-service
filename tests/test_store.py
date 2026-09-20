@@ -12226,5 +12226,10 @@ def test_an_answered_question_can_close(tmp_path: Path):
     closed = store.get_reply_task(task.id)
     assert closed.status == "done"
     assert "human_decision:" in closed.error
+    # The attempt has to leave `failed` too, or the next reconciliation sweep
+    # projects the task back from it: 384446 and 384447 reopened one minute
+    # after they were answered.
+    assert store.reconcile_failed_reply_tasks_with_terminal_attempts() == 0
+    assert store.get_reply_task(task.id).status == "done"
     # A task that is not waiting on anyone is not closed this way.
     assert not store.close_needs_human_task_with_decision(task.id, decision="again")
