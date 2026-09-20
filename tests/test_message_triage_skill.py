@@ -80,6 +80,19 @@ def test_message_triage_skill_defines_complete_judgment_workflow():
         assert required in text
 
 
+def test_message_triage_skill_discovers_repository_before_asking_for_disambiguation():
+    text = _skill_text()
+
+    for required in (
+        "repository, source code, or link request",
+        "available read-only repository or Git hosting records",
+        "unique matching repository",
+        "Only after that search remains ambiguous or empty",
+        "never guess a repository",
+    ):
+        assert required in text
+
+
 def test_canonical_prompt_delegates_message_triage_judgment_to_skill():
     text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
 
