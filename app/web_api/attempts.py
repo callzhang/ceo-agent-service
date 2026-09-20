@@ -499,6 +499,49 @@ def _action_links(
 from app.attempt_what_happened import build_what_happened
 
 
+def _external_effect_sentence(what_happened: dict[str, Any]) -> str:
+    """Say plainly that the action completed, without reciting identifiers.
+
+    The service records a write by the identifiers it returned -- a task id, a
+    process instance, a content hash. Those are evidence, not something a
+    person reads, so the sentence names the commands and counts the rest.
+    """
+
+    actions = what_happened.get("external_actions") or []
+    commands = [
+        action["what"] for action in actions if action.get("recorded_by") == "turn"
+    ]
+    recorded = sum(1 for action in actions if action.get("recorded_by") == "service")
+    parts = []
+    if commands:
+        parts.append("、".join(dict.fromkeys(commands)))
+    if recorded:
+        parts.append(f"服务记录了 {recorded} 项写操作回执")
+    at = next((action.get("at") for action in actions if action.get("at")), "")
+    when = f"（{at}）" if at else ""
+    return "外部动作已完成" + when + ("：" + "；".join(parts) if parts else "")
+
+
+def _consumer_result_with_deciding_scores(
+    payload: dict[str, Any], what_happened: dict[str, Any]
+) -> dict[str, Any]:
+    """Replace the shown scores with the ones the action was taken on."""
+
+    scores = what_happened.get("deciding_scores") or {}
+    if not scores:
+        return payload
+    updated = dict(payload)
+    for field in ("confidence", "rule_coverage", "information_completeness"):
+        value = scores.get(field)
+        if isinstance(value, (int, float)):
+            updated[field] = f"{round(float(value) * 100)}%"
+    risk = scores.get("risk")
+    if isinstance(risk, str) and risk:
+        updated["risk"] = risk
+    updated["from_run_id"] = scores.get("from_run_id")
+    return updated
+
+
 def build_attempt_detail(
     store: Any, attempt_id: int, *, email_store: Any = None
 ) -> tuple[int, dict[str, Any] | None]:
@@ -614,6 +657,7 @@ def build_attempt_detail(
         audit_explanation = _attempt_reason_text(attempt)
     except RuntimeError:
         audit_explanation = attempt.codex_reason or attempt.send_error
+    what_happened = build_what_happened(agent_runs, store=store)
     action_pills = [{"label": _attempt_action_label_text(attempt), "status": attempt.send_status}]
     if attempt.oa_action.strip():
         action_pills.append({"label": f"🧾 {attempt.oa_action.strip()}", "status": attempt.oa_action})
@@ -648,7 +692,15 @@ def build_attempt_detail(
             "attention": {
                 "kind": normalize_display_value(getattr(attention, "kind", "")) if attention else "",
                 "reason": normalize_display_value(getattr(attention, "reason", "")) if attention else "",
-                "external_effect": normalize_display_value(getattr(attention, "external_effect", "")) if attention else "",
+                # Say whether the action completed when the record knows. The
+                # stock sentence ("whether the external action completed is
+                # decided by the current result and the business system") is
+                # what the page showed for a leave that was already approved.
+                "external_effect": (
+                    _external_effect_sentence(what_happened)
+                    if what_happened["reached_the_outside_world"]
+                    else normalize_display_value(getattr(attention, "external_effect", "")) if attention else ""
+                ),
                 "retry_at": normalize_display_value(getattr(attention, "retry_at", "")) if attention else "",
             },
         },
@@ -664,8 +716,14 @@ def build_attempt_detail(
             {"label": "updated", "value": normalize_display_value(attempt.updated_at)},
             {"label": "reviewed", "value": normalize_display_value(attempt.reviewed_at)},
         ],
-        "consumer_result": _consumer_result_payload(
-            terminal_run, agent_runs, current_agent_runs, reply_task
+        # The scores shown are the ones the action was taken on. Reading them
+        # off the last run made the page say "approved on 86% complete
+        # material" for an approval decided at 100%.
+        "consumer_result": _consumer_result_with_deciding_scores(
+            _consumer_result_payload(
+                terminal_run, agent_runs, current_agent_runs, reply_task
+            ),
+            what_happened,
         ),
         "trigger": {
             "title": "Trigger",
@@ -692,7 +750,7 @@ def build_attempt_detail(
         "tool_uses": tool_uses,
         # The three questions a person opens this page with, answered from
         # the generation's own record rather than any one channel's fields.
-        "what_happened": build_what_happened(agent_runs, store=store),
+        "what_happened": what_happened,
         "agent_execution_record": bool(agent_runs or attempt.codex_session_id),
         "revision_count": len({getattr(run, "proposal_revision", "") for run in agent_runs if getattr(run, "role", None) and getattr(run, "proposal_revision", "")}),
         "oa": {
