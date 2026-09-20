@@ -4364,6 +4364,9 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
     recovered_orphaned_agent_runs = (
         store.recover_orphaned_agent_runs_for_terminal_reply_tasks()
     )
+    handed_off_completed_actions = (
+        store.close_failed_reply_tasks_that_completed_an_external_action()
+    )
     recovered_tasks = (
         store.recover_orphaned_processing_reply_tasks()
         + store.recover_interrupted_agent_runs_after_service_restart()
@@ -4377,6 +4380,7 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
         + skipped_superseded_tasks
         + reconciled_terminal_attempts
         + skipped_terminal_no_action_tasks
+        + handed_off_completed_actions
         + len(recovered_tasks)
         + recovered_orphaned_agent_runs
     )

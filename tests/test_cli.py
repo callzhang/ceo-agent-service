@@ -150,6 +150,46 @@ def test_service_start_closes_superseded_failed_weekly_okr_jobs(monkeypatch):
     assert calls[:4] == ["orphaned", "stale-weekly", "failed-weekly", "scheduled"]
 
 
+def test_service_start_hands_off_failed_tasks_after_external_action(monkeypatch):
+    calls: list[str] = []
+
+    def method(name, result=0):
+        return lambda *args, **kwargs: calls.append(name) or result
+
+    store = SimpleNamespace(
+        reconcile_failed_reply_tasks_with_recorded_deliveries=method("deliveries"),
+        reconcile_done_reply_tasks_with_failed_current_run=method("current-run"),
+        reconcile_failed_reply_tasks_with_confirmation_required_runs=method(
+            "confirmation"
+        ),
+        reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts=method(
+            "unsubscribe"
+        ),
+        skip_failed_reply_tasks_superseded_by_terminal_business_object=method(
+            "superseded"
+        ),
+        reconcile_failed_reply_tasks_with_terminal_attempts=method("attempts"),
+        skip_failed_reply_tasks_with_terminal_no_action_run=method("no-action"),
+        close_failed_reply_tasks_that_completed_an_external_action=method(
+            "completed-action", 1
+        ),
+        recover_orphaned_agent_runs_for_terminal_reply_tasks=method(
+            "orphaned-runs"
+        ),
+        recover_orphaned_processing_reply_tasks=method("processing", []),
+        recover_interrupted_agent_runs_after_service_restart=method("interrupted", []),
+        resume_completed_agent_turns_after_service_restart=method("completed", []),
+    )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
+
+    recovered = cli._recover_orphaned_reply_tasks_on_service_start(
+        SimpleNamespace(db_path=Path("/tmp/unused.sqlite3"))
+    )
+
+    assert "completed-action" in calls
+    assert recovered == 1
+
+
 def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, int]:
     store.enqueue_reply_task(
         channel="wechat",
