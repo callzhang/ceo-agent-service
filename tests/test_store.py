@@ -12198,3 +12198,33 @@ def test_the_oa_finalize_path_hands_over_too(tmp_path: Path):
     )
 
     assert store.get_reply_task(task.id).status == "needs_human"
+
+
+def test_an_answered_question_can_close(tmp_path: Path):
+    """A needs_human task has no way back to a terminal state on its own.
+
+    The retry path refuses it, which is right: re-running something handed to
+    a person can repeat an irreversible action. But an answered question has
+    to be able to close, or the page fills with questions that were settled in
+    conversation and nowhere else.
+    """
+    store = AutoReplyStore(tmp_path / "answered.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1", conversation_title="Group", single_chat=False,
+        trigger_message_id="msg-1", trigger_create_time="2026-09-20 10:00:00",
+        trigger_sender="Derek", trigger_text="decide this",
+        execution_generation="gen-1",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='needs_human'")
+
+    assert store.close_needs_human_task_with_decision(
+        task.id, decision="认可已发出的内容，不补发。"
+    )
+
+    closed = store.get_reply_task(task.id)
+    assert closed.status == "done"
+    assert "human_decision:" in closed.error
+    # A task that is not waiting on anyone is not closed this way.
+    assert not store.close_needs_human_task_with_decision(task.id, decision="again")

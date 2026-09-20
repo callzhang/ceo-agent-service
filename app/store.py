@@ -22065,6 +22065,45 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def close_needs_human_task_with_decision(
+        self, task_id: int, *, decision: str
+    ) -> bool:
+        """Record that a person answered the question and close the task.
+
+        A `needs_human` task has no way back to a terminal state on its own:
+        the retry path refuses it, which is right -- re-running something
+        handed to a person can repeat an irreversible action. But an answered
+        question has to be able to close, or the page fills with questions
+        that were settled in conversation and nowhere else.
+        """
+        decision = decision.strip()
+        if not decision:
+            raise ValueError("decision must be non-empty")
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='done', error=?, available_at='', locked_at=null,
+                    updated_at=current_timestamp
+                where id=? and status='needs_human'
+                """,
+                (f"human_decision:{decision}"[:500], task_id),
+            )
+            if cursor.rowcount != 1:
+                return False
+            db.execute(
+                """
+                update reply_attempts
+                set reviewer_feedback=?, reviewed_at=current_timestamp,
+                    resolved_at=current_timestamp, updated_at=current_timestamp
+                where agent_run_id in (
+                    select id from agent_runs where reply_task_id=?
+                )
+                """,
+                (decision, task_id),
+            )
+            return True
+
     def record_reviewed_reply_rerun(
         self,
         *,
