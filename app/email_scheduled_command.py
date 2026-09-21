@@ -33,7 +33,7 @@ from app.email_worker import (
 from app.store import AutoReplyStore
 
 
-HISTORY_EMBEDDING_TIMEOUT_SECONDS = 30.0
+HISTORY_EMBEDDING_TIMEOUT_SECONDS = 120.0
 
 
 @dataclass(frozen=True)

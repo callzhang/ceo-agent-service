@@ -451,7 +451,7 @@ Consumer→Audit 往返——退订在真实世界本来就是幂等的。同理
 在后续定时轮次继续向历史推进。模型 accepted 结果进入现有不可变 ActionPlan 和 provider action
 队列；`model_rejected`、`model_others` 与 `model_category_not_promoted` 保存完整预测证据为
 `pending_feedback`，不创建 Agent 分类任务和动作计划。Embedding、runtime 或持久化技术失败使本轮
-失败并在下轮重试，不写人工待确认。定时历史模型 runtime 的 Embedding 请求期限为 30 秒，实时
+失败并在下轮重试，不写人工待确认。定时历史模型 runtime 的 Embedding 请求期限为 120 秒，实时
 调用仍是 2 秒，避免批处理复用实时延迟预算后在同一封历史邮件上永久超时。冻结训练 snapshot 直接采用 provider 文件夹和 important 信号，
 训练与 shadow 评估均为离线、阶段性作业，不在收信路径实时训练或并行推理；全量线上模型仍需连续两个兼容版本对
 全部类别和 important 都达标且没有未解决的系统性错误。整个模型晋升后，实时新邮件主路径严格按

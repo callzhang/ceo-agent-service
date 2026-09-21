@@ -89,7 +89,7 @@ def test_scheduled_loader_widens_only_the_history_embedding_deadline(
     )
 
     assert bootstrap.load_active_model() is runtime
-    assert captured["embedding_remote_timeout_seconds"] == 30.0
+    assert captured["embedding_remote_timeout_seconds"] == 120.0
 
 
 def test_email_scheduled_command_reports_dependency_construction_failure() -> None:
