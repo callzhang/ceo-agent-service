@@ -510,6 +510,28 @@ def test_a_revert_counts_although_dws_publishes_no_schema_for_it() -> None:
     assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
 
 
+def test_history_provider_writes_do_not_launch_schema_discovery(monkeypatch) -> None:
+    from app.dingtalk_send_evidence import completed_provider_writes
+
+    monkeypatch.setattr(
+        "app.native_cli_metadata.run_bounded_process",
+        lambda *_args, **_kwargs: pytest.fail("history must not launch DWS schema"),
+    )
+    events = [
+        _shell(
+            "dws oa approval revert-task --instance-id instance-1"
+            " --task-id task-1 --target-activity-id start"
+            " --action REVERT_FOR_RESUBMIT --remark 补齐后重新提交"
+            " --yes --format json"
+        )
+    ]
+
+    assert completed_provider_writes(
+        events,
+        discover_metadata=False,
+    ) == {"instance-1", "task-1", "start"}
+
+
 def test_an_unregistered_unschemad_command_is_still_not_evidence() -> None:
     """The fallback is the registered-write list, not "anything unclassifiable"."""
 

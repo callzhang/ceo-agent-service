@@ -17,6 +17,13 @@ from app.dws_client import DwsClient
 from app.runtime_environment import central_python
 
 
+@pytest.fixture(autouse=True)
+def clear_dws_effect_cache():
+    native_cli_metadata._DWS_EFFECT_CACHE.clear()
+    yield
+    native_cli_metadata._DWS_EFFECT_CACHE.clear()
+
+
 def test_classifier_rejects_generic_local_read_pipeline():
     command = "cat /tmp/material.txt | sed -n '1,10p' | head -c 3000"
 
@@ -25,6 +32,28 @@ def test_classifier_rejects_generic_local_read_pipeline():
     )
 
     assert descriptor is None
+
+
+def test_dws_schema_effect_is_reused_across_classifier_instances(monkeypatch):
+    calls = []
+
+    def exact_schema(argv, *, timeout):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, '{"effect":"read"}', "")
+
+    monkeypatch.setattr(native_cli_metadata, "run_bounded_process", exact_schema)
+    item = {
+        "type": "command_execution",
+        "argv": ["dws", "oa", "approval", "detail", "--instance-id", "instance-1"],
+    }
+
+    first = NativeCliMetadataClassifier().classify(item)
+    second = NativeCliMetadataClassifier().classify(item)
+
+    assert first is not None and first.effect is EffectKind.READ_ONLY
+    assert second is not None and second.effect is EffectKind.READ_ONLY
+    assert second.target_identifiers == {"instance-id": "instance-1"}
+    assert len(calls) == 1
 
 
 def test_describe_native_command_rejects_generic_local_read():

@@ -4,6 +4,7 @@ import hashlib
 import json
 import shlex
 import subprocess
+import threading
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -67,6 +68,8 @@ _DWS_BOOLEAN_FLAGS = frozenset(
         "-y",
     }
 )
+_DWS_EFFECT_CACHE: dict[str, EffectKind] = {}
+_DWS_EFFECT_CACHE_LOCK = threading.Lock()
 
 
 def service_read_command_contract() -> tuple[str, ...]:
@@ -249,6 +252,13 @@ class NativeCliMetadataClassifier:
                 "dws", "schema", argv, EffectKind.READ_ONLY
             )
         for command_path in _command_path_candidates(argv[1:]):
+            with _DWS_EFFECT_CACHE_LOCK:
+                cached_effect = _DWS_EFFECT_CACHE.get(command_path)
+            if cached_effect is not None:
+                self._cache[("dws", command_path)] = cached_effect
+                return _classified_native_command(
+                    "dws", command_path, argv, cached_effect
+                )
             try:
                 process = run_bounded_process(
                     [
@@ -279,6 +289,8 @@ class NativeCliMetadataClassifier:
                 continue
             parsed = EffectKind.READ_ONLY if effect == "read" else EffectKind.EFFECTFUL
             self._cache[("dws", command_path)] = parsed
+            with _DWS_EFFECT_CACHE_LOCK:
+                _DWS_EFFECT_CACHE[command_path] = parsed
             return _classified_native_command(
                 "dws", command_path, argv, parsed
             )

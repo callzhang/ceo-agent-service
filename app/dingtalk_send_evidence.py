@@ -46,9 +46,11 @@ class DingTalkSendEvidenceDriver:
         store: AutoReplyStore,
         *,
         classifier: NativeCliMetadataClassifier | None = None,
+        discover_metadata: bool = True,
     ) -> None:
         self.store = store
         self._classifier = classifier
+        self._discover_metadata = discover_metadata
 
     def audit_run_has_execution_evidence(
         self, task: ReplyTask, *, audit_run_id: int
@@ -144,7 +146,11 @@ class DingTalkSendEvidenceDriver:
         if self._classifier is None:
             self._classifier = NativeCliMetadataClassifier()
         try:
-            classified = self._classifier.classify(command)
+            classified = (
+                self._classifier.classify(command)
+                if self._discover_metadata
+                else self._classifier.classify_cached(command)
+            )
         except NativeCliMetadataUnavailableError:
             return None
         if classified is not None:
@@ -212,6 +218,7 @@ def completed_provider_writes(
     tool_events: list[dict[str, object]],
     *,
     store: AutoReplyStore | None = None,
+    discover_metadata: bool = True,
 ) -> set[str]:
     """Identifiers a turn actually wrote to at the provider.
 
@@ -220,7 +227,10 @@ def completed_provider_writes(
     plain failure, because `failed` invites a rerun of something irreversible.
     """
 
-    driver = DingTalkSendEvidenceDriver(store)
+    driver = DingTalkSendEvidenceDriver(
+        store,
+        discover_metadata=discover_metadata,
+    )
     written, _ = driver._touched_objects(tool_events)
     return written
 

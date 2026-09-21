@@ -92,7 +92,11 @@ def external_actions(runs: Sequence[Any], *, store: Any = None) -> list[dict[str
         for command in dict.fromkeys(delivered_shell_send_commands(events)):
             found.append({"what": command, "at": at, "recorded_by": "turn"})
         try:
-            identifiers = completed_provider_writes(events, store=store)
+            identifiers = completed_provider_writes(
+                events,
+                store=store,
+                discover_metadata=False,
+            )
         except Exception:  # noqa: BLE001 - a page must render without the writer
             identifiers = ()
         for identifier in identifiers:
@@ -183,7 +187,13 @@ def acting_run_id(runs: Sequence[Any], *, store: Any = None) -> int | None:
         if delivered_shell_send_commands(events):
             return int(getattr(run, "id", 0)) or None
         try:
-            if any(completed_provider_writes(events, store=store)):
+            if any(
+                completed_provider_writes(
+                    events,
+                    store=store,
+                    discover_metadata=False,
+                )
+            ):
                 return int(getattr(run, "id", 0)) or None
         except Exception:  # noqa: BLE001 - a page must render without the writer
             continue
