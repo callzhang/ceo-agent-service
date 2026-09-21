@@ -332,6 +332,162 @@ def scan_agent_classification_batch(
     return EmailScanResult(len(batch.messages), enqueued, 0, 0)
 
 
+def scan_model_classification_batch(
+    source: object,
+    store: object,
+    context: AgentScanContext,
+    *,
+    mailbox: str = "INBOX",
+    folder_role: FolderRole,
+    configured_unclassified_source: bool,
+    lookback_days: int,
+    online_runtime: object,
+    accept_model: Callable[
+        [Mapping[str, object], object, Sequence[object], str, str], object
+    ],
+    request_feedback: Callable[
+        [Mapping[str, object], object, Sequence[object], str, str], object
+    ],
+    agent_task_adapter: object | None = None,
+    limit: int = 50,
+    today: Callable[[], date] | None = None,
+) -> EmailScanResult:
+    """Classify a bounded historical page without ever invoking the Agent."""
+
+    from app.email_classifier_runtime import (
+        EmailClassifierRuntimeMode,
+        OnlineClassificationResult,
+        OnlineModelInput,
+    )
+    from app.email_training_snapshot import (
+        MODEL_INPUT_SCHEMA_VERSION,
+        canonical_model_input,
+        provider_model_input_fields,
+    )
+
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+    if lookback_days <= 0:
+        raise ValueError("lookback_days must be positive")
+    source_is_eligible = folder_role is FolderRole.INBOX or (
+        folder_role is FolderRole.UNBOUND and configured_unclassified_source
+    )
+    if not source_is_eligible:
+        return EmailScanResult(0, 0, 0, 0)
+    snapshot_reader = getattr(online_runtime, "snapshot", None)
+    runtime_snapshot = (
+        snapshot_reader() if callable(snapshot_reader) else online_runtime
+    )
+    if EmailClassifierRuntimeMode(runtime_snapshot.mode) is not (
+        EmailClassifierRuntimeMode.MODEL_PRIMARY
+    ):
+        return EmailScanResult(0, 0, 0, 0)
+    predictor = runtime_snapshot.predictor
+    model_id = str(runtime_snapshot.model_id or "")
+    if not callable(predictor) or not model_id:
+        raise ValueError("model history scan dependencies are incomplete")
+
+    account_id = _source_account_id(source)
+    cursor = store.get_scan_cursor(account_id, mailbox)
+    cursor_uidvalidity = None if cursor is None else int(cursor["uidvalidity"])
+    excluded_uids = frozenset()
+    if cursor_uidvalidity is not None:
+        stable_classification_uids = getattr(
+            store, "stable_classification_uids", None
+        )
+        if callable(stable_classification_uids):
+            excluded_uids = stable_classification_uids(
+                account_id=account_id,
+                folder=mailbox,
+                uidvalidity=cursor_uidvalidity,
+            )
+        stable_agent_uids = getattr(agent_task_adapter, "stable_provider_uids", None)
+        if callable(stable_agent_uids):
+            excluded_uids = excluded_uids | stable_agent_uids(
+                account_id=account_id,
+                folder=mailbox,
+                uidvalidity=cursor_uidvalidity,
+            )
+    current_day = (today or (lambda: datetime.now(timezone.utc).date()))()
+    batch = source.fetch_uid_batch(
+        mailbox,
+        cursor_uidvalidity=cursor_uidvalidity,
+        last_seen_uid=0,
+        limit=limit,
+        unread_only=False,
+        excluded_uids=excluded_uids,
+        since=current_day - timedelta(days=int(lookback_days)),
+    )
+    if not isinstance(batch, ImapUidBatch):
+        raise TypeError("fetch_uid_batch must return ImapUidBatch")
+    if batch.account_id != account_id or batch.folder != mailbox:
+        raise ValueError(
+            "IMAP batch identity does not match requested account and folder"
+        )
+
+    persisted = 0
+    processed = 0
+    pending = 0
+    highest_uid = 0 if cursor is None else int(cursor["last_seen_uid"])
+    for message in batch.messages:
+        locator = _provider_locator(message)
+        stable_identity = _stable_message_identity(message, locator)
+        highest_uid = max(highest_uid, locator.uid)
+        has_agent_task = getattr(agent_task_adapter, "has_stable_record", None)
+        if (
+            callable(has_agent_task)
+            and has_agent_task(stable_identity)
+        ) or store.has_stable_classification(stable_identity):
+            reapply = getattr(store, "reapply_classification_to_copy", None)
+            if store.has_stable_classification(stable_identity) and callable(reapply):
+                reapply(stable_identity, locator)
+            continue
+        entries = extract_unsubscribe_entries(
+            list_unsubscribe=str(message.get("listUnsubscribe") or ""),
+            list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
+            body_text=str(
+                message.get("markdownBody") or message.get("textBody") or ""
+            ),
+            body_html=str(ephemeral_body_html(message)),
+            authentication_evidence=ephemeral_unsubscribe_authentication(message),
+        )
+        model_text = canonical_model_input(provider_model_input_fields(message))
+        result = predictor(OnlineModelInput(model_text, MODEL_INPUT_SCHEMA_VERSION))
+        if type(result) is not OnlineClassificationResult or result.source != "model":
+            raise TypeError("model history predictor returned an invalid result")
+        if result.value is not None and not result.fallback_reason:
+            accept_model(message, result.value, entries, model_text, model_id)
+            processed += 1
+        elif result.review_value is not None and result.fallback_reason in {
+            "model_rejected",
+            "model_others",
+            "model_category_not_promoted",
+        }:
+            request_feedback(
+                message, result.review_value, entries, model_text, model_id
+            )
+            pending += 1
+        else:
+            raise RuntimeError(
+                f"model history classification failed: {result.fallback_reason}"
+            )
+        persisted += 1
+    if batch.messages:
+        store.record_scan_cursor(
+            account_id=batch.account_id,
+            folder=batch.folder,
+            uidvalidity=batch.uidvalidity,
+            last_seen_uid=highest_uid,
+            expected_uidvalidity=(
+                cursor_uidvalidity
+                if cursor_uidvalidity is not None
+                and cursor_uidvalidity != batch.uidvalidity
+                else None
+            ),
+        )
+    return EmailScanResult(len(batch.messages), persisted, processed, pending)
+
+
 @dataclass(frozen=True)
 class EmailScanConfig:
     config_version: str

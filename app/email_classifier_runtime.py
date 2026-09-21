@@ -896,7 +896,10 @@ class OnlineEmbeddingPredictor:
             if not timed.prediction.category_accepted:
                 self.latency.record_fallback("model_rejected")
                 return OnlineClassificationResult(
-                    source="model", value=None, fallback_reason="model_rejected"
+                    source="model",
+                    value=None,
+                    fallback_reason="model_rejected",
+                    review_value=timed.prediction,
                 )
             # others means the model recognised the message as outside the
             # categories it was trained on, which is the Agent's job, not a
@@ -904,7 +907,10 @@ class OnlineEmbeddingPredictor:
             if timed.prediction.category == MODEL_OTHERS_CATEGORY_KEY:
                 self.latency.record_fallback("model_others")
                 return OnlineClassificationResult(
-                    source="model", value=None, fallback_reason="model_others"
+                    source="model",
+                    value=None,
+                    fallback_reason="model_others",
+                    review_value=timed.prediction,
                 )
             # A category that did not pass promotion is still the Agent's to
             # decide, however confident the model is.
@@ -917,6 +923,7 @@ class OnlineEmbeddingPredictor:
                     source="model",
                     value=None,
                     fallback_reason="model_category_not_promoted",
+                    review_value=timed.prediction,
                 )
             prediction = timed.prediction
             if not self.important_promoted and prediction.important:
@@ -1283,6 +1290,7 @@ class OnlineClassificationResult:
     source: str
     value: object
     fallback_reason: str = ""
+    review_value: object | None = None
     accept_outcome: "OnlineModelAcceptOutcome | None" = None
 
     def __post_init__(self) -> None:

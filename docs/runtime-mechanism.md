@@ -444,13 +444,18 @@ Consumer→Audit 往返——退订在真实世界本来就是幂等的。同理
 不得重新选择入口并改变已有授权。已有终态 receipt 的新 Consumer/Audit 执行只读取该 receipt，
 形成新的明确成功 run，不重新打开浏览器或发送新的外部请求。
 
-冷启动期间，实时主路径是 Agent，且只处理服务观察到的未读 Inbox/未绑定来源邮件；Agent 不处理
-已读邮件，也不因分类而改成已读。冻结训练 snapshot 直接采用 provider 文件夹和 important 信号，
-训练与 shadow 评估均为离线、阶段性作业，不在收信路径实时训练或并行推理。某一类别满足
-precision/support/group 门槛后，只获得显式历史批次的资格；全量线上模型仍需连续两个兼容版本对
-全部类别和 important 都达标且没有未解决的系统性错误。整个模型晋升后，主路径严格按
-`model -> Agent fallback` 顺序执行：模型接受时不调用 Agent；embedding 超时、失败或拒绝时才调用
-一次 Agent。两个连续候选必须分别绑定不同且时间递增的冻结 snapshot；snapshot digest 必须不同，
+每个邮箱账户有两个独立回溯窗口：Agent 默认 30 天，模型默认 365 天。`email-message-check-once`
+按当前 runtime 模式只运行其中一条路径：无上线模型时运行 Agent 窗口并遵守账户的“仅未读/全部”
+设置；模型上线后只运行模型窗口，优先覆盖全部尚无稳定记录的已读和未读 Inbox/未绑定来源邮件，不
+按日期把近期邮件留给 Agent，也不在同一轮创建 Agent 分类任务。模型路径以每文件夹固定批量
+在后续定时轮次继续向历史推进。模型 accepted 结果进入现有不可变 ActionPlan 和 provider action
+队列；`model_rejected`、`model_others` 与 `model_category_not_promoted` 保存完整预测证据为
+`pending_feedback`，不创建 Agent 分类任务和动作计划。Embedding、runtime 或持久化技术失败使本轮
+失败并在下轮重试，不写人工待确认。冻结训练 snapshot 直接采用 provider 文件夹和 important 信号，
+训练与 shadow 评估均为离线、阶段性作业，不在收信路径实时训练或并行推理；全量线上模型仍需连续两个兼容版本对
+全部类别和 important 都达标且没有未解决的系统性错误。整个模型晋升后，实时新邮件主路径严格按
+`model -> Agent fallback` 顺序执行；该旧接口不用于定时收信和历史回填。定时路径中的模型拒绝直接
+进入待确认，技术失败则重试，不调用 Agent。两个连续候选必须分别绑定不同且时间递增的冻结 snapshot；snapshot digest 必须不同，
 folder/important 累计标签水位以及至少一项独立评估样本或组证据必须前进。同一 snapshot 的重复训练
 不能满足晋升。
 
@@ -459,8 +464,9 @@ Provider 训练观察按有界批次运行。观察缓存与请求队列使用�
 consumer、训练三个组件都至少成功完成一轮后才发布 `ready`。
 
 业务类别移动完成后在变更后的 locator 上执行 flag/read 动作并回读；用户在 provider 中再次移动
-邮件时，下一份 snapshot 立即以该文件夹作为训练标签。历史任务按小批次、显式触发并保存游标，
-不会自动扫描全部邮箱。`junk` 先由代码发现标准退订候选；只有 unsubscribe 进入 Consumer/Audit
+邮件时，下一份 snapshot 立即以该文件夹作为训练标签。旧的 staged/manual 历史评测入口仍用于候选
+验证；生产历史整理由上述定时模型窗口自动、小批量、可恢复地推进，不会一次性读取整个邮箱。
+`junk` 先由代码发现标准退订候选；只有 unsubscribe 进入 Consumer/Audit
 网页流程，最终再移动到系统 Trash。连接邮箱 OTP 仅允许站点、收件人、挑战上下文和时间窗全部
 匹配的临时读取；普通 CAPTCHA 在隔离 profile 中有限尝试，不能完成的密码/MFA/CAPTCHA 保存不含
 秘密的有界 continuation 并交给用户，恢复时不重放已经审计的 operation prefix。

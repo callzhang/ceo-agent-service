@@ -536,36 +536,42 @@ describe("SettingsPage", () => {
     expect(await screen.findByText(/这些分类在本邮箱里没有验证到文件夹/)).toHaveTextContent("junk、work");
   });
 
-  it("saves a lookback window and the read-mail switch with a new mailbox", async () => {
+  it("saves independent Agent and model lookback windows", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
-    const savedAccount = { account_id: "big_example_test", display_name: "大邮箱", email_address: "big@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "big@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, scan_lookback_days: 90, scan_read_state: "all" as const, created_at: "", updated_at: "" };
+    const savedAccount = { account_id: "big_example_test", display_name: "大邮箱", email_address: "big@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "big@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, agent_lookback_days: 90, model_lookback_days: 730, scan_read_state: "all" as const, created_at: "", updated_at: "" };
     createEmailAccount.mockResolvedValueOnce({ ok: true, item: savedAccount, restart_required: true, message: "Email account configuration saved" });
 
     renderSettings("/settings?tab=connectors&connector=email");
     await user.click(await screen.findByRole("button", { name: "添加邮箱" }));
-    expect(screen.getByRole("slider", { name: "回读天数" })).toHaveValue("30");
+    expect(screen.getByRole("slider", { name: "Agent 回溯天数" })).toHaveValue("30");
+    expect(screen.getByRole("slider", { name: "模型回溯天数" })).toHaveValue("365");
     expect(screen.getByRole("switch", { name: "同时处理已读邮件" })).not.toBeChecked();
     await user.type(screen.getByRole("textbox", { name: "邮箱名称" }), "大邮箱");
     await user.type(screen.getByRole("textbox", { name: "邮箱地址" }), "big@example.test");
     await user.type(screen.getByRole("textbox", { name: "IMAP 服务器" }), "imap.example.test");
     await user.type(screen.getByLabelText("IMAP 密码"), "known-imap-secret");
-    fireEvent.change(screen.getByRole("slider", { name: "回读天数" }), { target: { value: "90" } });
+    fireEvent.change(screen.getByRole("slider", { name: "Agent 回溯天数" }), { target: { value: "90" } });
+    fireEvent.change(screen.getByRole("slider", { name: "模型回溯天数" }), { target: { value: "730" } });
     await user.click(screen.getByRole("switch", { name: "同时处理已读邮件" }));
-    expect(screen.getByText(/已读邮件也会被分类并移到对应文件夹/)).toBeInTheDocument();
+    expect(screen.getByText(/Agent 也会处理已读邮件/)).toBeInTheDocument();
+    expect(screen.getByText(/尚无上线模型时/)).toBeInTheDocument();
+    expect(screen.getByText(/模型上线后优先处理/)).toBeInTheDocument();
+    expect(screen.getByText(/不确定的结果进入“待确认”/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "保存邮箱" }));
 
     expect(createEmailAccount).toHaveBeenCalledWith(expect.objectContaining({
-      scan_lookback_days: 90,
+      agent_lookback_days: 90,
+      model_lookback_days: 730,
       scan_read_state: "all",
     }));
-    expect(await screen.findByText("回读最近 90 天 · 未读和已读")).toBeInTheDocument();
+    expect(await screen.findByText("Agent 90 天 · 模型 730 天 · Agent 处理未读和已读")).toBeInTheDocument();
   });
 
   it("adds and edits an IMAP account while leaving a saved secret undisclosed", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
-    const savedAccount = { account_id: "work_example_test", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, created_at: "", updated_at: "" };
+    const savedAccount = { account_id: "work_example_test", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, agent_lookback_days: 30, model_lookback_days: 365, scan_read_state: "unread" as const, created_at: "", updated_at: "" };
     createEmailAccount.mockResolvedValueOnce({ ok: true, item: savedAccount, restart_required: true, message: "Email account configuration saved" });
     updateEmailAccount.mockResolvedValueOnce({ ok: true, item: { ...savedAccount, scan_folders: ["INBOX", "Receipts"] }, restart_required: true, message: "Email account configuration saved" });
 
@@ -612,7 +618,7 @@ describe("SettingsPage", () => {
   it("toggles an account, tests IMAP only, and shows restart-required state", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
-    const account = { account_id: "work_mail", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, created_at: "", updated_at: "" };
+    const account = { account_id: "work_mail", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, agent_lookback_days: 30, model_lookback_days: 365, scan_read_state: "unread" as const, created_at: "", updated_at: "" };
     listEmailAccounts.mockResolvedValueOnce({ items: [account], meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
     updateEmailAccount.mockResolvedValueOnce({ ok: true, item: { ...account, enabled: false }, restart_required: true, message: "Email account configuration saved" });
     testEmailAccount.mockResolvedValueOnce({ ok: true, account_id: "work_mail", diagnostics: { imap: { ok: true, code: "connected" }, smtp: { enabled: false, tested: false, code: "disabled" } } });

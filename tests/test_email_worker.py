@@ -185,6 +185,18 @@ def _accepted_model_prediction(category="work", important=True):
     )
 
 
+def _rejected_model_prediction(category="work"):
+    return EmbeddingModelPrediction(
+        category=category,
+        category_probability=0.61,
+        category_probabilities={category: 0.61, "junk": 0.39},
+        category_accepted=False,
+        important=False,
+        important_probability=0.1,
+        head_ms=1.0,
+    )
+
+
 def test_model_primary_result_uses_existing_history_and_action_queue(tmp_path):
     store = EmailStore(tmp_path / "model-result.sqlite3")
     produced = []
@@ -234,6 +246,43 @@ def test_model_primary_result_uses_existing_history_and_action_queue(tmp_path):
     assert direct is not None
     assert direct.action_type is EmailAction.MOVE
     with sqlite3.connect(tmp_path / "model-result.sqlite3") as db:
+        assert db.execute(
+            "select count(*) from email_agent_classification_tasks"
+        ).fetchone()[0] == 0
+
+
+def test_rejected_model_result_enters_pending_feedback_without_any_task(tmp_path):
+    database = tmp_path / "model-pending-feedback.sqlite3"
+    store = EmailStore(database)
+    message = _model_accept_message() | {
+        "messageId": "<model-review@example.com>",
+        "uid": 18,
+        "providerUnread": False,
+    }
+
+    persisted = _module().persist_model_pending_feedback(
+        store,
+        message=message,
+        prediction=_rejected_model_prediction(),
+        context=AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        model_id="email-embedding-mlp-ready",
+        model_text="exact current model text",
+    )
+
+    assert persisted["status"] == "pending_feedback"
+    assert persisted["classification_source"] == "model"
+    assert persisted["predicted_category"] == "work"
+    assert persisted["confidence"] == 0.61
+    assert persisted["probabilities"] == {"junk": 0.39, "work": 0.61}
+    assert persisted["action_plan"] is None
+    with sqlite3.connect(database) as db:
+        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 0
+        assert db.execute("select count(*) from email_actions").fetchone()[0] == 0
         assert db.execute(
             "select count(*) from email_agent_classification_tasks"
         ).fetchone()[0] == 0

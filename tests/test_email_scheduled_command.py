@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from hashlib import sha256
 from types import SimpleNamespace
 
@@ -11,6 +12,8 @@ from app.agent_cron.commands import (
 )
 from app.email_classifier_agent import EmailClassifierAgent
 from app.email_classifier_scan import EmailScanResult
+from app.email_classifier_runtime import OnlineClassificationResult, RuntimeSnapshot
+from app.email_embedding_classifier import EmbeddingModelPrediction
 from app.email_imap_readonly import ImapUidBatch
 from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_scheduled_command import (
@@ -25,18 +28,17 @@ from app.managed_skills import (
 )
 
 
-def test_email_scheduled_command_runs_one_discovery_pass_without_loading_consumers_or_model() -> None:
+def test_email_scheduled_command_loads_one_model_runtime_and_closes_it() -> None:
     events: list[object] = []
+    runtime = SimpleNamespace(close=lambda: events.append("close-model"))
     bootstrap = SimpleNamespace(
         load_enabled_accounts=lambda: ({"account_id": "account-1"},),
-        scan_account=lambda account: (
-            events.append(("scan", account["account_id"]))
+        load_active_model=lambda: events.append("load-model") or runtime,
+        scan_account=lambda account, active_model: (
+            events.append(("scan", account["account_id"], active_model))
             or EmailScanResult(1, 1, 0, 0)
         ),
         record_health=lambda scope, payload: events.append((scope, payload)),
-        load_active_model=lambda: (_ for _ in ()).throw(
-            AssertionError("Cron discovery must not load the promoted model")
-        ),
         build_dependencies=lambda *_args: (_ for _ in ()).throw(
             AssertionError("Cron discovery must not build worker dependencies")
         ),
@@ -47,7 +49,9 @@ def test_email_scheduled_command_runs_one_discovery_pass_without_loading_consume
     )()
 
     assert summary == "email-message-check-once accounts=1 discovered=1 failures=0"
-    assert ("scan", "account-1") in events
+    assert events[0] == "load-model"
+    assert ("scan", "account-1", runtime) in events
+    assert events[-1] == "close-model"
 
 
 def test_email_scheduled_command_without_accounts_is_an_idempotent_noop() -> None:
@@ -268,5 +272,194 @@ def test_discovery_source_close_failure_does_not_replace_scan_failure(
 
     with pytest.raises(RuntimeError, match="primary scan failure"):
         bootstrap.scan_account(
-            {"account_id": "account-1", "scan_folders": ["INBOX"]}
+            {"account_id": "account-1", "scan_folders": ["INBOX"]},
+            SimpleNamespace(mode="agent_primary"),
         )
+
+
+def test_discovery_uses_model_window_exclusively_after_model_promotion(
+    tmp_path, monkeypatch
+) -> None:
+    calls = []
+
+    class Source:
+        account_id = "account-1"
+
+        def list_folders(self):
+            return (ProviderFolder("inbox-id", "INBOX", FolderRole.INBOX),)
+
+        def logout(self):
+            return None
+
+    monkeypatch.setattr(
+        "app.email_scheduled_command.scan_agent_classification_batch",
+        lambda *_args, **kwargs: (
+            calls.append(("agent", kwargs["lookback_days"], kwargs["include_read"]))
+            or EmailScanResult(0, 0, 0, 0)
+        ),
+    )
+    monkeypatch.setattr(
+        "app.email_scheduled_command.scan_model_classification_batch",
+        lambda *_args, **kwargs: (
+            calls.append(("model", kwargs["lookback_days"]))
+            or EmailScanResult(0, 0, 0, 0)
+        ),
+    )
+    bootstrap = build_email_discovery_dependencies(
+        SimpleNamespace(db_path=tmp_path / "dual-window.sqlite3"),
+        source_factory=lambda _account: Source(),
+    )
+    monkeypatch.setattr(
+        bootstrap.email_store,
+        "list_category_configs",
+        lambda: [
+            {
+                "category_key": "work",
+                "enabled": True,
+                "core_description": "Work.",
+                "include": [],
+                "exclude": [],
+                "config_version": "config-v1",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        bootstrap.email_store, "list_account_folder_bindings", lambda: []
+    )
+
+    bootstrap.scan_account(
+        {
+            "account_id": "account-1",
+            "scan_folders": ["INBOX"],
+            "agent_lookback_days": 30,
+            "model_lookback_days": 365,
+            "scan_read_state": "unread",
+        },
+        SimpleNamespace(mode="model_primary"),
+    )
+
+    assert calls == [("model", 365)]
+
+    calls.clear()
+    bootstrap.scan_account(
+        {
+            "account_id": "account-1",
+            "scan_folders": ["INBOX"],
+            "agent_lookback_days": 30,
+            "model_lookback_days": 365,
+            "scan_read_state": "unread",
+        },
+        SimpleNamespace(mode="agent_primary"),
+    )
+
+    assert calls == [("agent", 30, False)]
+
+
+def test_scheduled_model_rejection_persists_pending_feedback_not_agent_work(
+    tmp_path, monkeypatch
+) -> None:
+    message = {
+        "messageId": "<scheduled-history-review@example.com>",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 7,
+        "providerUnread": False,
+        "from": {"email": "sender@example.com"},
+        "subject": "Historical contract",
+        "textBody": "Please review the old contract.",
+        "date": "2025-10-01T12:00:00+00:00",
+    }
+
+    class Source:
+        account_id = "account-1"
+
+        def list_folders(self):
+            return (ProviderFolder("inbox-id", "INBOX", FolderRole.INBOX),)
+
+        def fetch_uid_batch(self, mailbox, **kwargs):
+            return ImapUidBatch(
+                account_id=self.account_id,
+                folder=mailbox,
+                uidvalidity=42,
+                previous_uidvalidity=kwargs["cursor_uidvalidity"],
+                messages=(message,),
+            )
+
+        def logout(self):
+            return None
+
+    bootstrap = build_email_discovery_dependencies(
+        SimpleNamespace(db_path=tmp_path / "scheduled-model-review.sqlite3"),
+        source_factory=lambda _account: Source(),
+    )
+    monkeypatch.setattr(
+        bootstrap.email_store,
+        "list_category_configs",
+        lambda: [
+            {
+                "category_key": "work",
+                "enabled": True,
+                "core_description": "Work.",
+                "include": [],
+                "exclude": [],
+                "config_version": "config-v1",
+            },
+            {
+                "category_key": "junk",
+                "enabled": True,
+                "core_description": "Junk.",
+                "include": [],
+                "exclude": [],
+                "config_version": "config-v1",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        bootstrap.email_store, "list_account_folder_bindings", lambda: []
+    )
+    prediction = EmbeddingModelPrediction(
+        category="work",
+        category_probability=0.62,
+        category_probabilities={"work": 0.62, "junk": 0.38},
+        category_accepted=False,
+        important=False,
+        important_probability=0.1,
+        head_ms=1.0,
+    )
+    runtime = SimpleNamespace(
+        snapshot=lambda: RuntimeSnapshot.model_primary(
+            predictor=lambda _value: OnlineClassificationResult(
+                source="model",
+                value=None,
+                fallback_reason="model_rejected",
+                review_value=prediction,
+            ),
+            model_id="email-embedding-mlp-ready",
+            input_schema_version="email-folder-model-input-v4",
+            compatibility={"embedding_revision": "r1"},
+        )
+    )
+
+    bootstrap.scan_account(
+        {
+            "account_id": "account-1",
+            "scan_folders": ["INBOX"],
+            "agent_lookback_days": 30,
+            "model_lookback_days": 365,
+            "scan_read_state": "unread",
+        },
+        runtime,
+    )
+
+    pending = bootstrap.email_store.get_classification_by_stable_identity(
+        "account-1:message-id:<scheduled-history-review@example.com>"
+    )
+    assert pending is not None
+    assert pending["status"] == "pending_feedback"
+    assert pending["classification_source"] == "model"
+    assert pending["action_plan"] is None
+    with sqlite3.connect(tmp_path / "scheduled-model-review.sqlite3") as db:
+        assert db.execute(
+            "select count(*) from email_agent_classification_tasks"
+        ).fetchone()[0] == 0

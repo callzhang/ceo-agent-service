@@ -2363,6 +2363,39 @@ class _OthersHead(_OnlineHead):
         )
 
 
+class _RejectedHead(_OnlineHead):
+    def predict_result(self, result, *, index=0, text=None):
+        return TimedEmbeddingModelPrediction(
+            prediction=EmbeddingModelPrediction(
+                category="legal",
+                category_probability=0.61,
+                category_probabilities={"legal": 0.61, "work": 0.39},
+                category_accepted=False,
+                important=False,
+                important_probability=0.1,
+                head_ms=4.0,
+            ),
+            timing=EmbeddingTiming(1.0, 2.0, 3.0, 4.0, 10.0),
+        )
+
+
+def test_rejected_prediction_keeps_review_evidence_without_changing_realtime_fallback():
+    predictor = OnlineEmbeddingPredictor(
+        model_id="email-embedding-mlp-second",
+        classifier=_RejectedHead(),
+        cache=_ExactCache(),
+        embedding_client=_EmbeddingClient(),
+        clock=lambda: 100.0,
+    )
+
+    result = predictor(OnlineModelInput("uncertain contract", "input-v3"))
+
+    assert result.value is None
+    assert result.fallback_reason == "model_rejected"
+    assert result.review_value.category == "legal"
+    assert result.review_value.category_probability == 0.61
+
+
 def test_confident_others_prediction_is_handed_to_the_agent():
     """others means the message is outside the trained categories, so it is the
     Agent's to classify even though the model was confident."""
@@ -2381,6 +2414,7 @@ def test_confident_others_prediction_is_handed_to_the_agent():
 
     assert result.value is None
     assert result.fallback_reason == "model_others"
+    assert result.review_value.category == "others"
     assert latency.fallback_counts()["model_others"] == 1
 
     agent_calls = []
@@ -2430,6 +2464,7 @@ def test_a_confident_prediction_for_an_unpromoted_category_goes_to_the_agent():
 
     assert result.value is None
     assert result.fallback_reason == "model_category_not_promoted"
+    assert result.review_value.category == "legal"
     assert latency.fallback_counts()["model_category_not_promoted"] == 1
 
 

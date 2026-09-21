@@ -4,7 +4,7 @@
 
 **Goal:** Automatically process up to a configurable model-history window while limiting Agent classification to its own shorter window and routing uncertain model predictions to the existing pending-feedback workflow.
 
-**Architecture:** The existing scheduled discovery command runs the Agent scan first and a new model-only history scan second. Stable classification identity deduplicates overlapping windows; the model-only route persists accepted results through the existing action pipeline and rejected results as actionless `pending_feedback`, without invoking the Agent producer.
+**Architecture:** The scheduled discovery command chooses exactly one route from the active runtime mode: Agent-only before model promotion, model-only after promotion. Stable classification identity deduplicates repeated scans; the model-only route persists accepted results through the existing action pipeline and rejected results as actionless `pending_feedback`, without invoking the Agent producer.
 
 **Tech Stack:** Python 3, SQLite migrations, Pydantic, FastAPI, React/TypeScript, pytest, Vitest.
 
@@ -54,7 +54,7 @@
 - Modify: `app/email_classifier_scan.py`
 - Modify: `tests/test_email_classifier_scan_model.py`
 
-- [ ] Write failing tests covering date window, read and unread mail, stable-record exclusion, accepted persistence, rejected/others/unpromoted pending persistence, no Agent producer call, and technical failure retry behavior.
+- [ ] Write failing tests covering the model date window, recent and historical read/unread mail, stable-record exclusion, accepted persistence, rejected/others/unpromoted pending persistence, no Agent producer call, and technical failure retry behavior.
 - [ ] Run the focused tests and verify failure before production changes.
 - [ ] Implement `scan_model_classification_batch`: search all mail from the model window with a fixed limit, use canonical model input, call one runtime snapshot, persist accepted or review results through callbacks, and advance only after durable persistence.
 - [ ] Run the focused tests and confirm model uncertainty never reaches the Agent producer.
@@ -65,9 +65,9 @@
 - Modify: `app/email_scheduled_command.py`
 - Modify: `tests/test_email_scheduled_command.py`
 
-- [ ] Write failing command tests asserting Agent and model lookback values are passed independently, Agent runs first, model runs only in `model_primary`, the runtime closes, and summary counts include both paths.
+- [ ] Write failing command tests asserting Agent and model lookback values are passed independently, exactly one route runs per runtime mode, the runtime closes, and summary counts reflect the selected path.
 - [ ] Run the tests and confirm the command currently loads no model and performs one pass.
-- [ ] Build the promoted runtime and action producer without loading Agent consumers; execute Agent then model for each eligible source folder; close source and runtime on every path.
+- [ ] Build the promoted runtime and action producer without loading Agent consumers; execute only Agent before promotion and only model after promotion for each eligible source folder; close source and runtime on every path.
 - [ ] Run scheduled-command tests and verify no-model mode leaves the historical window for a later model run instead of enqueueing Agent work.
 
 ### Task 6: Expose the two settings in the non-technical UI
@@ -89,7 +89,7 @@
 - Modify: `docs/runtime-mechanism.md`
 
 - [ ] Replace the statements that historical processing is manual-only and that every model rejection falls back to Agent.
-- [ ] Document the two windows, Agent-first overlap, bounded recurring model backfill, pending-feedback behavior, and technical-failure retry boundary.
+- [ ] Document the two mode-selected windows, model priority after promotion, bounded recurring model backfill, pending-feedback behavior, and technical-failure retry boundary.
 - [ ] Search both documents for contradictory historical/manual/fallback statements and resolve them.
 
 ### Task 8: Full verification, focused commit, and deployment handoff

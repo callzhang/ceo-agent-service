@@ -3962,7 +3962,7 @@ def test_a_mailbox_whose_folder_fails_pauses_only_that_category_and_says_so(
     assert disabled == ["junk"]
 
 
-def test_account_api_saves_the_scan_window_and_rejects_one_out_of_range(
+def test_account_api_saves_independent_agent_and_model_windows(
     tmp_path: Path,
 ):
     database = tmp_path / "scan-window.sqlite3"
@@ -3975,7 +3975,8 @@ def test_account_api_saves_the_scan_window_and_rejects_one_out_of_range(
     )
     payload = _new_account_payload("windowed") | {
         "enabled": False,
-        "scan_lookback_days": 90,
+        "agent_lookback_days": 90,
+        "model_lookback_days": 365,
         "scan_read_state": "all",
     }
 
@@ -3983,7 +3984,11 @@ def test_account_api_saves_the_scan_window_and_rejects_one_out_of_range(
         created = client.post("/api/console/email/accounts", json=payload)
         too_long = client.put(
             "/api/console/email/accounts/windowed",
-            json=payload | {"scan_lookback_days": 366},
+            json=payload | {"agent_lookback_days": 366},
+        )
+        model_too_long = client.put(
+            "/api/console/email/accounts/windowed",
+            json=payload | {"model_lookback_days": 3651},
         )
         unknown_state = client.put(
             "/api/console/email/accounts/windowed",
@@ -3991,12 +3996,19 @@ def test_account_api_saves_the_scan_window_and_rejects_one_out_of_range(
         )
 
     assert created.status_code == 201
-    assert created.json()["item"]["scan_lookback_days"] == 90
+    assert created.json()["item"]["agent_lookback_days"] == 90
+    assert created.json()["item"]["model_lookback_days"] == 365
+    assert "scan_lookback_days" not in created.json()["item"]
     assert created.json()["item"]["scan_read_state"] == "all"
     assert too_long.status_code == 400
+    assert model_too_long.status_code == 400
     assert unknown_state.status_code == 400
     stored = EmailStore(database).get_account("windowed")
-    assert (stored["scan_lookback_days"], stored["scan_read_state"]) == (90, "all")
+    assert (
+        stored["agent_lookback_days"],
+        stored["model_lookback_days"],
+        stored["scan_read_state"],
+    ) == (90, 365, "all")
 
 
 def test_learning_reports_the_active_run_only_while_it_is_still_running(tmp_path: Path):

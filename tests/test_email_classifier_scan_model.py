@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 import sqlite3
 from threading import Event, Lock
@@ -17,7 +18,9 @@ from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_scan import (
     AgentScanContext,
     EmailScanConfig,
+    EmailScanResult,
     scan_agent_classification_batch,
+    scan_model_classification_batch,
     should_enqueue_agent_classification,
     route_online_classification,
     scan_imap_accounts,
@@ -375,6 +378,161 @@ def test_promoted_scan_persists_accepted_model_result_without_agent_task(tmp_pat
     assert accepted[0][0] is message
     assert accepted[0][1] == "accepted-prediction"
     assert accepted[0][2]
+
+
+def test_model_history_scan_accepts_or_requests_feedback_without_agent_fallback(
+    tmp_path,
+):
+    messages = [
+        _message()
+        | {
+            "uid": 1,
+            "messageId": "<accepted-history@example.test>",
+            "providerUnread": True,
+            "subject": "accepted",
+            "date": "2025-10-01T12:00:00+00:00",
+        },
+        _message()
+        | {
+            "uid": 2,
+            "messageId": "<review-history@example.test>",
+            "providerUnread": False,
+            "subject": "review",
+            "date": "2026-09-20T12:00:00+00:00",
+        },
+        _message()
+        | {
+            "uid": 3,
+            "messageId": "<recent-model-review@example.test>",
+            "providerUnread": True,
+            "subject": "model reviews this recent unread message",
+            "date": "2026-09-20T12:00:00+00:00",
+        },
+    ]
+    calls = []
+
+    class HistorySource:
+        account_id = "dingtalk-account"
+
+        def fetch_uid_batch(self, mailbox, **kwargs):
+            calls.append((mailbox, kwargs))
+            return ImapUidBatch(
+                account_id=self.account_id,
+                folder=mailbox,
+                uidvalidity=42,
+                previous_uidvalidity=kwargs["cursor_uidvalidity"],
+                messages=tuple(messages),
+            )
+
+    accepted_prediction = SimpleNamespace(category="work")
+    review_prediction = SimpleNamespace(category="legal")
+
+    def predict(value):
+        if "accepted" in value.normalized_text:
+            return OnlineClassificationResult(
+                source="model", value=accepted_prediction
+            )
+        return OnlineClassificationResult(
+            source="model",
+            value=None,
+            fallback_reason="model_rejected",
+            review_value=review_prediction,
+        )
+
+    runtime = SimpleNamespace(
+        snapshot=lambda: RuntimeSnapshot.model_primary(
+            predictor=predict,
+            model_id="email-embedding-mlp-ready",
+            input_schema_version="email-folder-model-input-v4",
+            compatibility={"embedding_revision": "r1"},
+        )
+    )
+    accepted = []
+    pending = []
+
+    result = scan_model_classification_batch(
+        HistorySource(),
+        EmailStore(tmp_path / "model-history-scan.sqlite3"),
+        AgentScanContext(
+            allowed_category_keys=("work", "legal", "junk"),
+            category_descriptions={"work": {}, "legal": {}, "junk": {}},
+            folder_targets={"work": "Work", "legal": "Legal"},
+            config_version="config-v1",
+        ),
+        mailbox="INBOX",
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        lookback_days=365,
+        today=lambda: date(2026, 9, 21),
+        online_runtime=runtime,
+        accept_model=lambda *args: accepted.append(args),
+        request_feedback=lambda *args: pending.append(args),
+    )
+
+    assert result == EmailScanResult(3, 3, 1, 2)
+    assert len(accepted) == 1
+    assert len(pending) == 2
+    assert accepted[0][1] is accepted_prediction
+    assert pending[0][1] is review_prediction
+    assert accepted[0][4] == pending[0][4] == "email-embedding-mlp-ready"
+    [(_mailbox, search)] = calls
+    assert search["since"] == date(2025, 9, 21)
+    assert search["unread_only"] is False
+    assert search["last_seen_uid"] == 0
+
+
+def test_model_history_scan_does_not_turn_technical_failure_into_feedback(tmp_path):
+    message = _message() | {
+        "providerUnread": False,
+        "date": "2025-10-01T12:00:00+00:00",
+    }
+
+    class HistorySource:
+        account_id = "dingtalk-account"
+
+        def fetch_uid_batch(self, mailbox, **kwargs):
+            return ImapUidBatch(
+                account_id=self.account_id,
+                folder=mailbox,
+                uidvalidity=42,
+                previous_uidvalidity=kwargs["cursor_uidvalidity"],
+                messages=(message,),
+            )
+
+    runtime = SimpleNamespace(
+        snapshot=lambda: RuntimeSnapshot.model_primary(
+            predictor=lambda _value: (_ for _ in ()).throw(
+                TimeoutError("embedding unavailable")
+            ),
+            model_id="email-embedding-mlp-ready",
+            input_schema_version="email-folder-model-input-v4",
+            compatibility={"embedding_revision": "r1"},
+        )
+    )
+    pending = []
+    store = EmailStore(tmp_path / "model-history-failure.sqlite3")
+
+    with pytest.raises(TimeoutError, match="embedding unavailable"):
+        scan_model_classification_batch(
+            HistorySource(),
+            store,
+            AgentScanContext(
+                allowed_category_keys=("work", "junk"),
+                category_descriptions={"work": {}, "junk": {}},
+                folder_targets={"work": "Work"},
+                config_version="config-v1",
+            ),
+            mailbox="INBOX",
+            folder_role=FolderRole.INBOX,
+            configured_unclassified_source=False,
+            lookback_days=365,
+            online_runtime=runtime,
+            accept_model=lambda *_args: pytest.fail("unexpected acceptance"),
+            request_feedback=lambda *args: pending.append(args),
+        )
+
+    assert pending == []
+    assert store.get_scan_cursor("dingtalk-account", "INBOX") is None
 
 
 def test_snapshot_online_and_benchmark_use_identical_canonical_input(tmp_path):

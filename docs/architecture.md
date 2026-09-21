@@ -371,14 +371,18 @@ Consumer→Audit 往返——退订在真实世界本来就是幂等的，那套
 
 receipt 另外保存 `entry_url`，即这次实际打开的完整私密 URL。`entry_reference` 只是该 URL 的 sha256，邮件 HTML 正文也不落库，所以在此之前 `skipped_no_reliable_entry` 这类结论只能指出 host，无法被人工复现。写入前校验 sha256 与 `entry_reference` 一致；该值是可直接触发对外副作用的链接，只在 receipt 表和 Attempt 详情页出现，不进入 `trigger_message_json`、步骤日志或错误码。
 
-分类器按阶段运行。冷启动只由 Agent 处理服务上线后出现的未读 Inbox/未绑定来源邮件；已读邮件
-不交给 Agent，且分类过程不把邮件标为已读。训练只在冻结的 provider-folder snapshot 上离线、
-分阶段执行，shadow 模型不进入实时扫描。单个类别达到历史门槛后，只能用于显式、分批、可恢复的
-历史归类；这不等于线上晋升。只有连续两个兼容的完整模型版本都满足全部类别、important、样本组
+分类器按阶段运行。每个邮箱分别保存 Agent 与模型回溯窗口，默认 30 天和 365 天。尚无上线模型时，
+定时扫描只把 Agent 窗口内符合该账户“仅未读/全部”设置的 Inbox/未绑定来源邮件放入 Agent 队列。
+模型上线后，定时扫描改为只由模型优先接管模型窗口内全部尚无稳定记录的已读和未读邮件，不再按
+日期保留近期邮件给 Agent，也不在同一轮运行 Agent 扫描。模型高置信度结果沿现有不可变 ActionPlan 和
+provider action 队列整理邮件；低置信度、`others` 或未晋升类别只保存为 `pending_feedback`，进入
+Console“待确认”并等待人工标注，不回退给 Agent，也不创建动作计划。模型/Embedding 技术失败则
+保留邮件下轮重试，不伪装成待确认。分类过程不擅自改变邮件原有已读状态。训练只在冻结的
+provider-folder snapshot 上离线、分阶段执行，shadow 模型不进入实时扫描。只有连续两个兼容的完整模型版本都满足全部类别、important、样本组
 和系统性错误门槛，并且来自两个先后冻结、digest 不同且 folder/important 标签水位与独立评估证据
 确实前进的 snapshot，才原子晋升整个模型。同一 snapshot 改 model ID 或训练时间不能形成连续证据。
-晋升后实时流程是严格顺序的“模型优先，失败/超时/拒绝
-后再调用一次 Agent”，二者不并行。
+旧的显式实时调用接口仍保留顺序 fallback 契约，但定时收信与历史回填统一使用上述模式互斥路由；
+模型上线后，不确定结果进入待确认而不是调用 Agent。
 
 历史和实时移动都先读取 provider 当前状态，写入后再按新 locator 回读；important flag 在移动后的
 locator 上执行。用户随后在邮箱中移动邮件时，下一份冻结 snapshot 直接采用新文件夹标签。

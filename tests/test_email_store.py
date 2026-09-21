@@ -3389,8 +3389,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_42() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 42
+def test_email_schema_version_is_43() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 43
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:
@@ -3943,8 +3943,10 @@ def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path)
                 scan_interval_seconds integer not null check(scan_interval_seconds > 0),
                 created_at text not null,
                 updated_at text not null,
-                scan_lookback_days integer not null default 30
-                    check(scan_lookback_days between 1 and 365),
+                agent_lookback_days integer not null default 30
+                    check(agent_lookback_days between 1 and 365),
+                model_lookback_days integer not null default 365
+                    check(model_lookback_days between 1 and 3650),
                 scan_read_state text not null default 'unread'
                     check(scan_read_state in ('unread', 'all'))
             );
@@ -10348,7 +10350,7 @@ def test_a_category_whose_folder_stays_unverified_is_not_switched_back_on(
     assert store.categories_missing_active_bindings("second") == ("junk",)
 
 
-def test_v42_gives_existing_mailboxes_a_30_day_unread_only_window(tmp_path: Path):
+def test_v42_and_v43_give_existing_mailboxes_default_dual_windows(tmp_path: Path):
     database = tmp_path / "v42-scan-window.sqlite3"
     store = EmailStore(database)
     store.create_account(_task2_account_values("primary"))
@@ -10356,22 +10358,60 @@ def test_v42_gives_existing_mailboxes_a_30_day_unread_only_window(tmp_path: Path
     with sqlite3.connect(database) as db:
         db.executescript(
             """
-            alter table email_accounts drop column scan_lookback_days;
+            alter table email_accounts drop column agent_lookback_days;
+            alter table email_accounts drop column model_lookback_days;
             alter table email_accounts drop column scan_read_state;
-            delete from email_schema_migrations where version=42
-                and exists (select 1 from email_schema_migrations where version=41);
-            update email_schema_migrations set version=41 where version=42;
+            update email_schema_migrations set version=41 where version=43;
             """
         )
 
     reopened = EmailStore(database)
 
     account = reopened.get_account("primary")
-    assert (account["scan_lookback_days"], account["scan_read_state"]) == (30, "unread")
+    assert (
+        account["agent_lookback_days"],
+        account["model_lookback_days"],
+        account["scan_read_state"],
+    ) == (30, 365, "unread")
     with sqlite3.connect(database) as db:
         assert db.execute(
             "select max(version) from email_schema_migrations"
-        ).fetchone() == (42,)
+        ).fetchone() == (43,)
+
+
+def test_v43_preserves_agent_window_and_adds_one_year_model_window(tmp_path: Path):
+    database = tmp_path / "v43-dual-lookback.sqlite3"
+    store = EmailStore(database)
+    store.create_account(
+        _task2_account_values("primary") | {"agent_lookback_days": 90}
+    )
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        columns = {
+            row[1] for row in db.execute("pragma table_info(email_accounts)")
+        }
+        if "agent_lookback_days" in columns:
+            db.execute(
+                "alter table email_accounts rename column agent_lookback_days "
+                "to scan_lookback_days"
+            )
+        if "model_lookback_days" in columns:
+            db.execute("alter table email_accounts drop column model_lookback_days")
+        db.execute("update email_accounts set scan_lookback_days=90")
+        db.execute(
+            "update email_schema_migrations set version=42 where version=43"
+        )
+
+    reopened = EmailStore(database)
+
+    account = reopened.get_account("primary")
+    assert account["agent_lookback_days"] == 90
+    assert account["model_lookback_days"] == 365
+    assert "scan_lookback_days" not in account
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "select max(version) from email_schema_migrations"
+        ).fetchone() == (43,)
 
 
 def test_a_training_label_correction_never_moves_or_trashes_the_message(

@@ -68,7 +68,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 42
+EMAIL_SCHEMA_VERSION = 43
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -266,7 +266,8 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "scan_interval_seconds": ("integer", True, None),
         "created_at": ("text", True, None),
         "updated_at": ("text", True, None),
-        "scan_lookback_days": ("integer", True, "30"),
+        "agent_lookback_days": ("integer", True, "30"),
+        "model_lookback_days": ("integer", True, "365"),
         "scan_read_state": ("text", True, "'unread'"),
     },
     "email_scan_cursors": {
@@ -582,7 +583,8 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "enabled in (0, 1)",
         "json_valid(scan_folders_json)",
         "scan_interval_seconds > 0",
-        "scan_lookback_days between 1 and 365",
+        "agent_lookback_days between 1 and 365",
+        "model_lookback_days between 1 and 3650",
         "scan_read_state in ('unread', 'all')",
     ),
     "email_scan_cursors": (
@@ -3044,6 +3046,9 @@ class EmailStore:
             if latest_version == 41:
                 self._migrate_v41_to_v42(db, replace_version=is_prototype)
                 latest_version = 42
+            if latest_version == 42:
+                self._migrate_v42_to_v43(db, replace_version=is_prototype)
+                latest_version = 43
             self._validate_durable_state(db)
 
     @classmethod
@@ -5045,7 +5050,10 @@ class EmailStore:
             str(row["name"])
             for row in db.execute("pragma table_info(email_accounts)")
         }
-        if "scan_lookback_days" not in columns:
+        if (
+            "scan_lookback_days" not in columns
+            and "agent_lookback_days" not in columns
+        ):
             db.execute(
                 "alter table email_accounts add column scan_lookback_days "
                 "integer not null default 30 "
@@ -5065,6 +5073,38 @@ class EmailStore:
         else:
             db.execute(
                 "insert into email_schema_migrations(version, applied_at) values (42, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v42_to_v43(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Split the mailbox lookback into Agent and promoted-model windows."""
+
+        columns = {
+            str(row["name"])
+            for row in db.execute("pragma table_info(email_accounts)")
+        }
+        if "scan_lookback_days" in columns:
+            db.execute(
+                "alter table email_accounts rename column scan_lookback_days "
+                "to agent_lookback_days"
+            )
+        if "model_lookback_days" not in columns:
+            db.execute(
+                "alter table email_accounts add column model_lookback_days "
+                "integer not null default 365 "
+                "check(model_lookback_days between 1 and 3650)"
+            )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=43, applied_at=? "
+                "where version=42",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (43, ?)",
                 (self._now(),),
             )
 
@@ -5571,8 +5611,10 @@ class EmailStore:
                 scan_interval_seconds integer not null check(scan_interval_seconds > 0),
                 created_at text not null,
                 updated_at text not null,
-                scan_lookback_days integer not null default 30
-                    check(scan_lookback_days between 1 and 365),
+                agent_lookback_days integer not null default 30
+                    check(agent_lookback_days between 1 and 365),
+                model_lookback_days integer not null default 365
+                    check(model_lookback_days between 1 and 3650),
                 scan_read_state text not null default 'unread'
                     check(scan_read_state in ('unread', 'all'))
             )
@@ -12188,8 +12230,8 @@ class EmailStore:
                     imap_move_mode=?,
                     smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
                     smtp_secret_reference=?, enabled=?, scan_folders_json=?,
-                    scan_interval_seconds=?, scan_lookback_days=?,
-                    scan_read_state=?, updated_at=?
+                    scan_interval_seconds=?, agent_lookback_days=?,
+                    model_lookback_days=?, scan_read_state=?, updated_at=?
                 where account_id=?
                 """,
                 (
@@ -12209,7 +12251,8 @@ class EmailStore:
                     int(bool(values["enabled"])),
                     _json_dump(list(values["scan_folders"])),
                     values["scan_interval_seconds"],
-                    int(values.get("scan_lookback_days", existing["scan_lookback_days"])),
+                    int(values.get("agent_lookback_days", existing["agent_lookback_days"])),
+                    int(values.get("model_lookback_days", existing["model_lookback_days"])),
                     str(values.get("scan_read_state", existing["scan_read_state"])),
                     updated_at,
                     account_id,
@@ -12279,8 +12322,8 @@ class EmailStore:
                     imap_move_mode=?,
                     smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
                     smtp_secret_reference=?, enabled=?, scan_folders_json=?,
-                    scan_interval_seconds=?, scan_lookback_days=?,
-                    scan_read_state=?, created_at=?, updated_at=?
+                    scan_interval_seconds=?, agent_lookback_days=?,
+                    model_lookback_days=?, scan_read_state=?, created_at=?, updated_at=?
                 where account_id=? and updated_at=?
                 """,
                 (
@@ -12300,7 +12343,8 @@ class EmailStore:
                     int(bool(snapshot["enabled"])),
                     _json_dump(list(snapshot["scan_folders"])),
                     snapshot["scan_interval_seconds"],
-                    int(snapshot.get("scan_lookback_days", 30)),
+                    int(snapshot.get("agent_lookback_days", 30)),
+                    int(snapshot.get("model_lookback_days", 365)),
                     str(snapshot.get("scan_read_state", "unread")),
                     snapshot["created_at"],
                     snapshot["updated_at"],
@@ -12557,8 +12601,9 @@ class EmailStore:
                 smtp_host,
                 smtp_port, smtp_tls, smtp_username, smtp_secret_reference,
                 enabled, scan_folders_json, scan_interval_seconds, created_at,
-                updated_at, scan_lookback_days, scan_read_state
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                updated_at, agent_lookback_days, model_lookback_days,
+                scan_read_state
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 values["account_id"],
@@ -12580,7 +12625,8 @@ class EmailStore:
                 values["scan_interval_seconds"],
                 created_at,
                 updated_at,
-                int(values.get("scan_lookback_days", 30)),
+                int(values.get("agent_lookback_days", 30)),
+                int(values.get("model_lookback_days", 365)),
                 str(values.get("scan_read_state", "unread")),
             ),
         )
@@ -12609,7 +12655,8 @@ class EmailStore:
                 expected_type=list,
             ),
             "scan_interval_seconds": row["scan_interval_seconds"],
-            "scan_lookback_days": row["scan_lookback_days"],
+            "agent_lookback_days": row["agent_lookback_days"],
+            "model_lookback_days": row["model_lookback_days"],
             "scan_read_state": row["scan_read_state"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],

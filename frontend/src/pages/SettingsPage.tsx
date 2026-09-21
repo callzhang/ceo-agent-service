@@ -308,11 +308,13 @@ interface EmailAccountDraft {
   imap_secret_configured: boolean;
   enabled: boolean;
   scan_folders: string;
-  scan_lookback_days: number;
+  agent_lookback_days: number;
+  model_lookback_days: number;
   scan_read_state: "unread" | "all";
 }
 
-const DEFAULT_SCAN_LOOKBACK_DAYS = 30;
+const DEFAULT_AGENT_LOOKBACK_DAYS = 30;
+const DEFAULT_MODEL_LOOKBACK_DAYS = 365;
 
 function newEmailAccountDraft(): EmailAccountDraft {
   return {
@@ -327,7 +329,8 @@ function newEmailAccountDraft(): EmailAccountDraft {
     imap_secret_configured: false,
     enabled: true,
     scan_folders: "INBOX",
-    scan_lookback_days: DEFAULT_SCAN_LOOKBACK_DAYS,
+    agent_lookback_days: DEFAULT_AGENT_LOOKBACK_DAYS,
+    model_lookback_days: DEFAULT_MODEL_LOOKBACK_DAYS,
     scan_read_state: "unread",
   };
 }
@@ -345,8 +348,9 @@ function emailAccountDraft(account: EmailAccountItem): EmailAccountDraft {
     imap_secret_configured: account.imap_secret_configured,
     enabled: account.enabled,
     scan_folders: account.scan_folders.join(", "),
-    scan_lookback_days: account.scan_lookback_days ?? DEFAULT_SCAN_LOOKBACK_DAYS,
-    scan_read_state: account.scan_read_state ?? "unread",
+    agent_lookback_days: account.agent_lookback_days,
+    model_lookback_days: account.model_lookback_days,
+    scan_read_state: account.scan_read_state,
   };
 }
 
@@ -392,7 +396,8 @@ function accountPayload(draft: EmailAccountDraft): EmailAccountPayload | null {
     ...(draft.imap_secret.trim() ? { imap_secret: draft.imap_secret } : {}),
     enabled: draft.enabled,
     scan_folders: scanFolders,
-    scan_lookback_days: draft.scan_lookback_days,
+    agent_lookback_days: draft.agent_lookback_days,
+    model_lookback_days: draft.model_lookback_days,
     scan_read_state: draft.scan_read_state,
   };
 }
@@ -408,8 +413,9 @@ function savedAccountPayload(account: EmailAccountItem): EmailAccountPayload {
     imap_username: account.imap_username,
     enabled: account.enabled,
     scan_folders: account.scan_folders,
-    scan_lookback_days: account.scan_lookback_days ?? DEFAULT_SCAN_LOOKBACK_DAYS,
-    scan_read_state: account.scan_read_state ?? "unread",
+    agent_lookback_days: account.agent_lookback_days,
+    model_lookback_days: account.model_lookback_days,
+    scan_read_state: account.scan_read_state,
   };
 }
 
@@ -507,7 +513,7 @@ function EmailAccountsPanel() {
     {state === "error" && <button type="button" className="secondary-button" onClick={() => window.location.reload()}>重新加载</button>}
     {state === "ready" && <div className="email-account-list">
       {accounts.length ? accounts.map((account) => <article className="email-account-card" key={account.account_id}>
-        <div className="email-account-summary"><div><h4>{account.display_name}</h4><p>{account.email_address}</p><p className="muted">{account.imap_host}:{account.imap_port} · {account.scan_folders.join("、")}</p><p className="muted">回读最近 {account.scan_lookback_days ?? DEFAULT_SCAN_LOOKBACK_DAYS} 天 · {(account.scan_read_state ?? "unread") === "all" ? "未读和已读" : "仅未读"}</p></div><label className="email-account-switch"><span>启用</span><input type="checkbox" role="switch" aria-label={`启用${account.display_name}`} checked={account.enabled} disabled={Boolean(busyAccountId)} onChange={() => void toggleAccount(account)} /></label></div>
+        <div className="email-account-summary"><div><h4>{account.display_name}</h4><p>{account.email_address}</p><p className="muted">{account.imap_host}:{account.imap_port} · {account.scan_folders.join("、")}</p><p className="muted">Agent {account.agent_lookback_days} 天 · 模型 {account.model_lookback_days} 天 · Agent 处理{account.scan_read_state === "all" ? "未读和已读" : "仅未读"}</p></div><label className="email-account-switch"><span>启用</span><input type="checkbox" role="switch" aria-label={`启用${account.display_name}`} checked={account.enabled} disabled={Boolean(busyAccountId)} onChange={() => void toggleAccount(account)} /></label></div>
         <div className="email-account-status-row"><span>{account.imap_secret_configured ? "已保存密码" : "尚未设置密码"}</span><span>{connectionStates[account.account_id] || "尚未测试连接"}</span></div>
         {account.unverified_categories?.length ? <p className="field-error" role="status">这些分类在本邮箱里没有验证到文件夹，已暂停：{account.unverified_categories.join("、")}。确认密码和文件夹权限后重新保存邮箱即可恢复。</p> : null}
         <div className="email-account-actions"><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`编辑${account.display_name}`} onClick={() => { setDraft(emailAccountDraft(account)); setError(""); }}>编辑</button><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`测试${account.display_name}连接`} onClick={() => void testConnection(account)}>测试连接</button></div>
@@ -523,8 +529,9 @@ function EmailAccountsPanel() {
         <label><span>IMAP 用户名</span><input aria-label="IMAP 用户名" value={draft.imap_username} onChange={(event) => setDraft({ ...draft, imap_username: event.target.value })} /></label>
         <div><SecretField id="email-imap-secret" label="IMAP 密码" value={draft.imap_secret} onChange={(value) => setDraft({ ...draft, imap_secret: value })} />{draft.imap_secret_configured && <p className="field-help">密码已保存；留空不会修改。</p>}</div>
         <label><span>扫描文件夹</span><input aria-label="扫描文件夹" value={draft.scan_folders} placeholder="INBOX, Receipts" onChange={(event) => setDraft({ ...draft, scan_folders: event.target.value })} /><small>多个文件夹用英文逗号分隔。</small></label>
-        <label className="email-scan-window"><span>回读时间：最近 {draft.scan_lookback_days} 天</span><input aria-label="回读天数" type="range" min="1" max="365" step="1" value={draft.scan_lookback_days} onChange={(event) => setDraft({ ...draft, scan_lookback_days: Number(event.target.value) })} /><small>只处理这段时间内的邮件，更早的不会扫描。</small></label>
-        <label className="email-scan-read-state"><span>处理范围</span><span className="email-account-switch"><span>{draft.scan_read_state === "all" ? "未读和已读" : "仅未读"}</span><input type="checkbox" role="switch" aria-label="同时处理已读邮件" checked={draft.scan_read_state === "all"} onChange={(event) => setDraft({ ...draft, scan_read_state: event.target.checked ? "all" : "unread" })} /></span><small>{draft.scan_read_state === "all" ? "已读邮件也会被分类并移到对应文件夹，已读状态保持不变。" : "只分类和整理未读邮件。"}</small></label>
+        <label className="email-scan-window"><span>Agent 回溯：最近 {draft.agent_lookback_days} 天</span><input aria-label="Agent 回溯天数" type="range" min="1" max="365" step="1" value={draft.agent_lookback_days} onChange={(event) => setDraft({ ...draft, agent_lookback_days: Number(event.target.value) })} /><small>尚无上线模型时，这个窗口内符合读取范围的邮件会交给 Agent 分类。</small></label>
+        <label className="email-scan-window"><span>模型回溯：最近 {draft.model_lookback_days} 天</span><input aria-label="模型回溯天数" type="range" min="1" max="3650" step="1" value={draft.model_lookback_days} onChange={(event) => setDraft({ ...draft, model_lookback_days: Number(event.target.value) })} /><small>模型上线后优先处理这个窗口内的全部未分类邮件；确定结果自动整理，不确定的结果进入“待确认”，不会交给 Agent。</small></label>
+        <label className="email-scan-read-state"><span>Agent 处理范围</span><span className="email-account-switch"><span>{draft.scan_read_state === "all" ? "未读和已读" : "仅未读"}</span><input type="checkbox" role="switch" aria-label="同时处理已读邮件" checked={draft.scan_read_state === "all"} onChange={(event) => setDraft({ ...draft, scan_read_state: event.target.checked ? "all" : "unread" })} /></span><small>{draft.scan_read_state === "all" ? "Agent 也会处理已读邮件；已读状态保持不变。" : "Agent 只处理未读邮件；模型上线后不受这个设置影响。"}</small></label>
       </div>
       <div className="email-account-options"><label><input type="checkbox" checked={draft.imap_tls} onChange={(event) => setDraft({ ...draft, imap_tls: event.target.checked })} /> 使用 SSL/TLS</label><label><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /> 启用此邮箱</label></div>
       <button type="submit" className="primary-button" disabled={Boolean(busyAccountId)}>{busyAccountId ? "正在保存…" : "保存邮箱"}</button>

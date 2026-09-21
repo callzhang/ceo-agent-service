@@ -236,6 +236,30 @@ def _imap_only_account_payload(account_id: str = "work_mail") -> dict[str, objec
     }
 
 
+def test_email_account_has_independent_agent_and_model_lookback_windows() -> None:
+    payload = _imap_only_account_payload() | {
+        "scan_folders": tuple(_imap_only_account_payload()["scan_folders"])
+    }
+    parsed = EmailAccountPayload.model_validate(payload)
+
+    assert parsed.agent_lookback_days == 30
+    assert parsed.model_lookback_days == 365
+    assert parsed.scan_read_state == "unread"
+
+    with pytest.raises(ValidationError):
+        EmailAccountPayload.model_validate(
+            payload | {"agent_lookback_days": 366}
+        )
+    with pytest.raises(ValidationError):
+        EmailAccountPayload.model_validate(
+            payload | {"model_lookback_days": 3651}
+        )
+    with pytest.raises(ValidationError):
+        EmailAccountPayload.model_validate(
+            payload | {"scan_lookback_days": 30}
+        )
+
+
 def _client(
     tmp_path: Path,
     *,

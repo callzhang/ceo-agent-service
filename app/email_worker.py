@@ -341,6 +341,75 @@ def persist_model_primary_classification(
         raise OnlineModelAcceptError(stage, str(exc)) from exc
 
 
+def persist_model_pending_feedback(
+    email_store: object,
+    *,
+    message: Mapping[str, object],
+    prediction: object,
+    context: object,
+    model_id: str,
+    model_text: str,
+) -> Mapping[str, object]:
+    """Persist one reviewable model suggestion without actions or Agent work."""
+
+    from hashlib import sha256
+    from app.email_classifier_contracts import (
+        EmailAttachmentMetadata,
+        EmailClassification,
+        EmailClassificationStatus,
+    )
+    from app.email_classifier_model import email_message_to_text
+    from app.email_classifier_scan import _provider_locator, _stable_message_identity
+
+    if not model_text:
+        raise ValueError("model pending feedback requires canonical model text")
+    locator = _provider_locator(message)
+    stable_identity = _stable_message_identity(message, locator)
+    if locator.thread_id is None:
+        locator = locator.model_copy(update={"thread_id": stable_identity})
+    classification_id = (
+        int.from_bytes(sha256(stable_identity.encode("utf-8")).digest()[:8], "big")
+        & ((1 << 63) - 1)
+        or 1
+    )
+    category = str(prediction.category)
+    classification = EmailClassification(
+        classification_id=classification_id,
+        stable_message_identity=stable_identity,
+        provider_locator=locator,
+        category=category,
+        confidence=float(prediction.category_probability),
+        margin=_prediction_margin(prediction.category_probabilities),
+        probabilities=dict(prediction.category_probabilities),
+        model_id=model_id,
+        config_version=context.config_version,
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        classification_source="model",
+        action_plan=None,
+    )
+    sender_value = message.get("from") or message.get("sender") or {}
+    sender = (
+        str(sender_value.get("email") or sender_value.get("name") or "")
+        if isinstance(sender_value, Mapping)
+        else str(sender_value)
+    )
+    return email_store.persist_scan_result(
+        classification,
+        sender=sender,
+        recipients=tuple(),
+        subject=str(message.get("subject") or ""),
+        normalized_text=str(
+            message.get("markdownBody") or message.get("textBody") or ""
+        ),
+        attachment_metadata=tuple(
+            EmailAttachmentMetadata.model_validate(item)
+            for item in message.get("attachments") or ()
+        ),
+        received_at=str(message.get("date") or ""),
+        model_text=email_message_to_text(message),
+    )
+
+
 def _validated_model_accept_readback(
     existing: Mapping[str, object],
     *,
@@ -3551,7 +3620,7 @@ def build_email_worker_dependencies(
                                 role is FolderRole.UNBOUND and not is_bound
                             ),
                             lookback_days=int(
-                                account.get("scan_lookback_days") or 30
+                                account.get("agent_lookback_days") or 30
                             ),
                             include_read=account.get("scan_read_state") == "all",
                             online_runtime=current_model,
