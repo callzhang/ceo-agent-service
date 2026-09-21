@@ -21601,11 +21601,25 @@ class AutoReplyStore:
             rows = db.execute(
                 """
                 select attempts.id as attempt_id, attempts.agent_run_id,
+                       attempts.send_status, attempts.send_error,
                        runs.reply_task_id, runs.final_result_json,
                        runs.structured_error_json
                 from reply_attempts as attempts
                 left join agent_runs as runs on runs.id=attempts.agent_run_id
-                where attempts.send_status='needs_human'
+                where (
+                        attempts.send_status='needs_human'
+                        or (
+                            attempts.send_status='failed'
+                            and exists (
+                                select 1
+                                from reply_tasks stale_tasks
+                                where stale_tasks.channel=attempts.channel
+                                  and stale_tasks.conversation_id=attempts.conversation_id
+                                  and stale_tasks.trigger_message_id=attempts.trigger_message_id
+                                  and stale_tasks.status='needs_human'
+                            )
+                        )
+                      )
                   and attempts.reviewed_at is null
                   and trim(coalesce(attempts.resolved_at, ''))=''
                   and attempts.id=(
@@ -21626,23 +21640,27 @@ class AutoReplyStore:
                     is StoredNeedsHumanProjection.NEEDS_HUMAN
                 ):
                     continue
-                error_code = self._projection_failure_code(
-                    row["structured_error_json"], row["final_result_json"]
+                error_code = str(row["send_error"] or "").strip() or (
+                    self._projection_failure_code(
+                        row["structured_error_json"], row["final_result_json"]
+                    )
                 )
-                cursor = db.execute(
-                    """
-                    update reply_attempts
-                    set send_status='failed', send_error=?,
-                        human_decision_options_json='[]', updated_at=current_timestamp
-                    where id=? and send_status='needs_human'
-                    """,
-                    (error_code, row["attempt_id"]),
-                )
-                if cursor.rowcount != 1:
-                    continue
-                reconciled += 1
+                attempt_changed = 0
+                if row["send_status"] == "needs_human":
+                    cursor = db.execute(
+                        """
+                        update reply_attempts
+                        set send_status='failed', send_error=?,
+                            human_decision_options_json='[]', updated_at=current_timestamp
+                        where id=? and send_status='needs_human'
+                        """,
+                        (error_code, row["attempt_id"]),
+                    )
+                    if cursor.rowcount != 1:
+                        continue
+                    attempt_changed = 1
                 if row["reply_task_id"] is not None:
-                    db.execute(
+                    task_cursor = db.execute(
                         """
                         update reply_tasks
                         set status='failed', error=?, available_at='', locked_at=null,
@@ -21651,6 +21669,9 @@ class AutoReplyStore:
                         """,
                         (error_code, row["reply_task_id"]),
                     )
+                    if task_cursor.rowcount and not attempt_changed:
+                        reconciled += 1
+                reconciled += attempt_changed
             return reconciled
 
     @staticmethod

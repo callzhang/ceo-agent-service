@@ -12339,6 +12339,55 @@ def test_reconcile_invalid_current_needs_human_projection_to_failed(
     assert store.reconcile_invalid_needs_human_projections() == 0
 
 
+def test_reconcile_failed_attempt_closes_stale_technical_needs_human_task(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    ).run
+    consumer = store.fail_agent_run(
+        consumer.id,
+        {"code": "codex_result_invalid"},
+        owner="consumer",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+        channel=task.channel,
+    )
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update reply_attempts set agent_run_id=?, send_error='codex_result_invalid' where id=?",
+            (consumer.id, attempt_id),
+        )
+        db.execute(
+            "update reply_tasks set status='needs_human', error='codex_result_invalid' where id=?",
+            (task.id,),
+        )
+
+    assert store.reconcile_invalid_needs_human_projections() == 1
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"
+    assert store.get_reply_task(task.id).status == "failed"
+    assert store.get_reply_task(task.id).error == "codex_result_invalid"
+
+
 def test_failed_task_without_a_current_human_projection_is_unchanged(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "never-acted.sqlite3")
     store.enqueue_reply_task(
