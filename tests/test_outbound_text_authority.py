@@ -108,6 +108,12 @@ def test_every_send_spelling_is_caught_by_shape_not_by_a_list() -> None:
         assert shell_send_commands([_shell(command)]), command
 
 
+def test_provider_send_texts_extracts_quote_reply_content() -> None:
+    event = _shell('dws chat +messages-reply --message-id m1 --content "reply body"')
+
+    assert provider_send_texts([event]) == ["reply body"]
+
+
 def test_reading_what_a_send_did_is_not_a_send() -> None:
     for command in (
         "dws chat +messages-query-send-status --id 1",
