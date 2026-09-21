@@ -282,6 +282,34 @@ def test_group_delivery_uses_first_candidate_and_real_mentions(tmp_path):
     assert len(dws.sent) == 1
 
 
+def test_hr_group_shared_sensitive_content_is_one_group_delivery(tmp_path):
+    dws = FakeDws()
+    sender = ServiceMessageSender(
+        store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws
+    )
+    payload = send_decision(mention_names=[]).model_dump()
+    payload["final_message"] = (
+        "HR 参会人共同确认：候选人的管理成熟度仍需进一步验证。"
+    )
+    payload["sensitive_private_message"] = None
+    decision = MeetingAlignmentDecision.model_validate(payload)
+
+    result = deliver_meeting_alignment(
+        decision,
+        meeting_source(),
+        dws,
+        message_sender=sender,
+        delivery_key="meeting-alignment:recruiting:hr-group",
+    )
+
+    assert result.status == "sent"
+    assert result.sensitive_private_delivery is None
+    assert result.sensitive_private_merged is False
+    assert len(dws.sent) == 1
+    assert dws.sent[0]["conversation_id"] == "cid-first"
+    assert "管理成熟度" in dws.sent[0]["text"]
+
+
 def test_mixed_recruiting_summary_sends_sanitized_group_message_and_private_hr_note(
     tmp_path,
 ):

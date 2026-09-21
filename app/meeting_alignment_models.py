@@ -372,11 +372,15 @@ class MeetingAlignmentDecision(StrictModel):
         )
     )
     final_message: str = Field(
-        description="必须非空；人员敏感内容不得出现在这里。"
+        description=(
+            "必须非空；人员敏感内容通常不得出现在这里。若 target 是经实时证据匹配的 HR 群，"
+            "且内容是该 HR 受众共同讨论而非针对具体个人，可以在这里保留敏感详情。"
+        )
     )
     sensitive_private_message: SensitivePrivateMessage | None = Field(
         description=(
-            "没有人员敏感内容时必须是 null；非 null 时 audience_scope 必须是 business。"
+            "没有人员敏感内容时必须是 null；匹配的 HR 群可承接共同讨论的敏感内容并保持 null；"
+            "针对具体个人或受众不明确时才生成独立私聊；非 null 时 audience_scope 必须是 business。"
         )
     )
     audit_summary: str = Field(min_length=1)

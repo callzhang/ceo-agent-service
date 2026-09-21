@@ -346,7 +346,7 @@ def build_meeting_alignment_prompt(
 - 内容优先于参会人数：客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动一律是业务内容，必须返回 audience_scope=business，并使用 DWS 做群发现、按业务承接证据给候选群排序，以最强候选作为 target.kind=group。
 - 不能因为是 1:1、群可访问、议题相似或参会人部分重合而随意私信；业务群发现失败时，使用日历中已确认的会议组织者作为 direct fallback，不得伪装成 no_action，也不得按姓名模糊搜索目标。
 - personal 只适用于整场会议均为个人事项，必须返回 audience_scope=personal；只有完整日历 1:1（attendee_evidence=calendar、attendee_roster_complete=true、恰好两名参会人）时，才可以使用 target.kind=direct，目标只能是另一位参会人。
-- 业务会议中出现人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，必须拆分业务群消息与敏感私聊消息：人员敏感内容不得出现在 final_message；final_message 只保留可公开给业务承接群的结论、安排和行动，敏感部分写入 sensitive_private_message。
+- 业务会议中出现人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，先按受众决定是否拆分：如果 DWS 实时群发现证明目标是 HR 专属或已匹配的群，且讨论是会议中 HR 参会人的共同事项、不是针对未参会的具体个人，可以把敏感详情放进 final_message，并将 sensitive_private_message=null；只要群受众不明确、含非授权成员，或讨论针对具体个人，就必须去掉群消息中的敏感详情，写入 sensitive_private_message。
 - sensitive_private_message.target 必须是 direct，并使用参会人中经 DWS 实时身份和职责确认的 HR/人员负责人稳定 user_id；没有可确认的 HR/人员负责人时发给当前用户本人。recipient_evidence 写清实时身份或职责依据。不得按姓名猜测接收人，也不得发给被评价人或无关参会人。
 - 普通的工作分工、交付进展、项目风险和业务结果不是人员敏感内容，不得因为出现姓名就从群消息中删除。
 - 没有实质观点分歧时，仍须发送简短的会议结论、已确认事项和下一步；不得因议题平稳而跳过。"""
@@ -371,7 +371,7 @@ def build_meeting_alignment_prompt(
 - 措辞不同、补充信息、探索性讨论或已经自然顺畅推进，不算实质分歧。
 - 沉默不算对齐。只有相关各方明确同意、承诺或复述一致，才把议题标为 aligned；主持人单方面宣布结论不够。
 - topics 中有 aligned 时，trigger_reasons 必须包含 aligned_disagreement；topics 中有 unresolved 时，trigger_reasons 必须包含 unresolved_disagreement。两类议题同时存在时两个 trigger 都必须包含。
-- 每场会议最多生成一条业务群消息与一条敏感私聊消息；同一受众的多个议题必须合并，不得按议题拆成多条。
+- 每场会议最多生成一条业务群消息与一条敏感私聊消息；同一受众的多个议题必须合并，不得按议题拆成多条。HR 群可以承接其共同受众的敏感内容，此时只生成一条 HR 群消息，不再重复生成敏感私聊。
 
 内容合同：
 - aligned 议题：简述各方观点，并总结最终结论及对齐原因。
@@ -392,7 +392,7 @@ def build_meeting_alignment_prompt(
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守下方 schema，不添加字段。
 - action 固定为 send；final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同。
-- 没有人员敏感内容时 sensitive_private_message 必须为 null；存在混合内容时同时生成脱敏后的 final_message 和独立 sensitive_private_message。
+- 没有人员敏感内容时 sensitive_private_message 必须为 null；存在混合内容时，按目标群的受众边界选择：匹配的 HR 群共同讨论可将敏感详情放在 final_message 并把 sensitive_private_message 设为 null；针对具体个人或受众不明确时，生成脱敏后的 final_message 和独立 sensitive_private_message。
 
 {render_meeting_alignment_cross_field_rules()}
 

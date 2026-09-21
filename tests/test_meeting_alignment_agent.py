@@ -305,14 +305,28 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "能只靠会议证据解释时，historical_sources 必须为空数组" in prompt
     assert "必须逐字填写 `/configured/work_profile.md`" in prompt
     assert "不得改写、加标题或写成说明性文字" in prompt
-    assert "业务群消息与敏感私聊消息" in prompt
+    assert "业务群消息" in prompt and "敏感私聊消息" in prompt
     assert "人员评价、绩效、薪酬、晋升、去留、候选人结论" in prompt
-    assert "不得出现在 final_message" in prompt
+    assert "群受众不明确" in prompt
+    assert "可以把敏感详情放进 final_message" in prompt
     assert "sensitive_private_message" in prompt
     assert "每场会议最多生成一条合并消息" not in prompt
     assert "群内所有人员都必须属于本次会议参会人" not in prompt
     assert "业务承接证据" in prompt
     assert "内容优先于参会人数" in prompt
+
+
+def test_prompt_allows_shared_sensitive_content_for_an_automatically_matched_hr_group():
+    prompt = build_meeting_alignment_prompt(
+        source(),
+        work_profile="重视端到端结果",
+        work_profile_source="/configured/work_profile.md",
+    )
+
+    assert "HR 专属或已匹配的群" in prompt
+    assert "不是针对未参会的具体个人" in prompt
+    assert "可以把敏感详情放进 final_message" in prompt
+    assert "sensitive_private_message=null" in prompt
 
 
 def test_prompt_contains_scheduled_consumer_prompt_and_targeted_skills():
