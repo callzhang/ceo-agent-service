@@ -13,6 +13,7 @@ import tempfile
 from types import MappingProxyType
 from typing import Literal
 
+from app.agent_result import agent_message_json_objects
 from app.email_classifier_contracts import validate_email_category_key
 from app.email_embedding_classifier import CategoryDescription
 
@@ -983,7 +984,7 @@ class RoutedDescriptionOptimizerAgent:
                 ),
                 use_output_schema=False,
             ),
-            parser=lambda raw: raw.strip(),
+            parser=_parse_description_optimizer_result,
             result_codec=RoutedResultCodec.text(
                 schema_id="email.description-optimization-result.v1"
             ),
@@ -994,6 +995,33 @@ class RoutedDescriptionOptimizerAgent:
         if not isinstance(parsed, Mapping):
             raise ValueError("description optimizer Agent result must be an object")
         return parsed
+
+
+def _parse_description_optimizer_result(raw: str) -> str:
+    required = {"core", "include", "exclude", "cited_sample_ids", "reason"}
+    candidates = agent_message_json_objects(raw.strip())
+    for line in raw.splitlines():
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event, Mapping):
+            continue
+        item = event.get("item")
+        if (
+            isinstance(item, Mapping)
+            and item.get("type") == "agent_message"
+            and isinstance(item.get("text"), str)
+        ):
+            candidates.extend(agent_message_json_objects(item["text"]))
+    for candidate in reversed(candidates):
+        if isinstance(candidate, Mapping) and set(candidate) == required:
+            return json.dumps(
+                candidate,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+    raise ValueError("description optimizer result has an invalid schema")
 
 
 def propose_description_update(

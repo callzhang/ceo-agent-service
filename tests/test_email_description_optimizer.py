@@ -46,6 +46,44 @@ def test_routed_optimizer_uses_frozen_snapshot_as_runtime_parent() -> None:
     )
 
 
+def test_routed_optimizer_persists_only_the_agent_json_from_runtime_events() -> None:
+    calls = []
+    expected = {
+        "core": "Financing tied to an actual investor relationship.",
+        "include": ["fundraising diligence"],
+        "exclude": ["unsolicited capital marketing"],
+        "cited_sample_ids": ["sample-1"],
+        "reason": "The bounded conflict supports this distinction.",
+    }
+    raw = "\n".join(
+        (
+            json.dumps({"type": "turn.started"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": json.dumps(expected),
+                    },
+                }
+            ),
+            json.dumps({"type": "turn.completed"}),
+        )
+    )
+
+    class RoutedExecution:
+        def execute(self, **kwargs):
+            calls.append(kwargs)
+            return type("Result", (), {"value": kwargs["parser"](raw)})()
+
+    result = RoutedDescriptionOptimizerAgent(RoutedExecution())(
+        {"source_snapshot_id": "snapshot-1", "category": "financing"}
+    )
+
+    assert result == expected
+    assert json.loads(calls[0]["parser"](raw)) == expected
+
+
 def test_optimizer_invocation_lease_recovers_hard_crash_idempotently(tmp_path):
     repository = DescriptionProposalRepository(tmp_path / "registry")
     request_key = "a" * 64
