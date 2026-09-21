@@ -14103,7 +14103,6 @@ class AutoReplyStore:
                 where id=?
                   and status='failed'
                   and pre_action_failure=1
-                  and error='target_open_failed'
                   and trim(action_started_at)<>''
                   and datetime(action_started_at) <= datetime(?)
                   and execution_generation=?
