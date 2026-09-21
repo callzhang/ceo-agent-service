@@ -5721,7 +5721,14 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
                 "exit_code": 0,
                 "status": "completed",
                 "aggregated_output": json.dumps(
-                    {"messages": [{"messageId": "message-1", "text": reply_text}]}
+                    {
+                        "messages": [
+                            {
+                                "messageId": "message-1",
+                                "text": "@Lily  " + reply_text.replace("\n\n", "  \n"),
+                            }
+                        ]
+                    }
                 ),
             },
         },

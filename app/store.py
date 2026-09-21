@@ -17406,6 +17406,7 @@ class AutoReplyStore:
         from app.outbound_text_authority import (
             delivered_shell_send_commands,
             provider_send_texts,
+            unprepared_send_texts,
         )
 
         send_run = self.get_agent_run(send_run_id)
@@ -17459,10 +17460,34 @@ class AutoReplyStore:
         readback_evidence = json.dumps(
             readback_run.tool_events, ensure_ascii=False, separators=(",", ":")
         )
+        readback_texts: list[str] = []
+
+        def collect_message_texts(value: object) -> None:
+            if isinstance(value, dict):
+                if str(value.get("messageId") or "") == message_id:
+                    text = value.get("text")
+                    if isinstance(text, str) and text.strip():
+                        readback_texts.append(text)
+                for child in value.values():
+                    collect_message_texts(child)
+            elif isinstance(value, list):
+                for child in value:
+                    collect_message_texts(child)
+
+        for event in readback_run.tool_events:
+            collect_message_texts(event)
+            item = event.get("item") if isinstance(event, dict) else None
+            output = item.get("aggregated_output") if isinstance(item, dict) else None
+            if not isinstance(output, str) or not output.strip():
+                continue
+            try:
+                collect_message_texts(json.loads(output))
+            except json.JSONDecodeError:
+                continue
         if (
             action_key not in readback_evidence
-            or message_id not in readback_evidence
-            or reply_text not in readback_evidence
+            or not readback_texts
+            or unprepared_send_texts([reply_text], readback_texts)
         ):
             raise ValueError("readback run does not contain the reconciled delivery")
         provider_result = {
