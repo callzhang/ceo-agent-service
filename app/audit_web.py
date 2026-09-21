@@ -2953,6 +2953,14 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                         where t.channel=a.channel
                           and t.conversation_id=a.conversation_id
                           and t.trigger_message_id=a.trigger_message_id
+                          and lower(t.status)='needs_human'
+                    ) then 'needs_human'
+                    when lower(a.send_status) in ('failed', 'blocked')
+                     and exists (
+                        select 1 from reply_tasks t
+                        where t.channel=a.channel
+                          and t.conversation_id=a.conversation_id
+                          and t.trigger_message_id=a.trigger_message_id
                           and lower(t.status) in ('pending', 'processing')
                     ) then 'retryable'
                     when lower(a.send_status)='failed'

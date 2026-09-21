@@ -31,7 +31,7 @@ History 一致”；它不解释 Agent 如何调用命令，也不维护外部�
 | `feedback_events` | 未记录 `resolved_at` 的反馈 | 无 |
 | `daily_scan_state` / `wechat_read_state` | scanner `last_error` 或 reader 不可用 | 无待处理工作时 reader 未就绪 |
 | `errors` | 关联到 `conversation_id` 或 `message_id`，且最近 4 小时新建、未解决并没有活动重试路径的错误 | Codex 容量暂停期间的共享事件 |
-| `email_classifier_runtime_samples` | 最近 24 小时有 `failure` 样本：已上线的邮件模型在抛错而不是在判断 | 最近 24 小时判出率低于一半：模型在把大部分邮件推回 Agent |
+| `email_classifier_runtime_samples` | 最近 24 小时最新连续样本为 `failure`：已上线的邮件模型当前仍在抛错而不是判断；后续正常决策会恢复健康，失败样本仍保留为历史 | 最近 24 小时判出率低于一半：模型在把大部分邮件推回 Agent |
 
 没有样本不算发现：样本表为空时，"没有新邮件进来"和"模型根本没被问过"长得一模一样，闸门只
 对模型确实看过的邮件下结论。
@@ -53,6 +53,10 @@ History 一致”；它不解释 Agent 如何调用命令，也不维护外部�
 服务健康恢复不依赖静默观察期。任务错误也不按时间自动关闭：只有该 trigger 的实际后续
 `done`、`skipped`、`needs_human` 或其他持久化终态可以收口原错误。历史 error 保留在 History，
 用于追溯而不覆盖当前任务 projection。
+
+邮件模型运行样本同样按当前连续结果投影健康度：末尾连续 `failure` 表示当前故障；出现后续
+`success` 或正常 `rejected` 后立即恢复。质量门不会删除旧失败样本，也不会让已恢复的历史异常
+继续把系统健康状态保持为 degraded。
 
 ## Trigger 收敛
 

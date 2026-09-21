@@ -1324,6 +1324,28 @@ def test_an_email_model_that_raises_instead_of_deciding_is_a_violation(tmp_path)
     assert report.ok is False
 
 
+def test_email_model_recovers_after_a_later_successful_decision(tmp_path):
+    store = AutoReplyStore(tmp_path / "model-recovered.sqlite3")
+    EmailStore(store.path)
+    failed_at = (NOW - timedelta(minutes=6)).strftime("%Y-%m-%d %H:%M:%S")
+    recovered_at = (NOW - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    _runtime_sample(
+        store,
+        outcome="failure",
+        recorded_at=failed_at,
+        fallback_code="OnlineEmbeddingBatchError",
+    )
+    _runtime_sample(store, outcome="success", recorded_at=recovered_at)
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(
+        issue.source == "email_classifier_runtime_samples"
+        and issue.code == "model_failing"
+        for issue in report.violations
+    )
+
+
 def test_an_email_model_that_mostly_defers_is_attention_not_a_violation(tmp_path):
     """Handing unsure mail back is the design; doing it for most mail is news."""
 

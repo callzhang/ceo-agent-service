@@ -8183,6 +8183,52 @@ def test_resolved_failed_attempt_is_recovered_in_current_queue_projection(
     assert reply_attempt_queue["counts"]["recovered"] == 1
 
 
+def test_oa_failed_attempt_uses_current_needs_human_task_projection(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "oa-needs-human-attempt.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="oa_pending_scan:process-1",
+        conversation_title="OA approval",
+        single_chat=True,
+        trigger_message_id="oa-pending:process-1:revision-1",
+        trigger_create_time="2026-09-21 09:00:00",
+        trigger_sender="Applicant",
+        trigger_text="Review this approval.",
+        channel="dingtalk",
+        business_object_key="oa:process-1:task-1",
+    )
+    attempt_id = store.record_reply_attempt(
+        channel="dingtalk",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="failed",
+        send_error="codex_result_invalid",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='needs_human' where id=?",
+            (task.id,),
+        )
+
+    payload = build_worker_status_payload(store)
+    reply_attempt_queue = next(
+        queue for queue in payload["queues"] if queue["name"] == "Reply attempts"
+    )
+
+    assert reply_attempt_queue["failed"] == 0
+    assert reply_attempt_queue["counts"]["needs_human"] == 1
+
+
 @pytest.mark.parametrize("successor_status", ("done", "skipped"))
 def test_reply_attempt_queue_hides_failed_history_when_its_task_has_a_terminal_successor(
     tmp_path: Path,

@@ -747,13 +747,28 @@ def _check_email_model_runtime(
     considered = sum(counts.values())
     if not considered:
         return
-    # A failure is the model erroring, not the model being unsure: it means
-    # every message takes the slow path for a reason nobody chose.
+    recent_outcomes = [
+        str(row["outcome"] or "")
+        for row in db.execute(
+            """select outcome
+               from email_classifier_runtime_samples
+               where recorded_at >= ?
+               order by recorded_at desc, id desc""",
+            (cutoff,),
+        )
+    ]
+    active_failures = 0
+    for outcome in recent_outcomes:
+        if outcome != "failure":
+            break
+        active_failures += 1
+    # Runtime samples are append-only evidence. A later normal decision closes
+    # the service-level failure while preserving the older failed samples.
     _add(
         violations,
         source="email_classifier_runtime_samples",
         code="model_failing",
-        count=counts.get("failure", 0),
+        count=active_failures,
         severity="error",
         detail="the promoted email model raised instead of deciding",
     )
