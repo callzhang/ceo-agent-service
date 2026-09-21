@@ -1264,7 +1264,11 @@ def test_promoted_runtime_owns_one_resident_batcher_and_closes_it(tmp_path):
     assert runtime.model_predict is None
 
 
-def test_promoted_runtime_can_widen_embedding_deadline_for_history(tmp_path):
+def test_promoted_runtime_can_widen_embedding_deadline_for_history(
+    tmp_path, monkeypatch
+):
+    import app.email_classifier_runtime as runtime_module
+
     first_id = "email-embedding-mlp-history-first"
     model_id = "email-embedding-mlp-history"
     first_bytes = b"history-first"
@@ -1285,14 +1289,22 @@ def test_promoted_runtime_can_widen_embedding_deadline_for_history(tmp_path):
         classifier_loader=lambda _path: _LoadedOnlineModel(),
     )
 
+    captured_timeouts = []
+    monkeypatch.setattr(
+        runtime_module,
+        "_production_embedding_client",
+        lambda _model, *, timeout_seconds: (
+            captured_timeouts.append(timeout_seconds) or _EmbeddingClient()
+        ),
+    )
     runtime = PromotedEmailClassifierRuntime(
         registry,
         classifier_loader=lambda _path: _LoadedOnlineModel(),
-        embedding_client_factory=lambda _model: _EmbeddingClient(),
         cache_factory=lambda _model: _ExactCache(),
         embedding_remote_timeout_seconds=30.0,
     )
     try:
+        assert captured_timeouts == [30.0]
         assert runtime.embedding_batcher is not None
         assert runtime.embedding_batcher.remote_timeout_seconds == 30.0
     finally:

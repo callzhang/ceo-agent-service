@@ -1080,7 +1080,15 @@ class PromotedEmailClassifierRuntime:
         self.registry = registry
         self.learning_service = learning_service
         self._classifier_loader = classifier_loader
-        self._embedding_client_factory = embedding_client_factory or _production_embedding_client
+        self._embedding_remote_timeout_seconds = float(
+            embedding_remote_timeout_seconds
+        )
+        self._embedding_client_factory = embedding_client_factory or (
+            lambda classifier: _production_embedding_client(
+                classifier,
+                timeout_seconds=self._embedding_remote_timeout_seconds,
+            )
+        )
         self._embedding_client_owned = (
             embedding_client_factory is None
             if embedding_client_owned is None
@@ -1093,9 +1101,6 @@ class PromotedEmailClassifierRuntime:
         )
         self.latency = latency or StageLatencyRecorder()
         self._observability_store = observability_store
-        self._embedding_remote_timeout_seconds = float(
-            embedding_remote_timeout_seconds
-        )
         self._lock = threading.RLock()
         self._snapshot = RuntimeSnapshot.agent_primary()
         self._generation: _RuntimeGeneration | None = None
@@ -1287,10 +1292,15 @@ def _close_embedding_client(client: object) -> None:
         close()
 
 
-def _production_embedding_client(classifier: object) -> EmailEmbeddingClient:
+def _production_embedding_client(
+    classifier: object,
+    *,
+    timeout_seconds: float = ONLINE_EMBEDDING_TIMEOUT_SECONDS,
+) -> EmailEmbeddingClient:
     return EmailEmbeddingClient.from_environment(
         embedding_revision=str(classifier.embedding_revision),
         dimension=int(classifier.dimension),
+        timeout_seconds=timeout_seconds,
     )
 
 
