@@ -258,6 +258,7 @@ def test_rejected_model_result_enters_pending_feedback_without_any_task(tmp_path
         "messageId": "<model-review@example.com>",
         "uid": 18,
         "providerUnread": False,
+        "from": {"email": "alerts@news.pinterest.com"},
     }
 
     persisted = _module().persist_model_pending_feedback(

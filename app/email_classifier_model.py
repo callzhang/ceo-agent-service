@@ -50,7 +50,11 @@ def email_message_to_text(message: Mapping[str, object]) -> str:
     """Create redacted model features without retaining raw message content."""
     sender = message.get("from") or {}
     raw_sender = str(sender.get("email") or "") if isinstance(sender, Mapping) else ""
-    sender_domain = raw_sender.rsplit("@", 1)[-1].lower() if "@" in raw_sender else ""
+    sender_domain = (
+        _clean(raw_sender.rsplit("@", 1)[-1].lower())
+        if "@" in raw_sender
+        else ""
+    )
     exact_sender = ""
     if raw_sender:
         exact_sender = hashlib.sha256(raw_sender.strip().lower().encode("utf-8")).hexdigest()[:16]

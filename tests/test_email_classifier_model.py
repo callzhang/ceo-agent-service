@@ -87,6 +87,20 @@ def test_message_text_redacts_quota_access_tokens():
     assert text.count("TOKEN") >= 2
 
 
+def test_message_text_sanitizes_token_like_sender_domain_segments():
+    text = email_message_to_text(
+        {
+            "from": {"email": "alerts@news.pinterest.com"},
+            "toRecipients": [],
+            "subject": "Weekly ideas",
+            "textBody": "Your saved topics are ready.",
+        }
+    )
+
+    assert "pinterest" not in text.lower()
+    assert "TOKEN" in text
+
+
 def test_message_text_bounds_body_to_the_first_2048_characters():
     retained = "开头分类信号" + ("甲" * (2048 - len("开头分类信号")))
     omitted = "此处不应进入模型输入"
