@@ -33,11 +33,12 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 
 from app.agent_contracts import (
-    AuditAgentResult,
-    AuditOutcome,
     ConsumerAgentResult,
-    ConsumerOutcome,
     DecisionOption,
+)
+from app.decision_quality import (
+    StoredNeedsHumanProjection,
+    classify_stored_needs_human_projection,
 )
 from app.agent_runtime_config import (
     DEFAULT_CEO_CLAUDE_MODEL,
@@ -12393,6 +12394,11 @@ def _needs_human_decision_card(
         return ""
     action = f"/attempts/{attempt.id}/human-decision"
     options = _needs_human_decision_options(attempt, agent_runs)
+    if not options:
+        # Never turn an error string or stale, manually persisted button list
+        # into a user decision.  The startup reconciler will make the terminal
+        # failure explicit; until then the page remains read-only.
+        return ""
     option_forms = "".join(
         "<form method=\"post\" action=\"%s\">"
         "<input type=\"hidden\" name=\"instruction\" value=\"%s\">"
@@ -12413,12 +12419,6 @@ def _needs_human_decision_card(
     choice_section = (
         "<p class=\"muted\">请选择一条可复用的处理规则。系统会按该规则重新核验、执行并回读；每个选项会说明是否产生外部动作。</p>"
         + option_forms
-        if options
-        else (
-            "<p class=\"muted\">审核 Agent 会把审核意见反馈给执行 Agent 修订原任务。"
-            "只有当你发现一条可复用的 Skill 处理规则时，才需要在下方补充；"
-            "不需要确认‘是否已执行’或选择与当前对话无关的恢复动作。</p>"
-        )
     )
     return (
         '<section class="card needs-human-card"><h2>需要你的判断（用于迭代 Skill）</h2>'
@@ -12636,32 +12636,21 @@ def _needs_human_decision_options(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
 ) -> tuple[DecisionOption, ...]:
-    try:
-        persisted_options = json.loads(attempt.human_decision_options_json)
-        if persisted_options:
-            return tuple(
-                DecisionOption.model_validate(item) for item in persisted_options
-            )
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
     matching_runs = [run for run in agent_runs if run.id == attempt.agent_run_id]
-    for run in matching_runs or list(reversed(agent_runs)):
-        if not run.final_result_json.strip():
+    for run in matching_runs:
+        if (
+            classify_stored_needs_human_projection(run.final_result_json)
+            is not StoredNeedsHumanProjection.NEEDS_HUMAN
+        ):
             continue
-        if run.role is AgentRole.CONSUMER:
-            try:
-                result = ConsumerAgentResult.model_validate_json(run.final_result_json)
-            except ValueError:
-                continue
-            if result.outcome is ConsumerOutcome.NEEDS_HUMAN:
-                return result.decision_options
-        elif run.role is AgentRole.AUDIT:
-            try:
-                result = AuditAgentResult.model_validate_json(run.final_result_json)
-            except ValueError:
-                continue
-            if result.outcome is AuditOutcome.NEEDS_HUMAN:
-                return result.decision_options
+        try:
+            result = json.loads(run.final_result_json)
+            return tuple(
+                DecisionOption.model_validate(item)
+                for item in result["decision_options"]
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            continue
     return ()
 
 

@@ -150,7 +150,7 @@ def test_service_start_closes_superseded_failed_weekly_okr_jobs(monkeypatch):
     assert calls[:4] == ["orphaned", "stale-weekly", "failed-weekly", "scheduled"]
 
 
-def test_service_start_hands_off_failed_tasks_after_external_action(monkeypatch):
+def test_service_start_reconciles_invalid_human_projections(monkeypatch):
     calls: list[str] = []
 
     def method(name, result=0):
@@ -170,8 +170,8 @@ def test_service_start_hands_off_failed_tasks_after_external_action(monkeypatch)
         ),
         reconcile_failed_reply_tasks_with_terminal_attempts=method("attempts"),
         skip_failed_reply_tasks_with_terminal_no_action_run=method("no-action"),
-        close_failed_reply_tasks_that_completed_an_external_action=method(
-            "completed-action", 1
+        reconcile_invalid_needs_human_projections=method(
+            "invalid-human", 1
         ),
         recover_orphaned_agent_runs_for_terminal_reply_tasks=method(
             "orphaned-runs"
@@ -186,7 +186,7 @@ def test_service_start_hands_off_failed_tasks_after_external_action(monkeypatch)
         SimpleNamespace(db_path=Path("/tmp/unused.sqlite3"))
     )
 
-    assert "completed-action" in calls
+    assert "invalid-human" in calls
     assert recovered == 1
 
 

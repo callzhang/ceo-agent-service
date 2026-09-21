@@ -1535,9 +1535,9 @@ def test_history_approval_workflow_results_keep_failure_attention_actions(
     assert ">重试当前任务</button>" in failed_card
 
 
-def test_history_pins_only_current_unresolved_needs_human_attempts(tmp_path: Path):
+def test_history_does_not_pin_untraceable_needs_human_attempts(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    current_id = store.record_reply_attempt(
+    store.record_reply_attempt(
         conversation_id="cid-current-needs-human",
         conversation_title="Current decision",
         trigger_message_id="msg-current-needs-human",
@@ -1547,7 +1547,7 @@ def test_history_pins_only_current_unresolved_needs_human_attempts(tmp_path: Pat
         sensitivity_kind="general",
         send_status="needs_human",
     )
-    recovered_id = store.record_reply_attempt(
+    store.record_reply_attempt(
         conversation_id="cid-recovered-needs-human",
         conversation_title="Recovered decision",
         trigger_message_id="msg-recovered-needs-human",
@@ -1570,12 +1570,7 @@ def test_history_pins_only_current_unresolved_needs_human_attempts(tmp_path: Pat
 
     html = render_attempt_list(store, include_chart=False)
 
-    pinned = html.split('<section class="card history-pinned-needs-human">', 1)[1].split(
-        '</section>', 1
-    )[0]
-    assert f'href="/attempts/{current_id}"' in pinned
-    assert f'href="/attempts/{recovered_id}"' not in pinned
-    assert "待人工决策" in pinned
+    assert '<section class="card history-pinned-needs-human">' not in html
 
 
 def test_history_recovered_approval_keeps_business_and_recovery_pills(
@@ -10955,6 +10950,7 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
             "updated_at": "2026-08-11 10:00:00",
         }
     )
+    attempt = attempt.model_copy(update={"agent_run_id": run.id})
 
     html = audit_web_module._needs_human_decision_card(attempt, [run])
 
@@ -11078,6 +11074,7 @@ def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
             "updated_at": "2026-08-18 10:00:00",
         }
     )
+    attempt = attempt.model_copy(update={"agent_run_id": run.id})
 
     html = audit_web_module._needs_human_decision_card(attempt, [run])
 
@@ -11086,7 +11083,7 @@ def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
     assert "不会执行新的外部动作。" in html
 
 
-def test_needs_human_detail_prefers_options_persisted_on_actionable_attempt(
+def test_needs_human_detail_hides_untraceable_persisted_options(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -11122,9 +11119,7 @@ def test_needs_human_detail_prefers_options_persisted_on_actionable_attempt(
 
     html = audit_web_module._needs_human_decision_card(attempt, [])
 
-    assert "1. 恢复已确认状态" in html
-    assert "2. 保持当前状态" in html
-    assert "不会执行新的外部动作。" in html
+    assert html == ""
 
 
 def test_reviewed_reply_api_rejects_mutable_text_lookup_payload(tmp_path: Path):

@@ -159,6 +159,27 @@ class ScriptResult(BaseModel):
     summary: str
     error: AgentError = Field(default_factory=AgentError)
     oa_action_receipt: ScriptOaActionReceipt | None = None
+    typed_decision: bool = True
+    risk: str = "high"
+    confidence: float = 0.2
+    rule_coverage: float = 1.0
+    information_completeness: float = 1.0
+    decision_options: list[dict[str, str]] = Field(
+        default_factory=lambda: [
+            {
+                "key": "one_time",
+                "label": "仅本次处理",
+                "instruction": "按已核验的规则处理本次事项。",
+                "consequence": "不修改后续同类事项的规则。",
+            },
+            {
+                "key": "skill_update",
+                "label": "更新 Skill",
+                "instruction": "把这条规则更新到适用 Skill 后继续处理。",
+                "consequence": "后续同类事项按更新后的规则自动处理。",
+            },
+        ]
+    )
 
 
 def _get_audit_run(store, task_id: int, execution_generation: str):
@@ -371,6 +392,22 @@ class FakeAgentOrchestrator:
                         "retryable": False,
                         "authorization_required": False,
                     },
+                }
+            )
+        elif result.outcome is ScriptOutcome.NEEDS_HUMAN and result.typed_decision:
+            audit_result = AuditAgentResult.model_validate(
+                {
+                    "outcome": "needs_human",
+                    "risk": result.risk,
+                    "confidence": result.confidence,
+                    "rule_coverage": result.rule_coverage,
+                    "information_completeness": result.information_completeness,
+                    "summary": result.summary,
+                    "proposal_revision": 0,
+                    "feedback": None,
+                    "external_result": None,
+                    "decision_options": result.decision_options,
+                    "error": result.error.model_dump(mode="json"),
                 }
             )
         return OrchestrationResult(
@@ -747,6 +784,7 @@ def explicit_agent_result(
     code: str = "",
     retryable: bool = False,
     authorization_required: bool = False,
+    typed_decision: bool = True,
 ) -> ScriptResult:
     return ScriptResult(
         outcome=outcome,
@@ -756,6 +794,7 @@ def explicit_agent_result(
             retryable=retryable,
             authorization_required=authorization_required,
         ),
+        typed_decision=typed_decision,
     )
 
 
@@ -14544,7 +14583,7 @@ def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
     assert attempt.codex_reason == "cc only"
 
 
-def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
+def test_untyped_handoff_is_failed_not_escalated_as_a_principal_decision(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Alex Chen(明哥) 不要分身，真人看一下")
@@ -14558,6 +14597,7 @@ def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
             ScriptOutcome.NEEDS_HUMAN,
             "需要本人处理。",
             code="needs_human",
+            typed_decision=False,
         ),
     )
     store = worker.store
@@ -14573,8 +14613,8 @@ def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
     assert attempt is not None
     assert attempt.action == "agent_run"
     assert attempt.final_reply_text == ""
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "needs_human"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "invalid_needs_human_result"
     sent_reply = store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is None
     assert store.count_errors() == 0
@@ -15846,7 +15886,7 @@ def test_processing_ack_does_not_hide_unanswered_group_mention(
     assert "请审一下这个文档" in prompt
 
 
-def test_internal_personnel_question_missing_subject_blocks_without_sending(
+def test_untyped_personnel_subject_gap_is_failed_not_escalated(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(
@@ -15867,6 +15907,7 @@ def test_internal_personnel_question_missing_subject_blocks_without_sending(
             ScriptOutcome.NEEDS_HUMAN,
             "missing personnel subject",
             code="needs_human",
+            typed_decision=False,
         ),
     )
 
@@ -15875,8 +15916,8 @@ def test_internal_personnel_question_missing_subject_blocks_without_sending(
     assert final_sent(dws) == []
     attempts = worker.store.list_reply_attempts(limit=10)
     assert attempts[0].action == "agent_run"
-    assert attempts[0].send_status == "needs_human"
-    assert attempts[0].send_error == "needs_human"
+    assert attempts[0].send_status == "failed"
+    assert attempts[0].send_error == "invalid_needs_human_result"
     assert attempts[0].codex_reason == "missing personnel subject"
     assert attempts[0].final_reply_text == ""
     assert attempts[0].draft_reply_text == ""
@@ -16349,7 +16390,9 @@ def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
     assert codex.calls == []
 
 
-def test_handoff_ding_failure_does_not_block_ack(tmp_path: Path, monkeypatch):
+def test_untyped_handoff_ding_failure_does_not_create_a_human_ack(
+    tmp_path: Path, monkeypatch
+):
     notifications: list[dict[str, str | None]] = []
     dws = FakeDws(
         [conversation()],
@@ -16365,6 +16408,7 @@ def test_handoff_ding_failure_does_not_block_ack(tmp_path: Path, monkeypatch):
             ScriptOutcome.NEEDS_HUMAN,
             "Agent requested principal review.",
             code="needs_human",
+            typed_decision=False,
         ),
     )
     monkeypatch.setattr(
@@ -16380,26 +16424,16 @@ def test_handoff_ding_failure_does_not_block_ack(tmp_path: Path, monkeypatch):
     assert dws.message_text_emotions == []
     assert store.has_seen("msg-1") is False
     assert store.count_errors() == 0
-    assert store.count_reply_tasks(status="done") == 1
-    assert notifications == [
-        {
-            "title": "CEO 需要确认：@Alex Chen(明哥) 不要分身，真人看一下",
-            "message": (
-            "需要你确认：系统不会代为作出这项管理决定。\n"
-            "事项：@Alex Chen(明哥) 不要分身，真人看一下\n"
-            "已核验：Agent requested principal review.\n"
-            "操作：打开审计页阅读已核验事实，并提交具体处理指令。"
-            ),
-        }
-    ]
+    assert store.count_reply_tasks(status="failed") == 1
+    assert notifications == []
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "needs_human"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "invalid_needs_human_result"
 
 
-def test_needs_human_agent_attempt_publishes_browser_notification(
+def test_untyped_needs_human_agent_attempt_is_failed_not_published_as_a_decision(
     tmp_path: Path, monkeypatch
 ):
     browser_notifications: list[dict[str, str | None]] = []
@@ -16416,6 +16450,7 @@ def test_needs_human_agent_attempt_publishes_browser_notification(
             ScriptOutcome.NEEDS_HUMAN,
             "需要本人确认。",
             code="principal_confirmation_required",
+            typed_decision=False,
         ),
     )
     monkeypatch.setattr(
@@ -16428,20 +16463,18 @@ def test_needs_human_agent_attempt_publishes_browser_notification(
 
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "needs_human"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "invalid_needs_human_result"
     persisted_options = json.loads(attempt.human_decision_options_json)
-    assert [option["key"] for option in persisted_options] == [
-        "recheck_and_offer_choices",
-        "stop_without_action",
-    ]
+    assert persisted_options == []
     assert browser_notifications == [
         {
-            "title": "CEO 需要确认：@Alex Chen(明哥) 需要本人确认",
+            "title": "CEO 待处理：@Alex Chen(明哥) 需要本人确认",
             "message": (
-                "需要你确认：系统不会代为作出这项管理决定。\n"
                 "事项：@Alex Chen(明哥) 需要本人确认\n"
-                "已核验：需要本人确认。\n"
-                "操作：打开审计页阅读已核验事实，并提交具体处理指令。"
+                "状态：failed\n"
+                "原因：需要本人确认。\n"
+                "操作：打开审计页查看原因并继续处理。"
             ),
             "url": worker._notification_url(conversation(), attempt_id=attempt.id),
             "notification_id": worker._problem_notification_id(
@@ -16452,7 +16485,7 @@ def test_needs_human_agent_attempt_publishes_browser_notification(
     ]
 
 
-def test_needs_human_agent_attempt_falls_back_to_macos_notification(
+def test_untyped_needs_human_agent_attempt_does_not_send_human_notification(
     tmp_path: Path, monkeypatch
 ):
     notifications: list[dict[str, str | None]] = []
@@ -16469,6 +16502,7 @@ def test_needs_human_agent_attempt_falls_back_to_macos_notification(
             ScriptOutcome.NEEDS_HUMAN,
             "需要本人确认。",
             code="principal_confirmation_required",
+            typed_decision=False,
         ),
     )
     monkeypatch.setattr("app.worker.send_browser_notification", lambda **_: False)
@@ -16479,17 +16513,7 @@ def test_needs_human_agent_attempt_falls_back_to_macos_notification(
 
     worker.run_once()
 
-    assert notifications == [
-        {
-            "title": "CEO 需要确认：@Alex Chen(明哥) 需要本人确认",
-            "message": (
-                "需要你确认：系统不会代为作出这项管理决定。\n"
-                "事项：@Alex Chen(明哥) 需要本人确认\n"
-                "已核验：需要本人确认。\n"
-                "操作：打开审计页阅读已核验事实，并提交具体处理指令。"
-            ),
-        }
-    ]
+    assert notifications == []
 
 
 def test_retryable_failed_agent_attempt_does_not_notify_before_limit(
@@ -16715,7 +16739,7 @@ def test_codex_capacity_pause_skips_claiming_pending_reply_tasks(
     assert worker.store.count_reply_tasks(status="processing") == 0
 
 
-def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
+def test_untyped_handoff_does_not_fall_back_to_local_human_delivery(
     tmp_path: Path, monkeypatch
 ):
     notifications: list[dict[str, str | None]] = []
@@ -16734,6 +16758,7 @@ def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
             ScriptOutcome.NEEDS_HUMAN,
             "Agent requested principal review.",
             code="needs_human",
+            typed_decision=False,
         ),
     )
     monkeypatch.setattr(
@@ -16747,24 +16772,15 @@ def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
     assert store.list_errors() == []
     assert dws.dings == []
     assert dws.bot_direct_messages == []
-    assert notifications == [
-        {
-            "title": "CEO 需要确认：@Alex Chen(明哥) 不要分身，真人看一下",
-            "message": (
-            "需要你确认：系统不会代为作出这项管理决定。\n"
-            "事项：@Alex Chen(明哥) 不要分身，真人看一下\n"
-            "已核验：Agent requested principal review.\n"
-            "操作：打开审计页阅读已核验事实，并提交具体处理指令。"
-            ),
-        }
-    ]
+    assert notifications == []
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "invalid_needs_human_result"
 
 
-def test_handoff_text_emotion_failure_still_notifies_and_marks_seen(
+def test_untyped_handoff_text_emotion_failure_does_not_create_a_human_task(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -16790,22 +16806,23 @@ def test_handoff_text_emotion_failure_still_notifies_and_marks_seen(
             ScriptOutcome.NEEDS_HUMAN,
             "Agent requested principal review.",
             code="needs_human",
+            typed_decision=False,
         ),
     )
     worker.produce_once()
 
-    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.consume_once(max_tasks=1) == 0
 
     assert final_sent(dws) == []
     assert dws.message_text_emotions == []
     assert dws.dings == []
     assert store.has_seen("msg-1") is False
-    assert store.count_reply_tasks(status="done") == 1
+    assert store.count_reply_tasks(status="failed") == 1
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "needs_human"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "invalid_needs_human_result"
 
 
 def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypatch):
@@ -17144,6 +17161,3 @@ def test_an_audit_terminated_send_finds_its_proposal_through_the_run_lineage(tmp
     assert projection is not None
     assert projection.reply_text == "已收到，按这个安排。"
     assert projection.action_identity == "reply-1"
-
-
-

@@ -665,16 +665,16 @@ ask-back，继续现有 Audit/send 链路；ask-back 不落新的 outcome，也�
 个互斥可执行的规则/Skill 选项；每个选项必须包含唯一稳定的 `key`、显示用 `label`、可执行的
 `instruction` 和 `consequence`/影响；其余由 Skill 自主完成。one-time 与 Skill update 可同时作为
 反馈选择，复用同一业务对象、attempt 和兼容 session，产生新 revision，不新建 session。
-技术、provider、读取、路由、schema、Audit、retry failure 永远为 `failed`；领域
+技术、provider、receipt、读取、路由、schema、Audit、retry failure 永远为 `failed`；领域
 `authorization_required` 不泛化为人工升级，低分也不能绕过失败。
 provider 返回 `confirmation_required` 同样属于运行时失败边界：外部动作尚未执行，服务必须保留具体
 错误并落为 `failed`，不得创建泛化的“确认执行外部操作/停止当前事项”选项。
 
-新 wire 四字段必填且严格校验。受控旧 `final_result_json` hydration 只补
-`rule_coverage=1.0`、`information_completeness=1.0`，保留旧 risk/confidence，且不改原始历史
-run/audit。Quality gate/Attention 只统计 current latest projection 的结构化结果；字段缺失、
-非法值或 outer outcome mismatch fail-closed 为 invalid violation，reviewed、historical、pending
-recovery 排除。
+新 wire 四字段必填且严格校验。当前投影不兼容旧的“状态字符串 + 服务生成按钮”逻辑：
+`needs_human` 必须能追溯到完整 `final_result_json`，字段缺失、非法值、outer outcome mismatch、
+无 Agent run 或选项不完整都 fail-closed 为 `failed`；保留原始历史 run/audit，不改写其内容。
+服务启动时幂等修复这种 current projection，同时清空服务生成的选项。Quality gate/Attention
+只统计修复后的 current latest projection；reviewed、historical、pending recovery 排除。
 
 ### Audit Agent B
 

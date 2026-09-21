@@ -33,10 +33,12 @@ pending -> running -> done
 - `revision_pending`：修正版已排队；修正版必须有新的 revision 标识，并保留原结果和反馈的关联。
 - `done`：逻辑完成且结果已持久化。
 - `sent`：历史兼容名称；新任务以 `done` 表示完成，provider 发送结果保存在 trace。
-- `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；技术读取或 provider 失败使用 `failed`。
-  另外，**本代次已经对该业务对象完成过写操作**的任务，即使后续步骤失败也收口为 `needs_human`
-  而不是 `failed`（`fail_reply_task`，2026-09-18）：`failed` 意味着可以重跑，而重跑一个
-  已经拒绝或已经退回的审批不可逆。判据与执行证据闸口相同——本代次是否存在已完成的写操作。
+- `needs_human`：只能是有可追溯 Agent run 的完整结构化规则/Skill 缺口：
+  `information_completeness>=0.5`，且 `(risk=high 且 confidence<0.5)` 或
+  `rule_coverage<0.5`，并附 2--4 个互斥、可执行选项。技术读取、provider、receipt、
+  Audit、路由、schema 或重试失败一律使用 `failed`；已完成的外部动作也不改变这条分类。
+  重跑前由 `external_action_key` 和 provider 回读机械去重，而不是把“可能已执行”伪造成
+  Derek 的规则选择。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
 ## 功能机制开关与任务生产
@@ -119,7 +121,7 @@ pending recovery 排除，ask-back 不计 `needs_human`。
                   -> 超过内容反馈上限：failed
 ```
 
-反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和 provider 结果标识之间的关系。同一任务最多允许三个内容反馈周期；基础设施失败不消耗内容反馈周期。内容反馈耗尽表示自动闭环失败，终态为 `failed`（若本代次已经完成过外部写操作，则为 `needs_human`，见上）；只有 Audit 自身返回信息完整且满足 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 的结构化结果时，任务才进入 `needs_human`。
+反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和 provider 结果标识之间的关系。同一任务最多允许三个内容反馈周期；基础设施失败不消耗内容反馈周期。内容反馈耗尽是自动闭环失败，终态为 `failed`。只有 Consumer 或 Audit 自身返回的完整、可追溯结构化结果满足 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5`，并同时提供 2--4 个规则/Skill 选项时，任务才进入 `needs_human`。
 
 Consumer 与 Audit 之间自然流逝的时间不是候选事实冲突。当前执行时间只用于判断动作是否过期或上下文是否变旧；Audit 不得要求候选复述精确执行时间，也不得仅因自己的执行时间晚于 Consumer 而拒绝其他方面可执行的候选。
 

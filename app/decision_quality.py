@@ -1,9 +1,10 @@
-"""Pure decision-quality classification for agent results."""
+"""Pure decision-quality classification for agent results and projections."""
 
 from enum import StrEnum
+import json
 from math import isfinite
 from numbers import Real
-from typing import Any
+from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -14,6 +15,13 @@ class DecisionQuality(StrEnum):
     ASK_BACK = "ask_back"
     NEEDS_HUMAN = "needs_human"
     AUTONOMOUS = "autonomous"
+
+
+class StoredNeedsHumanProjection(StrEnum):
+    """Whether a persisted result is an actionable human rule decision."""
+
+    NEEDS_HUMAN = "needs_human"
+    INVALID = "invalid"
 
 
 class DecisionRisk(StrEnum):
@@ -107,3 +115,44 @@ def classify_decision_quality(
         **metrics.model_dump(),
         classification=_classification_for(**metrics.model_dump()),
     )
+
+
+def classify_stored_needs_human_projection(
+    result: object,
+) -> StoredNeedsHumanProjection:
+    """Accept only a complete, typed rule decision as a human projection."""
+
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except (TypeError, json.JSONDecodeError):
+            return StoredNeedsHumanProjection.INVALID
+    if not isinstance(result, Mapping) or result.get("outcome") != "needs_human":
+        return StoredNeedsHumanProjection.INVALID
+    try:
+        quality = classify_decision_quality(
+            risk=result["risk"],
+            confidence=result["confidence"],
+            rule_coverage=result["rule_coverage"],
+            information_completeness=result["information_completeness"],
+        )
+    except (KeyError, TypeError, ValueError):
+        return StoredNeedsHumanProjection.INVALID
+    if quality.classification is not DecisionQuality.NEEDS_HUMAN:
+        return StoredNeedsHumanProjection.INVALID
+    options = result.get("decision_options")
+    if not isinstance(options, list) or not 2 <= len(options) <= 4:
+        return StoredNeedsHumanProjection.INVALID
+    keys: set[str] = set()
+    for option in options:
+        if not isinstance(option, Mapping):
+            return StoredNeedsHumanProjection.INVALID
+        if any(
+            not isinstance(option.get(field), str) or not option[field].strip()
+            for field in ("key", "label", "instruction", "consequence")
+        ):
+            return StoredNeedsHumanProjection.INVALID
+        if option["key"] in keys:
+            return StoredNeedsHumanProjection.INVALID
+        keys.add(option["key"])
+    return StoredNeedsHumanProjection.NEEDS_HUMAN

@@ -10,7 +10,6 @@ table as a failed check rather than silently dropping a queue from coverage.
 from __future__ import annotations
 
 import json
-import math
 import sqlite3
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -18,6 +17,10 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.agent_cron.scheduler import SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS
+from app.decision_quality import (
+    StoredNeedsHumanProjection,
+    classify_stored_needs_human_projection,
+)
 from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.store import SERVICE_HEALTH_STATE_PREFIX
 
@@ -495,18 +498,12 @@ def _check_structured_needs_human(
     actionable = 0
     invalid = 0
     for row in rows:
-        classification = _structured_needs_human_classification(
+        classification = classify_stored_needs_human_projection(
             row["final_result_json"]
         )
-        if classification == "invalid":
-            classification = _service_generated_needs_human_classification(
-                row["final_result_json"],
-                row["send_error"],
-                row["human_decision_options_json"],
-            )
-        if classification == "needs_human":
+        if classification is StoredNeedsHumanProjection.NEEDS_HUMAN:
             actionable += 1
-        elif classification == "invalid":
+        else:
             invalid += 1
     _add(
         attention,
@@ -527,98 +524,6 @@ def _check_structured_needs_human(
         severity="error",
         detail="needs_human projection has no valid structured decision result",
     )
-
-
-def _service_generated_needs_human_classification(
-    result_json: object,
-    send_error: object,
-    options_json: object,
-) -> str:
-    """Recognize service-generated decisions without replacing run evidence."""
-    error_code = str(send_error or "").strip()
-    # A local recovery may deliberately create a human boundary after an
-    # external action was read back outside the service, or when an external
-    # write was not safe to replay.  These are not model claims and therefore
-    # must not be forced through the Consumer decision-options contract.
-    if error_code.startswith(("needs_human:", "external_action_completed:")):
-        return "needs_human"
-    # Email uncertainty deliberately keeps the original Consumer/Audit result
-    # as historical evidence. The current attempt projection is the new
-    # service-generated human boundary, so a non-human final result is
-    # expected and must not invalidate the projection.
-    if error_code == "email_unsubscribe_effect_uncertain":
-        pass
-    else:
-        return "invalid"
-    try:
-        options = json.loads(str(options_json or ""))
-    except (TypeError, json.JSONDecodeError):
-        return "invalid"
-    if not isinstance(options, list):
-        return "invalid"
-    return _structured_needs_human_classification(
-        json.dumps(
-            {
-                "outcome": "needs_human",
-                "risk": "high",
-                "confidence": 0.0,
-                "rule_coverage": 1.0,
-                "information_completeness": 1.0,
-                "decision_options": options,
-            }
-        )
-    )
-
-
-def _structured_needs_human_classification(raw: object) -> str:
-    """Return needs_human, ask_back, autonomous, or invalid for stored JSON."""
-    if not isinstance(raw, str) or not raw.strip():
-        return "invalid"
-    try:
-        result = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
-        return "invalid"
-    if not isinstance(result, dict):
-        return "invalid"
-    risk = result.get("risk")
-    if risk not in {"low", "medium", "high"}:
-        return "invalid"
-    # Results written before the structured quality contract only lacked the
-    # two new coverage/completeness fields. Keep this compatibility confined to
-    # the stored-result hydration boundary; risk and confidence remain
-    # mandatory so an old opaque human escalation cannot become actionable.
-    result.setdefault("rule_coverage", 1.0)
-    result.setdefault("information_completeness", 1.0)
-    scores: list[float] = []
-    for field in ("confidence", "rule_coverage", "information_completeness"):
-        value = result.get(field)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return "invalid"
-        score = float(value)
-        if not math.isfinite(score) or not 0 <= score <= 1:
-            return "invalid"
-        scores.append(score)
-    confidence, rule_coverage, information_completeness = scores
-    if result.get("outcome") != "needs_human":
-        return "invalid"
-    if information_completeness < 0.5:
-        return "ask_back"
-    options = result.get("decision_options")
-    if not isinstance(options, list) or not 2 <= len(options) <= 4:
-        return "invalid"
-    keys: set[str] = set()
-    for option in options:
-        if not isinstance(option, dict):
-            return "invalid"
-        if any(not isinstance(option.get(field), str) or not option[field].strip()
-               for field in ("key", "label", "instruction", "consequence")):
-            return "invalid"
-        if option["key"] in keys:
-            return "invalid"
-        keys.add(option["key"])
-    if (risk == "high" and confidence < 0.5) or rule_coverage < 0.5:
-        return "needs_human"
-    return "invalid"
 
 
 def _check_agent_runs(

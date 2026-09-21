@@ -707,7 +707,9 @@ def test_quality_gate_rejects_service_generated_confirmation_options(tmp_path):
     )
 
 
-def test_quality_gate_accepts_service_generated_uncertain_unsubscribe_options(tmp_path):
+def test_quality_gate_rejects_service_generated_uncertain_unsubscribe_options(
+    tmp_path,
+):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     attempt_id = _insert_needs_human_projection(
         store,
@@ -722,15 +724,13 @@ def test_quality_gate_accepts_service_generated_uncertain_unsubscribe_options(tm
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert ("reply_attempts", "needs_human", 1) in {
-        (item.source, item.code, item.count) for item in report.attention
-    }
-    assert not any(
+    assert not any(item.code == "needs_human" for item in report.attention)
+    assert any(
         item.code == "invalid_needs_human_result" for item in report.violations
     )
 
 
-def test_quality_gate_accepts_explicit_local_needs_human_boundary_without_model_result(
+def test_quality_gate_rejects_service_generated_receipt_failure_without_typed_decision(
     tmp_path,
 ):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
@@ -756,10 +756,8 @@ def test_quality_gate_accepts_explicit_local_needs_human_boundary_without_model_
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert ("reply_attempts", "needs_human", 1) in {
-        (item.source, item.code, item.count) for item in report.attention
-    }
-    assert not any(
+    assert not any(item.code == "needs_human" for item in report.attention)
+    assert any(
         item.code == "invalid_needs_human_result" for item in report.violations
     )
 
@@ -796,7 +794,7 @@ def test_quality_gate_requires_structured_high_risk_low_confidence_options(tmp_p
     }
 
 
-def test_quality_gate_hydrates_legacy_missing_coverage_fields(tmp_path):
+def test_quality_gate_rejects_legacy_missing_coverage_fields(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     result = _structured_needs_human_result()
     result.pop("rule_coverage")
@@ -805,10 +803,10 @@ def test_quality_gate_hydrates_legacy_missing_coverage_fields(tmp_path):
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert ("reply_attempts", "needs_human", 1) in {
-        (item.source, item.code, item.count) for item in report.attention
-    }
-    assert not any(item.code == "invalid_needs_human_result" for item in report.violations)
+    assert not any(item.code == "needs_human" for item in report.attention)
+    assert any(
+        item.code == "invalid_needs_human_result" for item in report.violations
+    )
 
 
 def test_quality_gate_does_not_report_low_risk_or_confident_needs_human_projection(tmp_path):

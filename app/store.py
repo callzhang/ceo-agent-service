@@ -73,6 +73,10 @@ from app.feedback_processing import (
     validate_resolution_receipt,
 )
 from app.config import feedback_spike_vercel_base_url
+from app.decision_quality import (
+    StoredNeedsHumanProjection,
+    classify_stored_needs_human_projection,
+)
 from app.feedback_spike import extract_configured_feedback_link_context
 from app.history import HistoryItem
 from app.legacy_receipt import legacy_receipt_has_explicit_failure
@@ -12117,21 +12121,6 @@ class AutoReplyStore:
                             f"reply task superseded: {task_id}"
                         )
                     return
-                # A generation that already reached a person is handed over,
-                # not failed: retrying it sends the message a second time.
-                # `fail_reply_task` has made this call since 444b2e2f, but
-                # this is the other path a turn's failure travels, and it did
-                # not -- task 384447 shell-sent, then failed five more turns
-                # on the missing receipt and ended `failed` with the message
-                # already delivered.
-                terminal_status = "failed"
-                if self._generation_completed_external_action(
-                    db,
-                    task_id=task_id,
-                    execution_generation=expected_execution_generation,
-                    business_object_key=str(row["business_object_key"] or ""),
-                ):
-                    terminal_status = "needs_human"
                 cursor = db.execute(
                     """
                     update reply_tasks
@@ -12140,7 +12129,7 @@ class AutoReplyStore:
                     where id=? and status='processing' and execution_generation=?
                     """,
                     (
-                        terminal_status,
+                        "failed",
                         failure_code,
                         task_id,
                         expected_execution_generation,
@@ -12171,59 +12160,6 @@ class AutoReplyStore:
 
 
 
-    def _generation_completed_external_action(
-        self,
-        db,
-        *,
-        task_id: int,
-        execution_generation: str,
-        business_object_key: str,
-    ) -> bool:
-        """Whether this generation already wrote to the task's business object."""
-
-        from app.dingtalk_send_evidence import completed_provider_writes
-        from app.outbound_text_authority import delivered_shell_send_commands
-
-        rows = db.execute(
-            """
-            select events.event_json
-            from agent_run_events as events
-            join agent_runs as runs on runs.id=events.agent_run_id
-            where runs.reply_task_id=? and runs.execution_generation=?
-            """,
-            (task_id, execution_generation),
-        ).fetchall()
-        tool_events: list[dict[str, object]] = []
-        for row in rows:
-            try:
-                event = json.loads(row["event_json"] or "{}")
-            except json.JSONDecodeError:
-                continue
-            if isinstance(event, dict):
-                tool_events.append(event)
-        if not tool_events:
-            return False
-        # A send the turn ran in its own shell reached a person just as surely
-        # as a recorded one, and leaves no delivery key to recognise it by, so
-        # a retry would send it again. It counts here whether or not the task
-        # has a business object: on 2026-09-19 task 384446 shell-sent, then
-        # returned `invalid_execution_path` five times over and failed, with
-        # the message already on the recipient's phone.
-        #
-        # Only a send the provider accepted counts. A send that ran and failed
-        # delivered nothing, so handing it to a person would cost a retry that
-        # is safe to make. DWS's own failure envelope is the signal, because a
-        # piped command exits with the last stage's status.
-        if delivered_shell_send_commands(tool_events):
-            return True
-        object_key = business_object_key.strip()
-        if not object_key:
-            return False
-        return any(
-            identifier and identifier in object_key
-            for identifier in completed_provider_writes(tool_events, store=self)
-        )
-
     def fail_reply_task(
         self,
         task_id: int,
@@ -12242,23 +12178,6 @@ class AutoReplyStore:
             if row is None:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
             has_new_input = int(row["input_version"]) > int(row["claimed_input_version"])
-            terminal_status, terminal_error = "failed", error
-            if not has_new_input and self._generation_completed_external_action(
-                db,
-                task_id=task_id,
-                execution_generation=expected_execution_generation,
-                business_object_key=str(row["business_object_key"] or ""),
-            ):
-                # The decision already reached the provider; only a later step
-                # failed. `failed` invites a rerun, and reply task 135612
-                # rejected an approval in DingTalk and then burned its revision
-                # budget on the follow-up notification, ending `failed` with the
-                # rejection irreversible. A person owns what is left.
-                terminal_status = "needs_human"
-                terminal_error = (
-                    "external_action_completed_followup_outstanding: "
-                    f"{error}"[:500]
-                )
             cursor = db.execute(
                 """
                 update reply_tasks
@@ -12269,10 +12188,10 @@ class AutoReplyStore:
                 where id=? and status='processing' and execution_generation=?
                 """,
                 (
-                    "pending" if has_new_input else terminal_status,
+                    "pending" if has_new_input else "failed",
                     uuid4().hex if has_new_input else expected_execution_generation,
-                    "" if has_new_input else terminal_error,
-                    "pending" if has_new_input else terminal_status,
+                    "" if has_new_input else error,
+                    "pending" if has_new_input else "failed",
                     task_id,
                     expected_execution_generation,
                 ),
@@ -21204,18 +21123,6 @@ class AutoReplyStore:
                 attempt_id,
                 audit_tool_events_json,
             )
-            # The third path a failure travels, and the one the OA channel
-            # actually takes. Claire's two leave approvals executed correctly
-            # on 2026-09-20, each sent her exactly one notification, and both
-            # tasks still ended `failed` -- because this path never asked
-            # whether the generation had already reached a person.
-            if task_status == "failed" and self._generation_completed_external_action(
-                db,
-                task_id=task_id,
-                execution_generation=expected_execution_generation,
-                business_object_key="",
-            ):
-                task_status = "needs_human"
             if task_status != "unchanged":
                 cursor = db.execute(
                     """
@@ -21407,6 +21314,85 @@ class AutoReplyStore:
                 )
             return reconciled
 
+    def reconcile_invalid_needs_human_projections(self) -> int:
+        """Replace current non-decision human projections with failed results.
+
+        A status string and a provider-side error cannot create a human task.
+        The current Attempt must instead reference a complete typed rule
+        decision that satisfies the shared decision-quality contract.
+        """
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                """
+                select attempts.id as attempt_id, attempts.agent_run_id,
+                       runs.reply_task_id, runs.final_result_json,
+                       runs.structured_error_json
+                from reply_attempts as attempts
+                left join agent_runs as runs on runs.id=attempts.agent_run_id
+                where attempts.send_status='needs_human'
+                  and attempts.reviewed_at is null
+                  and trim(coalesce(attempts.resolved_at, ''))=''
+                  and attempts.id=(
+                      select max(latest.id)
+                      from reply_attempts as latest
+                      where latest.channel=attempts.channel
+                        and latest.conversation_id=attempts.conversation_id
+                        and latest.trigger_message_id=attempts.trigger_message_id
+                  )
+                """
+            ).fetchall()
+            reconciled = 0
+            for row in rows:
+                if (
+                    classify_stored_needs_human_projection(
+                        row["final_result_json"]
+                    )
+                    is StoredNeedsHumanProjection.NEEDS_HUMAN
+                ):
+                    continue
+                error_code = self._projection_failure_code(
+                    row["structured_error_json"]
+                )
+                cursor = db.execute(
+                    """
+                    update reply_attempts
+                    set send_status='failed', send_error=?,
+                        human_decision_options_json='[]', updated_at=current_timestamp
+                    where id=? and send_status='needs_human'
+                    """,
+                    (error_code, row["attempt_id"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                reconciled += 1
+                if row["reply_task_id"] is not None:
+                    db.execute(
+                        """
+                        update reply_tasks
+                        set status='failed', error=?, available_at='', locked_at=null,
+                            updated_at=current_timestamp
+                        where id=? and status in ('done', 'needs_human')
+                        """,
+                        (error_code, row["reply_task_id"]),
+                    )
+            return reconciled
+
+    @staticmethod
+    def _projection_failure_code(structured_error_json: str | None) -> str:
+        try:
+            payload = json.loads(structured_error_json or "{}")
+        except (TypeError, json.JSONDecodeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            return "invalid_needs_human_projection"
+        source_code = payload.get("source_code")
+        if isinstance(source_code, str) and source_code.strip():
+            return source_code.strip()
+        code = payload.get("code")
+        if isinstance(code, str) and code.strip():
+            return code.strip()
+        return "invalid_needs_human_projection"
+
     def skip_failed_reply_tasks_superseded_by_terminal_business_object(self) -> int:
         """Close obsolete local projections once another task owns the business object.
 
@@ -21571,48 +21557,6 @@ class AutoReplyStore:
                 )
                 reconciled += cursor.rowcount
             return reconciled
-
-    def close_failed_reply_tasks_that_completed_an_external_action(self) -> int:
-        """Hand over a failed task whose generation already reached a person.
-
-        `fail_reply_task` makes this decision when the failure happens, but a
-        task that failed before that rule covered its shape stays `failed`
-        forever, and re-running it is exactly what must not happen: the action
-        is already done and cannot be taken back. Derek's rule is needs_human
-        -- a person decides, and nothing re-runs an irreversible action.
-        """
-        with self._immediate_write_transaction() as db:
-            rows = db.execute(
-                """
-                select id, execution_generation, business_object_key
-                from reply_tasks where status='failed'
-                """
-            ).fetchall()
-            closed = 0
-            for row in rows:
-                if not self._generation_completed_external_action(
-                    db,
-                    task_id=int(row["id"]),
-                    execution_generation=str(row["execution_generation"]),
-                    business_object_key=str(row["business_object_key"] or ""),
-                ):
-                    continue
-                cursor = db.execute(
-                    """
-                    update reply_tasks
-                    set status='needs_human', available_at='', locked_at=null,
-                        error=case
-                            when trim(coalesce(error, ''))=''
-                            then 'external_action_completed'
-                            else 'external_action_completed:' || error
-                        end,
-                        updated_at=current_timestamp
-                    where id=? and status='failed' and execution_generation=?
-                    """,
-                    (row["id"], row["execution_generation"]),
-                )
-                closed += cursor.rowcount
-            return closed
 
     def skip_failed_reply_tasks_with_terminal_no_action_run(self) -> int:
         """Close failures whose final run already proves no action remains."""
@@ -22424,8 +22368,9 @@ class AutoReplyStore:
         with self._connect() as db:
             rows = db.execute(
                 """
-                select *
+                select attempts.*, runs.final_result_json as current_run_result_json
                 from reply_attempts as attempts
+                left join agent_runs as runs on runs.id=attempts.agent_run_id
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and not exists (
                       select 1
@@ -22491,7 +22436,19 @@ class AutoReplyStore:
                 """,
                 (max(1, limit),),
             ).fetchall()
-            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+            attempts: list[ReplyAttempt] = []
+            for row in rows:
+                values = dict(row)
+                run_result = values.pop("current_run_result_json", "")
+                attempt = ReplyAttempt.model_validate(values)
+                if (
+                    attempt.send_status == "needs_human"
+                    and classify_stored_needs_human_projection(run_result)
+                    is not StoredNeedsHumanProjection.NEEDS_HUMAN
+                ):
+                    continue
+                attempts.append(attempt)
+            return attempts
 
     def list_current_unresolved_problem_attempt_summaries(
         self, *, limit: int | None = 50

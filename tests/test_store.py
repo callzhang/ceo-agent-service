@@ -11504,12 +11504,8 @@ def test_an_attempt_that_started_a_provider_effect_is_left_alone(tmp_path: Path)
     assert attempt_status == "starting"
 
 
-def test_a_task_whose_approval_action_completed_ends_needs_human(tmp_path):
-    """Reply task 135612 rejected an approval in DingTalk, then ended `failed`.
-
-    The rejection is irreversible and `failed` invites a rerun, so a task whose
-    decision already reached the provider ends as work a person owns instead.
-    """
+def test_a_task_whose_approval_action_completed_still_ends_failed(tmp_path):
+    """A completed action cannot turn a later technical failure into a decision."""
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="oa_pending_scan",
@@ -11568,8 +11564,8 @@ def test_a_task_whose_approval_action_completed_ends_needs_human(tmp_path):
 
     updated = store.get_reply_task(task.id)
     assert updated is not None
-    assert updated.status == "needs_human"
-    assert updated.error.startswith("external_action_completed_followup_outstanding")
+    assert updated.status == "failed"
+    assert updated.error == "audit_revision_exhausted"
 
 
 def test_a_task_that_wrote_nothing_still_fails(tmp_path):
@@ -11942,14 +11938,13 @@ def test_a_resume_that_never_stops_is_allowed_to_fail(tmp_path: Path):
     assert statuses[-1] == "failed"
 
 
-def test_a_shell_send_ends_the_task_needs_human_not_failed(tmp_path: Path):
-    """The message reached a person, so a retry would send it twice.
+def test_a_shell_send_failure_stays_failed_not_needs_human(tmp_path: Path):
+    """Unverified shell output is a technical failure, never a rule decision.
 
-    On 2026-09-19 task 384446 shell-sent, was corrected, then returned
-    `invalid_execution_path` five times and failed -- with the message already
-    on the recipient's phone and nothing in the task saying so. A shell send
-    leaves no delivery key to recognise, so it has to count as a completed
-    external action on its own.
+    A non-governed shell command cannot prove a provider delivery receipt.
+    Its later runtime failure must retain the concrete failure state; otherwise
+    the service creates opaque human work merely because an action *might*
+    have happened.
     """
     store = AutoReplyStore(tmp_path / "shell-send-needs-human.sqlite3")
     store.enqueue_reply_task(
@@ -11999,17 +11994,14 @@ def test_a_shell_send_ends_the_task_needs_human_not_failed(tmp_path: Path):
         expected_execution_generation=task.execution_generation,
     )
 
-    assert store.get_reply_task(task.id).status == "needs_human"
+    assert store.get_reply_task(task.id).status == "failed"
 
 
-def test_a_task_that_already_acted_is_handed_over_not_left_failed(tmp_path: Path):
-    """Re-running it is the one thing that must not happen.
-
-    A task that failed before the completed-action rule covered its shape
-    stays `failed` forever, and the only recovery anyone reaches for is a
-    retry -- which sends the message a second time.
-    """
-    store = AutoReplyStore(tmp_path / "already-acted.sqlite3")
+def test_reconcile_invalid_current_needs_human_projection_to_failed(
+    tmp_path: Path,
+) -> None:
+    """A current provider error cannot remain a human decision projection."""
+    store = AutoReplyStore(tmp_path / "invalid-human-projection.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-1", conversation_title="Group", single_chat=False,
         trigger_message_id="msg-1", trigger_create_time="2026-09-19 10:00:00",
@@ -12022,36 +12014,52 @@ def test_a_task_that_already_acted_is_handed_over_not_left_failed(tmp_path: Path
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
         operation_id="", owner="test",
     )
-    store.append_agent_run_event(
+    store.fail_agent_run(
         claim.run.id,
         {
-            "type": "item.completed",
-            "item": {
-                "type": "command_execution",
-                "exit_code": 0,
-                "status": "completed",
-                "command": (
-                    "/bin/zsh -lc 'dws chat +messages-send --group cid-1 "
-                    "--text \"已处理\"'"
-                ),
-                "aggregated_output": '{"success":true}',
-            },
+            "code": "agent_reported_failure",
+            "source_code": "provider_receipt_missing",
+            "retryable": True,
         },
         owner="test",
     )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+        human_decision_options_json='[{"key":"confirm"}]',
+        channel=task.channel,
+    )
     with store._connect() as db:
-        db.execute("update reply_tasks set status='failed', error='agent_reported_failure'")
+        db.execute(
+            "update reply_attempts set agent_run_id=?, send_error=? where id=?",
+            (claim.run.id, "provider_receipt_missing", attempt_id),
+        )
+        db.execute(
+            "update reply_tasks set status='needs_human', error='' where id=?",
+            (task.id,),
+        )
 
-    assert store.close_failed_reply_tasks_that_completed_an_external_action() == 1
+    assert all(
+        attempt.id != attempt_id
+        for attempt in store.list_current_unresolved_problem_attempts()
+    )
+    assert store.reconcile_invalid_needs_human_projections() == 1
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "provider_receipt_missing"
+    assert attempt.human_decision_options_json == "[]"
+    assert store.get_reply_task(task.id).status == "failed"
+    assert store.reconcile_invalid_needs_human_projections() == 0
 
-    closed = store.get_reply_task(task.id)
-    assert closed.status == "needs_human"
-    assert closed.error.startswith("external_action_completed")
-    # Idempotent: a second sweep finds nothing left to hand over.
-    assert store.close_failed_reply_tasks_that_completed_an_external_action() == 0
 
-
-def test_a_failed_task_that_never_acted_stays_failed(tmp_path: Path):
+def test_failed_task_without_a_current_human_projection_is_unchanged(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "never-acted.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-1", conversation_title="Group", single_chat=False,
@@ -12063,18 +12071,12 @@ def test_a_failed_task_that_never_acted_stays_failed(tmp_path: Path):
     with store._connect() as db:
         db.execute("update reply_tasks set status='failed', error='codex_result_missing'")
 
-    assert store.close_failed_reply_tasks_that_completed_an_external_action() == 0
+    assert store.reconcile_invalid_needs_human_projections() == 0
     assert store.get_reply_task(task.id).status == "failed"
 
 
-def test_the_second_failure_path_hands_over_too(tmp_path: Path):
-    """A turn's failure travels two paths, and only one knew the rule.
-
-    Task 384447 shell-sent, was corrected, then failed five more turns on the
-    missing receipt and ended `failed` -- with the message already delivered.
-    `fail_reply_task` had the completed-action rule; `complete_reply_task`,
-    the path that failure actually took, did not.
-    """
+def test_the_second_failure_path_keeps_receipt_failure_failed(tmp_path: Path):
+    """A missing receipt stays a recoverable technical failure on every path."""
     store = AutoReplyStore(tmp_path / "second-path.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-1", conversation_title="Group", single_chat=False,
@@ -12121,16 +12123,11 @@ def test_the_second_failure_path_hands_over_too(tmp_path: Path):
         task.id, expected_execution_generation=task.execution_generation
     )
 
-    assert store.get_reply_task(task.id).status == "needs_human"
+    assert store.get_reply_task(task.id).status == "failed"
 
 
-def test_the_oa_finalize_path_hands_over_too(tmp_path: Path):
-    """The third path a failure travels, and the one the OA channel takes.
-
-    Claire's two leave approvals executed correctly on 2026-09-20 and each
-    sent her exactly one notification, and both tasks still ended `failed`:
-    this path never asked whether the generation had already reached a person.
-    """
+def test_the_oa_finalize_path_keeps_technical_failure_failed(tmp_path: Path):
+    """Finalization cannot bypass the decision-quality contract either."""
     store = AutoReplyStore(tmp_path / "oa-finalize.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-1", conversation_title="审批待办", single_chat=False,
@@ -12197,7 +12194,7 @@ def test_the_oa_finalize_path_hands_over_too(tmp_path: Path):
         channel=task.channel,
     )
 
-    assert store.get_reply_task(task.id).status == "needs_human"
+    assert store.get_reply_task(task.id).status == "failed"
 
 
 def test_an_answered_question_can_close(tmp_path: Path):
