@@ -347,6 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
         "retry-work-summary-input",
         "release-failed-email-unsubscribe",
         "reconcile-failed-agent-message",
+        "handoff-failed-oa-authorization",
         "skip-stale-wechat-delivery",
         "backfill-task-memory-context",
         "backfill-routine-process-todos",
@@ -532,6 +533,10 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--readback-run-id", type=_positive_int, required=True)
             subparser.add_argument("--external-action-key", type=_non_blank, required=True)
             subparser.add_argument("--readback-message-id", type=_non_blank, required=True)
+        if command == "handoff-failed-oa-authorization":
+            subparser.add_argument("--task-id", type=_positive_int, required=True)
+            subparser.add_argument("--instance-id", type=_non_blank, required=True)
+            subparser.add_argument("--oa-task-id", type=_non_blank, required=True)
         if command == "skip-stale-wechat-delivery":
             subparser.add_argument("--delivery-id", type=_positive_int, required=True)
             subparser.add_argument(
@@ -1705,6 +1710,21 @@ def reconcile_failed_agent_message_command(
         readback_message_id=readback_message_id,
     )
     print(f"agent-message reconciled={sent.id}", flush=True)
+
+
+def handoff_failed_oa_authorization_command(
+    settings: WorkerSettings,
+    *,
+    task_id: int,
+    instance_id: str,
+    oa_task_id: str,
+) -> None:
+    run_id = AutoReplyStore(settings.db_path).handoff_failed_oa_authorization(
+        task_id=task_id,
+        instance_id=instance_id,
+        oa_task_id=oa_task_id,
+    )
+    print(f"oa-authorization needs_human={task_id} run={run_id}", flush=True)
 
 
 def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> bool:
@@ -4792,6 +4812,13 @@ def main() -> None:
             readback_run_id=args.readback_run_id,
             external_action_key=args.external_action_key,
             readback_message_id=args.readback_message_id,
+        )
+    elif args.command == "handoff-failed-oa-authorization":
+        handoff_failed_oa_authorization_command(
+            settings,
+            task_id=args.task_id,
+            instance_id=args.instance_id,
+            oa_task_id=args.oa_task_id,
         )
     elif args.command == "skip-stale-wechat-delivery":
         skip_stale_wechat_delivery_command(

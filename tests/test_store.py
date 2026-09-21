@@ -15,6 +15,10 @@ from threading import Barrier, Event, Thread
 import pytest
 
 import app.store as store_module
+from app.decision_quality import (
+    StoredNeedsHumanProjection,
+    classify_stored_needs_human_projection,
+)
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
@@ -5797,6 +5801,56 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
         assert db.execute(
             "select count(*) from external_action_results where external_action_key='external-1'"
         ).fetchone()[0] == 1
+
+
+def test_handoff_failed_oa_authorization_creates_valid_terminal_choice(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    instance_id = "instance-1"
+    oa_task_id = "oa-task-1"
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set business_object_key=? where id=?",
+            (f"oa:{instance_id}:{oa_task_id}", task_id),
+        )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id=instance_id,
+        oa_task_id=oa_task_id,
+        send_status="failed",
+        channel=task.channel,
+    )
+    store.fail_reply_task(
+        task_id,
+        "codex_process_failed",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    run_id = store.handoff_failed_oa_authorization(
+        task_id=task_id,
+        instance_id=instance_id,
+        oa_task_id=oa_task_id,
+    )
+
+    run = store.get_agent_run(run_id)
+    assert run is not None
+    assert (
+        classify_stored_needs_human_projection(run.final_result_json)
+        is StoredNeedsHumanProjection.NEEDS_HUMAN
+    )
+    assert store.get_reply_task(task_id).status == "needs_human"
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "needs_human"
+    assert attempt.agent_run_id == run_id
 
 
 

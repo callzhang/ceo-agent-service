@@ -17589,6 +17589,147 @@ class AutoReplyStore:
             )
             return SentReply.model_validate(dict(sent))
 
+    def handoff_failed_oa_authorization(
+        self,
+        *,
+        task_id: int,
+        instance_id: str,
+        oa_task_id: str,
+    ) -> int:
+        """Turn one verified, untouched failed OA action into a real permission choice."""
+        instance_id = instance_id.strip()
+        oa_task_id = oa_task_id.strip()
+        if not instance_id or not oa_task_id:
+            raise ValueError("OA instance and task ids are required")
+        options = [
+            {
+                "key": "authorize_current_oa_retry",
+                "label": "授权本审批重跑",
+                "instruction": (
+                    "仅对当前 OA 实例和任务授权 CEO 服务按最新材料重新判断并执行。"
+                ),
+                "consequence": "服务可能同意、拒绝或退回当前审批，并在执行后回读记录。",
+            },
+            {
+                "key": "leave_oa_untouched",
+                "label": "保持不处理",
+                "instruction": "不授权 CEO 服务对当前 OA 任务执行外部动作。",
+                "consequence": "OA 继续保持当前待办状态，服务不自动重跑。",
+            },
+        ]
+        summary = (
+            f"OA 实例 {instance_id} 的当前任务 {oa_task_id} 仍在运行；"
+            "此前 Agent 进程初始化失败且没有外部动作结果。技术故障已修复，"
+            "但重新执行可能同意、拒绝或退回真实审批，需要仅针对本实例的明确授权。"
+        )
+        result = {
+            "outcome": "needs_human",
+            "summary": summary,
+            "proposal": None,
+            "decision_options": options,
+            "risk": "high",
+            "confidence": 0.2,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "error_code": "external_action_authorization_required",
+            "error_retryable": False,
+            "error_authorization_required": True,
+        }
+        if (
+            classify_stored_needs_human_projection(result)
+            is not StoredNeedsHumanProjection.NEEDS_HUMAN
+        ):
+            raise ValueError("invalid OA authorization handoff")
+        with self._immediate_write_transaction() as db:
+            task = db.execute(
+                "select * from reply_tasks where id=? and status='failed'",
+                (task_id,),
+            ).fetchone()
+            if task is None:
+                raise ValueError("failed OA task does not exist")
+            expected_key = f"oa:{instance_id}:{oa_task_id}"
+            if str(task["business_object_key"] or "") != expected_key:
+                raise ValueError("OA task identity does not match")
+            attempt = db.execute(
+                """
+                select * from reply_attempts
+                where channel=? and conversation_id=? and trigger_message_id=?
+                order by id desc limit 1
+                """,
+                (task["channel"], task["conversation_id"], task["trigger_message_id"]),
+            ).fetchone()
+            if (
+                attempt is None
+                or attempt["send_status"] != "failed"
+                or str(attempt["oa_process_instance_id"] or "") != instance_id
+                or str(attempt["oa_task_id"] or "") != oa_task_id
+                or str(attempt["oa_action_result_json"] or "").strip()
+            ):
+                raise ValueError("failed OA attempt is not eligible for authorization handoff")
+            turn_attempt = int(
+                db.execute(
+                    """
+                    select coalesce(max(turn_attempt), -1) + 1
+                    from agent_runs
+                    where reply_task_id=? and execution_generation=? and role='consumer'
+                    """,
+                    (task_id, task["execution_generation"]),
+                ).fetchone()[0]
+            )
+            cursor = db.execute(
+                """
+                insert into agent_runs (
+                    reply_task_id, execution_generation, role, proposal_revision,
+                    turn_attempt, operation_id, status, final_result_json,
+                    started_at, completed_at, updated_at
+                ) values (?, ?, 'consumer', 0, ?, ?, 'completed', ?,
+                          current_timestamp, current_timestamp, current_timestamp)
+                """,
+                (
+                    task_id,
+                    task["execution_generation"],
+                    turn_attempt,
+                    f"oa-authorization-handoff:{task_id}",
+                    json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            run_id = int(cursor.lastrowid)
+            db.execute(
+                """
+                insert into agent_run_state_events (
+                    agent_run_id, phase, structured_error_json
+                ) values (?, 'completed', '')
+                """,
+                (run_id,),
+            )
+            db.execute(
+                """
+                update reply_attempts
+                set send_status='needs_human', send_error=?, codex_reason=?,
+                    audit_summary=?, human_decision_options_json=?, agent_run_id=?,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (
+                    "external_action_authorization_required",
+                    summary,
+                    summary,
+                    json.dumps(options, ensure_ascii=False, separators=(",", ":")),
+                    run_id,
+                    attempt["id"],
+                ),
+            )
+            db.execute(
+                """
+                update reply_tasks
+                set status='needs_human', error=?, available_at='', locked_at=null,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                ("external_action_authorization_required", task_id),
+            )
+            return run_id
+
     def reconcile_failed_reply_tasks_with_recorded_deliveries(self) -> int:
         """Close failed tasks whose completed provider action is in the ledger.
 

@@ -416,6 +416,21 @@ def test_parser_supports_reconcile_failed_agent_message():
     assert args.readback_message_id == "message-1"
 
 
+def test_parser_supports_failed_oa_authorization_handoff():
+    args = build_parser().parse_args(
+        [
+            "handoff-failed-oa-authorization",
+            "--task-id", "41",
+            "--instance-id", "instance-1",
+            "--oa-task-id", "oa-task-1",
+        ]
+    )
+
+    assert args.task_id == 41
+    assert args.instance_id == "instance-1"
+    assert args.oa_task_id == "oa-task-1"
+
+
 @pytest.mark.parametrize(
     ("timestamp", "expected", "expected_sqlite_datetime"),
     [
