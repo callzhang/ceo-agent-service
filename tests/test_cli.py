@@ -399,6 +399,23 @@ def test_parser_supports_skip_stale_wechat_delivery_with_default_retry_limit():
     assert args.max_retries == 2
 
 
+def test_parser_supports_reconcile_failed_agent_message():
+    args = build_parser().parse_args(
+        [
+            "reconcile-failed-agent-message",
+            "--send-run-id", "41",
+            "--readback-run-id", "42",
+            "--external-action-key", "external-1",
+            "--readback-message-id", "message-1",
+        ]
+    )
+
+    assert args.send_run_id == 41
+    assert args.readback_run_id == 42
+    assert args.external_action_key == "external-1"
+    assert args.readback_message_id == "message-1"
+
+
 @pytest.mark.parametrize(
     ("timestamp", "expected", "expected_sqlite_datetime"),
     [

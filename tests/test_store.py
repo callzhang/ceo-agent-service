@@ -5636,6 +5636,162 @@ def test_completed_message_delivery_persists_action_result_and_history_atomicall
         ).fetchone()[0] == 1
 
 
+def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    reply_text = "Delivered text."
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    ).run
+    store.complete_agent_run(
+        consumer.id,
+        {
+            "outcome": "proposal",
+            "proposal": {
+                "actions": [
+                    {
+                        "action_identity": "reply",
+                        "operation": "send_group_message",
+                        "target": {"conversation_id": task.conversation_id},
+                        "payload": {"content": reply_text},
+                    }
+                ]
+            },
+        },
+        owner="consumer",
+    )
+    send_run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-send",
+        owner="audit",
+    ).run
+    store.append_agent_run_event(
+        send_run.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "command": (
+                    "/bin/zsh -lc \"dws chat +send-to-group --group cid-1 "
+                    "--content 'Delivered text.' --yes --format json\""
+                ),
+                "exit_code": 0,
+                "status": "completed",
+                "aggregated_output": json.dumps(
+                    {"success": True, "result": {"openTaskId": "receipt-1"}}
+                ),
+            },
+        },
+        owner="audit",
+    )
+    store.fail_agent_run(send_run.id, {"code": "result_invalid"}, owner="audit")
+    readback_run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=1,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-readback",
+        owner="audit-readback",
+    ).run
+    store.append_agent_run_event(
+        readback_run.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "command": "dws chat +chat-messages --group cid-1 --format json",
+                "exit_code": 0,
+                "status": "completed",
+                "aggregated_output": json.dumps(
+                    {"messages": [{"messageId": "message-1", "text": reply_text}]}
+                ),
+            },
+        },
+        owner="audit-readback",
+    )
+    store.append_agent_run_event(
+        readback_run.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": json.dumps(
+                    {
+                        "outcome": "executed",
+                        "external_result": {
+                            "live_result_reference": {
+                                "external_action_key": "external-1",
+                                "message_id": "message-1",
+                            }
+                        },
+                    }
+                ),
+            },
+        },
+        owner="audit-readback",
+    )
+    store.fail_agent_run(
+        readback_run.id, {"code": "provider_receipt_missing"}, owner="audit-readback"
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+        channel=task.channel,
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (readback_run.id, attempt_id),
+        )
+    store.fail_reply_task(
+        task.id,
+        "provider_receipt_missing",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    sent = store.reconcile_failed_agent_message_delivery(
+        send_run_id=send_run.id,
+        readback_run_id=readback_run.id,
+        external_action_key="external-1",
+        readback_message_id="message-1",
+    )
+
+    assert sent.reply_text == reply_text
+    assert store.get_reply_task(task.id).status == "done"
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "completed"
+    assert attempt.send_error == ""
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from external_action_results where external_action_key='external-1'"
+        ).fetchone()[0] == 1
+
+
 
 
 def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):

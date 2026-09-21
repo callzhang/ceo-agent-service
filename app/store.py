@@ -17393,6 +17393,177 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def reconcile_failed_agent_message_delivery(
+        self,
+        *,
+        send_run_id: int,
+        readback_run_id: int,
+        external_action_key: str,
+        readback_message_id: str,
+    ) -> SentReply:
+        """Record a delivered shell send only when persisted send/readback agree."""
+        from app.agent_effect_guard import provider_receipts
+        from app.outbound_text_authority import (
+            delivered_shell_send_commands,
+            provider_send_texts,
+        )
+
+        send_run = self.get_agent_run(send_run_id)
+        readback_run = self.get_agent_run(readback_run_id)
+        if send_run is None or readback_run is None:
+            raise ValueError("send and readback runs must exist")
+        if (
+            send_run.reply_task_id != readback_run.reply_task_id
+            or send_run.execution_generation != readback_run.execution_generation
+            or send_run.status != "failed"
+            or readback_run.status != "failed"
+        ):
+            raise ValueError("reconciliation runs do not identify one failed generation")
+        if not delivered_shell_send_commands(send_run.tool_events):
+            raise ValueError("send run has no provider-accepted shell send")
+        receipts = provider_receipts(send_run.tool_events)
+        if not receipts:
+            raise ValueError("send run has no provider receipt")
+        if send_run.parent_agent_run_id is None:
+            raise ValueError("send run has no accepted proposal")
+        consumer = self.get_agent_run(send_run.parent_agent_run_id)
+        if consumer is None or consumer.status != "completed":
+            raise ValueError("accepted consumer proposal is unavailable")
+        try:
+            proposal = json.loads(consumer.final_result_json)["proposal"]
+            actions = proposal["actions"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            raise ValueError("accepted consumer proposal is invalid") from None
+        sent_texts = {text.strip() for text in provider_send_texts(send_run.tool_events)}
+        matches: list[dict[str, object]] = []
+        for action in actions if isinstance(actions, list) else []:
+            if not isinstance(action, dict):
+                continue
+            payload = action.get("payload")
+            content = payload.get("content") if isinstance(payload, dict) else None
+            if isinstance(content, str) and content.strip() in sent_texts:
+                matches.append(action)
+        if len(matches) != 1:
+            raise ValueError("provider send does not match exactly one proposed action")
+        action = matches[0]
+        reply_text = str(action["payload"]["content"]).strip()
+        action_identity = str(action.get("action_identity") or "").strip()
+        operation = str(action.get("operation") or "").strip()
+        target = action.get("target")
+        if not action_identity or not operation or not isinstance(target, dict):
+            raise ValueError("proposed action identity is incomplete")
+        action_key = external_action_key.strip()
+        message_id = readback_message_id.strip()
+        if not action_key or not message_id:
+            raise ValueError("external action key and readback message id are required")
+        readback_evidence = json.dumps(
+            readback_run.tool_events, ensure_ascii=False, separators=(",", ":")
+        )
+        if (
+            action_key not in readback_evidence
+            or message_id not in readback_evidence
+            or reply_text not in readback_evidence
+        ):
+            raise ValueError("readback run does not contain the reconciled delivery")
+        provider_result = {
+            "reconciled_from_failed_run": True,
+            "provider_receipt": receipts[0],
+            "readback_message_id": message_id,
+        }
+        provider_json = _json_object_text(provider_result, field="provider_result")
+        target_json = _json_object_text(target, field="target_identifiers")
+        feedback_context = extract_configured_feedback_link_context(
+            reply_text,
+            vercel_base_url=feedback_spike_vercel_base_url(),
+        )
+        feedback_token = feedback_context.feedback_token if feedback_context else ""
+        with self._immediate_write_transaction() as db:
+            task = db.execute(
+                "select * from reply_tasks where id=? and status='failed'",
+                (send_run.reply_task_id,),
+            ).fetchone()
+            if (
+                task is None
+                or task["execution_generation"] != send_run.execution_generation
+            ):
+                raise AgentRunLeaseLostError(
+                    f"reply task superseded: {send_run.reply_task_id}"
+                )
+            business_object_key = str(task["business_object_key"] or "").strip()
+            if not business_object_key:
+                raise ValueError("reconciled task has no business object key")
+            db.execute(
+                """
+                insert or ignore into external_action_results (
+                    external_action_key, business_object_key, action_identity,
+                    operation, target_identifiers_json, provider_result_json,
+                    result_digest, first_agent_run_id
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    action_key,
+                    business_object_key,
+                    action_identity,
+                    operation,
+                    target_json,
+                    provider_json,
+                    _canonical_json_sha256(provider_result),
+                    send_run_id,
+                ),
+            )
+            db.execute(
+                """
+                insert or ignore into sent_replies (
+                    conversation_id, trigger_message_id, reply_text,
+                    send_result_json, feedback_token, agent_run_id,
+                    external_action_key
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task["conversation_id"],
+                    task["trigger_message_id"],
+                    reply_text,
+                    provider_json,
+                    feedback_token,
+                    send_run_id,
+                    action_key,
+                ),
+            )
+            sent = db.execute(
+                "select * from sent_replies where external_action_key=?",
+                (action_key,),
+            ).fetchone()
+            if sent is None or sent["reply_text"] != reply_text:
+                raise ValueError("conflicting reconciled message delivery")
+            db.execute(
+                "insert or ignore into sent_reply_observers "
+                "(sent_reply_id, agent_run_id, reply_task_id) values (?, ?, ?)",
+                (sent["id"], readback_run_id, send_run.reply_task_id),
+            )
+            db.execute(
+                """
+                update reply_attempts
+                set send_status='completed', send_error='', final_reply_text=?,
+                    human_decision_options_json='[]', updated_at=current_timestamp
+                where id=(
+                    select max(id) from reply_attempts
+                    where channel=? and conversation_id=? and trigger_message_id=?
+                )
+                """,
+                (
+                    reply_text,
+                    task["channel"],
+                    task["conversation_id"],
+                    task["trigger_message_id"],
+                ),
+            )
+            db.execute(
+                "update reply_tasks set status='done', error='', available_at='', "
+                "locked_at=null, updated_at=current_timestamp where id=?",
+                (send_run.reply_task_id,),
+            )
+            return SentReply.model_validate(dict(sent))
+
     def reconcile_failed_reply_tasks_with_recorded_deliveries(self) -> int:
         """Close failed tasks whose completed provider action is in the ledger.
 

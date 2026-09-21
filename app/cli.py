@@ -346,6 +346,7 @@ def build_parser() -> argparse.ArgumentParser:
         "process-work-items",
         "retry-work-summary-input",
         "release-failed-email-unsubscribe",
+        "reconcile-failed-agent-message",
         "skip-stale-wechat-delivery",
         "backfill-task-memory-context",
         "backfill-routine-process-todos",
@@ -526,6 +527,11 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--audit-agent-run-id", type=_positive_int, required=True
             )
+        if command == "reconcile-failed-agent-message":
+            subparser.add_argument("--send-run-id", type=_positive_int, required=True)
+            subparser.add_argument("--readback-run-id", type=_positive_int, required=True)
+            subparser.add_argument("--external-action-key", type=_non_blank, required=True)
+            subparser.add_argument("--readback-message-id", type=_non_blank, required=True)
         if command == "skip-stale-wechat-delivery":
             subparser.add_argument("--delivery-id", type=_positive_int, required=True)
             subparser.add_argument(
@@ -1682,6 +1688,23 @@ def skip_stale_wechat_delivery_command(
             "record changed or is ineligible"
         ) from exc
     print(f"wechat-delivery skipped={delivery_id}", flush=True)
+
+
+def reconcile_failed_agent_message_command(
+    settings: WorkerSettings,
+    *,
+    send_run_id: int,
+    readback_run_id: int,
+    external_action_key: str,
+    readback_message_id: str,
+) -> None:
+    sent = AutoReplyStore(settings.db_path).reconcile_failed_agent_message_delivery(
+        send_run_id=send_run_id,
+        readback_run_id=readback_run_id,
+        external_action_key=external_action_key,
+        readback_message_id=readback_message_id,
+    )
+    print(f"agent-message reconciled={sent.id}", flush=True)
 
 
 def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> bool:
@@ -4761,6 +4784,14 @@ def main() -> None:
             settings,
             action_identity=args.action_identity,
             audit_agent_run_id=args.audit_agent_run_id,
+        )
+    elif args.command == "reconcile-failed-agent-message":
+        reconcile_failed_agent_message_command(
+            settings,
+            send_run_id=args.send_run_id,
+            readback_run_id=args.readback_run_id,
+            external_action_key=args.external_action_key,
+            readback_message_id=args.readback_message_id,
         )
     elif args.command == "skip-stale-wechat-delivery":
         skip_stale_wechat_delivery_command(
