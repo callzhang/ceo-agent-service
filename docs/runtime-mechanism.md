@@ -618,6 +618,8 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 - History 解析本地 Codex session 路径时，按 `session_path_index.jsonl` 的文件签名缓存最新索引
   记录；多个 retry/run 复用同一 session 不会重复解析完整索引。索引被 Codex 或维护程序更新后，
   文件签名变化会使缓存自动失效，因此页面不会因缓存遗漏新 session。
+- History 从既有工具事件归纳已完成的 provider 写入时禁用原生 CLI schema 发现；详情读取只使用
+  已记录的回执和注册写入定义，不启动 `dws schema` 或其他外部子进程。
 - 已被恢复器终态化或被新 generation 替代的 run 视为 lease 丢失；旧执行线程不会把该状态记录成新的任务失败。
 - 回复队列的 `processing` 有双重恢复边界：十分钟没有当前 generation 的运行心跳会被恢复；即使运行持续续租，单次队列处理超过一小时也会被释放，进入既有重试或终态路径，避免反馈循环无限占用队列。
 - Work summary 输入按 `source_type + source_ref` 幂等入队；重复扫描只能更新同一输入的载荷，不能把已经 `failed` 或 `skipped` 的输入重新打开。需要恢复失败输入时必须调用显式重试入口，避免周期扫描把终态输入反复改回 `pending`。

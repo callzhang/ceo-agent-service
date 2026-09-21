@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from app.dingtalk_send_evidence import DingTalkSendEvidenceDriver
 from app.store import AgentRole
 

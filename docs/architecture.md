@@ -1069,6 +1069,10 @@ session 指针读取 JSONL，并只向普通用户展示业务结果；内部角
 索引文件变更后下一次解析自动失效并重建该缓存；缓存只加速 session 路径发现，不改变
 SQLite 投影、JSONL 原文或审计证据。
 
+详情页判断既有外部动作时只重放已持久化的工具事件和 provider 回执；它不得为了渲染
+History 再启动原生 CLI 去发现命令元数据。运行时发现失败属于执行事实，不能成为一次
+只读 History 请求的延迟或副作用。
+
 当原始 session JSONL 已被清理、不可读取或不再可用时，Codex 详情页必须明确显示
 “Agent 记录不可用”，不能把它误解成业务结果丢失。页面仍可展示关联的 Attempt 索引；
 关联仅限于该 session 所属 `agent_run` 的同一 task、同一 execution generation 的当前投影，
