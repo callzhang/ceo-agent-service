@@ -633,6 +633,14 @@ def build_attempt_detail(
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
     status_message, requires_decision = _status_message(attempt, attention)
+    # A sent-reply ledger is direct evidence that a DingTalk response reached
+    # the provider. Prefer it to the task projection (which can simply be
+    # "done") so the person viewing the Attempt is not left guessing whether
+    # anything was actually delivered.
+    if sent_reply is not None and str(attempt.channel or "") == "dingtalk":
+        recipient = str(attempt.conversation_title or "").strip() or "对方"
+        status_message = f"已向 {recipient} 发送回复，并已记录投递回执。"
+        requires_decision = False
     if wechat_delivery is not None:
         delivery_status = str(getattr(wechat_delivery, "status", "") or "").strip()
         delivery_started = str(
@@ -675,6 +683,28 @@ def build_attempt_detail(
     tool_uses = (
         [] if agent_sessions else json_safe(_audit_tool_uses_for_attempt(attempt))
     )
+    metadata = [
+        {"label": "trigger message id", "value": normalize_display_value(attempt.trigger_message_id)},
+        {"label": "action", "value": normalize_display_value(attempt.action)},
+        {"label": "sensitivity", "value": normalize_display_value(attempt.sensitivity_kind)},
+        {"label": "permission", "value": normalize_display_value(_permission_display(attempt))},
+        {"label": "send status", "value": normalize_display_value(attempt.send_status)},
+        {"label": "send error", "value": normalize_display_value(attempt.send_error)},
+        {"label": "retry count", "value": str(attempt.retry_count)},
+        {"label": "created", "value": normalize_display_value(attempt.created_at)},
+        {"label": "updated", "value": normalize_display_value(attempt.updated_at)},
+        {"label": "reviewed", "value": normalize_display_value(attempt.reviewed_at)},
+    ]
+    if (
+        reply_task is not None
+        and int(getattr(reply_task, "manual_rerun_attempt_id", 0) or 0) > 0
+    ):
+        metadata.append(
+            {
+                "label": "当前批次",
+                "value": "人工重新处理：不是审核反馈后的复审。",
+            }
+        )
     return 200, {
         "id": attempt.id,
         "title": normalize_display_value(attempt.conversation_title),
@@ -704,18 +734,7 @@ def build_attempt_detail(
                 "retry_at": normalize_display_value(getattr(attention, "retry_at", "")) if attention else "",
             },
         },
-        "metadata": [
-            {"label": "trigger message id", "value": normalize_display_value(attempt.trigger_message_id)},
-            {"label": "action", "value": normalize_display_value(attempt.action)},
-            {"label": "sensitivity", "value": normalize_display_value(attempt.sensitivity_kind)},
-            {"label": "permission", "value": normalize_display_value(_permission_display(attempt))},
-            {"label": "send status", "value": normalize_display_value(attempt.send_status)},
-            {"label": "send error", "value": normalize_display_value(attempt.send_error)},
-            {"label": "retry count", "value": str(attempt.retry_count)},
-            {"label": "created", "value": normalize_display_value(attempt.created_at)},
-            {"label": "updated", "value": normalize_display_value(attempt.updated_at)},
-            {"label": "reviewed", "value": normalize_display_value(attempt.reviewed_at)},
-        ],
+        "metadata": metadata,
         # The scores shown are the ones the action was taken on. Reading them
         # off the last run made the page say "approved on 86% complete
         # material" for an approval decided at 100%.

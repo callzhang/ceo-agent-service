@@ -319,7 +319,7 @@ function ProcessingPanel({ detail }: { detail: AttemptDetail }) {
   const runtimeBatches = groupRuntimeAttempts(detail.runtime_attempts);
   if (!processCount && !detail.context_only_info) return null;
   return <section className="console-card attempt-process-card" aria-label="处理过程">
-    <div className="attempt-process-header"><div><h2>处理历史</h2><p>这里保留当前处理和历史重试；历史重试不会等同于重复发送。</p></div>{processCount > 0 && <span>{runtimeBatches.length || processCount} 个处理批次</span>}</div>
+    <div className="attempt-process-header"><div><h2>处理历史</h2><p>一个处理批次包含方案生成和方案审核；只有审核要求修改，才会进入下一轮。</p></div>{processCount > 0 && <span>{runtimeBatches.length || processCount} 个处理批次</span>}</div>
     {detail.runtime_attempts.length > 0 && <p className="attempt-process-count">{runtimeBatches.length} 个处理批次；{detail.runtime_attempts.length} 个内部运行记录；历史重试不会等同于重复发送。</p>}
     {detail.context_only_info && <div className="attempt-process-context"><span>上下文说明</span><SummaryText value={detail.context_only_info} lines={4} /></div>}
     {recordedCalls.length > 0 && <div className="attempt-process-subsection"><ToolUseList uses={recordedCalls} /></div>}
@@ -353,8 +353,10 @@ function EmailContext({ email }: { email: AttemptEmail | null }) {
 
 function RuntimeEntry({ entry }: { entry: AttemptRuntimeEntry }) {
   const isAudit = entry.role === "audit";
-  const phase = isAudit ? "审计核验" : entry.role === "consumer" ? "处理判断" : "系统处理";
-  const description = isAudit ? "核验方案的事实、边界和对外动作；必要时会要求下一轮修订。" : "根据当前消息和已知上下文形成处理方案。";
+  const phase = isAudit ? "方案审核" : entry.role === "consumer" ? "方案生成" : "系统处理";
+  const description = isAudit
+    ? "审核同一批次中的候选方案、边界和对外动作；只有要求修改时才会形成下一轮。"
+    : "根据当前消息和已知上下文形成候选方案，随后由 Audit 在同一批次中审核。";
   const retry = entry.turn_attempt > 0 ? ` · 第 ${entry.turn_attempt + 1} 次尝试` : "";
   const failureDescriptions: Record<string, string> = {
     service_restart_before_effect: "服务在产生外部动作前重启，之后可继续恢复。",

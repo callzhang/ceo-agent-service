@@ -129,8 +129,8 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByRole("link", { name: "查看 Agent session" })).toHaveAttribute("href", "/codex/session-8448");
     expect(screen.queryByRole("heading", { name: "Draft reply (raw Codex reply)" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "处理历史" })).toBeInTheDocument();
-    expect(screen.getByText("这里保留当前处理和历史重试；历史重试不会等同于重复发送。")).toBeInTheDocument();
-    expect(screen.getByText("处理判断 · 第 1 轮")).toBeInTheDocument();
+    expect(screen.getByText("一个处理批次包含方案生成和方案审核；只有审核要求修改，才会进入下一轮。")).toBeInTheDocument();
+    expect(screen.getByText("方案生成 · 第 1 轮")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-grid")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-side")).toBeInTheDocument();
     expect(document.querySelector(".attempt-review-main .attempt-review-block + .attempt-review-block")).toBeInTheDocument();
@@ -165,6 +165,26 @@ describe("AttemptDetailPage", () => {
     expect(batches[0].open).toBe(false);
     expect(batches[1].open).toBe(false);
     expect(batches[2].open).toBe(true);
+  });
+
+  it("explains that Consumer and Audit are the two steps of one processing batch", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        runtime_attempts: [
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 1, execution_generation: "same-batch", attempt_number: 1, created_at: "2026-09-16 08:43:08", finished_at: "2026-09-16 08:43:53" },
+          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 2, execution_generation: "same-batch", attempt_number: 1, created_at: "2026-09-16 08:43:59", finished_at: "2026-09-16 08:47:17" },
+        ],
+      },
+      meta: { snapshot_at: "2026-09-16T08:47:17Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "处理历史" })).toBeInTheDocument();
+    expect(screen.getByText("一个处理批次包含方案生成和方案审核；只有审核要求修改，才会进入下一轮。"))
+      .toBeInTheDocument();
+    expect(screen.getByText("方案生成 · 第 1 轮")).toBeInTheDocument();
+    expect(screen.getByText("方案审核 · 第 1 轮")).toBeInTheDocument();
   });
 
   it("turns internal audit labels into a readable explanation", async () => {
@@ -319,7 +339,7 @@ describe("AttemptDetailPage", () => {
 
     expect(await screen.findByRole("heading", { name: "处理过程 · Consumer" })).toBeInTheDocument();
     expect(screen.getByText("这里只展示处理 Agent 形成方案的记录。")).toBeInTheDocument();
-    expect(screen.getByText("处理判断 · 第 1 轮")).toBeInTheDocument();
+    expect(screen.getByText("方案生成 · 第 1 轮")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "返回 Attempt" })).toHaveAttribute("href", "/attempts/8448");
     expect(screen.queryByRole("heading", { name: "生成回复" })).not.toBeInTheDocument();
   });

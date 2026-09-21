@@ -539,6 +539,44 @@ def test_attempt_detail_api_projects_direct_terminal_consumer_result(tmp_path: P
     }
 
 
+def test_attempt_detail_names_a_recorded_delivery_when_the_task_is_done(
+    tmp_path: Path,
+):
+    """A queue-level `done` must not hide a chat reply the ledger proves sent."""
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="delivery-status-api")
+    attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
+    store.record_sent_reply(
+        task.conversation_id,
+        task.trigger_message_id,
+        "The reviewed update was sent.",
+        send_result_json='{"openTaskId":"provider-task-1"}',
+    )
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    assert item["status"]["raw"] == "done"
+    assert item["status"]["message"] == "已向 Consumer API result 发送回复，并已记录投递回执。"
+
+
+def test_attempt_detail_labels_a_manual_rerun_as_not_audit_feedback(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="manual-rerun-api")
+    attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
+
+    status, _, _ = handle_rerun_attempt_post(store, attempt_id)
+    assert status == 303
+
+    _, item = build_attempt_detail(store, attempt_id)
+
+    assert item is not None
+    assert {"label": "当前批次", "value": "人工重新处理：不是审核反馈后的复审。"} in item["metadata"]
+
+
 @pytest.mark.parametrize(
     ("stored_result", "failure", "expected_error"),
     [
