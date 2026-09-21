@@ -1015,9 +1015,9 @@ def _parse_description_optimizer_result(raw: str) -> str:
         ):
             candidates.extend(agent_message_json_objects(item["text"]))
     for candidate in reversed(candidates):
-        if isinstance(candidate, Mapping) and set(candidate) == required:
+        if isinstance(candidate, Mapping) and required <= set(candidate):
             return json.dumps(
-                candidate,
+                {key: candidate[key] for key in sorted(required)},
                 ensure_ascii=False,
                 separators=(",", ":"),
             )

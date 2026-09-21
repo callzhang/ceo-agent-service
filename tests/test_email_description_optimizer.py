@@ -55,6 +55,7 @@ def test_routed_optimizer_persists_only_the_agent_json_from_runtime_events() -> 
         "cited_sample_ids": ["sample-1"],
         "reason": "The bounded conflict supports this distinction.",
     }
+    emitted = {"category": "financing", **expected}
     raw = "\n".join(
         (
             json.dumps({"type": "turn.started"}),
@@ -63,7 +64,7 @@ def test_routed_optimizer_persists_only_the_agent_json_from_runtime_events() -> 
                     "type": "item.completed",
                     "item": {
                         "type": "agent_message",
-                        "text": json.dumps(expected),
+                        "text": json.dumps(emitted),
                     },
                 }
             ),
