@@ -1063,6 +1063,11 @@ Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的�
 session 指针读取 JSONL，并只向普通用户展示业务结果；内部角色、规划标签和原始敏感工具
 输出保持折叠或脱敏。
 
+为避免一个详情页因同一 session 的 Consumer、重试和 runtime 记录而重复扫描全量本地
+索引，`session_path_index.jsonl` 的最新记录按文件的 mtime、大小和 inode 做进程内只读缓存。
+索引文件变更后下一次解析自动失效并重建该缓存；缓存只加速 session 路径发现，不改变
+SQLite 投影、JSONL 原文或审计证据。
+
 当原始 session JSONL 已被清理、不可读取或不再可用时，Codex 详情页必须明确显示
 “Agent 记录不可用”，不能把它误解成业务结果丢失。页面仍可展示关联的 Attempt 索引；
 关联仅限于该 session 所属 `agent_run` 的同一 task、同一 execution generation 的当前投影，

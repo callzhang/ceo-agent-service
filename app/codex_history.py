@@ -10,6 +10,9 @@ from app.config import forbidden_path_prefixes
 DEFAULT_CODEX_HOME = Path.home() / ".codex"
 MAX_EVENT_BODY_CHARS = 20_000
 SESSION_PATH_INDEX = "session_path_index.jsonl"
+_SESSION_PATH_INDEX_CACHE: dict[
+    Path, tuple[tuple[int, int, int], dict[str, dict[str, Any]]]
+] = {}
 
 
 @dataclass(frozen=True)
@@ -233,34 +236,62 @@ def refresh_codex_session_path_index(codex_home: Path | None = None) -> int:
 
 
 def _indexed_session(session_id: str, root: Path) -> IndexedCodexSession | None:
-    index_path = root / SESSION_PATH_INDEX
-    if not index_path.exists():
+    record = _session_index_records(root).get(session_id)
+    if record is None:
         return None
+    path_text = record.get("path")
+    if not isinstance(path_text, str):
+        return None
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = root / path
+    if not _session_index_record_matches_file(record, path):
+        return None
+    line_count = record.get("line_count")
+    return IndexedCodexSession(
+        path=path,
+        line_count=line_count if isinstance(line_count, int) else None,
+    )
+
+
+def _session_index_records(root: Path) -> dict[str, dict[str, Any]]:
+    """Read the append-only session index once for each on-disk revision.
+
+    Attempt detail pages commonly resolve the same reused session through a
+    Consumer run, its retry records, and the runtime-attempt evidence.  The
+    index can contain tens of thousands of JSON lines, so reparsing it for
+    every one of those lookups makes a single detail request needlessly slow.
+    Its mtime, size and inode are a sufficient invalidation key: writers
+    replace or append a complete index before readers need its new records.
+    """
+    index_path = root / SESSION_PATH_INDEX
+    try:
+        stat = index_path.stat()
+    except OSError:
+        _SESSION_PATH_INDEX_CACHE.pop(root, None)
+        return {}
+    signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+    cached = _SESSION_PATH_INDEX_CACHE.get(root)
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+
     try:
         lines = index_path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return None
-    for line in reversed(lines):
+        return {}
+    records: dict[str, dict[str, Any]] = {}
+    for line in lines:
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if record.get("session_id") != session_id:
-            continue
-        path_text = record.get("path")
-        if not isinstance(path_text, str):
-            continue
-        path = Path(path_text)
-        if not path.is_absolute():
-            path = root / path
-        if not _session_index_record_matches_file(record, path):
-            continue
-        line_count = record.get("line_count")
-        return IndexedCodexSession(
-            path=path,
-            line_count=line_count if isinstance(line_count, int) else None,
-        )
-    return None
+        session_id = record.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            # The index is append-only.  Later lines are the authoritative
+            # path and line count for a session that has continued running.
+            records[session_id] = record
+    _SESSION_PATH_INDEX_CACHE[root] = (signature, records)
+    return records
 
 
 def _append_session_path_index(

@@ -219,6 +219,37 @@ def test_find_codex_session_path_uses_refreshed_path_index(tmp_path: Path):
     assert count_codex_session_lines(session_id, codex_home=tmp_path) == 3
 
 
+def test_find_codex_session_path_reuses_index_until_the_index_changes(
+    tmp_path: Path, monkeypatch
+):
+    session_id = "index-cache-session"
+    session_path = write_session(tmp_path, session_id)
+    refresh_codex_session_path_index(tmp_path)
+    index_path = tmp_path / "session_path_index.jsonl"
+    original_read_text = Path.read_text
+    reads = 0
+
+    def count_index_reads(path: Path, *args, **kwargs):
+        nonlocal reads
+        if path == index_path:
+            reads += 1
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", count_index_reads)
+
+    assert find_codex_session_path(session_id, codex_home=tmp_path) == session_path
+    assert find_codex_session_path(session_id, codex_home=tmp_path) == session_path
+    assert reads == 1
+
+    # A new index revision must invalidate the cache, so a session created by
+    # another process is discoverable without restarting the audit web.
+    index_path.write_text(
+        index_path.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+    )
+    assert find_codex_session_path(session_id, codex_home=tmp_path) == session_path
+    assert reads == 3
+
+
 def test_render_local_codex_session_renders_reasoning_summary_and_skips_system_events(tmp_path: Path):
     session_id = "019e2c00-test-session"
     session_path = write_session(tmp_path, session_id)
