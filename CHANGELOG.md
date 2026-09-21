@@ -6,7 +6,9 @@
   through an explicit recovery command only after target-scoped, read-only
   reconciliation records that no matching outbound message exists. Other
   unknown sends and superseded execution generations remain blocked, avoiding
-  both an indefinite reconciliation loop and an unsafe duplicate send.
+  both an indefinite reconciliation loop and an unsafe duplicate send. The
+  explicit CLI recovery uses the same user-initiated path as the console, so it
+  does not enter the automatic sender's idle wait after the operator acts.
 
 - 2026-09-21: 定时任务的重叠保护现在按完整的 Reply Task 终态判断。此前只承认
   `done/failed`，导致已经 `skipped` 或 `needs_human` 的历史执行仍被当作运行中；每周

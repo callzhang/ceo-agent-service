@@ -151,7 +151,11 @@ def cmd_reject(args) -> int:
 def cmd_retry_absent(args) -> int:
     from app.wechat.accessibility import WechatSender
     store = AutoReplyStore(Path(args.db))
-    sender = WechatSender(store, service.build_sender())
+    sender = WechatSender(
+        store,
+        service.build_sender(),
+        user_initiated=True,
+    )
     status = service.retry_readback_absent_wechat_delivery(store, sender, args.id)
     print(f"delivery #{args.id}: {status}")
     return 0

@@ -169,6 +169,31 @@ def test_read_recent_refuses_multiple_persisted_ready_accounts(
     assert "exactly one persisted ready" in capsys.readouterr().out
 
 
+def test_retry_absent_uses_user_initiated_sender(tmp_path, monkeypatch):
+    db = tmp_path / "worker.sqlite3"
+    built = {}
+
+    class Sender:
+        def __init__(self, store, runner, *, user_initiated=False):
+            built.update(
+                store=store,
+                runner=runner,
+                user_initiated=user_initiated,
+            )
+
+    monkeypatch.setattr("app.wechat.accessibility.WechatSender", Sender)
+    monkeypatch.setattr(cli.service, "build_sender", lambda: "runner")
+    monkeypatch.setattr(
+        cli.service,
+        "retry_readback_absent_wechat_delivery",
+        lambda store, sender, delivery_id: "sent",
+    )
+
+    assert cli.cmd_retry_absent(SimpleNamespace(db=str(db), id=107)) == 0
+    assert built["runner"] == "runner"
+    assert built["user_initiated"] is True
+
+
 def test_import_memory_uses_unique_ready_account_and_explicit_bounds(tmp_path, monkeypatch):
     db = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db)
