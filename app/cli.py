@@ -1072,14 +1072,21 @@ def run_agent_cron_scheduler_loop(
 
     store = AutoReplyStore(settings.db_path)
     option_service = _scheduled_task_option_service(settings, runtime_skill_snapshot)
+
+    def reply_task_execution_is_terminal(execution_id: str) -> bool:
+        task = store.get_reply_task(int(execution_id))
+        return task is not None and task.status in {
+            "done",
+            "failed",
+            "skipped",
+            "needs_human",
+        }
+
     scheduler = AgentCronScheduler(
         store=store,
         option_service=option_service,
         terminal_resolver=ExecutionTerminalResolverRegistry({
-            "reply_task": lambda execution_id: (
-                (task := store.get_reply_task(int(execution_id))) is not None
-                and task.status in {"done", "failed"}
-            ),
+            "reply_task": reply_task_execution_is_terminal,
             # A service command runs to completion inside its trigger claim,
             # so a linked command execution is terminal by construction.
             SERVICE_COMMAND_EXECUTION_KIND: lambda _execution_id: True,

@@ -8956,3 +8956,41 @@ def test_only_the_lease_conflict_code_is_treated_as_a_conflict():
         )
         is False
     )
+
+
+@pytest.mark.parametrize("terminal_status", ["done", "failed", "skipped", "needs_human"])
+def test_agent_cron_treats_terminal_reply_task_status_as_finished(
+    monkeypatch,
+    tmp_path: Path,
+    terminal_status: str,
+):
+    task = SimpleNamespace(status=terminal_status)
+    captured: dict[str, object] = {}
+
+    class FakeStore:
+        def __init__(self, _path):
+            pass
+
+        def get_reply_task(self, task_id: int):
+            assert task_id == 383933
+            return task
+
+    class FakeScheduler:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def run_forever(self, *, wake_event):
+            captured["wake_event"] = wake_event
+
+    monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
+    monkeypatch.setattr(cli, "_scheduled_task_option_service", lambda *_args: object())
+    monkeypatch.setattr("app.agent_cron.scheduler.AgentCronScheduler", FakeScheduler)
+
+    cli.run_agent_cron_scheduler_loop(
+        SimpleNamespace(db_path=tmp_path / "worker.sqlite3"),
+        object(),
+        wake_event=threading.Event(),
+    )
+
+    resolver = captured["terminal_resolver"]
+    assert resolver.is_terminal("reply_task", "383933") is True

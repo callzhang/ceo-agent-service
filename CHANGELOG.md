@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- 2026-09-21: 定时任务的重叠保护现在按完整的 Reply Task 终态判断。此前只承认
+  `done/failed`，导致已经 `skipped` 或 `needs_human` 的历史执行仍被当作运行中；每周
+  OKR 周报因此被一个五天前已经结束的旧任务阻塞。调度器现在也承认这两个明确终态，
+  同时继续阻止 `pending/running/processing` 的并发执行。
+
 - 2026-09-19: A delivered meeting conclusion reaches Memory in about three
   seconds instead of ninety. Recording one calls a single connector tool with
   arguments the service already decided, and running that through an Agent turn
