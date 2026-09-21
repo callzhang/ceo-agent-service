@@ -543,6 +543,10 @@ Derek，2026-09-18：外发消息的正文必须是服务为该动作准备好�
 发送回读与 WeChat 撤回只能复用该记录，不得根据当前配置重新生成。provider adapter 只接收已持久化
 的最终正文，业务模块直接调用原始发送方法会被架构测试拒绝。
 
+DingTalk provider 将该最终正文通过 `dws chat +messages-send --as user --markdown` 发送，使 Markdown
+标题、列表和反馈链接由钉钉按 Markdown 渲染。群聊、单聊仍使用稳定的 conversation/user/openDingTalk ID；
+delivery UUID、结构化群 @ 及 `ServiceMessageSender` 准备的签名与反馈链接保持原样随正文发送。
+
 Consumer 修订版可以原样复用上一 revision 中已持久化的服务反馈链接。敏感值校验只会对配置域名、
 固定回调路径、有效签名和成对反馈 token 完全匹配的服务链接做占位化处理；真实凭证、陌生域名、
 畸形回调或其他敏感值仍然必须使该 run 失败。

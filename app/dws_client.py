@@ -597,8 +597,9 @@ class DwsClient:
         command = [
             self.dws_bin,
             "chat",
-            "message",
-            "send",
+            "+messages-send",
+            "--as",
+            "user",
         ]
         targets = [
             value
@@ -638,7 +639,13 @@ class DwsClient:
                 at_open_dingtalk_names or [],
             )
         command.extend(
-            ["--text", self._literal_cli_value(send_text), "--format", "json", "--yes"]
+            [
+                "--markdown",
+                self._literal_cli_value(send_text),
+                "--format",
+                "json",
+                "--yes",
+            ]
         )
         return command
 
@@ -3615,12 +3622,16 @@ class DwsClient:
         command: list[str],
         result: subprocess.CompletedProcess[str],
     ) -> bool:
-        if len(command) < 4 or command[1:4] != ["chat", "message", "send"]:
+        if len(command) >= 4 and command[1:4] == ["chat", "message", "send"]:
+            arguments = command[4:]
+        elif len(command) >= 3 and command[1:3] == ["chat", "+messages-send"]:
+            arguments = command[3:]
+        else:
             return False
         if not any(
             argument in {"--idempotency-key", "--uuid"}
             or argument.startswith(("--idempotency-key=", "--uuid="))
-            for argument in command[4:]
+            for argument in arguments
         ):
             return False
         for raw_output in (result.stderr, result.stdout):
@@ -3884,12 +3895,16 @@ class DwsClient:
     def _automatic_retry_allowed(command: list[str]) -> bool:
         if len(command) >= 3 and command[1:3] == ["doc", "create"]:
             return False
-        if len(command) < 4 or command[1:4] != ["chat", "message", "send"]:
+        if len(command) >= 4 and command[1:4] == ["chat", "message", "send"]:
+            arguments = command[4:]
+        elif len(command) >= 3 and command[1:3] == ["chat", "+messages-send"]:
+            arguments = command[3:]
+        else:
             return True
         return any(
             argument in {"--idempotency-key", "--uuid"}
             or argument.startswith(("--idempotency-key=", "--uuid="))
-            for argument in command[4:]
+            for argument in arguments
         )
 
     def _refresh_cache(self) -> None:
@@ -3925,6 +3940,10 @@ class DwsClient:
 
     @classmethod
     def _sanitize_command(cls, command: list[str]) -> str:
+        if len(command) >= 3 and command[1:3] == ["chat", "+messages-send"]:
+            # A failed outbound message must remain diagnosable without
+            # persisting its recipient, title, body, or idempotency key.
+            return " ".join(command[:3]) + " <outbound arguments redacted>"
         if len(command) >= 4 and command[1:4] == ["chat", "message", "send"]:
             # A failed outbound message must remain diagnosable without
             # persisting its recipient, title, body, or idempotency key.

@@ -622,7 +622,14 @@ def test_run_json_keeps_non_network_code_one_as_terminal(monkeypatch):
     assert error_info.value.code == "1"
 
 
-def test_run_json_retries_unclassified_idempotent_message_send_failure(monkeypatch):
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["dws", "chat", "message", "send", "--uuid", "stable-id"],
+        ["dws", "chat", "+messages-send", "--as", "user", "--uuid", "stable-id"],
+    ],
+)
+def test_run_json_retries_unclassified_idempotent_message_send_failure(monkeypatch, command):
     calls = 0
 
     def fake_run(command, text, capture_output, check, timeout, env=None):
@@ -639,7 +646,7 @@ def test_run_json_retries_unclassified_idempotent_message_send_failure(monkeypat
 
     with pytest.raises(DwsError) as error_info:
         DwsClient(transient_retry_attempts=1).run_json(
-            ["dws", "chat", "message", "send", "--uuid", "stable-id"]
+            command
         )
 
     assert calls == 2
@@ -1765,16 +1772,48 @@ def test_send_message_command_shape():
     assert command == [
         "dws",
         "chat",
-        "message",
-        "send",
+        "+messages-send",
+        "--as",
+        "user",
         "--group",
         "cid-1",
         "--title",
         "收到（by明哥分身）",
         "--at-open-dingtalk-ids",
         "open-1",
-        "--text",
+        "--markdown",
         "<@open-1> 收到（by明哥分身）",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
+def test_send_message_command_uses_markdown_for_prepared_outbound_body():
+    client = DwsClient(dws_bin="dws")
+    body = "## 待办跟踪\n\n反馈：[👍 有帮助](https://feedback.example.com/up)"
+
+    command = client.build_send_message_command(
+        conversation_id="cid-1",
+        text=body,
+        title="待办跟踪",
+        idempotency_uuid="f04f7dd0-d614-4f4f-814c-ec8f65e094e1",
+    )
+
+    assert command == [
+        "dws",
+        "chat",
+        "+messages-send",
+        "--as",
+        "user",
+        "--group",
+        "cid-1",
+        "--title",
+        "待办跟踪",
+        "--uuid",
+        "f04f7dd0-d614-4f4f-814c-ec8f65e094e1",
+        "--markdown",
+        body,
         "--format",
         "json",
         "--yes",
@@ -1813,6 +1852,28 @@ def test_sanitize_command_redacts_all_outbound_message_arguments():
 
     assert DwsClient._sanitize_command(command) == (
         "dws chat message send <outbound arguments redacted>"
+    )
+
+
+def test_sanitize_command_redacts_markdown_outbound_message_arguments():
+    command = [
+        "dws",
+        "chat",
+        "+messages-send",
+        "--as",
+        "user",
+        "--open-dingtalk-id",
+        "recipient-open-id",
+        "--title",
+        "Sensitive title",
+        "--uuid",
+        "delivery-uuid",
+        "--markdown",
+        "Sensitive body and feedback link",
+    ]
+
+    assert DwsClient._sanitize_command(command) == (
+        "dws chat +messages-send <outbound arguments redacted>"
     )
 
 
@@ -1855,15 +1916,16 @@ def test_send_message_command_keeps_existing_text_without_injecting_at_placehold
     assert command == [
         "dws",
         "chat",
-        "message",
-        "send",
+        "+messages-send",
+        "--as",
+        "user",
         "--group",
         "cid-1",
         "--title",
         "收到（by明哥分身）",
         "--at-open-dingtalk-ids",
         "open-1",
-        "--text",
+        "--markdown",
         "<@open-1> 收到（by明哥分身）",
         "--format",
         "json",
@@ -1881,7 +1943,7 @@ def test_send_message_command_does_not_emit_stale_at_users_flag():
     )
 
     assert "--at-users" not in command
-    assert command[command.index("--text") + 1] == "收到（by明哥分身）"
+    assert command[command.index("--markdown") + 1] == "收到（by明哥分身）"
 
 
 def test_send_message_command_uses_open_dingtalk_id_mentions():
@@ -1895,7 +1957,7 @@ def test_send_message_command_uses_open_dingtalk_id_mentions():
 
     assert "--at-users" not in command
     assert command[command.index("--at-open-dingtalk-ids") + 1] == "open-owner-1"
-    assert command[command.index("--text") + 1] == "<@open-owner-1> 请同步进展"
+    assert command[command.index("--markdown") + 1] == "<@open-owner-1> 请同步进展"
 
 
 def test_send_message_command_adds_placeholders_for_structured_group_mentions():
@@ -1909,7 +1971,7 @@ def test_send_message_command_adds_placeholders_for_structured_group_mentions():
     )
 
     assert command[command.index("--at-open-dingtalk-ids") + 1] == "open-owner-1"
-    assert command[command.index("--text") + 1] == "<@open-owner-1> 请同步进展"
+    assert command[command.index("--markdown") + 1] == "<@open-owner-1> 请同步进展"
 
 
 def test_send_message_command_does_not_duplicate_existing_open_dingtalk_placeholders():
@@ -1922,7 +1984,7 @@ def test_send_message_command_does_not_duplicate_existing_open_dingtalk_placehol
         at_open_dingtalk_names=["磊哥"],
     )
 
-    assert command[command.index("--text") + 1] == "<@open-owner-1> 请同步进展"
+    assert command[command.index("--markdown") + 1] == "<@open-owner-1> 请同步进展"
 
 
 def test_send_message_command_does_not_duplicate_mentions_already_in_body():
@@ -1935,7 +1997,7 @@ def test_send_message_command_does_not_duplicate_mentions_already_in_body():
         at_open_dingtalk_names=["ET", "Roy Han"],
     )
 
-    assert command[command.index("--text") + 1] == (
+    assert command[command.index("--markdown") + 1] == (
         "<@open-et>(张毅倜) 先出方案；<@open-roy>(韩露) 补材料。"
     )
 
@@ -1950,7 +2012,7 @@ def test_send_message_command_does_not_replace_a_longer_visible_name():
         at_open_dingtalk_names=["ET"],
     )
 
-    assert command[command.index("--text") + 1] == "<@open-et> @ETC 先出方案。"
+    assert command[command.index("--markdown") + 1] == "<@open-et> @ETC 先出方案。"
 
 
 def test_direct_send_message_ignores_open_dingtalk_id_mentions_without_group_at_flag():
@@ -1964,7 +2026,7 @@ def test_direct_send_message_ignores_open_dingtalk_id_mentions_without_group_at_
     )
 
     assert "--at-open-dingtalk-ids" not in command
-    assert command[command.index("--text") + 1] == "请同步进展"
+    assert command[command.index("--markdown") + 1] == "请同步进展"
 
 
 def test_send_message_command_supports_title_override():
@@ -1981,7 +2043,7 @@ def test_send_message_command_supports_title_override():
     )
 
     assert command[command.index("--title") + 1] == "收到"
-    assert "https://feedback.example.com/up" in command[command.index("--text") + 1]
+    assert "https://feedback.example.com/up" in command[command.index("--markdown") + 1]
 
 
 def test_send_message_command_supports_direct_user_target():
@@ -1996,13 +2058,14 @@ def test_send_message_command_supports_direct_user_target():
     assert command == [
         "dws",
         "chat",
-        "message",
-        "send",
+        "+messages-send",
+        "--as",
+        "user",
         "--user",
         "user-1",
         "--title",
         "收到（by明哥分身）",
-        "--text",
+        "--markdown",
         "收到（by明哥分身）",
         "--format",
         "json",
@@ -2395,8 +2458,8 @@ def test_send_message_escapes_at_prefixed_title_for_dws_cli():
     )
 
     assert command[command.index("--title") + 1] == "回复：@周俊杰 明白，先把 diff 发出来。"
-    assert command[command.index("--text") + 1].startswith("> 周俊杰")
-    assert "<@user-1> @周俊杰" in command[command.index("--text") + 1]
+    assert command[command.index("--markdown") + 1].startswith("> 周俊杰")
+    assert "<@user-1> @周俊杰" in command[command.index("--markdown") + 1]
 
 
 def test_send_message_escapes_at_prefixed_text_for_dws_cli():
@@ -2408,7 +2471,7 @@ def test_send_message_escapes_at_prefixed_text_for_dws_cli():
     )
 
     assert command[command.index("--title") + 1].startswith("回复：@")
-    assert command[command.index("--text") + 1].startswith(" @")
+    assert command[command.index("--markdown") + 1].startswith(" @")
 
 
 def test_build_list_all_messages_command_shape():
@@ -4881,15 +4944,16 @@ def test_send_message_high_level_method_uses_command():
         [
             "dws",
             "chat",
-            "message",
-            "send",
+            "+messages-send",
+            "--as",
+            "user",
             "--group",
             "cid-1",
             "--title",
             "收到（by明哥分身）",
             "--at-open-dingtalk-ids",
             "open-1",
-            "--text",
+            "--markdown",
             "<@open-1> 收到（by明哥分身）",
             "--format",
             "json",
