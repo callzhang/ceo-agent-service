@@ -17796,9 +17796,11 @@ class AutoReplyStore:
 
         The OA scanner creates a terminal ``needs_human`` attempt when a
         decision really requires Derek. Derek may then complete that approval
-        directly in DingTalk. Once the process is terminal there is no action
-        left for the service, so the local attempt is ``skipped`` rather than
-        left indefinitely actionable.
+        directly in DingTalk. A later projection repair can also turn an
+        invalid technical ``needs_human`` Attempt into ``failed`` while its
+        owning task still has the old status. Once the process is terminal
+        there is no action left for the service, so the local attempt is
+        ``skipped`` and the owning task is ``done``.
         """
 
         process_id = process_instance_id.strip()
@@ -17807,6 +17809,13 @@ class AutoReplyStore:
         result = process_result.strip() or "completed"
         resolution = f"Live DingTalk OA process completed with result {result}."
         with self._immediate_write_transaction() as db:
+            attempt = db.execute(
+                "select channel, conversation_id, trigger_message_id "
+                "from reply_attempts where id=?",
+                (attempt_id,),
+            ).fetchone()
+            if attempt is None:
+                return False
             cursor = db.execute(
                 """
                 update reply_attempts
@@ -17814,13 +17823,29 @@ class AutoReplyStore:
                     resolved_at=current_timestamp, resolution=?,
                     updated_at=current_timestamp
                 where id=?
-                  and send_status='needs_human'
+                  and send_status in ('needs_human', 'failed')
                   and oa_process_instance_id=?
                   and trim(coalesce(resolved_at, ''))=''
                 """,
                 (resolution, attempt_id, process_id),
             )
-            return cursor.rowcount == 1
+            if cursor.rowcount != 1:
+                return False
+            db.execute(
+                """
+                update reply_tasks
+                set status='done', error='', available_at='', locked_at=null,
+                    updated_at=current_timestamp
+                where channel=? and conversation_id=? and trigger_message_id=?
+                  and status='needs_human'
+                """,
+                (
+                    attempt["channel"],
+                    attempt["conversation_id"],
+                    attempt["trigger_message_id"],
+                ),
+            )
+            return True
 
     def close_failed_reply_task_already_settled(
         self,
@@ -23363,7 +23388,20 @@ class AutoReplyStore:
                 """
                 select attempts.*
                 from reply_attempts attempts
-                where attempts.send_status='needs_human'
+                where (
+                        attempts.send_status='needs_human'
+                        or (
+                            attempts.send_status='failed'
+                            and exists (
+                                select 1
+                                from reply_tasks stale_tasks
+                                where stale_tasks.channel=attempts.channel
+                                  and stale_tasks.conversation_id=attempts.conversation_id
+                                  and stale_tasks.trigger_message_id=attempts.trigger_message_id
+                                  and stale_tasks.status='needs_human'
+                            )
+                        )
+                      )
                   and trim(coalesce(attempts.resolved_at, ''))=''
                   and trim(attempts.oa_process_instance_id)<>''
                   and attempts.id=(

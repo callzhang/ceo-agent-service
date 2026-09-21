@@ -9361,6 +9361,58 @@ def test_completed_oa_needs_human_attempt_is_closed_as_skipped(tmp_path: Path):
     assert "agree" in row["resolution"]
 
 
+def test_completed_oa_failed_attempt_closes_stale_needs_human_task(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="oa_pending_scan:proc-completed",
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id="oa-pending:proc-completed:revision-2",
+        trigger_create_time="2026-09-21 09:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        execution_generation="initial",
+        business_object_key="oa:proc-completed:task-completed",
+    )
+    task = store.claim_reply_task(1)
+    assert task is not None
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update reply_tasks set status='needs_human', error='codex_result_invalid' where id=?",
+            (task.id,),
+        )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-completed",
+        oa_task_id="task-completed",
+        send_status="failed",
+    )
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update reply_attempts set send_error='codex_result_invalid' where id=?",
+            (attempt_id,),
+        )
+
+    assert [row.id for row in store.list_open_oa_needs_human_attempts()] == [
+        attempt_id
+    ]
+    assert store.resolve_completed_oa_needs_human_attempt(
+        attempt_id,
+        process_instance_id="proc-completed",
+        process_result="agree",
+    )
+
+    assert store.get_reply_attempt(attempt_id).send_status == "skipped"
+    assert store.get_reply_task(task.id).status == "done"
+    assert store.get_reply_task(task.id).error == ""
+
+
 def test_completed_oa_closure_requires_matching_process_identity(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
