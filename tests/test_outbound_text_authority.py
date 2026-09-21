@@ -114,6 +114,24 @@ def test_provider_send_texts_extracts_quote_reply_content() -> None:
     assert provider_send_texts([event]) == ["reply body"]
 
 
+def test_provider_send_texts_decodes_logged_ansi_c_reply_content() -> None:
+    event = {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution",
+            "exit_code": 0,
+            "status": "completed",
+            "command": (
+                "/bin/zsh -lc \"dws chat +messages-reply --message-id m1 "
+                "--content $'first line\\\\n\\\\nsecond line' --yes\""
+            ),
+            "aggregated_output": '{"success":true}',
+        },
+    }
+
+    assert provider_send_texts([event]) == ["first line\n\nsecond line"]
+
+
 def test_reading_what_a_send_did_is_not_a_send() -> None:
     for command in (
         "dws chat +messages-query-send-status --id 1",

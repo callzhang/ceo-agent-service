@@ -5636,8 +5636,10 @@ def test_completed_message_delivery_persists_action_result_and_history_atomicall
         ).fetchone()[0] == 1
 
 
+@pytest.mark.parametrize("payload_field", ["content", "text"])
 def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
     tmp_path: Path,
+    payload_field: str,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
@@ -5664,7 +5666,7 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
                         "action_identity": "reply",
                         "operation": "send_group_message",
                         "target": {"conversation_id": task.conversation_id},
-                        "payload": {"content": reply_text},
+                        "payload": {payload_field: reply_text},
                     }
                 ]
             },

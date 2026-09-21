@@ -27,6 +27,23 @@ _SEND_COMMAND = re.compile(
     r"(?:\+dm|\+send-to-group|\+messages-send|\+messages-reply|\+send|send|message\s+send)\b"
 )
 _TEXT_FLAGS = ("--content", "--text", "--message", "--body")
+_ANSI_C_ESCAPE = re.compile(r"\\([nrt\\'\"])")
+
+
+def _decode_ansi_c_argument(value: str) -> str:
+    """Decode the small ANSI-C escape subset used by logged send commands."""
+
+    if not value.startswith("$"):
+        return value
+    replacements = {
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "\\": "\\",
+        "'": "'",
+        '"': '"',
+    }
+    return _ANSI_C_ESCAPE.sub(lambda match: replacements[match.group(1)], value[1:])
 
 
 def _first_stage(command: str) -> str:
@@ -83,13 +100,24 @@ def _text_arguments(payload: str) -> list[str]:
         argv = shlex.split(payload)
     except ValueError:
         argv = []
+    ansi_c_flags = {
+        flag
+        for flag in _TEXT_FLAGS
+        if re.search(rf"{re.escape(flag)}(?:=|\s+)\s*\$'", payload)
+    }
     found: list[str] = []
     for index, argument in enumerate(argv):
         for flag in _TEXT_FLAGS:
             if argument == flag and index + 1 < len(argv):
-                found.append(argv[index + 1])
+                value = argv[index + 1]
+                found.append(
+                    _decode_ansi_c_argument(value) if flag in ansi_c_flags else value
+                )
             elif argument.startswith(f"{flag}="):
-                found.append(argument[len(flag) + 1 :])
+                value = argument[len(flag) + 1 :]
+                found.append(
+                    _decode_ansi_c_argument(value) if flag in ansi_c_flags else value
+                )
     if found:
         return found
     for flag in _TEXT_FLAGS:

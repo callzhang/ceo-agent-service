@@ -17496,13 +17496,18 @@ class AutoReplyStore:
             if not isinstance(action, dict):
                 continue
             payload = action.get("payload")
-            content = payload.get("content") if isinstance(payload, dict) else None
+            content = None
+            if isinstance(payload, dict):
+                content = payload.get("content") or payload.get("text")
             if isinstance(content, str) and content.strip() in sent_texts:
                 matches.append(action)
         if len(matches) != 1:
             raise ValueError("provider send does not match exactly one proposed action")
         action = matches[0]
-        reply_text = str(action["payload"]["content"]).strip()
+        action_payload = action["payload"]
+        reply_text = str(
+            action_payload.get("content") or action_payload.get("text") or ""
+        ).strip()
         action_identity = str(action.get("action_identity") or "").strip()
         operation = str(action.get("operation") or "").strip()
         target = action.get("target")
