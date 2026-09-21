@@ -53,10 +53,7 @@ function parseAuditExplanation(text: string): AuditParts {
 
 function AuditExplanation({ detail }: { detail: AttemptDetail }) {
   const parts = parseAuditExplanation(detail.audit_explanation.text);
-  const rawStatus = detail.status.raw.trim().toLowerCase();
-  const conclusion = rawStatus === "done" || rawStatus === "completed" || rawStatus === "skipped"
-    ? "当前没有新的外部动作需要执行，事项已收口。"
-    : detail.status.message;
+  const conclusion = detail.status.message || "当前没有新的外部动作需要执行，事项已收口。";
   return <section className="attempt-review-block attempt-audit-section attempt-audit-readable">
     <h2>{detail.audit_explanation.title || "审计说明"}</h2>
     <dl>

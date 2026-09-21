@@ -214,6 +214,25 @@ describe("AttemptDetailPage", () => {
     expect(screen.queryByRole("heading", { name: "当前状态" })).not.toBeInTheDocument();
   });
 
+  it("shows a recorded delivery receipt in the terminal audit conclusion", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        status: {
+          ...detail.status,
+          raw: "done",
+          message: "已向 王宝桐 发送回复，并已记录投递回执。",
+        },
+      },
+      meta: { snapshot_at: "2026-09-16T08:47:17Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "审计说明" })).toBeInTheDocument();
+    expect(screen.getByText("已向 王宝桐 发送回复，并已记录投递回执。")).toBeInTheDocument();
+    expect(screen.queryByText("当前没有新的外部动作需要执行，事项已收口。")).not.toBeInTheDocument();
+  });
+
   it("shows the linked Consumer result group with its scores and risk", async () => {
     getAttemptDetail.mockResolvedValue({
       item: withConsumerResult({
