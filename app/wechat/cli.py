@@ -148,6 +148,15 @@ def cmd_reject(args) -> int:
     return 0
 
 
+def cmd_retry_absent(args) -> int:
+    from app.wechat.accessibility import WechatSender
+    store = AutoReplyStore(Path(args.db))
+    sender = WechatSender(store, service.build_sender())
+    status = service.retry_readback_absent_wechat_delivery(store, sender, args.id)
+    print(f"delivery #{args.id}: {status}")
+    return 0
+
+
 def cmd_import_memory(args) -> int:
     store = AutoReplyStore(Path(args.db))
     state = service.ready_account_state(store)
@@ -213,6 +222,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--id", type=int, required=True)
     p.set_defaults(fn=cmd_reject)
+    p = sub.add_parser("retry-absent")
+    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--id", type=int, required=True)
+    p.set_defaults(fn=cmd_retry_absent)
     p = sub.add_parser("import-memory")
     p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--account-id", default="")

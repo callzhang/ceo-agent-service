@@ -1,5 +1,7 @@
+import pytest
+
 from app.codex_decision import append_signature
-from app.store import AutoReplyStore
+from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.wechat import service
 from app.wechat.accessibility import AccessibilityResult, SendOutcome, WechatSender
 from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
@@ -506,6 +508,52 @@ def test_user_can_retry_expired_pre_action_wechat_delivery(tmp_path):
     assert sender.sent == [delivery.id]
     assert store.get_wechat_delivery_for_task(1).status == "sent"
     assert store.get_reply_attempt(attempt_id).send_status == "sent"
+
+
+def test_user_can_retry_wechat_delivery_after_readback_proves_absence(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery, attempt_id = _seed_with_attempt(store)
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "send_unknown",
+        error="read_only_reconciliation_inconclusive",
+    )
+
+    class RetryingSender(FakeSender):
+        def send(self, item, scope):
+            self.sent.append(item.id)
+            store.mark_wechat_delivery_sending(item.id)
+            store.set_wechat_delivery_status(item.id, "sent")
+            return SendOutcome("sent")
+
+    sender = RetryingSender()
+    assert (
+        service.retry_readback_absent_wechat_delivery(
+            store, sender, delivery.id
+        )
+        == "sent"
+    )
+    assert sender.sent == [delivery.id]
+    assert store.get_wechat_delivery_for_task(1).status == "sent"
+    assert store.get_reply_attempt(attempt_id).send_status == "sent"
+
+
+def test_readback_absent_retry_rejects_other_unknown_errors(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery, _attempt_id = _seed_with_attempt(store)
+    store.mark_wechat_delivery_sending(delivery.id)
+    store.set_wechat_delivery_status(
+        delivery.id,
+        "send_unknown",
+        error="sender_process_interrupted",
+    )
+
+    with pytest.raises(
+        AgentRunLeaseLostError,
+        match="not a current readback-absent retry",
+    ):
+        store.requeue_readback_absent_wechat_delivery_for_user(delivery.id)
 
 def test_accessibility_permission_recovery_restores_exhausted_pre_action_delivery(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")

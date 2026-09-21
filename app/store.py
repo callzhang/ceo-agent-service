@@ -13793,6 +13793,61 @@ class AutoReplyStore:
             pre_action_failure=bool(row["pre_action_failure"]),
         )
 
+    def requeue_readback_absent_wechat_delivery_for_user(self, delivery_id: int):
+        """Restore one uncertain delivery after readback proves it was not sent.
+
+        This transition is intentionally narrower than an ordinary retry.  It
+        only accepts the reconciliation state produced when target-scoped,
+        read-only history found no matching outbound message, and only while
+        the delivery still belongs to the task's current execution generation.
+        """
+        from app.wechat.models import WechatDelivery
+
+        if delivery_id < 1:
+            raise ValueError("delivery_id must be positive")
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update wechat_deliveries
+                set status='ready_to_send', error='', pre_action_failure=0,
+                    updated_at=current_timestamp
+                where id=?
+                  and status='send_unknown'
+                  and error='read_only_reconciliation_inconclusive'
+                  and trim(action_started_at)<>''
+                  and exists (
+                      select 1 from reply_tasks as tasks
+                      where tasks.id=wechat_deliveries.reply_task_id
+                        and tasks.execution_generation=
+                            wechat_deliveries.execution_generation
+                  )
+                """,
+                (delivery_id,),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    "WeChat delivery is not a current readback-absent retry: "
+                    f"{delivery_id}"
+                )
+            self._sync_wechat_delivery_reply_attempt(
+                db,
+                delivery_id=delivery_id,
+                delivery_status="ready_to_send",
+                error="",
+            )
+            row = db.execute(
+                "select * from wechat_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+        return WechatDelivery(
+            id=row["id"], task_id=row["reply_task_id"],
+            account_id=row["account_id"], target_type=row["target_type"],
+            target_id=row["target_id"], conversation_id=row["conversation_id"],
+            reply_text=row["reply_text"], action_started_at=row["action_started_at"],
+            execution_generation=row["execution_generation"], status=row["status"],
+            evidence=json.loads(row["evidence_json"]), error=row["error"],
+            pre_action_failure=bool(row["pre_action_failure"]),
+        )
+
     def claim_wechat_delivery(
         self,
         delivery_id: int,

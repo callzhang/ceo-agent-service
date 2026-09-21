@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-21: WeChat deliveries whose send result is unknown can now be retried
+  through an explicit recovery command only after target-scoped, read-only
+  reconciliation records that no matching outbound message exists. Other
+  unknown sends and superseded execution generations remain blocked, avoiding
+  both an indefinite reconciliation loop and an unsafe duplicate send.
+
 - 2026-09-21: 定时任务的重叠保护现在按完整的 Reply Task 终态判断。此前只承认
   `done/failed`，导致已经 `skipped` 或 `needs_human` 的历史执行仍被当作运行中；每周
   OKR 周报因此被一个五天前已经结束的旧任务阻塞。调度器现在也承认这两个明确终态，
