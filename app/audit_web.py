@@ -10010,6 +10010,20 @@ def handle_needs_human_decision_post(
     source = store.get_reply_attempt(attempt_id)
     if source is None:
         return 404, {}, render_page("Attempt not found", "Attempt not found")
+    terminal_run = store.get_agent_run(source.agent_run_id) if source.agent_run_id else None
+    if (
+        terminal_run is None
+        or classify_stored_needs_human_projection(terminal_run.final_result_json)
+        is not StoredNeedsHumanProjection.NEEDS_HUMAN
+    ):
+        return (
+            409,
+            {},
+            render_page(
+                "Decision unavailable",
+                "<p>该 attempt 没有可追踪的结构化管理决策。</p>",
+            ),
+        )
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
     instruction = parsed.get("instruction", [""])[0].strip()
     feedback_scope = parsed.get("feedback_scope", ["one_time"])[0].strip()

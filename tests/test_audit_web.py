@@ -6142,7 +6142,7 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
     assert '<a class="nav-item" href="/notifications">Notifications</a>' not in response.text
 
 
-def test_browser_notifications_page_shows_only_current_unresolved_problems(
+def test_browser_notifications_page_hides_untraceable_needs_human_projection(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -6194,8 +6194,8 @@ def test_browser_notifications_page_shows_only_current_unresolved_problems(
 
     assert response.status_code == 200
     assert "待处理问题" in response.text
-    assert f"Attempt #{current_decision}" in response.text
-    assert "请选择下一步。" in response.text
+    assert f"Attempt #{current_decision}" not in response.text
+    assert "请选择下一步。" not in response.text
     assert f"Attempt #{current_failure}" in response.text
     assert "Provider is unavailable." in response.text
     assert f"Attempt #{superseded_failure}" not in response.text
@@ -10799,7 +10799,7 @@ def test_handle_reviewed_message_reply_uses_immutable_attempt_binding(tmp_path: 
     assert task.status == "pending"
 
 
-def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
+def test_needs_human_decision_rejects_untraceable_projection(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -10839,15 +10839,8 @@ def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
 
     status, html = render_attempt_detail(store, attempt_id)
     assert status == 200
-    assert "需要你的判断" in html
-    assert "用于迭代 Skill" in html
-    assert "可复用的处理规则" in html
-    assert "事项：</strong>这个应该怎么处理？" in html
-    assert "目标和范围存在实际歧义" in html
-    assert "按当前事实继续处理并发布" not in html
-    assert "先追问一个具体澄清问题并发布" not in html
-    assert "其他处理指令" in html
-    assert "同时把这条反馈沉淀为 Skill 规则" in html
+    assert "需要你的判断" not in html
+    assert "其他处理指令" not in html
 
     status, headers, body = handle_needs_human_decision_post(
         store,
@@ -10856,21 +10849,16 @@ def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
     )
 
     source = store.get_reply_attempt(attempt_id)
-    restarted_store = AutoReplyStore(store.path)
-    task = restarted_store.get_reply_task_for_message("cid-1", "msg-1")
-    selected_attempt = store.get_reply_attempt(int(headers["Location"].rsplit("/", 1)[-1]))
-    assert status == 303
-    assert body == ""
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert status == 409
+    assert headers == {}
+    assert "没有可追踪的结构化管理决策" in body
     assert source is not None
-    assert source.send_status == "pending"
-    assert "Human decision for source attempt" in source.reviewer_feedback
+    assert source.send_status == "needs_human"
+    assert source.reviewer_feedback == ""
     assert task is not None
     assert task.status == "pending"
     assert task.oa_url == "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
-    assert selected_attempt is not None
-    assert selected_attempt.id == source.id
-    assert selected_attempt.reviewer_feedback == source.reviewer_feedback
-    assert "采用方案二并说明交付边界" in selected_attempt.reviewer_feedback
 
     wechat_attempt_id = store.record_reply_attempt(
         conversation_id="wechat-cid-1",
