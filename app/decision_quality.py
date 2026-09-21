@@ -129,6 +129,15 @@ def classify_stored_needs_human_projection(
             return StoredNeedsHumanProjection.INVALID
     if not isinstance(result, Mapping) or result.get("outcome") != "needs_human":
         return StoredNeedsHumanProjection.INVALID
+    error = result.get("error")
+    error_values = (
+        result.get("error_retryable"),
+        result.get("error_authorization_required"),
+        error.get("retryable") if isinstance(error, Mapping) else None,
+        error.get("authorization_required") if isinstance(error, Mapping) else None,
+    )
+    if any(value is True for value in error_values):
+        return StoredNeedsHumanProjection.INVALID
     try:
         quality = classify_decision_quality(
             risk=result["risk"],

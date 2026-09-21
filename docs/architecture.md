@@ -672,7 +672,8 @@ provider 返回 `confirmation_required` 同样属于运行时失败边界：外�
 
 新 wire 四字段必填且严格校验。当前投影不兼容旧的“状态字符串 + 服务生成按钮”逻辑：
 `needs_human` 必须能追溯到完整 `final_result_json`，字段缺失、非法值、outer outcome mismatch、
-无 Agent run 或选项不完整都 fail-closed 为 `failed`；保留原始历史 run/audit，不改写其内容。
+无 Agent run、选项不完整，或 `error_retryable` / `error_authorization_required` 为真都 fail-closed 为
+`failed`；后两者表示运行时错误而非规则缺口。保留原始历史 run/audit，不改写其内容。
 服务启动时幂等修复这种 current projection，同时清空服务生成的选项。Quality gate/Attention
 只统计修复后的 current latest projection；reviewed、historical、pending recovery 排除。
 

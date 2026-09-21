@@ -95,6 +95,9 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 provider 返回 `confirmation_required` 也属于运行时失败边界：它表示外部动作尚未执行，
 不是需要 Derek 决定的业务规则缺口。必须保留具体错误并落为 `failed`，不能生成“确认执行/停止”
 这类泛化的人工作业按钮；修复旧投影时同时清空这类选项。
+同理，持久化的 `needs_human` 结果若声称 `error_retryable` 或
+`error_authorization_required` 为真，说明它仍在报告运行时失败，不能作为规则决策展示；启动修复将其
+收口为 `failed` 并保留该结果给 History 排查。
 
 新 wire 结果的四字段均为必填并严格校验。旧 `final_result_json` hydration 仅可受控补齐
 `rule_coverage=1.0`、`information_completeness=1.0`，保留旧的 `risk`/`confidence`；原始历史

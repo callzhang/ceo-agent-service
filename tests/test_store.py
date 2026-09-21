@@ -15,10 +15,6 @@ from threading import Barrier, Event, Thread
 import pytest
 
 import app.store as store_module
-from app.decision_quality import (
-    StoredNeedsHumanProjection,
-    classify_stored_needs_human_projection,
-)
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
@@ -5803,18 +5799,12 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
         ).fetchone()[0] == 1
 
 
-def test_handoff_failed_oa_authorization_creates_valid_terminal_choice(tmp_path: Path):
+def test_reconcile_authorization_needs_human_projection_to_failed(tmp_path: Path):
+    """A fabricated action authorization choice closes as a technical failure."""
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
     assert task is not None
-    instance_id = "instance-1"
-    oa_task_id = "oa-task-1"
-    with store._connect() as db:
-        db.execute(
-            "update reply_tasks set business_object_key=? where id=?",
-            (f"oa:{instance_id}:{oa_task_id}", task_id),
-        )
     attempt_id = store.record_reply_attempt(
         conversation_id=task.conversation_id,
         conversation_title=task.conversation_title,
@@ -5823,34 +5813,55 @@ def test_handoff_failed_oa_authorization_creates_valid_terminal_choice(tmp_path:
         trigger_text=task.trigger_text,
         action="agent_run",
         sensitivity_kind="general",
-        oa_process_instance_id=instance_id,
-        oa_task_id=oa_task_id,
-        send_status="failed",
+        send_status="needs_human",
         channel=task.channel,
     )
-    store.fail_reply_task(
-        task_id,
-        "codex_process_failed",
-        expected_execution_generation=task.execution_generation,
-    )
+    result = {
+        "outcome": "needs_human",
+        "risk": "high",
+        "confidence": 0.2,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "decision_options": [
+            {
+                "key": "retry",
+                "label": "retry",
+                "instruction": "retry this action",
+                "consequence": "a provider action may happen",
+            },
+            {
+                "key": "stop",
+                "label": "stop",
+                "instruction": "do not retry",
+                "consequence": "the task remains incomplete",
+            },
+        ],
+        "error_code": "external_action_authorization_required",
+        "error_retryable": False,
+        "error_authorization_required": True,
+    }
+    with store._connect() as db:
+        run = db.execute(
+            """insert into agent_runs (
+                reply_task_id, execution_generation, role, status, final_result_json
+            ) values (?, ?, 'consumer', 'completed', ?)""",
+            (task.id, task.execution_generation, json.dumps(result)),
+        )
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (run.lastrowid, attempt_id),
+        )
+        db.execute(
+            "update reply_tasks set status='needs_human' where id=?", (task.id,)
+        )
 
-    run_id = store.handoff_failed_oa_authorization(
-        task_id=task_id,
-        instance_id=instance_id,
-        oa_task_id=oa_task_id,
-    )
-
-    run = store.get_agent_run(run_id)
-    assert run is not None
-    assert (
-        classify_stored_needs_human_projection(run.final_result_json)
-        is StoredNeedsHumanProjection.NEEDS_HUMAN
-    )
-    assert store.get_reply_task(task_id).status == "needs_human"
+    assert store.reconcile_invalid_needs_human_projections() == 1
     attempt = store.get_reply_attempt(attempt_id)
     assert attempt is not None
-    assert attempt.send_status == "needs_human"
-    assert attempt.agent_run_id == run_id
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "external_action_authorization_required"
+    assert attempt.human_decision_options_json == "[]"
+    assert store.get_reply_task(task.id).status == "failed"
 
 
 

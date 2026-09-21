@@ -165,3 +165,36 @@ def test_stored_needs_human_projection_requires_the_full_typed_rule_decision():
         )
         is StoredNeedsHumanProjection.INVALID
     )
+
+
+def test_stored_needs_human_projection_rejects_authorization_error():
+    """A runtime authorization error is not a reusable rule decision."""
+    result = {
+        "outcome": "needs_human",
+        "risk": "high",
+        "confidence": 0.2,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "decision_options": [
+            {
+                "key": "retry",
+                "label": "retry",
+                "instruction": "retry this action",
+                "consequence": "a provider action may happen",
+            },
+            {
+                "key": "stop",
+                "label": "stop",
+                "instruction": "do not retry",
+                "consequence": "the task remains incomplete",
+            },
+        ],
+        "error_code": "external_action_authorization_required",
+        "error_retryable": False,
+        "error_authorization_required": True,
+    }
+
+    assert (
+        classify_stored_needs_human_projection(result)
+        is StoredNeedsHumanProjection.INVALID
+    )
