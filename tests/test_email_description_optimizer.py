@@ -153,6 +153,8 @@ def test_description_proposal_is_complete_cited_and_does_not_mutate_active() -> 
     assert proposal.proposed.version != CURRENT.version
     assert set(proposal.cited_sample_ids) == {f"sample-{index}" for index in range(5)}
     assert CURRENT.core == "External legal rights and obligations."
+    assert seen[0]["source_snapshot_id"] == "snapshot-1"
+    assert seen[0]["source_snapshot_sha"] == "a" * 64
     assert seen[0]["examples"][0]["text"] == "redacted example 0"
 
 

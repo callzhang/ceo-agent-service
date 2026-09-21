@@ -1047,6 +1047,8 @@ def propose_description_update(
     payload = {
         "category": category,
         "category_pair": list(pair),
+        "source_snapshot_id": source_snapshot_id,
+        "source_snapshot_sha": source_snapshot_sha,
         "current_pair": pair_payload,
         "current": {
             "core": current.core,
