@@ -467,7 +467,7 @@ def test_codex_session_roles_resolve_both_transcripts_of_one_attempt(tmp_path: P
     assert audit == [{"id": attempt_id, "status": "skipped", "role": "audit"}]
 
 
-def test_attempt_detail_api_projects_exact_audit_linked_consumer_result_read_only(
+def test_attempt_detail_api_projects_latest_effective_run_result_read_only(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -510,12 +510,13 @@ def test_attempt_detail_api_projects_exact_audit_linked_consumer_result_read_onl
         task.id, task.execution_generation
     ) == before["runs"]
     assert item["consumer_result"] == {
-        "confidence": "82%",
-        "information_completeness": "75%",
-        "rule_coverage": "100%",
-        "risk": "medium",
+        "confidence": "10%",
+        "information_completeness": "20%",
+        "rule_coverage": "30%",
+        "risk": "high",
         "error_reason": "",
         "current_run": None,
+        "from_run_id": audit.id + 1,
     }
 
 
@@ -536,6 +537,7 @@ def test_attempt_detail_api_projects_direct_terminal_consumer_result(tmp_path: P
         "risk": "medium",
         "error_reason": "",
         "current_run": None,
+        "from_run_id": consumer.id,
     }
 
 
@@ -653,6 +655,7 @@ def test_attempt_detail_api_preserves_valid_metrics_from_partial_consumer_result
         "risk": "low",
         "error_reason": "",
         "current_run": None,
+        "from_run_id": consumer.id,
     }
 
 
@@ -693,7 +696,8 @@ def test_attempt_detail_api_recovers_consumer_when_audit_parent_link_is_missing(
     _, item = build_attempt_detail(store, attempt_id)
 
     assert item is not None
-    assert item["consumer_result"]["confidence"] == "82%"
+    assert item["consumer_result"]["confidence"] == "100%"
+    assert item["consumer_result"]["from_run_id"] == audit.id
     assert item["consumer_result"]["error_reason"] == ""
 
 
@@ -711,7 +715,8 @@ def test_attempt_detail_api_recovers_consumer_when_audit_parent_is_invalid(
     _, item = build_attempt_detail(store, attempt_id)
 
     assert item is not None
-    assert item["consumer_result"]["confidence"] == "82%"
+    assert item["consumer_result"]["confidence"] == "100%"
+    assert item["consumer_result"]["from_run_id"] == audit.id
     assert item["consumer_result"]["error_reason"] == ""
 
 
@@ -735,6 +740,7 @@ def test_attempt_detail_api_keeps_old_metrics_while_current_generation_is_pendin
         "risk": "medium",
         "error_reason": "",
         "current_run": {"id": None, "status": "pending"},
+        "from_run_id": consumer.id,
     }
 
     current_task = store.claim_reply_task(task.id)
@@ -760,4 +766,5 @@ def test_attempt_detail_api_keeps_old_metrics_while_current_generation_is_pendin
         "risk": "medium",
         "error_reason": "",
         "current_run": {"id": running.id, "status": "running"},
+        "from_run_id": consumer.id,
     }
