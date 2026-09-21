@@ -672,6 +672,8 @@ class DescriptionOptimizationOrchestrator:
                 ),
             )
             for row in raw_conflicts
+            if row.get("predicted_category") in configs
+            and row.get("confirmed_category") in configs
         )
         proposals = []
         for pair, cluster in cluster_description_conflicts(conflicts).items():

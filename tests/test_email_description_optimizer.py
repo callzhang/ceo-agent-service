@@ -566,6 +566,14 @@ def test_production_optimizer_combines_frozen_errors_and_folder_corrections_once
                     "redacted_text": f"folder correction {index}",
                 }
                 for index in range(2)
+            ] + [
+                {
+                    "sample_id": "legacy-important-head",
+                    "group_key": "legacy-important-head",
+                    "predicted_category": "important",
+                    "confirmed_category": "work",
+                    "redacted_text": "legacy independent importance output",
+                }
             ]
 
         def list_category_configs(self):
