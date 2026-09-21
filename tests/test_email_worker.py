@@ -259,6 +259,7 @@ def test_rejected_model_result_enters_pending_feedback_without_any_task(tmp_path
         "uid": 18,
         "providerUnread": False,
         "from": {"email": "alerts@news.pinterest.com"},
+        "subject": "项目pipeline更新",
     }
 
     persisted = _module().persist_model_pending_feedback(

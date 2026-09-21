@@ -61,14 +61,16 @@ def email_message_to_text(message: Mapping[str, object]) -> str:
     subject = _clean(message.get("subject"))
     body = _clean(message.get("markdownBody") or message.get("textBody"))
     body = body[:2048]
-    return " ".join(
-        (
-            f"__from_domain__{sender_domain}",
-            f"__from_hash__{exact_sender}",
-            f"__to__{_recipients(message, 'toRecipients')}",
-            f"__cc__{_recipients(message, 'ccRecipients')}",
-            f"__subject__{' '.join(jieba_lcut(subject))}",
-            " ".join(jieba_lcut(body)),
+    return _clean(
+        " ".join(
+            (
+                f"__from_domain__{sender_domain}",
+                f"__from_hash__{exact_sender}",
+                f"__to__{_recipients(message, 'toRecipients')}",
+                f"__cc__{_recipients(message, 'ccRecipients')}",
+                f"__subject__{' '.join(jieba_lcut(subject))}",
+                " ".join(jieba_lcut(body)),
+            )
         )
     )
 
