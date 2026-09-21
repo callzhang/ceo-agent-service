@@ -1264,6 +1264,41 @@ def test_promoted_runtime_owns_one_resident_batcher_and_closes_it(tmp_path):
     assert runtime.model_predict is None
 
 
+def test_promoted_runtime_can_widen_embedding_deadline_for_history(tmp_path):
+    first_id = "email-embedding-mlp-history-first"
+    model_id = "email-embedding-mlp-history"
+    first_bytes = b"history-first"
+    artifact_bytes = b"history"
+    registry = _ActivationRegistry(
+        tmp_path / "registry",
+        (
+            _mature_evidence(first_id, sha256(first_bytes).hexdigest()),
+            _mature_evidence(model_id, sha256(artifact_bytes).hexdigest()),
+        ),
+    )
+    (registry.embedding_artifacts / f"{first_id}.artifact").write_bytes(first_bytes)
+    artifact = registry.embedding_artifacts / f"{model_id}.artifact"
+    artifact.write_bytes(artifact_bytes)
+    _activate_test_model(
+        registry,
+        model_id,
+        classifier_loader=lambda _path: _LoadedOnlineModel(),
+    )
+
+    runtime = PromotedEmailClassifierRuntime(
+        registry,
+        classifier_loader=lambda _path: _LoadedOnlineModel(),
+        embedding_client_factory=lambda _model: _EmbeddingClient(),
+        cache_factory=lambda _model: _ExactCache(),
+        embedding_remote_timeout_seconds=30.0,
+    )
+    try:
+        assert runtime.embedding_batcher is not None
+        assert runtime.embedding_batcher.remote_timeout_seconds == 30.0
+    finally:
+        runtime.close()
+
+
 def test_promoted_runtime_owned_generation_closes_client_once_on_revoke(tmp_path):
     first_id = "email-embedding-mlp-owned-first"
     model_id = "email-embedding-mlp-owned"

@@ -33,6 +33,9 @@ from app.email_worker import (
 from app.store import AutoReplyStore
 
 
+HISTORY_EMBEDDING_TIMEOUT_SECONDS = 30.0
+
+
 @dataclass(frozen=True)
 class EmailDiscoveryBootstrap:
     """Only the resources needed to discover and enqueue new Email work."""
@@ -71,6 +74,7 @@ def build_email_discovery_dependencies(
         return PromotedEmailClassifierRuntime(
             model_registry,
             observability_store=email_store,
+            embedding_remote_timeout_seconds=HISTORY_EMBEDDING_TIMEOUT_SECONDS,
         )
 
     def scan_account(

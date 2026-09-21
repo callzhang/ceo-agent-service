@@ -69,6 +69,29 @@ def test_email_scheduled_command_without_accounts_is_an_idempotent_noop() -> Non
     assert summary == "email-message-check-once accounts=0 discovered=0 failures=0"
 
 
+def test_scheduled_loader_widens_only_the_history_embedding_deadline(
+    tmp_path, monkeypatch
+) -> None:
+    captured = {}
+    runtime = SimpleNamespace()
+
+    def build_runtime(_registry, **kwargs):
+        captured.update(kwargs)
+        return runtime
+
+    monkeypatch.setattr(
+        "app.email_scheduled_command.PromotedEmailClassifierRuntime",
+        build_runtime,
+    )
+    bootstrap = build_email_discovery_dependencies(
+        SimpleNamespace(db_path=tmp_path / "history-timeout.sqlite3"),
+        source_factory=lambda _account: pytest.fail("source must not be opened"),
+    )
+
+    assert bootstrap.load_active_model() is runtime
+    assert captured["embedding_remote_timeout_seconds"] == 30.0
+
+
 def test_email_scheduled_command_reports_dependency_construction_failure() -> None:
     def fail(_settings):
         raise RuntimeError("discovery bootstrap unavailable")

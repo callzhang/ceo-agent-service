@@ -1073,7 +1073,10 @@ class PromotedEmailClassifierRuntime:
         cache_factory: Callable[[object], object] | None = None,
         latency: StageLatencyRecorder | None = None,
         observability_store: EmailStore | None = None,
+        embedding_remote_timeout_seconds: float = ONLINE_EMBEDDING_TIMEOUT_SECONDS,
     ) -> None:
+        if embedding_remote_timeout_seconds <= 0:
+            raise ValueError("embedding remote timeout must be positive")
         self.registry = registry
         self.learning_service = learning_service
         self._classifier_loader = classifier_loader
@@ -1090,6 +1093,9 @@ class PromotedEmailClassifierRuntime:
         )
         self.latency = latency or StageLatencyRecorder()
         self._observability_store = observability_store
+        self._embedding_remote_timeout_seconds = float(
+            embedding_remote_timeout_seconds
+        )
         self._lock = threading.RLock()
         self._snapshot = RuntimeSnapshot.agent_primary()
         self._generation: _RuntimeGeneration | None = None
@@ -1174,7 +1180,10 @@ class PromotedEmailClassifierRuntime:
             _verify_online_classifier_compatibility(classifier, compatibility)
             client = self._embedding_client_factory(classifier)
             cache = self._cache_factory(classifier)
-            batcher = OnlineEmbeddingMicrobatcher(client)
+            batcher = OnlineEmbeddingMicrobatcher(
+                client,
+                remote_timeout_seconds=self._embedding_remote_timeout_seconds,
+            )
             generation_latency = (
                 self.latency
                 if self._observability_store is None
