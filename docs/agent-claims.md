@@ -80,6 +80,7 @@ reverts committed work they did not author.
 
 | claude-delivery-ledger-collapse | app/worker.py (delivery projection only), app/store.py (delivery candidate query only), app/quality_gate.py, docs/superpowers/specs/2026-09-18-delivery-evidence-without-a-ledger-design.md, docs/agent-claims.md | Implemented in 721b7f58, awaiting deploy: collapse sent_replies/external_action_results into a projection derived from the run's own provider evidence (Derek 2026-09-18) | 2026-09-18 |
 | claude-minutes-access-requests | app/minutes_access.py, app/minutes_console_browser.py, app/config.py (`minutes_console_storage_state` only), app/cli.py (`request_minutes_access_command` and its registration only), app/agent_cron/commands.py (that one catalog entry), skills/ceo-minutes-sync/SKILL.md, tests/test_minutes_access.py, tests/test_cli.py and tests/test_agent_cron_seeds.py (catalog lists only), CHANGELOG.md, docs/agent-claims.md | Ask for access to the minutes the read API refuses, and rewrite the retired Skill as the two-step archive workflow (Derek 2026-09-18: 一个 skill，定时任务调取，先申请权限再下载) | 2026-09-18 |
+| codex-email-backfill-progress-design | docs/superpowers/specs/2026-09-21-email-backfill-progress-design.md, docs/agent-claims.md | Specify a fixed-snapshot, durable Agent/model email backfill run with truthful processed, remaining, review, provider-action, and error counts | 2026-09-21 |
 ## Recent overlaps worth knowing
 
 - 2026-09-19, Claude session `claude-email-model-input-budget`: the `reserved email
