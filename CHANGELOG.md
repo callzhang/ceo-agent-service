@@ -6,7 +6,7 @@
   attempt's Agent run to belong to the task's current execution generation.
   An older OA scan revision can no longer fail a newer task generation or
   appear as an additional current error beside that task. History's current
-  status view applies the same generation rule.
+  status view and its operation-log API apply the same generation rule.
 
 - 2026-09-22: `needs_human` now requires a clear reason and evidence chain from
   the current Agent run. OA authorizations must name one bounded action and

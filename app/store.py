@@ -28325,6 +28325,13 @@ class AutoReplyStore:
                     0 as follow_up_id
                 from reply_attempts
                 where not exists (
+                    select 1 from agent_runs as attempt_run
+                    join reply_tasks as current_task
+                      on current_task.id=attempt_run.reply_task_id
+                    where attempt_run.id=reply_attempts.agent_run_id
+                      and attempt_run.execution_generation<>current_task.execution_generation
+                )
+                  and not exists (
                     select 1
                     from agent_runs as historical_run
                     join reply_attempts as newer_attempt

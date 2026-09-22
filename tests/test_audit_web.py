@@ -2652,7 +2652,12 @@ def test_history_chart_projects_hidden_legacy_attempts_through_terminal_task(
                     reply_task_id, execution_generation, role, operation_id, status
                 ) values (?, ?, 'consumer', ?, 'completed')
                 """,
-                (task.id, f"legacy-chart-generation-{generation}", f"legacy-{generation}"),
+                    (
+                        task.id,
+                        task.execution_generation if generation == len(attempt_ids) - 1
+                        else f"legacy-chart-generation-{generation}",
+                        f"legacy-{generation}",
+                    ),
             )
             db.execute(
                 "update reply_attempts set agent_run_id=? where id=?",
@@ -8511,6 +8516,12 @@ def test_attention_does_not_repeat_old_generation_attempt_for_current_oa_task(
         item.source_id != attempt_id
         for item in store.list_history_items(send_statuses=("failed",))
     )
+    _, operation_logs = store.list_operation_logs_with_count(
+        limit=20,
+        statuses=("failed",),
+        source_tables=("reply_attempts",),
+    )
+    assert all(row.source_id != attempt_id for row in operation_logs)
 
 
 def test_worker_attempt_counts_hide_historical_needs_human_business_object(
