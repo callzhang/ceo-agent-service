@@ -1,6 +1,6 @@
-# Task-first semantic storage (Tasks 1–2)
+# Task-first semantic storage (Tasks 1–3)
 
-This document describes the storage and atomic commands introduced by Tasks 1–2 of the approved
+This document describes the storage, atomic commands, and decision rules introduced by Tasks 1–3 of the approved
 [implementation plan](superpowers/plans/2026-09-22-task-first-tasks.md). It does
 not describe a deployed Task Agent cutover. The runtime, console, providers,
 and legacy import workflow still belong to later tasks.
@@ -125,6 +125,18 @@ A merged source remains historical. A fresh promotion, update, or acceptance
 against it is rejected before signal persistence; it is not redirected to the
 merge target. Merges remain one hop and reject already merged endpoints or a
 source that itself has incoming merges.
+
+Formal task creation and candidate promotion require structured
+`FormalityEvidence`. The service derives the formal basis, commitment status,
+and missing-owner evidence through `resolve_formality`; unauthorized
+assignments and implicit deliverables are rejected before persistence. A
+meeting action item with an explicit deliverable can be formal while its owner
+is unresolved, in which case `owner` is recorded as missing evidence.
+
+Same-deliverable merging requires structured `IdentityEvidence`. The service
+merges only when the evidence identifies the same external task, cites an
+explicit source reference, or establishes the full deliverable/owner/context/
+time-window match. Weaker identity evidence is insufficient for merging.
 
 ## Repair verification
 
