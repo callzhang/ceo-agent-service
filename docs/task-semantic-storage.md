@@ -1,6 +1,7 @@
-# Task-first semantic storage (Tasks 1–3)
+# Task-first semantic storage and business resolution (Tasks 1–4)
 
-This document describes the storage, atomic commands, and decision rules introduced by Tasks 1–3 of the approved
+This document describes the storage, atomic commands, decision rules, and business
+resolution commands introduced by Tasks 1–4 of the approved
 [implementation plan](superpowers/plans/2026-09-22-task-first-tasks.md). It does
 not describe a deployed Task Agent cutover. The runtime, console, providers,
 and legacy import workflow still belong to later tasks.
@@ -67,7 +68,7 @@ Task event APIs; attention projections remain later work.
 - Anchors have a registered type/reference, title, and active flag. The supported
   types represent the design's project, OKR, customer, product, revenue, financing,
   cash, key-hire, personnel, company-priority, and matter concepts. Registration
-  authority and relevance derivation are later resolution-service behavior.
+  authority and relevance derivation belong to `BusinessResolutionService`.
 - Task/anchor links carry confirmation status, a separate active flag, and a
   required evidence signal. An official project references a unique canonical
   anchor using a composite foreign key that requires the anchor's type to be
@@ -137,6 +138,44 @@ Same-deliverable merging requires structured `IdentityEvidence`. The service
 merges only when the evidence identifies the same external task, cites an
 explicit source reference, or establishes the full deliverable/owner/context/
 time-window match. Weaker identity evidence is insufficient for merging.
+
+## Business resolution commands
+
+`BusinessResolutionService` supplies the transaction boundary for clusters,
+typed Task relations, registered anchors, official Projects, Project candidates,
+and Task relevance. It does not expose an API or run classification. Every
+command operates on persisted IDs and validates referenced Tasks, anchors,
+Projects, candidates, and evidence signals in the same write transaction.
+
+A cluster groups existing Tasks through membership rows. It never rewrites a
+member's owner, deadline, lifecycle status, or commitment status. Proposing a
+Project for a cluster creates only a `business_project_candidates` row. An
+official `business_projects` row can be registered only from an active canonical
+anchor whose type is `project`, with a nonblank canonical registry source.
+Confirming a Project candidate requires an already persisted official Project
+and evidence signal; confirmation links the two existing rows and does not
+create a Project.
+
+Task relations require two existing, distinct Tasks and a persisted supporting
+signal. They do not merge either Task. Proposed Task/anchor links also require a
+persisted signal and leave Task relevance unchanged.
+
+Anchor confirmation records the decision, links its evidence to the Task with
+the typed `relevance` role, and recalculates the Task from every confirmed link
+inside one transaction. A Task is `relevant` when at least one confirmed active
+link points to an active registered anchor. An explicit `not_relevant` decision
+is stored as a confirmed inactive link and applies only when no confirmed active
+anchor remains. With neither condition, relevance is `unknown`. When the derived
+value changes, the same transaction updates the Task timestamps and appends a
+`relevance_changed` event containing the before and after Task snapshots. A
+failure in any of these writes rolls the link, evidence, Task update, and event
+back together.
+
+The default projection input includes `unknown` and `relevant` Tasks. Confirmed
+`not_relevant` Tasks remain available through ordinary filtered Task search but
+are excluded from that projection input. No command treats free text, model
+confidence, a cluster, or a Project candidate as authority for relevance or
+official Project creation.
 
 ## Repair verification
 

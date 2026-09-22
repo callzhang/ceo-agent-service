@@ -116,16 +116,24 @@ from app.task_models import (
     WorkUpdate,
 )
 from app.task_semantic_models import (
+    BusinessAnchor,
+    BusinessAnchorType,
     BusinessEvidenceRole,
     BusinessProject,
+    BusinessProjectCandidate,
+    BusinessRelationStatus,
+    BusinessRelationType,
     BusinessRelevance,
     BusinessTask,
+    BusinessTaskAnchorLink,
     BusinessTaskEvidence,
     BusinessTaskEvent,
     BusinessTaskEventType,
+    BusinessTaskRelation,
     BusinessTaskSignal,
     BusinessTaskStage,
     BusinessTaskStatus,
+    BusinessWorkCluster,
     CommitmentStatus,
     FormalTaskBasis,
 )
@@ -6609,6 +6617,210 @@ class AutoReplyStore:
                 (task_id,),
             ).fetchall()
             return [BusinessProject.model_validate(dict(row)) for row in rows]
+
+    # Task 4 resolution primitives deliberately accept an existing transaction.
+    # The resolution service owns the policy and composes these rows atomically.
+    def create_business_work_cluster_in_transaction(
+        self, *, title: str, _db: sqlite3.Connection
+    ) -> int:
+        cluster = BusinessWorkCluster(id=0, title=title, created_at="")
+        return int(_db.execute(
+            "insert into business_work_clusters (title) values (?)", (cluster.title,)
+        ).lastrowid)
+
+    def add_business_work_cluster_task_in_transaction(
+        self, *, cluster_id: int, task_id: int, _db: sqlite3.Connection
+    ) -> None:
+        _db.execute(
+            "insert into business_work_cluster_tasks (cluster_id, task_id) values (?, ?)",
+            (cluster_id, task_id),
+        )
+
+    def get_business_anchor_in_transaction(
+        self, *, anchor_id: int, _db: sqlite3.Connection
+    ) -> BusinessAnchor | None:
+        row = _db.execute(
+            "select * from business_anchors where id=?", (anchor_id,)
+        ).fetchone()
+        return BusinessAnchor.model_validate(dict(row)) if row is not None else None
+
+    def get_business_anchor_by_identity_in_transaction(
+        self,
+        *,
+        anchor_type: BusinessAnchorType | str,
+        anchor_ref: str,
+        _db: sqlite3.Connection,
+    ) -> BusinessAnchor | None:
+        selected_type = BusinessAnchorType(anchor_type)
+        row = _db.execute(
+            "select * from business_anchors where anchor_type=? and anchor_ref=?",
+            (selected_type.value, anchor_ref),
+        ).fetchone()
+        return BusinessAnchor.model_validate(dict(row)) if row is not None else None
+
+    def get_business_task_anchor_link_in_transaction(
+        self, *, task_id: int, anchor_id: int, _db: sqlite3.Connection
+    ) -> BusinessTaskAnchorLink | None:
+        row = _db.execute(
+            "select * from business_task_anchor_links where task_id=? and anchor_id=?",
+            (task_id, anchor_id),
+        ).fetchone()
+        return (
+            BusinessTaskAnchorLink.model_validate(dict(row))
+            if row is not None
+            else None
+        )
+
+    def get_business_project_candidate_in_transaction(
+        self, *, candidate_id: int, _db: sqlite3.Connection
+    ) -> BusinessProjectCandidate | None:
+        row = _db.execute(
+            "select * from business_project_candidates where id=?", (candidate_id,)
+        ).fetchone()
+        return (
+            BusinessProjectCandidate.model_validate(dict(row))
+            if row is not None
+            else None
+        )
+
+    def get_business_project_in_transaction(
+        self, *, project_id: int, _db: sqlite3.Connection
+    ) -> BusinessProject | None:
+        row = _db.execute(
+            "select * from business_projects where id=?", (project_id,)
+        ).fetchone()
+        return BusinessProject.model_validate(dict(row)) if row is not None else None
+
+    def derive_business_task_relevance_in_transaction(
+        self, *, task_id: int, _db: sqlite3.Connection
+    ) -> BusinessRelevance:
+        rows = _db.execute(
+            """
+            select link.status, link.active as link_active, anchor.active as anchor_active
+            from business_task_anchor_links as link
+            join business_anchors as anchor on anchor.id=link.anchor_id
+            where link.task_id=?
+            """,
+            (task_id,),
+        ).fetchall()
+        if any(
+            row["status"] == BusinessRelationStatus.CONFIRMED.value
+            and bool(row["link_active"])
+            and bool(row["anchor_active"])
+            for row in rows
+        ):
+            return BusinessRelevance.RELEVANT
+        if any(
+            row["status"] == BusinessRelationStatus.CONFIRMED.value
+            and not bool(row["link_active"])
+            for row in rows
+        ):
+            return BusinessRelevance.NOT_RELEVANT
+        return BusinessRelevance.UNKNOWN
+
+    def create_business_task_relation_in_transaction(
+        self, *, from_task_id: int, to_task_id: int,
+        relation_type: BusinessRelationType | str,
+        status: BusinessRelationStatus | str,
+        supporting_signal_id: int, reason: str = "", _db: sqlite3.Connection,
+    ) -> int:
+        relation = BusinessTaskRelation(
+            from_task_id=from_task_id, to_task_id=to_task_id, relation_type=relation_type,
+            status=status, supporting_signal_id=supporting_signal_id, reason=reason, created_at="",
+        )
+        return int(_db.execute(
+            """insert into business_task_relations
+               (from_task_id, to_task_id, relation_type, status, supporting_signal_id, reason)
+               values (?, ?, ?, ?, ?, ?)""",
+            (relation.from_task_id, relation.to_task_id, relation.relation_type.value,
+             relation.status.value, relation.supporting_signal_id, relation.reason),
+        ).lastrowid)
+
+    def create_business_anchor_in_transaction(
+        self, *, anchor_type: BusinessAnchorType | str, anchor_ref: str, title: str,
+        active: bool = True, _db: sqlite3.Connection,
+    ) -> int:
+        anchor = BusinessAnchor(
+            id=0, anchor_type=anchor_type, anchor_ref=anchor_ref, title=title,
+            active=active, created_at="",
+        )
+        return int(_db.execute(
+            """insert into business_anchors (anchor_type, anchor_ref, title, active)
+               values (?, ?, ?, ?)""",
+            (anchor.anchor_type.value, anchor.anchor_ref, anchor.title, int(anchor.active)),
+        ).lastrowid)
+
+    def create_business_task_anchor_link_in_transaction(
+        self, *, task_id: int, anchor_id: int, status: BusinessRelationStatus | str,
+        active: bool, evidence_signal_id: int, reason: str = "", _db: sqlite3.Connection,
+    ) -> None:
+        link = BusinessTaskAnchorLink(
+            task_id=task_id, anchor_id=anchor_id, status=status, active=active,
+            evidence_signal_id=evidence_signal_id, reason=reason, created_at="",
+        )
+        _db.execute(
+            """insert into business_task_anchor_links
+               (task_id, anchor_id, status, active, evidence_signal_id, reason)
+               values (?, ?, ?, ?, ?, ?)
+               on conflict(task_id, anchor_id) do update set
+                 status=excluded.status, active=excluded.active,
+                 evidence_signal_id=excluded.evidence_signal_id, reason=excluded.reason""",
+            (link.task_id, link.anchor_id, link.status.value, int(link.active),
+             link.evidence_signal_id, link.reason),
+        )
+
+    def create_business_project_in_transaction(
+        self, *, canonical_anchor_id: int, title: str, _db: sqlite3.Connection
+    ) -> int:
+        project = BusinessProject(
+            id=0, canonical_anchor_id=canonical_anchor_id, title=title, created_at=""
+        )
+        return int(_db.execute(
+            "insert into business_projects (canonical_anchor_id, title) values (?, ?)",
+            (project.canonical_anchor_id, project.title),
+        ).lastrowid)
+
+    def create_business_project_candidate_in_transaction(
+        self, *, cluster_id: int, title: str, reason: str, _db: sqlite3.Connection
+    ) -> int:
+        candidate = BusinessProjectCandidate(
+            id=0, cluster_id=cluster_id, title=title, reason=reason, created_at=""
+        )
+        return int(_db.execute(
+            "insert into business_project_candidates (cluster_id, title, reason) values (?, ?, ?)",
+            (candidate.cluster_id, candidate.title, candidate.reason),
+        ).lastrowid)
+
+    def confirm_business_project_candidate_in_transaction(
+        self, *, candidate_id: int, project_id: int, _db: sqlite3.Connection
+    ) -> None:
+        cursor = _db.execute(
+            """update business_project_candidates set status='confirmed', confirmed_project_id=?
+               where id=? and status='proposed'""", (project_id, candidate_id)
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("project candidate must exist and be proposed")
+
+    def get_business_project_candidate(self, candidate_id: int) -> BusinessProjectCandidate | None:
+        with self._connect() as db:
+            row = db.execute("select * from business_project_candidates where id=?", (candidate_id,)).fetchone()
+            return BusinessProjectCandidate.model_validate(dict(row)) if row else None
+
+    def get_business_project(self, project_id: int) -> BusinessProject | None:
+        with self._connect() as db:
+            row = db.execute("select * from business_projects where id=?", (project_id,)).fetchone()
+            return BusinessProject.model_validate(dict(row)) if row else None
+
+    def list_business_projects(self) -> list[BusinessProject]:
+        with self._connect() as db:
+            rows = db.execute("select * from business_projects order by id").fetchall()
+            return [BusinessProject.model_validate(dict(row)) for row in rows]
+
+    def list_business_tasks_for_projection(self) -> tuple[BusinessTask, ...]:
+        """Business-only input for later projections; keeps non-relevant tasks searchable."""
+        return self.list_business_tasks(
+            relevance=(BusinessRelevance.UNKNOWN, BusinessRelevance.RELEVANT)
+        )
 
     def backfill_scheduled_task_runtime_capabilities(
         self,
