@@ -1259,6 +1259,14 @@ def test_consumer_resumes_session_when_agent_capability_contract_changes(
     )
 
 
+def test_service_agent_instructions_skip_interactive_memory_bootstrap() -> None:
+    instructions = consumer_developer_instructions("Verify supported facts.")
+
+    assert "background service turn" in instructions
+    assert "do not call `memory_connector.user_get` as a session-start prerequisite" in instructions
+    assert "current work profile is already injected" in instructions
+
+
 def test_consumer_retryable_failure_without_tool_progress_preserves_session(
     store, task, context
 ):

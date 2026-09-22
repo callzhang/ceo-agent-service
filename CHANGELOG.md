@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-22: Consumer and Audit turns now identify themselves as background
+  service executions whose current work profile is already injected. Interactive
+  `memory_connector.user_get` bootstrap rules no longer become an unrelated hard
+  dependency for every DingTalk reply, while task-specific Memory reads remain
+  available when durable memory evidence is actually required.
+
 - 2026-09-22: Audit no longer turns service-owned DingTalk feedback callbacks
   into an impossible Consumer revision loop, and provider confirmation flags
   named either `confirmation_required` or `authorization_required` are treated

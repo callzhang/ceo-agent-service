@@ -1055,4 +1055,11 @@ def _role_developer_instructions(
         "for this turn. Do not reopen AGENT.md with shell, Python, or a native "
         "command tool; use the selected Skill capability for additional material."
     )
+    instructions += (
+        "\n\nThis is a background service turn, not an interactive Codex session. "
+        "The current work profile is already injected below, so interactive session "
+        "bootstrap requirements do not apply: do not call `memory_connector.user_get` "
+        "as a session-start prerequisite. Use Memory tools only when the current "
+        "business task specifically needs durable memory evidence."
+    )
     return instructions + "\n\n## Role Boundary\n" + role_boundary
