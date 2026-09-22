@@ -618,6 +618,9 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     assert task.trigger_message_id.startswith("oa-pending:proc-1:")
     assert "张三提交的录用申请" in task.trigger_text
     assert "申请人的最新明确陈述是其申请事实的权威来源" not in task.trigger_text
+    assert "审批判断与动作一律以 dingtalk-oa-approval 为准" not in task.trigger_text
+    assert "通用 Skill 只定义审批机制与材料核验边界" in task.trigger_text
+    assert "live processCode 精确匹配的业务规则卡" in task.trigger_text
     assert "procInstId=proc-1&taskId=102648910080" in task.oa_url
     assert '"source":"oa_pending_scan"' in task.trigger_message_json
     payload = json.loads(task.trigger_message_json)
@@ -1549,4 +1552,5 @@ def test_scan_pending_oa_approvals_points_the_turn_at_our_own_skill(tmp_path):
     [task] = store.claim_reply_tasks(limit=1)
     assert "dingtalk-oa-approval/SKILL.md" in task.trigger_text
     # The vendor reference may still be mentioned, but only as command usage.
-    assert "审批判断与动作一律以 dingtalk-oa-approval 为准" in task.trigger_text
+    assert "dingtalk-misc 的 references/oa.md 只作为 dws 命令用法参考" in task.trigger_text
+    assert "审批判断与动作一律以 dingtalk-oa-approval 为准" not in task.trigger_text

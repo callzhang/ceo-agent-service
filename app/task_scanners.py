@@ -616,7 +616,8 @@ def scan_pending_oa_approvals(
                 "并按其中的原则、风险与确信度口径、information_completeness 与 "
                 "rule_coverage 评分规则和动作选择执行；"
                 "dingtalk-misc 的 references/oa.md 只作为 dws 命令用法参考，"
-                "审批判断与动作一律以 dingtalk-oa-approval 为准。"
+                "通用 Skill 只定义审批机制与材料核验边界；模板级动作服从本次 "
+                "Scheduled Consumer 所选、且与 live processCode 精确匹配的业务规则卡。"
                 "在此前提下审阅完整审批材料、历史处理记录和当前节点。"
             ),
             raw_payload={

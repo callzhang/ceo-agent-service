@@ -30,14 +30,17 @@ def test_same_saved_rules_render_under_fixed_role_wrappers(
     assert "do not rewrite the candidate" in audit
 
 
-def test_default_oa_rules_trust_the_actual_applicant_statement():
+def test_default_oa_rules_keep_material_and_policy_gaps_separate():
     rules = SEED_AUDIT_RULES_TEMPLATE.read_text(encoding="utf-8")
 
-    assert "the actual applicant is the authoritative source" in rules
-    assert "do not require a separate source-system read to corroborate it" in rules
-    assert "do not let a stale or conflicting source-system view override it" in rules
-    assert "do not introduce a new supplementary requirement in that review cycle" in rules
-    assert "is not a missing mandatory field and must not delay approval" in rules
+    assert "actual applicant is authoritative" in rules
+    assert "cannot create, replace, or close a rule" in rules
+    assert "stardust-oa-finance-review" in rules
+    assert "live `processCode`" in rules
+    assert "sole authority for the template action" in rules
+    assert "cannot be reported as 100%" in rules
+    assert "cannot close that policy gap" in rules
+    assert "Do not introduce a new factual requirement" in rules
 
 
 def test_default_rules_do_not_treat_consumer_audit_clock_progress_as_conflict():

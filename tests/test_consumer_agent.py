@@ -361,16 +361,19 @@ def test_consumer_and_audit_instructions_include_current_work_profile(
         assert "profile 不能覆盖既有硬规则" in instructions
 
 
-def test_consumer_and_audit_instructions_treat_oa_applicant_as_authoritative():
+def test_consumer_and_audit_instructions_keep_oa_material_and_policy_gaps_separate():
     consumer = consumer_developer_instructions("Verify supported facts.")
     audit = audit_developer_instructions("Verify supported facts.")
 
     for instructions in (consumer, audit):
-        assert "the actual OA applicant is authoritative" in instructions
-        assert "Do not require another source to corroborate that statement" in instructions
-        assert "must not override the applicant" in instructions
-        assert "Do not introduce a new supplementary requirement in that review cycle" in instructions
-        assert "must not delay approval" in instructions
+        assert "actual OA applicant is authoritative" in instructions
+        assert "cannot create, replace, or close a rule" in instructions
+        assert "stardust-oa-finance-review" in instructions
+        assert "live `processCode`" in instructions
+        assert "sole authority for the template action" in instructions
+        assert "cannot be reported as 100%" in instructions
+        assert "cannot close that policy gap" in instructions
+        assert "Do not introduce a new factual requirement" in instructions
 
 
 def test_consumer_contract_hash_changes_with_work_profile(tmp_path, monkeypatch):
@@ -698,6 +701,18 @@ def test_consumer_oa_contract_never_requires_fields_absent_from_current_stage():
     assert "Do not import fields from a later business stage" in instructions
     assert "Rules stated in this contract are active service behavior" in instructions
     assert "do not describe its implementation as pending" in instructions
+
+
+def test_consumer_oa_finance_rule_card_keeps_material_and_policy_gaps_separate():
+    instructions = consumer_developer_instructions("Verify supported facts.")
+
+    assert "stardust-oa-finance-review" in instructions
+    assert "live `processCode`" in instructions
+    assert "sole authority for the template action" in instructions
+    assert "cannot be reported as 100%" in instructions
+    assert "comment the applicant" in instructions
+    assert "independently return `needs_human`" in instructions
+    assert "cannot close that policy gap" in instructions
 
 
 def test_consumer_instructions_autonomously_resolve_low_consequence_choices():

@@ -345,17 +345,24 @@ changed, explain the concrete risk boundary, and tell the requester not to act
 as though it were approved. This is an executable fallback, not needs_human.
 
 For DingTalk OA, read `~/.agents/skills/dingtalk-oa-approval/SKILL.md` for the
-approval rules and action choice, `dingtalk-misc/references/oa.md` only for dws
-command usage, and the latest canonical approval detail. The approval rules live
-in our own Skill: naming the vendor reference as the authority sent turns to read
-that instead, and `dws upgrade` overwrites the vendor Skills, so a rule written
-there does not survive. If the process is still running but a document, attachment, or
-other fact can be supplied by the applicant, comment on the original approval
-with the exact missing material and next step, then notify the actual applicant;
-keep the approval pending and do not ask Derek to choose. A timestamp without a
-timezone is not a business conflict: interpret it as Asia/Shanghai, convert it to
-UTC for comparison, and preserve the raw value for audit display. If the process
-or current task is already handled, return `no_action`.
+general review mechanism, material reading, and action boundaries,
+`dingtalk-misc/references/oa.md` only for dws command usage, and the latest
+canonical approval detail. The generic rules live in our own Skill: naming the
+vendor reference as the authority sent turns to read that instead, and `dws upgrade`
+overwrites the vendor Skills, so a rule written there does not survive. For a
+scheduled Stardust finance review, only the complete active
+`stardust-oa-finance-review` rule card that exactly matches the live `processCode`
+is the sole authority for the template action. A missing, partial, source-pending,
+or unmatched card cannot be reported as 100% rule coverage and requires an
+independent `needs_human`; do not infer its action from the generic Skill. If the
+process is still running and a document, attachment, or other fact can be supplied
+by the applicant, comment on the original approval with the exact missing material
+and next step, then notify the actual applicant. When that material gap also has a
+policy gap, preserve the independent `needs_human`: an applicant reply cannot close
+that policy gap. A timestamp without a timezone is not a business conflict:
+interpret it as Asia/Shanghai, convert it to UTC for comparison, and preserve the
+raw value for audit display. If the process or current task is already handled,
+return `no_action`.
 A field absent from the current OA form cannot be treated as mandatory. Do not import fields from a later business stage,
 a different form, or a reviewer preference into the current approval gate.
 Rules stated in this contract are active service behavior. When a request asks for an already active rule, acknowledge the

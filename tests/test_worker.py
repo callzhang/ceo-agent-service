@@ -2023,6 +2023,48 @@ def test_scheduled_service_trigger_persists_consumer_context_on_new_reply_task(
     assert payload["raw_payload"]["scheduled_consumer"] == context.to_payload()
 
 
+def test_worker_restores_finance_oa_scheduled_consumer_snapshot(
+    tmp_path, monkeypatch
+):
+    worker = make_worker(tmp_path, FakeDws([], {}), FakeCodex([]), monkeypatch)
+    scheduled_consumer = ServiceCommandConsumerContext(
+        scheduled_task_id=7,
+        scheduled_task_run_id=11,
+        prompt=(
+            "使用 $dingtalk-oa-approval 与 $stardust-oa-finance-review "
+            "审阅真实 DingTalk OA。"
+        ),
+        skill_names=("dingtalk-oa-approval", "stardust-oa-finance-review"),
+        skill_protocol="# Stardust finance OA review",
+    )
+    trigger = message("请处理财务 OA", message_id="oa-message-1")
+    trigger.raw_payload["scheduled_consumer"] = scheduled_consumer.to_payload()
+    assert worker.store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        channel="dingtalk",
+    )
+
+    [task] = worker.store.peek_reply_tasks(limit=1, channel="dingtalk")
+    context = worker._build_agent_task_context(
+        conversation=conversation(),
+        task=task,
+        trigger=trigger,
+        context_messages=[trigger],
+    )
+
+    assert context.consumer_prompt == scheduled_consumer.prompt
+    assert context.skill_protocol_override == scheduled_consumer.skill_protocol
+    assert context.skill_names == scheduled_consumer.skill_names
+    assert "scheduled_consumer" not in context.trigger_raw_payload
+
+
 def test_disabled_calendar_invite_leaves_new_calendar_task_uncreated(tmp_path, monkeypatch):
     dws = FakeDws([], {})
     worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
