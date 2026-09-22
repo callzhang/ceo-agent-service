@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-21: Reply-task recovery now follows the latest attempt even when the
+  stale task is `needs_human`, not only when it is `failed`. A selected human
+  decision is terminal `done`; a failed attempt with persisted settlement
+  evidence is also `done`; and a durable delivery ledger closes either stale
+  projection without replaying the provider action. Read-only external
+  readback can close an already-settled task while retaining resolved evidence
+  instead of creating a new Attention error.
+
 - 2026-09-21: OA recovery now reconciles the principal's exact approval task,
   not only the process-wide status. After a complete pending-task scan, an old
   task is terminal when its `taskId` is no longer pending even if a redirect or

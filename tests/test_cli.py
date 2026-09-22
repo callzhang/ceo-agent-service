@@ -168,7 +168,7 @@ def test_service_start_reconciles_invalid_human_projections(monkeypatch):
         skip_failed_reply_tasks_superseded_by_terminal_business_object=method(
             "superseded"
         ),
-        reconcile_failed_reply_tasks_with_terminal_attempts=method("attempts"),
+        reconcile_unresolved_reply_tasks_with_terminal_attempts=method("attempts"),
         skip_failed_reply_tasks_with_terminal_no_action_run=method("no-action"),
         reconcile_invalid_needs_human_projections=method(
             "invalid-human", 1

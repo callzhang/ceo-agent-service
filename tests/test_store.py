@@ -2834,6 +2834,54 @@ def test_reconcile_preserves_done_task_with_recorded_message_delivery(
     assert updated.status == "done"
 
 
+def test_reconcile_recorded_delivery_closes_needs_human_task(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-recorded-needs-human",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-recorded-needs-human",
+        trigger_create_time="2026-09-20 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please handle this",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    ).run
+    store.complete_agent_run(consumer.id, {"outcome": "proposal"}, owner="consumer")
+    store.record_completed_agent_message_delivery(
+        agent_run_id=consumer.id,
+        external_action_key="recorded-needs-human",
+        business_object_key=task.business_object_key,
+        action_identity="reply",
+        operation="message.send",
+        target_identifiers={"conversation_id": task.conversation_id},
+        conversation_id=task.conversation_id,
+        trigger_message_id=task.trigger_message_id,
+        reply_text="Already delivered.",
+        provider_result={"message_id": "provider-message-1"},
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='needs_human', error=? where id=?",
+            ("provider_effect_unreconciled", task.id),
+        )
+
+    assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "done"
+    assert updated.error == ""
+
+
 def test_complete_reply_task_never_hides_failed_current_run(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
@@ -3115,6 +3163,7 @@ def test_history_hides_legacy_duplicate_attempt_projections_for_one_reply_task(
     ("attempt_status", "expected_task_status"),
     (
         ("completed", "done"),
+        ("decision_selected", "done"),
         ("skipped", "skipped"),
         ("needs_human", "needs_human"),
     ),
@@ -3151,7 +3200,7 @@ def test_failed_reply_task_follows_latest_terminal_trigger_attempt(
         send_status=attempt_status,
     )
 
-    assert store.reconcile_failed_reply_tasks_with_terminal_attempts() == 1
+    assert store.reconcile_unresolved_reply_tasks_with_terminal_attempts() == 1
     updated = store.get_reply_task(task.id)
     assert updated is not None
     assert updated.status == expected_task_status
@@ -3160,6 +3209,86 @@ def test_failed_reply_task_follows_latest_terminal_trigger_attempt(
     # `skipped` with an empty error and nothing said a provider overload had
     # cut it short.
     assert updated.error == "reconciled_from_failed:codex_result_missing"
+
+
+def test_needs_human_task_follows_resolved_failed_attempt(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-settled-attempt",
+        conversation_title="Management",
+        single_chat=True,
+        trigger_message_id="msg-settled-attempt",
+        trigger_create_time="2026-09-20 09:00:00",
+        trigger_sender="Derek",
+        trigger_text="Handle this.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='needs_human', error=? where id=?",
+            ("external_action_completed:verified readback", task.id),
+        )
+        db.execute(
+            "update reply_attempts set send_error='agent_reported_failure', "
+            "resolved_at=current_timestamp, resolution=? "
+            "where id=?",
+            ("Provider action was sent and read back.", attempt_id),
+        )
+
+    assert store.reconcile_unresolved_reply_tasks_with_terminal_attempts() == 1
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "done"
+    assert updated.error.startswith("reconciled_from_needs_human:")
+
+
+def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-calendar-readback",
+        conversation_title="Calendar invite",
+        single_chat=True,
+        trigger_message_id="msg-calendar-readback",
+        trigger_create_time="2026-09-20 09:00:00",
+        trigger_sender="Claire",
+        trigger_text="Calendar invite",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='needs_human', error=? where id=?",
+            ("calendar_response_not_executed", task.id),
+        )
+
+    assert store.close_unresolved_reply_task_already_settled(
+        task.id,
+        settled_evidence=(
+            "Live calendar readback shows the principal attendee accepted event-1."
+        ),
+    )
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "done"
+    with store._connect() as db:
+        error = db.execute(
+            "select resolved_at, resolution from errors "
+            "where conversation_id=? and message_id=? "
+            "order by id desc limit 1",
+            (task.conversation_id, task.trigger_message_id),
+        ).fetchone()
+    assert error is not None
+    assert error[0]
+    assert "accepted event-1" in error[1]
 
 
 def test_skip_failed_reply_task_with_terminal_no_action_run(tmp_path: Path) -> None:
@@ -12623,7 +12752,7 @@ def test_an_answered_question_can_close(tmp_path: Path):
     # The attempt has to leave `failed` too, or the next reconciliation sweep
     # projects the task back from it: 384446 and 384447 reopened one minute
     # after they were answered.
-    assert store.reconcile_failed_reply_tasks_with_terminal_attempts() == 0
+    assert store.reconcile_unresolved_reply_tasks_with_terminal_attempts() == 0
     assert store.get_reply_task(task.id).status == "done"
     # A task that is not waiting on anyone is not closed this way.
     assert not store.close_needs_human_task_with_decision(task.id, decision="again")

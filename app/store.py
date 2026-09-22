@@ -152,6 +152,7 @@ TERMINAL_REPLY_ATTEMPT_TASK_STATUSES = MappingProxyType(
         "commented": "done",
         "calendar": "done",
         "document": "done",
+        "decision_selected": "done",
         "skipped": "skipped",
         "needs_human": "needs_human",
     }
@@ -17682,7 +17683,7 @@ class AutoReplyStore:
                 update reply_tasks as tasks
                 set status='done', error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
-                where tasks.status='failed'
+                where tasks.status in ('failed', 'needs_human')
                   and exists (
                       select 1
                       from external_action_results as actions
@@ -17871,20 +17872,17 @@ class AutoReplyStore:
             )
             return True
 
-    def close_failed_reply_task_already_settled(
+    def close_unresolved_reply_task_already_settled(
         self,
         task_id: int,
         *,
         settled_evidence: str,
     ) -> bool:
-        """Close a failed task whose business object already reached its end state.
+        """Close an unresolved task whose business object reached its end state.
 
-        A task can fail because the work it proposed had already been done, by
-        the principal directly or by an earlier run. The turn reads live state,
-        finds nothing left to do, and still has to report something; with no
-        way to say "already settled" it reports a failure. Rerunning cannot
-        help and, on an approval, risks repeating a decision nobody asked to
-        repeat.
+        A task can remain failed or needs-human after the work was already
+        done by the principal directly or by an earlier run. Rerunning cannot
+        help and can repeat an irreversible action.
 
         This is the one closure not derived from anything the service itself
         did, so the live evidence that settles it is required and is written
@@ -17896,25 +17894,27 @@ class AutoReplyStore:
         with self._immediate_write_transaction() as db:
             task = db.execute(
                 "select conversation_id, trigger_message_id from reply_tasks "
-                "where id=? and status='failed'",
+                "where id=? and status in ('failed', 'needs_human')",
                 (task_id,),
             ).fetchone()
             if task is None:
                 return False
             db.execute(
-                "insert into errors (conversation_id, message_id, kind, detail) "
-                "values (?, ?, ?, ?)",
+                "insert into errors (conversation_id, message_id, kind, detail, "
+                "resolved_at, resolution) "
+                "values (?, ?, ?, ?, current_timestamp, ?)",
                 (
                     task["conversation_id"],
                     task["trigger_message_id"],
                     "reply_task_already_settled",
+                    evidence,
                     evidence,
                 ),
             )
             cursor = db.execute(
                 "update reply_tasks set status='done', error='', available_at='', "
                 "locked_at=null, updated_at=current_timestamp "
-                "where id=? and status='failed'",
+                "where id=? and status in ('failed', 'needs_human')",
                 (task_id,),
             )
             return cursor.rowcount == 1
@@ -21823,14 +21823,15 @@ class AutoReplyStore:
                 + trigger_attempt_cursor.rowcount
             )
 
-    def reconcile_failed_reply_tasks_with_terminal_attempts(self) -> int:
-        """Project the latest terminal trigger attempt onto an old failed task.
+    def reconcile_unresolved_reply_tasks_with_terminal_attempts(self) -> int:
+        """Project the latest terminal trigger attempt onto a stale task.
 
         A reply attempt records the business outcome for one exact channel,
         conversation, and trigger message.  If its latest state is terminal,
-        a stale failed reply-task projection cannot remain current: it would
-        show the same work both as settled in History and as an error in
-        Attention.  This only changes the local projection; it never invokes
+        a stale failed or needs-human reply-task projection cannot remain
+        current: it would show the same work both as settled in History and as
+        unresolved. A failed attempt with persisted resolution evidence is
+        also settled. This only changes the local projection; it never invokes
         a provider or replays the original action.
         """
         statuses = tuple(TERMINAL_REPLY_ATTEMPT_TASK_STATUSES)
@@ -21838,7 +21839,8 @@ class AutoReplyStore:
         with self._immediate_write_transaction() as db:
             rows = db.execute(
                 f"""
-                select tasks.id, tasks.execution_generation, attempts.send_status
+                select tasks.id, tasks.status, tasks.execution_generation,
+                       attempts.send_status, attempts.resolved_at
                 from reply_tasks as tasks
                 join reply_attempts as attempts on attempts.id=(
                     select latest.id
@@ -21849,17 +21851,29 @@ class AutoReplyStore:
                     order by latest.id desc
                     limit 1
                 )
-                where tasks.status='failed'
-                  and attempts.send_status in ({placeholders})
+                where tasks.status in ('failed', 'needs_human')
+                  and (
+                      attempts.send_status in ({placeholders})
+                      or (
+                          attempts.send_status='failed'
+                          and trim(coalesce(attempts.resolved_at, ''))<>''
+                      )
+                  )
                 order by tasks.id
                 """,
                 statuses,
             ).fetchall()
             reconciled = 0
             for row in rows:
-                task_status = TERMINAL_REPLY_ATTEMPT_TASK_STATUSES[
-                    str(row["send_status"])
-                ]
+                attempt_status = str(row["send_status"])
+                task_status = (
+                    "done"
+                    if attempt_status == "failed"
+                    else TERMINAL_REPLY_ATTEMPT_TASK_STATUSES[attempt_status]
+                )
+                current_status = str(row["status"])
+                if task_status == current_status:
+                    continue
                 # Keep why it failed. Clearing the error here is what made
                 # the weekly report's lost week unreadable: the task ended
                 # `skipped` with an empty error, and nothing in its record
@@ -21873,12 +21887,18 @@ class AutoReplyStore:
                         error=case
                             when trim(coalesce(error, ''))=''
                             then ''
-                            else 'reconciled_from_failed:' || error
+                            else ? || error
                         end,
                         updated_at=current_timestamp
-                    where id=? and status='failed' and execution_generation=?
+                    where id=? and status=? and execution_generation=?
                     """,
-                    (task_status, row["id"], row["execution_generation"]),
+                    (
+                        task_status,
+                        f"reconciled_from_{current_status}:",
+                        row["id"],
+                        current_status,
+                        row["execution_generation"],
+                    ),
                 )
                 reconciled += cursor.rowcount
             return reconciled

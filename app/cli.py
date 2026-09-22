@@ -4386,7 +4386,7 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
         store.skip_failed_reply_tasks_superseded_by_terminal_business_object()
     )
     reconciled_terminal_attempts = (
-        store.reconcile_failed_reply_tasks_with_terminal_attempts()
+        store.reconcile_unresolved_reply_tasks_with_terminal_attempts()
     )
     skipped_terminal_no_action_tasks = (
         store.skip_failed_reply_tasks_with_terminal_no_action_run()
