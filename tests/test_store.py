@@ -6683,7 +6683,7 @@ def test_failed_agent_run_rejects_conflicting_terminal_rewrite(tmp_path: Path):
         )
 
 
-def test_retry_failed_reply_task_creates_a_new_retryable_consumer_turn(
+def test_retry_failed_reply_task_creates_a_new_generation_and_keeps_consumer_session(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -6726,13 +6726,10 @@ def test_retry_failed_reply_task_creates_a_new_retryable_consumer_turn(
     assert recovered.status == "pending"
     assert recovered.execution_generation != task.execution_generation
     assert recovered.error == "operator_retry_after_runtime_fix"
-    assert (
-        store.get_conversation_runtime_session(
-            task.conversation_id,
-            "codex_oauth",
-        )
-        is None
-    )
+    assert store.get_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+    ) == "stale-consumer-session"
     retry_claim = store.claim_reply_task(task_id)
     assert retry_claim is not None
     same_turn = store.claim_agent_run(

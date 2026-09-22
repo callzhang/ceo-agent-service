@@ -7846,10 +7846,36 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
         claimed.run.id,
         {
             "outcome": "needs_human",
-            "rule_coverage": 1.0,
+            "rule_coverage": 0.4,
             "information_completeness": 1.0,
             "summary": "A management choice is required.",
             "proposal": None,
+            "needs_human_reason": (
+                "The applicable management rule does not define whether "
+                "this class of plan should proceed or request more evidence."
+            ),
+            "decision_basis": {
+                "verified_facts": [
+                    {
+                        "assertion": "The proposed plan is ready for a policy decision.",
+                        "references": ["management-record:current"],
+                    }
+                ],
+                "rule_evidence": [
+                    {
+                        "assertion": "The available rule does not select a default for this plan class.",
+                        "references": ["management-policy:current"],
+                    }
+                ],
+                "quality_explanation": "Risk is high and rule coverage is below the escalation threshold.",
+                "no_external_action_evidence": [
+                    {
+                        "assertion": "No external action has been performed.",
+                        "references": ["provider-receipt:none"],
+                    }
+                ],
+                "conclusion": "A reusable management rule is required before this class can be automated.",
+            },
             "decision_options": [
                 {
                     "key": "A",
@@ -7865,7 +7891,7 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
                 },
             ],
             "error": {
-                "code": "decision_required",
+                "code": "",
                 "retryable": False,
                 "authorization_required": False,
             },
@@ -10323,7 +10349,7 @@ def test_handle_rerun_attempt_post_requeues_task_and_redirects(tmp_path: Path):
     assert trigger.content == "@Alex Chen 这个怎么处理？"
 
 
-def test_history_human_decision_accepts_failed_attempt_and_redirects_to_history(
+def test_history_human_decision_rejects_failed_attempt_without_typed_decision(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -10369,29 +10395,12 @@ def test_history_human_decision_accepts_failed_attempt_and_redirects_to_history(
     )
 
     source = store.get_reply_attempt(source_id)
-    requeued = store.get_reply_task(task.id)
-    assert status == 303
-    assert headers["Location"] == "/"
-    assert body == ""
-    assert source is not None and source.send_status == "pending"
-    assert requeued is not None and requeued.id == task.id
-    assert requeued.status == "pending"
-
-    attempt_count = store.count_reply_attempts()
-    generation = requeued.execution_generation
-    repeated_status, repeated_headers, _ = handle_needs_human_decision_post(
-        store,
-        source_id,
-        "instruction=暂不处理".encode(),
-        return_to="/",
-    )
-    repeated_task = store.get_reply_task(task.id)
-
-    assert repeated_status == 303
-    assert repeated_headers["Location"] == "/"
-    assert store.count_reply_attempts() == attempt_count
-    assert repeated_task is not None
-    assert repeated_task.execution_generation == generation
+    unchanged_task = store.get_reply_task(task.id)
+    assert status == 409
+    assert headers == {}
+    assert "没有可追踪的结构化管理决策" in body
+    assert source is not None and source.send_status == "failed"
+    assert unchanged_task is not None and unchanged_task.status == "failed"
 
 
 def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
@@ -10442,8 +10451,8 @@ def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
         return_to="/",
     )
 
-    assert status == 303
-    assert store.get_reply_attempt(source_id).send_status == "pending"
+    assert status == 409
+    assert store.get_reply_attempt(source_id).send_status == "failed"
 
 
 def test_exhausted_failed_run_remains_ordinary_retry_candidate(tmp_path: Path):
@@ -10907,10 +10916,33 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
             "final_result_json": json.dumps(
                 {
                     "outcome": "needs_human",
-                    "rule_coverage": 1.0,
+                    "rule_coverage": 0.4,
                     "information_completeness": 1.0,
                     "summary": "需要管理判断。",
                     "proposal": None,
+                    "needs_human_reason": "当前规则没有定义这类方案的默认处理方式。",
+                    "decision_basis": {
+                        "verified_facts": [
+                            {
+                                "assertion": "方案已经具备可选择的处理方向。",
+                                "references": ["management-record:current"],
+                            }
+                        ],
+                        "rule_evidence": [
+                            {
+                                "assertion": "现行规则没有规定默认处理方向。",
+                                "references": ["management-policy:current"],
+                            }
+                        ],
+                        "quality_explanation": "风险高且规则覆盖度低于升级阈值。",
+                        "no_external_action_evidence": [
+                            {
+                                "assertion": "尚未执行外部动作。",
+                                "references": ["provider-receipt:none"],
+                            }
+                        ],
+                        "conclusion": "需要建立可复用的管理规则。",
+                    },
                     "decision_options": [
                         {
                             "key": "A",
@@ -10926,7 +10958,7 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
                         },
                     ],
                     "error": {
-                        "code": "decision_required",
+                        "code": "",
                         "retryable": False,
                         "authorization_required": False,
                     },

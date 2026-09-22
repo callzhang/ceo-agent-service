@@ -519,15 +519,16 @@ launchd 和本地启动脚本都设置 `PYTHONDONTWRITEBYTECODE=1`。worker 与�
 ### Codex 会话隔离
 
 同一 `conversation_id` 的 Consumer A 先取得持久会话锁，再通过原子任务认领启动 Codex；
-不同会话可以在同一个 launchd 服务内并行执行。Consumer 与 Audit 的重试都优先继续各自兼容的
-原 Agent session；feedback 或 revision 只推进业务决策版本，不会自动清空 session。只有 runtime
-明确确认原 session 不存在、不可访问或契约不兼容时，才建立新的 session，并保留旧 session lineage。
+不同会话可以在同一个 launchd 服务内并行执行。Consumer 与 Audit 的重试都优先继续各自已有的
+原 Agent session；feedback、Skill 更新或 revision 只推进业务决策/Skill 版本，不会自动清空
+session。每次 turn 仍记录当前契约哈希作为回执，但哈希变化不是会话身份边界。只有 runtime 明确
+确认原 session 不存在、不可访问或认证上下文失效时，才建立新的 session，并保留旧 session lineage。
 服务不再用全局进程锁串行化所有 Codex 调用，否则一个长会话会让无关会话已认领却无法运行。
 
 跨 worker、审计页面和服务重启的竞争由 SQLite 会话锁、Agent run lease 和结果回读处理；
 同一会话顺序不依赖共享的进程级锁。
 
-服务重启时，未完成的 Agent turn 按普通失败重试；已完成 Agent 回合会从持久化结果继续。普通重启保留同一任务的 execution generation、兼容 session 和外部回执；只有明确完成运行时、路由或本地环境修复后，服务修复重试才创建新的 execution generation/session 绑定。两者都不创建独立的 unknown 或状态核对状态机，也不根据工具事件替 Agent 判断外部动作结果。下一次 Agent turn 按当前业务 Skill 读取外部状态，再决定是否继续。
+服务重启时，未完成的 Agent turn 按普通失败重试；已完成 Agent 回合会从持久化结果继续。普通重启保留同一任务的 execution generation、session 和外部回执；明确完成运行时、路由或本地环境修复后，服务修复重试可以创建新的 execution generation，但仍优先续用可访问的 session。两者都不创建独立的 unknown 或状态核对状态机，也不根据工具事件替 Agent 判断外部动作结果。下一次 Agent turn 按当前业务 Skill 读取外部状态，再决定是否继续。
 
 ### Schema 初始化竞争
 
@@ -694,7 +695,7 @@ B 不是 Derek 的第二个写作分身，而是独立审计与执行者。B 会
 5. 业务含义需要变化时返回具体反馈，由 A 生成新 revision；B 不自行改写候选。
 6. 外部动作中断时由下一次 Agent turn 按当前业务 Skill 读取目标状态并决定是否继续；服务不创建专门的恢复回合。
 
-同一任务的 B session 在 provider session 存在且契约兼容时继续复用；revision 前进不会单独强制创建新 session。只有 session 不存在、认证上下文失效或契约不兼容时才创建新 session。
+同一任务的 B session 在 provider session 存在且可访问时继续复用；Skill/契约版本更新和 revision 前进不会单独强制创建新 session。只有 session 不存在或认证上下文失效时才创建新 session。
 
 ## 会话与反馈周期
 

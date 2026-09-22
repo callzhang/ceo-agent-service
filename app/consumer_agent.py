@@ -464,23 +464,19 @@ class ConsumerAgentRunner:
             return True
         return self.codex_session_exists(session_id)
 
-    def _consumer_route_sessions(
-        self, conversation_id: str, contract_hash: str
-    ) -> dict[str, str]:
+    def _consumer_route_sessions(self, conversation_id: str) -> dict[str, str]:
+        """Return live route sessions for one continuous business conversation.
+
+        The current Skill/contract revision is recorded on the next completed
+        turn, but it is not an identity boundary for the conversation.  A
+        revision must receive the facts already verified in this session.
+        """
         sessions: dict[str, str] = {}
         for route_name in self._configured_route_names():
-            raw_session_id = self.store.get_conversation_runtime_session(
-                conversation_id, route_name
-            )
             session_id = self.store.get_conversation_runtime_session(
                 conversation_id,
                 route_name,
-                required_contract_hash=contract_hash,
             )
-            if raw_session_id and session_id is None:
-                self._clear_route_session(
-                    conversation_id, route_name, raw_session_id
-                )
             if session_id:
                 sessions[route_name] = session_id
         return sessions
@@ -557,9 +553,7 @@ class ConsumerAgentRunner:
             self.runtime_skill_snapshot,
             skill_protocol_override=context_skill_protocol,
         )
-        route_sessions = self._consumer_route_sessions(
-            task.conversation_id, contract_hash
-        )
+        route_sessions = self._consumer_route_sessions(task.conversation_id)
         # A forced rerun changes the execution generation and prompt, but it
         # must keep the compatible conversation session so the agent sees the
         # original context plus the new feedback.  Route-specific session

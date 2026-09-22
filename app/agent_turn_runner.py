@@ -1504,7 +1504,6 @@ class AgentTurnProcess(Generic[ResultT]):
         persisted = self.store.get_conversation_runtime_session(
             self.task.conversation_id,
             route.name,
-            required_contract_hash=conversation_contract_hash,
         )
         if persisted is not None and route.runtime_kind is RuntimeKind.CLAUDE_CLI:
             require_claude_session_id(persisted)

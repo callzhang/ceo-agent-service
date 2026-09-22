@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-22: Consumer 不再把 Skill、提示词或 wire-contract 版本变化当作
+  Codex 会话身份变化。新 generation/revision 在同一路由的 session 仍可访问时继续该对话，
+  并在本次 turn 更新契约回执；只有 provider 明确证明 session 不存在、不可访问或认证失效才
+  建立新会话。这避免新 Skill 丢失同一业务对象上一轮已经核验的事实后，重新制造
+  `needs_human`。
+
 - 2026-09-21: Audit now sends reviewed DingTalk chat actions through a
   service-owned tool that loads the exact persisted proposal, prepared body,
   recipient and idempotency key. Audit can no longer be instructed to issue a

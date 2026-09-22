@@ -89,8 +89,8 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 才进入 `needs_human`，并提供 2--4 个
 互斥、可执行的规则/Skill 选项；每项必须包含唯一稳定的 `key`、显示用 `label`、可执行的
 `instruction` 和 `consequence`/影响；其余由适用 Skill 自主完成。ask-back 不计入 needs_human。
-反馈可同时选择 one-time 与 Skill update；二者复用同一业务对象和同一 attempt，在兼容 session
-中生成新 revision，不新建 session。技术、provider、读取、路由、schema、Audit 或 retry failure
+反馈可同时选择 one-time 与 Skill update；二者复用同一业务对象和同一 attempt，在 provider 仍可访问的
+同一 session 中生成新 revision，不新建 session。技术、provider、读取、路由、schema、Audit 或 retry failure
 永远是 `failed`；领域 `authorization_required` 也不泛化为 `needs_human`，不能用低分绕过失败。
 provider 返回 `confirmation_required` 也属于运行时失败边界：它表示外部动作尚未执行，
 不是需要 Derek 决定的业务规则缺口。必须保留具体错误并落为 `failed`，不能生成“确认执行/停止”
@@ -167,8 +167,10 @@ business_object 1 ── 1 current reply_attempt
 OA 的稳定身份是 `process_instance_id + task_id`。同一 OA 从 webhook、pending scan、
 用户人工反馈进入时追加 input 并复用同一 task、同一兼容 Consumer session，在当前 run
 结束后提高 generation 并重新排队同一 task。服务修复运行时、路由或本地执行环境时，虽仍
-复用同一 task 和业务对象，但必须创建新的 execution generation，并清除旧的持久化 session
-绑定，让新进程重新获得完整的运行时能力；这两类重跑都保留旧 run/session/provider 事实。
+复用同一 task 和业务对象，但必须创建新的 execution generation，以隔离不可变的旧 run；只要
+provider session 仍可访问，就继续该 session 并在新 turn 注入当前 Skill/契约。只有 provider
+明确返回 session 不存在或认证上下文失效时才清除绑定；这两类重跑都保留旧
+run/session/provider 事实。
 
 DingTalk 日程卡片改期可能原地覆盖卡片内容而不产生新消息 ID。每小时的近期消息恢复读取
 该消息当前可读内容；若它和当前 task 投影不同，且实时日程仍有效、本人仍待响应，就以新的
@@ -719,9 +721,10 @@ provider 结果和旧错误事件不改写、不删除。旧 spec/plan 中描述
 不应作为实现依据。
 
 反馈、人工重跑、进程失败和 typed-result 失败都会创建新的 append-only `agent_run`，但不会创建
-新的业务 `reply_attempt`。只要原 runtime session 仍可访问且契约兼容，新 run 就向原 session
-发送 continuation；新 revision 表示业务结果版本前进，不表示必须创建新 session。只有 provider
-明确返回 session 不存在、认证上下文失效或契约不兼容时，才创建新 session。
+新的业务 `reply_attempt`。只要原 runtime session 仍可访问，新 run 就向原 session 发送
+continuation；新 revision 或 Skill/契约版本表示业务规则/结果版本前进，不表示必须创建新 session。
+每个 turn 都记录当前契约哈希作为回执，但哈希变化不能切断上下文。只有 provider 明确返回 session
+不存在或认证上下文失效时，才创建新 session。
 
 Agent 返回的错误只是它观察到的现象，含义由服务决定（`app/agent_reported_error.py`）。wire 结果里的
 `error_retryable` 与 `error_authorization_required` 不被读取；`error_code` 先统一为小写，服务认识的码
