@@ -138,7 +138,10 @@ REPOSITORY_MANAGED_SKILL_NAMES = (
 # Skills the service depends on that live only in the runtime tree: they have no
 # repository baseline to import from, so the file on disk is their first
 # revision. Without this they were edited in place with no history at all.
-RUNTIME_ONLY_VERSIONED_SKILL_NAMES = ("dingtalk-oa-approval",)
+RUNTIME_ONLY_VERSIONED_SKILL_NAMES = (
+    "dingtalk-oa-approval",
+    "stardust-oa-finance-review",
+)
 
 VERSIONED_RUNTIME_SKILL_NAMES = (
     *REPOSITORY_MANAGED_SKILL_NAMES,
