@@ -173,11 +173,12 @@ class ProposedAction(BaseModel):
             or ""
         ).strip()
         if (
-            self.operation in {"send_to_group", "messages-send-to-group"}
+            self.operation
+            in {"send_to_group", "messages-send-to-group", "send_group_message"}
             and not conversation_id
         ):
             raise ValueError("DingTalk group target requires conversation_id")
-        if self.operation in {"messages-reply", "message.reply"} and not (
+        if self.operation in {"messages-reply", "message.reply", "reply"} and not (
             conversation_id and message_id
         ):
             raise ValueError(

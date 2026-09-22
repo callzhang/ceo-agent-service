@@ -2106,6 +2106,18 @@ def test_consumer_accepts_valid_nested_output_locally(store, task, context):
             {"reply_text": "Verified notice."},
             "reply_text",
         ),
+        (
+            "reply",
+            {"conversation_id": "cid-agent", "message_id": "message-1"},
+            {"content": "Verified notice."},
+            "content",
+        ),
+        (
+            "send_group_message",
+            {"conversation_id": "cid-agent"},
+            {"content": "Verified notice."},
+            "content",
+        ),
     ),
 )
 def test_consumer_prepares_structured_dingtalk_message_postfix_before_audit(

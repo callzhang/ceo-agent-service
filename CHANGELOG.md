@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 2026-09-22: Audit's service-owned DingTalk sender now accepts the Consumer's
+  established `reply` and `send_group_message` operation names. The proposal
+  contract already allowed those names, but outbound preparation only recognized
+  older aliases, so Audit exhausted retries with
+  `dingtalk_message_action_unsupported` before any provider call. Both aliases
+  now use the same prepared body, durable delivery key and target validation as
+  the existing message operations.
+
 - 2026-09-22: Consumer 不再把 Skill、提示词或 wire-contract 版本变化当作
   Codex 会话身份变化。新 generation/revision 在同一路由的 session 仍可访问时继续该对话，
   并在本次 turn 更新契约回执；只有 provider 明确证明 session 不存在、不可访问或认证失效才

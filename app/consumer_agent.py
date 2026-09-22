@@ -830,9 +830,13 @@ def structured_dingtalk_outgoing_text_key(action: ProposedAction) -> str | None:
         or target.get("sender_open_dingtalk_id")
         or ""
     ).strip()
-    if action.operation in {"messages-reply", "message.reply"}:
+    if action.operation in {"messages-reply", "message.reply", "reply"}:
         return text_key if conversation_id and message_id else None
-    if action.operation in {"send_to_group", "messages-send-to-group"}:
+    if action.operation in {
+        "send_to_group",
+        "messages-send-to-group",
+        "send_group_message",
+    }:
         return text_key if conversation_id else None
     return text_key if recipient else None
 
