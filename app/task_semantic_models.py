@@ -246,6 +246,7 @@ class BusinessAnchor(_FrozenBusinessModel):
 
 
 class BusinessTaskAnchorLink(_FrozenBusinessModel):
+    id: int
     task_id: ReferenceId
     anchor_id: ReferenceId
     status: BusinessRelationStatus = BusinessRelationStatus.PROPOSED
@@ -270,15 +271,17 @@ class BusinessProjectCandidate(_FrozenBusinessModel):
     reason: Nonblank
     status: BusinessRelationStatus = BusinessRelationStatus.PROPOSED
     confirmed_project_id: ReferenceId | None = None
+    confirmation_signal_id: ReferenceId | None = None
     created_at: str
 
     @model_validator(mode="after")
     def validate_confirmation(self) -> BusinessProjectCandidate:
-        if (self.status is BusinessRelationStatus.CONFIRMED) != (
-            self.confirmed_project_id is not None
+        confirmed = self.status is BusinessRelationStatus.CONFIRMED
+        if confirmed != (self.confirmed_project_id is not None) or confirmed != (
+            self.confirmation_signal_id is not None
         ):
             raise ValueError(
-                "only confirmed candidates must reference an official project"
+                "only confirmed candidates must reference a project and confirmation signal"
             )
         return self
 

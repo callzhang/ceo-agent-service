@@ -185,7 +185,7 @@ class BusinessResolutionService:
                 and existing.status is BusinessRelationStatus.CONFIRMED
             ):
                 raise ValueError("proposal cannot replace a confirmed anchor match")
-            self.store.create_business_task_anchor_link_in_transaction(
+            link_id = self.store.create_business_task_anchor_link_in_transaction(
                 task_id=task_id,
                 anchor_id=anchor_id,
                 status=BusinessRelationStatus.PROPOSED,
@@ -194,7 +194,7 @@ class BusinessResolutionService:
                 reason=reason,
                 _db=db,
             )
-            return task_id
+            return link_id
 
     def confirm_anchor_match(
         self,
@@ -278,23 +278,55 @@ class BusinessResolutionService:
         self,
         *,
         candidate_id: int,
-        project_id: int,
+        project_id: int | None = None,
+        anchor_id: int | None = None,
         evidence_signal_id: int | None = None,
     ) -> int:
         if evidence_signal_id is None:
             raise ValueError("project candidate confirmation requires an evidence signal")
+        if (project_id is None) == (anchor_id is None):
+            raise ValueError("confirmation requires exactly one Project or project anchor")
         with self.store.business_task_transaction() as db:
             candidate = self.store.get_business_project_candidate_in_transaction(
                 candidate_id=candidate_id, _db=db
             )
             if candidate is None:
                 raise ValueError(f"business project candidate {candidate_id} does not exist")
-            if self.store.get_business_project_in_transaction(
-                project_id=project_id, _db=db
-            ) is None:
-                raise ValueError(f"official business project {project_id} does not exist")
             self._require_evidence_signal(signal_id=evidence_signal_id, db=db)
+            resolved_project_id: int
+            if project_id is not None:
+                if self.store.get_business_project_in_transaction(
+                    project_id=project_id, _db=db
+                ) is None:
+                    raise ValueError(f"official business project {project_id} does not exist")
+                resolved_project_id = project_id
+            else:
+                assert anchor_id is not None
+                anchor = self._require_anchor(
+                    self.store.get_business_anchor_in_transaction(
+                        anchor_id=anchor_id, _db=db
+                    ),
+                    anchor_id,
+                )
+                if anchor.anchor_type is not BusinessAnchorType.PROJECT or not anchor.active:
+                    raise ValueError(
+                        "explicit Project confirmation requires an active project anchor"
+                    )
+                existing_row = db.execute(
+                    "select id from business_projects where canonical_anchor_id=?",
+                    (anchor_id,),
+                ).fetchone()
+                resolved_project_id = (
+                    int(existing_row["id"])
+                    if existing_row is not None
+                    else self.store.create_business_project_in_transaction(
+                        canonical_anchor_id=anchor_id, title=anchor.title, _db=db
+                    )
+                )
             self.store.confirm_business_project_candidate_in_transaction(
-                candidate_id=candidate_id, project_id=project_id, _db=db
+                candidate_id=candidate_id,
+                project_id=resolved_project_id,
+                confirmation_signal_id=evidence_signal_id,
+                _db=db,
             )
             return candidate_id

@@ -369,15 +369,15 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "id", "anchor_type", "anchor_ref", "title", "active", "created_at",
     ),
     "business_task_anchor_links": (
-        "task_id", "anchor_id", "status", "active", "evidence_signal_id",
-        "reason", "created_at",
+        "id", "task_id", "anchor_id", "status", "active",
+        "evidence_signal_id", "reason", "created_at",
     ),
     "business_projects": (
         "id", "canonical_anchor_id", "anchor_type", "title", "created_at",
     ),
     "business_project_candidates": (
         "id", "cluster_id", "title", "reason", "status", "confirmed_project_id",
-        "created_at",
+        "confirmation_signal_id", "created_at",
     ),
     "business_attention_items": (
         "id", "stable_key", "category", "status", "title", "business_area",
@@ -3603,6 +3603,7 @@ class AutoReplyStore:
                     unique(id, anchor_type)
                 );
                 create table if not exists business_task_anchor_links (
+                    id integer primary key autoincrement,
                     task_id integer not null,
                     anchor_id integer not null,
                     status text not null default 'proposed'
@@ -3611,7 +3612,7 @@ class AutoReplyStore:
                     evidence_signal_id integer not null,
                     reason text not null default '',
                     created_at text not null default current_timestamp,
-                    primary key(task_id, anchor_id),
+                    unique(task_id, anchor_id),
                     foreign key(task_id) references business_tasks(id),
                     foreign key(anchor_id) references business_anchors(id),
                     foreign key(evidence_signal_id) references business_task_signals(id)
@@ -3635,10 +3636,13 @@ class AutoReplyStore:
                     status text not null default 'proposed'
                         check(status in ('proposed', 'confirmed', 'rejected')),
                     confirmed_project_id integer,
+                    confirmation_signal_id integer,
                     created_at text not null default current_timestamp,
                     check((status = 'confirmed') = (confirmed_project_id is not null)),
+                    check((status = 'confirmed') = (confirmation_signal_id is not null)),
                     foreign key(cluster_id) references business_work_clusters(id),
-                    foreign key(confirmed_project_id) references business_projects(id)
+                    foreign key(confirmed_project_id) references business_projects(id),
+                    foreign key(confirmation_signal_id) references business_task_signals(id)
                 );
                 create index if not exists idx_business_project_candidates_cluster
                     on business_project_candidates(cluster_id, status, id);
@@ -6753,9 +6757,9 @@ class AutoReplyStore:
     def create_business_task_anchor_link_in_transaction(
         self, *, task_id: int, anchor_id: int, status: BusinessRelationStatus | str,
         active: bool, evidence_signal_id: int, reason: str = "", _db: sqlite3.Connection,
-    ) -> None:
+    ) -> int:
         link = BusinessTaskAnchorLink(
-            task_id=task_id, anchor_id=anchor_id, status=status, active=active,
+            id=0, task_id=task_id, anchor_id=anchor_id, status=status, active=active,
             evidence_signal_id=evidence_signal_id, reason=reason, created_at="",
         )
         _db.execute(
@@ -6768,6 +6772,12 @@ class AutoReplyStore:
             (link.task_id, link.anchor_id, link.status.value, int(link.active),
              link.evidence_signal_id, link.reason),
         )
+        row = _db.execute(
+            "select id from business_task_anchor_links where task_id=? and anchor_id=?",
+            (link.task_id, link.anchor_id),
+        ).fetchone()
+        assert row is not None
+        return int(row["id"])
 
     def create_business_project_in_transaction(
         self, *, canonical_anchor_id: int, title: str, _db: sqlite3.Connection
@@ -6792,11 +6802,32 @@ class AutoReplyStore:
         ).lastrowid)
 
     def confirm_business_project_candidate_in_transaction(
-        self, *, candidate_id: int, project_id: int, _db: sqlite3.Connection
+        self,
+        *,
+        candidate_id: int,
+        project_id: int,
+        confirmation_signal_id: int,
+        _db: sqlite3.Connection,
     ) -> None:
+        candidate = self.get_business_project_candidate_in_transaction(
+            candidate_id=candidate_id, _db=_db
+        )
+        if candidate is None:
+            raise ValueError("project candidate must exist")
+        if candidate.status is BusinessRelationStatus.CONFIRMED:
+            if (
+                candidate.confirmed_project_id == project_id
+                and candidate.confirmation_signal_id == confirmation_signal_id
+            ):
+                return
+            if candidate.confirmed_project_id != project_id:
+                raise ValueError("project candidate is already confirmed to a different project")
+            raise ValueError("project candidate is already confirmed with different evidence")
         cursor = _db.execute(
-            """update business_project_candidates set status='confirmed', confirmed_project_id=?
-               where id=? and status='proposed'""", (project_id, candidate_id)
+            """update business_project_candidates
+               set status='confirmed', confirmed_project_id=?, confirmation_signal_id=?
+               where id=? and status='proposed'""",
+            (project_id, confirmation_signal_id, candidate_id),
         )
         if cursor.rowcount != 1:
             raise ValueError("project candidate must exist and be proposed")
@@ -6818,9 +6849,13 @@ class AutoReplyStore:
 
     def list_business_tasks_for_projection(self) -> tuple[BusinessTask, ...]:
         """Business-only input for later projections; keeps non-relevant tasks searchable."""
-        return self.list_business_tasks(
-            relevance=(BusinessRelevance.UNKNOWN, BusinessRelevance.RELEVANT)
-        )
+        with self._connect() as db:
+            rows = db.execute(
+                """select * from business_tasks
+                   where business_relevance in ('unknown', 'relevant')
+                   order by updated_at, id"""
+            ).fetchall()
+            return tuple(self._business_task_from_row(row) for row in rows)
 
     def backfill_scheduled_task_runtime_capabilities(
         self,

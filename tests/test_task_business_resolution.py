@@ -99,6 +99,53 @@ def test_only_registry_registration_or_explicit_evidence_confirmation_creates_pr
     ) == candidate_two
 
 
+def test_explicit_confirmation_atomically_creates_official_project_and_is_idempotent(resolver):
+    task_id = create_task(resolver.store, "explicit-confirmation")
+    cluster_id = resolver.create_cluster(title="Explicit project", task_ids=[task_id])
+    candidate_id = resolver.propose_project(
+        cluster_id=cluster_id, title="Explicit project", reason="Needs explicit confirmation"
+    )
+    anchor_id = resolver.register_anchor(
+        anchor_type=BusinessAnchorType.PROJECT,
+        anchor_ref="confirmed:explicit-project",
+        title="Explicit project",
+    )
+    signal_id = evidence_signal(resolver.store, "explicit-project-confirmation")
+    assert resolver.store.list_business_projects() == []
+
+    assert resolver.confirm_project_candidate(
+        candidate_id=candidate_id,
+        anchor_id=anchor_id,
+        evidence_signal_id=signal_id,
+    ) == candidate_id
+    candidate = resolver.store.get_business_project_candidate(candidate_id)
+    assert candidate is not None
+    assert candidate.confirmation_signal_id == signal_id
+    project = resolver.store.get_business_project(candidate.confirmed_project_id)
+    assert project is not None
+    assert project.canonical_anchor_id == anchor_id
+
+    assert resolver.confirm_project_candidate(
+        candidate_id=candidate_id,
+        anchor_id=anchor_id,
+        evidence_signal_id=signal_id,
+    ) == candidate_id
+    assert len(resolver.store.list_business_projects()) == 1
+
+    other_anchor_id = resolver.register_anchor(
+        anchor_type=BusinessAnchorType.PROJECT,
+        anchor_ref="confirmed:other-project",
+        title="Other project",
+    )
+    with pytest.raises(ValueError, match="different project"):
+        resolver.confirm_project_candidate(
+            candidate_id=candidate_id,
+            anchor_id=other_anchor_id,
+            evidence_signal_id=signal_id,
+        )
+    assert len(resolver.store.list_business_projects()) == 1
+
+
 def test_anchor_confirmation_derives_relevance_and_proposed_link_does_not(resolver):
     task_id = create_task(resolver.store, "one")
     anchor_id = resolver.register_anchor(
@@ -119,6 +166,42 @@ def test_anchor_confirmation_derives_relevance_and_proposed_link_does_not(resolv
     assert [event.event_type.value for event in resolver.store.list_business_task_events(task_id)][-1] == "relevance_changed"
 
 
+def test_anchor_proposals_return_their_persisted_link_ids(resolver):
+    task_id = create_task(resolver.store, "link-ids")
+    first_anchor = resolver.register_anchor(
+        anchor_type=BusinessAnchorType.CUSTOMER,
+        anchor_ref="customer:first-link",
+        title="First link",
+    )
+    second_anchor = resolver.register_anchor(
+        anchor_type=BusinessAnchorType.PRODUCT,
+        anchor_ref="product:second-link",
+        title="Second link",
+    )
+
+    first_link_id = resolver.propose_anchor_match(
+        task_id=task_id,
+        anchor_id=first_anchor,
+        evidence_signal_id=evidence_signal(resolver.store, "first-link"),
+    )
+    second_link_id = resolver.propose_anchor_match(
+        task_id=task_id,
+        anchor_id=second_anchor,
+        evidence_signal_id=evidence_signal(resolver.store, "second-link"),
+    )
+
+    with resolver.store._connect() as db:
+        rows = db.execute(
+            "select id, anchor_id from business_task_anchor_links where task_id=? order by id",
+            (task_id,),
+        ).fetchall()
+    assert first_link_id != second_link_id
+    assert [(row["id"], row["anchor_id"]) for row in rows] == [
+        (first_link_id, first_anchor),
+        (second_link_id, second_anchor),
+    ]
+
+
 def test_confirmed_not_relevant_stays_searchable_but_is_excluded_from_projection_input(resolver):
     task_id = create_task(resolver.store, "one")
     anchor_id = resolver.register_anchor(
@@ -137,6 +220,23 @@ def test_confirmed_not_relevant_stays_searchable_but_is_excluded_from_projection
     assert resolver.store.get_business_task(task_id).business_relevance is BusinessRelevance.NOT_RELEVANT
     assert resolver.store.list_business_tasks(relevance=[BusinessRelevance.NOT_RELEVANT])[0].id == task_id
     assert task_id not in {task.id for task in resolver.store.list_business_tasks_for_projection()}
+
+
+def test_projection_input_does_not_truncate_eligible_tasks_at_one_hundred(resolver):
+    created_ids = [
+        resolver.store.create_business_task(title=f"Candidate {index}", stage="candidate")
+        for index in range(101)
+    ]
+    late_relevant_id = resolver.store.create_business_task(
+        title="Late relevant task",
+        stage="candidate",
+        business_relevance=BusinessRelevance.RELEVANT,
+    )
+
+    projected_ids = {task.id for task in resolver.store.list_business_tasks_for_projection()}
+
+    assert set(created_ids).issubset(projected_ids)
+    assert late_relevant_id in projected_ids
 
 
 def test_relation_is_evidence_backed_and_does_not_merge_tasks(resolver):

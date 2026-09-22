@@ -63,14 +63,16 @@ Task event APIs; attention projections remain later work.
   supporting signal. Self-relations are invalid. Identity merging is separate.
 - Cluster memberships preserve independent task records and use a unique
   cluster/task pair. Project candidates require an existing cluster and a reason.
-  A confirmed candidate references an official project; a provisional or rejected
-  candidate cannot claim that reference.
+  A confirmed candidate references an official project and the persisted signal
+  that authorized confirmation; a provisional or rejected candidate can claim
+  neither reference.
 - Anchors have a registered type/reference, title, and active flag. The supported
   types represent the design's project, OKR, customer, product, revenue, financing,
   cash, key-hire, personnel, company-priority, and matter concepts. Registration
   authority and relevance derivation belong to `BusinessResolutionService`.
-- Task/anchor links carry confirmation status, a separate active flag, and a
-  required evidence signal. An official project references a unique canonical
+- Task/anchor links have stable persisted IDs and carry confirmation status, a
+  separate active flag, and a required evidence signal. An official project
+  references a unique canonical
   anchor using a composite foreign key that requires the anchor's type to be
   `project`; an existing customer anchor cannot masquerade as a project anchor.
 - Attention items keep a unique stable key, category, active/resolved status,
@@ -109,7 +111,9 @@ stage/status and relevance filter indexes remain in place, and all three task
 listing indexes are included in the required schema manifest.
 `list_business_task_project_links` reads official projects through confirmed,
 active task/anchor links to active project anchors, and returns an empty list
-for a standalone task.
+for a standalone task. `list_business_tasks_for_projection` reads the complete
+eligible set in one snapshot and therefore does not silently truncate the
+projection source at the ordinary 100-row Task listing default.
 
 ## Atomic semantic commands
 
@@ -150,15 +154,19 @@ Projects, candidates, and evidence signals in the same write transaction.
 A cluster groups existing Tasks through membership rows. It never rewrites a
 member's owner, deadline, lifecycle status, or commitment status. Proposing a
 Project for a cluster creates only a `business_project_candidates` row. An
-official `business_projects` row can be registered only from an active canonical
-anchor whose type is `project`, with a nonblank canonical registry source.
-Confirming a Project candidate requires an already persisted official Project
-and evidence signal; confirmation links the two existing rows and does not
-create a Project.
+official `business_projects` row can be registered from an active canonical
+anchor whose type is `project`, with a nonblank canonical registry source. The
+other authority path is an explicit candidate confirmation backed by a persisted
+signal: it may create the official Project from an already registered active
+project anchor and confirms the candidate in the same transaction. A cluster or
+candidate proposal alone never creates an official Project. Confirmation may
+also target an already persisted Project. Replaying the same candidate, Project,
+and confirmation signal returns the existing result; a different Project or
+signal is rejected.
 
 Task relations require two existing, distinct Tasks and a persisted supporting
 signal. They do not merge either Task. Proposed Task/anchor links also require a
-persisted signal and leave Task relevance unchanged.
+persisted signal, return their stable link ID, and leave Task relevance unchanged.
 
 Anchor confirmation records the decision, links its evidence to the Task with
 the typed `relevance` role, and recalculates the Task from every confirmed link

@@ -120,6 +120,7 @@ ROWS = {
     "business_task_anchor_links": (
         "BusinessTaskAnchorLink",
         {
+            "id": 1,
             "task_id": 1,
             "anchor_id": 1,
             "status": "confirmed",
@@ -148,6 +149,7 @@ ROWS = {
             "reason": "Ongoing goal",
             "status": "proposed",
             "confirmed_project_id": None,
+            "confirmation_signal_id": None,
             "created_at": STAMP,
         },
     ),
@@ -627,6 +629,7 @@ INVALID_ROWS = [
     ("business_project_candidates", {"cluster_id": None}),
     ("business_project_candidates", {"status": "confirmed"}),
     ("business_project_candidates", {"confirmed_project_id": 1}),
+    ("business_project_candidates", {"confirmation_signal_id": 1}),
     ("business_attention_items", {"category": "intervene"}),
     ("business_attention_items", {"status": "read"}),
     ("business_attention_items", {"status": "resolved"}),
@@ -690,6 +693,7 @@ FOREIGN_KEYS = {
     "business_project_candidates": {
         "cluster_id": "business_work_clusters",
         "confirmed_project_id": "business_projects",
+        "confirmation_signal_id": "business_task_signals",
     },
     "business_attention_items": {
         "anchor_id": "business_anchors",
@@ -757,8 +761,12 @@ def test_foreign_keys_reject_dangling_references(store, table, column):
         values.update({key: None for key in endpoints})
     if column == "merged_into_task_id":
         values["status"] = "merged"
-    if column == "confirmed_project_id":
-        values["status"] = "confirmed"
+    if column in {"confirmed_project_id", "confirmation_signal_id"}:
+        values.update(
+            status="confirmed",
+            confirmed_project_id=1,
+            confirmation_signal_id=1,
+        )
     if table == "business_attention_items":
         values["stable_key"] = "another-attention-item"
     if column == "resolution_signal_id":
