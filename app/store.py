@@ -121,6 +121,8 @@ from app.task_semantic_models import (
     BusinessRelevance,
     BusinessTask,
     BusinessTaskEvidence,
+    BusinessTaskEvent,
+    BusinessTaskEventType,
     BusinessTaskSignal,
     BusinessTaskStage,
     BusinessTaskStatus,
@@ -6137,6 +6139,263 @@ class AutoReplyStore:
     def _business_task_evidence_from_row(row: sqlite3.Row) -> BusinessTaskEvidence:
         return BusinessTaskEvidence.model_validate(dict(row))
 
+    @staticmethod
+    def _business_task_event_from_row(row: sqlite3.Row) -> BusinessTaskEvent:
+        return BusinessTaskEvent.model_validate(dict(row))
+
+    @contextmanager
+    def business_task_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Run one semantic Task transition in a single write transaction."""
+        with self._immediate_write_transaction() as db:
+            yield db
+
+    def get_business_task_signal_by_dedupe_key(
+        self, *, dedupe_key: str, _db: sqlite3.Connection
+    ) -> BusinessTaskSignal | None:
+        row = _db.execute(
+            "select * from business_task_signals where dedupe_key=?", (dedupe_key,)
+        ).fetchone()
+        return self._business_task_signal_from_row(row) if row is not None else None
+
+    def create_business_task_signal_in_transaction(
+        self,
+        *,
+        source_type: str,
+        source_ref: str,
+        evidence_text: str,
+        dedupe_key: str,
+        source_time: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        author_user_id: str = "",
+        author_name: str = "",
+        context_json: str = "{}",
+        now: datetime | None = None,
+        _db: sqlite3.Connection,
+    ) -> int:
+        timestamp = ensure_utc_datetime(
+            now or datetime.now(timezone.utc), field="business task signal now"
+        ).isoformat(timespec="seconds")
+        signal = BusinessTaskSignal(
+            id=0,
+            source_type=source_type,
+            source_ref=source_ref,
+            source_time=source_time,
+            conversation_id=conversation_id,
+            conversation_title=conversation_title,
+            author_user_id=author_user_id,
+            author_name=author_name,
+            evidence_text=evidence_text,
+            context_json=context_json,
+            dedupe_key=dedupe_key,
+            created_at=timestamp,
+        )
+        cursor = _db.execute(
+            """
+            insert into business_task_signals (
+                source_type, source_ref, source_time, conversation_id, conversation_title,
+                author_user_id, author_name, evidence_text, context_json, dedupe_key, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                signal.source_type,
+                signal.source_ref,
+                signal.source_time,
+                signal.conversation_id,
+                signal.conversation_title,
+                signal.author_user_id,
+                signal.author_name,
+                signal.evidence_text,
+                signal.context_json,
+                signal.dedupe_key,
+                signal.created_at,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def create_business_task_in_transaction(
+        self,
+        *,
+        title: str,
+        stage: BusinessTaskStage | str,
+        status: BusinessTaskStatus | str = BusinessTaskStatus.OPEN,
+        commitment_status: CommitmentStatus | str = CommitmentStatus.NONE,
+        formal_basis: FormalTaskBasis | str | None = None,
+        business_relevance: BusinessRelevance | str = BusinessRelevance.UNKNOWN,
+        description: str = "",
+        owner_user_id: str = "",
+        owner_name: str = "",
+        owner_evidence_json: str = "{}",
+        deadline_at: str = "",
+        missing_evidence_json: str = "[]",
+        merged_into_task_id: int | None = None,
+        last_activity_at: str | None = None,
+        now: datetime | None = None,
+        _db: sqlite3.Connection,
+    ) -> int:
+        timestamp = ensure_utc_datetime(
+            now or datetime.now(timezone.utc), field="business task now"
+        ).isoformat(timespec="seconds")
+        task = BusinessTask(
+            id=0,
+            title=title,
+            description=description,
+            stage=stage,
+            status=status,
+            commitment_status=commitment_status,
+            formal_basis=formal_basis,
+            business_relevance=business_relevance,
+            merged_into_task_id=merged_into_task_id,
+            owner_user_id=owner_user_id,
+            owner_name=owner_name,
+            owner_evidence_json=owner_evidence_json,
+            deadline_at=deadline_at,
+            missing_evidence_json=missing_evidence_json,
+            last_activity_at=timestamp if last_activity_at is None else last_activity_at,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        cursor = _db.execute(
+            """
+            insert into business_tasks (
+                title, description, stage, status, commitment_status, formal_basis,
+                business_relevance, merged_into_task_id, owner_user_id, owner_name,
+                owner_evidence_json, deadline_at, missing_evidence_json,
+                last_activity_at, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task.title,
+                task.description,
+                task.stage.value,
+                task.status.value,
+                task.commitment_status.value,
+                task.formal_basis.value if task.formal_basis is not None else None,
+                task.business_relevance.value,
+                task.merged_into_task_id,
+                task.owner_user_id,
+                task.owner_name,
+                task.owner_evidence_json,
+                task.deadline_at,
+                task.missing_evidence_json,
+                task.last_activity_at,
+                task.created_at,
+                task.updated_at,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def get_business_task_in_transaction(
+        self, *, task_id: int, _db: sqlite3.Connection
+    ) -> BusinessTask | None:
+        row = _db.execute(
+            "select * from business_tasks where id=?", (task_id,)
+        ).fetchone()
+        return self._business_task_from_row(row) if row is not None else None
+
+    def update_business_task_in_transaction(
+        self, *, task: BusinessTask, _db: sqlite3.Connection
+    ) -> None:
+        _db.execute(
+            """
+            update business_tasks set
+                title=?, description=?, stage=?, status=?, commitment_status=?, formal_basis=?,
+                business_relevance=?, merged_into_task_id=?, owner_user_id=?, owner_name=?,
+                owner_evidence_json=?, deadline_at=?, missing_evidence_json=?,
+                last_activity_at=?, updated_at=?
+            where id=?
+            """,
+            (
+                task.title,
+                task.description,
+                task.stage.value,
+                task.status.value,
+                task.commitment_status.value,
+                task.formal_basis.value if task.formal_basis is not None else None,
+                task.business_relevance.value,
+                task.merged_into_task_id,
+                task.owner_user_id,
+                task.owner_name,
+                task.owner_evidence_json,
+                task.deadline_at,
+                task.missing_evidence_json,
+                task.last_activity_at,
+                task.updated_at,
+                task.id,
+            ),
+        )
+
+    def link_business_task_evidence_in_transaction(
+        self,
+        *,
+        task_id: int,
+        signal_id: int,
+        evidence_role: BusinessEvidenceRole | str,
+        _db: sqlite3.Connection,
+    ) -> None:
+        evidence = BusinessTaskEvidence(
+            task_id=task_id,
+            signal_id=signal_id,
+            evidence_role=evidence_role,
+            created_at="",
+        )
+        _db.execute(
+            """
+            insert into business_task_evidence (task_id, signal_id, evidence_role)
+            values (?, ?, ?)
+            on conflict(task_id, signal_id, evidence_role) do nothing
+            """,
+            (evidence.task_id, evidence.signal_id, evidence.evidence_role.value),
+        )
+
+    def list_business_task_evidence_in_transaction(
+        self, *, task_id: int, _db: sqlite3.Connection
+    ) -> tuple[BusinessTaskEvidence, ...]:
+        rows = _db.execute(
+            "select * from business_task_evidence where task_id=? "
+            "order by created_at, signal_id, evidence_role",
+            (task_id,),
+        ).fetchall()
+        return tuple(self._business_task_evidence_from_row(row) for row in rows)
+
+    def append_business_task_event(
+        self,
+        *,
+        task_id: int,
+        event_type: BusinessTaskEventType | str,
+        signal_id: int | None,
+        before_json: str,
+        after_json: str,
+        reason: str,
+        _db: sqlite3.Connection,
+    ) -> int:
+        event = BusinessTaskEvent(
+            id=0,
+            task_id=task_id,
+            event_type=event_type,
+            signal_id=signal_id,
+            before_json=before_json,
+            after_json=after_json,
+            reason=reason,
+            created_at="",
+        )
+        cursor = _db.execute(
+            """
+            insert into business_task_events
+                (task_id, event_type, signal_id, before_json, after_json, reason)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.task_id,
+                event.event_type.value,
+                event.signal_id,
+                event.before_json,
+                event.after_json,
+                event.reason,
+            ),
+        )
+        return int(cursor.lastrowid)
+
     def create_business_task_signal(
         self,
         *,
@@ -6325,6 +6584,17 @@ class AutoReplyStore:
                 (task_id,),
             ).fetchall()
             return tuple(self._business_task_evidence_from_row(row) for row in rows)
+
+    def list_business_task_events(
+        self, task_id: int
+    ) -> tuple[BusinessTaskEvent, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_task_events where task_id=? "
+                "order by created_at, id",
+                (task_id,),
+            ).fetchall()
+            return tuple(self._business_task_event_from_row(row) for row in rows)
 
     def list_business_task_project_links(self, *, task_id: int) -> list[BusinessProject]:
         with self._connect() as db:
