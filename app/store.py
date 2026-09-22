@@ -116,17 +116,16 @@ from app.task_models import (
     WorkUpdate,
 )
 from app.task_semantic_models import (
-    BusinessCommitmentStatus,
-    BusinessEvidenceKind,
-    BusinessFormalBasis,
+    BusinessEvidenceRole,
+    BusinessProject,
     BusinessRelevance,
-    BusinessSignalKind,
-    BusinessSignalSource,
     BusinessTask,
     BusinessTaskEvidence,
     BusinessTaskSignal,
     BusinessTaskStage,
     BusinessTaskStatus,
+    CommitmentStatus,
+    FormalTaskBasis,
 )
 from app.wechat.models import WechatReplyScope
 
@@ -310,14 +309,18 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_iteration_decision_items_feedback_round",
     "idx_business_task_signals_source",
     "idx_business_tasks_list",
-    "idx_business_tasks_signal",
+    "idx_business_tasks_relevance",
     "idx_business_task_evidence_task",
+    "idx_business_task_events_task",
     "idx_business_task_relations_from",
     "idx_business_task_relations_to",
     "idx_business_work_cluster_tasks_task",
     "idx_business_task_anchor_links_task",
+    "idx_business_project_candidates_cluster",
+    "idx_business_attention_items_list",
     "idx_business_attention_tasks_task",
-    "idx_business_legacy_links_entity",
+    "idx_business_attention_events_item",
+    "idx_business_legacy_links_task",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
@@ -328,15 +331,58 @@ STORE_SCHEMA_REMOVED_COLUMNS = {
 }
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "business_task_signals": (
-        "source", "source_ref", "kind", "summary", "observed_at",
+        "id", "source_type", "source_ref", "source_time", "conversation_id",
+        "conversation_title", "author_user_id", "author_name", "evidence_text",
+        "context_json", "dedupe_key", "created_at",
     ),
     "business_tasks": (
-        "title", "stage", "status", "commitment_status", "formal_basis",
-        "business_relevance", "source_signal_id", "merged_into_task_id",
-        "project_id",
+        "id", "title", "description", "stage", "status", "formal_basis",
+        "commitment_status", "owner_user_id", "owner_name", "owner_evidence_json",
+        "deadline_at", "business_relevance", "missing_evidence_json",
+        "merged_into_task_id", "created_at", "updated_at", "last_activity_at",
     ),
     "business_task_evidence": (
-        "task_id", "kind", "source_signal_id", "summary", "observed_at",
+        "task_id", "signal_id", "evidence_role", "created_at",
+    ),
+    "business_task_events": (
+        "id", "task_id", "event_type", "signal_id", "before_json", "after_json",
+        "reason", "created_at",
+    ),
+    "business_task_relations": (
+        "from_task_id", "to_task_id", "relation_type", "status",
+        "supporting_signal_id", "reason", "created_at",
+    ),
+    "business_work_clusters": ("id", "title", "created_at"),
+    "business_work_cluster_tasks": ("cluster_id", "task_id", "created_at"),
+    "business_anchors": (
+        "id", "anchor_type", "anchor_ref", "title", "active", "created_at",
+    ),
+    "business_task_anchor_links": (
+        "task_id", "anchor_id", "status", "active", "evidence_signal_id",
+        "reason", "created_at",
+    ),
+    "business_projects": (
+        "id", "canonical_anchor_id", "anchor_type", "title", "created_at",
+    ),
+    "business_project_candidates": (
+        "id", "cluster_id", "title", "reason", "status", "confirmed_project_id",
+        "created_at",
+    ),
+    "business_attention_items": (
+        "id", "stable_key", "category", "status", "title", "business_area",
+        "why_attention", "current_state", "ceo_action", "anchor_id",
+        "evidence_signal_id", "resolution_signal_id", "resolved_at",
+        "created_at", "updated_at",
+    ),
+    "business_attention_tasks": ("attention_item_id", "task_id", "created_at"),
+    "business_attention_events": (
+        "id", "attention_item_id", "event_type", "signal_id", "before_json",
+        "after_json", "reason", "created_at",
+    ),
+    "business_legacy_links": (
+        "id", "signal_id", "task_id", "cluster_id", "anchor_id", "project_id",
+        "project_candidate_id", "attention_item_id", "work_project_id",
+        "work_todo_id", "work_update_id", "created_at",
     ),
     "scheduled_tasks": (
         "migration_key",
@@ -436,6 +482,9 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
+    "trg_business_task_signals_immutable_update",
+    "trg_business_task_signals_immutable_delete",
+    "trg_business_task_signals_immutable_replace",
     "trg_feedback_processing_round_integer_v2_insert",
     "trg_feedback_processing_round_integer_v2_update",
     "trg_runtime_attempt_session_evidence_trim_insert",
@@ -3359,47 +3408,68 @@ class AutoReplyStore:
                     item_json text not null default '{}',
                     created_at text not null default current_timestamp
                 );
-                create table if not exists business_projects (
-                    id integer primary key autoincrement,
-                    title text not null,
-                    status text not null default 'active',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
                 create table if not exists business_task_signals (
                     id integer primary key autoincrement,
-                    source text not null check(source in (
-                        'dingtalk_message', 'ai_minutes', 'email', 'document', 'manual'
-                    )),
-                    source_ref text not null,
-                    kind text not null check(kind in (
-                        'assignment', 'commitment', 'progress', 'blocker', 'decision'
-                    )),
-                    summary text not null,
-                    observed_at text not null,
+                    source_type text not null check(trim(source_type) <> ''),
+                    source_ref text not null check(trim(source_ref) <> ''),
+                    source_time text not null default '',
+                    conversation_id text not null default '',
+                    conversation_title text not null default '',
+                    author_user_id text not null default '',
+                    author_name text not null default '',
+                    evidence_text text not null check(trim(evidence_text) <> ''),
+                    context_json text not null default '{}'
+                        check(json_valid(context_json) and json_type(context_json) = 'object'),
+                    dedupe_key text not null unique check(trim(dedupe_key) <> ''),
                     created_at text not null default current_timestamp
                 );
                 create index if not exists idx_business_task_signals_source
-                    on business_task_signals(source, source_ref, id);
+                    on business_task_signals(source_type, source_ref, source_time, id);
+                create trigger if not exists trg_business_task_signals_immutable_update
+                before update on business_task_signals
+                begin
+                    select raise(abort, 'business task signals are immutable');
+                end;
+                create trigger if not exists trg_business_task_signals_immutable_delete
+                before delete on business_task_signals
+                begin
+                    select raise(abort, 'business task signals are immutable');
+                end;
+                create trigger if not exists trg_business_task_signals_immutable_replace
+                before insert on business_task_signals
+                when exists (
+                    select 1 from business_task_signals
+                    where id = new.id or dedupe_key = new.dedupe_key
+                )
+                begin
+                    select raise(abort, 'business task signals are immutable: UNIQUE id or dedupe_key');
+                end;
                 create table if not exists business_tasks (
                     id integer primary key autoincrement,
-                    title text not null,
+                    title text not null check(trim(title) <> ''),
+                    description text not null default '',
                     stage text not null check(stage in ('candidate', 'formal')),
-                    status text not null check(status in (
-                        'open', 'blocked', 'completed', 'cancelled', 'merged'
+                    status text not null default 'open' check(status in (
+                        'open', 'waiting', 'done', 'cancelled', 'merged'
                     )),
-                    commitment_status text not null check(commitment_status in (
-                        'uncommitted', 'assigned_unaccepted', 'accepted', 'declined'
+                    commitment_status text not null default 'none' check(commitment_status in (
+                        'none', 'assigned_unaccepted', 'accepted', 'disputed', 'completed', 'cancelled'
                     )),
                     formal_basis text check(formal_basis in (
-                        'explicit_assignment', 'explicit_commitment', 'approved_plan'
+                        'explicit_assignment', 'explicit_commitment', 'external_todo', 'meeting_action_item'
                     )),
-                    business_relevance text not null check(business_relevance in (
-                        'low', 'medium', 'high'
+                    business_relevance text not null default 'unknown' check(business_relevance in (
+                        'unknown', 'not_relevant', 'relevant'
                     )),
-                    source_signal_id integer,
                     merged_into_task_id integer,
-                    project_id integer,
+                    owner_user_id text not null default '',
+                    owner_name text not null default '',
+                    owner_evidence_json text not null default '{}'
+                        check(json_valid(owner_evidence_json) and json_type(owner_evidence_json) = 'object'),
+                    deadline_at text not null default '',
+                    missing_evidence_json text not null default '[]'
+                        check(json_valid(missing_evidence_json) and json_type(missing_evidence_json) = 'array'),
+                    last_activity_at text not null default current_timestamp,
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
                     check(
@@ -3410,46 +3480,62 @@ class AutoReplyStore:
                         (status = 'merged' and merged_into_task_id is not null)
                         or (status <> 'merged' and merged_into_task_id is null)
                     ),
-                    foreign key(source_signal_id) references business_task_signals(id),
-                    foreign key(merged_into_task_id) references business_tasks(id),
-                    foreign key(project_id) references business_projects(id)
+                    check(merged_into_task_id is null or merged_into_task_id <> id),
+                    foreign key(merged_into_task_id) references business_tasks(id)
                 );
                 create index if not exists idx_business_tasks_list
                     on business_tasks(stage, status, updated_at, id);
-                create index if not exists idx_business_tasks_signal
-                    on business_tasks(source_signal_id, id);
+                create index if not exists idx_business_tasks_relevance
+                    on business_tasks(business_relevance, updated_at, id);
                 create table if not exists business_task_evidence (
-                    id integer primary key autoincrement,
                     task_id integer not null,
-                    kind text not null check(kind in (
-                        'assignment', 'commitment', 'progress', 'completion', 'blocker'
+                    signal_id integer not null,
+                    evidence_role text not null check(evidence_role in (
+                        'discovery', 'commitment', 'assignment', 'acceptance', 'completion',
+                        'correction', 'merge_identity', 'relevance', 'resolution'
                     )),
-                    source_signal_id integer,
-                    summary text not null,
-                    observed_at text not null,
                     created_at text not null default current_timestamp,
+                    primary key(task_id, signal_id, evidence_role),
                     foreign key(task_id) references business_tasks(id),
-                    foreign key(source_signal_id) references business_task_signals(id)
+                    foreign key(signal_id) references business_task_signals(id)
                 );
                 create index if not exists idx_business_task_evidence_task
-                    on business_task_evidence(task_id, observed_at, id);
+                    on business_task_evidence(task_id, created_at, signal_id);
                 create table if not exists business_task_events (
                     id integer primary key autoincrement,
                     task_id integer not null,
-                    event_type text not null,
-                    detail_json text not null default '{}',
-                    occurred_at text not null,
-                    foreign key(task_id) references business_tasks(id)
+                    event_type text not null check(event_type in (
+                        'created', 'promoted', 'commitment_changed', 'owner_changed',
+                        'deadline_changed', 'status_changed', 'relevance_changed', 'merged'
+                    )),
+                    signal_id integer,
+                    before_json text not null
+                        check(json_valid(before_json) and json_type(before_json) = 'object'),
+                    after_json text not null
+                        check(json_valid(after_json) and json_type(after_json) = 'object'),
+                    reason text not null check(trim(reason) <> ''),
+                    created_at text not null default current_timestamp,
+                    foreign key(task_id) references business_tasks(id),
+                    foreign key(signal_id) references business_task_signals(id)
                 );
+                create index if not exists idx_business_task_events_task
+                    on business_task_events(task_id, created_at, id);
                 create table if not exists business_task_relations (
                     from_task_id integer not null,
                     to_task_id integer not null,
-                    relation_type text not null,
+                    relation_type text not null check(relation_type in (
+                        'depends_on', 'blocks', 'supports', 'supersedes', 'related_to'
+                    )),
+                    status text not null default 'proposed'
+                        check(status in ('proposed', 'confirmed', 'rejected')),
+                    supporting_signal_id integer not null,
+                    reason text not null default '',
                     created_at text not null default current_timestamp,
                     primary key(from_task_id, to_task_id, relation_type),
                     check(from_task_id <> to_task_id),
                     foreign key(from_task_id) references business_tasks(id),
-                    foreign key(to_task_id) references business_tasks(id)
+                    foreign key(to_task_id) references business_tasks(id),
+                    foreign key(supporting_signal_id) references business_task_signals(id)
                 );
                 create index if not exists idx_business_task_relations_from
                     on business_task_relations(from_task_id, relation_type, to_task_id);
@@ -3457,12 +3543,13 @@ class AutoReplyStore:
                     on business_task_relations(to_task_id, relation_type, from_task_id);
                 create table if not exists business_work_clusters (
                     id integer primary key autoincrement,
-                    title text not null,
+                    title text not null check(trim(title) <> ''),
                     created_at text not null default current_timestamp
                 );
                 create table if not exists business_work_cluster_tasks (
                     cluster_id integer not null,
                     task_id integer not null,
+                    created_at text not null default current_timestamp,
                     primary key(cluster_id, task_id),
                     foreign key(cluster_id) references business_work_clusters(id),
                     foreign key(task_id) references business_tasks(id)
@@ -3471,38 +3558,87 @@ class AutoReplyStore:
                     on business_work_cluster_tasks(task_id, cluster_id);
                 create table if not exists business_anchors (
                     id integer primary key autoincrement,
-                    anchor_type text not null,
-                    anchor_ref text not null,
+                    anchor_type text not null check(anchor_type in (
+                        'project', 'okr', 'customer', 'product', 'revenue', 'financing',
+                        'cash', 'key_hire', 'personnel', 'company_priority', 'matter'
+                    )),
+                    anchor_ref text not null check(trim(anchor_ref) <> ''),
+                    title text not null check(trim(title) <> ''),
+                    active integer not null default 1 check(active in (0, 1)),
                     created_at text not null default current_timestamp,
-                    unique(anchor_type, anchor_ref)
+                    unique(anchor_type, anchor_ref),
+                    unique(id, anchor_type)
                 );
                 create table if not exists business_task_anchor_links (
                     task_id integer not null,
                     anchor_id integer not null,
+                    status text not null default 'proposed'
+                        check(status in ('proposed', 'confirmed', 'rejected')),
+                    active integer not null default 1 check(active in (0, 1)),
+                    evidence_signal_id integer not null,
+                    reason text not null default '',
+                    created_at text not null default current_timestamp,
                     primary key(task_id, anchor_id),
                     foreign key(task_id) references business_tasks(id),
-                    foreign key(anchor_id) references business_anchors(id)
+                    foreign key(anchor_id) references business_anchors(id),
+                    foreign key(evidence_signal_id) references business_task_signals(id)
                 );
                 create index if not exists idx_business_task_anchor_links_task
-                    on business_task_anchor_links(task_id, anchor_id);
+                    on business_task_anchor_links(task_id, status, active, anchor_id);
+                create table if not exists business_projects (
+                    id integer primary key autoincrement,
+                    canonical_anchor_id integer not null unique,
+                    anchor_type text not null default 'project' check(anchor_type = 'project'),
+                    title text not null check(trim(title) <> ''),
+                    created_at text not null default current_timestamp,
+                    foreign key(canonical_anchor_id, anchor_type)
+                        references business_anchors(id, anchor_type)
+                );
                 create table if not exists business_project_candidates (
                     id integer primary key autoincrement,
-                    title text not null,
-                    source_signal_id integer,
+                    cluster_id integer not null,
+                    title text not null check(trim(title) <> ''),
+                    reason text not null check(trim(reason) <> ''),
+                    status text not null default 'proposed'
+                        check(status in ('proposed', 'confirmed', 'rejected')),
+                    confirmed_project_id integer,
                     created_at text not null default current_timestamp,
-                    foreign key(source_signal_id) references business_task_signals(id)
+                    check((status = 'confirmed') = (confirmed_project_id is not null)),
+                    foreign key(cluster_id) references business_work_clusters(id),
+                    foreign key(confirmed_project_id) references business_projects(id)
                 );
+                create index if not exists idx_business_project_candidates_cluster
+                    on business_project_candidates(cluster_id, status, id);
                 create table if not exists business_attention_items (
                     id integer primary key autoincrement,
-                    attention_type text not null,
-                    status text not null default 'open',
-                    summary text not null,
+                    stable_key text not null unique check(trim(stable_key) <> ''),
+                    category text not null check(category in ('fyi', 'watch', 'decision', 'push')),
+                    status text not null default 'active' check(status in ('active', 'resolved')),
+                    title text not null check(trim(title) <> ''),
+                    business_area text not null default '',
+                    why_attention text not null check(trim(why_attention) <> ''),
+                    current_state text not null check(trim(current_state) <> ''),
+                    ceo_action text not null check(trim(ceo_action) <> ''),
+                    anchor_id integer not null,
+                    evidence_signal_id integer not null,
+                    resolution_signal_id integer,
+                    resolved_at text not null default '',
                     created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
+                    updated_at text not null default current_timestamp,
+                    check(
+                        (status = 'active' and resolution_signal_id is null and resolved_at = '')
+                        or (status = 'resolved' and resolution_signal_id is not null and trim(resolved_at) <> '')
+                    ),
+                    foreign key(anchor_id) references business_anchors(id),
+                    foreign key(evidence_signal_id) references business_task_signals(id),
+                    foreign key(resolution_signal_id) references business_task_signals(id)
                 );
+                create index if not exists idx_business_attention_items_list
+                    on business_attention_items(status, category, updated_at, id);
                 create table if not exists business_attention_tasks (
                     attention_item_id integer not null,
                     task_id integer not null,
+                    created_at text not null default current_timestamp,
                     primary key(attention_item_id, task_id),
                     foreign key(attention_item_id) references business_attention_items(id),
                     foreign key(task_id) references business_tasks(id)
@@ -3512,21 +3648,56 @@ class AutoReplyStore:
                 create table if not exists business_attention_events (
                     id integer primary key autoincrement,
                     attention_item_id integer not null,
-                    event_type text not null,
-                    occurred_at text not null,
-                    foreign key(attention_item_id) references business_attention_items(id)
+                    event_type text not null check(event_type in (
+                        'opened', 'updated', 'category_changed', 'resolved', 'reopened'
+                    )),
+                    signal_id integer not null,
+                    before_json text not null
+                        check(json_valid(before_json) and json_type(before_json) = 'object'),
+                    after_json text not null
+                        check(json_valid(after_json) and json_type(after_json) = 'object'),
+                    reason text not null check(trim(reason) <> ''),
+                    created_at text not null default current_timestamp,
+                    foreign key(attention_item_id) references business_attention_items(id),
+                    foreign key(signal_id) references business_task_signals(id)
                 );
+                create index if not exists idx_business_attention_events_item
+                    on business_attention_events(attention_item_id, created_at, id);
                 create table if not exists business_legacy_links (
                     id integer primary key autoincrement,
-                    entity_type text not null,
-                    entity_id integer not null,
-                    legacy_system text not null,
-                    legacy_ref text not null,
+                    signal_id integer,
+                    task_id integer,
+                    cluster_id integer,
+                    anchor_id integer,
+                    project_id integer,
+                    project_candidate_id integer,
+                    attention_item_id integer,
+                    work_project_id integer unique,
+                    work_todo_id integer unique,
+                    work_update_id integer unique,
                     created_at text not null default current_timestamp,
-                    unique(legacy_system, legacy_ref)
+                    check(
+                        (signal_id is not null) + (task_id is not null) + (cluster_id is not null)
+                        + (anchor_id is not null) + (project_id is not null)
+                        + (project_candidate_id is not null) + (attention_item_id is not null) = 1
+                    ),
+                    check(
+                        (work_project_id is not null) + (work_todo_id is not null)
+                        + (work_update_id is not null) = 1
+                    ),
+                    foreign key(signal_id) references business_task_signals(id),
+                    foreign key(task_id) references business_tasks(id),
+                    foreign key(cluster_id) references business_work_clusters(id),
+                    foreign key(anchor_id) references business_anchors(id),
+                    foreign key(project_id) references business_projects(id),
+                    foreign key(project_candidate_id) references business_project_candidates(id),
+                    foreign key(attention_item_id) references business_attention_items(id),
+                    foreign key(work_project_id) references work_projects(id),
+                    foreign key(work_todo_id) references work_todos(id),
+                    foreign key(work_update_id) references work_updates(id)
                 );
-                create index if not exists idx_business_legacy_links_entity
-                    on business_legacy_links(entity_type, entity_id, id);
+                create index if not exists idx_business_legacy_links_task
+                    on business_legacy_links(task_id, id);
                 create table if not exists work_projects (
                     id integer primary key autoincrement,
                     title text not null,
@@ -5930,95 +6101,58 @@ class AutoReplyStore:
 
     @staticmethod
     def _business_task_signal_from_row(row: sqlite3.Row) -> BusinessTaskSignal:
-        return BusinessTaskSignal(
-            id=int(row["id"]),
-            source=BusinessSignalSource(str(row["source"])),
-            source_ref=str(row["source_ref"]),
-            kind=BusinessSignalKind(str(row["kind"])),
-            summary=str(row["summary"]),
-            observed_at=str(row["observed_at"]),
-            created_at=str(row["created_at"]),
-        )
+        return BusinessTaskSignal.model_validate(dict(row))
 
     @staticmethod
     def _business_task_from_row(row: sqlite3.Row) -> BusinessTask:
-        return BusinessTask(
-            id=int(row["id"]),
-            title=str(row["title"]),
-            stage=BusinessTaskStage(str(row["stage"])),
-            status=BusinessTaskStatus(str(row["status"])),
-            commitment_status=BusinessCommitmentStatus(
-                str(row["commitment_status"])
-            ),
-            formal_basis=(
-                BusinessFormalBasis(str(row["formal_basis"]))
-                if row["formal_basis"] is not None
-                else None
-            ),
-            business_relevance=BusinessRelevance(str(row["business_relevance"])),
-            source_signal_id=(
-                int(row["source_signal_id"])
-                if row["source_signal_id"] is not None
-                else None
-            ),
-            merged_into_task_id=(
-                int(row["merged_into_task_id"])
-                if row["merged_into_task_id"] is not None
-                else None
-            ),
-            project_id=(int(row["project_id"]) if row["project_id"] is not None else None),
-            created_at=str(row["created_at"]),
-            updated_at=str(row["updated_at"]),
-        )
+        return BusinessTask.model_validate(dict(row))
 
     @staticmethod
     def _business_task_evidence_from_row(row: sqlite3.Row) -> BusinessTaskEvidence:
-        return BusinessTaskEvidence(
-            id=int(row["id"]),
-            task_id=int(row["task_id"]),
-            kind=BusinessEvidenceKind(str(row["kind"])),
-            source_signal_id=(
-                int(row["source_signal_id"])
-                if row["source_signal_id"] is not None
-                else None
-            ),
-            summary=str(row["summary"]),
-            observed_at=str(row["observed_at"]),
-            created_at=str(row["created_at"]),
-        )
+        return BusinessTaskEvidence.model_validate(dict(row))
 
     def create_business_task_signal(
         self,
         *,
-        source: BusinessSignalSource,
+        source_type: str,
         source_ref: str,
-        kind: BusinessSignalKind,
-        summary: str,
-        observed_at: datetime,
+        evidence_text: str,
+        dedupe_key: str,
+        source_time: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        author_user_id: str = "",
+        author_name: str = "",
+        context_json: str = "{}",
+        now: datetime | None = None,
     ) -> BusinessTaskSignal:
-        if not source_ref.strip() or not summary.strip():
-            raise ValueError("business task signal source_ref and summary are required")
-        observed = ensure_utc_datetime(observed_at, field="business task signal observed_at")
-        observed_text = observed.isoformat(timespec="seconds")
+        timestamp = ensure_utc_datetime(
+            now or datetime.now(timezone.utc), field="business task signal now"
+        ).isoformat(timespec="seconds")
+        signal = BusinessTaskSignal(
+            id=0, source_type=source_type, source_ref=source_ref, source_time=source_time,
+            conversation_id=conversation_id, conversation_title=conversation_title,
+            author_user_id=author_user_id, author_name=author_name,
+            evidence_text=evidence_text, context_json=context_json,
+            dedupe_key=dedupe_key, created_at=timestamp,
+        )
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
                 """
                 insert into business_task_signals (
-                    source, source_ref, kind, summary, observed_at, created_at
-                ) values (?, ?, ?, ?, ?, ?)
+                    source_type, source_ref, source_time, conversation_id, conversation_title,
+                    author_user_id, author_name, evidence_text, context_json, dedupe_key, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    source.value,
-                    source_ref.strip(),
-                    kind.value,
-                    summary.strip(),
-                    observed_text,
-                    observed_text,
+                    signal.source_type, signal.source_ref, signal.source_time,
+                    signal.conversation_id, signal.conversation_title,
+                    signal.author_user_id, signal.author_name, signal.evidence_text,
+                    signal.context_json, signal.dedupe_key, signal.created_at,
                 ),
             )
             row = db.execute(
-                "select id, source, source_ref, kind, summary, observed_at, created_at "
-                "from business_task_signals where id=?",
+                "select * from business_task_signals where id=?",
                 (int(cursor.lastrowid),),
             ).fetchone()
             assert row is not None
@@ -6027,59 +6161,76 @@ class AutoReplyStore:
     def list_business_task_signals(self) -> tuple[BusinessTaskSignal, ...]:
         with self._connect() as db:
             rows = db.execute(
-                "select id, source, source_ref, kind, summary, observed_at, created_at "
-                "from business_task_signals order by id"
+                "select * from business_task_signals order by id"
             ).fetchall()
             return tuple(self._business_task_signal_from_row(row) for row in rows)
+
+    def get_business_task_signal(self, signal_id: int) -> BusinessTaskSignal | None:
+        with self._connect() as db:
+            row = db.execute("select * from business_task_signals where id=?", (signal_id,)).fetchone()
+            return self._business_task_signal_from_row(row) if row else None
 
     def create_business_task(
         self,
         *,
         title: str,
-        stage: BusinessTaskStage,
-        status: BusinessTaskStatus,
-        commitment_status: BusinessCommitmentStatus,
-        formal_basis: BusinessFormalBasis | None,
-        business_relevance: BusinessRelevance,
-        source_signal_id: int | None = None,
+        stage: BusinessTaskStage | str,
+        status: BusinessTaskStatus | str = BusinessTaskStatus.OPEN,
+        commitment_status: CommitmentStatus | str = CommitmentStatus.NONE,
+        formal_basis: FormalTaskBasis | str | None = None,
+        business_relevance: BusinessRelevance | str = BusinessRelevance.UNKNOWN,
+        description: str = "",
+        owner_user_id: str = "",
+        owner_name: str = "",
+        owner_evidence_json: str = "{}",
+        deadline_at: str = "",
+        missing_evidence_json: str = "[]",
         merged_into_task_id: int | None = None,
-        project_id: int | None = None,
-        now: datetime,
+        last_activity_at: str | None = None,
+        now: datetime | None = None,
     ) -> BusinessTask:
-        if not title.strip():
-            raise ValueError("business task title is required")
-        timestamp = ensure_utc_datetime(now, field="business task now")
+        timestamp = ensure_utc_datetime(
+            now or datetime.now(timezone.utc), field="business task now"
+        ).isoformat(timespec="seconds")
         # Validate the model before writing so the Python and SQLite contracts
         # reject the same invalid stage and merge combinations.
-        BusinessTask(
+        task = BusinessTask(
             id=0,
-            title=title.strip(),
+            title=title,
+            description=description,
             stage=stage,
             status=status,
             commitment_status=commitment_status,
             formal_basis=formal_basis,
             business_relevance=business_relevance,
-            source_signal_id=source_signal_id,
             merged_into_task_id=merged_into_task_id,
-            project_id=project_id,
+            owner_user_id=owner_user_id,
+            owner_name=owner_name,
+            owner_evidence_json=owner_evidence_json,
+            deadline_at=deadline_at,
+            missing_evidence_json=missing_evidence_json,
+            last_activity_at=timestamp if last_activity_at is None else last_activity_at,
             created_at=timestamp,
             updated_at=timestamp,
         )
-        timestamp_text = timestamp.isoformat(timespec="seconds")
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
                 """
                 insert into business_tasks (
-                    title, stage, status, commitment_status, formal_basis,
-                    business_relevance, source_signal_id, merged_into_task_id,
-                    project_id, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    title, description, stage, status, commitment_status, formal_basis,
+                    business_relevance, merged_into_task_id, owner_user_id, owner_name,
+                    owner_evidence_json, deadline_at, missing_evidence_json,
+                    last_activity_at, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    title.strip(), stage.value, status.value, commitment_status.value,
-                    formal_basis.value if formal_basis is not None else None,
-                    business_relevance.value, source_signal_id, merged_into_task_id,
-                    project_id, timestamp_text, timestamp_text,
+                    task.title, task.description, task.stage.value, task.status.value,
+                    task.commitment_status.value,
+                    task.formal_basis.value if task.formal_basis is not None else None,
+                    task.business_relevance.value, task.merged_into_task_id,
+                    task.owner_user_id, task.owner_name, task.owner_evidence_json,
+                    task.deadline_at, task.missing_evidence_json, task.last_activity_at,
+                    task.created_at, task.updated_at,
                 ),
             )
             row = db.execute("select * from business_tasks where id=?", (int(cursor.lastrowid),)).fetchone()
@@ -6091,10 +6242,30 @@ class AutoReplyStore:
             row = db.execute("select * from business_tasks where id=?", (task_id,)).fetchone()
             return self._business_task_from_row(row) if row is not None else None
 
-    def list_business_tasks(self) -> tuple[BusinessTask, ...]:
+    def list_business_tasks(
+        self, *, stages: Collection[BusinessTaskStage | str] | None = None,
+        statuses: Collection[BusinessTaskStatus | str] | None = None,
+        relevance: Collection[BusinessRelevance | str] | None = None,
+        limit: int = 100, offset: int = 0,
+    ) -> tuple[BusinessTask, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business task pagination must be non-negative with a positive limit")
+        where: list[str] = []
+        values: list[object] = []
+        for column, items, enum in (
+            ("stage", stages, BusinessTaskStage),
+            ("status", statuses, BusinessTaskStatus),
+            ("business_relevance", relevance, BusinessRelevance),
+        ):
+            if items is not None:
+                selected = tuple(enum(item).value for item in items)
+                where.append(f"{column} in ({', '.join('?' for _ in selected)})")
+                values.extend(selected)
+        clause = f" where {' and '.join(where)}" if where else ""
         with self._connect() as db:
             rows = db.execute(
-                "select * from business_tasks order by updated_at, id"
+                f"select * from business_tasks{clause} order by updated_at, id limit ? offset ?",
+                (*values, limit, offset),
             ).fetchall()
             return tuple(self._business_task_from_row(row) for row in rows)
 
@@ -6102,26 +6273,25 @@ class AutoReplyStore:
         self,
         *,
         task_id: int,
-        kind: BusinessEvidenceKind,
-        source_signal_id: int | None,
-        summary: str,
-        observed_at: datetime,
+        signal_id: int,
+        evidence_role: BusinessEvidenceRole | str,
     ) -> BusinessTaskEvidence:
-        if not summary.strip():
-            raise ValueError("business task evidence summary is required")
-        observed = ensure_utc_datetime(observed_at, field="business task evidence observed_at")
-        observed_text = observed.isoformat(timespec="seconds")
+        evidence = BusinessTaskEvidence(
+            task_id=task_id, signal_id=signal_id,
+            evidence_role=evidence_role, created_at="",
+        )
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
+            db.execute(
                 """
                 insert into business_task_evidence (
-                    task_id, kind, source_signal_id, summary, observed_at, created_at
-                ) values (?, ?, ?, ?, ?, ?)
+                    task_id, signal_id, evidence_role
+                ) values (?, ?, ?)
                 """,
-                (task_id, kind.value, source_signal_id, summary.strip(), observed_text, observed_text),
+                (evidence.task_id, evidence.signal_id, evidence.evidence_role.value),
             )
             row = db.execute(
-                "select * from business_task_evidence where id=?", (int(cursor.lastrowid),)
+                "select * from business_task_evidence where task_id=? and signal_id=? and evidence_role=?",
+                (evidence.task_id, evidence.signal_id, evidence.evidence_role.value),
             ).fetchone()
             assert row is not None
             return self._business_task_evidence_from_row(row)
@@ -6132,10 +6302,24 @@ class AutoReplyStore:
         with self._connect() as db:
             rows = db.execute(
                 "select * from business_task_evidence where task_id=? "
-                "order by observed_at, id",
+                "order by created_at, signal_id, evidence_role",
                 (task_id,),
             ).fetchall()
             return tuple(self._business_task_evidence_from_row(row) for row in rows)
+
+    def list_business_task_project_links(self, *, task_id: int) -> list[BusinessProject]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select p.* from business_projects p
+                join business_task_anchor_links l on l.anchor_id = p.canonical_anchor_id
+                join business_anchors a on a.id = l.anchor_id
+                where l.task_id=? and l.status='confirmed' and l.active=1 and a.active=1
+                order by p.id
+                """,
+                (task_id,),
+            ).fetchall()
+            return [BusinessProject.model_validate(dict(row)) for row in rows]
 
     def backfill_scheduled_task_runtime_capabilities(
         self,
