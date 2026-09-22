@@ -21531,6 +21531,15 @@ class AutoReplyStore:
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
                   )
+                  and not exists (
+                      select 1
+                      from errors as settled
+                      where settled.conversation_id=tasks.conversation_id
+                        and settled.message_id=tasks.trigger_message_id
+                        and settled.kind='reply_task_already_settled'
+                        and trim(coalesce(settled.resolved_at, ''))<>''
+                        and trim(coalesce(settled.resolution, ''))<>''
+                  )
                   {receipt_exclusion}
                 order by tasks.id
                 """,

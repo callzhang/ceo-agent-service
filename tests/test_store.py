@@ -3264,6 +3264,14 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
         trigger_text="Calendar invite",
     )
     [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store, task.id, task.execution_generation, owner="audit"
+    ).run
+    store.fail_agent_run(
+        run.id,
+        {"code": "codex_process_failed"},
+        owner="audit",
+    )
     with store._connect() as db:
         db.execute(
             "update reply_tasks set status='needs_human', error=? where id=?",
@@ -3279,6 +3287,8 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
     updated = store.get_reply_task(task.id)
     assert updated is not None
     assert updated.status == "done"
+    assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
+    assert store.get_reply_task(task.id).status == "done"
     with store._connect() as db:
         error = db.execute(
             "select resolved_at, resolution from errors "

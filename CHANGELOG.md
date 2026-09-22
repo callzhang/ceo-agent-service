@@ -8,7 +8,8 @@
   evidence is also `done`; and a durable delivery ledger closes either stale
   projection without replaying the provider action. Read-only external
   readback can close an already-settled task while retaining resolved evidence
-  instead of creating a new Attention error.
+  instead of creating a new Attention error, and that evidence prevents an old
+  failed run from reopening the task during the next service start.
 
 - 2026-09-21: OA recovery now reconciles the principal's exact approval task,
   not only the process-wide status. After a complete pending-task scan, an old
