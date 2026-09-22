@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-21: OA recovery now reconciles the principal's exact approval task,
+  not only the process-wide status. After a complete pending-task scan, an old
+  task is terminal when its `taskId` is no longer pending even if a redirect or
+  downstream approver keeps the process `RUNNING`. Incomplete pagination never
+  treats absence as proof, so tasks on an unread page remain open.
+
 - 2026-09-21: Attention recovery can now reconcile DingTalk messages that were
   delivered before their Agent run failed validation. The recovery compares the
   authored body independently from service feedback links, understands the

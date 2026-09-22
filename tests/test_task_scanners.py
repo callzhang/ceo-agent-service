@@ -691,6 +691,106 @@ def test_scan_pending_oa_approvals_keeps_running_oa_needs_human_attempt(tmp_path
     assert store.get_reply_attempt(attempt_id).send_status == "needs_human"
 
 
+def test_scan_pending_oa_approvals_closes_running_process_task_no_longer_pending(
+    tmp_path,
+):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return []
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            raise AssertionError("the process is no longer pending for the principal")
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {"result": {"status": "RUNNING"}}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-running:revision-2",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-running",
+        oa_task_id="task-old",
+        send_status="needs_human",
+    )
+
+    assert scan_pending_oa_approvals(store, FakeDws()) == 0
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    with store._connect() as db:
+        resolution = db.execute(
+            "select resolution from reply_attempts where id=?",
+            (attempt_id,),
+        ).fetchone()["resolution"]
+    assert "OA_TASK_NOT_PENDING" in resolution
+
+
+def test_scan_pending_oa_approvals_does_not_close_absent_task_on_partial_scan(
+    tmp_path,
+):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [
+                DwsOaApprovalCandidate(
+                    process_instance_id="other-process",
+                    title="其他审批",
+                )
+            ]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "other-task"}]}}
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            if process_instance_id == "proc-running":
+                return {"result": {"status": "RUNNING"}}
+            return {
+                "result": {
+                    "status": "RUNNING",
+                    "tasks": [
+                        {
+                            "taskId": "other-task",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ],
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {"result": {"operationRecords": []}}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-running:revision-3",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-running",
+        oa_task_id="task-old",
+        send_status="needs_human",
+    )
+
+    scan_pending_oa_approvals(
+        store,
+        FakeDws(),
+        page_size=1,
+        max_pages=1,
+    )
+
+    assert store.get_reply_attempt(attempt_id).send_status == "needs_human"
+
+
 def test_scan_pending_oa_approvals_caches_applicant_open_dingtalk_id(tmp_path):
     class Profile:
         user_id = "applicant-user-1"

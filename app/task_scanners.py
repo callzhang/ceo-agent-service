@@ -394,30 +394,8 @@ def scan_pending_oa_approvals(
         timespec="seconds"
     )
     window_end = scan_time.isoformat(timespec="seconds")
-    store.backfill_oa_audit_metadata()
-    reconciled_completed_attempt_ids: list[int] = []
-    reconciliation_read_failures: list[str] = []
-    detail_cache: dict[str, Any] = {}
-    for attempt in store.list_open_oa_needs_human_attempts():
-        process_instance_id = attempt.oa_process_instance_id.strip()
-        try:
-            detail_payload = read_detail(process_instance_id)
-        except Exception:
-            reconciliation_read_failures.append(process_instance_id)
-            continue
-        detail_cache[process_instance_id] = detail_payload
-        terminal_state = _oa_terminal_process_state(detail_payload)
-        if terminal_state is None:
-            continue
-        _status, process_result = terminal_state
-        if store.resolve_completed_oa_needs_human_attempt(
-            attempt.id,
-            process_instance_id=process_instance_id,
-            process_result=process_result,
-        ):
-            reconciled_completed_attempt_ids.append(attempt.id)
-
     approvals = []
+    pending_scan_complete = False
     try:
         for page in range(1, max_pages + 1):
             page_items = list_pending(
@@ -428,6 +406,7 @@ def scan_pending_oa_approvals(
             )
             approvals.extend(page_items)
             if len(page_items) < page_size:
+                pending_scan_complete = True
                 break
     except Exception as exc:
         store.set_daily_scan_state(
@@ -438,6 +417,27 @@ def scan_pending_oa_approvals(
         )
         return 0
 
+    store.backfill_oa_audit_metadata()
+    reconciled_completed_attempt_ids: list[int] = []
+    reconciliation_read_failures: list[str] = []
+    detail_cache: dict[str, Any] = {}
+    tasks_cache: dict[str, Any] = {}
+    pending_task_ids_by_process: dict[str, set[str]] = {}
+    for approval in approvals:
+        process_instance_id = str(
+            getattr(approval, "process_instance_id", "") or ""
+        ).strip()
+        if not process_instance_id or process_instance_id in tasks_cache:
+            continue
+        try:
+            tasks_payload = read_tasks(process_instance_id)
+            detail_payload = read_detail(process_instance_id)
+        except Exception:
+            reconciliation_read_failures.append(process_instance_id)
+            continue
+        tasks_cache[process_instance_id] = tasks_payload
+        detail_cache[process_instance_id] = detail_payload
+
     current_user_id = ""
     get_current_user_id = getattr(dws, "get_current_user_id", None)
     if get_current_user_id is not None:
@@ -445,6 +445,44 @@ def scan_pending_oa_approvals(
             current_user_id = str(get_current_user_id() or "")
         except Exception:
             current_user_id = ""
+    for process_instance_id, tasks_payload in tasks_cache.items():
+        task_id = _pending_oa_task_id_for_current_user(
+            {"result": [detail_cache[process_instance_id], tasks_payload]},
+            current_user_id=current_user_id,
+        )
+        if task_id:
+            pending_task_ids_by_process.setdefault(process_instance_id, set()).add(
+                task_id
+            )
+
+    for attempt in store.list_open_oa_needs_human_attempts():
+        process_instance_id = attempt.oa_process_instance_id.strip()
+        try:
+            detail_payload = detail_cache.get(process_instance_id)
+            if detail_payload is None:
+                detail_payload = read_detail(process_instance_id)
+                detail_cache[process_instance_id] = detail_payload
+        except Exception:
+            reconciliation_read_failures.append(process_instance_id)
+            continue
+        terminal_state = _oa_terminal_process_state(detail_payload)
+        process_result = ""
+        if terminal_state is not None:
+            _status, process_result = terminal_state
+        elif pending_scan_complete and attempt.oa_task_id.strip():
+            pending_task_ids = pending_task_ids_by_process.get(
+                process_instance_id, set()
+            )
+            if attempt.oa_task_id.strip() not in pending_task_ids:
+                process_result = "OA_TASK_NOT_PENDING"
+        if not process_result:
+            continue
+        if store.resolve_completed_oa_needs_human_attempt(
+            attempt.id,
+            process_instance_id=process_instance_id,
+            process_result=process_result,
+        ):
+            reconciled_completed_attempt_ids.append(attempt.id)
 
     previous_revisions: dict[str, str] = {}
     previous_queued_days: dict[str, str] = {}
@@ -484,7 +522,9 @@ def scan_pending_oa_approvals(
         if max_new_items is not None and queued >= max_new_items:
             continue
         try:
-            tasks_payload = read_tasks(process_instance_id)
+            tasks_payload = tasks_cache.get(process_instance_id)
+            if tasks_payload is None:
+                tasks_payload = read_tasks(process_instance_id)
             detail_payload = detail_cache.get(process_instance_id)
             if detail_payload is None:
                 detail_payload = read_detail(process_instance_id)
