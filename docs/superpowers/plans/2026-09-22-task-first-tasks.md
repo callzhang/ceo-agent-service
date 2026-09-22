@@ -31,7 +31,7 @@
 
 ```bash
 .venv/bin/pytest -q tests/test_task_models.py tests/test_task_store.py tests/test_task_agent.py tests/test_console_web_api.py tests/test_web_api_task_sort.py
-npm --prefix frontend test -- --run frontend/src/pages/TasksPage.test.tsx frontend/src/pages/TaskDetailPage.test.tsx frontend/src/api/console.test.ts
+npm --prefix frontend test -- --run src/pages/TasksPage.test.tsx src/pages/TaskDetailPage.test.tsx src/api/console.test.ts
 ```
 
 Expected: record the exact baseline pass/fail counts before changing code. Existing unrelated failures remain explicit and must not be converted into acceptance.
@@ -1108,7 +1108,7 @@ Add CSS contract tests proving `.task-domain-route` owns dark tokens and attenti
 Run:
 
 ```bash
-npm --prefix frontend test -- --run frontend/src/api/console.test.ts frontend/src/pages/TasksPage.test.tsx frontend/src/pages/TaskDetailPage.test.tsx frontend/src/pages/TaskAttentionDetailPage.test.tsx frontend/src/pages/TaskProjectDetailPage.test.tsx frontend/src/app/AppShell.test.tsx frontend/src/styles.tasks-responsive.test.ts
+npm --prefix frontend test -- --run src/api/console.test.ts src/pages/TasksPage.test.tsx src/pages/TaskDetailPage.test.tsx src/pages/TaskAttentionDetailPage.test.tsx src/pages/TaskProjectDetailPage.test.tsx src/app/AppShell.test.tsx src/styles.tasks-responsive.test.ts
 npm --prefix frontend run build
 ```
 
@@ -1194,13 +1194,13 @@ Run:
   tests/test_history.py
 
 npm --prefix frontend test -- --run \
-  frontend/src/api/console.test.ts \
-  frontend/src/pages/TasksPage.test.tsx \
-  frontend/src/pages/TaskDetailPage.test.tsx \
-  frontend/src/pages/TaskAttentionDetailPage.test.tsx \
-  frontend/src/pages/TaskProjectDetailPage.test.tsx \
-  frontend/src/app/AppShell.test.tsx \
-  frontend/src/styles.tasks-responsive.test.ts
+  src/api/console.test.ts \
+  src/pages/TasksPage.test.tsx \
+  src/pages/TaskDetailPage.test.tsx \
+  src/pages/TaskAttentionDetailPage.test.tsx \
+  src/pages/TaskProjectDetailPage.test.tsx \
+  src/app/AppShell.test.tsx \
+  src/styles.tasks-responsive.test.ts
 
 npm --prefix frontend run build
 ```
