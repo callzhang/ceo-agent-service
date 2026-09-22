@@ -30,6 +30,7 @@ from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
     ProcessExecutor,
+    repeated_result_failure_requires_fresh_session,
     result_correction_prompt,
 )
 from app.agent_wire_contracts import (
@@ -630,6 +631,12 @@ class ConsumerAgentRunner:
             role=AgentRole.CONSUMER,
             proposal_revision=proposal_revision,
         )
+        force_new_session = repeated_result_failure_requires_fresh_session(
+            self.store,
+            task,
+            role=AgentRole.CONSUMER,
+            proposal_revision=proposal_revision,
+        )
 
         result = process.execute(
                 run=claim.run,
@@ -677,7 +684,7 @@ class ConsumerAgentRunner:
                 image_paths=[Path(path) for path in context.image_paths],
                 required_capabilities=self._required_capabilities(context),
                 conversation_contract_hash=contract_hash,
-                force_new_session=False,
+                force_new_session=force_new_session,
         )
         self._report_unreviewed_provider_effects(task, result)
         return result

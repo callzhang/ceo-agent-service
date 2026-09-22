@@ -529,6 +529,58 @@ RESULT_INVALID_ERROR_CODE = "codex_result_invalid"
 RESULT_MISSING_ERROR_CODE = "codex_result_missing"
 
 
+def repeated_result_failure_requires_fresh_session(
+    store: AutoReplyStore,
+    task: ReplyTask,
+    *,
+    role: AgentRole,
+    proposal_revision: int,
+) -> bool:
+    """Break a session loop after it repeats the same unusable result twice."""
+
+    failed_runs = sorted(
+        (
+            run
+            for run in store.list_agent_runs_for_task_generation(
+                task.id,
+                task.execution_generation,
+            )
+            if run.role is role
+            and run.proposal_revision == proposal_revision
+            and run.status == "failed"
+            and run.codex_session_id
+        ),
+        key=lambda run: (run.turn_attempt, run.id),
+    )
+    if len(failed_runs) < 2:
+        return False
+    previous, latest = failed_runs[-2:]
+    if previous.codex_session_id != latest.codex_session_id:
+        return False
+
+    fingerprints: list[tuple[str, str]] = []
+    for run in (previous, latest):
+        try:
+            error = json.loads(run.structured_error_json or "{}")
+        except json.JSONDecodeError:
+            return False
+        if (
+            not isinstance(error, dict)
+            or error.get("code")
+            not in {RESULT_INVALID_ERROR_CODE, RESULT_MISSING_ERROR_CODE}
+            or not error.get("retryable")
+            or not error.get("session_continuable")
+        ):
+            return False
+        fingerprints.append(
+            (
+                str(error.get("code") or ""),
+                str(error.get("detail") or ""),
+            )
+        )
+    return fingerprints[0] == fingerprints[1]
+
+
 def result_correction_prompt(
     store: AutoReplyStore,
     task: ReplyTask,

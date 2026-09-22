@@ -1019,6 +1019,39 @@ def test_audit_prompt_uses_quality_gate_priority(setup):
     assert "only risk and confidence" not in prompt
 
 
+def test_audit_prompt_treats_service_postfix_as_trusted_delivery_content(setup):
+    store, task, audit_context, parent = setup
+    audit_context = replace(
+        audit_context,
+        proposal=ConsumerProposal.model_validate(
+            {
+                "objective": "Send reviewed questions",
+                "actions": [
+                    {
+                        "description": "Reply in the source group",
+                        "action_identity": "send-questions",
+                        "capability": "dingtalk-chat",
+                        "operation": "send_group_message",
+                        "target": {"conversation_id": task.conversation_id},
+                        "payload": {"content": "Two reviewed questions."},
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "Requested by Derek",
+            }
+        ),
+    )
+    executor = CapturingExecutor(_audit_jsonl("operation-1", session="postfix"))
+
+    AuditAgentRunner(store=store, workspace=Path("/workspace"), executor=executor).run(
+        task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id
+    )
+
+    prompt = executor.prompts[0]
+    assert "service-owned delivery postfix" in prompt
+    assert "must not request a Consumer revision" in prompt
+
+
 def test_audit_runtime_environment_overrides_ambient_send_mode(
     setup, monkeypatch
 ):
@@ -1451,7 +1484,11 @@ def test_audit_result_missing_proposal_revision_is_result_invalid(setup):
     assert "proposal_revision" in error["detail"]
 
 
-def test_audit_rejects_provider_confirmation_as_a_human_decision(setup):
+@pytest.mark.parametrize(
+    "error_code",
+    ("confirmation_required", "authorization_required"),
+)
+def test_audit_rejects_provider_confirmation_as_a_human_decision(setup, error_code):
     store, task, audit_context, parent = setup
     wire = _wire_result(
         {
@@ -1461,7 +1498,7 @@ def test_audit_rejects_provider_confirmation_as_a_human_decision(setup):
             "feedback": None,
             "external_result": None,
             "error": {
-                "code": "confirmation_required",
+                "code": error_code,
                 "retryable": False,
                 "authorization_required": True,
             },

@@ -239,7 +239,12 @@ class AuditAgentRunner:
                 "state; do not call dws directly and do not provide message text or "
                 "a recipient to the tool. Return executed only after the tool "
                 "returns delivery_status=sent, and copy its receipt into "
-                "external_result.live_result_reference.\n"
+                "external_result.live_result_reference. The principal signature "
+                "and configured feedback links in the prepared body are a trusted, "
+                "service-owned delivery postfix, not Consumer-authored content. "
+                "They are added after every Consumer revision, so Audit must not "
+                "request a Consumer revision solely because that postfix or its "
+                "service-generated query parameters are present.\n"
                 f"task_id={task.id}"
             )
         prompt += (
@@ -519,11 +524,14 @@ def _parse_audit_agent_result(
     if (
         has_typed_actions
         and result.outcome is AuditOutcome.FAILED
-        and result.error.code == "confirmation_required"
+        and result.error.code in {
+            "confirmation_required",
+            "authorization_required",
+        }
         and result.error.authorization_required
     ):
         raise ResultParseError(
-            "error_code: confirmation_required is not a business decision for "
+            f"error_code: {result.error.code} is not a business decision for "
             "an already reviewed typed action. Audit approval is the execution "
             "confirmation; execute with the provider's non-interactive "
             "confirmation flag and verify the result."

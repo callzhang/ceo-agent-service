@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- 2026-09-22: Audit no longer turns service-owned DingTalk feedback callbacks
+  into an impossible Consumer revision loop, and provider confirmation flags
+  named either `confirmation_required` or `authorization_required` are treated
+  as execution-contract corrections for already reviewed typed actions rather
+  than business authorization. Consumer result retries still preserve a useful
+  conversation session, but two identical, continuable result-validation
+  failures in the same session now open a fresh session so a stale conclusion
+  cannot consume every retry.
+
 - 2026-09-22: Audit's service-owned DingTalk sender now accepts the Consumer's
   established `reply` and `send_group_message` operation names. The proposal
   contract already allowed those names, but outbound preparation only recognized
