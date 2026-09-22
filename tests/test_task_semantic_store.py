@@ -344,16 +344,51 @@ def test_signal_preserves_original_evidence_and_provenance(store):
     values.pop("id")
     values.pop("created_at")
     values["evidence_text"] = "  王明，周五前提交报价。\n"
-    signal = store.create_business_task_signal(**values, now=NOW)
+    signal_id = store.create_business_task_signal(**values, now=NOW)
+    signal = store.get_business_task_signal(signal_id)
+    assert signal is not None
     assert signal.model_dump(mode="json") == dict(
-        values, id=signal.id, created_at=STAMP
+        values, id=signal_id, created_at=STAMP
     )
     assert store.get_business_task_signal(signal.id) == signal
     assert store.get_business_task_signal(999) is None
     with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
         store.create_business_task_signal(**values, now=NOW)
     changed = dict(values, evidence_text="王明：收到", dedupe_key="message:42:v2")
-    assert store.create_business_task_signal(**changed, now=NOW).id != signal.id
+    assert store.create_business_task_signal(**changed, now=NOW) != signal_id
+
+
+def test_business_task_can_exist_without_project(tmp_path):
+    from app.task_semantic_models import BusinessTaskStage, CommitmentStatus
+
+    store = AutoReplyStore(tmp_path / "service.sqlite3")
+    signal_id = store.create_business_task_signal(
+        source_type="reply_attempt",
+        source_ref="message:42",
+        source_time="2026-09-22T10:00:00Z",
+        evidence_text="王明，周五前提交美国客户报价第一版。",
+        context_json="{}",
+        dedupe_key="reply_attempt:message:42",
+    )
+    task_id = store.create_business_task(
+        title="提交美国客户报价第一版",
+        stage="formal",
+        status="open",
+        formal_basis="explicit_assignment",
+        commitment_status="assigned_unaccepted",
+        owner_name="王明",
+    )
+    store.link_business_task_evidence(
+        task_id=task_id,
+        signal_id=signal_id,
+        evidence_role="assignment",
+    )
+
+    task = store.get_business_task(task_id)
+    assert task is not None
+    assert task.stage is BusinessTaskStage.FORMAL
+    assert task.commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
+    assert store.list_business_task_project_links(task_id=task_id) == []
 
 
 @pytest.mark.parametrize(
@@ -376,7 +411,9 @@ def test_task_truth_round_trip_without_a_project(store):
     values = dict(ROWS["business_tasks"][1])
     for field in ("id", "created_at", "updated_at"):
         values.pop(field)
-    task = store.create_business_task(**values, now=NOW)
+    task_id = store.create_business_task(**values, now=NOW)
+    task = store.get_business_task(task_id)
+    assert task is not None
     assert task.model_dump(mode="json") == ROWS["business_tasks"][1]
     assert store.get_business_task(task.id) == task
     assert store.list_business_task_project_links(task_id=task.id) == []
@@ -384,9 +421,11 @@ def test_task_truth_round_trip_without_a_project(store):
 
 
 def test_creation_uses_declared_fields_and_defaults(store):
-    task = store.create_business_task(
+    task_id = store.create_business_task(
         title="Investigate pricing", stage="candidate", now=NOW
     )
+    task = store.get_business_task(task_id)
+    assert task is not None
     assert task.status.value == "open"
     assert task.commitment_status.value == "none"
     assert task.business_relevance.value == "unknown"
@@ -414,7 +453,7 @@ def test_task_listing_combines_filters_and_paginates_stably(store):
                 formal_basis="external_todo" if stage == "formal" else None,
                 business_relevance=relevance,
                 now=NOW,
-            ).id
+            )
         )
     assert [t.id for t in store.list_business_tasks(limit=2, offset=1)] == task_ids[1:3]
     assert [

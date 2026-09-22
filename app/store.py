@@ -6125,7 +6125,7 @@ class AutoReplyStore:
         author_name: str = "",
         context_json: str = "{}",
         now: datetime | None = None,
-    ) -> BusinessTaskSignal:
+    ) -> int:
         timestamp = ensure_utc_datetime(
             now or datetime.now(timezone.utc), field="business task signal now"
         ).isoformat(timespec="seconds")
@@ -6151,12 +6151,7 @@ class AutoReplyStore:
                     signal.context_json, signal.dedupe_key, signal.created_at,
                 ),
             )
-            row = db.execute(
-                "select * from business_task_signals where id=?",
-                (int(cursor.lastrowid),),
-            ).fetchone()
-            assert row is not None
-            return self._business_task_signal_from_row(row)
+            return int(cursor.lastrowid)
 
     def list_business_task_signals(self) -> tuple[BusinessTaskSignal, ...]:
         with self._connect() as db:
@@ -6188,7 +6183,7 @@ class AutoReplyStore:
         merged_into_task_id: int | None = None,
         last_activity_at: str | None = None,
         now: datetime | None = None,
-    ) -> BusinessTask:
+    ) -> int:
         timestamp = ensure_utc_datetime(
             now or datetime.now(timezone.utc), field="business task now"
         ).isoformat(timespec="seconds")
@@ -6233,9 +6228,7 @@ class AutoReplyStore:
                     task.created_at, task.updated_at,
                 ),
             )
-            row = db.execute("select * from business_tasks where id=?", (int(cursor.lastrowid),)).fetchone()
-            assert row is not None
-            return self._business_task_from_row(row)
+            return int(cursor.lastrowid)
 
     def get_business_task(self, task_id: int) -> BusinessTask | None:
         with self._connect() as db:

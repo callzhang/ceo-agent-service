@@ -81,8 +81,10 @@ indexes, and source-immutability triggers.
 
 ## Primitive store API
 
-The create/get methods return typed records; create methods accept only explicit
-keyword fields and use fixed INSERT column lists. The Task 1 APIs are
+`create_business_task_signal` and `create_business_task` return persisted integer
+IDs. Callers pass these IDs directly to evidence linking and getters; the getters
+return typed records. Create methods accept only explicit keyword fields and use
+fixed INSERT column lists. The Task 1 APIs are
 `create_business_task_signal`, `get_business_task_signal`, `create_business_task`,
 `get_business_task`, `list_business_tasks`, `link_business_task_evidence`, and
 `list_business_task_evidence`. The original signal-list primitive is retained.
@@ -109,8 +111,17 @@ triggers made these checks green. Tests also exercise real dangling foreign-key
 writes, canonical project-anchor type enforcement, valid record round trips,
 invalid states, uniqueness, listing, source fidelity, and pre-semantic startup.
 
-Final repair validation: `.venv/bin/pytest -q tests/test_task_semantic_store.py
+Initial contract repair validation: `.venv/bin/pytest -q tests/test_task_semantic_store.py
 tests/test_store.py tests/test_task_models.py` passed **627 tests**. Python
 compilation of both production files, Ruff on both production files and both
 specified test files, and `git diff --check` also passed. These are isolated
 storage checks, not evidence of a deployed runtime or applied legacy import.
+
+The follow-up interface regression copies the approved standalone-task call
+sequence unchanged: create signal ID, create task ID, link evidence, and get the
+task. Before the return-value correction it failed with two Pydantic `int_type`
+errors because `BusinessTask` and `BusinessTaskSignal` records reached the
+integer evidence-link fields. Both create methods now return their persisted
+integer IDs, and tests that inspect records use the getters. The same three-file
+suite then passed **628 tests**, including this regression; compilation, Ruff,
+and `git diff --check` also passed.
