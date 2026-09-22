@@ -108,6 +108,7 @@ def _options(
         "dingtalk-minutes",
         "dingtalk-calendar",
         "dingtalk-oa-approval",
+        "stardust-oa-finance-review",
         *operation_skills,
     }
     for name in required_operation_skills:
@@ -410,12 +411,45 @@ def test_reseeding_preserves_user_edits_when_adopting_a_legacy_fixed_check(
 
     assert repeated.name == original.name
     assert "$dingtalk-oa-approval" in repeated.prompt
-    assert [ref.skill_name for ref in repeated.skill_refs] == ["dingtalk-oa-approval"]
+    assert "$stardust-oa-finance-review" in repeated.prompt
+    assert [ref.skill_name for ref in repeated.skill_refs] == [
+        "dingtalk-oa-approval",
+        "stardust-oa-finance-review",
+    ]
     assert repeated.runtime_id == ""
     assert repeated.command == "scan-oa-approvals"
     assert repeated.enabled is False
     assert repeated.version == original.version + 1
     assert repeated.required_runtime_capabilities == ()
+
+
+def test_oa_seed_binds_generic_and_stardust_finance_review_skills(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "oa-finance-skill.sqlite3")
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes={"codex_oauth"},
+        operation_skills=("stardust-oa-finance-review",),
+    )
+
+    task = _task_by_key(
+        seed_scheduled_tasks(
+            store=store,
+            options=options,
+            working_directory=tmp_path,
+            now=NOW,
+        ),
+        "dingtalk-oa-check-v1",
+    )
+
+    assert "$dingtalk-oa-approval" in task.prompt
+    assert "$stardust-oa-finance-review" in task.prompt
+    assert [ref.skill_name for ref in task.skill_refs] == [
+        "dingtalk-oa-approval",
+        "stardust-oa-finance-review",
+    ]
 
 
 def test_startup_seed_leaves_deleted_legacy_fixed_check_unchanged(
@@ -880,7 +914,10 @@ def test_every_fixed_discovery_check_is_a_service_command(
             "dingtalk-calendar",
         ],
         "wechat-message-check-v1": ["ceo-wechat"],
-        "dingtalk-oa-check-v1": ["dingtalk-oa-approval"],
+        "dingtalk-oa-check-v1": [
+            "dingtalk-oa-approval",
+            "stardust-oa-finance-review",
+        ],
         "work-source-scan-daily-v1": [
             "ceo-meeting-work",
             "ceo-work-tracking",
@@ -1016,11 +1053,15 @@ def test_seed_creates_hourly_oa_check_with_real_operation_skill(
     assert task.cron_expression == "0 0 * * * *"
     assert task.command == "scan-oa-approvals"
     assert "$dingtalk-oa-approval" in task.prompt
+    assert "$stardust-oa-finance-review" in task.prompt
     assert task.runtime_id == ""
     assert task.runtime_options == {}
     assert task.required_runtime_capabilities == ()
     assert task.working_directory == ""
-    assert [ref.skill_name for ref in task.skill_refs] == ["dingtalk-oa-approval"]
+    assert [ref.skill_name for ref in task.skill_refs] == [
+        "dingtalk-oa-approval",
+        "stardust-oa-finance-review",
+    ]
     assert task.enabled is True
 
 
@@ -1061,8 +1102,10 @@ def test_reseed_renames_untouched_oa_default_so_the_approval_task_is_discoverabl
     assert reseeded.description == original.description
     assert reseeded.command == "scan-oa-approvals"
     assert "$dingtalk-oa-approval" in reseeded.prompt
+    assert "$stardust-oa-finance-review" in reseeded.prompt
     assert [ref.skill_name for ref in reseeded.skill_refs] == [
-        "dingtalk-oa-approval"
+        "dingtalk-oa-approval",
+        "stardust-oa-finance-review",
     ]
 
 

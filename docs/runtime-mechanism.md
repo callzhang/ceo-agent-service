@@ -144,10 +144,10 @@ Task Agent 的 `update_project` 是字段补丁，不是完整项目快照。服
 字段。结构化结果的编码必须保留原始字段集合，不能在往返编码时补入未提交的模型默认值。修订
 通过后，落库事务再次执行同一校验，防止校验与写入之间的并发变化造成数据覆盖。
 
-OA 审批中，实际申请人对其申请所作的最新明确陈述是当前事实。申请人说明材料已经补充或关联
-状态已经修正后，Consumer/Audit 直接据此继续处理；应用层不要求其他来源再确认，也不允许延迟、
-缓存或冲突的来源状态覆盖申请人陈述。该回审轮次不能新增此前未提出的格式、评分细节或潜在歧义
-要求；只有 OA 表单明确必填且申请人没有陈述的信息可以继续请求补充。
+OA 审批中，申请人的补充只可完善其可核验的事实或材料，不能生成、替代或关闭规则、例外、
+授权与动作映射。材料缺口和规则缺口同时存在时，Consumer 在原审批向申请人评论可补材料，
+并独立保留 `needs_human` 处理政策缺口；申请人后续回复只能触发重新读取 OA，不能使
+`rule_coverage` 变成 100%。
 
 ## Business Object、Task、Agent Run 与 Reply Attempt
 
@@ -246,11 +246,13 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
   `dingtalk-misc/references/oa.md`，导致我们自己的审批规则从未进入模型；官方技能还会被
   `dws upgrade` 覆盖，规则写在那里留不住。
 
-决策规则在 Skill 里，不在代码里：完整决策表、`information_completeness` / `rule_coverage`
-评分口径、退回优先于评论搁置、拒绝前必须先查 `revert-activities`、`--remark` 必填，都在
-`dingtalk-oa-approval` 的版本化修订中。该 Skill 只存在于运行时目录，没有仓库副本，按
-`RUNTIME_ONLY_VERSIONED_SKILL_NAMES` 版本化，**不得带 `metadata.managed_by` 标记**——
-操作 Skill 目录会拒绝带标记的文件，该 Skill 会因此从定时任务的可选清单里消失。
+决策规则在 Skill 里，不在代码里：通用的完整决策表、`information_completeness` /
+`rule_coverage` 评分口径、退回优先于评论搁置、拒绝前必须先查 `revert-activities`、`--remark`
+必填，都在 `dingtalk-oa-approval` 的版本化修订中。财务主导的 Stardust 模板再由
+`stardust-oa-finance-review` 按 live `processCode` 精确匹配规则卡；匹配的有效规则卡是该模板
+动作的唯一公司权威，没有完整规则卡不得自动决定。两份 Skill 都只存在于运行时目录，没有仓库
+副本，按 `RUNTIME_ONLY_VERSIONED_SKILL_NAMES` 版本化，**不得带 `metadata.managed_by` 标记**——
+操作 Skill 目录会拒绝带标记的文件，定时任务也就不能选择它们。
 
 ### 没有 runtime schema 的 DWS 写操作
 

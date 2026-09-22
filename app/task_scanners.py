@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from app.agent_cron.commands import current_service_command_consumer_context
+from app.agent_cron.commands import (
+    SERVICE_COMMAND_CONSUMER_CONTEXT_KEY,
+    current_service_command_consumer_context,
+)
 from app.dingtalk_models import DingTalkMessage
 from app.dws_client import OA_PENDING_PAGE_SIZE_MAX
 from app.store import AutoReplyStore
@@ -512,6 +515,7 @@ def scan_pending_oa_approvals(
     queued_process_ids: list[str] = []
     process_revisions: dict[str, str] = {}
     queued_days: dict[str, str] = dict(previous_queued_days)
+    scheduled_consumer = current_service_command_consumer_context()
     for approval in approvals:
         process_instance_id = str(
             getattr(approval, "process_instance_id", "") or ""
@@ -613,10 +617,7 @@ def scan_pending_oa_approvals(
                 "rule_coverage 评分规则和动作选择执行；"
                 "dingtalk-misc 的 references/oa.md 只作为 dws 命令用法参考，"
                 "审批判断与动作一律以 dingtalk-oa-approval 为准。"
-                "在此前提下审阅完整审批材料、历史处理记录和当前节点；"
-                "申请人的最新明确陈述是其申请事实的权威来源；申请人说明已补充材料或已修正"
-                "关联状态后，直接以该陈述继续审批，不要求其他系统再次证明，也不以延迟或冲突的"
-                "系统状态推翻该陈述。本轮不得新增此前未提出的格式、评分细节或潜在歧义要求。"
+                "在此前提下审阅完整审批材料、历史处理记录和当前节点。"
             ),
             raw_payload={
                 "source": "oa_pending_scan",
@@ -632,6 +633,15 @@ def scan_pending_oa_approvals(
                 **(
                     {"originatorOpenDingTalkId": applicant_open_dingtalk_id}
                     if applicant_open_dingtalk_id
+                    else {}
+                ),
+                **(
+                    {
+                        SERVICE_COMMAND_CONSUMER_CONTEXT_KEY: (
+                            scheduled_consumer.to_payload()
+                        )
+                    }
+                    if scheduled_consumer
                     else {}
                 ),
             },

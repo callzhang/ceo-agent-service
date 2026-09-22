@@ -175,8 +175,11 @@ MEETING_CONSUMER_PROMPT = (
     "$dingtalk-minutes 与 $dingtalk-calendar 读取会议和日历证据。"
 )
 OA_CONSUMER_PROMPT = (
-    "使用 $dingtalk-oa-approval 处理 Trigger 发现的真实 DingTalk OA 待审批事项，"
-    "沿用现有审批判断、回复与投递边界。"
+    "使用 $dingtalk-oa-approval 与 $stardust-oa-finance-review 处理 Trigger 发现的真实 "
+    "DingTalk OA 待审批事项：按 live processCode 匹配 Stardust 财务规则卡；规则卡是财务"
+    "模板级动作的唯一来源。向申请人评论可补的材料缺口，对规则、例外、授权或动作映射"
+    "缺口转 needs_human，并在任何动作后重新读取 DingTalk。不要在本 Prompt 中重述金额、"
+    "审批人或动作规则。"
 )
 MEETING_TODO_CONSUMER_PROMPT = (
     "使用 $ceo-meeting-work 核验 Trigger 提供的真实会议行动项证据，再使用 "
@@ -599,7 +602,7 @@ def _seed_oa_task(
     del working_directory
     skill_refs = _consumer_skill_refs(
         options,
-        operation=("dingtalk-oa-approval",),
+        operation=("dingtalk-oa-approval", "stardust-oa-finance-review"),
     )
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_OA_MIGRATION_KEY,

@@ -571,11 +571,32 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
 
     dws = FakeDws()
     store = AutoReplyStore(tmp_path / "task.sqlite3")
+    context = ServiceCommandConsumerContext(
+        scheduled_task_id=7,
+        scheduled_task_run_id=11,
+        prompt=(
+            "使用 $dingtalk-oa-approval 与 $stardust-oa-finance-review "
+            "审阅真实 DingTalk OA。"
+        ),
+        skill_names=("dingtalk-oa-approval", "stardust-oa-finance-review"),
+        skill_protocol="# OA review skills",
+    )
+    implementations = {
+        option.name: (lambda: "unused") for option in SERVICE_COMMAND_OPTIONS
+    }
+    implementations["scan-oa-approvals"] = lambda: str(
+        scan_pending_oa_approvals(
+            store,
+            dws,
+            now=datetime.fromisoformat("2026-07-27T09:30:00+08:00"),
+        )
+    )
 
-    queued = scan_pending_oa_approvals(
-        store,
-        dws,
-        now=datetime.fromisoformat("2026-07-27T09:30:00+08:00"),
+    queued = int(
+        ServiceCommandRegistry(implementations).run(
+            "scan-oa-approvals",
+            consumer_context=context,
+        )
     )
 
     assert queued == 1
@@ -596,9 +617,11 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     assert task.conversation_title == "审批待办"
     assert task.trigger_message_id.startswith("oa-pending:proc-1:")
     assert "张三提交的录用申请" in task.trigger_text
-    assert "申请人的最新明确陈述是其申请事实的权威来源" in task.trigger_text
+    assert "申请人的最新明确陈述是其申请事实的权威来源" not in task.trigger_text
     assert "procInstId=proc-1&taskId=102648910080" in task.oa_url
     assert '"source":"oa_pending_scan"' in task.trigger_message_json
+    payload = json.loads(task.trigger_message_json)
+    assert payload["raw_payload"]["scheduled_consumer"] == context.to_payload()
 
 
 def test_scan_pending_oa_approvals_closes_completed_oa_needs_human_attempt(tmp_path):
