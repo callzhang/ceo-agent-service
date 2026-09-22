@@ -130,13 +130,13 @@ def classify_stored_needs_human_projection(
     if not isinstance(result, Mapping) or result.get("outcome") != "needs_human":
         return StoredNeedsHumanProjection.INVALID
     error = result.get("error")
-    error_values = (
-        result.get("error_retryable"),
-        result.get("error_authorization_required"),
-        error.get("retryable") if isinstance(error, Mapping) else None,
-        error.get("authorization_required") if isinstance(error, Mapping) else None,
+    retryable = result.get("error_retryable") is True or (
+        isinstance(error, Mapping) and error.get("retryable") is True
     )
-    if any(value is True for value in error_values):
+    authorization_required = result.get("error_authorization_required") is True or (
+        isinstance(error, Mapping) and error.get("authorization_required") is True
+    )
+    if retryable:
         return StoredNeedsHumanProjection.INVALID
     try:
         quality = classify_decision_quality(
@@ -164,4 +164,18 @@ def classify_stored_needs_human_projection(
         if option["key"] in keys:
             return StoredNeedsHumanProjection.INVALID
         keys.add(option["key"])
+    if authorization_required:
+        error_code = result.get("error_code")
+        if not isinstance(error_code, str) and isinstance(error, Mapping):
+            error_code = error.get("code")
+        scoped_authorization = (
+            error_code == "external_action_authorization_required"
+            and any(key.startswith("authorize_") for key in keys)
+            and any(
+                key.startswith("leave_") and key.endswith("_untouched")
+                for key in keys
+            )
+        )
+        if not scoped_authorization:
+            return StoredNeedsHumanProjection.INVALID
     return StoredNeedsHumanProjection.NEEDS_HUMAN

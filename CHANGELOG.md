@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-09-21: Current Attempt status now follows the latest Consumer run in
+  the task's active execution generation. A completed, typed, one-time external
+  authorization decision is restored as `needs_human` with its exact choices;
+  generic provider confirmation or retry errors remain `failed`. This prevents
+  a concrete OA authorization boundary from appearing in Attention and History
+  as a technical failure after restart.
+
 - 2026-09-21: Reply-task recovery now follows the latest attempt even when the
   stale task is `needs_human`, not only when it is `failed`. A selected human
   decision is terminal `done`; a failed attempt with persisted settlement

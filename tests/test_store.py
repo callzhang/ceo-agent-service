@@ -6070,6 +6070,76 @@ def test_reconcile_authorization_needs_human_projection_to_failed(tmp_path: Path
     assert store.get_reply_task(task.id).status == "failed"
 
 
+def test_latest_scoped_authorization_run_restores_needs_human_projection(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "scoped-authorization.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+        channel=task.channel,
+    )
+    result = {
+        "outcome": "needs_human",
+        "summary": "仅当前 OA 实例需要明确授权。",
+        "risk": "high",
+        "confidence": 0.2,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "decision_options": [
+            {
+                "key": "authorize_current_oa_retry",
+                "label": "授权本审批重跑",
+                "instruction": "仅对当前 OA 实例和任务授权执行。",
+                "consequence": "服务可能对当前审批执行外部动作。",
+            },
+            {
+                "key": "leave_oa_untouched",
+                "label": "保持不处理",
+                "instruction": "不授权当前 OA 任务执行外部动作。",
+                "consequence": "审批继续保持当前状态。",
+            },
+        ],
+        "error_code": "external_action_authorization_required",
+        "error_retryable": False,
+        "error_authorization_required": True,
+    }
+    with store._connect() as db:
+        run = db.execute(
+            """insert into agent_runs (
+                reply_task_id, execution_generation, role, status, final_result_json
+            ) values (?, ?, 'consumer', 'completed', ?)""",
+            (task.id, task.execution_generation, json.dumps(result)),
+        )
+        db.execute(
+            "update reply_attempts set agent_run_id=?, send_error=? where id=?",
+            (run.lastrowid, "external_action_authorization_required", attempt_id),
+        )
+        db.execute(
+            "update reply_tasks set status='failed', error=? where id=?",
+            ("external_action_authorization_required", task.id),
+        )
+
+    assert store.reconcile_valid_needs_human_projections() == 1
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "needs_human"
+    assert attempt.send_error == ""
+    assert json.loads(attempt.human_decision_options_json) == result["decision_options"]
+    assert attempt.codex_reason == result["summary"]
+    assert store.get_reply_task(task.id).status == "needs_human"
+    assert store.reconcile_valid_needs_human_projections() == 0
+
+
 
 
 def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):

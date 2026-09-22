@@ -4397,6 +4397,9 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
     recovered_orphaned_agent_runs = (
         store.recover_orphaned_agent_runs_for_terminal_reply_tasks()
     )
+    reconciled_valid_human_projections = (
+        store.reconcile_valid_needs_human_projections()
+    )
     reconciled_invalid_human_projections = (
         store.reconcile_invalid_needs_human_projections()
     )
@@ -4414,6 +4417,7 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
         + reconciled_terminal_attempts
         + reconciled_settled_tasks
         + skipped_terminal_no_action_tasks
+        + reconciled_valid_human_projections
         + reconciled_invalid_human_projections
         + len(recovered_tasks)
         + recovered_orphaned_agent_runs

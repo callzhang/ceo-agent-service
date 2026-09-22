@@ -198,3 +198,36 @@ def test_stored_needs_human_projection_rejects_authorization_error():
         classify_stored_needs_human_projection(result)
         is StoredNeedsHumanProjection.INVALID
     )
+
+
+def test_stored_needs_human_projection_accepts_scoped_external_authorization():
+    """A bounded action choice is a business decision, not a provider error."""
+    result = {
+        "outcome": "needs_human",
+        "risk": "high",
+        "confidence": 0.2,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "decision_options": [
+            {
+                "key": "authorize_current_oa_retry",
+                "label": "授权本审批重跑",
+                "instruction": "仅对当前 OA 实例和任务授权执行。",
+                "consequence": "服务可能对当前审批执行外部动作。",
+            },
+            {
+                "key": "leave_oa_untouched",
+                "label": "保持不处理",
+                "instruction": "不授权当前 OA 任务执行外部动作。",
+                "consequence": "审批继续保持当前状态。",
+            },
+        ],
+        "error_code": "external_action_authorization_required",
+        "error_retryable": False,
+        "error_authorization_required": True,
+    }
+
+    assert (
+        classify_stored_needs_human_projection(result)
+        is StoredNeedsHumanProjection.NEEDS_HUMAN
+    )

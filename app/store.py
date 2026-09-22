@@ -21729,6 +21729,98 @@ class AutoReplyStore:
                 reconciled += attempt_changed
             return reconciled
 
+    def reconcile_valid_needs_human_projections(self) -> int:
+        """Project the latest valid Consumer decision onto its current Attempt.
+
+        The latest run of the current task generation is authoritative. A
+        completed, typed human decision must not remain displayed as a failed
+        Attempt merely because an older projection stored its authorization
+        boundary as an error.
+        """
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                """
+                select tasks.id as task_id, attempts.id as attempt_id,
+                       attempts.send_status, runs.id as run_id,
+                       runs.final_result_json
+                from reply_tasks as tasks
+                join agent_runs as runs on runs.id=(
+                    select latest_run.id
+                    from agent_runs as latest_run
+                    where latest_run.reply_task_id=tasks.id
+                      and latest_run.execution_generation=
+                          tasks.execution_generation
+                    order by latest_run.id desc
+                    limit 1
+                )
+                join reply_attempts as attempts on attempts.id=(
+                    select latest_attempt.id
+                    from reply_attempts as latest_attempt
+                    where latest_attempt.channel=tasks.channel
+                      and latest_attempt.conversation_id=tasks.conversation_id
+                      and latest_attempt.trigger_message_id=
+                          tasks.trigger_message_id
+                    order by latest_attempt.id desc
+                    limit 1
+                )
+                where tasks.status in ('failed', 'needs_human')
+                  and runs.status='completed'
+                  and attempts.send_status in ('failed', 'needs_human')
+                  and attempts.reviewed_at is null
+                  and trim(coalesce(attempts.resolved_at, ''))=''
+                order by tasks.id
+                """
+            ).fetchall()
+            reconciled = 0
+            for row in rows:
+                if (
+                    classify_stored_needs_human_projection(
+                        row["final_result_json"]
+                    )
+                    is not StoredNeedsHumanProjection.NEEDS_HUMAN
+                ):
+                    continue
+                result = json.loads(row["final_result_json"])
+                decision_options = json.dumps(
+                    result["decision_options"],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                summary = str(result.get("summary") or "").strip()
+                attempt_cursor = db.execute(
+                    """
+                    update reply_attempts
+                    set send_status='needs_human', send_error='', agent_run_id=?,
+                        codex_reason=?, audit_summary=?,
+                        human_decision_options_json=?, updated_at=current_timestamp
+                    where id=? and (
+                        send_status<>'needs_human'
+                        or send_error<>''
+                        or agent_run_id<>?
+                        or codex_reason<>?
+                        or audit_summary<>?
+                        or human_decision_options_json<>?
+                    )
+                    """,
+                    (
+                        row["run_id"], summary, summary, decision_options,
+                        row["attempt_id"], row["run_id"], summary, summary,
+                        decision_options,
+                    ),
+                )
+                task_cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='needs_human', error='', available_at='',
+                        locked_at=null, updated_at=current_timestamp
+                    where id=? and (status<>'needs_human' or error<>'')
+                    """,
+                    (row["task_id"],),
+                )
+                if attempt_cursor.rowcount or task_cursor.rowcount:
+                    reconciled += 1
+            return reconciled
+
     @staticmethod
     def _projection_failure_code(*payload_sources: str | None) -> str:
         for payload_source in payload_sources:

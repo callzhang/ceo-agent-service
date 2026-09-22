@@ -171,6 +171,7 @@ def test_service_start_reconciles_invalid_human_projections(monkeypatch):
         reconcile_unresolved_reply_tasks_with_terminal_attempts=method("attempts"),
         reconcile_unresolved_reply_tasks_with_settlement_evidence=method("settled"),
         skip_failed_reply_tasks_with_terminal_no_action_run=method("no-action"),
+        reconcile_valid_needs_human_projections=method("valid-human", 1),
         reconcile_invalid_needs_human_projections=method(
             "invalid-human", 1
         ),
@@ -187,8 +188,9 @@ def test_service_start_reconciles_invalid_human_projections(monkeypatch):
         SimpleNamespace(db_path=Path("/tmp/unused.sqlite3"))
     )
 
+    assert "valid-human" in calls
     assert "invalid-human" in calls
-    assert recovered == 1
+    assert recovered == 2
 
 
 def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, int]:
