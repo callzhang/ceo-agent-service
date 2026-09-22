@@ -137,6 +137,7 @@ def send_approved_dingtalk_message(
     """Send one prepared message from the proposal under the active Audit run."""
     from app.agent_contracts import ConsumerAgentResult
     from app.consumer_agent import structured_dingtalk_outgoing_text_key
+    from app.dingtalk_models import DingTalkConversation, DingTalkMessage
     from app.dws_client import DwsClient
     from app.service_message_sender import (
         ServiceMessageSender,
@@ -175,9 +176,7 @@ def send_approved_dingtalk_message(
             consumer_run.final_result_json
         )
     except ValueError as exc:
-        raise AgentReadOnlyViolationError(
-            "dingtalk_message_proposal_invalid"
-        ) from exc
+        raise AgentReadOnlyViolationError("dingtalk_message_proposal_invalid") from exc
     proposal = consumer_result.proposal
     actions = (
         [action for action in proposal.actions if action.action_identity == identity]
@@ -188,8 +187,6 @@ def send_approved_dingtalk_message(
         raise AgentReadOnlyViolationError("dingtalk_message_action_invalid")
     action = actions[0]
     if structured_dingtalk_outgoing_text_key(action) is None:
-        raise AgentReadOnlyViolationError("dingtalk_message_action_unsupported")
-    if action.operation in {"messages-reply", "message.reply"}:
         raise AgentReadOnlyViolationError("dingtalk_message_action_unsupported")
     delivery_key = agent_message_delivery_key(
         business_object_key=task.business_object_key,
@@ -212,20 +209,53 @@ def send_approved_dingtalk_message(
     if not conversation_id and not open_dingtalk_id and not user_id:
         raise AgentReadOnlyViolationError("dingtalk_message_target_missing")
     dws = dws_client or DwsClient()
-    receipt = ServiceMessageSender(store=store, dingtalk=dws).send_dingtalk_prepared(
-        prepared,
-        conversation_id=conversation_id,
-        open_dingtalk_id=open_dingtalk_id or None,
-        user_id=user_id or None,
-    )
+    sender = ServiceMessageSender(store=store, dingtalk=dws)
+    if action.operation in {"messages-reply", "message.reply", "reply"}:
+        message_id = str(
+            target.get("message_id") or target.get("source_message_id") or ""
+        ).strip()
+        if (
+            conversation_id != task.conversation_id
+            or message_id != task.trigger_message_id
+        ):
+            raise AgentReadOnlyViolationError("dingtalk_message_reply_target_invalid")
+        try:
+            trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        except ValueError as exc:
+            raise AgentReadOnlyViolationError(
+                "dingtalk_message_reply_target_invalid"
+            ) from exc
+        if (
+            trigger.open_conversation_id != task.conversation_id
+            or trigger.open_message_id != task.trigger_message_id
+            or not str(trigger.sender_open_dingtalk_id or "").strip()
+        ):
+            raise AgentReadOnlyViolationError("dingtalk_message_reply_target_invalid")
+        conversation = DingTalkConversation(
+            open_conversation_id=task.conversation_id,
+            title=task.conversation_title,
+            single_chat=task.single_chat,
+            unread_point=0,
+        )
+        receipt = sender.send_dingtalk_reply_to_trigger_prepared(
+            prepared,
+            conversation=conversation,
+            trigger=trigger,
+        )
+    else:
+        receipt = sender.send_dingtalk_prepared(
+            prepared,
+            conversation_id=conversation_id,
+            open_dingtalk_id=open_dingtalk_id or None,
+            user_id=user_id or None,
+        )
     provider_result = receipt.provider_result
     if not isinstance(provider_result, dict):
         raise RuntimeError("dingtalk_message_provider_result_invalid")
     verification = dws.verify_message_send_result(provider_result)
     if verification.get("state") != "sent":
         raise RuntimeError(
-            "dingtalk_message_delivery_"
-            + str(verification.get("state") or "ambiguous")
+            "dingtalk_message_delivery_" + str(verification.get("state") or "ambiguous")
         )
     return {
         "success": True,
@@ -235,6 +265,7 @@ def send_approved_dingtalk_message(
         "provider_result": provider_result,
         "verification": verification,
     }
+
 
 def _json_digest(value: object) -> str:
     encoded = json.dumps(
@@ -350,9 +381,9 @@ def _unclassified_read_command(argv: Sequence[str]):
         command_path=" ".join(operation_parts) or canonical[0],
         effect=EffectKind.READ_ONLY,
         command_digest=hashlib.sha256(
-            json.dumps(list(canonical), ensure_ascii=False, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            json.dumps(
+                list(canonical), ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
         ).hexdigest(),
         target_identifiers={},
     )
@@ -448,7 +479,9 @@ def read_spreadsheet(
     material_path = Path(path).expanduser().resolve(strict=True)
     if material_path.suffix.casefold() not in {".xlsx", ".xlsm"}:
         raise AgentReadOnlyViolationError("spreadsheet_format_unsupported")
-    if not any(material_path.is_relative_to(root) for root in SPREADSHEET_MATERIAL_ROOTS):
+    if not any(
+        material_path.is_relative_to(root) for root in SPREADSHEET_MATERIAL_ROOTS
+    ):
         raise AgentReadOnlyViolationError("spreadsheet_path_forbidden")
     flags = os.O_RDONLY | os.O_NONBLOCK
     flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -486,9 +519,10 @@ def read_text_file(path: str) -> dict[str, object]:
             if file_stat.st_size > MAX_SPREADSHEET_BYTES:
                 raise AgentReadOnlyViolationError("material_file_too_large")
         material_file.seek(0)
-        is_pdf = material_path.suffix.casefold() == ".pdf" or material_file.read(
-            5
-        ) == b"%PDF-"
+        is_pdf = (
+            material_path.suffix.casefold() == ".pdf"
+            or material_file.read(5) == b"%PDF-"
+        )
         material_file.seek(0)
         if is_pdf:
             return _read_pdf_material(material_file, material_path)
@@ -600,7 +634,9 @@ def _read_presentation_workbook(workbook: zipfile.ZipFile) -> dict[str, object]:
     for index, name in enumerate(slide_names, start=1):
         root = ElementTree.fromstring(workbook.read(name))
         text = "\n".join(
-            node.text or "" for node in root.iter() if node.tag.endswith("}t") and node.text
+            node.text or ""
+            for node in root.iter()
+            if node.tag.endswith("}t") and node.text
         )
         text = text[:remaining_chars]
         remaining_chars -= len(text)
@@ -676,7 +712,9 @@ def _xlsx_sheet_preview(
         cells: dict[str, str] = {}
         for cell in (node for node in row if node.tag.endswith("}c")):
             reference = cell.attrib.get("r", "")
-            column = "".join(character for character in reference if character.isalpha())
+            column = "".join(
+                character for character in reference if character.isalpha()
+            )
             if not column or _xlsx_column_number(column) > max_columns:
                 continue
             value = _xlsx_cell_value(cell, shared_strings)
@@ -688,7 +726,9 @@ def _xlsx_sheet_preview(
                     truncated = True
                     break
         if cells:
-            rows.append({"row": int(row.attrib.get("r", len(rows) + 1)), "cells": cells})
+            rows.append(
+                {"row": int(row.attrib.get("r", len(rows) + 1)), "cells": cells}
+            )
         if truncated:
             break
     return {"name": name, "rows": rows, "truncated": truncated}, remaining_chars
@@ -703,9 +743,7 @@ def _xlsx_column_number(column: str) -> int:
 
 def _xlsx_cell_value(cell: ElementTree.Element, shared_strings: list[str]) -> str:
     cell_type = cell.attrib.get("t", "")
-    text = "".join(
-        node.text or "" for node in cell.iter() if node.tag.endswith("}t")
-    )
+    text = "".join(node.text or "" for node in cell.iter() if node.tag.endswith("}t"))
     if text:
         return text
     raw_value = next(

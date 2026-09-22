@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-22: Audit's service-owned DingTalk action executor now supports a
+  Consumer's native reply operation instead of rejecting it after review. The
+  executor requires the proposal's conversation and message IDs to match the
+  persisted trigger, sends the persisted prepared body through the native reply
+  adapter, and reuses the durable delivery receipt on retry.
+
 - 2026-09-22: Consumer and Audit turns now identify themselves as background
   service executions whose current work profile is already injected. Interactive
   `memory_connector.user_get` bootstrap rules no longer become an unrelated hard
