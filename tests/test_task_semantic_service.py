@@ -40,12 +40,26 @@ def assignment_signal(*, dedupe_key: str = "message:assignment") -> SourceSignal
     )
 
 
+def formality_evidence(
+    basis: FormalTaskBasis, *, authorized: bool = True, deliverable: bool = True, owner: bool = True
+) -> FormalityEvidence:
+    return FormalityEvidence(
+        basis=basis,
+        assigner_is_authorized=authorized,
+        deliverable_is_explicit=deliverable,
+        owner_is_explicit=owner,
+    )
+
+
+def merge_identity() -> IdentityEvidence:
+    return IdentityEvidence(same_external_task_id=True)
+
+
 def record_assignment(service: TaskSemanticService, *, dedupe_key: str = "message:assignment"):
     return service.record_formal_task(
         RecordFormalTask(
             title="提交报价",
-            formal_basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
-            commitment_status=CommitmentStatus.ASSIGNED_UNACCEPTED,
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
             owner_name="王明",
             signal=assignment_signal(dedupe_key=dedupe_key),
         )
@@ -102,7 +116,7 @@ def test_record_task_reuses_independently_persisted_signal_and_replays(service, 
     else:
         command = RecordFormalTask(
             title="提交报价", signal=signal,
-            formal_basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
         )
         record = service.record_formal_task
 
@@ -132,7 +146,7 @@ def test_transition_reuses_independently_persisted_signal_and_replays(service, o
     if operation == "promote":
         command = PromoteCandidate(
             task_id=source.task_id, signal=signal,
-            formal_basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
         )
         transition = service.promote_candidate
     elif operation == "update":
@@ -147,6 +161,7 @@ def test_transition_reuses_independently_persisted_signal_and_replays(service, o
         target = record_assignment(service, dedupe_key="message:target")
         command = MergeBusinessTasks(
             source_task_id=source.task_id, target_task_id=target.task_id, signal=signal,
+            identity_evidence=merge_identity(),
         )
         transition = service.merge_same_deliverable
 
@@ -176,6 +191,7 @@ def test_fresh_transition_to_merged_source_rejects_without_any_mutation(
         MergeBusinessTasks(
             source_task_id=source.task_id, target_task_id=target.task_id,
             signal=assignment_signal(dedupe_key="review:merge"),
+            identity_evidence=merge_identity(),
         )
     )
     state_before = semantic_state(service)
@@ -192,7 +208,7 @@ def test_fresh_transition_to_merged_source_rejects_without_any_mutation(
             service.promote_candidate(
                 PromoteCandidate(
                     task_id=source.task_id,
-                    formal_basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+                    formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
                     signal=assignment_signal(dedupe_key="message:fresh-promotion"),
                 )
             )
@@ -216,7 +232,7 @@ def test_transition_replay_still_succeeds_after_source_is_merged(service, operat
     if operation == "promote":
         command = PromoteCandidate(
             task_id=source.task_id, signal=signal,
-            formal_basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
         )
         transition = service.promote_candidate
     else:
@@ -230,6 +246,7 @@ def test_transition_replay_still_succeeds_after_source_is_merged(service, operat
         MergeBusinessTasks(
             source_task_id=source.task_id, target_task_id=target.task_id,
             signal=assignment_signal(dedupe_key="review:merge"),
+            identity_evidence=merge_identity(),
         )
     )
     state_before = semantic_state(service)
@@ -317,6 +334,7 @@ def test_merge_preserves_source_history_and_copies_all_evidence_to_target(servic
                 evidence_text="两个任务指向同一份报价。",
                 dedupe_key="review:merge",
             ),
+            identity_evidence=merge_identity(),
         )
     )
 
@@ -356,6 +374,7 @@ def test_merge_rejects_chains_and_merged_endpoints_atomically(
             source_task_id=tasks[0].task_id,
             target_task_id=tasks[1].task_id,
             signal=assignment_signal(dedupe_key="review:first-merge"),
+            identity_evidence=merge_identity(),
         )
     )
     state_before = semantic_state(service)
@@ -366,6 +385,7 @@ def test_merge_rejects_chains_and_merged_endpoints_atomically(
                 source_task_id=tasks[source_index].task_id,
                 target_task_id=tasks[target_index].task_id,
                 signal=assignment_signal(dedupe_key="review:rejected-merge"),
+                identity_evidence=merge_identity(),
             )
         )
 
@@ -385,6 +405,7 @@ def test_merge_allows_multiple_sources_to_the_same_target(service):
                 source_task_id=source.task_id,
                 target_task_id=target.task_id,
                 signal=assignment_signal(dedupe_key=f"review:merge-{index}"),
+                identity_evidence=merge_identity(),
             )
         )
         assert result.task_id == target.task_id
@@ -402,9 +423,8 @@ def test_promotion_replay_preserves_original_result_state_and_history(service):
     )
     command = PromoteCandidate(
         task_id=candidate.task_id,
-        formal_basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+        formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
         signal=assignment_signal(dedupe_key="message:promotion"),
-        commitment_status=CommitmentStatus.ASSIGNED_UNACCEPTED,
     )
     first = service.promote_candidate(command)
     state_before = semantic_state(service)
@@ -428,6 +448,7 @@ def test_merge_replay_preserves_original_result_state_and_history(service):
         source_task_id=source.task_id,
         target_task_id=target.task_id,
         signal=assignment_signal(dedupe_key="review:merge"),
+        identity_evidence=merge_identity(),
     )
     first = service.merge_same_deliverable(command)
     state_before = semantic_state(service)
@@ -454,7 +475,7 @@ def test_creation_replay_returns_original_task_after_evidence_is_copied_by_merge
     else:
         command = RecordFormalTask(
             title="提交报价",
-            formal_basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
             signal=assignment_signal(),
         )
         record = service.record_formal_task
@@ -464,6 +485,7 @@ def test_creation_replay_returns_original_task_after_evidence_is_copied_by_merge
             source_task_id=first.task_id,
             target_task_id=target.task_id,
             signal=assignment_signal(dedupe_key="review:merge"),
+            identity_evidence=merge_identity(),
         )
     )
     state_before = semantic_state(service)
@@ -489,6 +511,7 @@ def test_acceptance_replay_preserves_result_after_task_is_merged(service):
             source_task_id=task.task_id,
             target_task_id=target.task_id,
             signal=assignment_signal(dedupe_key="review:merge"),
+            identity_evidence=merge_identity(),
         )
     )
     state_before = semantic_state(service)
@@ -533,7 +556,7 @@ def test_promotion_uses_the_same_formal_basis_evidence_role_as_creation(
     recorded = service.record_formal_task(
         RecordFormalTask(
             title="提交报价",
-            formal_basis=formal_basis,
+            formality=formality_evidence(formal_basis),
             signal=assignment_signal(dedupe_key="message:formal"),
         )
     )
@@ -543,7 +566,7 @@ def test_promotion_uses_the_same_formal_basis_evidence_role_as_creation(
     promoted = service.promote_candidate(
         PromoteCandidate(
             task_id=candidate.task_id,
-            formal_basis=formal_basis,
+            formality=formality_evidence(formal_basis),
             signal=assignment_signal(dedupe_key="message:promotion"),
         )
     )
@@ -645,3 +668,72 @@ def test_completing_one_member_does_not_change_an_independent_sibling(service):
 
     assert service.store.get_business_task(first.task_id).status is BusinessTaskStatus.DONE
     assert service.store.get_business_task(second.task_id).status is BusinessTaskStatus.OPEN
+
+
+def test_merge_without_structured_identity_evidence_rejects_before_signal_persistence(service):
+    target = record_assignment(service, dedupe_key="message:target")
+    source = record_assignment(service, dedupe_key="message:source")
+    state_before = semantic_state(service)
+
+    with pytest.raises(ValueError, match="identity evidence"):
+        service.merge_same_deliverable(
+            MergeBusinessTasks(
+                source_task_id=source.task_id,
+                target_task_id=target.task_id,
+                signal=assignment_signal(dedupe_key="message:unproven-merge"),
+                identity_evidence=None,
+            )
+        )
+
+    assert semantic_state(service) == state_before
+
+
+def test_direct_formal_creation_rejects_unauthorized_assignment_before_persisting(service):
+    with pytest.raises(ValueError, match="unauthorized assignment"):
+        service.record_formal_task(
+            RecordFormalTask(
+                title="提交报价",
+                formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT, authorized=False),
+                signal=assignment_signal(dedupe_key="message:direct-untrusted"),
+            )
+        )
+
+    assert service.store.list_business_task_signals() == ()
+    assert service.store.list_business_tasks() == ()
+
+
+def test_direct_candidate_promotion_rejects_implicit_deliverable_before_persisting(service):
+    candidate = service.record_candidate(
+        RecordCandidate(title="报价", signal=assignment_signal())
+    )
+    state_before = semantic_state(service)
+
+    with pytest.raises(ValueError, match="implicit deliverable"):
+        service.promote_candidate(
+            PromoteCandidate(
+                task_id=candidate.task_id,
+                formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT, deliverable=False),
+                signal=assignment_signal(dedupe_key="message:implicit-promotion"),
+            )
+        )
+
+    assert semantic_state(service) == state_before
+
+
+def test_direct_meeting_action_promotion_derives_commitment_and_missing_owner(service):
+    candidate = service.record_candidate(
+        RecordCandidate(title="提交报价", signal=assignment_signal())
+    )
+
+    service.promote_candidate(
+        PromoteCandidate(
+            task_id=candidate.task_id,
+            formality=formality_evidence(FormalTaskBasis.MEETING_ACTION_ITEM, owner=False),
+            signal=assignment_signal(dedupe_key="message:ownerless-meeting-action"),
+        )
+    )
+
+    task = service.store.get_business_task(candidate.task_id)
+    assert task is not None
+    assert task.commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
+    assert task.missing_evidence_json == '["owner"]'
