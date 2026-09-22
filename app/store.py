@@ -23351,6 +23351,13 @@ class AutoReplyStore:
                         limit 1
                     )
                 )
+                  and not exists (
+                    select 1 from agent_runs as attempt_run
+                    join reply_tasks as current_task
+                      on current_task.id=attempt_run.reply_task_id
+                    where attempt_run.id=reply_attempts.agent_run_id
+                      and attempt_run.execution_generation<>current_task.execution_generation
+                )
                   -- Legacy retries can have distinct physical projections for
                   -- one reply task. Keep their immutable runs, but show only
                   -- the task's newest business-result projection in History.

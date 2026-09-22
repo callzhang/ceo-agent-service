@@ -8507,6 +8507,10 @@ def test_attention_does_not_repeat_old_generation_attempt_for_current_oa_task(
         ("Reply task", str(task.id))
     ]
     assert store.count_current_unresolved_problem_attempts() == 0
+    assert all(
+        item.source_id != attempt_id
+        for item in store.list_history_items(send_statuses=("failed",))
+    )
 
 
 def test_worker_attempt_counts_hide_historical_needs_human_business_object(

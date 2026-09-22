@@ -3132,7 +3132,12 @@ def test_history_hides_legacy_duplicate_attempt_projections_for_one_reply_task(
                     reply_task_id, execution_generation, role, operation_id, status
                 ) values (?, ?, 'consumer', ?, 'completed')
                 """,
-                (task.id, f"legacy-generation-{generation}", f"legacy-{generation}"),
+                (
+                    task.id,
+                    task.execution_generation if generation == len(attempt_ids) - 1
+                    else f"legacy-generation-{generation}",
+                    f"legacy-{generation}",
+                ),
             )
             db.execute(
                 "update reply_attempts set agent_run_id=? where id=?",
