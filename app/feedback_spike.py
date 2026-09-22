@@ -122,6 +122,26 @@ def build_feedback_link_text(
     )
 
 
+def message_body_without_feedback_callbacks(
+    text: str,
+    *,
+    link_prefix: str = "反馈：",
+) -> str:
+    """Return the authored body when a service feedback suffix is present.
+
+    Failed shell sends can corrupt percent-encoding inside the generated
+    callback URLs. Reconciliation still needs to compare the authored body,
+    while preserving the actual delivered text in the ledger. The suffix is
+    removed only when it has both the configured structural marker and the
+    service callback path; arbitrary trailing text remains authoritative.
+    """
+
+    body, marker, callbacks = text.rpartition(f"\n\n{link_prefix}")
+    if marker and FEEDBACK_CALLBACK_PATH in callbacks:
+        return body
+    return text
+
+
 def _feedback_context_excerpt(text: str) -> str:
     stripped = " ".join(text.strip().split())
     if len(stripped) <= MAX_FEEDBACK_CONTEXT_CHARS:

@@ -114,6 +114,24 @@ def test_provider_send_texts_extracts_quote_reply_content() -> None:
     assert provider_send_texts([event]) == ["reply body"]
 
 
+def test_provider_send_texts_extracts_markdown_content() -> None:
+    event = {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution",
+            "exit_code": 0,
+            "status": "completed",
+            "command": (
+                "dws chat +messages-send --open-dingtalk-id user-1 "
+                "--markdown 'first line\n\nsecond line' --yes"
+            ),
+            "aggregated_output": '{"success":true}',
+        },
+    }
+
+    assert provider_send_texts([event]) == ["first line\n\nsecond line"]
+
+
 def test_provider_send_texts_decodes_logged_ansi_c_reply_content() -> None:
     event = {
         "type": "item.completed",

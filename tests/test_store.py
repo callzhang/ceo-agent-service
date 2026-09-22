@@ -5637,15 +5637,39 @@ def test_completed_message_delivery_persists_action_result_and_history_atomicall
 
 
 @pytest.mark.parametrize("payload_field", ["content", "text"])
+@pytest.mark.parametrize(
+    ("reply_text", "sent_text", "readback_text", "receipt_message_id"),
+    [
+        ("Delivered text.", "Delivered text.", "Delivered text.", False),
+        (
+            "Delivered text.\n\n反馈：[有帮助](https://example.com/api/"
+            "dingtalk-feedback-spike?q=%E6%AD%A3)",
+            "Delivered text.\n\n反馈：[有帮助](https://example.com/api/"
+            "dingtalk-feedback-spike?q=%E6%损坏)",
+            "Delivered text.\n\n反馈：[有帮助](https://example.com/api/"
+            "dingtalk-feedback-spike?q=%E6%损坏)",
+            False,
+        ),
+        (
+            "Delivered 12:00–12:30.",
+            "Delivered 12:00–12:30.",
+            "Delivered 12:00-12:30.",
+            True,
+        ),
+    ],
+)
 def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
     tmp_path: Path,
     payload_field: str,
+    reply_text: str,
+    sent_text: str,
+    readback_text: str,
+    receipt_message_id: bool,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
     assert task is not None
-    reply_text = "Delivered text."
     consumer = store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -5691,17 +5715,48 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
                 "type": "command_execution",
                 "command": (
                     "/bin/zsh -lc \"dws chat +send-to-group --group cid-1 "
-                    "--content 'Delivered text.' --yes --format json\""
+                    f"--content '{sent_text}' --yes --format json\""
                 ),
                 "exit_code": 0,
                 "status": "completed",
                 "aggregated_output": json.dumps(
-                    {"success": True, "result": {"openTaskId": "receipt-1"}}
+                    {
+                        "success": True,
+                        "result": {
+                            "openTaskId": "receipt-1",
+                            **(
+                                {"openMessageId": "message-1"}
+                                if receipt_message_id
+                                else {}
+                            ),
+                        },
+                    }
                 ),
             },
         },
         owner="audit",
     )
+    if sent_text != reply_text:
+        alternate = sent_text.replace("%损坏", "%另一损坏")
+        store.append_agent_run_event(
+            send_run.id,
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "command_execution",
+                    "command": (
+                        "/bin/zsh -lc \"dws chat +send-to-group --group cid-1 "
+                        f"--content '{alternate}' --yes --format json\""
+                    ),
+                    "exit_code": 0,
+                    "status": "completed",
+                    "aggregated_output": json.dumps(
+                        {"success": True, "result": {"openTaskId": "receipt-2"}}
+                    ),
+                },
+            },
+            owner="audit",
+        )
     store.fail_agent_run(send_run.id, {"code": "result_invalid"}, owner="audit")
     readback_run = store.claim_agent_run(
         task.id,
@@ -5727,7 +5782,12 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
                         "messages": [
                             {
                                 "messageId": "message-1",
-                                "text": "@Lily  " + reply_text.replace("\n\n", "  \n"),
+                                "text": (
+                                    readback_text
+                                    if receipt_message_id
+                                    else "@Lily  "
+                                    + readback_text.replace("\n\n", "  \n")
+                                ),
                             }
                         ]
                     }
@@ -5789,7 +5849,8 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
         readback_message_id="message-1",
     )
 
-    assert sent.reply_text == reply_text
+    expected_text = readback_text if receipt_message_id else sent_text
+    assert sent.reply_text == expected_text
     assert store.get_reply_task(task.id).status == "done"
     attempt = store.get_reply_attempt(attempt_id)
     assert attempt is not None
@@ -9363,7 +9424,11 @@ def test_completed_oa_needs_human_attempt_is_closed_as_skipped(tmp_path: Path):
     assert "agree" in row["resolution"]
 
 
-def test_completed_oa_failed_attempt_closes_stale_needs_human_task(tmp_path: Path):
+@pytest.mark.parametrize("task_status", ["needs_human", "failed"])
+def test_completed_oa_failed_attempt_closes_stale_task(
+    tmp_path: Path,
+    task_status: str,
+):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     assert store.enqueue_reply_task(
         conversation_id="oa_pending_scan:proc-completed",
@@ -9380,8 +9445,8 @@ def test_completed_oa_failed_attempt_closes_stale_needs_human_task(tmp_path: Pat
     assert task is not None
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update reply_tasks set status='needs_human', error='codex_result_invalid' where id=?",
-            (task.id,),
+            "update reply_tasks set status=?, error='codex_result_invalid' where id=?",
+            (task_status, task.id),
         )
     attempt_id = store.record_reply_attempt(
         conversation_id=task.conversation_id,

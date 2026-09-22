@@ -26,7 +26,7 @@ _SEND_COMMAND = re.compile(
     r"\bdws\s+(?:chat|ding|mail)\s+"
     r"(?:\+dm|\+send-to-group|\+messages-send|\+messages-reply|\+send|send|message\s+send)\b"
 )
-_TEXT_FLAGS = ("--content", "--text", "--message", "--body")
+_TEXT_FLAGS = ("--content", "--text", "--message", "--body", "--markdown")
 _ANSI_C_ESCAPE = re.compile(r"\\([nrt\\'\"])")
 
 

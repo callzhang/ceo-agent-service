@@ -16,6 +16,7 @@ from app.feedback_spike import (
     contains_forbidden_leak_outside_feedback_links,
     extract_configured_feedback_link_context,
     extract_feedback_link_context,
+    message_body_without_feedback_callbacks,
     normalize_vercel_base_url,
     prepare_outgoing_reply_text,
     send_feedback_spike_links,
@@ -143,6 +144,18 @@ def test_build_feedback_link_text_accepts_required_feedback_prefix():
         + FEEDBACK_REQUIRED_LINK_PREFIX
         + "[👍 有帮助](https://feedback.example.com/up)"
         "｜[👎 需改进](https://feedback.example.com/down)"
+    )
+
+
+def test_message_body_without_feedback_callbacks_tolerates_corrupt_callback_query():
+    text = (
+        "业务正文。\n\n反馈：[有帮助](https://example.com/api/"
+        "dingtalk-feedback-spike?reply_text=%E6%损坏)"
+    )
+
+    assert message_body_without_feedback_callbacks(text) == "业务正文。"
+    assert message_body_without_feedback_callbacks("业务正文。\n\n补充说明") == (
+        "业务正文。\n\n补充说明"
     )
 
 
@@ -403,7 +416,8 @@ def test_send_feedback_spike_links_uses_current_user_message_path(tmp_path):
     assert "rating=up" in client.sent[0]["text"]
     assert "rating=down" in client.sent[0]["text"]
     assert "attempt_id=42" in client.sent[0]["text"]
-    assert result["command"][3] == "send"
+    assert result["command"][:3] == ["dws", "chat", "+messages-send"]
+    assert result["command"][result["command"].index("--as") + 1] == "user"
     assert "--group" in result["command"]
     assert result["command"][result["command"].index("--title") + 1] == "收到（by明哥分身）"
     assert result["callback_url_up"] in client.sent[0]["text"]

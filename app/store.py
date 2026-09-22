@@ -77,7 +77,10 @@ from app.decision_quality import (
     StoredNeedsHumanProjection,
     classify_stored_needs_human_projection,
 )
-from app.feedback_spike import extract_configured_feedback_link_context
+from app.feedback_spike import (
+    extract_configured_feedback_link_context,
+    message_body_without_feedback_callbacks,
+)
 from app.history import HistoryItem
 from app.legacy_receipt import legacy_receipt_has_explicit_failure
 from app.managed_skills import (
@@ -17491,7 +17494,7 @@ class AutoReplyStore:
         except (json.JSONDecodeError, KeyError, TypeError):
             raise ValueError("accepted consumer proposal is invalid") from None
         sent_texts = {text.strip() for text in provider_send_texts(send_run.tool_events)}
-        matches: list[dict[str, object]] = []
+        matches: list[tuple[dict[str, object], list[str]]] = []
         for action in actions if isinstance(actions, list) else []:
             if not isinstance(action, dict):
                 continue
@@ -17499,15 +17502,22 @@ class AutoReplyStore:
             content = None
             if isinstance(payload, dict):
                 content = payload.get("content") or payload.get("text")
-            if isinstance(content, str) and content.strip() in sent_texts:
-                matches.append(action)
+            if not isinstance(content, str) or not content.strip():
+                continue
+            prepared_body = message_body_without_feedback_callbacks(content.strip())
+            matching_sent = [
+                sent_text
+                for sent_text in sent_texts
+                if not unprepared_send_texts(
+                    [message_body_without_feedback_callbacks(sent_text)],
+                    [prepared_body],
+                )
+            ]
+            if matching_sent:
+                matches.append((action, matching_sent))
         if len(matches) != 1:
             raise ValueError("provider send does not match exactly one proposed action")
-        action = matches[0]
-        action_payload = action["payload"]
-        reply_text = str(
-            action_payload.get("content") or action_payload.get("text") or ""
-        ).strip()
+        action, matching_sent_texts = matches[0]
         action_identity = str(action.get("action_identity") or "").strip()
         operation = str(action.get("operation") or "").strip()
         target = action.get("target")
@@ -17544,11 +17554,19 @@ class AutoReplyStore:
                 collect_message_texts(json.loads(output))
             except json.JSONDecodeError:
                 continue
-        if (
-            action_key not in readback_evidence
-            or not readback_texts
-            or unprepared_send_texts([reply_text], readback_texts)
-        ):
+        unique_readback_texts = set(readback_texts)
+        exact_readback_matches = {
+            sent_text
+            for sent_text in matching_sent_texts
+            if not unprepared_send_texts([sent_text], unique_readback_texts)
+        }
+        if action_key not in readback_evidence or len(unique_readback_texts) != 1:
+            raise ValueError("readback run does not contain the reconciled delivery")
+        if message_id in receipts:
+            reply_text = unique_readback_texts.pop()
+        elif len(exact_readback_matches) == 1:
+            reply_text = exact_readback_matches.pop()
+        else:
             raise ValueError("readback run does not contain the reconciled delivery")
         provider_result = {
             "reconciled_from_failed_run": True,
@@ -17842,7 +17860,7 @@ class AutoReplyStore:
                 set status='done', error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
                 where channel=? and conversation_id=? and trigger_message_id=?
-                  and status='needs_human'
+                  and status in ('needs_human', 'failed')
                 """,
                 (
                     attempt["channel"],
@@ -23424,7 +23442,7 @@ class AutoReplyStore:
                                 where stale_tasks.channel=attempts.channel
                                   and stale_tasks.conversation_id=attempts.conversation_id
                                   and stale_tasks.trigger_message_id=attempts.trigger_message_id
-                                  and stale_tasks.status='needs_human'
+                                  and stale_tasks.status in ('needs_human', 'failed')
                             )
                         )
                       )
