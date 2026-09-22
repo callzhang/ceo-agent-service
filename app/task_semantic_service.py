@@ -368,6 +368,19 @@ class TaskSemanticService:
                 if command.owner_evidence_json is None
                 else command.owner_evidence_json
             )
+            owner_identity_changed = (
+                command.owner_user_id is not None
+                and command.owner_user_id != task.owner_user_id
+            ) or (command.owner_name is not None and command.owner_name != task.owner_name)
+            if owner_identity_changed and (
+                command.owner_evidence_json is None
+                or not self._owner_is_persisted(
+                    owner_user_id=owner_user_id,
+                    owner_name=owner_name,
+                    owner_evidence_json=command.owner_evidence_json,
+                )
+            ):
+                raise ValueError("changed owner requires new owner evidence")
             owner_is_persisted = self._owner_is_persisted(
                 owner_user_id=owner_user_id,
                 owner_name=owner_name,

@@ -829,3 +829,62 @@ def test_promotion_without_persisted_owner_does_not_false_resolve_owner(service)
     assert task.owner_name == ""
     assert task.owner_evidence_json == "{}"
     assert task.missing_evidence_json == '["deadline","owner"]'
+
+
+def test_promotion_rejects_changed_owner_identity_without_new_matching_evidence(service):
+    candidate = service.record_candidate(
+        RecordCandidate(
+            title="提交报价",
+            signal=assignment_signal(),
+            owner_name="Alice",
+            missing_evidence_json='["owner"]',
+        )
+    )
+    service.update_task(
+        UpdateBusinessTask(
+            task_id=candidate.task_id,
+            signal=assignment_signal(dedupe_key="message:alice-evidence"),
+            owner_evidence_json='{"owner":"Alice","signal_id":2}',
+        )
+    )
+    state_before = semantic_state(service)
+
+    with pytest.raises(ValueError, match="changed owner requires new owner evidence"):
+        service.promote_candidate(
+            PromoteCandidate(
+                task_id=candidate.task_id,
+                signal=assignment_signal(dedupe_key="message:bob-promotion"),
+                formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+                owner_name="Bob",
+            )
+        )
+
+    assert semantic_state(service) == state_before
+
+
+def test_promotion_keeps_unchanged_owner_and_existing_evidence(service):
+    candidate = service.record_candidate(
+        RecordCandidate(title="提交报价", signal=assignment_signal(), owner_name="Alice")
+    )
+    service.update_task(
+        UpdateBusinessTask(
+            task_id=candidate.task_id,
+            signal=assignment_signal(dedupe_key="message:alice-evidence"),
+            owner_evidence_json='{"owner":"Alice","signal_id":2}',
+        )
+    )
+
+    service.promote_candidate(
+        PromoteCandidate(
+            task_id=candidate.task_id,
+            signal=assignment_signal(dedupe_key="message:alice-promotion"),
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_name="Alice",
+        )
+    )
+
+    task = service.store.get_business_task(candidate.task_id)
+    assert task is not None
+    assert task.owner_name == "Alice"
+    assert task.owner_evidence_json == '{"owner":"Alice","signal_id":2}'
+    assert task.missing_evidence_json == "[]"
