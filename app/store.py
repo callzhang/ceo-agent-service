@@ -17815,14 +17815,15 @@ class AutoReplyStore:
         process_instance_id: str,
         process_result: str,
     ) -> bool:
-        """Close an OA decision that no longer exists in the live approval queue.
+        """Close an OA task that no longer exists in the live approval queue.
 
         The OA scanner creates a terminal ``needs_human`` attempt when a
         decision really requires Derek. Derek may then complete that approval
-        directly in DingTalk. A later projection repair can also turn an
+        directly in DingTalk, or the task can be canceled by a redirect while
+        the wider process continues. A later projection repair can also turn an
         invalid technical ``needs_human`` Attempt into ``failed`` while its
-        owning task still has the old status. Once the process is terminal
-        there is no action left for the service, so the local attempt is
+        owning task still has the old status. Once this OA task is terminal
+        there is no action left for that attempt, so the local attempt is
         ``skipped`` and the owning task is ``done``.
         """
 
@@ -17830,7 +17831,7 @@ class AutoReplyStore:
         if not process_id:
             raise ValueError("process_instance_id must be non-empty")
         result = process_result.strip() or "completed"
-        resolution = f"Live DingTalk OA process completed with result {result}."
+        resolution = f"Live DingTalk OA task reached terminal state {result}."
         with self._immediate_write_transaction() as db:
             attempt = db.execute(
                 "select channel, conversation_id, trigger_message_id "

@@ -9422,6 +9422,7 @@ def test_completed_oa_needs_human_attempt_is_closed_as_skipped(tmp_path: Path):
     assert row["send_error"] == ""
     assert row["resolved_at"]
     assert "agree" in row["resolution"]
+    assert "OA task reached terminal state" in row["resolution"]
 
 
 @pytest.mark.parametrize("task_status", ["needs_human", "failed"])

@@ -10,7 +10,8 @@
   that same message. Duplicate shell sends remain blocked unless one live
   message is uniquely proven. Failed OA attempts whose owning task is also
   failed now remain eligible for read-only terminal reconciliation, and a
-  confirmed terminal approval closes both the attempt and its task.
+  confirmed terminal approval task closes both the attempt and its task even
+  when a redirect leaves the wider approval process running.
 
 - 2026-09-21: WeChat deliveries whose send result is unknown can now be retried
   through an explicit recovery command only after target-scoped, read-only
