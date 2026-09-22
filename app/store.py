@@ -17919,6 +17919,28 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def reconcile_unresolved_reply_tasks_with_settlement_evidence(self) -> int:
+        """Close stale tasks whose exact trigger has resolved settlement evidence."""
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks as tasks
+                set status='done', error='', available_at='', locked_at=null,
+                    updated_at=current_timestamp
+                where tasks.status in ('failed', 'needs_human')
+                  and exists (
+                      select 1
+                      from errors as settled
+                      where settled.conversation_id=tasks.conversation_id
+                        and settled.message_id=tasks.trigger_message_id
+                        and settled.kind='reply_task_already_settled'
+                        and trim(coalesce(settled.resolved_at, ''))<>''
+                        and trim(coalesce(settled.resolution, ''))<>''
+                  )
+                """
+            )
+            return cursor.rowcount
+
     def has_sent_reply_for_trigger(
         self,
         conversation_id: str,

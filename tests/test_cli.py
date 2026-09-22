@@ -169,6 +169,7 @@ def test_service_start_reconciles_invalid_human_projections(monkeypatch):
             "superseded"
         ),
         reconcile_unresolved_reply_tasks_with_terminal_attempts=method("attempts"),
+        reconcile_unresolved_reply_tasks_with_settlement_evidence=method("settled"),
         skip_failed_reply_tasks_with_terminal_no_action_run=method("no-action"),
         reconcile_invalid_needs_human_projections=method(
             "invalid-human", 1

@@ -3287,6 +3287,10 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
     updated = store.get_reply_task(task.id)
     assert updated is not None
     assert updated.status == "done"
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='failed' where id=?", (task.id,))
+    assert store.reconcile_unresolved_reply_tasks_with_settlement_evidence() == 1
+    assert store.get_reply_task(task.id).status == "done"
     assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
     assert store.get_reply_task(task.id).status == "done"
     with store._connect() as db:
