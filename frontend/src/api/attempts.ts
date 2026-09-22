@@ -92,6 +92,23 @@ export interface AttemptConsumerResult {
   current_run: { id: number | null; status: "pending" | "running" } | null;
 }
 
+export interface AttemptHumanDecision {
+  reason: string;
+  basis: {
+    verified_facts: Array<{ assertion: string; references: string[] }>;
+    rule_evidence: Array<{ assertion: string; references: string[] }>;
+    quality_explanation: string;
+    no_external_action_evidence: Array<{ assertion: string; references: string[] }>;
+    conclusion: string;
+  };
+  authorization_plan: {
+    summary: string;
+    side_effects: string[];
+    will_not_do: string[];
+    readback: string[];
+  } | null;
+}
+
 export interface AttemptDetail {
   id: number;
   title: string;
@@ -112,6 +129,7 @@ export interface AttemptDetail {
   references: Array<{ title: string; source: string; relevance: string }>;
   feedback: { reviewer_feedback: string; corrected_reply: string; feedback_url: string; events: AttemptFeedbackEvent[] };
   decision_options: Array<{ label: string; instruction: string; consequence: string; url: string }>;
+  human_decision?: AttemptHumanDecision | null;
   audit_summary: string;
   draft_reply: string;
   failure_reason: string;

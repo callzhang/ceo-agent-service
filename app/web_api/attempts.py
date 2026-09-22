@@ -542,6 +542,34 @@ def _consumer_result_with_deciding_scores(
     return updated
 
 
+def _human_decision_payload(attempt: Any, terminal_run: Any) -> dict[str, Any] | None:
+    """Expose only the typed decision whose run owns the current Attempt."""
+    if (
+        str(getattr(attempt, "send_status", "") or "").strip() != "needs_human"
+        or terminal_run is None
+        or str(getattr(terminal_run, "status", "") or "").strip() != "completed"
+        or int(getattr(attempt, "agent_run_id", 0) or 0)
+        != int(getattr(terminal_run, "id", 0) or 0)
+    ):
+        return None
+    from app.decision_quality import parse_stored_needs_human_decision
+
+    decision = parse_stored_needs_human_decision(
+        getattr(terminal_run, "final_result_json", "")
+    )
+    if decision is None:
+        return None
+    return {
+        "reason": normalize_display_value(decision.needs_human_reason),
+        "basis": json_safe(decision.decision_basis.model_dump(mode="json")),
+        "authorization_plan": (
+            json_safe(decision.authorization_plan.model_dump(mode="json"))
+            if decision.authorization_plan is not None
+            else None
+        ),
+    }
+
+
 def build_attempt_detail(
     store: Any, attempt_id: int, *, email_store: Any = None
 ) -> tuple[int, dict[str, Any] | None]:
@@ -661,6 +689,7 @@ def build_attempt_detail(
                     "url": f"/api/console/history/{int(attempt.id)}/human-decision",
                 }
             )
+    human_decision = _human_decision_payload(attempt, terminal_run)
     try:
         audit_explanation = _attempt_reason_text(attempt)
     except RuntimeError:
@@ -768,6 +797,7 @@ def build_attempt_detail(
             "events": _feedback_payload(feedback_events),
         },
         "decision_options": decision_options,
+        "human_decision": human_decision,
         "audit_summary": normalize_display_value(attempt.audit_summary),
         "draft_reply": normalize_display_value(attempt.draft_reply_text),
         "failure_reason": normalize_display_value(_agent_failure_reason_text(attempt, agent_runs)),

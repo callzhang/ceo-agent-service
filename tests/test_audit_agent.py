@@ -275,12 +275,35 @@ def test_an_earlier_turns_send_does_not_reject_this_one(setup):
                 "retryable": False,
                 "authorization_required": False,
             },
-            "risk": "high",
-            "confidence": 0.4,
-            "rule_coverage": 0.5,
-            "information_completeness": 0.5,
-        }
-    )
+                "risk": "high",
+                "confidence": 0.4,
+                "rule_coverage": 0.5,
+                "information_completeness": 0.5,
+                "needs_human_reason": "当前规则无法决定是否将此前外发的消息作为本事项的最终处理。",
+                "decision_basis": {
+                    "verified_facts": [
+                        {
+                            "assertion": "上一轮已外发一条消息。",
+                            "references": [f"agent_run:{first.run.id}"],
+                        }
+                    ],
+                    "rule_evidence": [
+                        {
+                            "assertion": "当前规则没有覆盖既有外发消息与本次处理的对应关系。",
+                            "references": ["skill:test-audit-boundary"],
+                        }
+                    ],
+                    "quality_explanation": "已读到当前事项和既有外发记录，但规则只部分覆盖该对应关系。",
+                    "no_external_action_evidence": [
+                        {
+                            "assertion": "本轮没有执行新的外部动作。",
+                            "references": [f"agent_run:{retry.run.id}"],
+                        }
+                    ],
+                    "conclusion": "需要选择是否把既有消息作为本事项的最终处理。",
+                },
+            }
+        )
     runner = AuditAgentRunner(
         store=store, workspace=Path("/workspace"), owner="audit-test"
     )

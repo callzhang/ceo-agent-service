@@ -20,7 +20,7 @@ pending -> running -> done
 - `revision_pending`：修正版已排队；必须有新的 revision，并保留原 run、反馈、session 和外部回执的关系。
 - `done`：任务逻辑完成且结果已持久化。
 - `sent`：历史兼容名称；新任务以 `done` 表示完成，provider 发送结果保存在 trace。
-- `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；不是技术读取失败的兜底状态。
+- `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；不是技术读取失败的兜底状态。每个结果必须附带面向用户的 `needs_human_reason` 和可追溯 `decision_basis`（已核验事实、适用规则、质量分值解释、未发生外部动作的依据和结论）。若理由只是技术、路由、schema、Audit 或重试失败，该投影无效并收口为 `failed`。高风险外部动作还必须提供匹配当前对象的单一 `authorization_plan`，说明动作、影响、明确排除的动作及执行后读回；详情页只展示由当前 Attempt 所指 run 的有效结构化依据。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败，并保留失败阶段和原因。
 
 审核闭环如下：

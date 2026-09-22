@@ -52,8 +52,16 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
                 "outcome": {"const": "needs_human"},
                 "proposal": {"type": "null"},
                 "decision_options": {"type": "array", "minItems": 2, "maxItems": 4},
+                "needs_human_reason": {"type": "string", "minLength": 1},
+                "decision_basis": {"type": "object"},
             },
-            "required": ["outcome", "proposal", "decision_options"],
+            "required": [
+                "outcome",
+                "proposal",
+                "decision_options",
+                "needs_human_reason",
+                "decision_basis",
+            ],
         },
     ]
 
@@ -102,8 +110,17 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
                 "feedback": null_value,
                 "external_result": null_value,
                 "decision_options": {"type": "array", "minItems": 2, "maxItems": 4},
+                "needs_human_reason": {"type": "string", "minLength": 1},
+                "decision_basis": {"type": "object"},
             },
-            "required": ["outcome", "feedback", "external_result", "decision_options"],
+            "required": [
+                "outcome",
+                "feedback",
+                "external_result",
+                "decision_options",
+                "needs_human_reason",
+                "decision_basis",
+            ],
         },
         {
             "type": "object",
@@ -240,6 +257,65 @@ class DecisionOption(BaseModel):
     consequence: str = Field(min_length=1)
 
 
+class DecisionBasis(BaseModel):
+    """The compact evidence chain a person needs to assess an escalation."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    verified_facts: tuple[ProposalFact, ...] = Field(min_length=1)
+    rule_evidence: tuple[ProposalFact, ...] = Field(min_length=1)
+    quality_explanation: str = Field(min_length=1)
+    no_external_action_evidence: tuple[ProposalFact, ...] = Field(min_length=1)
+    conclusion: str = Field(min_length=1)
+
+    @field_validator(
+        "verified_facts",
+        "rule_evidence",
+        "no_external_action_evidence",
+        mode="before",
+    )
+    @classmethod
+    def accept_json_arrays(cls, value: object) -> object:
+        return tuple(value) if isinstance(value, list) else value
+
+
+class AuthorizationPlan(BaseModel):
+    """One bounded, externally effective action awaiting a human decision."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    summary: str = Field(min_length=1)
+    primary_action: ProposedAction
+    follow_up_actions: tuple[ProposedAction, ...] = ()
+    side_effects: tuple[str, ...] = Field(min_length=1)
+    will_not_do: tuple[str, ...] = Field(min_length=1)
+    readback: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator(
+        "follow_up_actions",
+        "side_effects",
+        "will_not_do",
+        "readback",
+        mode="before",
+    )
+    @classmethod
+    def accept_json_arrays(cls, value: object) -> object:
+        return tuple(value) if isinstance(value, list) else value
+
+    @model_validator(mode="after")
+    def validate_explicit_external_action(self) -> "AuthorizationPlan":
+        if self.summary != self.primary_action.description:
+            raise ValueError("authorization plan summary must name the primary action")
+        if self.primary_action.effect != "external":
+            raise ValueError("authorization plan primary action must be external")
+        action_ids = [self.primary_action.action_identity] + [
+            action.action_identity for action in self.follow_up_actions
+        ]
+        if len(action_ids) != len(set(action_ids)):
+            raise ValueError("authorization plan action identities must be unique")
+        return self
+
+
 class ConsumerAgentResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -256,6 +332,9 @@ class ConsumerAgentResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     rule_coverage: float = Field(ge=0.0, le=1.0)
     information_completeness: float = Field(ge=0.0, le=1.0)
+    needs_human_reason: str | None = None
+    decision_basis: DecisionBasis | None = None
+    authorization_plan: AuthorizationPlan | None = None
 
     @field_validator("outcome", mode="before")
     @classmethod
@@ -282,18 +361,51 @@ class ConsumerAgentResult(BaseModel):
             keys = [option.key for option in self.decision_options]
             if len(keys) != len(set(keys)):
                 raise ValueError("decision option keys must be unique")
-            quality = classify_decision_quality(
-                risk=self.risk.value,
-                confidence=self.confidence,
-                rule_coverage=self.rule_coverage,
-                information_completeness=self.information_completeness,
-            )
-            if quality.classification is not DecisionQuality.NEEDS_HUMAN:
-                raise ValueError(
-                    "needs_human outcome must match decision quality classification"
+            if not self.needs_human_reason:
+                raise ValueError("needs_human_reason is required for needs_human")
+            if self.decision_basis is None:
+                raise ValueError("decision_basis is required for needs_human")
+            if self.error.retryable:
+                raise ValueError("needs_human cannot carry a retryable error")
+            if self.error.authorization_required:
+                if self.authorization_plan is None:
+                    raise ValueError(
+                        "authorization_plan is required for authorization needs_human"
+                    )
+                if self.risk is not RiskLevel.HIGH:
+                    raise ValueError("authorization needs_human requires high risk")
+                if self.information_completeness < 0.5 or self.rule_coverage < 0.5:
+                    raise ValueError(
+                        "authorization needs_human requires complete information and rule coverage"
+                    )
+            else:
+                if self.error.code:
+                    raise ValueError("needs_human cannot carry a non-authorization error")
+                if self.authorization_plan is not None:
+                    raise ValueError(
+                        "authorization_plan requires authorization needs_human"
+                    )
+                quality = classify_decision_quality(
+                    risk=self.risk.value,
+                    confidence=self.confidence,
+                    rule_coverage=self.rule_coverage,
+                    information_completeness=self.information_completeness,
                 )
+                if quality.classification is not DecisionQuality.NEEDS_HUMAN:
+                    raise ValueError(
+                        "needs_human outcome must match decision quality classification"
+                    )
         elif self.decision_options:
             raise ValueError("decision options are only valid for needs_human")
+        elif any(
+            value is not None
+            for value in (
+                self.needs_human_reason,
+                self.decision_basis,
+                self.authorization_plan,
+            )
+        ):
+            raise ValueError("needs_human fields are only valid for needs_human")
         return self
 
 
@@ -338,6 +450,9 @@ class AuditAgentResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     rule_coverage: float = Field(ge=0.0, le=1.0)
     information_completeness: float = Field(ge=0.0, le=1.0)
+    needs_human_reason: str | None = None
+    decision_basis: DecisionBasis | None = None
+    authorization_plan: AuthorizationPlan | None = None
 
     @field_validator("outcome", mode="before")
     @classmethod
@@ -374,18 +489,51 @@ class AuditAgentResult(BaseModel):
             keys = [option.key for option in self.decision_options]
             if len(keys) != len(set(keys)):
                 raise ValueError("decision option keys must be unique")
-            quality = classify_decision_quality(
-                risk=self.risk.value,
-                confidence=self.confidence,
-                rule_coverage=self.rule_coverage,
-                information_completeness=self.information_completeness,
-            )
-            if quality.classification is not DecisionQuality.NEEDS_HUMAN:
-                raise ValueError(
-                    "needs_human outcome must match decision quality classification"
+            if not self.needs_human_reason:
+                raise ValueError("needs_human_reason is required for needs_human")
+            if self.decision_basis is None:
+                raise ValueError("decision_basis is required for needs_human")
+            if self.error.retryable:
+                raise ValueError("needs_human cannot carry a retryable error")
+            if self.error.authorization_required:
+                if self.authorization_plan is None:
+                    raise ValueError(
+                        "authorization_plan is required for authorization needs_human"
+                    )
+                if self.risk is not RiskLevel.HIGH:
+                    raise ValueError("authorization needs_human requires high risk")
+                if self.information_completeness < 0.5 or self.rule_coverage < 0.5:
+                    raise ValueError(
+                        "authorization needs_human requires complete information and rule coverage"
+                    )
+            else:
+                if self.error.code:
+                    raise ValueError("needs_human cannot carry a non-authorization error")
+                if self.authorization_plan is not None:
+                    raise ValueError(
+                        "authorization_plan requires authorization needs_human"
+                    )
+                quality = classify_decision_quality(
+                    risk=self.risk.value,
+                    confidence=self.confidence,
+                    rule_coverage=self.rule_coverage,
+                    information_completeness=self.information_completeness,
                 )
+                if quality.classification is not DecisionQuality.NEEDS_HUMAN:
+                    raise ValueError(
+                        "needs_human outcome must match decision quality classification"
+                    )
         elif self.decision_options:
             raise ValueError("decision options are only valid for needs_human")
+        elif any(
+            value is not None
+            for value in (
+                self.needs_human_reason,
+                self.decision_basis,
+                self.authorization_plan,
+            )
+        ):
+            raise ValueError("needs_human fields are only valid for needs_human")
         if self.outcome is AuditOutcome.DRY_RUN:
             if self.error.code != "dry_run_execution_suppressed":
                 raise ValueError("dry_run requires dry_run_execution_suppressed")

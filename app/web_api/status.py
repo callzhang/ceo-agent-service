@@ -190,6 +190,7 @@ class WorkerStatus(StrictStatusModel):
     queues: list[QueueStatus]
     dispatcher_queues: list[DispatcherQueueStatus]
     attention_rows: list[AttentionRow]
+    human_decision_rows: list[AttentionRow] = Field(default_factory=list)
     database: DatabaseStatus
     summary: QueueSummary
 

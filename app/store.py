@@ -76,6 +76,7 @@ from app.config import feedback_spike_vercel_base_url
 from app.decision_quality import (
     StoredNeedsHumanProjection,
     classify_stored_needs_human_projection,
+    parse_stored_needs_human_decision,
 )
 from app.feedback_spike import (
     extract_configured_feedback_link_context,
@@ -21722,7 +21723,8 @@ class AutoReplyStore:
             rows = db.execute(
                 """
                 select tasks.id as task_id, attempts.id as attempt_id,
-                       attempts.send_status, runs.id as run_id,
+                       attempts.send_status, attempts.oa_process_instance_id,
+                       attempts.oa_task_id, runs.id as run_id,
                        runs.final_result_json
                 from reply_tasks as tasks
                 join agent_runs as runs on runs.id=(
@@ -21754,20 +21756,21 @@ class AutoReplyStore:
             ).fetchall()
             reconciled = 0
             for row in rows:
-                if (
-                    classify_stored_needs_human_projection(
-                        row["final_result_json"]
-                    )
-                    is not StoredNeedsHumanProjection.NEEDS_HUMAN
+                decision = parse_stored_needs_human_decision(
+                    row["final_result_json"]
+                )
+                if decision is None or not self._authorization_plan_matches_attempt(
+                    decision,
+                    oa_process_instance_id=str(row["oa_process_instance_id"] or ""),
+                    oa_task_id=str(row["oa_task_id"] or ""),
                 ):
                     continue
-                result = json.loads(row["final_result_json"])
                 decision_options = json.dumps(
-                    result["decision_options"],
+                    [option.model_dump(mode="json") for option in decision.decision_options],
                     ensure_ascii=False,
                     separators=(",", ":"),
                 )
-                summary = str(result.get("summary") or "").strip()
+                summary = decision.summary
                 attempt_cursor = db.execute(
                     """
                     update reply_attempts
@@ -21801,6 +21804,25 @@ class AutoReplyStore:
                 if attempt_cursor.rowcount or task_cursor.rowcount:
                     reconciled += 1
             return reconciled
+
+    @staticmethod
+    def _authorization_plan_matches_attempt(
+        decision: object,
+        *,
+        oa_process_instance_id: str,
+        oa_task_id: str,
+    ) -> bool:
+        plan = getattr(decision, "authorization_plan", None)
+        if plan is None:
+            return True
+        target = plan.primary_action.target
+        for field, value in (
+            ("oa_process_instance_id", oa_process_instance_id),
+            ("oa_task_id", oa_task_id),
+        ):
+            if value and str(target.get(field) or "") != value:
+                return False
+        return True
 
     @staticmethod
     def _projection_failure_code(*payload_sources: str | None) -> str:

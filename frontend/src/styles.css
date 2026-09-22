@@ -1153,6 +1153,11 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-references-card li span, .attempt-references-card li small { color: var(--ink-soft); }
 .attempt-references-card li small { font-size: .78rem; }
 .attempt-decision-card { display: grid; gap: 10px; }
+.attempt-decision-basis { display: grid; gap: 8px; }
+.attempt-decision-basis h2, .attempt-decision-basis h3, .attempt-decision-basis h4 { margin: 0; }
+.attempt-decision-basis h3, .attempt-decision-basis h4 { color: var(--ink-soft); font-size: .8rem; }
+.attempt-decision-basis p, .attempt-decision-basis ul { margin: 0; color: var(--ink-soft); line-height: 1.5; }
+.attempt-decision-basis ul { padding-left: 20px; }
 .attempt-decision-card > p { margin-bottom: 2px; color: var(--ink-soft); }
 .attempt-decision-option { display: grid; gap: 4px; width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: var(--surface); text-align: left; cursor: pointer; }
 .attempt-decision-option:hover { border-color: var(--accent); background: var(--surface-muted); }

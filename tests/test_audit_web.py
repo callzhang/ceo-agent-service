@@ -11032,7 +11032,7 @@ def test_oa_manual_rerun_hides_old_human_choices_on_attempt_page(tmp_path: Path)
     assert "需要你决策：</strong>否" in html
 
 
-def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
+def test_needs_human_detail_hides_audit_technical_conflict(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-audit-choice",
@@ -11098,9 +11098,7 @@ def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
 
     html = audit_web_module._needs_human_decision_card(attempt, [run])
 
-    assert "1. 恢复到已确认位置" in html
-    assert "2. 保持当前状态" in html
-    assert "不会执行新的外部动作。" in html
+    assert html == ""
 
 
 def test_needs_human_detail_hides_untraceable_persisted_options(

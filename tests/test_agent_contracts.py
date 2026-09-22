@@ -74,6 +74,149 @@ def _decision_options() -> list[dict[str, str]]:
     ]
 
 
+def _decision_basis() -> dict[str, object]:
+    return {
+        "verified_facts": [
+            {
+                "assertion": "The current OA task is still running.",
+                "references": ["oa:task:103917272718"],
+            }
+        ],
+        "rule_evidence": [
+            {
+                "assertion": "The applicable high-risk rule requires this specific authorization.",
+                "references": ["skill:dingtalk-oa-approval#risk"],
+            }
+        ],
+        "quality_explanation": "The material and rule are complete; authorization is separate from evidence completeness.",
+        "no_external_action_evidence": [
+            {
+                "assertion": "No provider receipt exists for this OA action.",
+                "references": ["attempt:9733"],
+            }
+        ],
+        "conclusion": "Only this explicit action requires a human decision.",
+    }
+
+
+def _authorization_plan() -> dict[str, object]:
+    primary_action = dict(_proposal()["actions"][0])
+    primary_action["description"] = "Return the current OA task to its supervisor."
+    primary_action["action_identity"] = "return-current-oa-task"
+    primary_action["target"] = {
+        "oa_process_instance_id": "process-9733",
+        "oa_task_id": "task-9733",
+    }
+    return {
+        "summary": "Return the current OA task to its supervisor.",
+        "primary_action": primary_action,
+        "follow_up_actions": [],
+        "side_effects": ["The current OA task is returned to its supervisor."],
+        "will_not_do": ["This authorization will not approve or reject the OA."],
+        "readback": ["Read the OA history to verify the returned task."],
+    }
+
+
+def _explainable_needs_human_payload(
+    model: type[ConsumerAgentResult] | type[AuditAgentResult],
+    *,
+    authorization_required: bool = False,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "outcome": "needs_human",
+        "summary": "A high-risk decision is not covered by the current rule.",
+        "decision_options": _decision_options(),
+        "risk": "high",
+        "confidence": 0.49,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "error": {
+            **_error(),
+            "code": "authorization_required" if authorization_required else "",
+            "authorization_required": authorization_required,
+        },
+        "needs_human_reason": "A high-risk action needs a concrete decision that the current rule does not provide.",
+        "decision_basis": _decision_basis(),
+    }
+    if model is ConsumerAgentResult:
+        payload["proposal"] = None
+    else:
+        payload.update(
+            proposal_revision=0,
+            feedback=None,
+            external_result=None,
+        )
+    if authorization_required:
+        payload["authorization_plan"] = _authorization_plan()
+    return payload
+
+
+@pytest.mark.parametrize("model", (ConsumerAgentResult, AuditAgentResult))
+def test_needs_human_requires_explainable_reason_and_basis(model):
+    payload = _explainable_needs_human_payload(model)
+    accepted = model.model_validate(payload)
+    assert accepted.needs_human_reason
+    assert accepted.decision_basis is not None
+
+    for field in ("needs_human_reason", "decision_basis"):
+        invalid = dict(payload)
+        invalid.pop(field)
+        with pytest.raises(ValidationError, match=field):
+            model.model_validate(invalid)
+
+
+@pytest.mark.parametrize("model", (ConsumerAgentResult, AuditAgentResult))
+def test_authorization_plan_is_bounded_to_one_explicit_external_action(model):
+    payload = _explainable_needs_human_payload(model, authorization_required=True)
+    accepted = model.model_validate(payload)
+    assert accepted.authorization_plan is not None
+    assert accepted.authorization_plan.primary_action.effect == "external"
+
+    generic = dict(payload)
+    generic["authorization_plan"] = {
+        **_authorization_plan(),
+        "summary": "Re-evaluate and execute the current item.",
+    }
+    with pytest.raises(ValidationError, match="summary"):
+        model.model_validate(generic)
+
+    no_effect = dict(payload)
+    no_effect["authorization_plan"] = {
+        **_authorization_plan(),
+        "primary_action": {
+            **_authorization_plan()["primary_action"],
+            "effect": "none",
+        },
+    }
+    with pytest.raises(ValidationError, match="external"):
+        model.model_validate(no_effect)
+
+
+@pytest.mark.parametrize("model", (ConsumerAgentResult, AuditAgentResult))
+def test_non_human_outcome_rejects_human_decision_fields(model):
+    payload = (
+        {
+            "outcome": "no_action",
+            "summary": "Nothing to do.",
+            "proposal": None,
+            "decision_options": [],
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "error": _error(),
+        }
+        if model is ConsumerAgentResult
+        else _audit_payload(outcome="failed", feedback=None, external_result=None)
+    )
+    payload.update(
+        needs_human_reason="A reason that is only valid for a human decision.",
+        decision_basis=_decision_basis(),
+    )
+    with pytest.raises(ValidationError, match="needs_human"):
+        model.model_validate(payload)
+
+
 def test_proposed_action_does_not_require_deferred_structured_boundary_field():
     assert "external_boundary" not in ProposedAction.model_fields
 
@@ -87,17 +230,7 @@ def test_proposed_action_requires_stable_action_identity():
 
 
 def test_needs_human_follows_decision_quality_classification_for_all_task_types():
-    consumer_payload = {
-        "outcome": "needs_human",
-        "summary": "A management decision is required.",
-        "proposal": None,
-        "decision_options": _decision_options(),
-        "risk": "high",
-        "confidence": 0.49,
-        "rule_coverage": 1.0,
-        "information_completeness": 1.0,
-        "error": _error(),
-    }
+    consumer_payload = _explainable_needs_human_payload(ConsumerAgentResult)
     accepted = ConsumerAgentResult.model_validate(consumer_payload)
     assert accepted.risk is RiskLevel.HIGH
     assert accepted.confidence == 0.49
@@ -112,13 +245,7 @@ def test_needs_human_follows_decision_quality_classification_for_all_task_types(
     )
     assert low_coverage.outcome is ConsumerOutcome.NEEDS_HUMAN
 
-    audit_payload = _audit_payload(
-        outcome="needs_human",
-        feedback=None,
-        decision_options=_decision_options(),
-        risk="high",
-        confidence=0.49,
-    )
+    audit_payload = _explainable_needs_human_payload(AuditAgentResult)
     audit = AuditAgentResult.model_validate(audit_payload)
     assert audit.risk is RiskLevel.HIGH
     assert audit.confidence == 0.49
@@ -160,17 +287,7 @@ def test_domain_result_requires_all_decision_quality_fields(model, field):
 
 
 def test_decision_quality_fields_are_readable_and_classify_needs_human():
-    payload = {
-        "outcome": "needs_human",
-        "summary": "A management decision is required.",
-        "proposal": None,
-        "decision_options": _decision_options(),
-        "risk": "high",
-        "confidence": 0.49,
-        "rule_coverage": 1.0,
-        "information_completeness": 1.0,
-        "error": _error(),
-    }
+    payload = _explainable_needs_human_payload(ConsumerAgentResult)
     result = ConsumerAgentResult.model_validate(payload)
 
     assert result.rule_coverage == 1.0
@@ -188,15 +305,11 @@ def test_needs_human_rejects_non_needs_human_quality_classifications(
     risk, confidence, rule_coverage, information_completeness
 ):
     payload = {
-        "outcome": "needs_human",
-        "summary": "A management decision is required.",
-        "proposal": None,
-        "decision_options": _decision_options(),
+        **_explainable_needs_human_payload(ConsumerAgentResult),
         "risk": risk,
         "confidence": confidence,
         "rule_coverage": rule_coverage,
         "information_completeness": information_completeness,
-        "error": _error(),
     }
     with pytest.raises(ValidationError, match="must match decision quality"):
         ConsumerAgentResult.model_validate(payload)
@@ -287,6 +400,16 @@ def _consumer_wire_payload(**overrides: object) -> dict[str, object]:
     payload.update(overrides)
     if payload["outcome"] == "needs_human" and "risk" not in overrides:
         payload.update(risk="high", confidence=0.1)
+    if payload["outcome"] == "needs_human":
+        payload.setdefault(
+            "needs_human_reason",
+            "A high-risk rule decision needs an explicit human choice.",
+        )
+        payload.setdefault("decision_basis", _decision_basis())
+        if "error_code" not in overrides:
+            payload["error_code"] = ""
+        if "error_retryable" not in overrides:
+            payload["error_retryable"] = False
     return payload
 
 
@@ -309,6 +432,16 @@ def _audit_wire_payload(**overrides: object) -> dict[str, object]:
     payload.update(overrides)
     if payload["outcome"] == "needs_human" and "risk" not in overrides:
         payload.update(risk="high", confidence=0.1)
+    if payload["outcome"] == "needs_human":
+        payload.setdefault(
+            "needs_human_reason",
+            "A high-risk rule decision needs an explicit human choice.",
+        )
+        payload.setdefault("decision_basis", _decision_basis())
+        if "error_code" not in overrides:
+            payload["error_code"] = ""
+        if "error_retryable" not in overrides:
+            payload["error_retryable"] = False
     return payload
 
 
@@ -668,9 +801,11 @@ def test_needs_human_requires_actionable_options_and_wire_preserves_them():
             "confidence": 0.1,
             "rule_coverage": 1.0,
             "information_completeness": 1.0,
-            "error_code": "decision_required",
+            "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,
+            "needs_human_reason": "A high-risk rule decision needs an explicit human choice.",
+            "decision_basis": _decision_basis(),
         }
     ).to_result()
 
@@ -691,7 +826,7 @@ def test_audit_needs_human_requires_actionable_options_and_wire_preserves_them()
         _audit_wire_payload(
             outcome="needs_human",
             decision_options=options,
-            error_code="decision_required",
+            error_code="",
             error_retryable=False,
         )
     ).to_result()
@@ -1144,14 +1279,16 @@ def test_audit_wire_result_preserves_nested_result_fields():
             "confidence": 0.1,
             "rule_coverage": 1.0,
             "information_completeness": 1.0,
-            "error_code": "decision_required",
+            "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,
+            "needs_human_reason": "A high-risk rule decision needs an explicit human choice.",
+            "decision_basis": _decision_basis(),
         }
     ).to_result()
 
     assert result.outcome is AuditOutcome.NEEDS_HUMAN
-    assert result.error.code == "decision_required"
+    assert result.error.code == ""
     assert result.decision_options[0].key == "A"
 
 

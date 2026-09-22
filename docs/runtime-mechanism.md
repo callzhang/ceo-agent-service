@@ -39,6 +39,11 @@ pending -> running -> done
   Audit、路由、schema 或重试失败一律使用 `failed`；已完成的外部动作也不改变这条分类。
   重跑前由 `external_action_key` 和 provider 回读机械去重，而不是把“可能已执行”伪造成
   Derek 的规则选择。
+- 每个 `needs_human` 结果还必须包含面向用户的 `needs_human_reason` 和可追溯的
+  `decision_basis`：已核验事实、适用规则、质量分值解释、未执行证据和结论。高风险外部
+  动作需要单一、与当前 OA 实例/任务匹配的 `authorization_plan`，写明动作、影响、不会执行
+  的动作以及执行后的读回。Attempt 详情只根据当前 Attempt 指向的有效终态 run 展示这份说明；
+  旧 run 或不完整结果不能把 `done` 投影成当前人工待办。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
 ## 功能机制开关与任务生产

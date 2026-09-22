@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-22: `needs_human` now requires a clear reason and evidence chain from
+  the current Agent run. OA authorizations must name one bounded action and
+  match the current process and task; technical failures cannot create an
+  authorization card. Attempt details render the evidence behind a valid card,
+  while invalid stale projections appear as failed work.
+
 - 2026-09-22: Audit's service-owned DingTalk action executor now supports a
   Consumer's native reply operation instead of rejecting it after review. The
   executor requires the proposal's conversation and message IDs to match the

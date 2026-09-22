@@ -83,7 +83,9 @@ def _humanized_summary(value: Any) -> str:
 def _record(row: dict[str, Any]) -> AttentionRecord:
     error = normalize_display_value(row.get("error"))
     status = normalize_display_value(row.get("status"))
-    detail_label, detail = _detail(status, error)
+    default_detail_label, default_detail = _detail(status, error)
+    detail_label = normalize_display_value(row.get("detail_label")) or default_detail_label
+    detail = normalize_display_value(row.get("detail")) or default_detail
     context = normalize_display_value(row.get("context"))
     root_cause = _humanized_summary(row.get("root_cause"))
     error_code = normalize_display_value(row.get("error_code"))

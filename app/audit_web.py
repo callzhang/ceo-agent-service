@@ -2167,6 +2167,7 @@ def build_worker_status_payload(
         queues = _queue_status_snapshots(store)
         dispatcher_queues = _dispatcher_queue_snapshots(store)
         attention_rows = _queue_attention_rows(store)
+        human_decision_rows = _human_decision_attention_rows(store)
         email_health = _email_worker_health_snapshot(store)
         meeting_memory_health = store.meeting_memory_health_snapshot(
             delayed_after_seconds=MEETING_MEMORY_HEALTH_DELAY_SECONDS
@@ -2182,7 +2183,7 @@ def build_worker_status_payload(
         max(0, int(row.get("count") or 1))
         for row in attention_rows
         if isinstance(row, Mapping)
-    )
+    ) + len(human_decision_rows)
     payload: dict[str, object] = {
         "service": service,
         "components": _service_component_snapshots(store),
@@ -2194,6 +2195,7 @@ def build_worker_status_payload(
         "queues": queues,
         "dispatcher_queues": dispatcher_queues,
         "attention_rows": attention_rows,
+        "human_decision_rows": human_decision_rows,
         "database": {"path": str(store.path)},
         "summary": {
             "queue_count": len(queues),
@@ -3471,6 +3473,74 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     return rows if limit is None else rows[:limit]
 
 
+def _human_decision_attention_rows(
+    store: AutoReplyStore, *, limit: int | None = None
+) -> list[dict[str, str]]:
+    """Return current, typed rule decisions as a separate Attention category."""
+    from app.decision_quality import parse_stored_needs_human_decision
+
+    sql = """
+        select attempts.id, attempts.conversation_title, attempts.updated_at,
+               attempts.agent_run_id, runs.final_result_json
+        from reply_attempts as attempts
+        join reply_tasks as tasks
+          on tasks.channel=attempts.channel
+         and tasks.conversation_id=attempts.conversation_id
+         and tasks.trigger_message_id=attempts.trigger_message_id
+        join business_object_tasks as current_object
+          on current_object.business_object_key=tasks.business_object_key
+         and current_object.reply_task_id=tasks.id
+        join agent_runs as runs
+          on runs.id=attempts.agent_run_id
+         and runs.reply_task_id=tasks.id
+         and runs.execution_generation=tasks.execution_generation
+         and runs.status='completed'
+         and runs.id=(
+             select latest_run.id from agent_runs as latest_run
+             where latest_run.reply_task_id=tasks.id
+               and latest_run.execution_generation=tasks.execution_generation
+             order by latest_run.turn_attempt desc,
+                      latest_run.proposal_revision desc, latest_run.id desc
+             limit 1
+         )
+        where attempts.send_status='needs_human'
+          and attempts.reviewed_at is null
+          and trim(coalesce(attempts.resolved_at, ''))=''
+          and attempts.id=(
+              select max(latest.id) from reply_attempts as latest
+              where latest.channel=attempts.channel
+                and latest.conversation_id=attempts.conversation_id
+                and latest.trigger_message_id=attempts.trigger_message_id
+          )
+        order by attempts.updated_at desc, attempts.id desc
+    """
+    if limit is not None:
+        sql += " limit ?"
+    with store._connect() as db:
+        rows = db.execute(sql, (limit,) if limit is not None else ()).fetchall()
+    decisions: list[dict[str, str]] = []
+    for row in rows:
+        decision = parse_stored_needs_human_decision(row["final_result_json"])
+        if decision is None:
+            continue
+        decisions.append(
+            {
+                "category": "Rule decision",
+                "id": str(row["id"]),
+                "status": "needs_human",
+                "context": str(row["conversation_title"] or ""),
+                "summary": str(decision.needs_human_reason),
+                "updated_at": str(row["updated_at"] or ""),
+                "error": "",
+                "root_cause": "需要确定处理规则",
+                "detail_label": "判断依据",
+                "detail": str(decision.needs_human_reason),
+                "detail_url": f"/attempts/{int(row['id'])}",
+            }
+        )
+    return decisions
+
+
 def _sqlite_table_exists(db: sqlite3.Connection, table: str) -> bool:
     row = db.execute(
         "select 1 from sqlite_master where type='table' and name=?",
@@ -3605,7 +3675,7 @@ def _worker_queues_table(queues: object) -> str:
 def _worker_attention_table(rows_obj: object) -> str:
     rows = "".join(
         "<tr>"
-        f"<td>{escape(str(row.get('category') or ''))} #{escape(str(row.get('id') or ''))}</td>"
+        f"<td>{_attention_item_label(row)}</td>"
         f"<td><span class=\"pill {_operation_status_class(str(row.get('status') or ''))}\">{escape(str(row.get('status') or '-'))}</span></td>"
         f"<td>{escape(str(row.get('context') or '-'))}</td>"
         f"<td>{escape(_excerpt(str(row.get('summary') or ''), 220) or '-')}</td>"
@@ -3622,6 +3692,14 @@ def _worker_attention_table(rows_obj: object) -> str:
         f"{rows or '<tr><td colspan=\"6\" class=\"muted\">No pending, processing, or failed queue items.</td></tr>'}"
         "</tbody></table>"
     )
+
+
+def _attention_item_label(row: Mapping[str, object]) -> str:
+    label = f"{escape(str(row.get('category') or ''))} #{escape(str(row.get('id') or ''))}"
+    detail_url = str(row.get("detail_url") or "").strip()
+    if not detail_url.startswith("/"):
+        return label
+    return f'<a href="{escape(detail_url, quote=True)}">{label}</a>'
 
 
 def _status_counts_label(value: object) -> str:
@@ -3806,6 +3884,10 @@ def render_settings_page(
             max(0, int(row.get("count") or 1))
             for row in payload_attention_rows
             if isinstance(row, Mapping)
+        ) + len(
+            worker_status_payload.get("human_decision_rows") or []
+            if isinstance(worker_status_payload, Mapping)
+            else []
         )
     else:
         with store.read_snapshot():
@@ -3813,7 +3895,7 @@ def render_settings_page(
                 max(0, int(row.get("count") or 1))
                 for row in _queue_attention_rows(store)
                 if isinstance(row, Mapping)
-            )
+            ) + len(_human_decision_attention_rows(store))
     body = (
         '<div class="settings-layout">'
         f"{_settings_tabs(active_tab, attention_count=attention_count)}"
@@ -3918,11 +4000,15 @@ def _render_attention_content(
 ) -> str:
     payload = payload or build_worker_status_payload(store)
     rows = payload.get("attention_rows") or []
+    decisions = payload.get("human_decision_rows") or []
     return (
         '<section class="card worker-section compact-card">'
         "<h2>Attention</h2>"
-        '<p class="muted">只显示未解决的服务和任务错误；处理中、待处理和 needs_human 另行统计。</p>'
+        '<p class="muted">服务错误与需要你确定的规则分别列出；只有当前业务对象对应的有效 Agent 决策才会出现在第二栏。</p>'
+        "<h3>未解决的服务和任务错误</h3>"
         f"{_worker_attention_table(rows)}"
+        "<h3>需要你确定的规则</h3>"
+        f"{_worker_attention_table(decisions)}"
         "</section>"
     )
 
@@ -10575,7 +10661,10 @@ def create_audit_app(
         """Read the current Attention snapshot without serving stale status data."""
 
         with audit_store.read_snapshot():
-            return _queue_attention_rows(audit_store)
+            return [
+                *_queue_attention_rows(audit_store),
+                *_human_decision_attention_rows(audit_store),
+            ]
 
     def read_fresh_feedback_backlog() -> dict[str, object]:
         """Read authoritative queue counts straight from SQLite.
@@ -10644,6 +10733,7 @@ def create_audit_app(
             "queues": [],
             "dispatcher_queues": [],
             "attention_rows": [],
+            "human_decision_rows": [],
             "database": {"path": str(db_path)},
             "summary": {
                 "queue_count": 0,
@@ -10662,10 +10752,10 @@ def create_audit_app(
         )
         # Queue totals may use the short-lived status snapshot, but Attention
         # is an error surface and must agree with its dedicated endpoint on
-        # every refresh.  In particular, a successfully recovered service
-        # incident must disappear immediately instead of lingering until the
-        # next background status-cache render.
-        attention_rows = read_cached_attention_rows()
+        # every refresh. Decisions are read separately so the service-error
+        # list remains distinct from actual rule questions.
+        attention_rows = _queue_attention_rows(audit_store)
+        human_decision_rows = _human_decision_attention_rows(audit_store)
         summary = dict(payload.get("summary") or {})
         # Queue counts are the user-facing source of truth for current work.
         # The worker payload is intentionally cached while slow connector
@@ -10678,7 +10768,7 @@ def create_audit_app(
             max(0, int(row.get("count") or 1))
             for row in attention_rows
             if isinstance(row, Mapping)
-        )
+        ) + len(human_decision_rows)
         connector_statuses = connector_status_cache.get_or_refresh(
             _connector_status_snapshots,
             lambda: {},
@@ -10704,6 +10794,7 @@ def create_audit_app(
         return {
             **payload,
             "attention_rows": attention_rows,
+            "human_decision_rows": human_decision_rows,
             "summary": summary,
             "connectors": connector_statuses,
             "wechat": wechat_status,
@@ -10862,7 +10953,10 @@ def create_audit_app(
         attention_rows_factory=(
             read_cached_attention_rows
             if spa_enabled
-            else lambda: _queue_attention_rows(audit_store)
+            else lambda: [
+                *_queue_attention_rows(audit_store),
+                *_human_decision_attention_rows(audit_store),
+            ]
         ),
         task_row_builder=_task_row_payload,
         history_chart_factory=render_history_chart,
@@ -11202,13 +11296,15 @@ def create_audit_app(
         store = AutoReplyStore(db_path)
         with store.read_snapshot():
             rows = _queue_attention_rows(store)
+            decisions = _human_decision_attention_rows(store)
         return JSONResponse({
             "count": sum(
                 max(0, int(row.get("count") or 1))
                 for row in rows
                 if isinstance(row, Mapping)
-            ),
+            ) + len(decisions),
             "rows": rows,
+            "human_decisions": decisions,
         })
 
     @app.get("/logs", response_class=HTMLResponse)
