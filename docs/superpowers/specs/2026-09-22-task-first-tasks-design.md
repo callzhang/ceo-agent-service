@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-22
 
-**Status:** Approved in brainstorming; awaiting written-spec review
+**Status:** Approved for implementation planning
 
 **Scope:** CEO Agent Service Tasks domain model, derivation flow, migration boundary, and console information architecture
 
