@@ -89,6 +89,9 @@ class PromoteCandidate:
     task_id: int
     signal: SourceSignal
     formality: FormalityEvidence
+    owner_user_id: str | None = None
+    owner_name: str | None = None
+    owner_evidence_json: str | None = None
     reason: str = "Task now has formal evidence."
 
 
@@ -202,6 +205,28 @@ class TaskSemanticService:
             else BusinessEvidenceRole.ASSIGNMENT
         )
 
+    @staticmethod
+    def _owner_is_persisted(
+        *, owner_user_id: str, owner_name: str, owner_evidence_json: str
+    ) -> bool:
+        try:
+            owner_evidence = json.loads(owner_evidence_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("owner evidence must be JSON") from exc
+        return bool(owner_user_id.strip() or owner_name.strip()) and bool(owner_evidence)
+
+    @staticmethod
+    def _reconcile_missing_owner(*, missing_evidence_json: str, owner_is_persisted: bool) -> str:
+        missing_evidence = json.loads(missing_evidence_json)
+        if not isinstance(missing_evidence, list) or not all(
+            isinstance(item, str) for item in missing_evidence
+        ):
+            raise ValueError("missing evidence must be a JSON string list")
+        remaining = [item for item in missing_evidence if item != "owner"]
+        if not owner_is_persisted:
+            remaining.append("owner")
+        return json.dumps(list(dict.fromkeys(remaining)), separators=(",", ":"))
+
     def _record_new_task(
         self,
         *,
@@ -258,6 +283,11 @@ class TaskSemanticService:
         resolution = resolve_formality(command.formality)
         if resolution.stage is not BusinessTaskStage.FORMAL or command.formality.basis is None:
             raise ValueError("formal task requires formal evidence")
+        owner_is_persisted = self._owner_is_persisted(
+            owner_user_id=command.owner_user_id,
+            owner_name=command.owner_name,
+            owner_evidence_json=command.owner_evidence_json,
+        )
         return self._record_new_task(
             signal=command.signal,
             task_fields={
@@ -270,7 +300,9 @@ class TaskSemanticService:
                 "owner_name": command.owner_name,
                 "owner_evidence_json": command.owner_evidence_json,
                 "deadline_at": command.deadline_at,
-                "missing_evidence_json": json.dumps(list(resolution.missing_evidence)),
+                "missing_evidence_json": self._reconcile_missing_owner(
+                    missing_evidence_json="[]", owner_is_persisted=owner_is_persisted
+                ),
             },
             evidence_role=self._formal_evidence_role(command.formality.basis),
             reason="Formal task recorded from source evidence.",
@@ -325,13 +357,35 @@ class TaskSemanticService:
                 raise ValueError("cannot promote a merged task")
             if task.stage is not BusinessTaskStage.CANDIDATE:
                 raise ValueError("only a candidate task can be promoted")
+            owner_user_id = (
+                task.owner_user_id
+                if command.owner_user_id is None
+                else command.owner_user_id
+            )
+            owner_name = task.owner_name if command.owner_name is None else command.owner_name
+            owner_evidence_json = (
+                task.owner_evidence_json
+                if command.owner_evidence_json is None
+                else command.owner_evidence_json
+            )
+            owner_is_persisted = self._owner_is_persisted(
+                owner_user_id=owner_user_id,
+                owner_name=owner_name,
+                owner_evidence_json=owner_evidence_json,
+            )
             signal_id = self._signal_id_or_create(signal=command.signal, db=db, now=now)
             after = task.model_copy(
                 update={
                     "stage": BusinessTaskStage.FORMAL,
                     "formal_basis": command.formality.basis,
                     "commitment_status": resolution.commitment_status,
-                    "missing_evidence_json": json.dumps(list(resolution.missing_evidence)),
+                    "owner_user_id": owner_user_id,
+                    "owner_name": owner_name,
+                    "owner_evidence_json": owner_evidence_json,
+                    "missing_evidence_json": self._reconcile_missing_owner(
+                        missing_evidence_json=task.missing_evidence_json,
+                        owner_is_persisted=owner_is_persisted,
+                    ),
                     "updated_at": self._timestamp(now),
                     "last_activity_at": self._timestamp(now),
                 }
@@ -366,6 +420,11 @@ class TaskSemanticService:
             )
             if task.status is BusinessTaskStatus.MERGED:
                 raise ValueError("cannot accept a merged task")
+            if (
+                task.stage is not BusinessTaskStage.FORMAL
+                or task.commitment_status is not CommitmentStatus.ASSIGNED_UNACCEPTED
+            ):
+                raise ValueError("acceptance requires a formal assigned task")
             signal_id = self._signal_id_or_create(signal=command.signal, db=db, now=now)
             after = task.model_copy(
                 update={
@@ -393,6 +452,8 @@ class TaskSemanticService:
             return TaskMutationResult(task_id=task.id, signal_id=signal_id, created=False)
 
     def update_task(self, command: UpdateBusinessTask) -> TaskMutationResult:
+        if command.commitment_status is not None:
+            raise ValueError("commitment transitions require dedicated acceptance commands")
         now = self._now()
         fields = {
             "commitment_status": command.commitment_status,

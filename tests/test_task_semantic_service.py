@@ -137,8 +137,12 @@ def test_record_task_reuses_independently_persisted_signal_and_replays(service, 
 
 @pytest.mark.parametrize("operation", ["promote", "update", "accept", "merge"])
 def test_transition_reuses_independently_persisted_signal_and_replays(service, operation):
-    source = service.record_candidate(
-        RecordCandidate(title="提交报价", signal=assignment_signal())
+    source = (
+        record_assignment(service)
+        if operation == "accept"
+        else service.record_candidate(
+            RecordCandidate(title="提交报价", signal=assignment_signal())
+        )
     )
     signal = assignment_signal(dedupe_key="message:transition")
     signal_id = service.store.create_business_task_signal(**asdict(signal))
@@ -737,3 +741,91 @@ def test_direct_meeting_action_promotion_derives_commitment_and_missing_owner(se
     assert task is not None
     assert task.commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
     assert task.missing_evidence_json == '["owner"]'
+
+
+@pytest.mark.parametrize("operation", ["acceptance", "generic_update"])
+def test_candidate_cannot_receive_commitment_transition_and_preserves_state(service, operation):
+    candidate = service.record_candidate(
+        RecordCandidate(title="提交报价", signal=assignment_signal())
+    )
+    state_before = semantic_state(service)
+    signal = assignment_signal(dedupe_key=f"message:invalid-{operation}")
+
+    with pytest.raises(ValueError, match="formal assigned task|dedicated acceptance"):
+        if operation == "acceptance":
+            service.apply_acceptance(ApplyAcceptance(task_id=candidate.task_id, signal=signal))
+        else:
+            service.update_task(
+                UpdateBusinessTask(
+                    task_id=candidate.task_id,
+                    signal=signal,
+                    commitment_status=CommitmentStatus.ACCEPTED,
+                )
+            )
+
+    assert semantic_state(service) == state_before
+
+
+def test_generic_update_rejects_invalid_formal_commitment_transition_without_mutation(service):
+    assigned = record_assignment(service)
+    state_before = semantic_state(service)
+
+    with pytest.raises(ValueError, match="dedicated acceptance"):
+        service.update_task(
+            UpdateBusinessTask(
+                task_id=assigned.task_id,
+                signal=assignment_signal(dedupe_key="message:generic-accept"),
+                commitment_status=CommitmentStatus.ACCEPTED,
+            )
+        )
+
+    assert semantic_state(service) == state_before
+
+
+def test_promotion_preserves_unrelated_missing_evidence_and_resolves_only_owner(service):
+    candidate = service.record_candidate(
+        RecordCandidate(
+            title="提交报价",
+            signal=assignment_signal(),
+            missing_evidence_json='["deadline","owner"]',
+        )
+    )
+
+    service.promote_candidate(
+        PromoteCandidate(
+            task_id=candidate.task_id,
+            signal=assignment_signal(dedupe_key="message:owner-resolved"),
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_name="王明",
+            owner_evidence_json='{"signal_id": 2}',
+        )
+    )
+
+    task = service.store.get_business_task(candidate.task_id)
+    assert task is not None
+    assert task.owner_name == "王明"
+    assert task.missing_evidence_json == '["deadline"]'
+
+
+def test_promotion_without_persisted_owner_does_not_false_resolve_owner(service):
+    candidate = service.record_candidate(
+        RecordCandidate(
+            title="提交报价",
+            signal=assignment_signal(),
+            missing_evidence_json='["deadline"]',
+        )
+    )
+
+    service.promote_candidate(
+        PromoteCandidate(
+            task_id=candidate.task_id,
+            signal=assignment_signal(dedupe_key="message:missing-owner"),
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+        )
+    )
+
+    task = service.store.get_business_task(candidate.task_id)
+    assert task is not None
+    assert task.owner_name == ""
+    assert task.owner_evidence_json == "{}"
+    assert task.missing_evidence_json == '["deadline","owner"]'
