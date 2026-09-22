@@ -21655,7 +21655,10 @@ class AutoReplyStore:
                 """
                 select attempts.id as attempt_id, attempts.agent_run_id,
                        attempts.send_status, attempts.send_error,
-                       runs.reply_task_id, runs.final_result_json,
+                       attempts.channel, attempts.conversation_id,
+                       attempts.trigger_message_id,
+                       runs.reply_task_id, runs.execution_generation,
+                       runs.final_result_json,
                        runs.structured_error_json
                 from reply_attempts as attempts
                 left join agent_runs as runs on runs.id=attempts.agent_run_id
@@ -21739,9 +21742,15 @@ class AutoReplyStore:
                         update reply_tasks
                         set status='failed', error=?, available_at='', locked_at=null,
                             updated_at=current_timestamp
-                        where id=? and status in ('done', 'needs_human', 'pending', 'processing')
+                        where id=? and execution_generation=?
+                          and channel=? and conversation_id=? and trigger_message_id=?
+                          and status in ('done', 'needs_human', 'pending', 'processing')
                         """,
-                        (error_code, row["reply_task_id"]),
+                        (
+                            error_code, row["reply_task_id"], row["execution_generation"],
+                            row["channel"], row["conversation_id"],
+                            row["trigger_message_id"],
+                        ),
                     )
                     if task_cursor.rowcount and not attempt_changed:
                         reconciled += 1
@@ -22881,6 +22890,13 @@ class AutoReplyStore:
                 left join agent_runs as runs on runs.id=attempts.agent_run_id
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and not exists (
+                      select 1 from agent_runs as attempt_run
+                      join reply_tasks as current_task
+                        on current_task.id=attempt_run.reply_task_id
+                      where attempt_run.id=attempts.agent_run_id
+                        and attempt_run.execution_generation<>current_task.execution_generation
+                  )
+                  and not exists (
                       select 1
                       from reply_tasks as historical_task
                       join business_object_tasks as current_business_object
@@ -22971,6 +22987,13 @@ class AutoReplyStore:
                 from reply_attempts as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and not exists (
+                      select 1 from agent_runs as attempt_run
+                      join reply_tasks as current_task
+                        on current_task.id=attempt_run.reply_task_id
+                      where attempt_run.id=attempts.agent_run_id
+                        and attempt_run.execution_generation<>current_task.execution_generation
+                  )
+                  and not exists (
                       select 1
                       from reply_tasks as historical_task
                       join business_object_tasks as current_business_object
@@ -23056,6 +23079,13 @@ class AutoReplyStore:
                 select count(*) as count
                 from reply_attempts as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
+                  and not exists (
+                      select 1 from agent_runs as attempt_run
+                      join reply_tasks as current_task
+                        on current_task.id=attempt_run.reply_task_id
+                      where attempt_run.id=attempts.agent_run_id
+                        and attempt_run.execution_generation<>current_task.execution_generation
+                  )
                   and not exists (
                       select 1
                       from reply_tasks as historical_task

@@ -8456,6 +8456,59 @@ def test_attention_hides_historical_failed_task_when_business_object_is_done(
     assert store.count_current_unresolved_problem_attempts() == 0
 
 
+def test_attention_does_not_repeat_old_generation_attempt_for_current_oa_task(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="oa-pending:process-1",
+        conversation_title="OA pending",
+        single_chat=True,
+        trigger_message_id="oa-pending:process-1:old",
+        trigger_create_time="2026-09-20 10:00:00",
+        trigger_sender="OA",
+        trigger_text="old approval revision",
+        business_object_key="oa:process-1:task-1",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+        channel=task.channel,
+    )
+    with store._connect() as db:
+        run = db.execute(
+            """insert into agent_runs (
+                reply_task_id, execution_generation, role, status, final_result_json
+            ) values (?, ?, 'consumer', 'completed', '{}')""",
+            (task.id, task.execution_generation),
+        )
+        db.execute(
+            "update reply_attempts set agent_run_id=?, send_error='old failure' where id=?",
+            (run.lastrowid, attempt_id),
+        )
+        db.execute(
+            """update reply_tasks
+               set trigger_message_id='oa-pending:process-1:new',
+                   execution_generation='current-gen', status='failed',
+                   error='current failure'
+               where id=?""",
+            (task.id,),
+        )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert [(row["category"], row["id"]) for row in rows] == [
+        ("Reply task", str(task.id))
+    ]
+    assert store.count_current_unresolved_problem_attempts() == 0
+
+
 def test_worker_attempt_counts_hide_historical_needs_human_business_object(
     tmp_path: Path,
 ):
