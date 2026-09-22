@@ -21677,10 +21677,23 @@ class AutoReplyStore:
                     is StoredNeedsHumanProjection.NEEDS_HUMAN
                 ):
                     continue
-                error_code = str(row["send_error"] or "").strip() or (
-                    self._projection_failure_code(
-                        row["structured_error_json"], row["final_result_json"]
-                    )
+                # Once strict validation rejects a stored ``needs_human``
+                # payload, its former error code is not trustworthy.  In
+                # particular, ``external_action_authorization_required`` and
+                # ``needs_human`` used to be copied from malformed Consumer
+                # output and made a technical failure look like a live human
+                # authorization request.  Keep the current projection
+                # explicitly classified as invalid instead of preserving the
+                # misleading legacy label.
+                existing_error = str(row["send_error"] or "").strip()
+                error_code = (
+                    "invalid_needs_human_projection"
+                    if existing_error in {
+                        "",
+                        "needs_human",
+                        "external_action_authorization_required",
+                    }
+                    else existing_error
                 )
                 attempt_changed = 0
                 if row["send_status"] == "needs_human":

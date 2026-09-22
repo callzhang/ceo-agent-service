@@ -6190,7 +6190,7 @@ def test_reconcile_authorization_needs_human_projection_to_failed(tmp_path: Path
     attempt = store.get_reply_attempt(attempt_id)
     assert attempt is not None
     assert attempt.send_status == "failed"
-    assert attempt.send_error == "external_action_authorization_required"
+    assert attempt.send_error == "invalid_needs_human_projection"
     assert attempt.human_decision_options_json == "[]"
     assert store.get_reply_task(task.id).status == "failed"
 

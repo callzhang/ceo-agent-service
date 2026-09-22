@@ -66,6 +66,11 @@ _ATTENTION_SUMMARY_LIMIT = 240
 def _humanized_summary(value: Any) -> str:
     """Keep Attention's primary line readable without discarding evidence."""
     text = normalize_display_value(value)
+    text = {
+        "invalid_needs_human_projection": "人工决策结果结构不完整，未进入人工决策队列",
+        "external_action_authorization_required": "外部动作授权缺失（仅技术失败，不是待你决策）",
+        "needs_human": "需要人工规则反馈，但当前结果未通过结构校验",
+    }.get(text, text)
     text = _ATTENTION_COMMENT_RE.sub("", text)
     text = _ATTENTION_TIME_RE.sub(lambda match: match.group(1), text)
     text = _ATTENTION_MARKDOWN_LINK_RE.sub(lambda match: match.group(1), text)

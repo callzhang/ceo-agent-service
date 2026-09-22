@@ -2007,3 +2007,5 @@
 - Expanded the sanitized Skill-runtime comparison matrix from 11 to 19 cases. The added cases cover
   authorized personnel delivery, the create/follow-up/complete work lifecycle, OA approve/return/reject
   decisions with applicant notification, and read-only recovery when an external side effect is unknown.
+
+- Clarify reconciled invalid `needs_human` projections as technical failures in Attention, so malformed historical decision payloads cannot be mistaken for live human authorization requests.

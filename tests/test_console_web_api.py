@@ -2379,6 +2379,25 @@ def test_console_attention_humanizes_markup_and_bounds_primary_summary():
     assert service_error.detail == long_error
 
 
+def test_console_attention_explains_invalid_human_projection_as_failure():
+    [group] = group_attention_rows(
+        [
+            {
+                "category": "Reply task",
+                "id": "9733",
+                "status": "failed",
+                "context": "审批待办",
+                "summary": "旧处理结果",
+                "updated_at": "2026-09-22 20:35:50",
+                "error": "invalid_needs_human_projection",
+            }
+        ]
+    )
+
+    assert group.root_cause == "人工决策结果结构不完整，未进入人工决策队列"
+    assert group.error == "invalid_needs_human_projection"
+
+
 def test_spa_attention_reads_current_snapshot_after_status_cache_is_warm(monkeypatch, tmp_path: Path):
     rows = [
         {
