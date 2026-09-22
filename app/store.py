@@ -21647,6 +21647,14 @@ class AutoReplyStore:
                         attempts.send_status='needs_human'
                         or (
                             attempts.send_status='failed'
+                            and attempts.send_error in (
+                                'needs_human',
+                                'external_action_authorization_required',
+                                'invalid_needs_human_projection'
+                            )
+                        )
+                        or (
+                            attempts.send_status='failed'
                             and exists (
                                 select 1
                                 from reply_tasks stale_tasks
@@ -21715,7 +21723,7 @@ class AutoReplyStore:
                         update reply_tasks
                         set status='failed', error=?, available_at='', locked_at=null,
                             updated_at=current_timestamp
-                        where id=? and status in ('done', 'needs_human')
+                        where id=? and status in ('done', 'needs_human', 'pending', 'processing')
                         """,
                         (error_code, row["reply_task_id"]),
                     )

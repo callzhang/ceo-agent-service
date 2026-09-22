@@ -6194,6 +6194,17 @@ def test_reconcile_authorization_needs_human_projection_to_failed(tmp_path: Path
     assert attempt.human_decision_options_json == "[]"
     assert store.get_reply_task(task.id).status == "failed"
 
+    # A restart/recovery pass must not revive the same invalid projection as
+    # a fresh pending task after the first reconciliation has already failed
+    # it.
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='pending', error='orphaned_before_agent_start' where id=?",
+            (task.id,),
+        )
+    assert store.reconcile_invalid_needs_human_projections() == 1
+    assert store.get_reply_task(task.id).status == "failed"
+
 
 def test_latest_scoped_authorization_run_restores_needs_human_projection(
     tmp_path: Path,
