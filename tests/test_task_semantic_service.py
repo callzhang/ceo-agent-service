@@ -18,10 +18,12 @@ from app.task_semantic_service import (
     PromoteCandidate,
     RecordCandidate,
     RecordFormalTask,
+    RecordTaskFromEvidence,
     SourceSignal,
     TaskSemanticService,
     UpdateBusinessTask,
 )
+from app.task_semantic_rules import FormalityEvidence, IdentityEvidence
 
 
 @pytest.fixture
@@ -554,3 +556,92 @@ def test_promotion_uses_the_same_formal_basis_evidence_role_as_creation(
         for item in service.store.list_business_task_evidence(promoted.task_id)
         if item.signal_id == promoted.signal_id
     ] == [evidence_role]
+
+
+def test_service_records_rule_derived_candidate_and_formal_task_states(service):
+    candidate = service.record_task_from_evidence(
+        RecordTaskFromEvidence(
+            title="探索报价范围",
+            signal=assignment_signal(dedupe_key="message:candidate"),
+            formality=FormalityEvidence(
+                basis=None,
+                assigner_is_authorized=False,
+                deliverable_is_explicit=False,
+                owner_is_explicit=False,
+            ),
+        )
+    )
+    formal = service.record_task_from_evidence(
+        RecordTaskFromEvidence(
+            title="提交报价",
+            signal=assignment_signal(dedupe_key="message:meeting-action"),
+            formality=FormalityEvidence(
+                basis=FormalTaskBasis.MEETING_ACTION_ITEM,
+                assigner_is_authorized=False,
+                deliverable_is_explicit=True,
+                owner_is_explicit=False,
+            ),
+        )
+    )
+
+    candidate_task = service.store.get_business_task(candidate.task_id)
+    formal_task = service.store.get_business_task(formal.task_id)
+    assert candidate_task is not None and formal_task is not None
+    assert candidate_task.stage.value == "candidate"
+    assert candidate_task.commitment_status is CommitmentStatus.NONE
+    assert formal_task.stage.value == "formal"
+    assert formal_task.commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
+    assert formal_task.missing_evidence_json == '["owner"]'
+
+
+def test_service_rejects_rule_insufficient_assignment_before_persisting(service):
+    with pytest.raises(ValueError, match="cannot promote an unauthorized assignment"):
+        service.record_task_from_evidence(
+            RecordTaskFromEvidence(
+                title="提交报价",
+                signal=assignment_signal(dedupe_key="message:untrusted-assignment"),
+                formality=FormalityEvidence(
+                    basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+                    assigner_is_authorized=False,
+                    deliverable_is_explicit=True,
+                    owner_is_explicit=True,
+                ),
+            )
+        )
+
+    assert service.store.list_business_task_signals() == ()
+    assert service.store.list_business_tasks() == ()
+
+
+def test_service_refuses_link_level_identity_evidence_for_merge(service):
+    target = record_assignment(service, dedupe_key="message:target")
+    source = record_assignment(service, dedupe_key="message:source")
+
+    with pytest.raises(ValueError, match="does not authorize a merge"):
+        service.merge_same_deliverable(
+            MergeBusinessTasks(
+                source_task_id=source.task_id,
+                target_task_id=target.task_id,
+                signal=assignment_signal(dedupe_key="message:shared-goal"),
+                identity_evidence=IdentityEvidence(same_context=True),
+            )
+        )
+
+    assert service.store.get_business_task(source.task_id).status is BusinessTaskStatus.OPEN
+    assert service.store.get_business_task(target.task_id).status is BusinessTaskStatus.OPEN
+
+
+def test_completing_one_member_does_not_change_an_independent_sibling(service):
+    first = record_assignment(service, dedupe_key="message:cluster-member-a")
+    second = record_assignment(service, dedupe_key="message:cluster-member-b")
+
+    service.update_task(
+        UpdateBusinessTask(
+            task_id=first.task_id,
+            signal=assignment_signal(dedupe_key="message:complete-a"),
+            status=BusinessTaskStatus.DONE,
+        )
+    )
+
+    assert service.store.get_business_task(first.task_id).status is BusinessTaskStatus.DONE
+    assert service.store.get_business_task(second.task_id).status is BusinessTaskStatus.OPEN

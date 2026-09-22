@@ -27,6 +27,12 @@ from app.task_semantic_models import (
     CommitmentStatus,
     FormalTaskBasis,
 )
+from app.task_semantic_rules import (
+    FormalityEvidence,
+    IdentityEvidence,
+    resolve_formality,
+    resolve_identity,
+)
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,18 @@ class RecordFormalTask:
 
 
 @dataclass(frozen=True)
+class RecordTaskFromEvidence:
+    title: str
+    signal: SourceSignal
+    formality: FormalityEvidence
+    description: str = ""
+    owner_user_id: str = ""
+    owner_name: str = ""
+    owner_evidence_json: str = "{}"
+    deadline_at: str = ""
+
+
+@dataclass(frozen=True)
 class PromoteCandidate:
     task_id: int
     formal_basis: FormalTaskBasis
@@ -104,6 +122,7 @@ class MergeBusinessTasks:
     target_task_id: int
     signal: SourceSignal
     reason: str = "Confirmed as the same deliverable."
+    identity_evidence: IdentityEvidence | None = None
 
 
 @dataclass(frozen=True)
@@ -257,6 +276,38 @@ class TaskSemanticService:
             reason="Formal task recorded from source evidence.",
         )
 
+    def record_task_from_evidence(self, command: RecordTaskFromEvidence) -> TaskMutationResult:
+        resolution = resolve_formality(command.formality)
+        missing_evidence_json = json.dumps(list(resolution.missing_evidence))
+        if resolution.stage is BusinessTaskStage.CANDIDATE:
+            return self.record_candidate(
+                RecordCandidate(
+                    title=command.title,
+                    signal=command.signal,
+                    description=command.description,
+                    owner_user_id=command.owner_user_id,
+                    owner_name=command.owner_name,
+                    deadline_at=command.deadline_at,
+                    missing_evidence_json=missing_evidence_json,
+                )
+            )
+        if command.formality.basis is None:
+            raise AssertionError("formal resolution requires a formal basis")
+        return self.record_formal_task(
+            RecordFormalTask(
+                title=command.title,
+                formal_basis=command.formality.basis,
+                signal=command.signal,
+                commitment_status=resolution.commitment_status,
+                description=command.description,
+                owner_user_id=command.owner_user_id,
+                owner_name=command.owner_name,
+                owner_evidence_json=command.owner_evidence_json,
+                deadline_at=command.deadline_at,
+                missing_evidence_json=missing_evidence_json,
+            )
+        )
+
     def promote_candidate(self, command: PromoteCandidate) -> TaskMutationResult:
         now = self._now()
         with self.store.business_task_transaction() as db:
@@ -405,6 +456,11 @@ class TaskSemanticService:
     def merge_same_deliverable(self, command: MergeBusinessTasks) -> TaskMutationResult:
         if command.source_task_id == command.target_task_id:
             raise ValueError("a task cannot merge into itself")
+        if (
+            command.identity_evidence is not None
+            and resolve_identity(command.identity_evidence) != "merge"
+        ):
+            raise ValueError("identity evidence does not authorize a merge")
         now = self._now()
         with self.store.business_task_transaction() as db:
             replay = self._replay_result(signal=command.signal, db=db)
