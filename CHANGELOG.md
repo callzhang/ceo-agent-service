@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-09-21: Audit now sends reviewed DingTalk chat actions through a
+  service-owned tool that loads the exact persisted proposal, prepared body,
+  recipient and idempotency key. Audit can no longer be instructed to issue a
+  shell send that the result validator must reject. Failed historical runs can
+  also reconcile a provider send and exact readback recorded in the same run.
+
 - 2026-09-21: Current Attempt status now follows the latest Consumer run in
   the task's active execution generation. A completed, typed, one-time external
   authorization decision is restored as `needs_human` with its exact choices;

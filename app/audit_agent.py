@@ -207,6 +207,9 @@ class AuditAgentRunner:
             execution_mode_environment=self.execution_environment,
         )
         email_unsubscribe_tools = self._email_unsubscribe_tools(task, run)
+        dingtalk_message_tools = self._dingtalk_message_tools(
+            task, run, expected_actions=expected_actions
+        )
         if email_unsubscribe_tools:
             prompt += (
                 "\n\n### Email Unsubscribe Capability\n"
@@ -225,6 +228,19 @@ class AuditAgentRunner:
                 "service derives the task's terminal state from that receipt. "
                 "Never use reply, SMTP, mailto, or attachment content to "
                 "unsubscribe."
+            )
+        if dingtalk_message_tools:
+            prompt += (
+                "\n\n### DingTalk Message Capability\n"
+                "For an approved DingTalk message action, call "
+                "send_approved_dingtalk_message with this task_id and the exact "
+                "action_identity from the candidate. The tool reads the reviewed "
+                "recipient, service-prepared body and idempotency key from durable "
+                "state; do not call dws directly and do not provide message text or "
+                "a recipient to the tool. Return executed only after the tool "
+                "returns delivery_status=sent, and copy its receipt into "
+                "external_result.live_result_reference.\n"
+                f"task_id={task.id}"
             )
         prompt += (
             "\n\n### Needs Human Display Contract\n"
@@ -270,7 +286,7 @@ class AuditAgentRunner:
                     command=sys.executable,
                     args=("-m", "app.agent_cli"),
                     cwd=str(SERVICE_ROOT),
-                ) if email_unsubscribe_tools else None,
+                ) if email_unsubscribe_tools or dingtalk_message_tools else None,
             ),
             parse_result=self._parse_evidenced_result(
                 task,
@@ -440,6 +456,29 @@ class AuditAgentRunner:
         ):
             return ()
         return ("unsubscribe_email",)
+
+    @staticmethod
+    def _dingtalk_message_tools(
+        task: ReplyTask,
+        run: AgentRun,
+        *,
+        expected_actions: tuple[dict[str, object], ...],
+    ) -> tuple[str, ...]:
+        if (
+            task.channel != "dingtalk"
+            or run.reply_task_id != task.id
+            or run.execution_generation != task.execution_generation
+            or run.role is not AgentRole.AUDIT
+            or run.status != "running"
+        ):
+            return ()
+        if not any(
+            str(action.get("capability") or "") == "dingtalk-chat"
+            and bool(str(action.get("delivery_key") or "").strip())
+            for action in expected_actions
+        ):
+            return ()
+        return ("send_approved_dingtalk_message",)
 
 
 def _external_action_identity_prompt(

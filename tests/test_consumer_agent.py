@@ -788,7 +788,9 @@ def test_audit_instructions_treat_review_as_confirmation_for_covered_service_wri
     )
 
     assert "Audit approval is the execution confirmation" in instructions
-    assert "pass its non-interactive confirmation flag" in instructions
+    assert "service-owned approved-message capability" in instructions
+    assert "never invoke a provider chat send directly from the shell" in instructions
+    assert "pass that flag" in instructions
     assert "must not request another confirmation from Derek" in instructions
 
 

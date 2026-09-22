@@ -621,8 +621,13 @@ def test_audit_runner_adds_stable_action_identity_without_command_authorization(
     assert "External action identities" in prompt
     assert "external_action_key" in prompt
     assert "command authorizations" in prompt
+    assert "send_approved_dingtalk_message" in prompt
+    assert f"task_id={task.id}" in prompt
     assert "execute_reviewed_write" not in prompt
     assert "--open-dingtalk-id" not in prompt
+    command = ["codex", "exec", "--json"]
+    captured["configure_command"](command)
+    assert "mcp_servers.agent_cli" in json.dumps(command)
 
 
 

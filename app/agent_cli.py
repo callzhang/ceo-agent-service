@@ -126,6 +126,116 @@ def execute_reviewed_write(
         process_runner=process_runner,
     )
 
+
+def send_approved_dingtalk_message(
+    db_path: Path,
+    task_id: int,
+    action_identity: str,
+    *,
+    dws_client=None,
+) -> dict[str, object]:
+    """Send one prepared message from the proposal under the active Audit run."""
+    from app.agent_contracts import ConsumerAgentResult
+    from app.consumer_agent import structured_dingtalk_outgoing_text_key
+    from app.dws_client import DwsClient
+    from app.service_message_sender import (
+        ServiceMessageSender,
+        agent_message_delivery_key,
+    )
+    from app.store import AgentRole, AutoReplyStore
+
+    identity = action_identity.strip()
+    if isinstance(task_id, bool) or task_id <= 0 or not identity:
+        raise AgentReadOnlyViolationError("dingtalk_message_action_invalid")
+    store = AutoReplyStore(db_path)
+    task = store.get_reply_task(task_id)
+    if task is None or task.channel != "dingtalk":
+        raise AgentReadOnlyViolationError("dingtalk_message_task_invalid")
+    running_audits = [
+        run
+        for run in store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation
+        )
+        if run.role is AgentRole.AUDIT and run.status == "running"
+    ]
+    if len(running_audits) != 1:
+        raise AgentReadOnlyViolationError("dingtalk_message_audit_run_invalid")
+    audit_run = running_audits[0]
+    if audit_run.parent_agent_run_id is None:
+        raise AgentReadOnlyViolationError("dingtalk_message_proposal_invalid")
+    consumer_run = store.get_agent_run(audit_run.parent_agent_run_id)
+    if (
+        consumer_run is None
+        or consumer_run.role is not AgentRole.CONSUMER
+        or consumer_run.status != "completed"
+    ):
+        raise AgentReadOnlyViolationError("dingtalk_message_proposal_invalid")
+    try:
+        consumer_result = ConsumerAgentResult.model_validate_json(
+            consumer_run.final_result_json
+        )
+    except ValueError as exc:
+        raise AgentReadOnlyViolationError(
+            "dingtalk_message_proposal_invalid"
+        ) from exc
+    proposal = consumer_result.proposal
+    actions = (
+        [action for action in proposal.actions if action.action_identity == identity]
+        if proposal is not None
+        else []
+    )
+    if len(actions) != 1:
+        raise AgentReadOnlyViolationError("dingtalk_message_action_invalid")
+    action = actions[0]
+    if structured_dingtalk_outgoing_text_key(action) is None:
+        raise AgentReadOnlyViolationError("dingtalk_message_action_unsupported")
+    if action.operation in {"messages-reply", "message.reply"}:
+        raise AgentReadOnlyViolationError("dingtalk_message_action_unsupported")
+    delivery_key = agent_message_delivery_key(
+        business_object_key=task.business_object_key,
+        action_identity=action.action_identity,
+        execution_generation=task.execution_generation,
+        proposal_revision=audit_run.proposal_revision,
+    )
+    prepared = store.get_outbound_postfix("dingtalk", delivery_key)
+    if prepared is None:
+        raise AgentReadOnlyViolationError("dingtalk_message_prepared_body_missing")
+    target = action.target
+    conversation_id = str(target.get("conversation_id") or "").strip() or None
+    open_dingtalk_id = str(
+        target.get("open_dingtalk_id")
+        or target.get("recipient_open_dingtalk_id")
+        or target.get("sender_open_dingtalk_id")
+        or ""
+    ).strip()
+    user_id = str(target.get("user_id") or "").strip()
+    if not conversation_id and not open_dingtalk_id and not user_id:
+        raise AgentReadOnlyViolationError("dingtalk_message_target_missing")
+    dws = dws_client or DwsClient()
+    receipt = ServiceMessageSender(store=store, dingtalk=dws).send_dingtalk_prepared(
+        prepared,
+        conversation_id=conversation_id,
+        open_dingtalk_id=open_dingtalk_id or None,
+        user_id=user_id or None,
+    )
+    provider_result = receipt.provider_result
+    if not isinstance(provider_result, dict):
+        raise RuntimeError("dingtalk_message_provider_result_invalid")
+    verification = dws.verify_message_send_result(provider_result)
+    if verification.get("state") != "sent":
+        raise RuntimeError(
+            "dingtalk_message_delivery_"
+            + str(verification.get("state") or "ambiguous")
+        )
+    return {
+        "success": True,
+        "delivery_status": "sent",
+        "delivery_key": delivery_key,
+        "action_identity": action.action_identity,
+        "provider_result": provider_result,
+        "verification": verification,
+    }
+
 def _json_digest(value: object) -> str:
     encoded = json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -773,6 +883,30 @@ server = FastMCP(
         "Normal Consumer and Audit commands run through the Codex runtime directly."
     ),
 )
+
+
+@server.tool(
+    name="send_approved_dingtalk_message",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+async def send_approved_dingtalk_message_tool(
+    task_id: int,
+    action_identity: str,
+) -> dict[str, object]:
+    """Send the exact prepared DingTalk action currently approved by Audit."""
+    from app.config import worker_db_path
+
+    return await asyncio.to_thread(
+        send_approved_dingtalk_message,
+        worker_db_path(),
+        task_id,
+        action_identity,
+    )
 
 
 @server.tool(

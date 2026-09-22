@@ -25,13 +25,150 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
         "read_spreadsheet",
         "execute_audited_email_unsubscribe",
         "unsubscribe_email",
+        "send_approved_dingtalk_message",
     }
     assert all(description.strip() for description in descriptions.values())
     assert "PDF" in descriptions["read_text_file"]
     assert "email unsubscribe" in descriptions["execute_audited_email_unsubscribe"]
     assert "Unsubscribe this email task" in descriptions["unsubscribe_email"]
+    assert "exact prepared DingTalk action" in descriptions[
+        "send_approved_dingtalk_message"
+    ]
     assert "Consumer and Audit commands" in agent_cli.server.instructions
     assert "execute_email_unsubscribe" not in descriptions
+
+
+def test_approved_dingtalk_message_tool_reaches_service_helper(monkeypatch, tmp_path):
+    import app.config as config
+
+    calls = []
+    db_path = tmp_path / "worker.sqlite3"
+    monkeypatch.setattr(config, "worker_db_path", lambda: db_path)
+    monkeypatch.setattr(
+        agent_cli,
+        "send_approved_dingtalk_message",
+        lambda received_db, task_id, action_identity: calls.append(
+            (received_db, task_id, action_identity)
+        )
+        or {"delivery_status": "sent"},
+    )
+
+    result = asyncio.run(
+        agent_cli.send_approved_dingtalk_message_tool(17, "clarify-scope")
+    )
+
+    assert result == {"delivery_status": "sent"}
+    assert calls == [(db_path, 17, "clarify-scope")]
+
+
+def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(tmp_path):
+    from app.service_message_sender import agent_message_delivery_key
+    from app.store import AgentRole, AutoReplyStore
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-trigger",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-trigger",
+        trigger_create_time="2026-09-21 10:00:00",
+        trigger_sender="Sender",
+        trigger_text="Please clarify",
+        execution_generation="generation-1",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    ).run
+    store.complete_agent_run(
+        consumer.id,
+        {
+            "outcome": "proposal",
+            "summary": "Ask one clarification.",
+            "proposal": {
+                "objective": "Clarify scope",
+                "actions": [
+                    {
+                        "description": "Ask the sender.",
+                        "action_identity": "clarify-scope",
+                        "capability": "dingtalk-chat",
+                        "operation": "send_direct_message",
+                        "effect": "external",
+                        "target": {"open_dingtalk_id": "open-recipient"},
+                        "payload": {"content": "Which scope?"},
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "Clarification is required.",
+            },
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 0.4,
+        },
+        owner="consumer",
+    )
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-1",
+        owner="audit",
+    ).run
+    assert audit.status == "running"
+    delivery_key = agent_message_delivery_key(
+        business_object_key=task.business_object_key,
+        action_identity="clarify-scope",
+        execution_generation=task.execution_generation,
+        proposal_revision=0,
+    )
+    prepared = store.prepare_outbound_postfix(
+        "dingtalk", delivery_key, "Which scope?", "Please clarify"
+    )
+
+    class FakeDws:
+        def __init__(self):
+            self.calls = []
+
+        def send_message(self, conversation_id, text, **target):
+            self.calls.append((conversation_id, text, target))
+            return {"success": True, "result": {"openTaskId": "task-1"}}
+
+        @staticmethod
+        def verify_message_send_result(result):
+            assert result["result"]["openTaskId"] == "task-1"
+            return {"state": "sent", "open_task_id": "task-1"}
+
+    dws = FakeDws()
+    result = agent_cli.send_approved_dingtalk_message(
+        store.path,
+        task.id,
+        "clarify-scope",
+        dws_client=dws,
+    )
+
+    assert result["delivery_status"] == "sent"
+    assert result["delivery_key"] == delivery_key
+    assert dws.calls[0][0] is None
+    assert dws.calls[0][1] == prepared.final_body
+    assert dws.calls[0][2]["open_dingtalk_id"] == "open-recipient"
+    assert dws.calls[0][2]["idempotency_uuid"]
 
 
 def test_audited_email_unsubscribe_tool_reaches_worker_helper(monkeypatch, tmp_path):

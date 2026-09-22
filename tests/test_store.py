@@ -6005,6 +6005,129 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
         ).fetchone()[0] == 1
 
 
+def test_reconcile_failed_agent_message_accepts_send_and_readback_in_same_run(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    ).run
+    store.complete_agent_run(
+        consumer.id,
+        {
+            "outcome": "proposal",
+            "proposal": {
+                "actions": [
+                    {
+                        "action_identity": "reply",
+                        "operation": "send_direct_message",
+                        "target": {"open_dingtalk_id": "open-recipient"},
+                        "payload": {"content": "Delivered text."},
+                    }
+                ]
+            },
+        },
+        owner="consumer",
+    )
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-send",
+        owner="audit",
+    ).run
+    action_key = "same-run-external-key"
+    store.append_agent_run_event(
+        audit.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "command": (
+                    "/bin/zsh -lc \"dws chat +messages-send --open-dingtalk-id "
+                    "open-recipient --content 'Delivered text.' --uuid "
+                    f"{action_key} --yes --format json\""
+                ),
+                "exit_code": 0,
+                "status": "completed",
+                "aggregated_output": json.dumps(
+                    {"success": True, "result": {"openTaskId": "receipt-1"}}
+                ),
+            },
+        },
+        owner="audit",
+    )
+    store.append_agent_run_event(
+        audit.id,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "command": "dws chat +messages-mget --message-ids message-1",
+                "exit_code": 0,
+                "status": "completed",
+                "aggregated_output": json.dumps(
+                    {
+                        "external_action_key": action_key,
+                        "messages": [
+                            {"messageId": "message-1", "text": "Delivered text."}
+                        ],
+                    }
+                ),
+            },
+        },
+        owner="audit",
+    )
+    store.fail_agent_run(audit.id, {"code": "result_invalid"}, owner="audit")
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+        channel=task.channel,
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (audit.id, attempt_id),
+        )
+    store.fail_reply_task(
+        task.id,
+        "result_invalid",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    sent = store.reconcile_failed_agent_message_delivery(
+        send_run_id=audit.id,
+        readback_run_id=audit.id,
+        external_action_key=action_key,
+        readback_message_id="message-1",
+    )
+
+    assert sent.reply_text == "Delivered text."
+    assert store.get_reply_task(task.id).status == "done"
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "completed"
+
+
 def test_reconcile_authorization_needs_human_projection_to_failed(tmp_path: Path):
     """A fabricated action authorization choice closes as a technical failure."""
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
