@@ -43,10 +43,10 @@ export function EmailReadingPanel(props: Props) {
   const label = (key: string | null | undefined) => !key ? "未分类（留在收件箱）" : configs.find(item => item.category_key === key)?.display_name || (key === "junk" ? "垃圾（Trash）" : key);
   const item = detail?.item;
   const provider = detail?.provider_classification || item?.provider_classification;
-  const signalsAvailable = provider && ("starred" in provider || "important_flag" in provider);
-  const starLabel = provider?.starred == null ? "未知" : provider.starred ? "已标星" : "未标星";
-  const flagLabel = provider?.important_flag == null ? "未知" : provider.important_flag ? "已标记" : "未标记";
-  const rawSignals = Array.isArray(provider?.important_signals) ? provider.important_signals.join("、") || "无" : "未知";
+  const signalsAvailable = typeof provider?.starred === "boolean" || typeof provider?.important_flag === "boolean";
+  const starLabel = typeof provider?.starred === "boolean" ? provider.starred ? "已标星" : "未标星" : "未同步";
+  const flagLabel = typeof provider?.important_flag === "boolean" ? provider.important_flag ? "已标记" : "未标记" : "未同步";
+  const rawSignals = Array.isArray(provider?.important_signals) ? provider.important_signals.join("、") || "无" : "未同步";
   const editable = item?.status === "pending_feedback" || item?.status === "processed";
   const events = detail?.observability || [];
   return <section className="email-reading" role="region" aria-label="邮件详情">
@@ -65,9 +65,9 @@ export function EmailReadingPanel(props: Props) {
             <label><span className="sr-only">选择分类</span><select aria-label="选择分类" value={props.category || ""} disabled={saving || loading} onChange={event => props.onCategory(event.target.value)}><option value="" disabled>选择类别</option>{props.options.map(option => <option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</select></label>
             <button type="submit" className="primary-button" disabled={!props.category || saving || loading}>{saving ? "正在保存…" : "保存修改"}</button>
           </form>}
-          <span className="email-important-state" title={signalsAvailable ? `原始邮箱信号：${rawSignals}` : "Star / Flag 状态未知"}>
-            <Star size={15} fill={provider?.starred === true ? "currentColor" : "none"}/><span>Star：{signalsAvailable ? starLabel : "未知"}</span>
-            <Flag size={15} fill={provider?.important_flag === true ? "currentColor" : "none"}/><span>Flag：{signalsAvailable ? flagLabel : "未知"}</span>
+          <span className="email-important-state" title={signalsAvailable ? `原始邮箱信号：${rawSignals}` : "Star / Flag 状态未同步"}>
+            <Star size={15} fill={provider?.starred === true ? "currentColor" : "none"}/><span>Star：{starLabel}</span>
+            <Flag size={15} fill={provider?.important_flag === true ? "currentColor" : "none"}/><span>Flag：{flagLabel}</span>
           </span>
         </div>
         {props.saveError && <p role="alert">{props.saveError}</p>}{props.saved && <p role="status" className="email-saved">分类已保存</p>}
@@ -85,7 +85,7 @@ export function EmailReadingPanel(props: Props) {
         {!!events.length && <button className="email-result-strip" onClick={() => setTab("activity")}><span>{events.map(actionResultLabel).join(" · ")}</span><strong>查看处理记录 →</strong></button>}
       </div> : <div role="tabpanel" id="email-reading-activity" aria-labelledby="email-reading-tab-activity" className="email-reading-body">
         <ObservabilityDetails key={item.id} events={events} classificationId={item.id} entry={detail?.unsubscribe_entry}/>
-        {provider && <section aria-label="邮箱观察事实" className="email-provider-state"><h3>邮箱当前状态</h3><p>文件夹：{String(provider.provider_folder_name || provider.category_key || "未知")}</p><p>Star：{signalsAvailable ? starLabel : "未知"} · Flag：{signalsAvailable ? flagLabel : "未知"}</p><p>原始信号：{rawSignals}</p></section>}
+        {provider && <section aria-label="邮箱观察事实" className="email-provider-state"><h3>邮箱当前状态</h3><p>文件夹：{String(provider.provider_folder_name || provider.category_key || "未知")}</p><p>Star：{starLabel} · Flag：{flagLabel}</p><p>原始信号：{rawSignals}</p></section>}
         <details className="email-technical"><summary>技术详情</summary><ProcessedClassificationEvidence row={item}/>{provider && <pre>{JSON.stringify(provider,null,2)}</pre>}</details>
       </div>}
     </>}

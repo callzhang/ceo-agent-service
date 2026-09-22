@@ -113,10 +113,10 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
       {rows.map(item=><button type="button" key={item.id} ref={element=>{if(element)rowRefs.current.set(item.id,element);else rowRefs.current.delete(item.id);}} aria-label={`打开邮件 ${item.subject || "无主题"}`} aria-pressed={selected===item.id} disabled={saving||loading} className="email-dense-row" onClick={()=>{navigate(page,pageSize,item.id);setClosed("");setSaved(false);}}>
         {(() => {
           const provider = item.provider_classification;
-          const signalsAvailable = provider && ("starred" in provider || "important_flag" in provider);
-          const starLabel = provider?.starred == null ? "未知" : provider.starred ? "已标星" : "未标星";
-          const flagLabel = provider?.important_flag == null ? "未知" : provider.important_flag ? "已标记" : "未标记";
-          return <span className="email-important-signals" title={signalsAvailable ? `Star：${starLabel} · Flag：${flagLabel}` : "Star / Flag 状态未知"} aria-label={signalsAvailable ? `Star：${starLabel}，Flag：${flagLabel}` : "重要状态未知"}>
+          const signalsAvailable = typeof provider?.starred === "boolean" || typeof provider?.important_flag === "boolean";
+          const starLabel = typeof provider?.starred === "boolean" ? provider.starred ? "已标星" : "未标星" : "未同步";
+          const flagLabel = typeof provider?.important_flag === "boolean" ? provider.important_flag ? "已标记" : "未标记" : "未同步";
+          return <span className="email-important-signals" title={signalsAvailable ? `Star：${starLabel} · Flag：${flagLabel}` : "Star / Flag 状态未同步"} aria-label={signalsAvailable ? `Star：${starLabel}，Flag：${flagLabel}` : "重要状态未同步"}>
             <Star size={14} fill={provider?.starred === true ? "currentColor" : "none"} aria-hidden="true"/>
             <Flag size={14} fill={provider?.important_flag === true ? "currentColor" : "none"} aria-hidden="true"/>
           </span>;

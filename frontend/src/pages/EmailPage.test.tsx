@@ -277,7 +277,11 @@ it("reveals unsubscribe evidence only on demand and links the verified Attempt",
   expect(await within(drawer).findByDisplayValue("https://example.test/unsubscribe?token=fixture")).toBeInTheDocument();
   expect(within(drawer).getByRole("button",{name:"复制地址"})).toBeInTheDocument();
   expect(within(drawer).getByRole("region",{name:"邮箱观察事实"})).toHaveTextContent("legal");
-  expect(screen.getAllByLabelText("重要状态未知").length).toBeGreaterThan(0);
+  expect(within(drawer).getByText("Star：未同步")).toBeInTheDocument();
+  expect(within(drawer).getByText("Flag：未同步")).toBeInTheDocument();
+  expect(screen.getAllByLabelText("重要状态未同步").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Star：未知")).not.toBeInTheDocument();
+  expect(screen.queryByText("Flag：未知")).not.toBeInTheDocument();
 });
 it("supports keyboard tabs and drawer tab traversal",async()=>{
   const user=userEvent.setup();show();
