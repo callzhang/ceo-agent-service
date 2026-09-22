@@ -189,7 +189,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-16.1"
+STORE_SCHEMA_VERSION = "2026-09-22.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -314,6 +314,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "lease_expires_at",
         "first_scheduled_for",
         "occurrence_count",
+        "result_summary",
     ),
     "dispatcher_claim_leases": (
         "terminal_at",
@@ -2404,6 +2405,7 @@ class AutoReplyStore:
                     lease_expires_at text,
                     created_at text not null default current_timestamp,
                     dispatched_at text,
+                    result_summary text not null default '',
                     foreign key(scheduled_task_id) references scheduled_tasks(id)
                 );
                 create unique index if not exists idx_scheduled_task_runs_scheduled_instant
@@ -4815,6 +4817,11 @@ class AutoReplyStore:
                     "alter table scheduled_task_runs add column "
                     "occurrence_count integer not null default 1"
                 )
+            if "result_summary" not in scheduled_run_columns:
+                db.execute(
+                    "alter table scheduled_task_runs add column "
+                    "result_summary text not null default ''"
+                )
             db.execute(
                 "update scheduled_task_runs set first_scheduled_for=scheduled_for "
                 "where first_scheduled_for=''"
@@ -5317,6 +5324,12 @@ class AutoReplyStore:
     def _require_scheduled_task_text(value: object, *, field: str) -> str:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field} must be nonempty")
+        return value.strip()
+
+    @staticmethod
+    def _scheduled_task_result_summary(value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("scheduled task run result summary must be text")
         return value.strip()
 
     @staticmethod
@@ -6241,7 +6254,7 @@ class AutoReplyStore:
             "first_scheduled_for, occurrence_count, "
             "dispatch_status, skip_or_error_reason, snapshot_json, "
             "execution_kind, execution_id, lease_owner, lease_expires_at, "
-            "created_at, dispatched_at"
+            "created_at, dispatched_at, result_summary"
         )
 
     @classmethod
@@ -6273,6 +6286,7 @@ class AutoReplyStore:
             snapshot=snapshot,
             execution_kind=str(row["execution_kind"]),
             execution_id=str(row["execution_id"]),
+            result_summary=str(row["result_summary"]),
             lease_owner=str(row["lease_owner"]),
             lease_expires_at=(
                 parse_utc_datetime(
@@ -6627,6 +6641,7 @@ class AutoReplyStore:
         owner: str,
         execution_kind: str,
         execution_id: str,
+        result_summary: str = "",
         now: datetime | None = None,
     ) -> ScheduledTaskRun:
         owner = self._require_scheduled_task_text(
@@ -6638,6 +6653,7 @@ class AutoReplyStore:
         execution_id = self._require_scheduled_task_text(
             execution_id, field="scheduled task run execution id"
         )
+        result_summary = self._scheduled_task_result_summary(result_summary)
         now_text = self._scheduled_task_time_text(
             now or datetime.now(timezone.utc),
             field="scheduled task run execution link time",
@@ -6646,12 +6662,12 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update scheduled_task_runs
-                   set execution_kind=?, execution_id=?
+                   set execution_kind=?, execution_id=?, result_summary=?
                  where id=? and dispatch_status='pending' and lease_owner=?
                    and lease_expires_at > ?
                    and execution_kind='' and execution_id=''
                 """,
-                (execution_kind, execution_id, run_id, owner, now_text),
+                (execution_kind, execution_id, result_summary, run_id, owner, now_text),
             )
             if cursor.rowcount != 1:
                 raise ValueError(

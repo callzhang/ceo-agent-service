@@ -89,15 +89,16 @@ scheduled_tasks
 
 定时任务有两种执行形式，由 `scheduled_tasks.command` 区分。`command` 为空的是 Agent 任务，
 走上面的完整路径。`command` 非空的是服务命令任务：它只声明服务命令目录中的一个名字（当前是
-DingTalk 消息、DingTalk 近期消息恢复、微信消息、会议、OA、工作来源和 AI 听记同步），不需要
+DingTalk 消息、DingTalk 近期消息恢复、微信消息、会议、OA、工作来源、受限 AI 听记权限申请和 AI 听记同步），不需要
 Runtime、Skill 或工作目录。判断标准是这次执行本身有没有判断空间：确定性的发现或同步工作属于
 服务命令，需要 Skill 判断的才是 Agent 任务。AI 听记同步的分页读取、归档和内容游标都由
 `app/minutes_sync.py` 确定性完成，因此它也是服务命令。
 scheduled adapter 领取 trigger 后，Dispatcher 在本进程内直接运行该命令；成功时把
-`service_command + 命令名` 记为 trigger 的 execution link 并标记 `dispatched`，失败时 trigger
+`service_command + 命令名` 记为 trigger 的 execution link、保存命令返回的单行结果摘要并标记 `dispatched`，失败时 trigger
 以 `failed` 结束并进入 Attention。服务命令任务不创建 synthetic scheduled reply task、agent run
 或 reply_attempt；命令发现真实对象后，才由既有 reply、meeting 或 work-summary Consumer 处理。
-因此没有新对象时不会在消息历史里留下每分钟一条的记录。`scheduled-task-options` 为每个服务
+运行记录 API 和定时任务页面展示已保存的结果摘要；旧运行记录的摘要为空。这样服务命令即使没有
+创建 Agent Attempt，也能显示本次扫描数量和结果。没有新对象时不会在消息历史里留下每分钟一条的记录。`scheduled-task-options` 为每个服务
 命令附带一份从服务状态计算的只读“下游”描述（通道、consumer 执行器、角色边界常量、实际加载的
 Skill、consumer 要求的 Runtime 能力和路由可用性），页面据此说明命令发现的消息会被谁处理：
 

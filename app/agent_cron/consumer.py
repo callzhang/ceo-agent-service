@@ -140,6 +140,7 @@ class ScheduledTaskTriggerConsumer:
         self._store.link_scheduled_task_run_execution(
             run.id, owner=guard.token.owner,
             execution_kind=SERVICE_COMMAND_EXECUTION_KIND, execution_id=command,
+            result_summary=summary,
             now=now,
         )
         guard.finish_source(now, status="dispatched")

@@ -1023,8 +1023,7 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
                 f"sent={process_follow_ups_command(settings, refresh_evidence=False, limit=50)}"
             ),
             "request-minutes-access": lambda: (
-                "request-minutes-access "
-                f"requested={request_minutes_access_command(settings)}"
+                f"request-minutes-access {request_minutes_access_command(settings)}"
             ),
             "sync-minutes-once": lambda: (
                 "sync-minutes-once "
@@ -2376,7 +2375,7 @@ def renew_minutes_session_command(settings: WorkerSettings) -> int:
     return carried
 
 
-def request_minutes_access_command(settings: WorkerSettings) -> int:
+def request_minutes_access_command(settings: WorkerSettings) -> str:
     """Ask each minute's owner for the access the read API refuses us.
 
     Deterministic throughout: the console says which minutes exist, the read
@@ -2411,7 +2410,7 @@ def request_minutes_access_command(settings: WorkerSettings) -> int:
             f"days_left={result.session_expires_in_days:.1f}",
             flush=True,
         )
-    return result.requested
+    return result.summary()
 
 
 def scan_oa_approvals_command(
