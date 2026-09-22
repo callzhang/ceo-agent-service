@@ -1,9 +1,9 @@
-# Task-first semantic storage (Task 1)
+# Task-first semantic storage (Tasks 1–2)
 
-This document describes the storage introduced by Task 1 of the approved
+This document describes the storage and atomic commands introduced by Tasks 1–2 of the approved
 [implementation plan](superpowers/plans/2026-09-22-task-first-tasks.md). It does
 not describe a deployed Task Agent cutover. The runtime, console, providers,
-transition services, and legacy import workflow still belong to later tasks.
+and legacy import workflow still belong to later tasks.
 
 The schema version is `2026-09-22.1`, the single version assigned to the complete
 new semantic schema. Initialization adds the 15 bounded tables to a pre-semantic
@@ -43,7 +43,7 @@ deadline, missing evidence, last activity, and separate stage, lifecycle,
 commitment, and relevance fields. Formal tasks require one of the four approved
 bases; candidates cannot carry one. A merged task requires an existing, distinct
 merge target, and other statuses cannot carry a merge target. Merge-chain checks
-and transitions are part of Task 2.
+and transitions are enforced by Task 2's semantic service.
 
 Source observations attach through `business_task_evidence`, whose required
 `task_id`, `signal_id`, and typed `evidence_role` form its composite key. There is
@@ -52,8 +52,8 @@ task can remain `assigned_unaccepted` with no project membership.
 
 Task events retain a typed transition, optional source signal, before/after JSON
 objects, reason, and creation time. Attention events retain the same evidence
-shape with a required signal. This task defines their records and storage only;
-atomic transition/event creation and append-only event APIs remain Task 2 work.
+shape with a required signal. Task 2 adds atomic Task transitions and append-only
+Task event APIs; attention projections remain later work.
 
 ## Relationships and projections
 
@@ -109,6 +109,22 @@ listing indexes are included in the required schema manifest.
 `list_business_task_project_links` reads official projects through confirmed,
 active task/anchor links to active project anchors, and returns an empty list
 for a standalone task.
+
+## Atomic semantic commands
+
+`TaskSemanticService` records candidates/formal tasks, promotes candidates,
+applies acceptance, updates Task state, and merges the same deliverable. Each
+command commits its signal, Task changes, evidence links, and events together.
+A signal previously collected through `create_business_task_signal` is reused
+by deduplication key when its first semantic command is applied. Signal
+existence alone does not mean that a command has already run; an existing Task
+event identifies a replay and preserves the original result. Replays append no
+new Task, signal, evidence, or event, including after a later merge.
+
+A merged source remains historical. A fresh promotion, update, or acceptance
+against it is rejected before signal persistence; it is not redirected to the
+merge target. Merges remain one hop and reject already merged endpoints or a
+source that itself has incoming merges.
 
 ## Repair verification
 

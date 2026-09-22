@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import asdict
 
 import pytest
 
@@ -86,6 +87,153 @@ def test_duplicate_signal_is_idempotent_and_does_not_duplicate_downstream_histor
     assert len(service.store.list_business_tasks()) == 1
     assert len(service.store.list_business_task_evidence(first.task_id)) == 1
     assert [row.event_type.value for row in service.events(first.task_id)] == ["created"]
+
+
+@pytest.mark.parametrize("record_kind", ["candidate", "formal"])
+def test_record_task_reuses_independently_persisted_signal_and_replays(service, record_kind):
+    signal = assignment_signal()
+    signal_id = service.store.create_business_task_signal(**asdict(signal))
+    original_signal = service.store.get_business_task_signal(signal_id)
+    if record_kind == "candidate":
+        command = RecordCandidate(title="提交报价", signal=signal)
+        record = service.record_candidate
+    else:
+        command = RecordFormalTask(
+            title="提交报价", signal=signal,
+            formal_basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+        )
+        record = service.record_formal_task
+
+    first = record(command)
+    state_before_replay = semantic_state(service)
+    replay = record(command)
+
+    assert first.created is True
+    assert first.signal_id == replay.signal_id == signal_id
+    assert replay.task_id == first.task_id
+    assert replay.created is False
+    assert service.store.list_business_task_signals() == (original_signal,)
+    assert len(service.store.list_business_tasks()) == 1
+    assert len(service.store.list_business_task_evidence(first.task_id)) == 1
+    assert [event.event_type.value for event in service.events(first.task_id)] == ["created"]
+    assert semantic_state(service) == state_before_replay
+
+
+@pytest.mark.parametrize("operation", ["promote", "update", "accept", "merge"])
+def test_transition_reuses_independently_persisted_signal_and_replays(service, operation):
+    source = service.record_candidate(
+        RecordCandidate(title="提交报价", signal=assignment_signal())
+    )
+    signal = assignment_signal(dedupe_key="message:transition")
+    signal_id = service.store.create_business_task_signal(**asdict(signal))
+    original_signal = service.store.get_business_task_signal(signal_id)
+    if operation == "promote":
+        command = PromoteCandidate(
+            task_id=source.task_id, signal=signal,
+            formal_basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+        )
+        transition = service.promote_candidate
+    elif operation == "update":
+        command = UpdateBusinessTask(
+            task_id=source.task_id, signal=signal, deadline_at="2026-09-25T17:00:00Z",
+        )
+        transition = service.update_task
+    elif operation == "accept":
+        command = ApplyAcceptance(task_id=source.task_id, signal=signal)
+        transition = service.apply_acceptance
+    else:
+        target = record_assignment(service, dedupe_key="message:target")
+        command = MergeBusinessTasks(
+            source_task_id=source.task_id, target_task_id=target.task_id, signal=signal,
+        )
+        transition = service.merge_same_deliverable
+
+    first = transition(command)
+    state_before_replay = semantic_state(service)
+
+    assert first.signal_id == signal_id
+    assert service.store.get_business_task_signal(signal_id) == original_signal
+    assert len(service.events(source.task_id)) == 2
+    assert transition(command) == first
+    assert semantic_state(service) == state_before_replay
+
+
+@pytest.mark.parametrize("operation", ["promote-candidate", "update-candidate", "update-formal"])
+@pytest.mark.parametrize("check_insert_order", [False, True])
+def test_fresh_transition_to_merged_source_rejects_without_any_mutation(
+    service, operation, check_insert_order, monkeypatch
+):
+    if operation == "update-formal":
+        source = record_assignment(service)
+    else:
+        source = service.record_candidate(
+            RecordCandidate(title="提交报价", signal=assignment_signal())
+        )
+    target = record_assignment(service, dedupe_key="message:target")
+    service.merge_same_deliverable(
+        MergeBusinessTasks(
+            source_task_id=source.task_id, target_task_id=target.task_id,
+            signal=assignment_signal(dedupe_key="review:merge"),
+        )
+    )
+    state_before = semantic_state(service)
+
+    def unexpected_signal_insert(**_kwargs):
+        pytest.fail("merged source must be rejected before signal persistence")
+
+    if check_insert_order:
+        monkeypatch.setattr(
+            service.store, "create_business_task_signal_in_transaction", unexpected_signal_insert
+        )
+    with pytest.raises(ValueError, match="merged"):
+        if operation == "promote-candidate":
+            service.promote_candidate(
+                PromoteCandidate(
+                    task_id=source.task_id,
+                    formal_basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+                    signal=assignment_signal(dedupe_key="message:fresh-promotion"),
+                )
+            )
+        else:
+            service.update_task(
+                UpdateBusinessTask(
+                    task_id=source.task_id, deadline_at="2026-09-25T17:00:00Z",
+                    signal=assignment_signal(dedupe_key="message:fresh-deadline"),
+                )
+            )
+
+    assert semantic_state(service) == state_before
+
+
+@pytest.mark.parametrize("operation", ["promote", "update"])
+def test_transition_replay_still_succeeds_after_source_is_merged(service, operation):
+    source = service.record_candidate(
+        RecordCandidate(title="提交报价", signal=assignment_signal())
+    )
+    signal = assignment_signal(dedupe_key="message:transition")
+    if operation == "promote":
+        command = PromoteCandidate(
+            task_id=source.task_id, signal=signal,
+            formal_basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+        )
+        transition = service.promote_candidate
+    else:
+        command = UpdateBusinessTask(
+            task_id=source.task_id, signal=signal, deadline_at="2026-09-25T17:00:00Z",
+        )
+        transition = service.update_task
+    first = transition(command)
+    target = record_assignment(service, dedupe_key="message:target")
+    service.merge_same_deliverable(
+        MergeBusinessTasks(
+            source_task_id=source.task_id, target_task_id=target.task_id,
+            signal=assignment_signal(dedupe_key="review:merge"),
+        )
+    )
+    state_before = semantic_state(service)
+
+    assert transition(command) == first
+    assert semantic_state(service) == state_before
 
 
 def test_acceptance_changes_the_same_assigned_task_and_appends_history(service):

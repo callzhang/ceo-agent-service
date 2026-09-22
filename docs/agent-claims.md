@@ -28,6 +28,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-task2-quality-repair | app/task_semantic_service.py, tests/test_task_semantic_service.py, docs/task-semantic-storage.md, docs/agent-claims.md | Reuse independently persisted signals for first semantic transitions and reject fresh changes to merged source tasks | 2026-09-22 |
 | codex-agent-health-metrics | app/store.py, app/audit_web.py, app/cli.py, frontend/src/api/console.ts, frontend/src/pages/StatusPage.tsx, tests/test_store.py, tests/test_audit_web.py, tests/test_cli.py, tests/test_console_status_response.py, frontend/src/api/console.test.ts, frontend/src/pages/StatusPage.test.tsx, README.md, CHANGELOG.md | Meeting Memory lease-backed health payload, degraded health gate, components and status UI | 2026-09-15 |
 | codex-attempt-detail-readable-history | app/web_api/attempts.py, frontend/src/pages/AttemptDetailPage.tsx, frontend/src/pages/AttemptDetailPage.test.tsx, frontend/src/styles.css, tests/test_console_attempt_detail_api.py, docs/agent-claims.md | Group Attempt runtime history and render audit explanations in user-facing language | 2026-09-15 |
 | codex-session-readable-history | frontend/src/pages/CodexPages.tsx, frontend/src/pages/CodexPages.test.tsx, frontend/src/components/status/StatusBadge.tsx, frontend/src/components/status/StatusBadge.test.tsx, frontend/src/styles.css, docs/agent-claims.md | Explain unavailable/reused Codex sessions and group related Attempt history | 2026-09-15 |

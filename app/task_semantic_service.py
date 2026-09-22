@@ -2,8 +2,10 @@
 
 This module deliberately has no API or Task Agent integration.  Its commands
 are the only place that combine source observations, Task truth, evidence, and
-history in one transaction. Replays resolve their original result from that
-history before inspecting mutable Task state. Merges remain one hop: a Task
+history in one transaction. A previously collected signal can drive its first
+transition; only an existing event makes it a replay. Replays resolve their
+original result before inspecting mutable Task state. Fresh changes to a
+merged source are rejected before signal persistence. Merges remain one hop: a Task
 that already receives merged sources cannot itself become a merged source.
 """
 
@@ -129,28 +131,25 @@ class TaskSemanticService:
             task.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
 
-    def _signal_id_or_create(self, *, signal: SourceSignal, db: sqlite3.Connection, now: datetime) -> tuple[int, bool]:
+    def _signal_id_or_create(self, *, signal: SourceSignal, db: sqlite3.Connection, now: datetime) -> int:
         existing = self.store.get_business_task_signal_by_dedupe_key(
             dedupe_key=signal.dedupe_key, _db=db
         )
         if existing is not None:
-            return existing.id, False
-        return (
-            self.store.create_business_task_signal_in_transaction(
-                source_type=signal.source_type,
-                source_ref=signal.source_ref,
-                evidence_text=signal.evidence_text,
-                dedupe_key=signal.dedupe_key,
-                source_time=signal.source_time,
-                conversation_id=signal.conversation_id,
-                conversation_title=signal.conversation_title,
-                author_user_id=signal.author_user_id,
-                author_name=signal.author_name,
-                context_json=signal.context_json,
-                now=now,
-                _db=db,
-            ),
-            True,
+            return existing.id
+        return self.store.create_business_task_signal_in_transaction(
+            source_type=signal.source_type,
+            source_ref=signal.source_ref,
+            evidence_text=signal.evidence_text,
+            dedupe_key=signal.dedupe_key,
+            source_time=signal.source_time,
+            conversation_id=signal.conversation_id,
+            conversation_title=signal.conversation_title,
+            author_user_id=signal.author_user_id,
+            author_name=signal.author_name,
+            context_json=signal.context_json,
+            now=now,
+            _db=db,
         )
 
     @staticmethod
@@ -160,20 +159,23 @@ class TaskSemanticService:
         return task
 
     @staticmethod
-    def _replay_result(*, signal_id: int, db: sqlite3.Connection) -> TaskMutationResult:
+    def _replay_result(*, signal: SourceSignal, db: sqlite3.Connection) -> TaskMutationResult | None:
         # Commands append the result Task's event last, including a merge's
         # target event. Evidence links can later be copied to another Task;
         # immutable event history preserves the original command result.
         row = db.execute(
             """
-            select task_id from business_task_events
-            where signal_id=? order by id desc limit 1
+            select event.task_id, event.signal_id from business_task_events as event
+            join business_task_signals as signal on signal.id=event.signal_id
+            where signal.dedupe_key=? order by event.id desc limit 1
             """,
-            (signal_id,),
+            (signal.dedupe_key,),
         ).fetchone()
         if row is None:
-            raise ValueError("duplicate signal has no semantic task history")
-        return TaskMutationResult(task_id=int(row["task_id"]), signal_id=signal_id, created=False)
+            return None
+        return TaskMutationResult(
+            task_id=int(row["task_id"]), signal_id=int(row["signal_id"]), created=False
+        )
 
     @staticmethod
     def _formal_evidence_role(formal_basis: FormalTaskBasis) -> BusinessEvidenceRole:
@@ -194,9 +196,10 @@ class TaskSemanticService:
     ) -> TaskMutationResult:
         now = self._now()
         with self.store.business_task_transaction() as db:
-            signal_id, inserted = self._signal_id_or_create(signal=signal, db=db, now=now)
-            if not inserted:
-                return self._replay_result(signal_id=signal_id, db=db)
+            replay = self._replay_result(signal=signal, db=db)
+            if replay is not None:
+                return replay
+            signal_id = self._signal_id_or_create(signal=signal, db=db, now=now)
             task_id = self.store.create_business_task_in_transaction(
                 now=now, _db=db, **task_fields
             )
@@ -257,15 +260,18 @@ class TaskSemanticService:
     def promote_candidate(self, command: PromoteCandidate) -> TaskMutationResult:
         now = self._now()
         with self.store.business_task_transaction() as db:
-            signal_id, inserted = self._signal_id_or_create(signal=command.signal, db=db, now=now)
-            if not inserted:
-                return self._replay_result(signal_id=signal_id, db=db)
+            replay = self._replay_result(signal=command.signal, db=db)
+            if replay is not None:
+                return replay
             task = self._require_task(
                 self.store.get_business_task_in_transaction(task_id=command.task_id, _db=db),
                 command.task_id,
             )
+            if task.status is BusinessTaskStatus.MERGED:
+                raise ValueError("cannot promote a merged task")
             if task.stage is not BusinessTaskStage.CANDIDATE:
                 raise ValueError("only a candidate task can be promoted")
+            signal_id = self._signal_id_or_create(signal=command.signal, db=db, now=now)
             after = task.model_copy(
                 update={
                     "stage": BusinessTaskStage.FORMAL,
@@ -296,15 +302,16 @@ class TaskSemanticService:
     def apply_acceptance(self, command: ApplyAcceptance) -> TaskMutationResult:
         now = self._now()
         with self.store.business_task_transaction() as db:
-            signal_id, inserted = self._signal_id_or_create(signal=command.signal, db=db, now=now)
-            if not inserted:
-                return self._replay_result(signal_id=signal_id, db=db)
+            replay = self._replay_result(signal=command.signal, db=db)
+            if replay is not None:
+                return replay
             task = self._require_task(
                 self.store.get_business_task_in_transaction(task_id=command.task_id, _db=db),
                 command.task_id,
             )
             if task.status is BusinessTaskStatus.MERGED:
                 raise ValueError("cannot accept a merged task")
+            signal_id = self._signal_id_or_create(signal=command.signal, db=db, now=now)
             after = task.model_copy(
                 update={
                     "commitment_status": CommitmentStatus.ACCEPTED,
@@ -346,13 +353,16 @@ class TaskSemanticService:
             raise ValueError("task update must change at least one field")
         event_type = self._update_event_type(changed)
         with self.store.business_task_transaction() as db:
-            signal_id, inserted = self._signal_id_or_create(signal=command.signal, db=db, now=now)
-            if not inserted:
-                return self._replay_result(signal_id=signal_id, db=db)
+            replay = self._replay_result(signal=command.signal, db=db)
+            if replay is not None:
+                return replay
             task = self._require_task(
                 self.store.get_business_task_in_transaction(task_id=command.task_id, _db=db),
                 command.task_id,
             )
+            if task.status is BusinessTaskStatus.MERGED:
+                raise ValueError("cannot update a merged task")
+            signal_id = self._signal_id_or_create(signal=command.signal, db=db, now=now)
             after = task.model_copy(
                 update={
                     **changed,
@@ -397,9 +407,9 @@ class TaskSemanticService:
             raise ValueError("a task cannot merge into itself")
         now = self._now()
         with self.store.business_task_transaction() as db:
-            signal_id, inserted = self._signal_id_or_create(signal=command.signal, db=db, now=now)
-            if not inserted:
-                return self._replay_result(signal_id=signal_id, db=db)
+            replay = self._replay_result(signal=command.signal, db=db)
+            if replay is not None:
+                return replay
             source = self._require_task(
                 self.store.get_business_task_in_transaction(task_id=command.source_task_id, _db=db),
                 command.source_task_id,
@@ -416,6 +426,7 @@ class TaskSemanticService:
             ).fetchone()
             if incoming_merge is not None:
                 raise ValueError("merge chains are not allowed")
+            signal_id = self._signal_id_or_create(signal=command.signal, db=db, now=now)
             for evidence in self.store.list_business_task_evidence_in_transaction(
                 task_id=source.id, _db=db
             ):
