@@ -211,6 +211,35 @@ ROWS = {
     ),
 }
 
+# Python's str.strip whitespace includes C0 separators as well as Unicode
+# spaces. Keep this fixture independent of the SQL predicate under test.
+STRIP_WHITESPACE = (
+    "\t\n\v\f\r\x1c\x1d\x1e\x1f \x85\xa0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
+NONBLANK_COLUMNS = [
+    ("business_task_signals", "source_type"),
+    ("business_task_signals", "source_ref"),
+    ("business_task_signals", "evidence_text"),
+    ("business_task_signals", "dedupe_key"),
+    ("business_tasks", "title"),
+    ("business_task_events", "reason"),
+    ("business_work_clusters", "title"),
+    ("business_anchors", "anchor_ref"),
+    ("business_anchors", "title"),
+    ("business_projects", "title"),
+    ("business_project_candidates", "title"),
+    ("business_project_candidates", "reason"),
+    ("business_attention_items", "stable_key"),
+    ("business_attention_items", "title"),
+    ("business_attention_items", "why_attention"),
+    ("business_attention_items", "current_state"),
+    ("business_attention_items", "ceo_action"),
+    ("business_attention_items", "resolved_at"),
+    ("business_attention_events", "reason"),
+]
+
 
 @pytest.fixture
 def store(tmp_path):
@@ -244,6 +273,57 @@ def model_for(table):
     name = ROWS[table][0]
     assert hasattr(models, name), f"missing frozen record {name}"
     return getattr(models, name)
+
+
+def nonblank_row(table, column, text):
+    values = dict(ROWS[table][1], **{column: text})
+    if column == "resolved_at":
+        values.update(status="resolved", resolution_signal_id=1)
+    return values
+
+
+@pytest.mark.parametrize("table,column", NONBLANK_COLUMNS)
+@pytest.mark.parametrize(
+    "blank_text",
+    [
+        pytest.param("", id="empty"),
+        pytest.param(" ", id="space"),
+        pytest.param("\t", id="tab"),
+        pytest.param("\n", id="newline"),
+        pytest.param("\t\n", id="tab-newline"),
+        pytest.param("\u00a0", id="nonbreaking-space"),
+        pytest.param("\u2003", id="em-space"),
+        pytest.param("\u3000", id="ideographic-space"),
+        pytest.param(STRIP_WHITESPACE, id="all-python-whitespace"),
+    ],
+)
+def test_nonblank_text_rejects_whitespace_in_pydantic_and_sqlite(
+    store, table, column, blank_text
+):
+    assert not blank_text.strip()
+    values = nonblank_row(table, column, blank_text)
+    with pytest.raises(ValidationError):
+        model_for(table).model_validate(values)
+    # Use an independent connection: checks must work without a Python UDF,
+    # and foreign-key failures must not mask a missing nonblank constraint.
+    with sqlite3.connect(store.path) as db:
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            insert_row(db, table, values)
+
+
+@pytest.mark.parametrize("table,column", NONBLANK_COLUMNS)
+@pytest.mark.parametrize("content", ["original evidence", "\u200b\ufeff"])
+def test_nonblank_text_preserves_surrounding_whitespace(store, table, column, content):
+    text = f"{STRIP_WHITESPACE}{content}{STRIP_WHITESPACE}"
+    values = nonblank_row(table, column, text)
+    expected = model_for(table).model_validate(values)
+    assert getattr(expected, column) == text
+    with sqlite3.connect(store.path) as db:
+        db.row_factory = sqlite3.Row
+        insert_row(db, table, values)
+        row = db.execute(f"select * from {table}").fetchone()
+        assert row[column] == text
+        assert model_for(table).model_validate(dict(row)) == expected
 
 
 @pytest.mark.parametrize("table", ROWS)
@@ -343,7 +423,7 @@ def test_signal_preserves_original_evidence_and_provenance(store):
     values = dict(ROWS["business_task_signals"][1])
     values.pop("id")
     values.pop("created_at")
-    values["evidence_text"] = "  王明，周五前提交报价。\n"
+    values["evidence_text"] = " \t\u2003王明，周五前提交报价。\n\u00a0"
     signal_id = store.create_business_task_signal(**values, now=NOW)
     signal = store.get_business_task_signal(signal_id)
     assert signal is not None
@@ -469,6 +549,34 @@ def test_task_listing_combines_filters_and_paginates_stably(store):
     for kwargs in ({"limit": 0}, {"offset": -1}, {"statuses": ["completed"]}):
         with pytest.raises(ValueError):
             store.list_business_tasks(**kwargs)
+
+
+def test_default_task_listing_uses_updated_id_index_without_sorting(store):
+    first = store.create_business_task(title="First tied task", stage="candidate", now=NOW)
+    earlier = store.create_business_task(
+        title="Earlier task", stage="candidate", now=NOW.replace(day=21)
+    )
+    last = store.create_business_task(title="Last tied task", stage="candidate", now=NOW)
+    with store.read_snapshot(), store._connect() as db:
+        queries = []
+        db.set_trace_callback(queries.append)
+        tasks = store.list_business_tasks()
+        db.set_trace_callback(None)
+        assert [task.id for task in tasks] == [earlier, first, last]
+        assert len(queries) == 1
+        plan = [
+            row["detail"]
+            for row in db.execute(f"explain query plan {queries[0]}")
+        ]
+        assert not any("TEMP B-TREE" in detail for detail in plan), plan
+        assert any(
+            "USING INDEX idx_business_tasks_updated_id" in detail for detail in plan
+        ), plan
+        columns = [
+            row["name"]
+            for row in db.execute("pragma index_info(idx_business_tasks_updated_id)")
+        ]
+        assert columns[:2] == ["updated_at", "id"]
 
 
 def test_evidence_is_a_typed_unique_task_signal_role_link(store):
@@ -720,6 +828,7 @@ def test_attention_resolution_retains_evidence_and_events(store):
 def test_list_indexes_are_present_and_in_the_required_manifest(store):
     expected = {
         "idx_business_task_signals_source",
+        "idx_business_tasks_updated_id",
         "idx_business_tasks_list",
         "idx_business_tasks_relevance",
         "idx_business_task_evidence_task",

@@ -308,6 +308,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_iteration_decisions_batch",
     "idx_feedback_iteration_decision_items_feedback_round",
     "idx_business_task_signals_source",
+    "idx_business_tasks_updated_id",
     "idx_business_tasks_list",
     "idx_business_tasks_relevance",
     "idx_business_task_evidence_task",
@@ -714,6 +715,24 @@ RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
         "workbench",
     }
 )
+
+
+def _business_nonblank_sql(column: str) -> str:
+    """Match Python str.strip() in SQLite CHECKs without changing stored text.
+
+    SQLite's default trim only removes U+0020. These 29 codepoints include
+    Python's ASCII/C0 and Unicode whitespace. Native trim/char keep the CHECK
+    usable by independent SQLite connections without a registered Python UDF.
+    The column is a trusted schema identifier, never caller-supplied input.
+    """
+    whitespace = (
+        "char(9,10,11,12,13,28,29,30,31,32,133,160,5760,"
+        "8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,"
+        "8232,8233,8239,8287,12288)"
+    )
+    return f"trim({column}, {whitespace}) <> ''"
+
+
 def _meeting_alignment_job_span(
     job: "MeetingAlignmentJob",
 ) -> tuple[datetime | None, datetime | None]:
@@ -3408,19 +3427,21 @@ class AutoReplyStore:
                     item_json text not null default '{}',
                     created_at text not null default current_timestamp
                 );
+                """
+                f"""
                 create table if not exists business_task_signals (
                     id integer primary key autoincrement,
-                    source_type text not null check(trim(source_type) <> ''),
-                    source_ref text not null check(trim(source_ref) <> ''),
+                    source_type text not null check({_business_nonblank_sql("source_type")}),
+                    source_ref text not null check({_business_nonblank_sql("source_ref")}),
                     source_time text not null default '',
                     conversation_id text not null default '',
                     conversation_title text not null default '',
                     author_user_id text not null default '',
                     author_name text not null default '',
-                    evidence_text text not null check(trim(evidence_text) <> ''),
-                    context_json text not null default '{}'
+                    evidence_text text not null check({_business_nonblank_sql("evidence_text")}),
+                    context_json text not null default '{{}}'
                         check(json_valid(context_json) and json_type(context_json) = 'object'),
-                    dedupe_key text not null unique check(trim(dedupe_key) <> ''),
+                    dedupe_key text not null unique check({_business_nonblank_sql("dedupe_key")}),
                     created_at text not null default current_timestamp
                 );
                 create index if not exists idx_business_task_signals_source
@@ -3446,7 +3467,7 @@ class AutoReplyStore:
                 end;
                 create table if not exists business_tasks (
                     id integer primary key autoincrement,
-                    title text not null check(trim(title) <> ''),
+                    title text not null check({_business_nonblank_sql("title")}),
                     description text not null default '',
                     stage text not null check(stage in ('candidate', 'formal')),
                     status text not null default 'open' check(status in (
@@ -3464,7 +3485,7 @@ class AutoReplyStore:
                     merged_into_task_id integer,
                     owner_user_id text not null default '',
                     owner_name text not null default '',
-                    owner_evidence_json text not null default '{}'
+                    owner_evidence_json text not null default '{{}}'
                         check(json_valid(owner_evidence_json) and json_type(owner_evidence_json) = 'object'),
                     deadline_at text not null default '',
                     missing_evidence_json text not null default '[]'
@@ -3483,6 +3504,8 @@ class AutoReplyStore:
                     check(merged_into_task_id is null or merged_into_task_id <> id),
                     foreign key(merged_into_task_id) references business_tasks(id)
                 );
+                create index if not exists idx_business_tasks_updated_id
+                    on business_tasks(updated_at, id);
                 create index if not exists idx_business_tasks_list
                     on business_tasks(stage, status, updated_at, id);
                 create index if not exists idx_business_tasks_relevance
@@ -3513,7 +3536,7 @@ class AutoReplyStore:
                         check(json_valid(before_json) and json_type(before_json) = 'object'),
                     after_json text not null
                         check(json_valid(after_json) and json_type(after_json) = 'object'),
-                    reason text not null check(trim(reason) <> ''),
+                    reason text not null check({_business_nonblank_sql("reason")}),
                     created_at text not null default current_timestamp,
                     foreign key(task_id) references business_tasks(id),
                     foreign key(signal_id) references business_task_signals(id)
@@ -3543,7 +3566,7 @@ class AutoReplyStore:
                     on business_task_relations(to_task_id, relation_type, from_task_id);
                 create table if not exists business_work_clusters (
                     id integer primary key autoincrement,
-                    title text not null check(trim(title) <> ''),
+                    title text not null check({_business_nonblank_sql("title")}),
                     created_at text not null default current_timestamp
                 );
                 create table if not exists business_work_cluster_tasks (
@@ -3562,8 +3585,8 @@ class AutoReplyStore:
                         'project', 'okr', 'customer', 'product', 'revenue', 'financing',
                         'cash', 'key_hire', 'personnel', 'company_priority', 'matter'
                     )),
-                    anchor_ref text not null check(trim(anchor_ref) <> ''),
-                    title text not null check(trim(title) <> ''),
+                    anchor_ref text not null check({_business_nonblank_sql("anchor_ref")}),
+                    title text not null check({_business_nonblank_sql("title")}),
                     active integer not null default 1 check(active in (0, 1)),
                     created_at text not null default current_timestamp,
                     unique(anchor_type, anchor_ref),
@@ -3589,7 +3612,7 @@ class AutoReplyStore:
                     id integer primary key autoincrement,
                     canonical_anchor_id integer not null unique,
                     anchor_type text not null default 'project' check(anchor_type = 'project'),
-                    title text not null check(trim(title) <> ''),
+                    title text not null check({_business_nonblank_sql("title")}),
                     created_at text not null default current_timestamp,
                     foreign key(canonical_anchor_id, anchor_type)
                         references business_anchors(id, anchor_type)
@@ -3597,8 +3620,8 @@ class AutoReplyStore:
                 create table if not exists business_project_candidates (
                     id integer primary key autoincrement,
                     cluster_id integer not null,
-                    title text not null check(trim(title) <> ''),
-                    reason text not null check(trim(reason) <> ''),
+                    title text not null check({_business_nonblank_sql("title")}),
+                    reason text not null check({_business_nonblank_sql("reason")}),
                     status text not null default 'proposed'
                         check(status in ('proposed', 'confirmed', 'rejected')),
                     confirmed_project_id integer,
@@ -3611,14 +3634,14 @@ class AutoReplyStore:
                     on business_project_candidates(cluster_id, status, id);
                 create table if not exists business_attention_items (
                     id integer primary key autoincrement,
-                    stable_key text not null unique check(trim(stable_key) <> ''),
+                    stable_key text not null unique check({_business_nonblank_sql("stable_key")}),
                     category text not null check(category in ('fyi', 'watch', 'decision', 'push')),
                     status text not null default 'active' check(status in ('active', 'resolved')),
-                    title text not null check(trim(title) <> ''),
+                    title text not null check({_business_nonblank_sql("title")}),
                     business_area text not null default '',
-                    why_attention text not null check(trim(why_attention) <> ''),
-                    current_state text not null check(trim(current_state) <> ''),
-                    ceo_action text not null check(trim(ceo_action) <> ''),
+                    why_attention text not null check({_business_nonblank_sql("why_attention")}),
+                    current_state text not null check({_business_nonblank_sql("current_state")}),
+                    ceo_action text not null check({_business_nonblank_sql("ceo_action")}),
                     anchor_id integer not null,
                     evidence_signal_id integer not null,
                     resolution_signal_id integer,
@@ -3627,7 +3650,8 @@ class AutoReplyStore:
                     updated_at text not null default current_timestamp,
                     check(
                         (status = 'active' and resolution_signal_id is null and resolved_at = '')
-                        or (status = 'resolved' and resolution_signal_id is not null and trim(resolved_at) <> '')
+                        or (status = 'resolved' and resolution_signal_id is not null
+                            and {_business_nonblank_sql("resolved_at")})
                     ),
                     foreign key(anchor_id) references business_anchors(id),
                     foreign key(evidence_signal_id) references business_task_signals(id),
@@ -3656,7 +3680,7 @@ class AutoReplyStore:
                         check(json_valid(before_json) and json_type(before_json) = 'object'),
                     after_json text not null
                         check(json_valid(after_json) and json_type(after_json) = 'object'),
-                    reason text not null check(trim(reason) <> ''),
+                    reason text not null check({_business_nonblank_sql("reason")}),
                     created_at text not null default current_timestamp,
                     foreign key(attention_item_id) references business_attention_items(id),
                     foreign key(signal_id) references business_task_signals(id)
@@ -3698,6 +3722,8 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_business_legacy_links_task
                     on business_legacy_links(task_id, id);
+                """
+                """
                 create table if not exists work_projects (
                     id integer primary key autoincrement,
                     title text not null,

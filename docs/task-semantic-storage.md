@@ -20,6 +20,15 @@ persisted contract. Object-valued JSON and the missing-evidence array are checke
 for their required shapes. Keeping JSON as strings also avoids mutable nested
 containers inside otherwise frozen records.
 
+All required semantic text and the resolution time of a resolved attention item
+use the same nonblank definition as Python's `str.strip()`. The shared SQLite
+predicate uses native `trim(column, char(...)) <> ''` with all 29 Python whitespace
+codepoints, including tabs, newlines, C0 separators, and Unicode spaces. It works
+on independent SQLite connections without registering a Python function. The
+predicate only validates: valid text, including its surrounding whitespace,
+round-trips unchanged. Zero-width space and BOM are not Python strip whitespace
+and remain valid nonblank content.
+
 `business_task_signals` preserves source type/reference/time, conversation
 identity/title, author identity/name, original evidence text, and context.
 Unknown source context stays empty rather than being fabricated. Evidence text
@@ -93,6 +102,10 @@ Task listing accepts enum members or their canonical strings for optional
 `stages`, `statuses`, and `relevance` collections. Filters combine with AND;
 an explicitly empty collection matches nothing. Pagination defaults to
 `limit=100`, `offset=0`, ordered stably by `updated_at, id`.
+The default, unfiltered order is supported by
+`idx_business_tasks_updated_id(updated_at, id)` without a temporary sort. The
+stage/status and relevance filter indexes remain in place, and all three task
+listing indexes are included in the required schema manifest.
 `list_business_task_project_links` reads official projects through confirmed,
 active task/anchor links to active project anchors, and returns an empty list
 for a standalone task.
@@ -125,3 +138,19 @@ integer evidence-link fields. Both create methods now return their persisted
 integer IDs, and tests that inspect records use the getters. The same three-file
 suite then passed **628 tests**, including this regression; compilation, Ruff,
 and `git diff --check` also passed.
+
+The nonblank/index quality regressions were run before the production correction:
+`.venv/bin/pytest -q tests/test_task_semantic_store.py -k 'nonblank_text or
+default_task_listing or list_indexes_are_present' --tb=line` produced
+**135 failed, 76 passed, 202 deselected**. The 133 nonblank failures were direct
+SQLite writes that did not raise `IntegrityError` after Pydantic had rejected the
+same whitespace-only rows. The other failures were the absent default-list
+index and the actual query plan's `USE TEMP B-TREE FOR ORDER BY`. Empty/plain-space
+rejection and original-whitespace preservation already passed. The expanded
+tests cover all 19 required text/resolution-time fields and capture the query
+issued by the default listing API to inspect its plan.
+
+After the correction, the same focused command passed **211 tests** with
+202 deselected. The required three-file suite passed **838 tests**; Python
+compilation, Ruff, and `git diff --check` also passed. These checks remain local
+to the isolated Task 1 storage worktree; no runtime deployment was performed.
