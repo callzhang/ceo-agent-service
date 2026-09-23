@@ -314,3 +314,41 @@ def test_explicit_proposal_removal_prevents_readding_task(projection):
 
     assert projection.recompute_for_tasks((second,)) == ()
     assert [link.task_id for link in projection.store.list_business_attention_tasks(item_id)] == [first]
+
+
+def test_proposal_task_order_is_canonical_and_does_not_append_event(projection):
+    first, anchor_id, signal_id = _task_with_anchor(projection, "ordered-first")
+    second, _, _ = _task_with_anchor(projection, "ordered-second")
+    BusinessResolutionService(projection.store).confirm_anchor_match(
+        task_id=second, anchor_id=anchor_id, evidence_signal_id=signal_id, reason="同一客户"
+    )
+    item_id = projection.upsert(_proposal((first, second), anchor_id, signal_id))
+    before = projection.store.list_business_attention_events(item_id)
+
+    assert projection.upsert(_proposal((second, first), anchor_id, signal_id)) == item_id
+    assert projection.store.list_business_attention_events(item_id) == before
+
+
+def test_initial_terminal_proposal_retains_resolution_lineage(projection):
+    task_id, anchor_id, signal_id = _task_with_anchor(projection, "initial-terminal")
+    TaskSemanticService(projection.store).update_task(
+        UpdateBusinessTask(
+            task_id=task_id, status=BusinessTaskStatus.DONE,
+            signal=SourceSignal(
+                source_type="message", source_ref="initial-terminal:done", evidence_text="完成",
+                dedupe_key="initial-terminal:done",
+            ),
+        )
+    )
+    item_id = projection.upsert(_proposal((task_id,), anchor_id, signal_id))
+    assert projection.store.list_business_attention_tasks(item_id) == ()
+    resolution_signal = projection.store.create_business_task_signal(
+        source_type="message", source_ref="initial-terminal:resolution", evidence_text="已解决",
+        dedupe_key="initial-terminal:resolution",
+    )
+    projection.store.link_business_task_evidence(
+        task_id=task_id, signal_id=resolution_signal, evidence_role="resolution"
+    )
+
+    projection.resolve(item_id=item_id, resolution_signal_id=resolution_signal, reason="已解决")
+    assert projection.store.get_business_attention_item(item_id).status.value == "resolved"

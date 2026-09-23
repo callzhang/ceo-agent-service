@@ -203,6 +203,13 @@ exist and already be linked to an underlying Task. A proposal may say
 `当前无需处理`, while still recording material information, risk, decision, or
 push context through its category and explanatory fields.
 
+Proposal Task IDs are unique and stored in ascending ID order before comparison
+or persistence, so equivalent input orderings cannot create membership updates
+or events. Current eligible members remain a separate ordered set. A proposal
+may include a terminal Task when it has valid relevance and anchor evidence;
+it is absent from current membership but remains in desired proposal membership
+for a later evidence-backed resolution.
+
 The command creates an `opened` event for a new item and keeps the same item ID
 when fields or category change. It records `updated`, `category_changed`, or
 `reopened` events with before/after snapshots only when the semantic item fields

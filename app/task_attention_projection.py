@@ -32,6 +32,11 @@ class AttentionProposal:
     task_ids: tuple[int, ...]
     evidence_signal_id: int
 
+    def __post_init__(self) -> None:
+        if len(set(self.task_ids)) != len(self.task_ids):
+            raise ValueError("attention Task IDs must be unique")
+        object.__setattr__(self, "task_ids", tuple(sorted(self.task_ids)))
+
 
 class BusinessAttentionProjection:
     """Creates the CEO-facing projection from persisted business Task truth."""
@@ -262,8 +267,18 @@ class BusinessAttentionProjection:
                     attention_item_id=item_id, _db=db
                 )
             )
+            desired_task_ids = tuple(
+                link.task_id
+                for link in self.store.list_business_attention_proposal_tasks_in_transaction(
+                    attention_item_id=item_id, _db=db
+                )
+            )
             historical_task_ids = tuple(
-                sorted(set(current_task_ids) | set(self._historical_task_ids(item_id=item_id, db=db)))
+                sorted(
+                    set(current_task_ids)
+                    | set(desired_task_ids)
+                    | set(self._historical_task_ids(item_id=item_id, db=db))
+                )
             )
             if not historical_task_ids:
                 raise ValueError("attention item has no Task lineage")
