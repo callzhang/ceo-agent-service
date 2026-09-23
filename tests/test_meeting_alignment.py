@@ -1794,6 +1794,23 @@ def test_calendar_summary_does_not_update_description_for_other_organizer(tmp_pa
     assert len(dws.send_calls) == 1
 
 
+def test_first_meeting_follow_up_does_not_recall_its_own_send(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.calendar_pages[""]["events"][0].organizer = "A"
+    job_id = seed_consumer_job(store, dws)
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, FakeMeetingRunner(consumer_send_decision()), now=NOW, limit=1
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "sent"
+    assert job.calendar_summary_status == "skipped"
+    assert len(dws.send_calls) == 1
+    assert dws.__dict__.get("recalled") is None
+
+
 def test_transcript_meeting_without_calendar_event_marks_calendar_note_skipped(
     tmp_path,
 ):

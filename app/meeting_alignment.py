@@ -1299,6 +1299,7 @@ def _deliver_meeting_job(
             job,
             evidence,
             previous,
+            superseded_send_result_json="",
             now=now,
             retry_delay=retry_delay,
             max_attempts=max_attempts,
@@ -1396,6 +1397,7 @@ def _deliver_meeting_job(
         job_after_send,
         evidence,
         result,
+        superseded_send_result_json=job.send_result_json,
         now=now,
         retry_delay=retry_delay,
         max_attempts=max_attempts,
@@ -1409,13 +1411,11 @@ def _write_meeting_summary_to_calendar_or_retry(
     evidence: CalendarMeetingEvidence,
     delivery: MeetingDeliveryResult,
     *,
+    superseded_send_result_json: str,
     now: datetime,
     retry_delay: timedelta,
     max_attempts: int,
 ) -> None:
-    # Captured before the job records this send: it points at the follow-up the
-    # people in this meeting are already holding, which a re-summary replaces.
-    superseded_send_result = job.send_result_json or ""
     _record_where_the_message_landed(dws, delivery)
     summary = (job.final_message or delivery.message_text).strip()
     if not summary:
@@ -1445,7 +1445,7 @@ def _write_meeting_summary_to_calendar_or_retry(
             calendar_summary_result_json=receipt,
             error="",
         )
-        _withdraw_superseded_follow_up(dws, superseded_send_result)
+        _withdraw_superseded_follow_up(dws, superseded_send_result_json)
         _notify_meeting_sent(job, delivery)
         return
     creator = evidence.creator
@@ -1472,7 +1472,7 @@ def _write_meeting_summary_to_calendar_or_retry(
             calendar_summary_result_json=receipt,
             error="",
         )
-        _withdraw_superseded_follow_up(dws, superseded_send_result)
+        _withdraw_superseded_follow_up(dws, superseded_send_result_json)
         _notify_meeting_sent(job, delivery)
         return
     try:
@@ -1527,7 +1527,7 @@ def _write_meeting_summary_to_calendar_or_retry(
                 calendar_summary_result_json=receipt,
                 error="",
             )
-            _withdraw_superseded_follow_up(dws, superseded_send_result)
+            _withdraw_superseded_follow_up(dws, superseded_send_result_json)
             _notify_meeting_sent(job, delivery)
             return
         receipt = json.dumps(
@@ -1566,7 +1566,7 @@ def _write_meeting_summary_to_calendar_or_retry(
         calendar_summary_result_json=receipt,
         error="",
     )
-    _withdraw_superseded_follow_up(dws, superseded_send_result)
+    _withdraw_superseded_follow_up(dws, superseded_send_result_json)
     _notify_meeting_sent(job, delivery)
 
 
