@@ -28,7 +28,6 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| codex-task6-acceptance-source-ref-uniqueness | app/task_semantic_service.py (acceptance reply binding only), app/store.py (source reference to formal Task query only), tests/test_task_semantic_service.py (ambiguity regressions only), docs/task-semantic-storage.md (acceptance contract only), docs/agent-claims.md | Reject short owner acceptance when a shared source reference identifies multiple formal Tasks; preserve unique-source replies. No API/UI/retrieval/runtime/live-data change. | 2026-09-23 |
 | codex-attempt-detail-readable-history | app/web_api/attempts.py, frontend/src/pages/AttemptDetailPage.tsx, frontend/src/pages/AttemptDetailPage.test.tsx, frontend/src/styles.css, tests/test_console_attempt_detail_api.py, docs/agent-claims.md | Group Attempt runtime history and render audit explanations in user-facing language | 2026-09-15 |
 | codex-session-readable-history | frontend/src/pages/CodexPages.tsx, frontend/src/pages/CodexPages.test.tsx, frontend/src/components/status/StatusBadge.tsx, frontend/src/components/status/StatusBadge.test.tsx, frontend/src/styles.css, docs/agent-claims.md | Explain unavailable/reused Codex sessions and group related Attempt history | 2026-09-15 |
 | codex-session-history-docs | docs/architecture.md, docs/agent-claims.md | Document the user-visible meaning of unavailable Codex transcripts and related Attempt indexes | 2026-09-15 |
