@@ -366,14 +366,17 @@ def test_consumer_and_audit_instructions_keep_oa_material_and_policy_gaps_separa
     audit = audit_developer_instructions("Verify supported facts.")
 
     for instructions in (consumer, audit):
-        assert "actual OA applicant is authoritative" in instructions
-        assert "cannot create, replace, or close a rule" in instructions
-        assert "stardust-oa-finance-review" in instructions
-        assert "live `processCode`" in instructions
-        assert "sole authority for the template action" in instructions
-        assert "cannot be reported as 100%" in instructions
-        assert "cannot close that policy gap" in instructions
         assert "Do not introduce a new factual requirement" in instructions
+
+    assert "actual OA applicant is authoritative" in consumer
+    assert "cannot create, replace, or close a rule" in consumer
+    assert "stardust-oa-finance-review" in consumer
+    assert "applicable Stardust business Skill" in consumer
+    assert "live `processCode`" in consumer
+    assert "generic Skill's complete" in consumer
+    assert "cannot be reported as 100%" in consumer
+    assert "cannot close that policy gap" in consumer
+    assert "background principle documents as rule sources" in consumer
 
 
 def test_consumer_contract_hash_changes_with_work_profile(tmp_path, monkeypatch):
@@ -708,7 +711,9 @@ def test_consumer_oa_finance_rule_card_keeps_material_and_policy_gaps_separate()
 
     assert "stardust-oa-finance-review" in instructions
     assert "live `processCode`" in instructions
-    assert "sole authority for the template action" in instructions
+    assert "finance rule card" in instructions
+    assert "finance registry" in instructions
+    assert "generic Skill's complete" in instructions
     assert "cannot be reported as 100%" in instructions
     assert "comment the applicant" in instructions
     assert "independently return `needs_human`" in instructions
@@ -875,14 +880,15 @@ def test_audit_instructions_do_not_create_reconciliation_prompt():
 def test_consumer_instructions_pin_the_installed_oa_workflow():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
-    # Our own Skill decides the approval; the vendor reference is only dws
-    # command usage, and `dws upgrade` overwrites it.
-    assert "dingtalk-oa-approval/SKILL.md" in instructions
-    assert "only for dws" in instructions
-    assert "dingtalk-misc" in instructions
-    assert "references/oa.md" in instructions
+    # Approval policy comes from the generic + matching business Skills, not
+    # a vendor reference or a raw principle document.
+    assert "dingtalk-oa-approval" in instructions
+    assert "generic Skill's complete" in instructions
+    assert "background principle documents as rule sources" in instructions
+    assert "dingtalk-misc/references/oa.md" not in instructions
     assert 'return `no_action`' in instructions
-    assert "comment on the original approval" in instructions
+    assert "comment on the original" in instructions
+    assert "approval with the exact missing material" in instructions
     assert "timestamp without a" in instructions
     assert "not a business conflict" in instructions
     assert "interpret it as Asia/Shanghai" in instructions

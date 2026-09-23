@@ -380,22 +380,20 @@ dingtalk-chat reply to communicate it. State that the OKR record was not
 changed, explain the concrete risk boundary, and tell the requester not to act
 as though it were approved. This is an executable fallback, not needs_human.
 
-For DingTalk OA, read `~/.agents/skills/dingtalk-oa-approval/SKILL.md` for the
-general review mechanism, material reading, and action boundaries,
-`dingtalk-misc/references/oa.md` only for dws command usage, and the latest
-canonical approval detail. The generic rules live in our own Skill: naming the
-vendor reference as the authority sent turns to read that instead, and `dws upgrade`
-overwrites the vendor Skills, so a rule written there does not survive. For a
-scheduled Stardust finance review, only the complete active
-`stardust-oa-finance-review` rule card that exactly matches the live `processCode`
-is the sole authority for the template action. A missing, partial, source-pending,
-or unmatched card cannot be reported as 100% rule coverage and requires an
-independent `needs_human`; do not infer its action from the generic Skill. If the
-process is still running and a document, attachment, or other fact can be supplied
-by the applicant, comment on the original approval with the exact missing material
-and next step, then notify the actual applicant. When that material gap also has a
-policy gap, preserve the independent `needs_human`: an applicant reply cannot close
-that policy gap. A timestamp without a timezone is not a business conflict:
+For DingTalk OA, use `dingtalk-oa-approval` for cross-company review mechanics and
+its complete decision table, plus the applicable Stardust business Skill(s) for
+company-specific criteria. Select category Skills from the live `processCode` and
+form; load every applicable Skill for cross-category cases. Do not read or rely on
+background principle documents as rule sources. The finance rule card applies
+only to an exactly matching process in the finance registry; a missing finance
+card for a non-finance process is not a policy gap. An incomplete applicable
+business Skill or an uncovered case-specific rule/authority remains below 100%
+coverage and requires an independent `needs_human`; use the generic Skill's complete
+decision table for action mapping. If the process is still running and a document,
+attachment, or other fact can be supplied by the applicant, comment on the original
+approval with the exact missing material and next step, then notify the actual
+applicant. When that material gap also has a policy gap, preserve the independent
+`needs_human`: an applicant reply cannot close that policy gap. A timestamp without a timezone is not a business conflict:
 interpret it as Asia/Shanghai, convert it to UTC for comparison, and preserve the
 raw value for audit display. If the process or current task is already handled,
 return `no_action`.

@@ -421,7 +421,8 @@ def test_reseeding_preserves_user_edits_when_adopting_a_legacy_fixed_check(
     assert "$stardust-oa-contract-review" in repeated.prompt
     assert "$stardust-oa-people-review" in repeated.prompt
     assert "$stardust-oa-attendance-travel-review" in repeated.prompt
-    assert "钉钉审批审阅原则.md" in repeated.prompt
+    assert "钉钉审批审阅原则.md" not in repeated.prompt
+    assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in repeated.prompt
     assert "rule_coverage" in repeated.prompt
     assert "needs_human" in repeated.prompt
     assert "审批人必须是申请人的下属" in repeated.prompt
@@ -468,7 +469,8 @@ def test_oa_seed_binds_generic_and_stardust_finance_review_skills(
     assert "$stardust-oa-contract-review" in task.prompt
     assert "$stardust-oa-people-review" in task.prompt
     assert "$stardust-oa-attendance-travel-review" in task.prompt
-    assert "钉钉审批审阅原则.md" in task.prompt
+    assert "钉钉审批审阅原则.md" not in task.prompt
+    assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in task.prompt
     assert [ref.skill_name for ref in task.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
@@ -496,7 +498,14 @@ def test_oa_seed_migrates_previous_repository_default_prompt_and_skill_refs(
             position=index,
         )
         for index, name in enumerate(
-            ("dingtalk-oa-approval", "stardust-oa-finance-review")
+            (
+                "dingtalk-oa-approval",
+                "stardust-oa-finance-review",
+                "stardust-oa-project-review",
+                "stardust-oa-contract-review",
+                "stardust-oa-people-review",
+                "stardust-oa-attendance-travel-review",
+            )
         )
     )
     original = store.create_scheduled_task(
@@ -527,7 +536,8 @@ def test_oa_seed_migrates_previous_repository_default_prompt_and_skill_refs(
     assert updated.name == original.name
     assert updated.description == original.description
     assert updated.prompt != LEGACY_OA_CONSUMER_PROMPT
-    assert "钉钉审批审阅原则.md" in updated.prompt
+    assert "钉钉审批审阅原则.md" not in updated.prompt
+    assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in updated.prompt
     assert [ref.skill_name for ref in updated.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
