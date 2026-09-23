@@ -5,14 +5,16 @@ import pytest
 from app.store import AutoReplyStore
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_models import (
+    BusinessActorKind,
     BusinessAnchorType,
     BusinessRelationStatus,
     BusinessRelationType,
     BusinessRelevance,
     BusinessTaskStatus,
+    BusinessTaskDateType,
     FormalTaskBasis,
 )
-from app.task_semantic_service import RecordFormalTask, SourceSignal, TaskSemanticService
+from app.task_semantic_service import RecordFormalTask, SourceSignal, TaskDateInput, TaskSemanticService
 from app.task_semantic_rules import FormalityEvidence
 
 
@@ -38,7 +40,12 @@ def create_task(store: AutoReplyStore, key: str, *, owner: str = "王明") -> in
                 owner_is_explicit=True,
             ),
             owner_name=owner,
-            deadline_at="2026-10-01T00:00:00+00:00",
+            owner_evidence_json=f'{{"source_ref":"{key}","excerpt":"{owner}"}}',
+            date_facts=(TaskDateInput(
+                date_type=BusinessTaskDateType.REQUESTED_DEADLINE_AT,
+                value_at="2026-10-01T00:00:00+00:00", raw_phrase="2026-10-01",
+                actor_kind=BusinessActorKind.HUMAN, actor_user_id="assigner",
+            ),),
         )
     ).task_id
 

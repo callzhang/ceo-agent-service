@@ -24,7 +24,7 @@ from app.task_semantic_rules import (
             BusinessTaskStage.FORMAL,
             CommitmentStatus.ASSIGNED_UNACCEPTED,
         ),
-        (FormalTaskBasis.EXTERNAL_TODO, BusinessTaskStage.FORMAL, CommitmentStatus.ACCEPTED),
+        (FormalTaskBasis.EXTERNAL_TODO, BusinessTaskStage.FORMAL, CommitmentStatus.ASSIGNED_UNACCEPTED),
         (
             FormalTaskBasis.MEETING_ACTION_ITEM,
             BusinessTaskStage.FORMAL,
@@ -76,19 +76,16 @@ def test_unauthorized_assignment_or_implicit_deliverable_is_not_promoted(evidenc
         resolve_formality(evidence)
 
 
-def test_meeting_action_item_allows_unresolved_owner_and_exposes_missing_owner_evidence():
-    resolution = resolve_formality(
-        FormalityEvidence(
-            basis=FormalTaskBasis.MEETING_ACTION_ITEM,
-            assigner_is_authorized=False,
-            deliverable_is_explicit=True,
-            owner_is_explicit=False,
+def test_meeting_action_item_without_explicit_owner_cannot_be_formal():
+    with pytest.raises(ValueError, match="owner"):
+        resolve_formality(
+            FormalityEvidence(
+                basis=FormalTaskBasis.MEETING_ACTION_ITEM,
+                assigner_is_authorized=False,
+                deliverable_is_explicit=True,
+                owner_is_explicit=False,
+            )
         )
-    )
-
-    assert resolution.stage is BusinessTaskStage.FORMAL
-    assert resolution.commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
-    assert resolution.missing_evidence == ("owner",)
 
 
 def test_shared_goal_returns_link_not_merge():

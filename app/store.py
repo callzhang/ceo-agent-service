@@ -118,6 +118,7 @@ from app.task_models import (
 )
 from app.task_semantic_models import (
     AttentionCategory,
+    BusinessActorKind,
     BusinessAnchor,
     BusinessAnchorType,
     BusinessEvidenceRole,
@@ -127,6 +128,8 @@ from app.task_semantic_models import (
     BusinessRelationType,
     BusinessRelevance,
     BusinessTask,
+    BusinessTaskDateEvidence,
+    BusinessTaskDateType,
     BusinessTaskAnchorLink,
     BusinessTaskEvidence,
     BusinessTaskEvent,
@@ -217,7 +220,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-22.1"
+STORE_SCHEMA_VERSION = "2026-09-23.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -263,6 +266,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "business_task_signals",
     "business_tasks",
     "business_task_evidence",
+    "business_task_date_evidence",
     "business_task_events",
     "business_task_relations",
     "business_work_clusters",
@@ -330,6 +334,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_tasks_list",
     "idx_business_tasks_relevance",
     "idx_business_task_evidence_task",
+    "idx_business_task_date_evidence_task",
     "idx_business_task_events_task",
     "idx_business_task_relations_from",
     "idx_business_task_relations_to",
@@ -353,7 +358,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "business_task_signals": (
         "id", "source_type", "source_ref", "source_time", "conversation_id",
         "conversation_title", "author_user_id", "author_name", "evidence_text",
-        "context_json", "dedupe_key", "created_at",
+        "context_json", "dedupe_key", "created_at", "author_kind",
     ),
     "business_tasks": (
         "id", "title", "description", "stage", "status", "formal_basis",
@@ -363,6 +368,10 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
     "business_task_evidence": (
         "task_id", "signal_id", "evidence_role", "created_at",
+    ),
+    "business_task_date_evidence": (
+        "id", "task_id", "date_type", "value_at", "raw_phrase",
+        "source_signal_id", "actor_kind", "actor_user_id", "actor_name", "created_at",
     ),
     "business_task_events": (
         "id", "task_id", "event_type", "signal_id", "before_json", "after_json",
@@ -508,6 +517,9 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_business_task_signals_immutable_update",
     "trg_business_task_signals_immutable_delete",
     "trg_business_task_signals_immutable_replace",
+    "trg_business_task_date_evidence_immutable_update",
+    "trg_business_task_date_evidence_immutable_delete",
+    "trg_business_task_date_evidence_immutable_replace",
     "trg_feedback_processing_round_integer_v2_insert",
     "trg_feedback_processing_round_integer_v2_update",
     "trg_runtime_attempt_session_evidence_trim_insert",
@@ -3465,7 +3477,9 @@ class AutoReplyStore:
                     context_json text not null default '{{}}'
                         check(json_valid(context_json) and json_type(context_json) = 'object'),
                     dedupe_key text not null unique check({_business_nonblank_sql("dedupe_key")}),
-                    created_at text not null default current_timestamp
+                    created_at text not null default current_timestamp,
+                    author_kind text not null default 'unknown'
+                        check(author_kind in ('human', 'system', 'agent', 'unknown'))
                 );
                 create index if not exists idx_business_task_signals_source
                     on business_task_signals(source_type, source_ref, source_time, id);
@@ -3547,12 +3561,42 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_business_task_evidence_task
                     on business_task_evidence(task_id, created_at, signal_id);
+                create table if not exists business_task_date_evidence (
+                    id integer primary key autoincrement,
+                    task_id integer not null,
+                    date_type text not null check(date_type in (
+                        'assigned_at', 'requested_deadline_at', 'external_deadline_at',
+                        'committed_deadline_at', 'estimated_deadline_at', 'next_check_at'
+                    )),
+                    value_at text not null default '',
+                    raw_phrase text not null check({_business_nonblank_sql("raw_phrase")}),
+                    source_signal_id integer not null,
+                    actor_kind text not null check(actor_kind in ('human', 'system', 'agent', 'unknown')),
+                    actor_user_id text not null default '',
+                    actor_name text not null default '',
+                    created_at text not null default current_timestamp,
+                    foreign key(task_id) references business_tasks(id),
+                    foreign key(source_signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_date_evidence_task
+                    on business_task_date_evidence(task_id, id);
+                create trigger if not exists trg_business_task_date_evidence_immutable_update
+                before update on business_task_date_evidence
+                begin select raise(abort, 'business task date evidence is immutable'); end;
+                create trigger if not exists trg_business_task_date_evidence_immutable_delete
+                before delete on business_task_date_evidence
+                begin select raise(abort, 'business task date evidence is immutable'); end;
+                create trigger if not exists trg_business_task_date_evidence_immutable_replace
+                before insert on business_task_date_evidence
+                when exists (select 1 from business_task_date_evidence where id=new.id)
+                begin select raise(abort, 'business task date evidence is immutable'); end;
                 create table if not exists business_task_events (
                     id integer primary key autoincrement,
                     task_id integer not null,
                     event_type text not null check(event_type in (
                         'created', 'promoted', 'commitment_changed', 'owner_changed',
-                        'deadline_changed', 'status_changed', 'relevance_changed', 'merged'
+                        'deadline_changed', 'date_evidence_recorded', 'status_changed',
+                        'relevance_changed', 'merged'
                     )),
                     signal_id integer,
                     before_json text not null
@@ -4137,6 +4181,50 @@ class AutoReplyStore:
                 );
                 """
             )
+            signal_columns = {
+                row["name"] for row in db.execute("pragma table_info(business_task_signals)")
+            }
+            if "author_kind" not in signal_columns:
+                db.execute(
+                    "alter table business_task_signals add column author_kind text not null "
+                    "default 'unknown' check(author_kind in ('human', 'system', 'agent', 'unknown'))"
+                )
+            event_table_sql = db.execute(
+                "select sql from sqlite_master where type='table' and name='business_task_events'"
+            ).fetchone()["sql"]
+            if "date_evidence_recorded" not in event_table_sql:
+                db.execute("alter table business_task_events rename to business_task_events_before_date_evidence")
+                db.execute(
+                    f"""create table business_task_events (
+                        id integer primary key autoincrement,
+                        task_id integer not null,
+                        event_type text not null check(event_type in (
+                            'created', 'promoted', 'commitment_changed', 'owner_changed',
+                            'deadline_changed', 'date_evidence_recorded', 'status_changed',
+                            'relevance_changed', 'merged'
+                        )),
+                        signal_id integer,
+                        before_json text not null
+                            check(json_valid(before_json) and json_type(before_json) = 'object'),
+                        after_json text not null
+                            check(json_valid(after_json) and json_type(after_json) = 'object'),
+                        reason text not null check({_business_nonblank_sql('reason')}),
+                        created_at text not null default current_timestamp,
+                        foreign key(task_id) references business_tasks(id),
+                        foreign key(signal_id) references business_task_signals(id)
+                    )"""
+                )
+                db.execute(
+                    """insert into business_task_events (
+                        id, task_id, event_type, signal_id, before_json, after_json, reason, created_at
+                    ) select id, task_id, event_type, signal_id, before_json, after_json, reason, created_at
+                    from business_task_events_before_date_evidence"""
+                )
+                db.execute("drop table business_task_events_before_date_evidence")
+                db.execute(
+                    "create index idx_business_task_events_task "
+                    "on business_task_events(task_id, created_at, id)"
+                )
             delivery_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(wechat_deliveries)").fetchall()
@@ -6188,6 +6276,10 @@ class AutoReplyStore:
         return BusinessTaskEvidence.model_validate(dict(row))
 
     @staticmethod
+    def _business_task_date_evidence_from_row(row: sqlite3.Row) -> BusinessTaskDateEvidence:
+        return BusinessTaskDateEvidence.model_validate(dict(row))
+
+    @staticmethod
     def _business_task_event_from_row(row: sqlite3.Row) -> BusinessTaskEvent:
         return BusinessTaskEvent.model_validate(dict(row))
 
@@ -6235,6 +6327,7 @@ class AutoReplyStore:
         conversation_title: str = "",
         author_user_id: str = "",
         author_name: str = "",
+        author_kind: BusinessActorKind | str = BusinessActorKind.UNKNOWN,
         context_json: str = "{}",
         now: datetime | None = None,
         _db: sqlite3.Connection,
@@ -6251,6 +6344,7 @@ class AutoReplyStore:
             conversation_title=conversation_title,
             author_user_id=author_user_id,
             author_name=author_name,
+            author_kind=author_kind,
             evidence_text=evidence_text,
             context_json=context_json,
             dedupe_key=dedupe_key,
@@ -6260,8 +6354,9 @@ class AutoReplyStore:
             """
             insert into business_task_signals (
                 source_type, source_ref, source_time, conversation_id, conversation_title,
-                author_user_id, author_name, evidence_text, context_json, dedupe_key, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                author_user_id, author_name, evidence_text, context_json, dedupe_key,
+                created_at, author_kind
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 signal.source_type,
@@ -6275,6 +6370,7 @@ class AutoReplyStore:
                 signal.context_json,
                 signal.dedupe_key,
                 signal.created_at,
+                signal.author_kind.value,
             ),
         )
         return int(cursor.lastrowid)
@@ -6424,6 +6520,62 @@ class AutoReplyStore:
         ).fetchall()
         return tuple(self._business_task_evidence_from_row(row) for row in rows)
 
+    def get_business_task_signal_for_task_source_ref_in_transaction(
+        self, *, task_id: int, source_ref: str, _db: sqlite3.Connection
+    ) -> BusinessTaskSignal | None:
+        row = _db.execute(
+            """select signal.* from business_task_signals as signal
+               join business_task_evidence as evidence on evidence.signal_id=signal.id
+               where evidence.task_id=? and signal.source_ref=?
+               order by signal.id desc limit 1""",
+            (task_id, source_ref),
+        ).fetchone()
+        return self._business_task_signal_from_row(row) if row is not None else None
+
+    def create_business_task_date_evidence_in_transaction(
+        self, *, task_id: int, source_signal_id: int,
+        date_type: BusinessTaskDateType | str, value_at: str, raw_phrase: str,
+        actor_kind: BusinessActorKind | str, actor_user_id: str = "", actor_name: str = "",
+        _db: sqlite3.Connection,
+    ) -> int:
+        fact = BusinessTaskDateEvidence(
+            id=0, task_id=task_id, source_signal_id=source_signal_id,
+            date_type=date_type, value_at=value_at, raw_phrase=raw_phrase,
+            actor_kind=actor_kind, actor_user_id=actor_user_id, actor_name=actor_name,
+            created_at="",
+        )
+        cursor = _db.execute(
+            """insert into business_task_date_evidence (
+                task_id, date_type, value_at, raw_phrase, source_signal_id,
+                actor_kind, actor_user_id, actor_name
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                fact.task_id, fact.date_type.value, fact.value_at, fact.raw_phrase,
+                fact.source_signal_id, fact.actor_kind.value, fact.actor_user_id, fact.actor_name,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def list_business_task_date_evidence(self, task_id: int) -> tuple[BusinessTaskDateEvidence, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_task_date_evidence where task_id=? order by id",
+                (task_id,),
+            ).fetchall()
+            return tuple(self._business_task_date_evidence_from_row(row) for row in rows)
+
+    def list_unmerged_formal_business_task_ids_for_signal_in_transaction(
+        self, *, signal_id: int, _db: sqlite3.Connection
+    ) -> tuple[int, ...]:
+        rows = _db.execute(
+            """select distinct task.id from business_task_evidence as evidence
+               join business_tasks as task on task.id=evidence.task_id
+               where evidence.signal_id=? and task.stage='formal' and task.status<>'merged'
+               order by task.id""",
+            (signal_id,),
+        ).fetchall()
+        return tuple(int(row["id"]) for row in rows)
+
     def append_business_task_event(
         self,
         *,
@@ -6474,6 +6626,7 @@ class AutoReplyStore:
         conversation_title: str = "",
         author_user_id: str = "",
         author_name: str = "",
+        author_kind: BusinessActorKind | str = BusinessActorKind.UNKNOWN,
         context_json: str = "{}",
         now: datetime | None = None,
     ) -> int:
@@ -6484,6 +6637,7 @@ class AutoReplyStore:
             id=0, source_type=source_type, source_ref=source_ref, source_time=source_time,
             conversation_id=conversation_id, conversation_title=conversation_title,
             author_user_id=author_user_id, author_name=author_name,
+            author_kind=author_kind,
             evidence_text=evidence_text, context_json=context_json,
             dedupe_key=dedupe_key, created_at=timestamp,
         )
@@ -6492,14 +6646,16 @@ class AutoReplyStore:
                 """
                 insert into business_task_signals (
                     source_type, source_ref, source_time, conversation_id, conversation_title,
-                    author_user_id, author_name, evidence_text, context_json, dedupe_key, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    author_user_id, author_name, evidence_text, context_json, dedupe_key,
+                    created_at, author_kind
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal.source_type, signal.source_ref, signal.source_time,
                     signal.conversation_id, signal.conversation_title,
                     signal.author_user_id, signal.author_name, signal.evidence_text,
                     signal.context_json, signal.dedupe_key, signal.created_at,
+                    signal.author_kind.value,
                 ),
             )
             return int(cursor.lastrowid)

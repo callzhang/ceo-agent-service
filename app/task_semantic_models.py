@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from enum import StrEnum
 import json
 from typing import Annotated, Literal
@@ -34,6 +35,22 @@ class FormalTaskBasis(StrEnum):
     EXPLICIT_ASSIGNMENT = "explicit_assignment"
     EXTERNAL_TODO = "external_todo"
     MEETING_ACTION_ITEM = "meeting_action_item"
+
+
+class BusinessActorKind(StrEnum):
+    HUMAN = "human"
+    SYSTEM = "system"
+    AGENT = "agent"
+    UNKNOWN = "unknown"
+
+
+class BusinessTaskDateType(StrEnum):
+    ASSIGNED_AT = "assigned_at"
+    REQUESTED_DEADLINE_AT = "requested_deadline_at"
+    EXTERNAL_DEADLINE_AT = "external_deadline_at"
+    COMMITTED_DEADLINE_AT = "committed_deadline_at"
+    ESTIMATED_DEADLINE_AT = "estimated_deadline_at"
+    NEXT_CHECK_AT = "next_check_at"
 
 
 class BusinessRelevance(StrEnum):
@@ -72,6 +89,7 @@ class BusinessTaskEventType(StrEnum):
     COMMITMENT_CHANGED = "commitment_changed"
     OWNER_CHANGED = "owner_changed"
     DEADLINE_CHANGED = "deadline_changed"
+    DATE_EVIDENCE_RECORDED = "date_evidence_recorded"
     STATUS_CHANGED = "status_changed"
     RELEVANCE_CHANGED = "relevance_changed"
     MERGED = "merged"
@@ -150,6 +168,7 @@ class BusinessTaskSignal(_FrozenBusinessModel):
     conversation_title: str = ""
     author_user_id: str = ""
     author_name: str = ""
+    author_kind: BusinessActorKind = BusinessActorKind.UNKNOWN
     evidence_text: Nonblank
     context_json: JsonObject = "{}"
     dedupe_key: Nonblank
@@ -195,6 +214,34 @@ class BusinessTaskEvidence(_FrozenBusinessModel):
     signal_id: ReferenceId
     evidence_role: BusinessEvidenceRole
     created_at: str
+
+
+class BusinessTaskDateEvidence(_FrozenBusinessModel):
+    id: int
+    task_id: ReferenceId
+    date_type: BusinessTaskDateType
+    value_at: str = ""
+    raw_phrase: Nonblank
+    source_signal_id: ReferenceId
+    actor_kind: BusinessActorKind
+    actor_user_id: str = ""
+    actor_name: str = ""
+    created_at: str
+
+    @model_validator(mode="after")
+    def validate_date_value(self) -> BusinessTaskDateEvidence:
+        if not self.value_at:
+            if self.date_type is not BusinessTaskDateType.COMMITTED_DEADLINE_AT:
+                return self
+            raise ValueError("date value is required for this date type")
+        try:
+            if "T" in self.value_at or " " in self.value_at:
+                datetime.fromisoformat(self.value_at.replace("Z", "+00:00"))
+            else:
+                date.fromisoformat(self.value_at)
+        except ValueError as exc:
+            raise ValueError("date value must be ISO date or datetime") from exc
+        return self
 
 
 class BusinessTaskEvent(_FrozenBusinessModel):

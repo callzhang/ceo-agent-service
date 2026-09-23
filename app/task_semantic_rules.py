@@ -51,6 +51,8 @@ def resolve_formality(evidence: FormalityEvidence) -> FormalityResolution:
         )
     if not evidence.deliverable_is_explicit:
         raise ValueError("cannot promote an implicit deliverable")
+    if not evidence.owner_is_explicit:
+        raise ValueError("cannot promote a task without an explicit owner")
     if (
         evidence.basis is FormalTaskBasis.EXPLICIT_ASSIGNMENT
         and not evidence.assigner_is_authorized
@@ -58,9 +60,9 @@ def resolve_formality(evidence: FormalityEvidence) -> FormalityResolution:
         raise ValueError("cannot promote an unauthorized assignment")
 
     match evidence.basis:
-        case FormalTaskBasis.EXPLICIT_COMMITMENT | FormalTaskBasis.EXTERNAL_TODO:
+        case FormalTaskBasis.EXPLICIT_COMMITMENT:
             commitment_status = CommitmentStatus.ACCEPTED
-        case FormalTaskBasis.EXPLICIT_ASSIGNMENT | FormalTaskBasis.MEETING_ACTION_ITEM:
+        case FormalTaskBasis.EXPLICIT_ASSIGNMENT | FormalTaskBasis.EXTERNAL_TODO | FormalTaskBasis.MEETING_ACTION_ITEM:
             commitment_status = CommitmentStatus.ASSIGNED_UNACCEPTED
         case _:
             raise AssertionError(f"unhandled formal task basis: {evidence.basis}")
@@ -68,7 +70,7 @@ def resolve_formality(evidence: FormalityEvidence) -> FormalityResolution:
     return FormalityResolution(
         stage=BusinessTaskStage.FORMAL,
         commitment_status=commitment_status,
-        missing_evidence=() if evidence.owner_is_explicit else ("owner",),
+        missing_evidence=(),
     )
 
 

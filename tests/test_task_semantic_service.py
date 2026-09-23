@@ -7,6 +7,8 @@ import pytest
 
 from app.store import AutoReplyStore
 from app.task_semantic_models import (
+    BusinessActorKind,
+    BusinessTaskDateType,
     BusinessEvidenceRole,
     BusinessTaskStatus,
     CommitmentStatus,
@@ -21,6 +23,7 @@ from app.task_semantic_service import (
     RecordTaskFromEvidence,
     SourceSignal,
     TaskSemanticService,
+    TaskDateInput,
     UpdateBusinessTask,
 )
 from app.task_semantic_rules import FormalityEvidence, IdentityEvidence
@@ -38,6 +41,38 @@ def assignment_signal(*, dedupe_key: str = "message:assignment") -> SourceSignal
         evidence_text="王明，周五前提交报价。",
         dedupe_key=dedupe_key,
     )
+
+
+def acceptance_signal(*, dedupe_key: str) -> SourceSignal:
+    return SourceSignal(
+        source_type="dingtalk_message", source_ref=dedupe_key,
+        evidence_text="我接受提交报价。", dedupe_key=dedupe_key,
+        author_user_id="wangming", author_name="王明",
+        author_kind=BusinessActorKind.HUMAN,
+    )
+
+
+def owner_evidence_for(signal: SourceSignal) -> str:
+    return f'{{"source_ref":"{signal.source_ref}","excerpt":"王明"}}'
+
+
+def formal_signal(*, dedupe_key: str, basis: FormalTaskBasis) -> SourceSignal:
+    if basis is FormalTaskBasis.EXPLICIT_COMMITMENT:
+        return SourceSignal(
+            source_type="dingtalk_message", source_ref=dedupe_key,
+            evidence_text="王明承诺提交报价。", dedupe_key=dedupe_key,
+            author_user_id="wangming", author_name="王明",
+            author_kind=BusinessActorKind.HUMAN,
+        )
+    return assignment_signal(dedupe_key=dedupe_key)
+
+
+def requested_date(value: str) -> tuple[TaskDateInput, ...]:
+    return (TaskDateInput(
+        date_type=BusinessTaskDateType.REQUESTED_DEADLINE_AT,
+        value_at=value, raw_phrase=value,
+        actor_kind=BusinessActorKind.HUMAN, actor_user_id="derek",
+    ),)
 
 
 def formality_evidence(
@@ -60,7 +95,9 @@ def record_assignment(service: TaskSemanticService, *, dedupe_key: str = "messag
         RecordFormalTask(
             title="提交报价",
             formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_user_id="wangming",
             owner_name="王明",
+            owner_evidence_json=f'{{"source_ref":"{dedupe_key}","excerpt":"王明"}}',
             signal=assignment_signal(dedupe_key=dedupe_key),
         )
     )
@@ -72,8 +109,258 @@ def semantic_state(service: TaskSemanticService):
         service.store.list_business_task_signals(),
         tasks,
         {task.id: service.store.list_business_task_evidence(task.id) for task in tasks},
+        {task.id: service.store.list_business_task_date_evidence(task.id) for task in tasks},
         {task.id: service.events(task.id) for task in tasks},
     )
+
+
+def test_formal_task_requires_source_backed_identified_owner(service):
+    command = RecordFormalTask(
+        title="提交报价",
+        signal=assignment_signal(),
+        formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+    )
+    with pytest.raises(ValueError, match="owner"):
+        service.record_formal_task(command)
+    assert semantic_state(service)[0:2] == ((), ())
+
+
+def test_explicit_commitment_requires_owner_authored_source(service):
+    command = RecordFormalTask(
+        title="提交报价",
+        signal=SourceSignal(
+            source_type="dingtalk_message",
+            source_ref="message:other-person",
+            evidence_text="李丽说王明会提交报价。",
+            dedupe_key="message:other-person",
+            author_user_id="lili",
+            author_name="李丽",
+        ),
+        formality=formality_evidence(FormalTaskBasis.EXPLICIT_COMMITMENT),
+        owner_user_id="wangming",
+        owner_name="王明",
+        owner_evidence_json='{"source_ref":"message:other-person","excerpt":"王明"}',
+    )
+    with pytest.raises(ValueError, match="owner.authored|owner actor"):
+        service.record_formal_task(command)
+    assert semantic_state(service)[0:2] == ((), ())
+
+
+def test_external_todo_is_formal_without_owner_acceptance(service):
+    result = service.record_formal_task(
+        RecordFormalTask(
+            title="提交报价",
+            signal=SourceSignal(
+                source_type="external_todo",
+                source_ref="todo:18",
+                evidence_text="待办负责人：王明；提交报价。",
+                dedupe_key="todo:18",
+                author_user_id="system",
+            ),
+            formality=formality_evidence(FormalTaskBasis.EXTERNAL_TODO),
+            owner_user_id="wangming",
+            owner_name="王明",
+            owner_evidence_json='{"source_ref":"todo:18","excerpt":"王明"}',
+        )
+    )
+    task = service.store.get_business_task(result.task_id)
+    assert task is not None
+    assert task.commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
+
+
+def test_acceptance_requires_owner_actor_explicit_content_and_unique_task_link(service):
+    initial = service.record_formal_task(
+        RecordFormalTask(
+            title="提交报价",
+            signal=assignment_signal(),
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_user_id="wangming",
+            owner_name="王明",
+            owner_evidence_json='{"source_ref":"message:assignment","excerpt":"王明"}',
+        )
+    )
+    for author_user_id, explicit, reference, excerpt in (
+        ("lili", True, initial.signal_id, "我接受提交报价"),
+        ("wangming", False, initial.signal_id, "收到"),
+        ("wangming", True, 999, "我接受提交报价"),
+        ("wangming", True, initial.signal_id, "源文没有这句"),
+    ):
+        with pytest.raises(ValueError, match="acceptance|owner|linked"):
+            service.apply_acceptance(
+                ApplyAcceptance(
+                    task_id=initial.task_id,
+                    signal=SourceSignal(
+                        source_type="dingtalk_message",
+                        source_ref=f"reply:{author_user_id}:{explicit}:{reference}",
+                        evidence_text="收到" if not explicit else "我接受提交报价",
+                        dedupe_key=f"reply:{author_user_id}:{explicit}:{reference}",
+                        author_user_id=author_user_id,
+                        author_kind=BusinessActorKind.HUMAN,
+                    ),
+                    acceptance_is_explicit=explicit,
+                    referenced_signal_id=reference,
+                    acceptance_excerpt=excerpt,
+                )
+            )
+    task = service.store.get_business_task(initial.task_id)
+    assert task is not None
+    assert task.commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
+
+
+def test_acceptance_rejects_source_link_shared_by_two_open_tasks(service):
+    first = service.record_formal_task(
+        RecordFormalTask(
+            title="提交报价",
+            signal=assignment_signal(),
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json='{"source_ref":"message:assignment","excerpt":"王明"}',
+        )
+    )
+    second = service.record_formal_task(
+        RecordFormalTask(
+            title="复核报价",
+            signal=assignment_signal(dedupe_key="message:second"),
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json='{"source_ref":"message:second","excerpt":"王明"}',
+        )
+    )
+    service.store.link_business_task_evidence(
+        task_id=second.task_id, signal_id=first.signal_id, evidence_role="assignment"
+    )
+    state_before = semantic_state(service)
+
+    with pytest.raises(ValueError, match="unique|multiple"):
+        service.apply_acceptance(
+            ApplyAcceptance(
+                task_id=first.task_id,
+                signal=SourceSignal(
+                    source_type="dingtalk_message", source_ref="reply:ambiguous",
+                    evidence_text="我接受报价工作", dedupe_key="reply:ambiguous",
+                    author_user_id="wangming", author_name="王明",
+                    author_kind=BusinessActorKind.HUMAN,
+                ),
+                acceptance_is_explicit=True,
+                referenced_signal_id=first.signal_id,
+                acceptance_excerpt="我接受报价工作",
+            )
+        )
+    assert semantic_state(service) == state_before
+
+
+def test_assignment_and_acceptance_keep_distinct_source_backed_date_facts(service):
+    from app.task_semantic_models import BusinessActorKind, BusinessTaskDateType
+    from app.task_semantic_service import TaskDateInput
+
+    assignment = service.record_formal_task(
+        RecordFormalTask(
+            title="提交报价",
+            signal=assignment_signal(),
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json='{"source_ref":"message:assignment","excerpt":"王明"}',
+            date_facts=(
+                TaskDateInput(
+                    date_type=BusinessTaskDateType.ASSIGNED_AT,
+                    value_at="2026-09-22T09:00:00+08:00", raw_phrase="今天分配",
+                    actor_kind=BusinessActorKind.HUMAN, actor_user_id="derek", actor_name="Derek",
+                ),
+                TaskDateInput(
+                    date_type=BusinessTaskDateType.REQUESTED_DEADLINE_AT,
+                    value_at="2026-09-25", raw_phrase="周五前",
+                    actor_kind=BusinessActorKind.HUMAN, actor_user_id="derek", actor_name="Derek",
+                ),
+            ),
+        )
+    )
+    before = service.store.list_business_task_date_evidence(assignment.task_id)
+    assert [fact.date_type for fact in before] == [
+        BusinessTaskDateType.ASSIGNED_AT,
+        BusinessTaskDateType.REQUESTED_DEADLINE_AT,
+    ]
+    assert all(fact.source_signal_id == assignment.signal_id for fact in before)
+    assert all(fact.actor_user_id == "derek" for fact in before)
+    assert service.store.get_business_task(assignment.task_id).created_at != before[0].value_at
+    assert service.store.get_business_task(assignment.task_id).deadline_at == ""
+
+    accepted = service.apply_acceptance(
+        ApplyAcceptance(
+            task_id=assignment.task_id,
+            signal=SourceSignal(
+                source_type="dingtalk_message", source_ref="reply:commit",
+                evidence_text="报价我接受，周六提交。", dedupe_key="reply:commit",
+                author_user_id="wangming", author_name="王明", author_kind=BusinessActorKind.HUMAN,
+            ),
+            acceptance_is_explicit=True,
+            referenced_signal_id=assignment.signal_id,
+            acceptance_excerpt="报价我接受",
+            date_facts=(TaskDateInput(
+                date_type=BusinessTaskDateType.COMMITTED_DEADLINE_AT,
+                value_at="2026-09-26", raw_phrase="周六提交",
+                actor_kind=BusinessActorKind.HUMAN, actor_user_id="wangming", actor_name="王明",
+            ),),
+        )
+    )
+    after = service.store.list_business_task_date_evidence(assignment.task_id)
+    assert len(after) == 3
+    assert after[-1].source_signal_id == accepted.signal_id
+    assert after[-1].date_type is BusinessTaskDateType.COMMITTED_DEADLINE_AT
+    assert after[-1].actor_user_id == "wangming"
+    assert service.store.get_business_task(assignment.task_id).deadline_at == ""
+
+
+def test_unparseable_estimate_stays_raw_and_generic_update_cannot_commit_deadline(service):
+    from app.task_semantic_models import BusinessActorKind, BusinessTaskDateType
+    from app.task_semantic_service import TaskDateInput
+
+    task = service.record_candidate(
+        RecordCandidate(
+            title="评估报价周期", signal=assignment_signal(),
+            date_facts=(TaskDateInput(
+                date_type=BusinessTaskDateType.ESTIMATED_DEADLINE_AT,
+                value_at="", raw_phrase="尽快，可能下周",
+                actor_kind=BusinessActorKind.HUMAN, actor_user_id="derek",
+            ),),
+        )
+    )
+    facts = service.store.list_business_task_date_evidence(task.task_id)
+    assert facts[0].value_at == ""
+    assert facts[0].raw_phrase == "尽快，可能下周"
+    with pytest.raises(ValueError, match="committed.*deadline"):
+        service.update_task(UpdateBusinessTask(
+            task_id=task.task_id,
+            signal=assignment_signal(dedupe_key="message:generic-date"),
+            date_facts=(TaskDateInput(
+                date_type=BusinessTaskDateType.COMMITTED_DEADLINE_AT,
+                value_at="2026-09-26", raw_phrase="周六",
+                actor_kind=BusinessActorKind.HUMAN, actor_user_id="wangming",
+            ),),
+        ))
+    assert len(service.store.list_business_task_date_evidence(task.task_id)) == 1
+
+
+def test_semantic_commands_reject_untyped_deadline_writes(service):
+    with pytest.raises(ValueError, match="untyped.*deadline"):
+        service.record_candidate(RecordCandidate(
+            title="报价", signal=assignment_signal(), deadline_at="2026-09-25"
+        ))
+    with pytest.raises(ValueError, match="untyped.*deadline"):
+        service.record_formal_task(RecordFormalTask(
+            title="报价", signal=assignment_signal(),
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json='{"source_ref":"message:assignment","excerpt":"王明"}',
+            deadline_at="2026-09-25",
+        ))
+    task = service.record_candidate(RecordCandidate(title="报价", signal=assignment_signal()))
+    with pytest.raises(ValueError, match="untyped.*deadline"):
+        service.update_task(UpdateBusinessTask(
+            task_id=task.task_id,
+            signal=assignment_signal(dedupe_key="message:deadline"),
+            deadline_at="2026-09-25",
+        ))
+    assert service.store.get_business_task(task.task_id).deadline_at == ""
 
 
 def test_record_formal_task_commits_signal_task_evidence_and_initial_event_together(service):
@@ -117,6 +404,8 @@ def test_record_task_reuses_independently_persisted_signal_and_replays(service, 
         command = RecordFormalTask(
             title="提交报价", signal=signal,
             formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json='{"source_ref":"message:assignment","excerpt":"王明"}',
         )
         record = service.record_formal_task
 
@@ -144,22 +433,32 @@ def test_transition_reuses_independently_persisted_signal_and_replays(service, o
             RecordCandidate(title="提交报价", signal=assignment_signal())
         )
     )
-    signal = assignment_signal(dedupe_key="message:transition")
+    signal = (
+        acceptance_signal(dedupe_key="message:transition")
+        if operation == "accept" else assignment_signal(dedupe_key="message:transition")
+    )
     signal_id = service.store.create_business_task_signal(**asdict(signal))
     original_signal = service.store.get_business_task_signal(signal_id)
     if operation == "promote":
         command = PromoteCandidate(
             task_id=source.task_id, signal=signal,
             formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json=owner_evidence_for(signal),
         )
         transition = service.promote_candidate
     elif operation == "update":
         command = UpdateBusinessTask(
-            task_id=source.task_id, signal=signal, deadline_at="2026-09-25T17:00:00Z",
+            task_id=source.task_id, signal=signal,
+            date_facts=requested_date("2026-09-25T17:00:00Z"),
         )
         transition = service.update_task
     elif operation == "accept":
-        command = ApplyAcceptance(task_id=source.task_id, signal=signal)
+        command = ApplyAcceptance(
+            task_id=source.task_id, signal=signal,
+            acceptance_is_explicit=True, acceptance_excerpt="我接受提交报价",
+            referenced_signal_id=source.signal_id,
+        )
         transition = service.apply_acceptance
     else:
         target = record_assignment(service, dedupe_key="message:target")
@@ -214,12 +513,15 @@ def test_fresh_transition_to_merged_source_rejects_without_any_mutation(
                     task_id=source.task_id,
                     formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
                     signal=assignment_signal(dedupe_key="message:fresh-promotion"),
+                    owner_user_id="wangming", owner_name="王明",
+                    owner_evidence_json='{"source_ref":"message:fresh-promotion","excerpt":"王明"}',
                 )
             )
         else:
             service.update_task(
                 UpdateBusinessTask(
-                    task_id=source.task_id, deadline_at="2026-09-25T17:00:00Z",
+                    task_id=source.task_id,
+                    date_facts=requested_date("2026-09-25T17:00:00Z"),
                     signal=assignment_signal(dedupe_key="message:fresh-deadline"),
                 )
             )
@@ -237,11 +539,14 @@ def test_transition_replay_still_succeeds_after_source_is_merged(service, operat
         command = PromoteCandidate(
             task_id=source.task_id, signal=signal,
             formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json=owner_evidence_for(signal),
         )
         transition = service.promote_candidate
     else:
         command = UpdateBusinessTask(
-            task_id=source.task_id, signal=signal, deadline_at="2026-09-25T17:00:00Z",
+            task_id=source.task_id, signal=signal,
+            date_facts=requested_date("2026-09-25T17:00:00Z"),
         )
         transition = service.update_task
     first = transition(command)
@@ -270,7 +575,12 @@ def test_acceptance_changes_the_same_assigned_task_and_appends_history(service):
                 source_ref="message:acceptance",
                 evidence_text="我接受，会在周五前完成。",
                 dedupe_key="message:acceptance",
+                author_user_id="wangming", author_name="王明",
+                author_kind=BusinessActorKind.HUMAN,
             ),
+            acceptance_is_explicit=True,
+            acceptance_excerpt="我接受",
+            referenced_signal_id=initial.signal_id,
         )
     )
 
@@ -301,7 +611,17 @@ def test_event_insert_failure_rolls_back_signal_task_evidence_and_update(service
                     source_ref="message:rollback",
                     evidence_text="我接受。",
                     dedupe_key="message:rollback",
+                    author_user_id="wangming", author_name="王明",
+                    author_kind=BusinessActorKind.HUMAN,
                 ),
+                acceptance_is_explicit=True,
+                acceptance_excerpt="我接受",
+                referenced_signal_id=initial.signal_id,
+                date_facts=(TaskDateInput(
+                    date_type=BusinessTaskDateType.COMMITTED_DEADLINE_AT,
+                    value_at="2026-09-26", raw_phrase="周六提交",
+                    actor_kind=BusinessActorKind.HUMAN, actor_user_id="wangming",
+                ),),
             )
         )
 
@@ -309,6 +629,7 @@ def test_event_insert_failure_rolls_back_signal_task_evidence_and_update(service
     assert task is not None
     assert task.commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
     assert service.store.get_business_task_signal(2) is None
+    assert service.store.list_business_task_date_evidence(initial.task_id) == ()
     assert [row.event_type.value for row in service.events(initial.task_id)] == ["created"]
 
 
@@ -429,6 +750,8 @@ def test_promotion_replay_preserves_original_result_state_and_history(service):
         task_id=candidate.task_id,
         formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
         signal=assignment_signal(dedupe_key="message:promotion"),
+        owner_user_id="wangming", owner_name="王明",
+        owner_evidence_json='{"source_ref":"message:promotion","excerpt":"王明"}',
     )
     first = service.promote_candidate(command)
     state_before = semantic_state(service)
@@ -481,6 +804,8 @@ def test_creation_replay_returns_original_task_after_evidence_is_copied_by_merge
             title="提交报价",
             formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
             signal=assignment_signal(),
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json='{"source_ref":"message:assignment","excerpt":"王明"}',
         )
         record = service.record_formal_task
     first = record(command)
@@ -506,7 +831,10 @@ def test_acceptance_replay_preserves_result_after_task_is_merged(service):
     task = record_assignment(service)
     command = ApplyAcceptance(
         task_id=task.task_id,
-        signal=assignment_signal(dedupe_key="message:acceptance"),
+        signal=acceptance_signal(dedupe_key="message:acceptance"),
+        acceptance_is_explicit=True,
+        acceptance_excerpt="我接受提交报价",
+        referenced_signal_id=task.signal_id,
     )
     first = service.apply_acceptance(command)
     target = record_assignment(service, dedupe_key="message:target")
@@ -528,14 +856,14 @@ def test_update_replay_preserves_result_after_a_later_state_change(service):
     task = record_assignment(service)
     command = UpdateBusinessTask(
         task_id=task.task_id,
-        deadline_at="2026-09-25T17:00:00Z",
+        date_facts=requested_date("2026-09-25T17:00:00Z"),
         signal=assignment_signal(dedupe_key="message:first-deadline"),
     )
     first = service.update_task(command)
     service.update_task(
         UpdateBusinessTask(
             task_id=task.task_id,
-            deadline_at="2026-09-28T17:00:00Z",
+            date_facts=requested_date("2026-09-28T17:00:00Z"),
             signal=assignment_signal(dedupe_key="message:later-deadline"),
         )
     )
@@ -550,28 +878,34 @@ def test_update_replay_preserves_result_after_a_later_state_change(service):
     [
         (FormalTaskBasis.EXPLICIT_ASSIGNMENT, BusinessEvidenceRole.ASSIGNMENT),
         (FormalTaskBasis.EXPLICIT_COMMITMENT, BusinessEvidenceRole.COMMITMENT),
-        (FormalTaskBasis.EXTERNAL_TODO, BusinessEvidenceRole.COMMITMENT),
+        (FormalTaskBasis.EXTERNAL_TODO, BusinessEvidenceRole.ASSIGNMENT),
         (FormalTaskBasis.MEETING_ACTION_ITEM, BusinessEvidenceRole.ASSIGNMENT),
     ],
 )
 def test_promotion_uses_the_same_formal_basis_evidence_role_as_creation(
     service, formal_basis, evidence_role
 ):
+    creation_signal = formal_signal(dedupe_key="message:formal", basis=formal_basis)
     recorded = service.record_formal_task(
         RecordFormalTask(
             title="提交报价",
             formality=formality_evidence(formal_basis),
-            signal=assignment_signal(dedupe_key="message:formal"),
+            signal=creation_signal,
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json=owner_evidence_for(creation_signal),
         )
     )
     candidate = service.record_candidate(
         RecordCandidate(title="提交报价", signal=assignment_signal())
     )
+    promotion_signal = formal_signal(dedupe_key="message:promotion", basis=formal_basis)
     promoted = service.promote_candidate(
         PromoteCandidate(
             task_id=candidate.task_id,
             formality=formality_evidence(formal_basis),
-            signal=assignment_signal(dedupe_key="message:promotion"),
+            signal=promotion_signal,
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json=owner_evidence_for(promotion_signal),
         )
     )
 
@@ -585,7 +919,7 @@ def test_promotion_uses_the_same_formal_basis_evidence_role_as_creation(
     ] == [evidence_role]
 
 
-def test_service_records_rule_derived_candidate_and_formal_task_states(service):
+def test_service_records_candidate_and_rejects_ownerless_formal_action(service):
     candidate = service.record_task_from_evidence(
         RecordTaskFromEvidence(
             title="探索报价范围",
@@ -598,27 +932,25 @@ def test_service_records_rule_derived_candidate_and_formal_task_states(service):
             ),
         )
     )
-    formal = service.record_task_from_evidence(
-        RecordTaskFromEvidence(
-            title="提交报价",
-            signal=assignment_signal(dedupe_key="message:meeting-action"),
-            formality=FormalityEvidence(
-                basis=FormalTaskBasis.MEETING_ACTION_ITEM,
-                assigner_is_authorized=False,
-                deliverable_is_explicit=True,
-                owner_is_explicit=False,
-            ),
+    with pytest.raises(ValueError, match="owner"):
+        service.record_task_from_evidence(
+            RecordTaskFromEvidence(
+                title="提交报价",
+                signal=assignment_signal(dedupe_key="message:meeting-action"),
+                formality=FormalityEvidence(
+                    basis=FormalTaskBasis.MEETING_ACTION_ITEM,
+                    assigner_is_authorized=False,
+                    deliverable_is_explicit=True,
+                    owner_is_explicit=False,
+                ),
+            )
         )
-    )
 
     candidate_task = service.store.get_business_task(candidate.task_id)
-    formal_task = service.store.get_business_task(formal.task_id)
-    assert candidate_task is not None and formal_task is not None
+    assert candidate_task is not None
     assert candidate_task.stage.value == "candidate"
     assert candidate_task.commitment_status is CommitmentStatus.NONE
-    assert formal_task.stage.value == "formal"
-    assert formal_task.commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
-    assert formal_task.missing_evidence_json == '["owner"]'
+    assert len(service.store.list_business_tasks()) == 1
 
 
 def test_service_rejects_rule_insufficient_assignment_before_persisting(service):
@@ -724,23 +1056,24 @@ def test_direct_candidate_promotion_rejects_implicit_deliverable_before_persisti
     assert semantic_state(service) == state_before
 
 
-def test_direct_meeting_action_promotion_derives_commitment_and_missing_owner(service):
+def test_direct_meeting_action_promotion_rejects_missing_owner(service):
     candidate = service.record_candidate(
         RecordCandidate(title="提交报价", signal=assignment_signal())
     )
 
-    service.promote_candidate(
-        PromoteCandidate(
-            task_id=candidate.task_id,
-            formality=formality_evidence(FormalTaskBasis.MEETING_ACTION_ITEM, owner=False),
-            signal=assignment_signal(dedupe_key="message:ownerless-meeting-action"),
+    with pytest.raises(ValueError, match="owner"):
+        service.promote_candidate(
+            PromoteCandidate(
+                task_id=candidate.task_id,
+                formality=formality_evidence(FormalTaskBasis.MEETING_ACTION_ITEM, owner=False),
+                signal=assignment_signal(dedupe_key="message:ownerless-meeting-action"),
+            )
         )
-    )
 
     task = service.store.get_business_task(candidate.task_id)
     assert task is not None
-    assert task.commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
-    assert task.missing_evidence_json == '["owner"]'
+    assert task.stage.value == "candidate"
+    assert task.commitment_status is CommitmentStatus.NONE
 
 
 @pytest.mark.parametrize("operation", ["acceptance", "generic_update"])
@@ -782,12 +1115,12 @@ def test_generic_update_rejects_invalid_formal_commitment_transition_without_mut
     assert semantic_state(service) == state_before
 
 
-def test_promotion_preserves_unrelated_missing_evidence_and_resolves_only_owner(service):
+def test_promotion_preserves_unrelated_missing_evidence_and_resolves_owner(service):
     candidate = service.record_candidate(
         RecordCandidate(
             title="提交报价",
             signal=assignment_signal(),
-            missing_evidence_json='["deadline","owner"]',
+            missing_evidence_json='["approval","owner"]',
         )
     )
 
@@ -796,39 +1129,41 @@ def test_promotion_preserves_unrelated_missing_evidence_and_resolves_only_owner(
             task_id=candidate.task_id,
             signal=assignment_signal(dedupe_key="message:owner-resolved"),
             formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
-            owner_name="王明",
-            owner_evidence_json='{"signal_id": 2}',
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json='{"source_ref":"message:owner-resolved","excerpt":"王明"}',
         )
     )
 
     task = service.store.get_business_task(candidate.task_id)
     assert task is not None
     assert task.owner_name == "王明"
-    assert task.missing_evidence_json == '["deadline"]'
+    assert task.missing_evidence_json == '["approval"]'
 
 
-def test_promotion_without_persisted_owner_does_not_false_resolve_owner(service):
+def test_promotion_without_persisted_owner_stays_candidate(service):
     candidate = service.record_candidate(
         RecordCandidate(
             title="提交报价",
             signal=assignment_signal(),
-            missing_evidence_json='["deadline"]',
+            missing_evidence_json='["approval"]',
         )
     )
 
-    service.promote_candidate(
-        PromoteCandidate(
-            task_id=candidate.task_id,
-            signal=assignment_signal(dedupe_key="message:missing-owner"),
-            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+    with pytest.raises(ValueError, match="owner"):
+        service.promote_candidate(
+            PromoteCandidate(
+                task_id=candidate.task_id,
+                signal=assignment_signal(dedupe_key="message:missing-owner"),
+                formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            )
         )
-    )
 
     task = service.store.get_business_task(candidate.task_id)
     assert task is not None
     assert task.owner_name == ""
     assert task.owner_evidence_json == "{}"
-    assert task.missing_evidence_json == '["deadline","owner"]'
+    assert task.missing_evidence_json == '["approval"]'
+    assert task.stage.value == "candidate"
 
 
 def test_promotion_rejects_changed_owner_identity_without_new_matching_evidence(service):
@@ -843,8 +1178,13 @@ def test_promotion_rejects_changed_owner_identity_without_new_matching_evidence(
     service.update_task(
         UpdateBusinessTask(
             task_id=candidate.task_id,
-            signal=assignment_signal(dedupe_key="message:alice-evidence"),
-            owner_evidence_json='{"owner":"Alice","signal_id":2}',
+            signal=SourceSignal(
+                source_type="dingtalk_message", source_ref="message:alice-evidence",
+                evidence_text="Alice 确认负责提交报价。", dedupe_key="message:alice-evidence",
+                author_user_id="alice", author_name="Alice",
+                author_kind=BusinessActorKind.HUMAN,
+            ),
+            owner_evidence_json='{"source_ref":"message:alice-evidence","excerpt":"Alice"}',
         )
     )
     state_before = semantic_state(service)
@@ -869,15 +1209,23 @@ def test_promotion_keeps_unchanged_owner_and_existing_evidence(service):
     service.update_task(
         UpdateBusinessTask(
             task_id=candidate.task_id,
-            signal=assignment_signal(dedupe_key="message:alice-evidence"),
-            owner_evidence_json='{"owner":"Alice","signal_id":2}',
+            signal=SourceSignal(
+                source_type="dingtalk_message", source_ref="message:alice-evidence",
+                evidence_text="Alice 确认负责提交报价。", dedupe_key="message:alice-evidence",
+                author_user_id="alice", author_name="Alice",
+                author_kind=BusinessActorKind.HUMAN,
+            ),
+            owner_evidence_json='{"source_ref":"message:alice-evidence","excerpt":"Alice"}',
         )
     )
 
     service.promote_candidate(
         PromoteCandidate(
             task_id=candidate.task_id,
-            signal=assignment_signal(dedupe_key="message:alice-promotion"),
+            signal=SourceSignal(
+                source_type="dingtalk_message", source_ref="message:alice-promotion",
+                evidence_text="继续执行 Alice 的报价任务。", dedupe_key="message:alice-promotion",
+            ),
             formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
             owner_name="Alice",
         )
@@ -886,5 +1234,5 @@ def test_promotion_keeps_unchanged_owner_and_existing_evidence(service):
     task = service.store.get_business_task(candidate.task_id)
     assert task is not None
     assert task.owner_name == "Alice"
-    assert task.owner_evidence_json == '{"owner":"Alice","signal_id":2}'
+    assert task.owner_evidence_json == '{"source_ref":"message:alice-evidence","excerpt":"Alice"}'
     assert task.missing_evidence_json == "[]"

@@ -1,16 +1,19 @@
-# Task-first semantic storage, business resolution, and attention projection (Tasks 1–5)
+# Task-first semantic storage, business resolution, and attention projection (Tasks 1–6)
 
 This document describes the storage, atomic commands, decision rules, and business
-resolution commands introduced by Tasks 1–5 of the approved
+resolution commands introduced by Tasks 1–5, plus the Task 6 owner, acceptance,
+and typed-date semantic contract of the approved
 [implementation plan](superpowers/plans/2026-09-22-task-first-tasks.md). It does
 not describe a deployed Task Agent cutover. The runtime, console, providers,
 and legacy import workflow still belong to later tasks.
 
-The schema version is `2026-09-22.1`, the single version assigned to the complete
-new semantic schema. Initialization adds the 15 bounded tables to a pre-semantic
-database without reclassifying, copying, or deleting its legacy work records.
-The incomplete intermediate schema from the isolated development branch is not
-a released migration source; no compatibility migration for that draft is added.
+The schema version is `2026-09-23.1`. Initialization adds 16 bounded semantic
+tables to a pre-semantic database without reclassifying, copying, or deleting
+legacy work records. An existing `2026-09-22.1` semantic database gains the
+append-only date-evidence table and signal actor kind; its Task events retain
+their IDs and history while their constraint gains `date_evidence_recorded`.
+The migration leaves every old, untyped `business_tasks.deadline_at` value
+unchanged and unclassified.
 
 ## Records and evidence
 
@@ -31,7 +34,8 @@ round-trips unchanged. Zero-width space and BOM are not Python strip whitespace
 and remain valid nonblank content.
 
 `business_task_signals` preserves source type/reference/time, conversation
-identity/title, author identity/name, original evidence text, and context.
+identity/title, author identity/name/kind (`human`, `system`, `agent`, or
+`unknown`), original evidence text, and context.
 Unknown source context stays empty rather than being fabricated. Evidence text
 and source strings are not trimmed or summarized when stored. The caller supplies
 the source/content deduplication key; its unique constraint rejects duplicates.
@@ -40,7 +44,7 @@ The primitive create method raises on duplicate input; returning an existing
 signal from a multi-row command is part of Task 2's transaction service.
 
 `business_tasks` stores description, owner identity and supporting evidence,
-deadline, missing evidence, last activity, and separate stage, lifecycle,
+an opaque legacy deadline field, missing evidence, last activity, and separate stage, lifecycle,
 commitment, and relevance fields. Formal tasks require one of the four approved
 bases; candidates cannot carry one. A merged task requires an existing, distinct
 merge target, and other statuses cannot carry a merge target. Merge-chain checks
@@ -49,7 +53,20 @@ and transitions are enforced by Task 2's semantic service.
 Source observations attach through `business_task_evidence`, whose required
 `task_id`, `signal_id`, and typed `evidence_role` form its composite key. There is
 no redundant direct source or project pointer on a task. An explicitly assigned
-task can remain `assigned_unaccepted` with no project membership.
+Task or external TODO remains `assigned_unaccepted` without owner acceptance
+or project membership. A formal Task requires an identified owner and an exact
+source citation. An ownerless action stays candidate or unmatched.
+
+`business_task_date_evidence` holds append-only typed facts: `assigned_at`,
+`requested_deadline_at`, `external_deadline_at`, `committed_deadline_at`,
+`estimated_deadline_at`, and `next_check_at`. Each fact stores its source signal,
+actor kind/identity, original phrase, optional parsed ISO date or datetime,
+and creation time. Non-committed date language may remain raw with an empty
+parsed value. `committed_deadline_at` requires a concrete parsed value and the
+identified human owner's actor ID; only an owner-authored explicit commitment
+or dedicated acceptance transition can record it. Task `created_at` remains
+the system-recorded creation time. Business Tasks may have no date. A concrete
+parseable due date is required separately for a later legacy/DingTalk TODO mirror.
 
 Task events retain a typed transition, optional source signal, before/after JSON
 objects, reason, and creation time. Attention events retain the same evidence
@@ -93,8 +110,8 @@ Task event APIs; attention projections remain later work.
   constrained without a generic, unchecked entity ID. No import runs in Task 1.
 
 All semantic references have foreign keys, membership links have unique keys,
-and the required schema manifest covers all 15 tables, their columns, list
-indexes, and source-immutability triggers.
+and the required schema manifest covers all 16 tables, their columns, list
+indexes, and source/date-immutability triggers.
 
 ## Primitive store API
 
@@ -119,6 +136,8 @@ active task/anchor links to active project anchors, and returns an empty list
 for a standalone task. `list_business_tasks_for_projection` reads the complete
 eligible set in one snapshot and therefore does not silently truncate the
 projection source at the ordinary 100-row Task listing default.
+`list_business_task_date_evidence` returns one Task's complete typed date
+history in insertion order. Readers do not classify the old `deadline_at`.
 
 ## Atomic semantic commands
 
@@ -137,11 +156,16 @@ merge target. Merges remain one hop and reject already merged endpoints or a
 source that itself has incoming merges.
 
 Formal task creation and candidate promotion require structured
-`FormalityEvidence`. The service derives the formal basis, commitment status,
-and missing-owner evidence through `resolve_formality`; unauthorized
-assignments and implicit deliverables are rejected before persistence. A
-meeting action item with an explicit deliverable can be formal while its owner
-is unresolved, in which case `owner` is recorded as missing evidence.
+`FormalityEvidence`, an identified owner, and an exact owner excerpt linked to
+a source signal. The service derives formal basis and commitment status through
+`resolve_formality`; unauthorized assignments, implicit deliverables, and
+ownerless formalization are rejected before persistence. An external TODO is
+formal but never proves the human owner accepted it. `ApplyAcceptance` requires
+an explicit source excerpt, a human author ID equal to the Task owner, and a
+prior source signal uniquely linked to that one unmerged formal Task. The
+acceptance signal and role commit together. Generic `UpdateBusinessTask`
+cannot set commitment status or write the old untyped deadline; date inputs
+create typed evidence rows instead.
 
 Same-deliverable merging requires structured `IdentityEvidence`. The service
 merges only when the evidence identifies the same external task, cites an

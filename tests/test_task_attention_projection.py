@@ -26,7 +26,7 @@ def _task_with_anchor(projection: BusinessAttentionProjection, key: str) -> tupl
         RecordFormalTask(
             title=f"推进 {key}",
             signal=SourceSignal(
-                source_type="message", source_ref=key, evidence_text=f"负责人推进 {key}",
+                source_type="message", source_ref=key, evidence_text=f"王明负责推进 {key}",
                 dedupe_key=f"task:{key}",
             ),
             formality=FormalityEvidence(
@@ -36,6 +36,7 @@ def _task_with_anchor(projection: BusinessAttentionProjection, key: str) -> tupl
                 owner_is_explicit=True,
             ),
             owner_name="王明",
+            owner_evidence_json=f'{{"source_ref":"{key}","excerpt":"王明"}}',
         )
     ).task_id
     signal_id = projection.store.create_business_task_signal(

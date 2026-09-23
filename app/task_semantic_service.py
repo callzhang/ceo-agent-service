@@ -18,10 +18,13 @@ import sqlite3
 
 from app.store import AutoReplyStore
 from app.task_semantic_models import (
+    BusinessActorKind,
     BusinessEvidenceRole,
     BusinessRelevance,
     BusinessTask,
+    BusinessTaskSignal,
     BusinessTaskEventType,
+    BusinessTaskDateType,
     BusinessTaskStage,
     BusinessTaskStatus,
     CommitmentStatus,
@@ -46,7 +49,18 @@ class SourceSignal:
     conversation_title: str = ""
     author_user_id: str = ""
     author_name: str = ""
+    author_kind: BusinessActorKind = BusinessActorKind.UNKNOWN
     context_json: str = "{}"
+
+
+@dataclass(frozen=True)
+class TaskDateInput:
+    date_type: BusinessTaskDateType
+    value_at: str
+    raw_phrase: str
+    actor_kind: BusinessActorKind
+    actor_user_id: str = ""
+    actor_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -58,6 +72,7 @@ class RecordCandidate:
     owner_name: str = ""
     deadline_at: str = ""
     missing_evidence_json: str = "[]"
+    date_facts: tuple[TaskDateInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -70,6 +85,7 @@ class RecordFormalTask:
     owner_name: str = ""
     owner_evidence_json: str = "{}"
     deadline_at: str = ""
+    date_facts: tuple[TaskDateInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -82,6 +98,7 @@ class RecordTaskFromEvidence:
     owner_name: str = ""
     owner_evidence_json: str = "{}"
     deadline_at: str = ""
+    date_facts: tuple[TaskDateInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,13 +110,18 @@ class PromoteCandidate:
     owner_name: str | None = None
     owner_evidence_json: str | None = None
     reason: str = "Task now has formal evidence."
+    date_facts: tuple[TaskDateInput, ...] = ()
 
 
 @dataclass(frozen=True)
 class ApplyAcceptance:
     task_id: int
     signal: SourceSignal
+    acceptance_is_explicit: bool = False
+    acceptance_excerpt: str = ""
+    referenced_signal_id: int | None = None
     reason: str = "Task owner accepted the commitment."
+    date_facts: tuple[TaskDateInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -114,6 +136,7 @@ class UpdateBusinessTask:
     status: BusinessTaskStatus | None = None
     business_relevance: BusinessRelevance | None = None
     reason: str = "Task state changed."
+    date_facts: tuple[TaskDateInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -166,6 +189,7 @@ class TaskSemanticService:
             conversation_title=signal.conversation_title,
             author_user_id=signal.author_user_id,
             author_name=signal.author_name,
+            author_kind=signal.author_kind,
             context_json=signal.context_json,
             now=now,
             _db=db,
@@ -200,8 +224,7 @@ class TaskSemanticService:
     def _formal_evidence_role(formal_basis: FormalTaskBasis) -> BusinessEvidenceRole:
         return (
             BusinessEvidenceRole.COMMITMENT
-            if formal_basis
-            in {FormalTaskBasis.EXPLICIT_COMMITMENT, FormalTaskBasis.EXTERNAL_TODO}
+            if formal_basis is FormalTaskBasis.EXPLICIT_COMMITMENT
             else BusinessEvidenceRole.ASSIGNMENT
         )
 
@@ -213,7 +236,71 @@ class TaskSemanticService:
             owner_evidence = json.loads(owner_evidence_json)
         except json.JSONDecodeError as exc:
             raise ValueError("owner evidence must be JSON") from exc
+        if not isinstance(owner_evidence, dict):
+            raise ValueError("owner evidence must be an object")
         return bool(owner_user_id.strip() or owner_name.strip()) and bool(owner_evidence)
+
+    @staticmethod
+    def _require_source_backed_owner(
+        *, signal: SourceSignal | BusinessTaskSignal, owner_user_id: str, owner_name: str,
+        owner_evidence_json: str,
+    ) -> None:
+        if not (owner_user_id.strip() or owner_name.strip()):
+            raise ValueError("formal task requires an identified owner")
+        try:
+            evidence = json.loads(owner_evidence_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("owner evidence must be JSON") from exc
+        if not isinstance(evidence, dict):
+            raise ValueError("owner evidence must be an object")
+        excerpt = evidence.get("excerpt")
+        if evidence.get("source_ref") != signal.source_ref or not isinstance(excerpt, str):
+            raise ValueError("owner evidence must cite the source")
+        if not excerpt.strip() or excerpt not in signal.evidence_text:
+            raise ValueError("owner evidence excerpt must occur in the source")
+        if not any(name and name in excerpt for name in (owner_user_id, owner_name)):
+            raise ValueError("owner identity must appear in its source evidence excerpt")
+
+    @staticmethod
+    def _require_owner_authored_commitment(*, signal: SourceSignal, owner_user_id: str) -> None:
+        if (
+            not owner_user_id.strip()
+            or signal.author_kind is not BusinessActorKind.HUMAN
+            or signal.author_user_id != owner_user_id
+        ):
+            raise ValueError("explicit commitment requires an owner-authored source")
+
+    @staticmethod
+    def _validate_date_facts(
+        date_facts: tuple[TaskDateInput, ...], *, may_commit: bool, owner_user_id: str = ""
+    ) -> None:
+        for fact in date_facts:
+            if fact.date_type is BusinessTaskDateType.COMMITTED_DEADLINE_AT:
+                if not may_commit:
+                    raise ValueError("committed deadline requires owner acceptance")
+                if (
+                    fact.actor_kind is not BusinessActorKind.HUMAN
+                    or not owner_user_id.strip()
+                    or fact.actor_user_id != owner_user_id
+                ):
+                    raise ValueError("committed deadline requires the owner actor")
+
+    def _record_date_facts(
+        self, *, task_id: int, signal_id: int, date_facts: tuple[TaskDateInput, ...],
+        db: sqlite3.Connection,
+    ) -> None:
+        for fact in date_facts:
+            self.store.create_business_task_date_evidence_in_transaction(
+                task_id=task_id,
+                source_signal_id=signal_id,
+                date_type=fact.date_type,
+                value_at=fact.value_at,
+                raw_phrase=fact.raw_phrase,
+                actor_kind=fact.actor_kind,
+                actor_user_id=fact.actor_user_id,
+                actor_name=fact.actor_name,
+                _db=db,
+            )
 
     @staticmethod
     def _reconcile_missing_owner(*, missing_evidence_json: str, owner_is_persisted: bool) -> str:
@@ -234,6 +321,7 @@ class TaskSemanticService:
         task_fields: dict[str, object],
         evidence_role: BusinessEvidenceRole,
         reason: str,
+        date_facts: tuple[TaskDateInput, ...] = (),
     ) -> TaskMutationResult:
         now = self._now()
         with self.store.business_task_transaction() as db:
@@ -246,6 +334,9 @@ class TaskSemanticService:
             )
             self.store.link_business_task_evidence_in_transaction(
                 task_id=task_id, signal_id=signal_id, evidence_role=evidence_role, _db=db
+            )
+            self._record_date_facts(
+                task_id=task_id, signal_id=signal_id, date_facts=date_facts, db=db
             )
             task = self._require_task(
                 self.store.get_business_task_in_transaction(task_id=task_id, _db=db), task_id
@@ -262,6 +353,9 @@ class TaskSemanticService:
             return TaskMutationResult(task_id=task_id, signal_id=signal_id, created=True)
 
     def record_candidate(self, command: RecordCandidate) -> TaskMutationResult:
+        if command.deadline_at:
+            raise ValueError("untyped deadline is legacy; use date_facts")
+        self._validate_date_facts(command.date_facts, may_commit=False)
         return self._record_new_task(
             signal=command.signal,
             task_fields={
@@ -270,19 +364,36 @@ class TaskSemanticService:
                 "stage": BusinessTaskStage.CANDIDATE,
                 "owner_user_id": command.owner_user_id,
                 "owner_name": command.owner_name,
-                "deadline_at": command.deadline_at,
                 "missing_evidence_json": command.missing_evidence_json,
             },
             evidence_role=BusinessEvidenceRole.DISCOVERY,
             reason="Candidate task recorded from source evidence.",
+            date_facts=command.date_facts,
         )
 
     def record_formal_task(self, command: RecordFormalTask) -> TaskMutationResult:
+        if command.deadline_at:
+            raise ValueError("untyped deadline is legacy; use date_facts")
         if command.formality is None:
             raise ValueError("formal task requires structured formality evidence")
         resolution = resolve_formality(command.formality)
         if resolution.stage is not BusinessTaskStage.FORMAL or command.formality.basis is None:
             raise ValueError("formal task requires formal evidence")
+        self._require_source_backed_owner(
+            signal=command.signal,
+            owner_user_id=command.owner_user_id,
+            owner_name=command.owner_name,
+            owner_evidence_json=command.owner_evidence_json,
+        )
+        if command.formality.basis is FormalTaskBasis.EXPLICIT_COMMITMENT:
+            self._require_owner_authored_commitment(
+                signal=command.signal, owner_user_id=command.owner_user_id
+            )
+        self._validate_date_facts(
+            command.date_facts,
+            may_commit=command.formality.basis is FormalTaskBasis.EXPLICIT_COMMITMENT,
+            owner_user_id=command.owner_user_id,
+        )
         owner_is_persisted = self._owner_is_persisted(
             owner_user_id=command.owner_user_id,
             owner_name=command.owner_name,
@@ -299,16 +410,18 @@ class TaskSemanticService:
                 "owner_user_id": command.owner_user_id,
                 "owner_name": command.owner_name,
                 "owner_evidence_json": command.owner_evidence_json,
-                "deadline_at": command.deadline_at,
                 "missing_evidence_json": self._reconcile_missing_owner(
                     missing_evidence_json="[]", owner_is_persisted=owner_is_persisted
                 ),
             },
             evidence_role=self._formal_evidence_role(command.formality.basis),
             reason="Formal task recorded from source evidence.",
+            date_facts=command.date_facts,
         )
 
     def record_task_from_evidence(self, command: RecordTaskFromEvidence) -> TaskMutationResult:
+        if command.deadline_at:
+            raise ValueError("untyped deadline is legacy; use date_facts")
         resolution = resolve_formality(command.formality)
         missing_evidence_json = json.dumps(list(resolution.missing_evidence))
         if resolution.stage is BusinessTaskStage.CANDIDATE:
@@ -319,8 +432,8 @@ class TaskSemanticService:
                     description=command.description,
                     owner_user_id=command.owner_user_id,
                     owner_name=command.owner_name,
-                    deadline_at=command.deadline_at,
                     missing_evidence_json=missing_evidence_json,
+                    date_facts=command.date_facts,
                 )
             )
         if command.formality.basis is None:
@@ -334,7 +447,7 @@ class TaskSemanticService:
                 owner_user_id=command.owner_user_id,
                 owner_name=command.owner_name,
                 owner_evidence_json=command.owner_evidence_json,
-                deadline_at=command.deadline_at,
+                date_facts=command.date_facts,
             )
         )
 
@@ -386,6 +499,29 @@ class TaskSemanticService:
                 owner_name=owner_name,
                 owner_evidence_json=owner_evidence_json,
             )
+            cited_source_ref = json.loads(owner_evidence_json).get("source_ref")
+            owner_source = command.signal
+            if cited_source_ref != command.signal.source_ref:
+                owner_source = self.store.get_business_task_signal_for_task_source_ref_in_transaction(
+                    task_id=task.id, source_ref=cited_source_ref or "", _db=db
+                )
+                if owner_source is None:
+                    raise ValueError("owner evidence must cite a linked source")
+            self._require_source_backed_owner(
+                signal=owner_source,
+                owner_user_id=owner_user_id,
+                owner_name=owner_name,
+                owner_evidence_json=owner_evidence_json,
+            )
+            if command.formality.basis is FormalTaskBasis.EXPLICIT_COMMITMENT:
+                self._require_owner_authored_commitment(
+                    signal=command.signal, owner_user_id=owner_user_id
+                )
+            self._validate_date_facts(
+                command.date_facts,
+                may_commit=command.formality.basis is FormalTaskBasis.EXPLICIT_COMMITMENT,
+                owner_user_id=owner_user_id,
+            )
             signal_id = self._signal_id_or_create(signal=command.signal, db=db, now=now)
             after = task.model_copy(
                 update={
@@ -409,6 +545,9 @@ class TaskSemanticService:
                 signal_id=signal_id,
                 evidence_role=self._formal_evidence_role(command.formality.basis),
                 _db=db,
+            )
+            self._record_date_facts(
+                task_id=task.id, signal_id=signal_id, date_facts=command.date_facts, db=db
             )
             self.store.append_business_task_event(
                 task_id=task.id,
@@ -438,6 +577,34 @@ class TaskSemanticService:
                 or task.commitment_status is not CommitmentStatus.ASSIGNED_UNACCEPTED
             ):
                 raise ValueError("acceptance requires a formal assigned task")
+            if not command.acceptance_is_explicit:
+                raise ValueError("acceptance requires explicit owner commitment evidence")
+            if (
+                not command.acceptance_excerpt.strip()
+                or command.acceptance_excerpt not in command.signal.evidence_text
+            ):
+                raise ValueError("acceptance excerpt must occur in the owner-authored source")
+            if (
+                not task.owner_user_id.strip()
+                or command.signal.author_kind is not BusinessActorKind.HUMAN
+                or command.signal.author_user_id != task.owner_user_id
+            ):
+                raise ValueError("acceptance requires the identified owner actor")
+            if command.referenced_signal_id is None or not any(
+                item.signal_id == command.referenced_signal_id
+                for item in self.store.list_business_task_evidence_in_transaction(
+                    task_id=task.id, _db=db
+                )
+            ):
+                raise ValueError("acceptance must be linked to this existing task")
+            matching_task_ids = self.store.list_unmerged_formal_business_task_ids_for_signal_in_transaction(
+                signal_id=command.referenced_signal_id, _db=db
+            )
+            if matching_task_ids != (task.id,):
+                raise ValueError("acceptance source must uniquely link to one formal task")
+            self._validate_date_facts(
+                command.date_facts, may_commit=True, owner_user_id=task.owner_user_id
+            )
             signal_id = self._signal_id_or_create(signal=command.signal, db=db, now=now)
             after = task.model_copy(
                 update={
@@ -453,6 +620,9 @@ class TaskSemanticService:
                 evidence_role=BusinessEvidenceRole.ACCEPTANCE,
                 _db=db,
             )
+            self._record_date_facts(
+                task_id=task.id, signal_id=signal_id, date_facts=command.date_facts, db=db
+            )
             self.store.append_business_task_event(
                 task_id=task.id,
                 event_type=BusinessTaskEventType.COMMITMENT_CHANGED,
@@ -467,20 +637,25 @@ class TaskSemanticService:
     def update_task(self, command: UpdateBusinessTask) -> TaskMutationResult:
         if command.commitment_status is not None:
             raise ValueError("commitment transitions require dedicated acceptance commands")
+        if command.deadline_at is not None:
+            raise ValueError("untyped deadline is legacy; use date_facts")
+        self._validate_date_facts(command.date_facts, may_commit=False)
         now = self._now()
         fields = {
             "commitment_status": command.commitment_status,
             "owner_user_id": command.owner_user_id,
             "owner_name": command.owner_name,
             "owner_evidence_json": command.owner_evidence_json,
-            "deadline_at": command.deadline_at,
             "status": command.status,
             "business_relevance": command.business_relevance,
         }
         changed = {name: value for name, value in fields.items() if value is not None}
-        if not changed:
+        if not changed and not command.date_facts:
             raise ValueError("task update must change at least one field")
-        event_type = self._update_event_type(changed)
+        event_type = (
+            self._update_event_type(changed)
+            if changed else BusinessTaskEventType.DATE_EVIDENCE_RECORDED
+        )
         with self.store.business_task_transaction() as db:
             replay = self._replay_result(signal=command.signal, db=db)
             if replay is not None:
@@ -506,6 +681,9 @@ class TaskSemanticService:
                 evidence_role=BusinessEvidenceRole.CORRECTION,
                 _db=db,
             )
+            self._record_date_facts(
+                task_id=task.id, signal_id=signal_id, date_facts=command.date_facts, db=db
+            )
             self.store.append_business_task_event(
                 task_id=task.id,
                 event_type=event_type,
@@ -523,8 +701,6 @@ class TaskSemanticService:
             return BusinessTaskEventType.COMMITMENT_CHANGED
         if set(changed) <= {"owner_user_id", "owner_name", "owner_evidence_json"}:
             return BusinessTaskEventType.OWNER_CHANGED
-        if set(changed) == {"deadline_at"}:
-            return BusinessTaskEventType.DEADLINE_CHANGED
         if set(changed) == {"status"}:
             return BusinessTaskEventType.STATUS_CHANGED
         if set(changed) == {"business_relevance"}:

@@ -28,6 +28,7 @@ ROWS = {
             "conversation_title": "客户报价",
             "author_user_id": "derek",
             "author_name": "Derek",
+            "author_kind": "human",
             "evidence_text": "王明，周五前提交报价。\n",
             "context_json": '{"reply_to":"message:41"}',
             "dedupe_key": "message:42:v1",
@@ -62,6 +63,21 @@ ROWS = {
             "task_id": 1,
             "signal_id": 1,
             "evidence_role": "assignment",
+            "created_at": STAMP,
+        },
+    ),
+    "business_task_date_evidence": (
+        "BusinessTaskDateEvidence",
+        {
+            "id": 1,
+            "task_id": 1,
+            "date_type": "requested_deadline_at",
+            "value_at": "2026-09-25",
+            "raw_phrase": "周五前",
+            "source_signal_id": 1,
+            "actor_kind": "human",
+            "actor_user_id": "derek",
+            "actor_name": "Derek",
             "created_at": STAMP,
         },
     ),
@@ -235,6 +251,7 @@ NONBLANK_COLUMNS = [
     ("business_task_signals", "evidence_text"),
     ("business_task_signals", "dedupe_key"),
     ("business_tasks", "title"),
+    ("business_task_date_evidence", "raw_phrase"),
     ("business_task_events", "reason"),
     ("business_work_clusters", "title"),
     ("business_anchors", "anchor_ref"),
@@ -497,6 +514,49 @@ def test_signal_observations_are_immutable(store, statement):
         insert_row(db, "business_task_signals", ROWS["business_task_signals"][1])
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             db.execute(statement)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "update business_task_date_evidence set raw_phrase='下周' where id=1",
+        "delete from business_task_date_evidence where id=1",
+        "insert or replace into business_task_date_evidence (id, task_id, date_type, value_at, raw_phrase, source_signal_id, actor_kind) values (1, 1, 'estimated_deadline_at', '', '下周', 1, 'human')",
+    ],
+)
+def test_date_evidence_is_immutable(store, statement):
+    with store._connect() as db:
+        seed_references(db)
+        insert_row(db, "business_task_date_evidence", ROWS["business_task_date_evidence"][1])
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            db.execute(statement)
+
+
+@pytest.mark.parametrize(
+    "date_type",
+    ["requested_deadline_at", "external_deadline_at", "estimated_deadline_at"],
+)
+def test_unparseable_source_date_is_retained_without_fabricated_value(date_type):
+    fact = models.BusinessTaskDateEvidence.model_validate(
+        dict(
+            ROWS["business_task_date_evidence"][1],
+            date_type=date_type,
+            value_at="",
+            raw_phrase="尽快，日期未定",
+        )
+    )
+    assert fact.value_at == ""
+    assert fact.raw_phrase == "尽快，日期未定"
+
+
+def test_committed_deadline_requires_parseable_value():
+    with pytest.raises(ValidationError, match="date value"):
+        models.BusinessTaskDateEvidence.model_validate(
+            dict(
+                ROWS["business_task_date_evidence"][1],
+                date_type="committed_deadline_at", value_at="", raw_phrase="尽快",
+            )
+        )
 
 
 def test_task_truth_round_trip_without_a_project(store):
@@ -909,6 +969,89 @@ def test_existing_pre_semantic_store_initializes_without_rewriting_legacy(tmp_pa
             == "Pre-existing legacy source"
         )
         assert db.execute("pragma foreign_key_check").fetchall() == []
+
+
+def test_previous_semantic_schema_migrates_without_classifying_legacy_deadline(tmp_path):
+    path = tmp_path / "previous-semantic.sqlite3"
+    original = AutoReplyStore(path)
+    task_id = original.create_business_task(
+        title="旧报价", stage="candidate", deadline_at="2026-09-25T18:00:00+08:00"
+    )
+    signal_id = original.create_business_task_signal(
+        source_type="message", source_ref="old:1", evidence_text="旧报价待确认",
+        dedupe_key="old:1", author_user_id="wangming", author_kind="human",
+    )
+    original.link_business_task_evidence(
+        task_id=task_id, signal_id=signal_id, evidence_role="discovery"
+    )
+    with original.business_task_transaction() as db:
+        original_event_id = original.append_business_task_event(
+            task_id=task_id, event_type="created", signal_id=signal_id,
+            before_json="{}", after_json='{"stage":"candidate"}', reason="旧语义任务",
+            _db=db,
+        )
+    with original._connect() as db:
+        for trigger in (
+            "trg_business_task_date_evidence_immutable_update",
+            "trg_business_task_date_evidence_immutable_delete",
+            "trg_business_task_date_evidence_immutable_replace",
+        ):
+            db.execute(f"drop trigger {trigger}")
+        db.execute("drop table business_task_date_evidence")
+        db.execute("alter table business_task_signals drop column author_kind")
+        event_sql = db.execute(
+            "select sql from sqlite_master where type='table' and name='business_task_events'"
+        ).fetchone()["sql"]
+        old_event_sql = event_sql.replace("'date_evidence_recorded', ", "")
+        assert old_event_sql != event_sql
+        db.execute("drop table business_task_events")
+        db.execute(old_event_sql)
+        db.execute(
+            """insert into business_task_events (
+                id, task_id, event_type, signal_id, before_json, after_json, reason
+            ) values (?, ?, 'created', ?, '{}', '{"stage":"candidate"}', '旧语义任务')""",
+            (original_event_id, task_id, signal_id),
+        )
+        db.execute(
+            "create index idx_business_task_events_task "
+            "on business_task_events(task_id, created_at, id)"
+        )
+        db.execute(
+            "update service_state set value='2026-09-22.1' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+
+    migrated = AutoReplyStore(path)
+    assert migrated._schema_is_current() is True
+    assert migrated.get_business_task(task_id).deadline_at == "2026-09-25T18:00:00+08:00"
+    assert migrated.list_business_task_date_evidence(task_id) == ()
+    assert migrated.get_business_task_signal(signal_id).author_kind.value == "unknown"
+    assert [event.id for event in migrated.list_business_task_events(task_id)] == [original_event_id]
+    with migrated._connect() as db:
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+        assert "'skipped'" in db.execute(
+            "select sql from sqlite_master where type='table' and name='task_todo_sync_outbox'"
+        ).fetchone()["sql"]
+    fresh = AutoReplyStore(tmp_path / "fresh-semantic.sqlite3")
+    for table in (
+        "business_task_signals", "business_task_date_evidence", "business_task_events"
+    ):
+        with migrated._connect() as old_db, fresh._connect() as new_db:
+            assert [tuple(row) for row in old_db.execute(f"pragma table_info({table})")] == [
+                tuple(row) for row in new_db.execute(f"pragma table_info({table})")
+            ]
+            assert [tuple(row) for row in old_db.execute(f"pragma foreign_key_list({table})")] == [
+                tuple(row) for row in new_db.execute(f"pragma foreign_key_list({table})")
+            ]
+    with migrated.business_task_transaction() as db:
+        migrated.create_business_task_date_evidence_in_transaction(
+            task_id=task_id, source_signal_id=signal_id,
+            date_type="estimated_deadline_at", value_at="", raw_phrase="大概下周",
+            actor_kind="unknown", _db=db,
+        )
+    assert migrated.list_business_task_date_evidence(task_id)[0].raw_phrase == "大概下周"
+    assert len(AutoReplyStore(path).list_business_task_date_evidence(task_id)) == 1
 
 
 @pytest.mark.parametrize(
