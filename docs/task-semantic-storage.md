@@ -211,10 +211,14 @@ aggregate several independently open Tasks. Resolution requires a persisted
 signal already linked to an underlying Task and appends one `resolved` event.
 `record_viewed` performs no authoritative write and cannot resolve an item.
 
-`recompute_for_tasks` derives a stable `anchor:<anchor_id>:open` watch item for
-each confirmed active anchor represented by relevant, unmerged input Tasks. It
-uses the anchor-link evidence and open-task count as the semantic snapshot.
-Repeating a recomputation with unchanged rows adds no attention event or link.
+`recompute_for_tasks` never creates attention from a relevant anchor alone. It
+refreshes only existing, explicitly proposed attention items that reference the
+requested Tasks. It retains each item's category and active/resolved state, and
+uses only relevant `open` or `waiting` Tasks with a confirmed active anchor
+link as current membership. A membership change removes stale links, appends an
+`updated` event with Task IDs in its before/after snapshots, and leaves an item
+active even when no eligible member remains because resolution still requires
+evidence. Repeating unchanged recomputation adds no attention event or link.
 
 ## Repair verification
 

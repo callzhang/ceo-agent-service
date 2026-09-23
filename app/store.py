@@ -6980,6 +6980,34 @@ class AutoReplyStore:
             (attention_item_id, task_id),
         )
 
+    def replace_business_attention_tasks_in_transaction(
+        self, *, attention_item_id: int, task_ids: tuple[int, ...], _db: sqlite3.Connection
+    ) -> bool:
+        """Make current projection membership equal the supplied Task IDs."""
+        selected = tuple(sorted(set(task_ids)))
+        rows = _db.execute(
+            "select task_id from business_attention_tasks where attention_item_id=? order by task_id",
+            (attention_item_id,),
+        ).fetchall()
+        current = tuple(int(row["task_id"]) for row in rows)
+        if current == selected:
+            return False
+        if selected:
+            _db.execute(
+                f"delete from business_attention_tasks where attention_item_id=? and task_id not in ({', '.join('?' for _ in selected)})",
+                (attention_item_id, *selected),
+            )
+        else:
+            _db.execute(
+                "delete from business_attention_tasks where attention_item_id=?",
+                (attention_item_id,),
+            )
+        for task_id in selected:
+            self.link_business_attention_task_in_transaction(
+                attention_item_id=attention_item_id, task_id=task_id, _db=_db
+            )
+        return True
+
     def append_business_attention_event_in_transaction(
         self,
         *,
@@ -7017,11 +7045,18 @@ class AutoReplyStore:
 
     def list_business_attention_tasks(self, attention_item_id: int) -> tuple[BusinessAttentionTask, ...]:
         with self._connect() as db:
-            rows = db.execute(
-                "select * from business_attention_tasks where attention_item_id=? order by task_id",
-                (attention_item_id,),
-            ).fetchall()
-            return tuple(self._business_attention_task_from_row(row) for row in rows)
+            return self.list_business_attention_tasks_in_transaction(
+                attention_item_id=attention_item_id, _db=db
+            )
+
+    def list_business_attention_tasks_in_transaction(
+        self, *, attention_item_id: int, _db: sqlite3.Connection
+    ) -> tuple[BusinessAttentionTask, ...]:
+        rows = _db.execute(
+            "select * from business_attention_tasks where attention_item_id=? order by task_id",
+            (attention_item_id,),
+        ).fetchall()
+        return tuple(self._business_attention_task_from_row(row) for row in rows)
 
     def list_business_attention_events(self, attention_item_id: int) -> tuple[BusinessAttentionEvent, ...]:
         with self._connect() as db:

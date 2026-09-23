@@ -6,9 +6,14 @@ from app.store import AutoReplyStore
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_models import AttentionCategory, BusinessAnchorType
-from app.task_semantic_service import RecordFormalTask, SourceSignal, TaskSemanticService
+from app.task_semantic_service import (
+    RecordFormalTask,
+    SourceSignal,
+    TaskSemanticService,
+    UpdateBusinessTask,
+)
 from app.task_semantic_rules import FormalityEvidence
-from app.task_semantic_models import FormalTaskBasis
+from app.task_semantic_models import BusinessTaskStatus, FormalTaskBasis
 
 
 @pytest.fixture
@@ -137,3 +142,70 @@ def test_recompute_is_idempotent_for_same_semantic_snapshot(projection):
         len(projection.store.list_business_attention_events(item_id)),
     )
     assert after == before
+
+
+def test_recompute_does_not_create_attention_for_routine_anchored_work(projection):
+    task_id, _, _ = _task_with_anchor(projection, "routine")
+
+    assert projection.recompute_for_tasks((task_id,)) == ()
+    assert projection.store.list_business_attention_items() == ()
+
+
+def test_recompute_preserves_category_and_resolved_state(projection):
+    task_id, anchor_id, signal_id = _task_with_anchor(projection, "preserve")
+    item_id = projection.upsert(
+        _proposal((task_id,), anchor_id, signal_id, category=AttentionCategory.DECISION)
+    )
+    resolution_signal = projection.store.create_business_task_signal(
+        source_type="message", source_ref="resolved:preserve", evidence_text="已解决",
+        dedupe_key="resolved:preserve",
+    )
+    projection.store.link_business_task_evidence(
+        task_id=task_id, signal_id=resolution_signal, evidence_role="resolution"
+    )
+    projection.resolve(item_id=item_id, resolution_signal_id=resolution_signal, reason="已解决")
+
+    assert projection.recompute_for_tasks((task_id,)) == (item_id,)
+    item = projection.store.get_business_attention_item(item_id)
+    assert item.category is AttentionCategory.DECISION
+    assert item.status.value == "resolved"
+
+
+def test_upsert_synchronizes_membership_and_rejects_inactive_anchor(projection):
+    first, anchor_id, signal_id = _task_with_anchor(projection, "membership-first")
+    second, _, _ = _task_with_anchor(projection, "membership-second")
+    resolver = BusinessResolutionService(projection.store)
+    resolver.confirm_anchor_match(
+        task_id=second, anchor_id=anchor_id, evidence_signal_id=signal_id, reason="同一客户"
+    )
+    item_id = projection.upsert(_proposal((first, second), anchor_id, signal_id))
+    projection.upsert(_proposal((first,), anchor_id, signal_id))
+    assert [link.task_id for link in projection.store.list_business_attention_tasks(item_id)] == [first]
+    latest = projection.store.list_business_attention_events(item_id)[-1]
+    assert '"task_ids":[%s,%s]' % (first, second) in latest.before_json
+    assert '"task_ids":[%s]' % first in latest.after_json
+
+    with projection.store.business_task_transaction() as db:
+        db.execute("update business_anchors set active=0 where id=?", (anchor_id,))
+    with pytest.raises(ValueError, match="active"):
+        projection.upsert(_proposal((first,), anchor_id, signal_id))
+
+
+@pytest.mark.parametrize("status", [BusinessTaskStatus.DONE, BusinessTaskStatus.CANCELLED])
+def test_recompute_removes_terminal_tasks_from_attention_membership(projection, status):
+    task_id, anchor_id, signal_id = _task_with_anchor(projection, f"terminal:{status.value}")
+    item_id = projection.upsert(_proposal((task_id,), anchor_id, signal_id))
+    TaskSemanticService(projection.store).update_task(
+        UpdateBusinessTask(
+            task_id=task_id,
+            status=status,
+            signal=SourceSignal(
+                source_type="message", source_ref=f"terminal:{status.value}",
+                evidence_text=f"任务已{status.value}", dedupe_key=f"terminal:{status.value}",
+            ),
+        )
+    )
+
+    assert projection.recompute_for_tasks((task_id,)) == (item_id,)
+    assert projection.store.list_business_attention_tasks(item_id) == ()
+    assert projection.store.get_business_attention_item(item_id).status.value == "active"

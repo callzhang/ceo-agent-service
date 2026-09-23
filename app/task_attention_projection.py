@@ -49,9 +49,11 @@ class BusinessAttentionProjection:
             raise ValueError(f"{field} must not be blank")
 
     @staticmethod
-    def _snapshot(item: BusinessAttentionItem) -> str:
+    def _snapshot(item: BusinessAttentionItem, task_ids: tuple[int, ...] = ()) -> str:
+        payload = item.model_dump(mode="json")
+        payload["task_ids"] = list(sorted(task_ids))
         return json.dumps(
-            item.model_dump(mode="json"),
+            payload,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -69,7 +71,6 @@ class BusinessAttentionProjection:
                 item.ceo_action != proposal.ceo_action,
                 item.anchor_id != proposal.anchor_id,
                 item.evidence_signal_id != proposal.evidence_signal_id,
-                item.status is not AttentionStatus.ACTIVE,
             )
         )
 
@@ -92,10 +93,12 @@ class BusinessAttentionProjection:
         if signal is None:
             raise ValueError("attention evidence signal does not exist")
         anchor = db.execute(
-            "select 1 from business_anchors where id=?", (proposal.anchor_id,)
+            "select active from business_anchors where id=?", (proposal.anchor_id,)
         ).fetchone()
         if anchor is None:
             raise ValueError("attention anchor does not exist")
+        if not bool(anchor["active"]):
+            raise ValueError("attention anchor must be active")
 
         tasks: list[BusinessTask] = []
         confirmed_anchor = False
@@ -141,23 +144,37 @@ class BusinessAttentionProjection:
                 )
                 item = self.store.get_business_attention_item_in_transaction(item_id=item_id, _db=db)
                 assert item is not None
+                self.store.replace_business_attention_tasks_in_transaction(
+                    attention_item_id=item_id, task_ids=proposal.task_ids, _db=db
+                )
                 self.store.append_business_attention_event_in_transaction(
                     attention_item_id=item_id, event_type=BusinessAttentionEventType.OPENED,
                     signal_id=proposal.evidence_signal_id, before_json="{}",
-                    after_json=self._snapshot(item), reason="Business attention opened", _db=db,
+                    after_json=self._snapshot(item, proposal.task_ids),
+                    reason="Business attention opened", _db=db,
                 )
             else:
                 item_id = existing.id
-                if self._item_changed(existing, proposal):
+                before_task_ids = tuple(
+                    link.task_id for link in self.store.list_business_attention_tasks_in_transaction(
+                        attention_item_id=item_id, _db=db
+                    )
+                )
+                membership_changed = before_task_ids != tuple(sorted(proposal.task_ids))
+                fields_changed = self._item_changed(existing, proposal)
+                if fields_changed or membership_changed:
                     updated = existing.model_copy(
                         update={
-                            "category": proposal.category, "status": AttentionStatus.ACTIVE,
+                            "category": proposal.category,
+                            "status": AttentionStatus.ACTIVE if fields_changed else existing.status,
                             "title": proposal.title, "business_area": proposal.business_area,
                             "why_attention": proposal.why_attention,
                             "current_state": proposal.current_state, "ceo_action": proposal.ceo_action,
                             "anchor_id": proposal.anchor_id,
                             "evidence_signal_id": proposal.evidence_signal_id,
-                            "resolution_signal_id": None, "resolved_at": "", "updated_at": now,
+                            "resolution_signal_id": None if fields_changed else existing.resolution_signal_id,
+                            "resolved_at": "" if fields_changed else existing.resolved_at,
+                            "updated_at": now,
                         }
                     )
                     self.store.update_business_attention_item_in_transaction(item=updated, _db=db)
@@ -168,15 +185,16 @@ class BusinessAttentionProjection:
                         if existing.category is not proposal.category
                         else BusinessAttentionEventType.UPDATED
                     )
+                    self.store.replace_business_attention_tasks_in_transaction(
+                        attention_item_id=item_id, task_ids=proposal.task_ids, _db=db
+                    )
                     self.store.append_business_attention_event_in_transaction(
                         attention_item_id=item_id, event_type=event_type,
-                        signal_id=proposal.evidence_signal_id, before_json=self._snapshot(existing),
-                        after_json=self._snapshot(updated), reason="Business attention updated", _db=db,
+                        signal_id=proposal.evidence_signal_id,
+                        before_json=self._snapshot(existing, before_task_ids),
+                        after_json=self._snapshot(updated, proposal.task_ids),
+                        reason="Business attention updated", _db=db,
                     )
-            for task_id in proposal.task_ids:
-                self.store.link_business_attention_task_in_transaction(
-                    attention_item_id=item_id, task_id=task_id, _db=db
-                )
             return item_id
 
     def resolve(self, *, item_id: int, resolution_signal_id: int, reason: str) -> None:
@@ -220,37 +238,59 @@ class BusinessAttentionProjection:
             raise ValueError("business attention item does not exist")
 
     def recompute_for_tasks(self, task_ids: tuple[int, ...]) -> tuple[int, ...]:
-        """Derive one stable active-work item per confirmed anchor in the supplied Tasks."""
+        """Refresh membership of previously proposed attention items only."""
         if not task_ids:
             return ()
-        with self.store._connect() as db:
-            groups: dict[int, list[tuple[int, int, str, str]]] = {}
-            for task_id in dict.fromkeys(task_ids):
-                task = self.store.get_business_task_in_transaction(task_id=task_id, _db=db)
-                if task is None or task.status is BusinessTaskStatus.MERGED:
-                    continue
-                rows = db.execute(
-                    """select link.anchor_id, link.evidence_signal_id, anchor.title, anchor.anchor_type
-                       from business_task_anchor_links link join business_anchors anchor on anchor.id=link.anchor_id
-                       where link.task_id=? and link.status='confirmed' and link.active=1 and anchor.active=1""",
-                    (task_id,),
-                ).fetchall()
-                for row in rows:
-                    groups.setdefault(int(row["anchor_id"]), []).append(
-                        (task_id, int(row["evidence_signal_id"]), str(row["title"]), str(row["anchor_type"]))
-                    )
+        requested = tuple(sorted(set(task_ids)))
         item_ids: list[int] = []
-        for anchor_id, members in groups.items():
-            eligible = [member for member in members if self.store.get_business_task(member[0]).business_relevance is BusinessRelevance.RELEVANT]
-            if not eligible:
-                continue
-            first = eligible[0]
-            proposal = AttentionProposal(
-                stable_key=f"anchor:{anchor_id}:open", category=AttentionCategory.WATCH,
-                title=f"{first[2]} 需关注", business_area=first[3],
-                why_attention="关联业务任务仍在推进", current_state=f"{len(eligible)} 项开放任务",
-                ceo_action="当前无需处理", anchor_id=anchor_id,
-                task_ids=tuple(member[0] for member in eligible), evidence_signal_id=first[1],
-            )
-            item_ids.append(self.upsert(proposal))
+        with self.store.business_task_transaction() as db:
+            rows = db.execute(
+                f"""select distinct item.* from business_attention_items item
+                    join business_attention_tasks member on member.attention_item_id=item.id
+                    where member.task_id in ({', '.join('?' for _ in requested)}) order by item.id""",
+                requested,
+            ).fetchall()
+            for row in rows:
+                item = BusinessAttentionItem.model_validate(dict(row))
+                before_task_ids = tuple(
+                    link.task_id for link in self.store.list_business_attention_tasks_in_transaction(
+                        attention_item_id=item.id, _db=db
+                    )
+                )
+                eligible_task_ids: list[int] = []
+                for task_id in before_task_ids:
+                    task = self.store.get_business_task_in_transaction(task_id=task_id, _db=db)
+                    if (
+                        task is not None
+                        and task.status in (BusinessTaskStatus.OPEN, BusinessTaskStatus.WAITING)
+                        and task.business_relevance is BusinessRelevance.RELEVANT
+                        and db.execute(
+                            """select 1 from business_task_anchor_links link
+                               join business_anchors anchor on anchor.id=link.anchor_id
+                               where link.task_id=? and link.anchor_id=? and link.status='confirmed'
+                                 and link.active=1 and anchor.active=1""",
+                            (task_id, item.anchor_id),
+                        ).fetchone() is not None
+                    ):
+                        eligible_task_ids.append(task_id)
+                after_task_ids = tuple(eligible_task_ids)
+                next_state = f"{len(after_task_ids)} 项开放任务"
+                if before_task_ids == after_task_ids and item.current_state == next_state:
+                    item_ids.append(item.id)
+                    continue
+                updated = item.model_copy(
+                    update={"current_state": next_state, "updated_at": self._timestamp()}
+                )
+                self.store.update_business_attention_item_in_transaction(item=updated, _db=db)
+                self.store.replace_business_attention_tasks_in_transaction(
+                    attention_item_id=item.id, task_ids=after_task_ids, _db=db
+                )
+                self.store.append_business_attention_event_in_transaction(
+                    attention_item_id=item.id, event_type=BusinessAttentionEventType.UPDATED,
+                    signal_id=item.evidence_signal_id,
+                    before_json=self._snapshot(item, before_task_ids),
+                    after_json=self._snapshot(updated, after_task_ids),
+                    reason="Business attention membership recomputed", _db=db,
+                )
+                item_ids.append(item.id)
         return tuple(item_ids)
