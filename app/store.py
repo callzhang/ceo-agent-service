@@ -4189,13 +4189,73 @@ class AutoReplyStore:
                     "alter table business_task_signals add column author_kind text not null "
                     "default 'unknown' check(author_kind in ('human', 'system', 'agent', 'unknown'))"
                 )
+            stranded_event_table = db.execute(
+                "select 1 from sqlite_master where type='table' "
+                "and name='business_task_events_before_date_evidence'"
+            ).fetchone()
+            if stranded_event_table is not None:
+                db.execute("savepoint recover_business_task_events_date_evidence")
+                try:
+                    current_event_table = db.execute(
+                        "select 1 from sqlite_master where type='table' "
+                        "and name='business_task_events'"
+                    ).fetchone()
+                    if current_event_table is None:
+                        db.execute(
+                            "alter table business_task_events_before_date_evidence "
+                            "rename to business_task_events"
+                        )
+                    else:
+                        conflict = db.execute(
+                            """select 1 from business_task_events_before_date_evidence old
+                               join business_task_events current on current.id=old.id
+                               where old.task_id is not current.task_id
+                                  or old.event_type is not current.event_type
+                                  or old.signal_id is not current.signal_id
+                                  or old.before_json is not current.before_json
+                                  or old.after_json is not current.after_json
+                                  or old.reason is not current.reason
+                                  or old.created_at is not current.created_at
+                               limit 1"""
+                        ).fetchone()
+                        if conflict is not None:
+                            raise ValueError(
+                                "stranded business task event migration has conflicting rows"
+                            )
+                        db.execute(
+                            """insert into business_task_events (
+                                id, task_id, event_type, signal_id, before_json,
+                                after_json, reason, created_at
+                            ) select old.id, old.task_id, old.event_type, old.signal_id,
+                                     old.before_json, old.after_json, old.reason, old.created_at
+                              from business_task_events_before_date_evidence old
+                             where not exists (
+                                 select 1 from business_task_events current
+                                  where current.id=old.id
+                             )"""
+                        )
+                        db.execute("drop table business_task_events_before_date_evidence")
+                        db.execute(
+                            "create index if not exists idx_business_task_events_task "
+                            "on business_task_events(task_id, created_at, id)"
+                        )
+                except BaseException:
+                    db.execute("rollback to recover_business_task_events_date_evidence")
+                    db.execute("release recover_business_task_events_date_evidence")
+                    raise
+                db.execute("release recover_business_task_events_date_evidence")
             event_table_sql = db.execute(
                 "select sql from sqlite_master where type='table' and name='business_task_events'"
             ).fetchone()["sql"]
             if "date_evidence_recorded" not in event_table_sql:
-                db.execute("alter table business_task_events rename to business_task_events_before_date_evidence")
-                db.execute(
-                    f"""create table business_task_events (
+                db.execute("savepoint migrate_business_task_events_date_evidence")
+                try:
+                    db.execute(
+                        "alter table business_task_events rename to "
+                        "business_task_events_before_date_evidence"
+                    )
+                    db.execute(
+                        f"""create table business_task_events (
                         id integer primary key autoincrement,
                         task_id integer not null,
                         event_type text not null check(event_type in (
@@ -4213,18 +4273,23 @@ class AutoReplyStore:
                         foreign key(task_id) references business_tasks(id),
                         foreign key(signal_id) references business_task_signals(id)
                     )"""
-                )
-                db.execute(
-                    """insert into business_task_events (
+                    )
+                    db.execute(
+                        """insert into business_task_events (
                         id, task_id, event_type, signal_id, before_json, after_json, reason, created_at
                     ) select id, task_id, event_type, signal_id, before_json, after_json, reason, created_at
                     from business_task_events_before_date_evidence"""
-                )
-                db.execute("drop table business_task_events_before_date_evidence")
-                db.execute(
-                    "create index idx_business_task_events_task "
-                    "on business_task_events(task_id, created_at, id)"
-                )
+                    )
+                    db.execute("drop table business_task_events_before_date_evidence")
+                    db.execute(
+                        "create index idx_business_task_events_task "
+                        "on business_task_events(task_id, created_at, id)"
+                    )
+                except BaseException:
+                    db.execute("rollback to migrate_business_task_events_date_evidence")
+                    db.execute("release migrate_business_task_events_date_evidence")
+                    raise
+                db.execute("release migrate_business_task_events_date_evidence")
             delivery_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(wechat_deliveries)").fetchall()
@@ -6669,8 +6734,15 @@ class AutoReplyStore:
 
     def get_business_task_signal(self, signal_id: int) -> BusinessTaskSignal | None:
         with self._connect() as db:
-            row = db.execute("select * from business_task_signals where id=?", (signal_id,)).fetchone()
-            return self._business_task_signal_from_row(row) if row else None
+            return self.get_business_task_signal_in_transaction(signal_id=signal_id, _db=db)
+
+    def get_business_task_signal_in_transaction(
+        self, *, signal_id: int, _db: sqlite3.Connection
+    ) -> BusinessTaskSignal | None:
+        row = _db.execute(
+            "select * from business_task_signals where id=?", (signal_id,)
+        ).fetchone()
+        return self._business_task_signal_from_row(row) if row else None
 
     def create_business_task(
         self,

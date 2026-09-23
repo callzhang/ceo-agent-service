@@ -178,6 +178,7 @@ class TaskSemanticService:
             dedupe_key=signal.dedupe_key, _db=db
         )
         if existing is not None:
+            self._require_same_signal(signal=signal, persisted=existing)
             return existing.id
         return self.store.create_business_task_signal_in_transaction(
             source_type=signal.source_type,
@@ -196,13 +197,27 @@ class TaskSemanticService:
         )
 
     @staticmethod
+    def _require_same_signal(*, signal: SourceSignal, persisted: BusinessTaskSignal) -> None:
+        fields = (
+            "source_type", "source_ref", "source_time", "conversation_id",
+            "conversation_title", "author_user_id", "author_name", "author_kind",
+            "evidence_text", "context_json", "dedupe_key",
+        )
+        if any(getattr(signal, field) != getattr(persisted, field) for field in fields):
+            raise ValueError("signal dedupe key source payload mismatch")
+
+    @staticmethod
     def _require_task(task: BusinessTask | None, task_id: int) -> BusinessTask:
         if task is None:
             raise ValueError(f"business task {task_id} does not exist")
         return task
 
-    @staticmethod
-    def _replay_result(*, signal: SourceSignal, db: sqlite3.Connection) -> TaskMutationResult | None:
+    def _replay_result(self, *, signal: SourceSignal, db: sqlite3.Connection) -> TaskMutationResult | None:
+        persisted = self.store.get_business_task_signal_by_dedupe_key(
+            dedupe_key=signal.dedupe_key, _db=db
+        )
+        if persisted is not None:
+            self._require_same_signal(signal=signal, persisted=persisted)
         # Commands append the result Task's event last, including a merge's
         # target event. Evidence links can later be copied to another Task;
         # immutable event history preserves the original command result.
@@ -258,7 +273,26 @@ class TaskSemanticService:
             raise ValueError("owner evidence must cite the source")
         if not excerpt.strip() or excerpt not in signal.evidence_text:
             raise ValueError("owner evidence excerpt must occur in the source")
-        if not any(name and name in excerpt for name in (owner_user_id, owner_name)):
+        if owner_name and owner_name not in excerpt:
+            raise ValueError("owner identity must appear in its source evidence excerpt")
+        if owner_user_id:
+            context = json.loads(signal.context_json)
+            mapped = context.get("owner_identity", {})
+            if not isinstance(mapped, dict):
+                mapped = {}
+            author_matches = (
+                signal.author_kind is BusinessActorKind.HUMAN
+                and signal.author_user_id == owner_user_id
+                and (not owner_name or signal.author_name == owner_name)
+            )
+            context_matches = (
+                mapped.get("user_id") == owner_user_id
+                and (not owner_name or mapped.get("name") == owner_name)
+            )
+            text_id_only = not owner_name and owner_user_id in excerpt
+            if not text_id_only and not author_matches and not context_matches:
+                raise ValueError("owner ID requires source identity mapping")
+        elif not owner_name or owner_name not in excerpt:
             raise ValueError("owner identity must appear in its source evidence excerpt")
 
     @staticmethod
@@ -272,9 +306,23 @@ class TaskSemanticService:
 
     @staticmethod
     def _validate_date_facts(
-        date_facts: tuple[TaskDateInput, ...], *, may_commit: bool, owner_user_id: str = ""
+        date_facts: tuple[TaskDateInput, ...], *, signal: SourceSignal,
+        may_commit: bool, owner_user_id: str = ""
     ) -> None:
         for fact in date_facts:
+            if not fact.raw_phrase.strip() or fact.raw_phrase not in signal.evidence_text:
+                raise ValueError("date phrase must occur in its source")
+            agent_next_check = (
+                fact.date_type is BusinessTaskDateType.NEXT_CHECK_AT
+                and fact.actor_kind is BusinessActorKind.AGENT
+                and bool(fact.actor_user_id.strip())
+            )
+            if not agent_next_check and (
+                fact.actor_kind is not signal.author_kind
+                or fact.actor_user_id != signal.author_user_id
+                or fact.actor_name != signal.author_name
+            ):
+                raise ValueError("date actor must match its source actor")
             if fact.date_type is BusinessTaskDateType.COMMITTED_DEADLINE_AT:
                 if not may_commit:
                     raise ValueError("committed deadline requires owner acceptance")
@@ -355,7 +403,7 @@ class TaskSemanticService:
     def record_candidate(self, command: RecordCandidate) -> TaskMutationResult:
         if command.deadline_at:
             raise ValueError("untyped deadline is legacy; use date_facts")
-        self._validate_date_facts(command.date_facts, may_commit=False)
+        self._validate_date_facts(command.date_facts, signal=command.signal, may_commit=False)
         return self._record_new_task(
             signal=command.signal,
             task_fields={
@@ -391,6 +439,7 @@ class TaskSemanticService:
             )
         self._validate_date_facts(
             command.date_facts,
+            signal=command.signal,
             may_commit=command.formality.basis is FormalTaskBasis.EXPLICIT_COMMITMENT,
             owner_user_id=command.owner_user_id,
         )
@@ -519,6 +568,7 @@ class TaskSemanticService:
                 )
             self._validate_date_facts(
                 command.date_facts,
+                signal=command.signal,
                 may_commit=command.formality.basis is FormalTaskBasis.EXPLICIT_COMMITMENT,
                 owner_user_id=owner_user_id,
             )
@@ -602,8 +652,20 @@ class TaskSemanticService:
             )
             if matching_task_ids != (task.id,):
                 raise ValueError("acceptance source must uniquely link to one formal task")
+            referenced_signal = self.store.get_business_task_signal_in_transaction(
+                signal_id=command.referenced_signal_id, _db=db
+            )
+            if not (
+                task.title in command.acceptance_excerpt
+                or (
+                    referenced_signal is not None
+                    and referenced_signal.source_ref in command.acceptance_excerpt
+                )
+            ):
+                raise ValueError("acceptance must name the target task deliverable")
             self._validate_date_facts(
-                command.date_facts, may_commit=True, owner_user_id=task.owner_user_id
+                command.date_facts, signal=command.signal,
+                may_commit=True, owner_user_id=task.owner_user_id
             )
             signal_id = self._signal_id_or_create(signal=command.signal, db=db, now=now)
             after = task.model_copy(
@@ -639,7 +701,7 @@ class TaskSemanticService:
             raise ValueError("commitment transitions require dedicated acceptance commands")
         if command.deadline_at is not None:
             raise ValueError("untyped deadline is legacy; use date_facts")
-        self._validate_date_facts(command.date_facts, may_commit=False)
+        self._validate_date_facts(command.date_facts, signal=command.signal, may_commit=False)
         now = self._now()
         fields = {
             "commitment_status": command.commitment_status,
@@ -666,6 +728,15 @@ class TaskSemanticService:
             )
             if task.status is BusinessTaskStatus.MERGED:
                 raise ValueError("cannot update a merged task")
+            if set(changed) & {"owner_user_id", "owner_name", "owner_evidence_json"}:
+                self._require_source_backed_owner(
+                    signal=command.signal,
+                    owner_user_id=changed.get("owner_user_id", task.owner_user_id),
+                    owner_name=changed.get("owner_name", task.owner_name),
+                    owner_evidence_json=changed.get(
+                        "owner_evidence_json", task.owner_evidence_json
+                    ),
+                )
             signal_id = self._signal_id_or_create(signal=command.signal, db=db, now=now)
             after = task.model_copy(
                 update={

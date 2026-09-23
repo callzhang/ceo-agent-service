@@ -30,8 +30,10 @@ def create_task(store: AutoReplyStore, key: str, *, owner: str = "王明") -> in
         RecordFormalTask(
             title=f"任务 {key}",
             signal=SourceSignal(
-                source_type="message", source_ref=key, evidence_text=f"{owner} 负责 {key}",
+                source_type="message", source_ref=key,
+                evidence_text=f"{owner} 负责 {key}，要求 2026-10-01 前完成",
                 dedupe_key=f"signal:{key}",
+                author_kind=BusinessActorKind.HUMAN, author_user_id="assigner",
             ),
             formality=FormalityEvidence(
                 basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,

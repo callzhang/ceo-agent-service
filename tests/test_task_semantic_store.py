@@ -1054,6 +1054,71 @@ def test_previous_semantic_schema_migrates_without_classifying_legacy_deadline(t
     assert len(AutoReplyStore(path).list_business_task_date_evidence(task_id)) == 1
 
 
+def test_event_constraint_migration_rolls_back_when_copy_fails(tmp_path):
+    path = tmp_path / "event-migration-failure.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        event_sql = db.execute(
+            "select sql from sqlite_master where type='table' and name='business_task_events'"
+        ).fetchone()[0]
+        old_event_sql = event_sql.replace("'date_evidence_recorded', ", "")
+        db.execute("drop table business_task_events")
+        db.execute(old_event_sql)
+        db.execute(
+            """insert into business_task_events
+               (id, task_id, event_type, signal_id, before_json, after_json, reason)
+               values (7, 999, 'created', null, '{}', '{}', 'legacy orphan')"""
+        )
+        db.execute("update service_state set value='2026-09-22.1' where key=?",
+                   (store_module.STORE_SCHEMA_VERSION_KEY,))
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+
+    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+        AutoReplyStore(path)
+
+    with sqlite3.connect(path) as db:
+        names = {row[0] for row in db.execute(
+            "select name from sqlite_master where type='table'"
+        )}
+        assert "business_task_events" in names
+        assert "business_task_events_before_date_evidence" not in names
+        assert db.execute("select id from business_task_events").fetchall() == [(7,)]
+        sql = db.execute(
+            "select sql from sqlite_master where type='table' and name='business_task_events'"
+        ).fetchone()[0]
+        assert "date_evidence_recorded" not in sql
+
+
+def test_event_constraint_migration_recovers_stranded_rename(tmp_path):
+    path = tmp_path / "stranded-event-migration.sqlite3"
+    original = AutoReplyStore(path)
+    task_id = original.create_business_task(title="报价", stage="candidate")
+    with original.business_task_transaction() as db:
+        original.append_business_task_event(
+            task_id=task_id, event_type="created", signal_id=None,
+            before_json="{}", after_json="{}", reason="source event", _db=db,
+        )
+    with sqlite3.connect(path) as db:
+        event_sql = db.execute(
+            "select sql from sqlite_master where type='table' and name='business_task_events'"
+        ).fetchone()[0]
+        db.execute("alter table business_task_events rename to business_task_events_before_date_evidence")
+        db.execute(event_sql)
+        db.execute("update service_state set value='2026-09-22.1' where key=?",
+                   (store_module.STORE_SCHEMA_VERSION_KEY,))
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+
+    recovered = AutoReplyStore(path)
+    assert [event.reason for event in recovered.list_business_task_events(task_id)] == [
+        "source event"
+    ]
+    with recovered._connect() as db:
+        assert db.execute(
+            "select name from sqlite_master where type='table' "
+            "and name='business_task_events_before_date_evidence'"
+        ).fetchone() is None
+
+
 @pytest.mark.parametrize(
     "field", ["context_json", "owner_evidence_json", "missing_evidence_json"]
 )

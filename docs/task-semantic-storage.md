@@ -13,7 +13,11 @@ legacy work records. An existing `2026-09-22.1` semantic database gains the
 append-only date-evidence table and signal actor kind; its Task events retain
 their IDs and history while their constraint gains `date_evidence_recorded`.
 The migration leaves every old, untyped `business_tasks.deadline_at` value
-unchanged and unclassified.
+unchanged and unclassified. Event-table rename, creation, copy, and index
+recreation run in one SQLite savepoint. A failed copy rolls the table rename
+back; initialization also recovers an older interrupted migration that left
+the renamed source table beside an incomplete replacement, after checking
+that overlapping event rows agree.
 
 ## Records and evidence
 
@@ -42,6 +46,9 @@ the source/content deduplication key; its unique constraint rejects duplicates.
 SQLite triggers prohibit UPDATE, DELETE, and replacement of an existing signal.
 The primitive create method raises on duplicate input; returning an existing
 signal from a multi-row command is part of Task 2's transaction service.
+Reuse by deduplication key requires every persisted source and actor field to
+match the submitted signal, including on a replay; a matching key cannot
+turn an unknown or system observation into a human statement.
 
 `business_tasks` stores description, owner identity and supporting evidence,
 an opaque legacy deadline field, missing evidence, last activity, and separate stage, lifecycle,
@@ -56,6 +63,13 @@ no redundant direct source or project pointer on a task. An explicitly assigned
 Task or external TODO remains `assigned_unaccepted` without owner acceptance
 or project membership. A formal Task requires an identified owner and an exact
 source citation. An ownerless action stays candidate or unmatched.
+An owner ID with a name must match the source's human author identity or its
+structured `context_json.owner_identity` user ID/name pair. Co-occurrence of
+two people's names and IDs in prose does not establish a mapping. An ID without
+a name may be cited directly in the excerpt. A source-backed name without a verified ID can be retained,
+but that owner cannot satisfy the owner-ID acceptance requirement. Owner
+changes through the generic update command also need a fresh matching source
+excerpt and source reference.
 
 `business_task_date_evidence` holds append-only typed facts: `assigned_at`,
 `requested_deadline_at`, `external_deadline_at`, `committed_deadline_at`,
@@ -67,6 +81,10 @@ identified human owner's actor ID; only an owner-authored explicit commitment
 or dedicated acceptance transition can record it. Task `created_at` remains
 the system-recorded creation time. Business Tasks may have no date. A concrete
 parseable due date is required separately for a later legacy/DingTalk TODO mirror.
+Each date phrase must occur verbatim in its source signal. Source-derived date
+actor kind, ID, and name must match that signal's author. An operational
+`next_check_at` may instead carry an explicit Agent actor ID while quoting the
+human source phrase that supplied the timing.
 
 Task events retain a typed transition, optional source signal, before/after JSON
 objects, reason, and creation time. Attention events retain the same evidence
@@ -163,6 +181,8 @@ ownerless formalization are rejected before persistence. An external TODO is
 formal but never proves the human owner accepted it. `ApplyAcceptance` requires
 an explicit source excerpt, a human author ID equal to the Task owner, and a
 prior source signal uniquely linked to that one unmerged formal Task. The
+acceptance excerpt must also identify that Task's deliverable by its title or
+the referenced source's exact external reference. The
 acceptance signal and role commit together. Generic `UpdateBusinessTask`
 cannot set commitment status or write the old untyped deadline; date inputs
 create typed evidence rows instead.
