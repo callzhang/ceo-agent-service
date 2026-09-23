@@ -1023,12 +1023,11 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
                 f"sent={process_follow_ups_command(settings, refresh_evidence=False, limit=50)}"
             ),
             "request-minutes-access": lambda: (
-                "request-minutes-access "
-                f"requested={request_minutes_access_command(settings)}"
+                f"request-minutes-access {request_minutes_access_command(settings)}"
             ),
             "sync-minutes-once": lambda: (
                 "sync-minutes-once "
-                f"queued={sync_minutes_once_command(settings)}"
+                f"{sync_minutes_once_command(settings)}"
             ),
             # Cron owns the timing, so the command runs on the trigger rather
             # than re-deciding whether today is its scheduled Sunday.
@@ -2235,7 +2234,7 @@ def scan_meeting_todos_once_command(
     return queued
 
 
-def sync_minutes_once_command(settings: WorkerSettings) -> int:
+def sync_minutes_once_command(settings: WorkerSettings) -> str:
     """Mirror new DingTalk AI minutes into the local archive.
 
     Deterministic throughout, and it sends nothing outward. A partial result
@@ -2266,7 +2265,7 @@ def sync_minutes_once_command(settings: WorkerSettings) -> int:
     print(f"sync-minutes-once {result.summary()}", flush=True)
     if result.failed or result.permission_pending:
         raise RuntimeError(f"sync-minutes-once incomplete: {result.summary()}")
-    return result.synced
+    return result.summary()
 
 
 def authorize_memory_connector_command(settings: WorkerSettings) -> int:
@@ -2376,7 +2375,7 @@ def renew_minutes_session_command(settings: WorkerSettings) -> int:
     return carried
 
 
-def request_minutes_access_command(settings: WorkerSettings) -> int:
+def request_minutes_access_command(settings: WorkerSettings) -> str:
     """Ask each minute's owner for the access the read API refuses us.
 
     Deterministic throughout: the console says which minutes exist, the read
@@ -2411,7 +2410,7 @@ def request_minutes_access_command(settings: WorkerSettings) -> int:
             f"days_left={result.session_expires_in_days:.1f}",
             flush=True,
         )
-    return result.requested
+    return result.summary()
 
 
 def scan_oa_approvals_command(

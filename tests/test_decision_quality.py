@@ -127,8 +127,47 @@ def test_result_rejects_classification_inconsistent_with_incomplete_information(
 
 
 def test_stored_needs_human_projection_requires_the_full_typed_rule_decision():
-    valid = {
+    valid = _rule_gap_result()
+
+    assert (
+        classify_stored_needs_human_projection(valid)
+        is StoredNeedsHumanProjection.NEEDS_HUMAN
+    )
+    assert (
+        classify_stored_needs_human_projection(
+            {**valid, "confidence": 0.9}
+        )
+        is StoredNeedsHumanProjection.INVALID
+    )
+    assert (
+        classify_stored_needs_human_projection(
+            {key: value for key, value in valid.items() if key != "decision_basis"}
+        )
+        is StoredNeedsHumanProjection.INVALID
+    )
+
+
+def _decision_basis() -> dict[str, object]:
+    return {
+        "verified_facts": [
+            {"assertion": "The OA remains running.", "references": ["oa:task:1"]}
+        ],
+        "rule_evidence": [
+            {"assertion": "The rule does not cover this choice.", "references": ["skill:oa#rule"]}
+        ],
+        "quality_explanation": "The evidence is complete and the rule gap is explicit.",
+        "no_external_action_evidence": [
+            {"assertion": "No action receipt exists.", "references": ["attempt:1"]}
+        ],
+        "conclusion": "A reusable rule choice is required.",
+    }
+
+
+def _rule_gap_result() -> dict[str, object]:
+    return {
         "outcome": "needs_human",
+        "summary": "A rule choice is required.",
+        "proposal": None,
         "risk": "high",
         "confidence": 0.2,
         "rule_coverage": 1.0,
@@ -147,51 +186,21 @@ def test_stored_needs_human_projection_requires_the_full_typed_rule_decision():
                 "consequence": "后续同类任务自动处理",
             },
         ],
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "needs_human_reason": "The current Skill has no rule for this decision.",
+        "decision_basis": _decision_basis(),
     }
-
-    assert (
-        classify_stored_needs_human_projection(valid)
-        is StoredNeedsHumanProjection.NEEDS_HUMAN
-    )
-    assert (
-        classify_stored_needs_human_projection(
-            {**valid, "confidence": 0.9}
-        )
-        is StoredNeedsHumanProjection.INVALID
-    )
-    assert (
-        classify_stored_needs_human_projection(
-            {key: value for key, value in valid.items() if key != "rule_coverage"}
-        )
-        is StoredNeedsHumanProjection.INVALID
-    )
 
 
 def test_stored_needs_human_projection_rejects_authorization_error():
     """A runtime authorization error is not a reusable rule decision."""
     result = {
-        "outcome": "needs_human",
-        "risk": "high",
-        "confidence": 0.2,
-        "rule_coverage": 1.0,
-        "information_completeness": 1.0,
-        "decision_options": [
-            {
-                "key": "retry",
-                "label": "retry",
-                "instruction": "retry this action",
-                "consequence": "a provider action may happen",
-            },
-            {
-                "key": "stop",
-                "label": "stop",
-                "instruction": "do not retry",
-                "consequence": "the task remains incomplete",
-            },
-        ],
-        "error_code": "external_action_authorization_required",
-        "error_retryable": False,
-        "error_authorization_required": True,
+        **_rule_gap_result(),
+        "error": {
+            "code": "confirmation_required",
+            "retryable": True,
+            "authorization_required": True,
+        },
     }
 
     assert (
@@ -200,34 +209,42 @@ def test_stored_needs_human_projection_rejects_authorization_error():
     )
 
 
-def test_stored_needs_human_projection_accepts_scoped_external_authorization():
-    """A bounded action choice is a business decision, not a provider error."""
+def test_stored_needs_human_projection_authorization_plan_obeys_quality_gate():
+    """A bounded authorization plan is not an extra needs_human route."""
     result = {
-        "outcome": "needs_human",
-        "risk": "high",
-        "confidence": 0.2,
-        "rule_coverage": 1.0,
-        "information_completeness": 1.0,
-        "decision_options": [
-            {
-                "key": "authorize_current_oa_retry",
-                "label": "授权本审批重跑",
-                "instruction": "仅对当前 OA 实例和任务授权执行。",
-                "consequence": "服务可能对当前审批执行外部动作。",
+        **_rule_gap_result(),
+        "error": {
+            "code": "authorization_required",
+            "retryable": False,
+            "authorization_required": True,
+        },
+        "needs_human_reason": "The high-risk OA action requires one specific authorization.",
+        "authorization_plan": {
+            "summary": "Return the current OA task to its supervisor.",
+            "primary_action": {
+                "description": "Return the current OA task to its supervisor.",
+                "action_identity": "return-oa-task",
+                "capability": "agent_cli.dws",
+                "operation": "oa approval revert-task",
+                "target": {
+                    "oa_process_instance_id": "process-1",
+                    "oa_task_id": "task-1",
+                },
+                "payload": {},
+                "effect": "external",
             },
-            {
-                "key": "leave_oa_untouched",
-                "label": "保持不处理",
-                "instruction": "不授权当前 OA 任务执行外部动作。",
-                "consequence": "审批继续保持当前状态。",
-            },
-        ],
-        "error_code": "external_action_authorization_required",
-        "error_retryable": False,
-        "error_authorization_required": True,
+            "follow_up_actions": [],
+            "side_effects": ["The current OA task is returned to its supervisor."],
+            "will_not_do": ["The OA is not approved or rejected."],
+            "readback": ["Read the OA history after the action."],
+        },
     }
 
     assert (
         classify_stored_needs_human_projection(result)
         is StoredNeedsHumanProjection.NEEDS_HUMAN
+    )
+    assert (
+        classify_stored_needs_human_projection({**result, "confidence": 0.9})
+        is StoredNeedsHumanProjection.INVALID
     )

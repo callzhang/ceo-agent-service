@@ -2933,24 +2933,11 @@ def test_worker_defers_without_audit_when_context_refresh_fails(tmp_path: Path):
     assert executor.audit_prompt == ""
 
 
-def test_worker_retries_authorization_failed_turn_after_gate_recovery(tmp_path: Path):
+def test_worker_corrects_provider_authorization_flag_in_same_task_turn(tmp_path: Path):
     trigger = _message("Send the approved message.")
     executor = AuthorizationRecoveryProtocolExecutor()
     worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
     task_id = _enqueue(worker.store, trigger)
-
-    assert worker.consume_once(max_tasks=1) == 0
-
-    waiting = worker.store.get_reply_task(task_id)
-    assert waiting is not None
-    assert waiting.status == "pending"
-    assert waiting.error == "authorization_required"
-    assert executor.audit_attempts == 1
-    with worker.store._connect() as db:
-        db.execute(
-            "update reply_tasks set available_at='' where id=?",
-            (task_id,),
-        )
 
     assert worker.consume_once(max_tasks=1) == 1
 
@@ -2963,7 +2950,9 @@ def test_worker_retries_authorization_failed_turn_after_gate_recovery(tmp_path: 
     assert [run.status for run in audit_runs] == ["failed", "completed"]
 
 
-def test_worker_defers_authorization_failure_at_attempt_limit(tmp_path: Path):
+def test_provider_authorization_correction_does_not_consume_task_attempt(
+    tmp_path: Path,
+):
     trigger = _message("Send the approved message.")
     executor = AuthorizationRecoveryProtocolExecutor()
     worker, _dws = _worker_with_protocol_executor(
@@ -2974,13 +2963,13 @@ def test_worker_defers_authorization_failure_at_attempt_limit(tmp_path: Path):
     )
     task_id = _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 1
 
-    waiting = worker.store.get_reply_task(task_id)
-    assert waiting is not None
-    assert waiting.status == "pending"
-    assert waiting.error == "authorization_required"
-    assert waiting.attempts == 0
+    completed = worker.store.get_reply_task(task_id)
+    assert completed is not None
+    assert completed.status == "done"
+    assert completed.attempts == 1
+    assert executor.audit_attempts == 2
 
 
 def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):

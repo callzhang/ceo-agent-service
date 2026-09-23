@@ -39,6 +39,11 @@ pending -> running -> done
   Audit、路由、schema 或重试失败一律使用 `failed`；已完成的外部动作也不改变这条分类。
   重跑前由 `external_action_key` 和 provider 回读机械去重，而不是把“可能已执行”伪造成
   Derek 的规则选择。
+- 每个 `needs_human` 结果还必须包含面向用户的 `needs_human_reason` 和可追溯的
+  `decision_basis`：已核验事实、适用规则、质量分值解释、未执行证据和结论。高风险外部
+  动作需要单一、与当前 OA 实例/任务匹配的 `authorization_plan`，写明动作、影响、不会执行
+  的动作以及执行后的读回。Attempt 详情只根据当前 Attempt 指向的有效终态 run 展示这份说明；
+  旧 run 或不完整结果不能把 `done` 投影成当前人工待办。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
 ## 功能机制开关与任务生产
@@ -91,13 +96,14 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 `instruction` 和 `consequence`/影响；其余由适用 Skill 自主完成。ask-back 不计入 needs_human。
 反馈可同时选择 one-time 与 Skill update；二者复用同一业务对象和同一 attempt，在 provider 仍可访问的
 同一 session 中生成新 revision，不新建 session。技术、provider、读取、路由、schema、Audit 或 retry failure
-永远是 `failed`；领域 `authorization_required` 也不泛化为 `needs_human`，不能用低分绕过失败。
+永远是 `failed`；领域 `authorization_required` 也不泛化为 `needs_human`。只有精确通用码、
+匹配当前动作的授权计划和统一质量门槛全部成立，才可形成结构化人工规则决策。
 provider 返回 `confirmation_required` 也属于运行时失败边界：它表示外部动作尚未执行，
 不是需要 Derek 决定的业务规则缺口。必须保留具体错误并落为 `failed`，不能生成“确认执行/停止”
 这类泛化的人工作业按钮；修复旧投影时同时清空这类选项。
-同理，持久化的 `needs_human` 结果若声称 `error_retryable` 或
-`error_authorization_required` 为真，说明它仍在报告运行时失败，不能作为规则决策展示；启动修复将其
-收口为 `failed` 并保留该结果给 History 排查。
+同理，持久化的 `needs_human` 结果若声称 `error_retryable` 为真，或
+`error_authorization_required` 为真但缺少精确通用码、授权计划或统一门槛，不能作为规则决策
+展示；启动修复将其收口为 `failed` 并保留该结果给 History 排查。
 
 新 wire 结果的四字段均为必填并严格校验。旧 `final_result_json` hydration 仅可受控补齐
 `rule_coverage=1.0`、`information_completeness=1.0`，保留旧的 `risk`/`confidence`；原始历史
@@ -696,7 +702,9 @@ DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 cla
 `ceo-minutes-sync-daily-v1` 在启动时原地转换为命令形式（保留名称、Cron、时区，未编辑过的旧 seed
 转换后启用，已编辑的保留用户的启用状态，已删除的不动）。AI 听记同步不再需要 Skill 判断：分页读取
 摘要与逐字稿、写入本地归档、维护内容游标都由 `app/minutes_sync.py` 确定性完成，时长不足五分钟的
-会议直接跳过，服务不会代为申请任何听记权限。OKR 周报同样是服务命令：它唯一的动作就是执行一条确定性命令，而那条命令的实时 OKR 读取会跑到五十分钟以上，任何 Agent 超时都装不下，被杀之后命令还会脱离运行记录继续跑。因此当前没有任何种子任务是 Agent 形式，Cron 在所有模型路由都不可用时仍然照常工作。Lark 没有
+会议直接跳过。成功运行的归档命令单行结果摘要会持久化到 scheduled run，并显示在定时任务运行记录中，包含
+`discovered`、`synced`、`skipped`、`permission_requested`、`permission_pending`、`failed` 计数及可操作的跳过明细。
+另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析、失败数量及会话剩余天数。OKR 周报同样是服务命令：它唯一的动作就是执行一条确定性命令，而那条命令的实时 OKR 读取会跑到五十分钟以上，任何 Agent 超时都装不下，被杀之后命令还会脱离运行记录继续跑。因此当前没有任何种子任务是 Agent 形式，Cron 在所有模型路由都不可用时仍然照常工作。Lark 没有
 默认 seed。
 内部投递、发送状态确认、错误恢复及 Todo completion follow-up 仍是内部机制，不外化为 Cron。
 

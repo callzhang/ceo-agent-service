@@ -506,7 +506,10 @@ def test_the_daily_service_command_archives_every_minute_the_pass_discovered(
         AutoReplyStore(settings.db_path), object(), settings
     )
 
-    assert registry.run("sync-minutes-once") == "sync-minutes-once queued=9"
+    assert registry.run("sync-minutes-once") == (
+        "sync-minutes-once discovered=9 synced=9 skipped=0 "
+        "permission_requested=0 permission_pending=0 failed=0"
+    )
     assert len(list((tmp_path / "AI听记").rglob("*.md"))) == 9
 
 

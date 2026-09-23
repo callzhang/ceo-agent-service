@@ -20,7 +20,7 @@ pending -> running -> done
 - `revision_pending`：修正版已排队；必须有新的 revision，并保留原 run、反馈、session 和外部回执的关系。
 - `done`：任务逻辑完成且结果已持久化。
 - `sent`：历史兼容名称；新任务以 `done` 表示完成，provider 发送结果保存在 trace。
-- `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；不是技术读取失败的兜底状态。
+- `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；不是技术读取失败的兜底状态。每个结果必须附带面向用户的 `needs_human_reason` 和可追溯 `decision_basis`（已核验事实、适用规则、质量分值解释、未发生外部动作的依据和结论）。若理由只是技术、路由、schema、Audit 或重试失败，该投影无效并收口为 `failed`。高风险外部动作还必须提供匹配当前对象的单一 `authorization_plan`，说明动作、影响、明确排除的动作及执行后读回；详情页只展示由当前 Attempt 所指 run 的有效结构化依据。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败，并保留失败阶段和原因。
 
 审核闭环如下：
@@ -89,15 +89,16 @@ scheduled_tasks
 
 定时任务有两种执行形式，由 `scheduled_tasks.command` 区分。`command` 为空的是 Agent 任务，
 走上面的完整路径。`command` 非空的是服务命令任务：它只声明服务命令目录中的一个名字（当前是
-DingTalk 消息、DingTalk 近期消息恢复、微信消息、会议、OA、工作来源和 AI 听记同步），不需要
+DingTalk 消息、DingTalk 近期消息恢复、微信消息、会议、OA、工作来源、受限 AI 听记权限申请和 AI 听记同步），不需要
 Runtime、Skill 或工作目录。判断标准是这次执行本身有没有判断空间：确定性的发现或同步工作属于
 服务命令，需要 Skill 判断的才是 Agent 任务。AI 听记同步的分页读取、归档和内容游标都由
 `app/minutes_sync.py` 确定性完成，因此它也是服务命令。
 scheduled adapter 领取 trigger 后，Dispatcher 在本进程内直接运行该命令；成功时把
-`service_command + 命令名` 记为 trigger 的 execution link 并标记 `dispatched`，失败时 trigger
+`service_command + 命令名` 记为 trigger 的 execution link、保存命令返回的单行结果摘要并标记 `dispatched`，失败时 trigger
 以 `failed` 结束并进入 Attention。服务命令任务不创建 synthetic scheduled reply task、agent run
 或 reply_attempt；命令发现真实对象后，才由既有 reply、meeting 或 work-summary Consumer 处理。
-因此没有新对象时不会在消息历史里留下每分钟一条的记录。`scheduled-task-options` 为每个服务
+运行记录 API 和定时任务页面展示已保存的结果摘要；旧运行记录的摘要为空。这样服务命令即使没有
+创建 Agent Attempt，也能显示本次扫描数量和结果。没有新对象时不会在消息历史里留下每分钟一条的记录。`scheduled-task-options` 为每个服务
 命令附带一份从服务状态计算的只读“下游”描述（通道、consumer 执行器、角色边界常量、实际加载的
 Skill、consumer 要求的 Runtime 能力和路由可用性），页面据此说明命令发现的消息会被谁处理：
 
@@ -673,14 +674,15 @@ ask-back，继续现有 Audit/send 链路；ask-back 不落新的 outcome，也�
 `instruction` 和 `consequence`/影响；其余由 Skill 自主完成。one-time 与 Skill update 可同时作为
 反馈选择，复用同一业务对象、attempt 和兼容 session，产生新 revision，不新建 session。
 技术、provider、receipt、读取、路由、schema、Audit、retry failure 永远为 `failed`；领域
-`authorization_required` 不泛化为人工升级，低分也不能绕过失败。
+`authorization_required` 不泛化为人工升级；只有精确的通用错误码、匹配当前动作的授权计划和统一质量门槛同时成立，才可形成结构化规则决策。
 provider 返回 `confirmation_required` 同样属于运行时失败边界：外部动作尚未执行，服务必须保留具体
 错误并落为 `failed`，不得创建泛化的“确认执行外部操作/停止当前事项”选项。
 
 新 wire 四字段必填且严格校验。当前投影不兼容旧的“状态字符串 + 服务生成按钮”逻辑：
 `needs_human` 必须能追溯到完整 `final_result_json`，字段缺失、非法值、outer outcome mismatch、
-无 Agent run、选项不完整，或 `error_retryable` / `error_authorization_required` 为真都 fail-closed 为
-`failed`；后两者表示运行时错误而非规则缺口。保留原始历史 run/audit，不改写其内容。
+无 Agent run、选项不完整或 `error_retryable` 为真都 fail-closed 为 `failed`；`error_authorization_required`
+只有精确通用码 `authorization_required`、匹配的单一授权计划和同一质量门槛全部成立才有效。
+保留原始历史 run/audit，不改写其内容。
 服务启动时幂等修复这种 current projection，同时清空服务生成的选项。Quality gate/Attention
 只统计修复后的 current latest projection；reviewed、historical、pending recovery 排除。
 

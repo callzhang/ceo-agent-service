@@ -1197,6 +1197,38 @@ def test_console_status_route_registers_a_response_model(tmp_path: Path):
     assert route.response_model is not None
 
 
+def test_console_status_accepts_human_decision_evidence(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        audit_web_module,
+        "_human_decision_attention_rows",
+        lambda _store: [{
+            "category": "Rule decision",
+            "id": "42",
+            "status": "needs_human",
+            "context": "Approval",
+            "summary": "A rule choice is required",
+            "updated_at": "2026-09-23 04:00:00",
+            "error": "",
+            "root_cause": "Missing rule",
+            "detail_label": "Decision basis",
+            "detail": "The current policy does not cover this case.",
+            "detail_url": "/attempts/42",
+        }],
+    )
+
+    with _client(tmp_path, raise_server_exceptions=False) as client:
+        response = client.get("/api/console/status")
+        attention = client.get("/api/console/attention")
+
+    assert response.status_code == 200
+    assert response.json()["item"]["human_decision_rows"][0]["detail"] == (
+        "The current policy does not cover this case."
+    )
+    assert response.json()["item"]["summary"]["attention"] == 0
+    assert attention.status_code == 200
+    assert attention.json()["meta"]["total"] == 0
+
+
 @pytest.mark.parametrize(
     ("model", "payload"),
     (
@@ -2377,6 +2409,25 @@ def test_console_attention_humanizes_markup_and_bounds_primary_summary():
     assert "command=" not in service_error.summary
     assert service_error.root_cause == "dws command failed"
     assert service_error.detail == long_error
+
+
+def test_console_attention_explains_invalid_human_projection_as_failure():
+    [group] = group_attention_rows(
+        [
+            {
+                "category": "Reply task",
+                "id": "9733",
+                "status": "failed",
+                "context": "审批待办",
+                "summary": "旧处理结果",
+                "updated_at": "2026-09-22 20:35:50",
+                "error": "invalid_needs_human_projection",
+            }
+        ]
+    )
+
+    assert group.root_cause == "人工决策结果结构不完整，未进入人工决策队列"
+    assert group.error == "invalid_needs_human_projection"
 
 
 def test_spa_attention_reads_current_snapshot_after_status_cache_is_warm(monkeypatch, tmp_path: Path):

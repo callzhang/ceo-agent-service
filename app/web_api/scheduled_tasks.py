@@ -172,6 +172,7 @@ def _run_payload(
         "skip_or_error_reason": run.skip_or_error_reason,
         "execution_kind": run.execution_kind,
         "execution_id": run.execution_id,
+        "result_summary": run.result_summary,
         "created_at": _utc_text(run.created_at),
         "dispatched_at": _utc_text(run.dispatched_at),
         "attempts": [

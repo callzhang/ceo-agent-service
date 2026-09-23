@@ -27,6 +27,35 @@ def project_attempt_status(attempt: Any, task: Any, runs: list[Any]) -> str:
         if not generation
         or str(getattr(run, "execution_generation", "") or "").strip() == generation
     ]
+    if (
+        fallback == "needs_human"
+        and current_runs
+        and int(getattr(attempt, "agent_run_id", 0) or 0) > 0
+    ):
+        latest_run = max(
+            current_runs,
+            key=lambda run: (
+                int(getattr(run, "turn_attempt", 0) or 0),
+                int(getattr(run, "proposal_revision", 0) or 0),
+                int(getattr(run, "id", 0) or 0),
+            ),
+        )
+        if int(getattr(latest_run, "id", 0) or 0) == int(attempt.agent_run_id):
+            from app.decision_quality import (
+                StoredNeedsHumanProjection,
+                classify_stored_needs_human_projection,
+            )
+
+            if getattr(latest_run, "status", "") != "completed":
+                return "failed"
+            if (
+                classify_stored_needs_human_projection(
+                    getattr(latest_run, "final_result_json", "")
+                )
+                is StoredNeedsHumanProjection.NEEDS_HUMAN
+            ):
+                return "needs_human"
+            return "failed"
     # A closed task outranks a run that failed inside it. Attempt 9136 is the
     # live case: reply task 383933 was closed `skipped` on 2026-09-15 because a
     # later weekly OKR report succeeded, while its last run stayed `failed`

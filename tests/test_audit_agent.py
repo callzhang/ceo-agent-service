@@ -275,12 +275,35 @@ def test_an_earlier_turns_send_does_not_reject_this_one(setup):
                 "retryable": False,
                 "authorization_required": False,
             },
-            "risk": "high",
-            "confidence": 0.4,
-            "rule_coverage": 0.5,
-            "information_completeness": 0.5,
-        }
-    )
+                "risk": "high",
+                "confidence": 0.4,
+                "rule_coverage": 0.5,
+                "information_completeness": 0.5,
+                "needs_human_reason": "当前规则无法决定是否将此前外发的消息作为本事项的最终处理。",
+                "decision_basis": {
+                    "verified_facts": [
+                        {
+                            "assertion": "上一轮已外发一条消息。",
+                            "references": [f"agent_run:{first.run.id}"],
+                        }
+                    ],
+                    "rule_evidence": [
+                        {
+                            "assertion": "当前规则没有覆盖既有外发消息与本次处理的对应关系。",
+                            "references": ["skill:test-audit-boundary"],
+                        }
+                    ],
+                    "quality_explanation": "已读到当前事项和既有外发记录，但规则只部分覆盖该对应关系。",
+                    "no_external_action_evidence": [
+                        {
+                            "assertion": "本轮没有执行新的外部动作。",
+                            "references": [f"agent_run:{retry.run.id}"],
+                        }
+                    ],
+                    "conclusion": "需要选择是否把既有消息作为本事项的最终处理。",
+                },
+            }
+        )
     runner = AuditAgentRunner(
         store=store, workspace=Path("/workspace"), owner="audit-test"
     )
@@ -1019,6 +1042,39 @@ def test_audit_prompt_uses_quality_gate_priority(setup):
     assert "only risk and confidence" not in prompt
 
 
+def test_audit_prompt_treats_service_postfix_as_trusted_delivery_content(setup):
+    store, task, audit_context, parent = setup
+    audit_context = replace(
+        audit_context,
+        proposal=ConsumerProposal.model_validate(
+            {
+                "objective": "Send reviewed questions",
+                "actions": [
+                    {
+                        "description": "Reply in the source group",
+                        "action_identity": "send-questions",
+                        "capability": "dingtalk-chat",
+                        "operation": "send_group_message",
+                        "target": {"conversation_id": task.conversation_id},
+                        "payload": {"content": "Two reviewed questions."},
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "Requested by Derek",
+            }
+        ),
+    )
+    executor = CapturingExecutor(_audit_jsonl("operation-1", session="postfix"))
+
+    AuditAgentRunner(store=store, workspace=Path("/workspace"), executor=executor).run(
+        task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id
+    )
+
+    prompt = executor.prompts[0]
+    assert "service-owned delivery postfix" in prompt
+    assert "must not request a Consumer revision" in prompt
+
+
 def test_audit_runtime_environment_overrides_ambient_send_mode(
     setup, monkeypatch
 ):
@@ -1451,7 +1507,11 @@ def test_audit_result_missing_proposal_revision_is_result_invalid(setup):
     assert "proposal_revision" in error["detail"]
 
 
-def test_audit_rejects_provider_confirmation_as_a_human_decision(setup):
+@pytest.mark.parametrize(
+    "error_code",
+    ("confirmation_required", "authorization_required"),
+)
+def test_audit_rejects_provider_confirmation_as_a_human_decision(setup, error_code):
     store, task, audit_context, parent = setup
     wire = _wire_result(
         {
@@ -1461,7 +1521,7 @@ def test_audit_rejects_provider_confirmation_as_a_human_decision(setup):
             "feedback": None,
             "external_result": None,
             "error": {
-                "code": "confirmation_required",
+                "code": error_code,
                 "retryable": False,
                 "authorization_required": True,
             },

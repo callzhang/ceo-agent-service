@@ -31,9 +31,10 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
     assert "PDF" in descriptions["read_text_file"]
     assert "email unsubscribe" in descriptions["execute_audited_email_unsubscribe"]
     assert "Unsubscribe this email task" in descriptions["unsubscribe_email"]
-    assert "exact prepared DingTalk action" in descriptions[
-        "send_approved_dingtalk_message"
-    ]
+    assert (
+        "exact prepared DingTalk action"
+        in descriptions["send_approved_dingtalk_message"]
+    )
     assert "Consumer and Audit commands" in agent_cli.server.instructions
     assert "execute_email_unsubscribe" not in descriptions
 
@@ -47,10 +48,10 @@ def test_approved_dingtalk_message_tool_reaches_service_helper(monkeypatch, tmp_
     monkeypatch.setattr(
         agent_cli,
         "send_approved_dingtalk_message",
-        lambda received_db, task_id, action_identity: calls.append(
-            (received_db, task_id, action_identity)
-        )
-        or {"delivery_status": "sent"},
+        lambda received_db, task_id, action_identity: (
+            calls.append((received_db, task_id, action_identity))
+            or {"delivery_status": "sent"}
+        ),
     )
 
     result = asyncio.run(
@@ -171,6 +172,142 @@ def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(tmp_p
     assert dws.calls[0][2]["idempotency_uuid"]
 
 
+def test_approved_dingtalk_reply_uses_persisted_trigger_and_reuses_receipt(tmp_path):
+    from app.dingtalk_models import DingTalkMessage
+    from app.service_message_sender import agent_message_delivery_key
+    from app.store import AgentRole, AutoReplyStore
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    trigger = DingTalkMessage(
+        open_conversation_id="cid-trigger",
+        open_message_id="msg-trigger",
+        conversation_title="Friday",
+        single_chat=False,
+        sender_name="Reporter",
+        sender_open_dingtalk_id="open-reporter",
+        create_time="2026-09-22 10:00:00",
+        content="Please close the loop",
+    )
+    assert store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        execution_generation="generation-1",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer",
+    ).run
+    store.complete_agent_run(
+        consumer.id,
+        {
+            "outcome": "proposal",
+            "summary": "Reply to the report.",
+            "proposal": {
+                "objective": "Close the loop",
+                "actions": [
+                    {
+                        "description": "Reply to the triggering report.",
+                        "action_identity": "reply-to-report",
+                        "capability": "dingtalk-chat",
+                        "operation": "messages-reply",
+                        "effect": "external",
+                        "target": {
+                            "conversation_id": trigger.open_conversation_id,
+                            "message_id": trigger.open_message_id,
+                        },
+                        "payload": {"content": "Please send the success receipt."},
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "A reply is required.",
+            },
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+        },
+        owner="consumer",
+    )
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-reply",
+        owner="audit",
+    ).run
+    assert audit.status == "running"
+    delivery_key = agent_message_delivery_key(
+        business_object_key=task.business_object_key,
+        action_identity="reply-to-report",
+        execution_generation=task.execution_generation,
+        proposal_revision=0,
+    )
+    prepared = store.prepare_outbound_postfix(
+        "dingtalk",
+        delivery_key,
+        "Please send the success receipt.",
+        trigger.content,
+    )
+
+    class FakeDws:
+        def __init__(self):
+            self.calls = []
+
+        def send_reply_to_trigger(self, conversation, received_trigger, text):
+            self.calls.append((conversation, received_trigger, text))
+            return {"success": True, "result": {"processQueryKey": "reply-1"}}
+
+        @staticmethod
+        def verify_message_send_result(result):
+            assert result["result"]["processQueryKey"] == "reply-1"
+            return {"state": "sent", "open_task_id": ""}
+
+    dws = FakeDws()
+    first = agent_cli.send_approved_dingtalk_message(
+        store.path,
+        task.id,
+        "reply-to-report",
+        dws_client=dws,
+    )
+    replay = agent_cli.send_approved_dingtalk_message(
+        store.path,
+        task.id,
+        "reply-to-report",
+        dws_client=dws,
+    )
+
+    assert first == replay
+    assert first["delivery_status"] == "sent"
+    assert first["delivery_key"] == delivery_key
+    assert len(dws.calls) == 1
+    conversation, received_trigger, text = dws.calls[0]
+    assert conversation.open_conversation_id == trigger.open_conversation_id
+    assert received_trigger == trigger
+    assert text == prepared.final_body
+
+
 def test_audited_email_unsubscribe_tool_reaches_worker_helper(monkeypatch, tmp_path):
     import app.config as config
     import app.email_worker as email_worker
@@ -286,9 +423,7 @@ def test_registered_reaction_write_is_accepted_when_dws_schema_is_incomplete():
     ]
 
     classifier = Unclassified()
-    canonical, command = agent_cli._classify_reviewed_write(
-        argv, classifier=classifier
-    )
+    canonical, command = agent_cli._classify_reviewed_write(argv, classifier=classifier)
 
     assert canonical == tuple(argv)
     assert command.cli == "dws"
@@ -706,8 +841,15 @@ def test_explicit_authorization_requires_a_consuming_boundary_before_runner(
     monkeypatch: pytest.MonkeyPatch,
 ):
     argv = [
-        "dws", "chat", "message", "send", "--user", "user-1", "--text",
-        "hello", "--yes",
+        "dws",
+        "chat",
+        "message",
+        "send",
+        "--user",
+        "user-1",
+        "--text",
+        "hello",
+        "--yes",
     ]
     authorization = agent_cli.review_write_authorization(
         argv, "confirmation-1", 0, classifier=_write_classifier()

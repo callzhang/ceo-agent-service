@@ -44,6 +44,61 @@
       "title": "AgentError",
       "type": "object"
     },
+    "AuthorizationPlan": {
+      "additionalProperties": false,
+      "description": "One bounded, externally effective action awaiting a human decision.",
+      "properties": {
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "primary_action": {
+          "$ref": "#/$defs/ProposedAction"
+        },
+        "follow_up_actions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProposedAction"
+          },
+          "title": "Follow Up Actions",
+          "type": "array"
+        },
+        "side_effects": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Side Effects",
+          "type": "array"
+        },
+        "will_not_do": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Will Not Do",
+          "type": "array"
+        },
+        "readback": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Readback",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "primary_action",
+        "side_effects",
+        "will_not_do",
+        "readback"
+      ],
+      "title": "AuthorizationPlan",
+      "type": "object"
+    },
     "ConsumerOutcome": {
       "enum": [
         "proposal",
@@ -89,6 +144,55 @@
         "authored_judgment"
       ],
       "title": "ConsumerProposal",
+      "type": "object"
+    },
+    "DecisionBasis": {
+      "additionalProperties": false,
+      "description": "The compact evidence chain a person needs to assess an escalation.",
+      "properties": {
+        "verified_facts": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "minItems": 1,
+          "title": "Verified Facts",
+          "type": "array"
+        },
+        "rule_evidence": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "minItems": 1,
+          "title": "Rule Evidence",
+          "type": "array"
+        },
+        "quality_explanation": {
+          "minLength": 1,
+          "title": "Quality Explanation",
+          "type": "string"
+        },
+        "no_external_action_evidence": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "minItems": 1,
+          "title": "No External Action Evidence",
+          "type": "array"
+        },
+        "conclusion": {
+          "minLength": 1,
+          "title": "Conclusion",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verified_facts",
+        "rule_evidence",
+        "quality_explanation",
+        "no_external_action_evidence",
+        "conclusion"
+      ],
+      "title": "DecisionBasis",
       "type": "object"
     },
     "DecisionOption": {
@@ -268,12 +372,21 @@
           "maxItems": 4,
           "minItems": 2,
           "type": "array"
+        },
+        "needs_human_reason": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "decision_basis": {
+          "type": "object"
         }
       },
       "required": [
         "outcome",
         "proposal",
-        "decision_options"
+        "decision_options",
+        "needs_human_reason",
+        "decision_basis"
       ],
       "type": "object"
     }
@@ -328,6 +441,40 @@
       "minimum": 0.0,
       "title": "Information Completeness",
       "type": "number"
+    },
+    "needs_human_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Needs Human Reason"
+    },
+    "decision_basis": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DecisionBasis"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "authorization_plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuthorizationPlan"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

@@ -115,12 +115,35 @@ def _bounded_needs_human_result() -> ConsumerAgentResult:
             "risk": "high",
             "confidence": 0.1,
             "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "error": {
-                "code": "management_decision_required",
-                "retryable": False,
-                "authorization_required": True,
-            },
+                "information_completeness": 1.0,
+                "needs_human_reason": "当前规则没有覆盖这项高风险事实调研的决策边界。",
+                "decision_basis": {
+                    "verified_facts": [
+                        {
+                            "assertion": "调研可能涉及外部主体。",
+                            "references": ["task:current"],
+                        }
+                    ],
+                    "rule_evidence": [
+                        {
+                            "assertion": "现有规则没有定义此类高风险调研的处理方式。",
+                            "references": ["skill:test-rule"],
+                        }
+                    ],
+                    "quality_explanation": "事实和规则材料完整，但高风险判断没有足够确信度。",
+                    "no_external_action_evidence": [
+                        {
+                            "assertion": "当前 run 尚未执行外部动作。",
+                            "references": ["agent_run:pending"],
+                        }
+                    ],
+                    "conclusion": "需要针对可复用规则作出选择。",
+                },
+                "error": {
+                    "code": "",
+                    "retryable": False,
+                    "authorization_required": False,
+                },
         }
     )
 
@@ -218,7 +241,6 @@ def test_synthetic_audit_failure_has_quality_fields_without_needs_human_options(
 
     result = _failed_audit_result(
         type("Run", (), {"proposal_revision": 0})(),
-        AuditOutcome.FAILED,
         AgentError(code="provider_read_failed", retryable=True),
     )
     assert result.outcome is AuditOutcome.FAILED
@@ -227,6 +249,26 @@ def test_synthetic_audit_failure_has_quality_fields_without_needs_human_options(
     assert result.confidence == 0.0
     assert result.rule_coverage == 1.0
     assert result.information_completeness == 1.0
+
+
+def test_synthetic_authorization_failure_cannot_create_a_human_card():
+    from app.agent_orchestrator import _failed_audit_result
+
+    result = _failed_audit_result(
+        type("Run", (), {"proposal_revision": 0})(),
+        AgentError(
+            code="confirmation_required",
+            retryable=True,
+            authorization_required=True,
+        ),
+    )
+
+    assert result.outcome is AuditOutcome.FAILED
+    assert result.error.code == "confirmation_required"
+    assert result.decision_options == ()
+    assert result.needs_human_reason is None
+    assert result.decision_basis is None
+    assert result.authorization_plan is None
 
 
 class ScriptedConsumer:

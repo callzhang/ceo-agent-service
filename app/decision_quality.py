@@ -4,7 +4,7 @@ from enum import StrEnum
 import json
 from math import isfinite
 from numbers import Real
-from typing import Any, Mapping
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -122,60 +122,34 @@ def classify_stored_needs_human_projection(
 ) -> StoredNeedsHumanProjection:
     """Accept only a complete, typed rule decision as a human projection."""
 
+    return (
+        StoredNeedsHumanProjection.NEEDS_HUMAN
+        if parse_stored_needs_human_decision(result) is not None
+        else StoredNeedsHumanProjection.INVALID
+    )
+
+
+def parse_stored_needs_human_decision(result: object):
+    """Return a validated terminal human decision, never a partial JSON shape.
+
+    Imports stay local because the typed result models use this module's quality
+    classifier while they are being defined.
+    """
+
     if isinstance(result, str):
         try:
             result = json.loads(result)
         except (TypeError, json.JSONDecodeError):
-            return StoredNeedsHumanProjection.INVALID
-    if not isinstance(result, Mapping) or result.get("outcome") != "needs_human":
-        return StoredNeedsHumanProjection.INVALID
-    error = result.get("error")
-    retryable = result.get("error_retryable") is True or (
-        isinstance(error, Mapping) and error.get("retryable") is True
-    )
-    authorization_required = result.get("error_authorization_required") is True or (
-        isinstance(error, Mapping) and error.get("authorization_required") is True
-    )
-    if retryable:
-        return StoredNeedsHumanProjection.INVALID
-    try:
-        quality = classify_decision_quality(
-            risk=result["risk"],
-            confidence=result["confidence"],
-            rule_coverage=result["rule_coverage"],
-            information_completeness=result["information_completeness"],
-        )
-    except (KeyError, TypeError, ValueError):
-        return StoredNeedsHumanProjection.INVALID
-    if quality.classification is not DecisionQuality.NEEDS_HUMAN:
-        return StoredNeedsHumanProjection.INVALID
-    options = result.get("decision_options")
-    if not isinstance(options, list) or not 2 <= len(options) <= 4:
-        return StoredNeedsHumanProjection.INVALID
-    keys: set[str] = set()
-    for option in options:
-        if not isinstance(option, Mapping):
-            return StoredNeedsHumanProjection.INVALID
-        if any(
-            not isinstance(option.get(field), str) or not option[field].strip()
-            for field in ("key", "label", "instruction", "consequence")
-        ):
-            return StoredNeedsHumanProjection.INVALID
-        if option["key"] in keys:
-            return StoredNeedsHumanProjection.INVALID
-        keys.add(option["key"])
-    if authorization_required:
-        error_code = result.get("error_code")
-        if not isinstance(error_code, str) and isinstance(error, Mapping):
-            error_code = error.get("code")
-        scoped_authorization = (
-            error_code == "external_action_authorization_required"
-            and any(key.startswith("authorize_") for key in keys)
-            and any(
-                key.startswith("leave_") and key.endswith("_untouched")
-                for key in keys
-            )
-        )
-        if not scoped_authorization:
-            return StoredNeedsHumanProjection.INVALID
-    return StoredNeedsHumanProjection.NEEDS_HUMAN
+            return None
+    if not isinstance(result, dict) or result.get("outcome") != "needs_human":
+        return None
+    from pydantic import ValidationError
+
+    from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
+
+    for model in (ConsumerAgentResult, AuditAgentResult):
+        try:
+            return model.model_validate(result)
+        except ValidationError:
+            continue
+    return None

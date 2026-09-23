@@ -30,6 +30,7 @@ from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
     ProcessExecutor,
+    repeated_result_failure_requires_fresh_session,
     result_correction_prompt,
 )
 from app.agent_wire_contracts import (
@@ -133,10 +134,26 @@ score that contradicts the summary is invalid.
 
 Technical/provider/read/route/schema/Audit/retry failure is always `failed`,
 regardless of any quality score; do not upgrade it to `needs_human`.
-Domain-level `authorization_required` is a specific business result and must
-not be generalized into the `needs_human` quality gate. When feedback is
-applied, reuse the same business object and attempt and a compatible session;
-create a new revision for the replacement, not a new session.
+A genuine high-risk authorization boundary is still subject to the same quality
+gate: information must be complete and either risk must be high with confidence
+below 0.5, or rule coverage must be below 0.5. An authorization plan never
+bypasses that classification. Only the exact generic error code
+`authorization_required` may accompany this needs_human shape; provider
+confirmation and other authorization-related execution errors remain `failed`.
+After reading the complete material and applicable rule, identify one exact
+external action and its exact target that the Skill does not authorize
+autonomously. Every `needs_human` result must include a
+plain-language `needs_human_reason` and a `decision_basis` with verified facts,
+applicable rule evidence, quality explanation, proof that no external action
+has happened, and a conclusion. For this authorization boundary, also include
+an `authorization_plan`: its `summary` must exactly equal the single
+`primary_action.description`; list its external `side_effects`, what it will
+not do, and its required `readback`. Confidence describes evidence and
+judgment, never whether a person has granted permission. A technical failure
+never supplies a human reason, decision basis, or authorization plan. When
+feedback is applied, reuse the same business object and attempt and a
+compatible session; create a new revision for the replacement, not a new
+session.
 """.strip()
 AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION = """
 Use the current work profile, complete conversation context, and inspected
@@ -270,9 +287,16 @@ the existing proposal/Audit/send chain. Otherwise, `needs_human` is allowed
 only when (`risk == high` and `confidence < 0.5`) or `rule_coverage < 0.5`;
 provide 2-4 mutually exclusive executable rule/Skill options, with one-time
 feedback and Skill update selectable together. Technical/provider/read/route/
-schema/Audit/retry failures are always `failed`; domain `authorization_required`
-is not a generic `needs_human`. Feedback reuses the same business object,
-attempt, and compatible session and creates a new revision, not a new session.
+schema/Audit/retry failures are always `failed`. A high-risk authorization
+boundary is subject to this same classifier and cannot bypass its thresholds.
+Only the exact generic `authorization_required` error code may accompany that
+decision, with an exact external action and target, `needs_human_reason`,
+`decision_basis`, and `authorization_plan`; the plan summary must equal the
+primary action description and state side effects, excluded actions, and
+readback. Confidence describes evidence, not a missing authorization. A
+technical failure never has those human-decision fields. Feedback reuses the
+same business object, attempt, and compatible session and creates a new
+revision, not a new session.
 The
 application does not sandbox your commands: read whatever the selected Skill
 capabilities let you read, and never refuse work by citing a policy the
@@ -369,7 +393,11 @@ Rules stated in this contract are active service behavior. When a request asks f
 current rule and do not describe its implementation as pending merely because there is no separate deployment receipt.
 """.strip()
 AUDIT_ROLE_BOUNDARY = """
-You are Audit Agent B. Review the supplied typed candidate against the task context and applicable business Skills. Return one valid Audit Agent wire JSON object matching the schema, including top-level `risk`, `confidence`, `rule_coverage`, and `information_completeness` (each 0 to 1, with risk low/medium/high) for every task type and outcome. If information_completeness < 0.5, require a normal single-question ask-back proposal and do not create a persistent outcome. Otherwise, `needs_human` applies only when (risk == high and confidence < 0.5) or rule_coverage < 0.5; require 2-4 mutually exclusive executable rule/Skill options, allowing one-time feedback and Skill update together. Technical/provider/read/route/schema/Audit/retry failures are always failed; authorization_required is not generic needs_human. Feedback reuses the same business object, attempt, and compatible session and creates a new revision, not a new session. Return feedback_provided with concrete rule, observation, and requested_revision fields when Consumer must regenerate its result. Return executed, needs_human, or failed for the other terminal outcomes. Provider command names, MCP tools, receipts, and readback procedures are runtime capabilities and are not application review conditions. For OKR approval/review, verify the live OKR and apply evidence proportionate to the request. For target setting or target adjustment, verify target text, owner, scope, and rationale; do not require completed delivery evidence merely to approve a future commitment. For completion review, require the relevant metrics and acceptance evidence. Verify that Consumer chose approve (通过) or reject (不通过); never convert this covered decision into needs_human. When the candidate has a valid OKR approve/reject judgment but the OKR provider has no usable write operation, execute the supported applicant notification action in the same candidate, report that the OKR record was not changed, and do not turn the covered business judgment into failed or needs_human. Send any correction back to Consumer as feedback_provided. Legacy revision_required is accepted only as input and normalized to feedback_provided output.
+You are Audit Agent B. Review the supplied typed candidate against the task context and applicable business Skills. Return one valid Audit Agent wire JSON object matching the schema, including top-level `risk`, `confidence`, `rule_coverage`, and `information_completeness` (each 0 to 1, with risk low/medium/high) for every task type and outcome. If information_completeness < 0.5, require a normal single-question ask-back proposal and do not create a persistent outcome. Otherwise, `needs_human` applies when (risk == high and confidence < 0.5) or rule_coverage < 0.5; require 2-4 mutually exclusive executable rule/Skill options, allowing one-time feedback and Skill update together. A high-risk authorization boundary remains subject to that same classification; only the exact generic `authorization_required` code may accompany it, with one exact external action and target plus `needs_human_reason`, `decision_basis`, and `authorization_plan`; the plan summary must equal the primary action description and state side effects, excluded actions, and readback. Confidence describes evidence, not a missing permission. Technical/provider/read/route/schema/Audit/retry failures are always failed and must never contain those human-decision fields. Feedback reuses the same business object, attempt, and compatible session and creates a new revision, not a new session. Return feedback_provided with concrete rule, observation, and requested_revision fields when Consumer must regenerate its result. Return executed, needs_human, or failed for the other terminal outcomes. Provider command names, MCP tools, receipts, and readback procedures are runtime capabilities and are not application review conditions. For OKR approval/review, verify the live OKR and apply evidence proportionate to the request. For target setting or target adjustment, verify target text, owner, scope, and rationale; do not require completed delivery evidence merely to approve a future commitment. For completion review, require the relevant metrics and acceptance evidence. Verify that Consumer chose approve (通过) or reject (不通过); never convert this covered decision into needs_human. When the candidate has a valid OKR approve/reject judgment but the OKR provider has no usable write operation, execute the supported applicant notification action in the same candidate, report that the OKR record was not changed, and do not turn the covered business judgment into failed or needs_human. Send any correction back to Consumer as feedback_provided. Legacy revision_required is accepted only as input and normalized to feedback_provided output.
+Authorization decisions follow the same quality thresholds as every other
+needs_human result. The plan adds evidence, not another route to needs_human.
+Only the exact generic error code `authorization_required` may accompany
+that plan; provider `confirmation_required` remains a failed result.
 For a covered service-triggered external action already represented by the typed
 candidate, Audit approval is the execution confirmation. Execute prepared chat
 messages through the service-owned approved-message capability; never invoke a
@@ -630,6 +658,12 @@ class ConsumerAgentRunner:
             role=AgentRole.CONSUMER,
             proposal_revision=proposal_revision,
         )
+        force_new_session = repeated_result_failure_requires_fresh_session(
+            self.store,
+            task,
+            role=AgentRole.CONSUMER,
+            proposal_revision=proposal_revision,
+        )
 
         result = process.execute(
                 run=claim.run,
@@ -677,7 +711,7 @@ class ConsumerAgentRunner:
                 image_paths=[Path(path) for path in context.image_paths],
                 required_capabilities=self._required_capabilities(context),
                 conversation_contract_hash=contract_hash,
-                force_new_session=False,
+                force_new_session=force_new_session,
         )
         self._report_unreviewed_provider_effects(task, result)
         return result
@@ -830,9 +864,13 @@ def structured_dingtalk_outgoing_text_key(action: ProposedAction) -> str | None:
         or target.get("sender_open_dingtalk_id")
         or ""
     ).strip()
-    if action.operation in {"messages-reply", "message.reply"}:
+    if action.operation in {"messages-reply", "message.reply", "reply"}:
         return text_key if conversation_id and message_id else None
-    if action.operation in {"send_to_group", "messages-send-to-group"}:
+    if action.operation in {
+        "send_to_group",
+        "messages-send-to-group",
+        "send_group_message",
+    }:
         return text_key if conversation_id else None
     return text_key if recipient else None
 
@@ -1043,5 +1081,12 @@ def _role_developer_instructions(
         "\n\nThe shared-rules section above is the complete service-provided context "
         "for this turn. Do not reopen AGENT.md with shell, Python, or a native "
         "command tool; use the selected Skill capability for additional material."
+    )
+    instructions += (
+        "\n\nThis is a background service turn, not an interactive Codex session. "
+        "The current work profile is already injected below, so interactive session "
+        "bootstrap requirements do not apply: do not call `memory_connector.user_get` "
+        "as a session-start prerequisite. Use Memory tools only when the current "
+        "business task specifically needs durable memory evidence."
     )
     return instructions + "\n\n## Role Boundary\n" + role_boundary

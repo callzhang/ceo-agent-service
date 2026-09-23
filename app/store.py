@@ -76,6 +76,7 @@ from app.config import feedback_spike_vercel_base_url
 from app.decision_quality import (
     StoredNeedsHumanProjection,
     classify_stored_needs_human_projection,
+    parse_stored_needs_human_decision,
 )
 from app.feedback_spike import (
     extract_configured_feedback_link_context,
@@ -429,6 +430,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "lease_expires_at",
         "first_scheduled_for",
         "occurrence_count",
+        "result_summary",
     ),
     "dispatcher_claim_leases": (
         "terminal_at",
@@ -2540,6 +2542,7 @@ class AutoReplyStore:
                     lease_expires_at text,
                     created_at text not null default current_timestamp,
                     dispatched_at text,
+                    result_summary text not null default '',
                     foreign key(scheduled_task_id) references scheduled_tasks(id)
                 );
                 create unique index if not exists idx_scheduled_task_runs_scheduled_instant
@@ -5264,6 +5267,11 @@ class AutoReplyStore:
                     "alter table scheduled_task_runs add column "
                     "occurrence_count integer not null default 1"
                 )
+            if "result_summary" not in scheduled_run_columns:
+                db.execute(
+                    "alter table scheduled_task_runs add column "
+                    "result_summary text not null default ''"
+                )
             db.execute(
                 "update scheduled_task_runs set first_scheduled_for=scheduled_for "
                 "where first_scheduled_for=''"
@@ -5766,6 +5774,12 @@ class AutoReplyStore:
     def _require_scheduled_task_text(value: object, *, field: str) -> str:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field} must be nonempty")
+        return value.strip()
+
+    @staticmethod
+    def _scheduled_task_result_summary(value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("scheduled task run result summary must be text")
         return value.strip()
 
     @staticmethod
@@ -7671,7 +7685,7 @@ class AutoReplyStore:
             "first_scheduled_for, occurrence_count, "
             "dispatch_status, skip_or_error_reason, snapshot_json, "
             "execution_kind, execution_id, lease_owner, lease_expires_at, "
-            "created_at, dispatched_at"
+            "created_at, dispatched_at, result_summary"
         )
 
     @classmethod
@@ -7703,6 +7717,7 @@ class AutoReplyStore:
             snapshot=snapshot,
             execution_kind=str(row["execution_kind"]),
             execution_id=str(row["execution_id"]),
+            result_summary=str(row["result_summary"]),
             lease_owner=str(row["lease_owner"]),
             lease_expires_at=(
                 parse_utc_datetime(
@@ -8057,6 +8072,7 @@ class AutoReplyStore:
         owner: str,
         execution_kind: str,
         execution_id: str,
+        result_summary: str = "",
         now: datetime | None = None,
     ) -> ScheduledTaskRun:
         owner = self._require_scheduled_task_text(
@@ -8068,6 +8084,7 @@ class AutoReplyStore:
         execution_id = self._require_scheduled_task_text(
             execution_id, field="scheduled task run execution id"
         )
+        result_summary = self._scheduled_task_result_summary(result_summary)
         now_text = self._scheduled_task_time_text(
             now or datetime.now(timezone.utc),
             field="scheduled task run execution link time",
@@ -8076,12 +8093,12 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update scheduled_task_runs
-                   set execution_kind=?, execution_id=?
+                   set execution_kind=?, execution_id=?, result_summary=?
                  where id=? and dispatch_status='pending' and lease_owner=?
                    and lease_expires_at > ?
                    and execution_kind='' and execution_id=''
                 """,
-                (execution_kind, execution_id, run_id, owner, now_text),
+                (execution_kind, execution_id, result_summary, run_id, owner, now_text),
             )
             if cursor.rowcount != 1:
                 raise ValueError(
@@ -23069,12 +23086,23 @@ class AutoReplyStore:
                 """
                 select attempts.id as attempt_id, attempts.agent_run_id,
                        attempts.send_status, attempts.send_error,
-                       runs.reply_task_id, runs.final_result_json,
+                       attempts.channel, attempts.conversation_id,
+                       attempts.trigger_message_id,
+                       runs.reply_task_id, runs.execution_generation,
+                       runs.final_result_json,
                        runs.structured_error_json
                 from reply_attempts as attempts
                 left join agent_runs as runs on runs.id=attempts.agent_run_id
                 where (
                         attempts.send_status='needs_human'
+                        or (
+                            attempts.send_status='failed'
+                            and attempts.send_error in (
+                                'needs_human',
+                                'external_action_authorization_required',
+                                'invalid_needs_human_projection'
+                            )
+                        )
                         or (
                             attempts.send_status='failed'
                             and exists (
@@ -23107,10 +23135,23 @@ class AutoReplyStore:
                     is StoredNeedsHumanProjection.NEEDS_HUMAN
                 ):
                     continue
-                error_code = str(row["send_error"] or "").strip() or (
-                    self._projection_failure_code(
-                        row["structured_error_json"], row["final_result_json"]
-                    )
+                # Once strict validation rejects a stored ``needs_human``
+                # payload, its former error code is not trustworthy.  In
+                # particular, ``external_action_authorization_required`` and
+                # ``needs_human`` used to be copied from malformed Consumer
+                # output and made a technical failure look like a live human
+                # authorization request.  Keep the current projection
+                # explicitly classified as invalid instead of preserving the
+                # misleading legacy label.
+                existing_error = str(row["send_error"] or "").strip()
+                error_code = (
+                    "invalid_needs_human_projection"
+                    if existing_error in {
+                        "",
+                        "needs_human",
+                        "external_action_authorization_required",
+                    }
+                    else existing_error
                 )
                 attempt_changed = 0
                 if row["send_status"] == "needs_human":
@@ -23132,9 +23173,15 @@ class AutoReplyStore:
                         update reply_tasks
                         set status='failed', error=?, available_at='', locked_at=null,
                             updated_at=current_timestamp
-                        where id=? and status in ('done', 'needs_human')
+                        where id=? and execution_generation=?
+                          and channel=? and conversation_id=? and trigger_message_id=?
+                          and status in ('done', 'needs_human', 'pending', 'processing')
                         """,
-                        (error_code, row["reply_task_id"]),
+                        (
+                            error_code, row["reply_task_id"], row["execution_generation"],
+                            row["channel"], row["conversation_id"],
+                            row["trigger_message_id"],
+                        ),
                     )
                     if task_cursor.rowcount and not attempt_changed:
                         reconciled += 1
@@ -23153,7 +23200,8 @@ class AutoReplyStore:
             rows = db.execute(
                 """
                 select tasks.id as task_id, attempts.id as attempt_id,
-                       attempts.send_status, runs.id as run_id,
+                       attempts.send_status, attempts.oa_process_instance_id,
+                       attempts.oa_task_id, runs.id as run_id,
                        runs.final_result_json
                 from reply_tasks as tasks
                 join agent_runs as runs on runs.id=(
@@ -23185,20 +23233,21 @@ class AutoReplyStore:
             ).fetchall()
             reconciled = 0
             for row in rows:
-                if (
-                    classify_stored_needs_human_projection(
-                        row["final_result_json"]
-                    )
-                    is not StoredNeedsHumanProjection.NEEDS_HUMAN
+                decision = parse_stored_needs_human_decision(
+                    row["final_result_json"]
+                )
+                if decision is None or not self._authorization_plan_matches_attempt(
+                    decision,
+                    oa_process_instance_id=str(row["oa_process_instance_id"] or ""),
+                    oa_task_id=str(row["oa_task_id"] or ""),
                 ):
                     continue
-                result = json.loads(row["final_result_json"])
                 decision_options = json.dumps(
-                    result["decision_options"],
+                    [option.model_dump(mode="json") for option in decision.decision_options],
                     ensure_ascii=False,
                     separators=(",", ":"),
                 )
-                summary = str(result.get("summary") or "").strip()
+                summary = decision.summary
                 attempt_cursor = db.execute(
                     """
                     update reply_attempts
@@ -23232,6 +23281,25 @@ class AutoReplyStore:
                 if attempt_cursor.rowcount or task_cursor.rowcount:
                     reconciled += 1
             return reconciled
+
+    @staticmethod
+    def _authorization_plan_matches_attempt(
+        decision: object,
+        *,
+        oa_process_instance_id: str,
+        oa_task_id: str,
+    ) -> bool:
+        plan = getattr(decision, "authorization_plan", None)
+        if plan is None:
+            return True
+        target = plan.primary_action.target
+        for field, value in (
+            ("oa_process_instance_id", oa_process_instance_id),
+            ("oa_task_id", oa_task_id),
+        ):
+            if value and str(target.get(field) or "") != value:
+                return False
+        return True
 
     @staticmethod
     def _projection_failure_code(*payload_sources: str | None) -> str:
@@ -24253,6 +24321,13 @@ class AutoReplyStore:
                 left join agent_runs as runs on runs.id=attempts.agent_run_id
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and not exists (
+                      select 1 from agent_runs as attempt_run
+                      join reply_tasks as current_task
+                        on current_task.id=attempt_run.reply_task_id
+                      where attempt_run.id=attempts.agent_run_id
+                        and attempt_run.execution_generation<>current_task.execution_generation
+                  )
+                  and not exists (
                       select 1
                       from reply_tasks as historical_task
                       join business_object_tasks as current_business_object
@@ -24343,6 +24418,13 @@ class AutoReplyStore:
                 from reply_attempts as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and not exists (
+                      select 1 from agent_runs as attempt_run
+                      join reply_tasks as current_task
+                        on current_task.id=attempt_run.reply_task_id
+                      where attempt_run.id=attempts.agent_run_id
+                        and attempt_run.execution_generation<>current_task.execution_generation
+                  )
+                  and not exists (
                       select 1
                       from reply_tasks as historical_task
                       join business_object_tasks as current_business_object
@@ -24428,6 +24510,13 @@ class AutoReplyStore:
                 select count(*) as count
                 from reply_attempts as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
+                  and not exists (
+                      select 1 from agent_runs as attempt_run
+                      join reply_tasks as current_task
+                        on current_task.id=attempt_run.reply_task_id
+                      where attempt_run.id=attempts.agent_run_id
+                        and attempt_run.execution_generation<>current_task.execution_generation
+                  )
                   and not exists (
                       select 1
                       from reply_tasks as historical_task
@@ -24692,6 +24781,13 @@ class AutoReplyStore:
                             process_attempts.id desc
                         limit 1
                     )
+                )
+                  and not exists (
+                    select 1 from agent_runs as attempt_run
+                    join reply_tasks as current_task
+                      on current_task.id=attempt_run.reply_task_id
+                    where attempt_run.id=reply_attempts.agent_run_id
+                      and attempt_run.execution_generation<>current_task.execution_generation
                 )
                   -- Legacy retries can have distinct physical projections for
                   -- one reply task. Keep their immutable runs, but show only
@@ -29660,6 +29756,13 @@ class AutoReplyStore:
                     0 as follow_up_id
                 from reply_attempts
                 where not exists (
+                    select 1 from agent_runs as attempt_run
+                    join reply_tasks as current_task
+                      on current_task.id=attempt_run.reply_task_id
+                    where attempt_run.id=reply_attempts.agent_run_id
+                      and attempt_run.execution_generation<>current_task.execution_generation
+                )
+                  and not exists (
                     select 1
                     from agent_runs as historical_run
                     join reply_attempts as newer_attempt

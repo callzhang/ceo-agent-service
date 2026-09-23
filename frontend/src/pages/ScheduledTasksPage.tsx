@@ -86,6 +86,13 @@ function timeLabel(value: string | null) {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function runStatusLabel(status: ScheduledTaskRun["dispatch_status"]) {
+  if (status === "pending") return "等待执行";
+  if (status === "dispatched") return "已完成";
+  if (status === "skipped") return "已跳过";
+  return "失败";
+}
+
 function boundedCronStep(field: string, maximum: number) {
   const parts = field.split("/");
   if (parts.length !== 2 || parts[0] !== "*" || !/^\d+$/.test(parts[1])) return null;
@@ -206,7 +213,7 @@ function TaskListItem({ task, selected, onSelect }: { task: ScheduledTask; selec
     <small>{task.description}</small>
     <span>{task.schedule_description}</span>
     <small>下次：{timeLabel(task.next_run_at)}</small>
-    <small>最近：{task.recent_run?.dispatch_status || "尚未运行"}</small>
+    <small>最近：{task.recent_run ? runStatusLabel(task.recent_run.dispatch_status) : "尚未运行"}</small>
   </button>;
 }
 
@@ -217,7 +224,7 @@ interface RunHistoryEntry { run: ScheduledTaskRun; oldest: ScheduledTaskRun; cou
 function runHistoryGroupKind(run: ScheduledTaskRun): RunHistoryGroupKind | null {
   if (run.trigger_kind !== "scheduled" || run.attempts.length > 0) return null;
   if (run.dispatch_status === "skipped" && run.skip_or_error_reason === PREVIOUS_EXECUTION_ACTIVE) return "previous_execution_active";
-  if (run.dispatch_status === "dispatched" && run.execution_kind === "service_command") return "service_check";
+  if (run.dispatch_status === "dispatched" && run.execution_kind === "service_command" && !run.result_summary?.trim()) return "service_check";
   return null;
 }
 
@@ -243,7 +250,7 @@ function RunHistory({ runs, latestAttemptRun, hasMore, loading, onMore, commandO
   return <section className="scheduled-task-history" aria-labelledby="scheduled-task-history-title">
     <div className="scheduled-task-section-heading"><h3 id="scheduled-task-history-title">运行记录</h3><span>{entries.length} 条</span></div>
     {entries.length === 0 ? <p className="scheduled-task-empty-copy">尚无运行记录。</p> : <ol>{entries.map((entry) => <li key={`${entry.kind || "run"}:${entry.run.id}`}>
-      <div><strong>{entry.run.trigger_kind === "manual" ? "手动运行" : "定时触发"}</strong><span>{entry.kind ? "已合并" : entry.run.dispatch_status}</span>{entry.latestAttempt && <span className="scheduled-task-effective-trigger">最近一次触发 Agent</span>}</div>
+      <div><strong>{entry.run.trigger_kind === "manual" ? "手动运行" : "定时触发"}</strong><span>{entry.kind ? "已合并" : runStatusLabel(entry.run.dispatch_status)}</span>{entry.latestAttempt && <span className="scheduled-task-effective-trigger">最近一次触发 Agent</span>}</div>
       <small>{entry.count > 1 ? `${timeLabel(entry.oldest.first_scheduled_for)} – ${timeLabel(entry.run.scheduled_for)}` : timeLabel(entry.run.scheduled_for)}</small>
       {entry.kind === "service_check" ? <span className="scheduled-task-attempt-links">{entry.count} 次检查未触发 Agent</span>
         : entry.kind === "previous_execution_active" ? <span className="scheduled-task-attempt-links">上一轮运行期间跳过 {entry.count} 个定时点</span>
@@ -252,6 +259,7 @@ function RunHistory({ runs, latestAttemptRun, hasMore, loading, onMore, commandO
         const command = commandOptions.find((option) => option.name === entry.run.execution_id);
         return <span className="scheduled-task-command"><span>{command?.display_name || "服务命令"}</span><details><summary>技术详情</summary><small>{entry.run.execution_id}</small></details></span>;
       })() : entry.run.execution_kind && entry.run.execution_id && <span>{entry.run.execution_kind} #{entry.run.execution_id}</span>}
+      {entry.run.result_summary?.trim() && <p className="scheduled-task-result-summary">{entry.run.result_summary}</p>}
       {entry.run.skip_or_error_reason && entry.kind === null && <p>{entry.run.skip_or_error_reason}</p>}
     </li>)}</ol>}
     {hasMore && <button type="button" className="secondary-button" disabled={loading} onClick={onMore}>{loading ? "加载中…" : "加载更多运行记录"}</button>}

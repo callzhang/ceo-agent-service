@@ -1259,6 +1259,14 @@ def test_consumer_resumes_session_when_agent_capability_contract_changes(
     )
 
 
+def test_service_agent_instructions_skip_interactive_memory_bootstrap() -> None:
+    instructions = consumer_developer_instructions("Verify supported facts.")
+
+    assert "background service turn" in instructions
+    assert "do not call `memory_connector.user_get` as a session-start prerequisite" in instructions
+    assert "current work profile is already injected" in instructions
+
+
 def test_consumer_retryable_failure_without_tool_progress_preserves_session(
     store, task, context
 ):
@@ -1807,6 +1815,58 @@ def test_retry_after_missing_result_creates_new_run_in_same_session(store, task,
     assert store.get_codex_session_id(task.conversation_id) == "session-old"
 
 
+def test_repeated_identical_result_failure_restarts_consumer_session(
+    store, task, context
+):
+    store.upsert_conversation(
+        task.conversation_id,
+        task.conversation_title,
+        task.single_chat,
+        "session-stuck",
+    )
+    store.set_codex_session_contract_hash(
+        task.conversation_id, consumer_wire_contract_hash()
+    )
+    failure = {
+        "code": "codex_result_invalid",
+        "retryable": True,
+        "authorization_required": False,
+        "detail": "same invalid external action claim",
+        "session_continuable": True,
+    }
+    for turn_attempt in range(2):
+        owner = f"consumer-{turn_attempt}"
+        claim = store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+            turn_attempt=turn_attempt,
+            parent_agent_run_id=None,
+            operation_id="",
+            owner=owner,
+        )
+        assert claim.claimed
+        store.set_agent_run_session(
+            claim.run.id,
+            "session-stuck",
+            owner=owner,
+        )
+        store.fail_agent_run(claim.run.id, failure, owner=owner)
+
+    executor = CapturingExecutor(_result_jsonl(session="session-recovered"))
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert "resume" not in executor.commands[0]
+    assert store.get_codex_session_id(task.conversation_id) == "session-recovered"
+
+
 def test_consumer_preserves_codex_cli_authentication_failure(store, task, context):
     stdout = "\n".join(
         (
@@ -2105,6 +2165,18 @@ def test_consumer_accepts_valid_nested_output_locally(store, task, context):
             {"conversation_id": "cid-agent", "message_id": "message-1"},
             {"reply_text": "Verified notice."},
             "reply_text",
+        ),
+        (
+            "reply",
+            {"conversation_id": "cid-agent", "message_id": "message-1"},
+            {"content": "Verified notice."},
+            "content",
+        ),
+        (
+            "send_group_message",
+            {"conversation_id": "cid-agent"},
+            {"content": "Verified notice."},
+            "content",
         ),
     ),
 )

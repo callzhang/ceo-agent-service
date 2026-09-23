@@ -13,7 +13,6 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     ConsumerOutcome,
     ConsumerProposal,
-    DecisionOption,
 )
 from app.agent_result import AgentError, ResultParseError
 from app.agent_turn_runner import AgentTurnRunResult
@@ -151,7 +150,6 @@ class _NextConsumer:
     proposal_revision: int
     parent_run_id: int | None
     feedback: AuditFeedback | None
-    authorization_error_code: str = ""
     deferred_error_code: str = ""
     domain_continuation: bool = False
     required_receipt_id: str = ""
@@ -164,7 +162,6 @@ class _NextAudit:
     turn_attempt: int
     parent_run_id: int
     proposal: ConsumerProposal | None
-    authorization_error_code: str = ""
     deferred_error_code: str = ""
 
 
@@ -173,7 +170,6 @@ class _Deferred:
     run: AgentRun | None
     code: str
     feedback_cycles: int
-    authorization_required: bool = False
     detail: str = ""
 
 
@@ -245,14 +241,10 @@ class AgentOrchestrator:
                 if isinstance(state, _NextConsumer):
                     attempt_key = (AgentRole.CONSUMER, state.proposal_revision, "run")
                     max_attempts = (
-                        1
-                        if (state.authorization_error_code or state.deferred_error_code)
-                        else MAX_ROLE_ATTEMPTS_PER_PROCESS
+                        1 if state.deferred_error_code else MAX_ROLE_ATTEMPTS_PER_PROCESS
                     )
                     if role_attempts.get(attempt_key, 0) >= max_attempts:
-                        if not (
-                            state.authorization_error_code or state.deferred_error_code
-                        ):
+                        if not state.deferred_error_code:
                             return self._retry_exhausted_result(
                                 task,
                                 role=AgentRole.CONSUMER,
@@ -261,15 +253,8 @@ class AgentOrchestrator:
                         return self._deferred_result(
                             _Deferred(
                                 run=None,
-                                code=(
-                                    state.authorization_error_code
-                                    or state.deferred_error_code
-                                    or "consumer_retry_deferred"
-                                ),
+                                code=state.deferred_error_code or "consumer_retry_deferred",
                                 feedback_cycles=self._feedback_cycles(task),
-                                authorization_required=bool(
-                                    state.authorization_error_code
-                                ),
                             )
                         )
                     role_attempts[attempt_key] = role_attempts.get(attempt_key, 0) + 1
@@ -306,14 +291,10 @@ class AgentOrchestrator:
                     # longer part of orchestration.
                     attempt_key = (AgentRole.AUDIT, state.proposal_revision, "run")
                     max_attempts = (
-                        1
-                        if state.authorization_error_code or state.deferred_error_code
-                        else MAX_ROLE_ATTEMPTS_PER_PROCESS
+                        1 if state.deferred_error_code else MAX_ROLE_ATTEMPTS_PER_PROCESS
                     )
                     if role_attempts.get(attempt_key, 0) >= max_attempts:
-                        if not (
-                            state.authorization_error_code or state.deferred_error_code
-                        ):
+                        if not state.deferred_error_code:
                             return self._retry_exhausted_result(
                                 task,
                                 role=AgentRole.AUDIT,
@@ -322,15 +303,8 @@ class AgentOrchestrator:
                         return self._deferred_result(
                             _Deferred(
                                 run=None,
-                                code=(
-                                    state.authorization_error_code
-                                    or state.deferred_error_code
-                                    or "audit_retry_deferred"
-                                ),
+                                code=state.deferred_error_code or "audit_retry_deferred",
                                 feedback_cycles=self._feedback_cycles(task),
-                                authorization_required=bool(
-                                    state.authorization_error_code
-                                ),
                             )
                         )
                     role_attempts[attempt_key] = role_attempts.get(attempt_key, 0) + 1
@@ -626,7 +600,6 @@ class AgentOrchestrator:
                     audit_state.turn_attempt,
                     consumer.id,
                     consumer_state.proposal,
-                    audit_state.authorization_error_code,
                     audit_state.deferred_error_code,
                 )
             if not isinstance(audit_state, AuditAgentResult):
@@ -736,9 +709,7 @@ class AgentOrchestrator:
                     run,
                     feedback,
                     feedback_cycles,
-                    authorization_error_code=(
-                        error.code or "authorization_required"
-                    ),
+                    deferred_error_code=error.code or "authorization_required",
                     runs_by_id=runs_by_id,
                     domain_snapshot=domain_snapshot,
                 )
@@ -746,7 +717,6 @@ class AgentOrchestrator:
                 run,
                 error.code or "authorization_required",
                 feedback_cycles,
-                authorization_required=True,
             )
         if run.status == "failed" and error.retryable:
             if error.code in {
@@ -838,9 +808,6 @@ class AgentOrchestrator:
             if task.error == error.code:
                 return _NextAudit(
                     run.proposal_revision,
-                    # Failed runs have a durable unique turn key. A recovery
-                    # must create a fresh Audit turn rather than attempting to
-                    # claim the already failed one.
                     run.turn_attempt + 1,
                     run.parent_agent_run_id or 0,
                     None,
@@ -850,7 +817,6 @@ class AgentOrchestrator:
                 run,
                 error.code or "authorization_required",
                 feedback_cycles,
-                authorization_required=True,
             )
         if run.status == "failed" and error.retryable:
             if error.code in {
@@ -897,7 +863,7 @@ class AgentOrchestrator:
                 run.parent_agent_run_id or 0,
                 None,
             )
-        result = _failed_audit_result(run, AuditOutcome.FAILED, error)
+        result = _failed_audit_result(run, error)
         return _audit_terminal(_failure_status(error), run, result, feedback_cycles)
 
     def _retry_feedback(
@@ -1169,7 +1135,6 @@ class AgentOrchestrator:
         feedback: AuditFeedback | None,
         feedback_cycles: int,
         *,
-        authorization_error_code: str = "",
         deferred_error_code: str = "",
         runs_by_id: dict[int, AgentRun] | None = None,
         domain_snapshot: object | None = None,
@@ -1179,7 +1144,6 @@ class AgentOrchestrator:
                 run.proposal_revision,
                 run.parent_agent_run_id,
                 feedback,
-                authorization_error_code,
                 deferred_error_code,
             )
         continuation = self._consumer_parent_continuation(
@@ -1201,7 +1165,6 @@ class AgentOrchestrator:
             run.proposal_revision,
             run.parent_agent_run_id,
             feedback,
-            authorization_error_code,
             deferred_error_code,
             domain_continuation=True,
             required_receipt_id=decision.required_receipt_id,
@@ -1304,7 +1267,7 @@ class AgentOrchestrator:
         return _audit_terminal(
             "failed_terminal",
             run,
-            _failed_audit_result(run, AuditOutcome.FAILED, error),
+            _failed_audit_result(run, error),
             feedback_cycles,
         )
 
@@ -1384,7 +1347,6 @@ class AgentOrchestrator:
             error=AgentError(
                 code=state.code,
                 retryable=True,
-                authorization_required=state.authorization_required,
             ),
             feedback_cycles=state.feedback_cycles,
         )
@@ -1536,38 +1498,15 @@ def _audit_terminal(
 
 def _failed_audit_result(
     run: AgentRun,
-    outcome: AuditOutcome,
     error: AgentError,
 ) -> AuditAgentResult:
-    decision_options: tuple[DecisionOption, ...] = ()
-    if outcome is AuditOutcome.NEEDS_HUMAN:
-        decision_options = (
-            DecisionOption(
-                key="confirmed_occurred",
-                label="确认已执行",
-                instruction="确认外部动作已经发生，并结束当前任务。",
-                consequence="不会重放外部动作。",
-            ),
-            DecisionOption(
-                key="confirmed_not_occurred",
-                label="确认未执行",
-                instruction="确认外部动作没有发生，并安全重开当前任务。",
-                consequence="Agent 会重新审核后再决定是否执行。",
-            ),
-            DecisionOption(
-                key="terminate_unrecoverable",
-                label="无法确认并停止",
-                instruction="无法确认外部结果，停止当前任务且不自动重放。",
-                consequence="保留审计记录，不执行新的外部动作。",
-            ),
-        )
     return AuditAgentResult(
-        outcome=outcome,
+        outcome=AuditOutcome.FAILED,
         summary=error.code or "Audit Agent failed.",
         proposal_revision=run.proposal_revision,
         feedback=None,
         external_result=None,
-        decision_options=decision_options,
+        decision_options=(),
         risk="high",
         confidence=0.0,
         rule_coverage=1.0,

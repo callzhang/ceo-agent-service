@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+- 2026-09-22: Attention now counts only error rows. Valid `needs_human` rule
+  decisions remain visible in the separate human-decision list and no longer
+  inflate the Attention API or status summary.
+
+- 2026-09-22: The console status response now accepts the evidence label and
+  detail on a human rule-decision row. A valid decision no longer makes the
+  entire status endpoint return HTTP 500.
+
+- 2026-09-22: Current reply-task recovery and Attention now require an
+  attempt's Agent run to belong to the task's current execution generation.
+  An older OA scan revision can no longer fail a newer task generation or
+  appear as an additional current error beside that task. History's current
+  status view and its operation-log API apply the same generation rule.
+
+- 2026-09-22: `needs_human` now requires a clear reason and evidence chain from
+  the current Agent run. OA authorizations must name one bounded action and
+  match the current process and task; technical failures cannot create an
+  authorization card. Attempt details render the evidence behind a valid card,
+  while invalid stale projections appear as failed work.
+
+- 2026-09-22: Audit's service-owned DingTalk action executor now supports a
+  Consumer's native reply operation instead of rejecting it after review. The
+  executor requires the proposal's conversation and message IDs to match the
+  persisted trigger, sends the persisted prepared body through the native reply
+  adapter, and reuses the durable delivery receipt on retry.
+
+- 2026-09-22: Consumer and Audit turns now identify themselves as background
+  service executions whose current work profile is already injected. Interactive
+  `memory_connector.user_get` bootstrap rules no longer become an unrelated hard
+  dependency for every DingTalk reply, while task-specific Memory reads remain
+  available when durable memory evidence is actually required.
+
+- 2026-09-22: Audit no longer turns service-owned DingTalk feedback callbacks
+  into an impossible Consumer revision loop, and provider confirmation flags
+  named either `confirmation_required` or `authorization_required` are treated
+  as execution-contract corrections for already reviewed typed actions rather
+  than business authorization. Consumer result retries still preserve a useful
+  conversation session, but two identical, continuable result-validation
+  failures in the same session now open a fresh session so a stale conclusion
+  cannot consume every retry.
+
+- 2026-09-22: Audit's service-owned DingTalk sender now accepts the Consumer's
+  established `reply` and `send_group_message` operation names. The proposal
+  contract already allowed those names, but outbound preparation only recognized
+  older aliases, so Audit exhausted retries with
+  `dingtalk_message_action_unsupported` before any provider call. Both aliases
+  now use the same prepared body, durable delivery key and target validation as
+  the existing message operations.
+
 - 2026-09-22: Consumer 不再把 Skill、提示词或 wire-contract 版本变化当作
   Codex 会话身份变化。新 generation/revision 在同一路由的 session 仍可访问时继续该对话，
   并在本次 turn 更新契约回执；只有 provider 明确证明 session 不存在、不可访问或认证失效才
@@ -1972,3 +2021,5 @@
 - Expanded the sanitized Skill-runtime comparison matrix from 11 to 19 cases. The added cases cover
   authorized personnel delivery, the create/follow-up/complete work lifecycle, OA approve/return/reject
   decisions with applicant notification, and read-only recovery when an external side effect is unknown.
+
+- Clarify reconciled invalid `needs_human` projections as technical failures in Attention, so malformed historical decision payloads cannot be mistaken for live human authorization requests.

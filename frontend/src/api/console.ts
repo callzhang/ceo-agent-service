@@ -199,6 +199,7 @@ export interface WorkerStatus {
   queues: Array<{ name: string; table: string; counts: Record<string, number>; pending: number; processing: number; failed: number; retryable: number; latest_updated_at: string; latest_error: string }>;
   dispatcher_queues: StatusDispatcherQueue[];
   attention_rows: Array<{ category: string; id: string; status: string; context: string; summary: string; updated_at: string; error: string; root_cause?: string | null; detail_url?: string | null }>;
+  human_decision_rows?: Array<{ category: string; id: string; status: string; context: string; summary: string; updated_at: string; error: string; root_cause?: string | null; detail_url?: string | null }>;
   database: { path: string };
   summary: { queue_count: number; pending: number; processing: number; failed: number; retryable: number; attention: number };
 }
@@ -980,7 +981,7 @@ function attentionRow(value: unknown): boolean {
 }
 
 function workerStatus(value: unknown): value is WorkerStatus {
-  const row = exactRecord(value, ["service", "system_health", "components", "connectors", "email", "meeting_memory_health", "wechat", "queues", "dispatcher_queues", "attention_rows", "database", "summary"]);
+  const row = exactRecord(value, ["service", "system_health", "components", "connectors", "email", "meeting_memory_health", "wechat", "queues", "dispatcher_queues", "attention_rows", "database", "summary"], ["human_decision_rows"]);
   if (row === null) return false;
   const service = exactRecord(row.service, ["label", "target", "ok", "state", "detail", "pid", "runs", "initialized", "last_terminating_signal", "returncode"]);
   const health = exactRecord(row.system_health, ["state", "detail", "checked_at", "violations", "components"]);
@@ -996,6 +997,7 @@ function workerStatus(value: unknown): value is WorkerStatus {
     && Array.isArray(row.queues) && row.queues.every(queueStatus)
     && Array.isArray(row.dispatcher_queues) && row.dispatcher_queues.every(dispatcherQueueStatus)
     && Array.isArray(row.attention_rows) && row.attention_rows.every(attentionRow)
+    && (!Array.isArray(row.human_decision_rows) || row.human_decision_rows.every(attentionRow))
     && database !== null && typeof database.path === "string"
     && summary !== null && counts(summary, ["queue_count", "pending", "processing", "failed", "retryable", "attention"]);
 }

@@ -93,7 +93,9 @@ def _claude_route() -> RuntimeRoute:
     )
 
 
-def test_claude_consumer_session_requires_exact_route_and_contract_hash(tmp_path):
+def test_claude_consumer_session_is_route_scoped_and_survives_contract_revision(
+    tmp_path,
+):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     store.upsert_conversation_runtime_session(
@@ -120,7 +122,7 @@ def test_claude_consumer_session_requires_exact_route_and_contract_hash(tmp_path
         role=AgentRole.CONSUMER,
         requested_session_id="claude-session",
         conversation_contract_hash="different-contract",
-    ) is None
+    ) == "claude-session"
     assert process._session_for_route(
         _claude_route(),
         role=AgentRole.AUDIT,
@@ -191,7 +193,7 @@ def test_claude_incompatible_resume_clears_only_matching_route_slot(tmp_path):
     assert persisted.source_session_id == "claude-session"
 
 
-def test_malformed_or_legacy_claude_session_never_resumes(tmp_path):
+def test_legacy_claude_session_resumes_but_malformed_session_is_rejected(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     process = AgentTurnProcess(
@@ -205,7 +207,7 @@ def test_malformed_or_legacy_claude_session_never_resumes(tmp_path):
         role=AgentRole.CONSUMER,
         requested_session_id=None,
         conversation_contract_hash="current-contract",
-    ) is None
+    ) == "legacy-claude-session"
     with store._connect() as db:
         db.execute(
             "update conversation_runtime_sessions set session_id='--malformed', "

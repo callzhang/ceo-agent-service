@@ -2652,7 +2652,12 @@ def test_history_chart_projects_hidden_legacy_attempts_through_terminal_task(
                     reply_task_id, execution_generation, role, operation_id, status
                 ) values (?, ?, 'consumer', ?, 'completed')
                 """,
-                (task.id, f"legacy-chart-generation-{generation}", f"legacy-{generation}"),
+                    (
+                        task.id,
+                        task.execution_generation if generation == len(attempt_ids) - 1
+                        else f"legacy-chart-generation-{generation}",
+                        f"legacy-{generation}",
+                    ),
             )
             db.execute(
                 "update reply_attempts set agent_run_id=? where id=?",
@@ -8456,6 +8461,69 @@ def test_attention_hides_historical_failed_task_when_business_object_is_done(
     assert store.count_current_unresolved_problem_attempts() == 0
 
 
+def test_attention_does_not_repeat_old_generation_attempt_for_current_oa_task(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="oa-pending:process-1",
+        conversation_title="OA pending",
+        single_chat=True,
+        trigger_message_id="oa-pending:process-1:old",
+        trigger_create_time="2026-09-20 10:00:00",
+        trigger_sender="OA",
+        trigger_text="old approval revision",
+        business_object_key="oa:process-1:task-1",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+        channel=task.channel,
+    )
+    with store._connect() as db:
+        run = db.execute(
+            """insert into agent_runs (
+                reply_task_id, execution_generation, role, status, final_result_json
+            ) values (?, ?, 'consumer', 'completed', '{}')""",
+            (task.id, task.execution_generation),
+        )
+        db.execute(
+            "update reply_attempts set agent_run_id=?, send_error='old failure' where id=?",
+            (run.lastrowid, attempt_id),
+        )
+        db.execute(
+            """update reply_tasks
+               set trigger_message_id='oa-pending:process-1:new',
+                   execution_generation='current-gen', status='failed',
+                   error='current failure'
+               where id=?""",
+            (task.id,),
+        )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert [(row["category"], row["id"]) for row in rows] == [
+        ("Reply task", str(task.id))
+    ]
+    assert store.count_current_unresolved_problem_attempts() == 0
+    assert all(
+        item.source_id != attempt_id
+        for item in store.list_history_items(send_statuses=("failed",))
+    )
+    _, operation_logs = store.list_operation_logs_with_count(
+        limit=20,
+        statuses=("failed",),
+        source_tables=("reply_attempts",),
+    )
+    assert all(row.source_id != attempt_id for row in operation_logs)
+
+
 def test_worker_attempt_counts_hide_historical_needs_human_business_object(
     tmp_path: Path,
 ):
@@ -11032,7 +11100,7 @@ def test_oa_manual_rerun_hides_old_human_choices_on_attempt_page(tmp_path: Path)
     assert "需要你决策：</strong>否" in html
 
 
-def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
+def test_needs_human_detail_hides_audit_technical_conflict(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-audit-choice",
@@ -11098,9 +11166,7 @@ def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
 
     html = audit_web_module._needs_human_decision_card(attempt, [run])
 
-    assert "1. 恢复到已确认位置" in html
-    assert "2. 保持当前状态" in html
-    assert "不会执行新的外部动作。" in html
+    assert html == ""
 
 
 def test_needs_human_detail_hides_untraceable_persisted_options(

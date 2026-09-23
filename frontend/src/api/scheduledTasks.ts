@@ -56,6 +56,7 @@ export interface ScheduledTaskRun {
   skip_or_error_reason: string;
   execution_kind: string;
   execution_id: string;
+  result_summary?: string;
   created_at: string;
   dispatched_at: string | null;
   attempts: Array<{ id: number; status: string }>;

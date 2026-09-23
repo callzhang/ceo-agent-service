@@ -66,6 +66,11 @@ _ATTENTION_SUMMARY_LIMIT = 240
 def _humanized_summary(value: Any) -> str:
     """Keep Attention's primary line readable without discarding evidence."""
     text = normalize_display_value(value)
+    text = {
+        "invalid_needs_human_projection": "人工决策结果结构不完整，未进入人工决策队列",
+        "external_action_authorization_required": "外部动作授权缺失（仅技术失败，不是待你决策）",
+        "needs_human": "需要人工规则反馈，但当前结果未通过结构校验",
+    }.get(text, text)
     text = _ATTENTION_COMMENT_RE.sub("", text)
     text = _ATTENTION_TIME_RE.sub(lambda match: match.group(1), text)
     text = _ATTENTION_MARKDOWN_LINK_RE.sub(lambda match: match.group(1), text)
@@ -83,7 +88,9 @@ def _humanized_summary(value: Any) -> str:
 def _record(row: dict[str, Any]) -> AttentionRecord:
     error = normalize_display_value(row.get("error"))
     status = normalize_display_value(row.get("status"))
-    detail_label, detail = _detail(status, error)
+    default_detail_label, default_detail = _detail(status, error)
+    detail_label = normalize_display_value(row.get("detail_label")) or default_detail_label
+    detail = normalize_display_value(row.get("detail")) or default_detail
     context = normalize_display_value(row.get("context"))
     root_cause = _humanized_summary(row.get("root_cause"))
     error_code = normalize_display_value(row.get("error_code"))

@@ -14,8 +14,10 @@ from app.agent_contracts import (
     AuditAgentResult,
     AuditExternalResult,
     AuditFeedback,
+    AuthorizationPlan,
     ConsumerAgentResult,
     ConsumerProposal,
+    DecisionBasis,
     DecisionOption,
     RiskLevel,
 )
@@ -66,6 +68,9 @@ class _ConsumerNeedsHumanWire(_WireBase):
         max_length=4,
         json_schema_extra={"uniqueItems": True},
     )
+    needs_human_reason: str = Field(min_length=1)
+    decision_basis: DecisionBasis
+    authorization_plan: AuthorizationPlan | None = None
 
 
 class _ConsumerNoActionWire(_WireBase):
@@ -114,6 +119,9 @@ class ConsumerAgentWireResult(RootModel[ConsumerWirePayload]):
                 "rule_coverage": payload.rule_coverage,
                 "information_completeness": payload.information_completeness,
                 "error": payload.error_payload(),
+                "needs_human_reason": getattr(payload, "needs_human_reason", None),
+                "decision_basis": getattr(payload, "decision_basis", None),
+                "authorization_plan": getattr(payload, "authorization_plan", None),
             }
         )
 
@@ -148,6 +156,9 @@ class _AuditNeedsHumanWire(_AuditWireBase):
         max_length=4,
         json_schema_extra={"uniqueItems": True},
     )
+    needs_human_reason: str = Field(min_length=1)
+    decision_basis: DecisionBasis
+    authorization_plan: AuthorizationPlan | None = None
 
 
 class _AuditDryRunWire(_AuditWireBase):
@@ -198,6 +209,9 @@ class AuditAgentWireResult(RootModel[AuditWirePayload]):
                 "rule_coverage": payload.rule_coverage,
                 "information_completeness": payload.information_completeness,
                 "error": payload.error_payload(),
+                "needs_human_reason": getattr(payload, "needs_human_reason", None),
+                "decision_basis": getattr(payload, "decision_basis", None),
+                "authorization_plan": getattr(payload, "authorization_plan", None),
             }
         )
 

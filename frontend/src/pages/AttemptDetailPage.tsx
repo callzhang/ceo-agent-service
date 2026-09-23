@@ -109,6 +109,23 @@ function ConsumerResult({ result }: { result: AttemptConsumerResult }) {
   </>;
 }
 
+function HumanDecisionBasis({ detail }: { detail: AttemptDetail }) {
+  const decision = detail.human_decision;
+  if (!decision) return null;
+  const basis = decision.basis;
+  const factList = (items: Array<{ assertion: string; references: string[] }>) => items.map((item) => <li key={`${item.assertion}-${item.references.join(",")}`}>{item.assertion}{item.references.length > 0 && <small>依据：{item.references.join("、")}</small>}</li>);
+  return <section className="console-card attempt-decision-basis" aria-label="人工判断依据">
+    <h2>为什么需要你判断</h2>
+    <p>{decision.reason}</p>
+    <h3>已核验事实</h3><ul>{factList(basis.verified_facts)}</ul>
+    <h3>适用规则</h3><ul>{factList(basis.rule_evidence)}</ul>
+    <h3>风险与规则覆盖</h3><p>{basis.quality_explanation}</p>
+    <h3>外部操作状态</h3><ul>{factList(basis.no_external_action_evidence)}</ul>
+    <h3>结论</h3><p>{basis.conclusion}</p>
+    {decision.authorization_plan && <><h3>本次授权范围</h3><p>{decision.authorization_plan.summary}</p><h4>可能影响</h4><ul>{decision.authorization_plan.side_effects.map((item) => <li key={item}>{item}</li>)}</ul><h4>不会执行</h4><ul>{decision.authorization_plan.will_not_do.map((item) => <li key={item}>{item}</li>)}</ul><h4>执行后核验</h4><ul>{decision.authorization_plan.readback.map((item) => <li key={item}>{item}</li>)}</ul></>}
+  </section>;
+}
+
 function MetadataGrid({ rows, consumerResult }: { rows: AttemptMetadata[]; consumerResult?: AttemptConsumerResult }) {
   return <section className="console-card attempt-metadata-card" aria-label="指标">
     <div className="attempt-metadata-grid">
@@ -500,7 +517,7 @@ export function AttemptDetailPage() {
           <ProcessingPanel detail={detail} />
         </div>
         <aside className="attempt-review-side" aria-label="反馈与人工处理">
-          {detail.status.requires_decision && <section className="console-card attempt-decision-card"><h2>需要你的判断</h2><p>选择上方方案会创建一个新的处理修订，原始 Attempt 保留。若方案说明会产生外部动作，后续处理会按说明执行并回读。</p>{detail.decision_options.map((option, index) => <button className="attempt-decision-option" type="button" disabled={decisionSubmitting} key={option.instruction} onClick={() => { if (window.confirm(`确认选择“${option.label}”？`)) void runDecision(option.url, option.instruction); }}><strong>{index + 1}. {option.label}</strong><span>{option.consequence}</span></button>)}<label htmlFor="attempt-custom-decision">其他处理指令（默认仅本次）</label><label className="attempt-skill-toggle" htmlFor="attempt-skill-update"><input id="attempt-skill-update" type="checkbox" checked={skillUpdateRequested} onChange={(event) => setSkillUpdateRequested(event.target.checked)} /> 同时把这条反馈沉淀为 Skill 规则</label><textarea id="attempt-custom-decision" value={customDecision} placeholder="例如：采用方案二，并说明交付边界" onChange={(event) => setCustomDecision(event.target.value)} /><p className="attempt-decision-hint">请填写其他处理指令后提交；下方“反馈迭代”只保存反馈，不会执行处理。</p><button type="button" className="primary-button" disabled={!customDecision.trim() || decisionSubmitting} onClick={() => { if (window.confirm("确认提交这条人工处理指令？")) void runDecision(detail.decision_options[0]?.url || `/api/console/history/${detail.id}/human-decision`, customDecision.trim()); }}>{decisionSubmitting ? "提交中…" : "提交处理指令"}</button></section>}
+          {detail.status.requires_decision && <><HumanDecisionBasis detail={detail} /><section className="console-card attempt-decision-card"><h2>可选处理方式</h2><p>提交后会在同一事项中创建新修订；勾选 Skill 规则后，这条反馈也会用于更新 Skill。</p>{detail.decision_options.map((option, index) => <button className="attempt-decision-option" type="button" disabled={decisionSubmitting} key={option.instruction} onClick={() => { if (window.confirm(`确认选择“${option.label}”？`)) void runDecision(option.url, option.instruction); }}><strong>{index + 1}. {option.label}</strong><span>{option.consequence}</span></button>)}<label htmlFor="attempt-custom-decision">补充处理要求</label><label className="attempt-skill-toggle" htmlFor="attempt-skill-update"><input id="attempt-skill-update" type="checkbox" checked={skillUpdateRequested} onChange={(event) => setSkillUpdateRequested(event.target.checked)} /> 同时把这条反馈沉淀为 Skill 规则</label><textarea id="attempt-custom-decision" value={customDecision} placeholder="说明你希望系统以后如何处理这一类情况" onChange={(event) => setCustomDecision(event.target.value)} /><button type="button" className="primary-button" disabled={!customDecision.trim() || decisionSubmitting} onClick={() => { if (window.confirm("确认提交这条处理要求？")) void runDecision(detail.decision_options[0]?.url || `/api/console/history/${detail.id}/human-decision`, customDecision.trim()); }}>{decisionSubmitting ? "提交中…" : "提交处理要求"}</button></section></>}
           <MetadataGrid rows={[...detail.metadata, ...(detail.revision_count ? [{ label: "revisions", value: `${detail.revision_count} revisions` }] : [])]} consumerResult={detail.consumer_result} />
           <FeedbackPanel detail={detail} onSaved={setMessage} />
           {message && <p className="attempt-action-message" role="status" aria-live="polite">{message}</p>}

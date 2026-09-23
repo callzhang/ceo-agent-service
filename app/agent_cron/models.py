@@ -383,6 +383,7 @@ class ScheduledTaskRun:
     snapshot: ScheduledTaskSnapshot
     execution_kind: str
     execution_id: str
+    result_summary: str
     lease_owner: str
     lease_expires_at: datetime | None
     created_at: datetime
