@@ -1357,8 +1357,10 @@ def test_json_from_mixed_stdout_rejects_text_after_json():
 def test_get_resource_download_url_keeps_url_when_dws_download_stage_fails(
     monkeypatch,
 ):
+    calls = []
+
     def fake_run(*args, **kwargs):
-        del args, kwargs
+        calls.append((args, kwargs))
         return subprocess.CompletedProcess(
             args=["dws"],
             returncode=5,
@@ -1368,7 +1370,9 @@ def test_get_resource_download_url_keeps_url_when_dws_download_stage_fails(
             stderr="",
         )
 
-    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        DwsClient, "_run_cli_process", staticmethod(fake_run)
+    )
     client = DwsClient(dws_bin="dws")
 
     payload = client.get_resource_download_url(
@@ -1381,6 +1385,7 @@ def test_get_resource_download_url_keeps_url_when_dws_download_stage_fails(
     assert payload == {
         "downloadUrl": "https://signed.example/message-image.png?token=abc"
     }
+    assert calls[0][1]["isolate_process_group"] is True
 
 
 def test_get_resource_download_url_uses_local_file_when_success_stdout_is_not_json(
@@ -1423,7 +1428,9 @@ def test_get_resource_download_url_uses_local_file_when_success_stdout_is_not_js
         "NamedTemporaryFile",
         fake_named_temporary_file,
     )
-    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        DwsClient, "_run_cli_process", staticmethod(fake_run)
+    )
     client = DwsClient(dws_bin="dws")
 
     payload = client.get_resource_download_url(
@@ -1460,7 +1467,9 @@ def test_get_resource_download_url_keeps_file_when_dws_reports_secondary_error(
     monkeypatch.setattr(
         dws_client.tempfile, "NamedTemporaryFile", lambda **_: TemporaryFile()
     )
-    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        DwsClient, "_run_cli_process", staticmethod(fake_run)
+    )
 
     payload = DwsClient(dws_bin="dws").get_resource_download_url(
         "cid-1", "msg-1", "@img-token-1", "mediaId"
