@@ -275,3 +275,42 @@ def test_resolution_snapshot_includes_current_membership(projection):
     expected = '"task_ids":[%s,%s]' % (first, second)
     assert expected in event.before_json
     assert expected in event.after_json
+
+
+def test_recompute_readds_desired_task_when_eligibility_returns(projection, monkeypatch):
+    task_id, anchor_id, signal_id = _task_with_anchor(projection, "returns")
+    item_id = projection.upsert(_proposal((task_id,), anchor_id, signal_id))
+    service = TaskSemanticService(projection.store)
+    service.update_task(
+        UpdateBusinessTask(
+            task_id=task_id, status=BusinessTaskStatus.DONE,
+            signal=SourceSignal(source_type="message", source_ref="returns:done", evidence_text="完成", dedupe_key="returns:done"),
+        )
+    )
+    monkeypatch.setattr(projection, "_timestamp", lambda: "2026-09-22T12:00:00+00:00")
+    projection.recompute_for_tasks((task_id,))
+    assert projection.store.list_business_attention_tasks(item_id) == ()
+    assert projection.store.get_business_attention_item(item_id).updated_at == "2026-09-22T12:00:00+00:00"
+
+    service.update_task(
+        UpdateBusinessTask(
+            task_id=task_id, status=BusinessTaskStatus.OPEN,
+            signal=SourceSignal(source_type="message", source_ref="returns:open", evidence_text="重新打开", dedupe_key="returns:open"),
+        )
+    )
+    monkeypatch.setattr(projection, "_timestamp", lambda: "2026-09-22T12:01:00+00:00")
+    assert projection.recompute_for_tasks((task_id,)) == (item_id,)
+    assert [link.task_id for link in projection.store.list_business_attention_tasks(item_id)] == [task_id]
+    assert projection.store.get_business_attention_item(item_id).updated_at == "2026-09-22T12:01:00+00:00"
+
+
+def test_explicit_proposal_removal_prevents_readding_task(projection):
+    first, anchor_id, signal_id = _task_with_anchor(projection, "removal-first")
+    second, _, _ = _task_with_anchor(projection, "removal-second")
+    resolver = BusinessResolutionService(projection.store)
+    resolver.confirm_anchor_match(task_id=second, anchor_id=anchor_id, evidence_signal_id=signal_id, reason="同一客户")
+    item_id = projection.upsert(_proposal((first, second), anchor_id, signal_id))
+    projection.upsert(_proposal((first,), anchor_id, signal_id))
+
+    assert projection.recompute_for_tasks((second,)) == ()
+    assert [link.task_id for link in projection.store.list_business_attention_tasks(item_id)] == [first]

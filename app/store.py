@@ -135,6 +135,7 @@ from app.task_semantic_models import (
     BusinessAttentionEvent,
     BusinessAttentionEventType,
     BusinessAttentionItem,
+    BusinessAttentionProposalTask,
     BusinessAttentionTask,
     BusinessTaskStage,
     BusinessTaskStatus,
@@ -271,6 +272,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "business_project_candidates",
     "business_attention_items",
     "business_attention_tasks",
+    "business_attention_proposal_tasks",
     "business_attention_events",
     "business_legacy_links",
 )
@@ -335,6 +337,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_project_candidates_cluster",
     "idx_business_attention_items_list",
     "idx_business_attention_tasks_task",
+    "idx_business_attention_proposal_tasks_task",
     "idx_business_attention_events_item",
     "idx_business_legacy_links_task",
 )
@@ -392,6 +395,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "created_at", "updated_at",
     ),
     "business_attention_tasks": ("attention_item_id", "task_id", "created_at"),
+    "business_attention_proposal_tasks": ("attention_item_id", "task_id", "created_at"),
     "business_attention_events": (
         "id", "attention_item_id", "event_type", "signal_id", "before_json",
         "after_json", "reason", "created_at",
@@ -3691,6 +3695,16 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_business_attention_tasks_task
                     on business_attention_tasks(task_id, attention_item_id);
+                create table if not exists business_attention_proposal_tasks (
+                    attention_item_id integer not null,
+                    task_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(attention_item_id, task_id),
+                    foreign key(attention_item_id) references business_attention_items(id),
+                    foreign key(task_id) references business_tasks(id)
+                );
+                create index if not exists idx_business_attention_proposal_tasks_task
+                    on business_attention_proposal_tasks(task_id, attention_item_id);
                 create table if not exists business_attention_events (
                     id integer primary key autoincrement,
                     attention_item_id integer not null,
@@ -6172,6 +6186,12 @@ class AutoReplyStore:
         return BusinessAttentionTask.model_validate(dict(row))
 
     @staticmethod
+    def _business_attention_proposal_task_from_row(
+        row: sqlite3.Row,
+    ) -> BusinessAttentionProposalTask:
+        return BusinessAttentionProposalTask.model_validate(dict(row))
+
+    @staticmethod
     def _business_attention_event_from_row(row: sqlite3.Row) -> BusinessAttentionEvent:
         return BusinessAttentionEvent.model_validate(dict(row))
 
@@ -7008,6 +7028,36 @@ class AutoReplyStore:
             )
         return True
 
+    def replace_business_attention_proposal_tasks_in_transaction(
+        self, *, attention_item_id: int, task_ids: tuple[int, ...], _db: sqlite3.Connection
+    ) -> bool:
+        """Persist the latest explicit proposal membership, independent of eligibility."""
+        selected = tuple(sorted(set(task_ids)))
+        rows = _db.execute(
+            "select task_id from business_attention_proposal_tasks where attention_item_id=? order by task_id",
+            (attention_item_id,),
+        ).fetchall()
+        current = tuple(int(row["task_id"]) for row in rows)
+        if current == selected:
+            return False
+        if selected:
+            _db.execute(
+                f"delete from business_attention_proposal_tasks where attention_item_id=? and task_id not in ({', '.join('?' for _ in selected)})",
+                (attention_item_id, *selected),
+            )
+        else:
+            _db.execute(
+                "delete from business_attention_proposal_tasks where attention_item_id=?",
+                (attention_item_id,),
+            )
+        for task_id in selected:
+            _db.execute(
+                """insert into business_attention_proposal_tasks (attention_item_id, task_id)
+                   values (?, ?) on conflict(attention_item_id, task_id) do nothing""",
+                (attention_item_id, task_id),
+            )
+        return True
+
     def append_business_attention_event_in_transaction(
         self,
         *,
@@ -7057,6 +7107,15 @@ class AutoReplyStore:
             (attention_item_id,),
         ).fetchall()
         return tuple(self._business_attention_task_from_row(row) for row in rows)
+
+    def list_business_attention_proposal_tasks_in_transaction(
+        self, *, attention_item_id: int, _db: sqlite3.Connection
+    ) -> tuple[BusinessAttentionProposalTask, ...]:
+        rows = _db.execute(
+            "select * from business_attention_proposal_tasks where attention_item_id=? order by task_id",
+            (attention_item_id,),
+        ).fetchall()
+        return tuple(self._business_attention_proposal_task_from_row(row) for row in rows)
 
     def list_business_attention_events(self, attention_item_id: int) -> tuple[BusinessAttentionEvent, ...]:
         with self._connect() as db:

@@ -182,6 +182,14 @@ ROWS = {
             "created_at": STAMP,
         },
     ),
+    "business_attention_proposal_tasks": (
+        "BusinessAttentionProposalTask",
+        {
+            "attention_item_id": 1,
+            "task_id": 1,
+            "created_at": STAMP,
+        },
+    ),
     "business_attention_events": (
         "BusinessAttentionEvent",
         {
@@ -706,6 +714,10 @@ FOREIGN_KEYS = {
         "attention_item_id": "business_attention_items",
         "task_id": "business_tasks",
     },
+    "business_attention_proposal_tasks": {
+        "attention_item_id": "business_attention_items",
+        "task_id": "business_tasks",
+    },
     "business_attention_events": {
         "attention_item_id": "business_attention_items",
         "signal_id": "business_task_signals",
@@ -799,6 +811,7 @@ def test_official_project_requires_an_existing_project_anchor(store):
         "business_work_cluster_tasks",
         "business_task_anchor_links",
         "business_attention_tasks",
+        "business_attention_proposal_tasks",
         "business_legacy_links",
     ],
 )
@@ -850,6 +863,7 @@ def test_list_indexes_are_present_and_in_the_required_manifest(store):
         "idx_business_project_candidates_cluster",
         "idx_business_attention_items_list",
         "idx_business_attention_tasks_task",
+        "idx_business_attention_proposal_tasks_task",
         "idx_business_attention_events_item",
         "idx_business_legacy_links_task",
     }

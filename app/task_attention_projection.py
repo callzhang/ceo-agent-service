@@ -140,9 +140,33 @@ class BusinessAttentionProjection:
             raise ValueError("attention evidence signal must be linked to an underlying Task")
         return tuple(tasks)
 
+    def _current_eligible_task_ids(
+        self, *, task_ids: tuple[int, ...], anchor_id: int, db
+    ) -> tuple[int, ...]:
+        eligible: list[int] = []
+        for task_id in task_ids:
+            task = self.store.get_business_task_in_transaction(task_id=task_id, _db=db)
+            if (
+                task is not None
+                and task.status in (BusinessTaskStatus.OPEN, BusinessTaskStatus.WAITING)
+                and task.business_relevance is BusinessRelevance.RELEVANT
+                and db.execute(
+                    """select 1 from business_task_anchor_links link
+                       join business_anchors anchor on anchor.id=link.anchor_id
+                       where link.task_id=? and link.anchor_id=? and link.status='confirmed'
+                         and link.active=1 and anchor.active=1""",
+                    (task_id, anchor_id),
+                ).fetchone() is not None
+            ):
+                eligible.append(task_id)
+        return tuple(eligible)
+
     def upsert(self, proposal: AttentionProposal) -> int:
         with self.store.business_task_transaction() as db:
             self._validate_proposal(proposal, db=db)
+            current_task_ids = self._current_eligible_task_ids(
+                task_ids=proposal.task_ids, anchor_id=proposal.anchor_id, db=db
+            )
             existing = self.store.get_business_attention_item_by_stable_key_in_transaction(
                 stable_key=proposal.stable_key, _db=db
             )
@@ -158,12 +182,15 @@ class BusinessAttentionProjection:
                 item = self.store.get_business_attention_item_in_transaction(item_id=item_id, _db=db)
                 assert item is not None
                 self.store.replace_business_attention_tasks_in_transaction(
+                    attention_item_id=item_id, task_ids=current_task_ids, _db=db
+                )
+                self.store.replace_business_attention_proposal_tasks_in_transaction(
                     attention_item_id=item_id, task_ids=proposal.task_ids, _db=db
                 )
                 self.store.append_business_attention_event_in_transaction(
                     attention_item_id=item_id, event_type=BusinessAttentionEventType.OPENED,
                     signal_id=proposal.evidence_signal_id, before_json="{}",
-                    after_json=self._snapshot(item, proposal.task_ids),
+                    after_json=self._snapshot(item, current_task_ids),
                     reason="Business attention opened", _db=db,
                 )
             else:
@@ -173,9 +200,16 @@ class BusinessAttentionProjection:
                         attention_item_id=item_id, _db=db
                     )
                 )
-                membership_changed = before_task_ids != tuple(sorted(proposal.task_ids))
+                desired_before_task_ids = tuple(
+                    link.task_id
+                    for link in self.store.list_business_attention_proposal_tasks_in_transaction(
+                        attention_item_id=item_id, _db=db
+                    )
+                )
+                membership_changed = before_task_ids != current_task_ids
+                desired_changed = desired_before_task_ids != tuple(sorted(proposal.task_ids))
                 fields_changed = self._item_changed(existing, proposal)
-                if fields_changed or membership_changed:
+                if fields_changed or membership_changed or desired_changed:
                     updated = existing.model_copy(
                         update={
                             "category": proposal.category,
@@ -199,13 +233,16 @@ class BusinessAttentionProjection:
                         else BusinessAttentionEventType.UPDATED
                     )
                     self.store.replace_business_attention_tasks_in_transaction(
+                        attention_item_id=item_id, task_ids=current_task_ids, _db=db
+                    )
+                    self.store.replace_business_attention_proposal_tasks_in_transaction(
                         attention_item_id=item_id, task_ids=proposal.task_ids, _db=db
                     )
                     self.store.append_business_attention_event_in_transaction(
                         attention_item_id=item_id, event_type=event_type,
                         signal_id=proposal.evidence_signal_id,
                         before_json=self._snapshot(existing, before_task_ids),
-                        after_json=self._snapshot(updated, proposal.task_ids),
+                        after_json=self._snapshot(updated, current_task_ids),
                         reason="Business attention updated", _db=db,
                     )
             return item_id
@@ -275,7 +312,7 @@ class BusinessAttentionProjection:
         with self.store.business_task_transaction() as db:
             rows = db.execute(
                 f"""select distinct item.* from business_attention_items item
-                    join business_attention_tasks member on member.attention_item_id=item.id
+                    join business_attention_proposal_tasks member on member.attention_item_id=item.id
                     where member.task_id in ({', '.join('?' for _ in requested)}) order by item.id""",
                 requested,
             ).fetchall()
@@ -286,26 +323,20 @@ class BusinessAttentionProjection:
                         attention_item_id=item.id, _db=db
                     )
                 )
-                eligible_task_ids: list[int] = []
-                for task_id in before_task_ids:
-                    task = self.store.get_business_task_in_transaction(task_id=task_id, _db=db)
-                    if (
-                        task is not None
-                        and task.status in (BusinessTaskStatus.OPEN, BusinessTaskStatus.WAITING)
-                        and task.business_relevance is BusinessRelevance.RELEVANT
-                        and db.execute(
-                            """select 1 from business_task_anchor_links link
-                               join business_anchors anchor on anchor.id=link.anchor_id
-                               where link.task_id=? and link.anchor_id=? and link.status='confirmed'
-                                 and link.active=1 and anchor.active=1""",
-                            (task_id, item.anchor_id),
-                        ).fetchone() is not None
-                    ):
-                        eligible_task_ids.append(task_id)
-                after_task_ids = tuple(eligible_task_ids)
+                desired_task_ids = tuple(
+                    link.task_id
+                    for link in self.store.list_business_attention_proposal_tasks_in_transaction(
+                        attention_item_id=item.id, _db=db
+                    )
+                )
+                after_task_ids = self._current_eligible_task_ids(
+                    task_ids=desired_task_ids, anchor_id=item.anchor_id, db=db
+                )
                 if before_task_ids == after_task_ids:
                     item_ids.append(item.id)
                     continue
+                updated = item.model_copy(update={"updated_at": self._timestamp()})
+                self.store.update_business_attention_item_in_transaction(item=updated, _db=db)
                 self.store.replace_business_attention_tasks_in_transaction(
                     attention_item_id=item.id, task_ids=after_task_ids, _db=db
                 )
@@ -313,7 +344,7 @@ class BusinessAttentionProjection:
                     attention_item_id=item.id, event_type=BusinessAttentionEventType.UPDATED,
                     signal_id=item.evidence_signal_id,
                     before_json=self._snapshot(item, before_task_ids),
-                    after_json=self._snapshot(item, after_task_ids),
+                    after_json=self._snapshot(updated, after_task_ids),
                     reason="Business attention membership recomputed", _db=db,
                 )
                 item_ids.append(item.id)

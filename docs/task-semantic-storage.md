@@ -218,12 +218,18 @@ uses only relevant `open` or `waiting` Tasks with a confirmed active anchor
 link as current membership. A membership change removes stale links, appends an
 `updated` event with Task IDs in its before/after snapshots, and leaves an item
 active even when no eligible member remains because resolution still requires
-evidence. Historical Task membership remains available in immutable attention
+evidence. The latest explicit proposal membership is persisted separately from
+current eligible membership. Recompute locates items through that desired set,
+so a completed, cancelled, non-relevant, or inactive-anchor Task can return to
+the same attention item when eligibility returns; a newer explicit proposal
+removal changes the desired set and prevents resurrection. Historical Task membership remains available in immutable attention
 event snapshots, so a later resolution signal may be linked to a former member
 after recomputation removes it. Resolution snapshots record the current member
 IDs on both sides of the state transition. Recompute preserves proposal-owned
 `current_state` text and changes it only through a later explicit proposal.
-Repeating unchanged recomputation adds no attention event or link.
+When current membership changes, recompute updates the attention item's
+`updated_at` in the same transaction as its membership event. Repeating
+unchanged recomputation adds no attention event, link, or timestamp update.
 
 ## Repair verification
 

@@ -324,6 +324,14 @@ class BusinessAttentionTask(_FrozenBusinessModel):
     created_at: str
 
 
+class BusinessAttentionProposalTask(_FrozenBusinessModel):
+    """Explicit desired membership, retained apart from current eligibility."""
+
+    attention_item_id: ReferenceId
+    task_id: ReferenceId
+    created_at: str
+
+
 class BusinessAttentionEvent(_FrozenBusinessModel):
     id: int
     attention_item_id: ReferenceId
