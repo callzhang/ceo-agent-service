@@ -154,9 +154,15 @@ class BusinessResolutionService:
                 "select * from business_projects where canonical_anchor_id=?", (anchor_id,)
             ).fetchone()
             if existing_row is not None:
-                return BusinessProject.model_validate(dict(existing_row)).id
+                existing = BusinessProject.model_validate(dict(existing_row))
+                if existing.registry_source != registry_source:
+                    raise ValueError("official Project already has different registry provenance")
+                return existing.id
             return self.store.create_business_project_in_transaction(
-                canonical_anchor_id=anchor.id, title=anchor.title, _db=db
+                canonical_anchor_id=anchor.id,
+                title=anchor.title,
+                registry_source=registry_source,
+                _db=db,
             )
 
     def propose_anchor_match(
@@ -320,7 +326,10 @@ class BusinessResolutionService:
                     int(existing_row["id"])
                     if existing_row is not None
                     else self.store.create_business_project_in_transaction(
-                        canonical_anchor_id=anchor_id, title=anchor.title, _db=db
+                        canonical_anchor_id=anchor_id,
+                        title=anchor.title,
+                        registry_source=f"explicit_confirmation:{evidence_signal_id}",
+                        _db=db,
                     )
                 )
             self.store.confirm_business_project_candidate_in_transaction(

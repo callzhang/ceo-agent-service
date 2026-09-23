@@ -89,7 +89,9 @@ def test_only_registry_registration_or_explicit_evidence_confirmation_creates_pr
     assert resolver.store.list_business_projects() == []
 
     project_id = resolver.register_official_project(anchor_id=anchor_id, registry_source="portfolio-registry")
-    assert resolver.store.get_business_project(project_id).canonical_anchor_id == anchor_id
+    registered_project = resolver.store.get_business_project(project_id)
+    assert registered_project.canonical_anchor_id == anchor_id
+    assert registered_project.registry_source == "portfolio-registry"
     candidate_two = resolver.propose_project(
         cluster_id=cluster_id, title="美国客户成交第二阶段", reason="另一个候选",
     )
@@ -124,6 +126,7 @@ def test_explicit_confirmation_atomically_creates_official_project_and_is_idempo
     project = resolver.store.get_business_project(candidate.confirmed_project_id)
     assert project is not None
     assert project.canonical_anchor_id == anchor_id
+    assert project.registry_source == f"explicit_confirmation:{signal_id}"
 
     assert resolver.confirm_project_candidate(
         candidate_id=candidate_id,
@@ -251,6 +254,78 @@ def test_relation_is_evidence_backed_and_does_not_merge_tasks(resolver):
     assert relation_id > 0
     assert resolver.store.get_business_task(first).status is not BusinessTaskStatus.MERGED
     assert resolver.store.get_business_task(second).status is not BusinessTaskStatus.MERGED
+
+
+def test_relation_proposal_can_be_confirmed_and_replayed_without_changing_identity(resolver):
+    first = create_task(resolver.store, "relation-first")
+    second = create_task(resolver.store, "relation-second")
+    proposed_signal = evidence_signal(resolver.store, "relation-proposed")
+    confirmed_signal = evidence_signal(resolver.store, "relation-confirmed")
+
+    relation_id = resolver.add_relation(
+        from_task_id=first,
+        to_task_id=second,
+        relation_type=BusinessRelationType.RELATED_TO,
+        evidence_signal_id=proposed_signal,
+        status=BusinessRelationStatus.PROPOSED,
+        reason="Possible shared work",
+    )
+    assert resolver.add_relation(
+        from_task_id=first,
+        to_task_id=second,
+        relation_type=BusinessRelationType.RELATED_TO,
+        evidence_signal_id=proposed_signal,
+        status=BusinessRelationStatus.PROPOSED,
+        reason="Possible shared work",
+    ) == relation_id
+    assert resolver.add_relation(
+        from_task_id=first,
+        to_task_id=second,
+        relation_type=BusinessRelationType.RELATED_TO,
+        evidence_signal_id=confirmed_signal,
+        status=BusinessRelationStatus.CONFIRMED,
+        reason="Confirmed shared work",
+    ) == relation_id
+    assert resolver.add_relation(
+        from_task_id=first,
+        to_task_id=second,
+        relation_type=BusinessRelationType.RELATED_TO,
+        evidence_signal_id=confirmed_signal,
+        status=BusinessRelationStatus.CONFIRMED,
+        reason="Confirmed shared work",
+    ) == relation_id
+
+    later_proposal = evidence_signal(resolver.store, "relation-late-proposal")
+    assert resolver.add_relation(
+        from_task_id=first,
+        to_task_id=second,
+        relation_type=BusinessRelationType.RELATED_TO,
+        evidence_signal_id=later_proposal,
+        status=BusinessRelationStatus.PROPOSED,
+        reason="Late possible match",
+    ) == relation_id
+    with pytest.raises(ValueError, match="conflicting relation decision"):
+        resolver.add_relation(
+            from_task_id=first,
+            to_task_id=second,
+            relation_type=BusinessRelationType.RELATED_TO,
+            evidence_signal_id=evidence_signal(resolver.store, "relation-rejected"),
+            status=BusinessRelationStatus.REJECTED,
+            reason="Conflicting rejection",
+        )
+
+    with resolver.store._connect() as db:
+        row = db.execute(
+            """select rowid, status, supporting_signal_id, reason
+               from business_task_relations
+               where from_task_id=? and to_task_id=? and relation_type=?""",
+            (first, second, BusinessRelationType.RELATED_TO.value),
+        ).fetchone()
+    assert row is not None
+    assert int(row["rowid"]) == relation_id
+    assert row["status"] == BusinessRelationStatus.CONFIRMED.value
+    assert row["supporting_signal_id"] == confirmed_signal
+    assert row["reason"] == "Confirmed shared work"
 
 
 def test_resolution_commands_require_persisted_evidence(resolver):

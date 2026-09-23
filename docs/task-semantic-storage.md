@@ -60,7 +60,11 @@ Task event APIs; attention projections remain later work.
 
 - Task relations use `depends_on`, `blocks`, `supports`, `supersedes`, or
   `related_to`, with `proposed`, `confirmed`, or `rejected` status and a required
-  supporting signal. Self-relations are invalid. Identity merging is separate.
+  supporting signal. Their composite identity keeps one stable SQLite row. An
+  exact status/evidence replay is a no-op; a proposal may become confirmed or
+  rejected using new persisted evidence; a later proposal cannot downgrade a
+  terminal decision; conflicting terminal decisions are rejected. Self-relations
+  are invalid. Identity merging is separate.
 - Cluster memberships preserve independent task records and use a unique
   cluster/task pair. Project candidates require an existing cluster and a reason.
   A confirmed candidate references an official project and the persisted signal
@@ -72,8 +76,8 @@ Task event APIs; attention projections remain later work.
   authority and relevance derivation belong to `BusinessResolutionService`.
 - Task/anchor links have stable persisted IDs and carry confirmation status, a
   separate active flag, and a required evidence signal. An official project
-  references a unique canonical
-  anchor using a composite foreign key that requires the anchor's type to be
+  references a unique canonical anchor and persists its nonblank
+  `registry_source`. The composite foreign key requires the anchor's type to be
   `project`; an existing customer anchor cannot masquerade as a project anchor.
 - Attention items keep a unique stable key, category, active/resolved status,
   title, business area, why attention is needed, current state, CEO action,
@@ -158,7 +162,9 @@ official `business_projects` row can be registered from an active canonical
 anchor whose type is `project`, with a nonblank canonical registry source. The
 other authority path is an explicit candidate confirmation backed by a persisted
 signal: it may create the official Project from an already registered active
-project anchor and confirms the candidate in the same transaction. A cluster or
+project anchor and records `explicit_confirmation:<signal_id>` as the Project's
+registration source while the candidate retains the signal foreign key. It
+confirms the candidate in the same transaction. A cluster or
 candidate proposal alone never creates an official Project. Confirmation may
 also target an already persisted Project. Replaying the same candidate, Project,
 and confirmation signal returns the existing result; a different Project or

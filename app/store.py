@@ -373,7 +373,8 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "evidence_signal_id", "reason", "created_at",
     ),
     "business_projects": (
-        "id", "canonical_anchor_id", "anchor_type", "title", "created_at",
+        "id", "canonical_anchor_id", "anchor_type", "title", "registry_source",
+        "created_at",
     ),
     "business_project_candidates": (
         "id", "cluster_id", "title", "reason", "status", "confirmed_project_id",
@@ -3624,6 +3625,8 @@ class AutoReplyStore:
                     canonical_anchor_id integer not null unique,
                     anchor_type text not null default 'project' check(anchor_type = 'project'),
                     title text not null check({_business_nonblank_sql("title")}),
+                    registry_source text not null
+                        check({_business_nonblank_sql("registry_source")}),
                     created_at text not null default current_timestamp,
                     foreign key(canonical_anchor_id, anchor_type)
                         references business_anchors(id, anchor_type)
@@ -6732,13 +6735,43 @@ class AutoReplyStore:
             from_task_id=from_task_id, to_task_id=to_task_id, relation_type=relation_type,
             status=status, supporting_signal_id=supporting_signal_id, reason=reason, created_at="",
         )
-        return int(_db.execute(
-            """insert into business_task_relations
-               (from_task_id, to_task_id, relation_type, status, supporting_signal_id, reason)
-               values (?, ?, ?, ?, ?, ?)""",
-            (relation.from_task_id, relation.to_task_id, relation.relation_type.value,
-             relation.status.value, relation.supporting_signal_id, relation.reason),
-        ).lastrowid)
+        existing = _db.execute(
+            """select rowid as relation_id, * from business_task_relations
+               where from_task_id=? and to_task_id=? and relation_type=?""",
+            (relation.from_task_id, relation.to_task_id, relation.relation_type.value),
+        ).fetchone()
+        if existing is None:
+            return int(_db.execute(
+                """insert into business_task_relations
+                   (from_task_id, to_task_id, relation_type, status, supporting_signal_id, reason)
+                   values (?, ?, ?, ?, ?, ?)""",
+                (relation.from_task_id, relation.to_task_id, relation.relation_type.value,
+                 relation.status.value, relation.supporting_signal_id, relation.reason),
+            ).lastrowid)
+        relation_id = int(existing["relation_id"])
+        existing_status = BusinessRelationStatus(existing["status"])
+        if existing_status is relation.status:
+            if int(existing["supporting_signal_id"]) == relation.supporting_signal_id:
+                return relation_id
+            raise ValueError("relation replay with the same status requires the same evidence")
+        if existing_status is not BusinessRelationStatus.PROPOSED:
+            if relation.status is BusinessRelationStatus.PROPOSED:
+                return relation_id
+            raise ValueError("conflicting relation decision")
+        if relation.status is BusinessRelationStatus.PROPOSED:
+            raise AssertionError("same proposed status handled above")
+        _db.execute(
+            """update business_task_relations
+               set status=?, supporting_signal_id=?, reason=?
+               where rowid=?""",
+            (
+                relation.status.value,
+                relation.supporting_signal_id,
+                relation.reason,
+                relation_id,
+            ),
+        )
+        return relation_id
 
     def create_business_anchor_in_transaction(
         self, *, anchor_type: BusinessAnchorType | str, anchor_ref: str, title: str,
@@ -6780,14 +6813,24 @@ class AutoReplyStore:
         return int(row["id"])
 
     def create_business_project_in_transaction(
-        self, *, canonical_anchor_id: int, title: str, _db: sqlite3.Connection
+        self,
+        *,
+        canonical_anchor_id: int,
+        title: str,
+        registry_source: str,
+        _db: sqlite3.Connection,
     ) -> int:
         project = BusinessProject(
-            id=0, canonical_anchor_id=canonical_anchor_id, title=title, created_at=""
+            id=0,
+            canonical_anchor_id=canonical_anchor_id,
+            title=title,
+            registry_source=registry_source,
+            created_at="",
         )
         return int(_db.execute(
-            "insert into business_projects (canonical_anchor_id, title) values (?, ?)",
-            (project.canonical_anchor_id, project.title),
+            """insert into business_projects
+               (canonical_anchor_id, title, registry_source) values (?, ?, ?)""",
+            (project.canonical_anchor_id, project.title, project.registry_source),
         ).lastrowid)
 
     def create_business_project_candidate_in_transaction(

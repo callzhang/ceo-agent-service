@@ -261,6 +261,7 @@ class BusinessProject(_FrozenBusinessModel):
     canonical_anchor_id: ReferenceId
     anchor_type: Literal["project"] = "project"
     title: Nonblank
+    registry_source: Nonblank
     created_at: str
 
 
