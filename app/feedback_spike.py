@@ -9,7 +9,6 @@ from app.codex_decision import append_signature
 from app.dws_client import DwsClient
 from app.leak_check import contains_forbidden_leak
 
-MAX_FEEDBACK_CONTEXT_CHARS = 30
 FEEDBACK_UP_LINK_LABEL = "👍 有帮助"
 FEEDBACK_DOWN_LINK_LABEL = "👎 需改进"
 FEEDBACK_CALLBACK_PATH = "/api/dingtalk-feedback-spike"
@@ -85,12 +84,8 @@ def build_callback_url(
     }
     if attempt_id is not None and str(attempt_id).strip():
         fields["attempt_id"] = str(attempt_id).strip()
-    original_excerpt = _safe_feedback_context_excerpt(original_text)
-    if original_excerpt:
-        fields["original_text"] = original_excerpt
-    reply_excerpt = _safe_feedback_context_excerpt(reply_text)
-    if reply_excerpt:
-        fields["reply_text"] = reply_excerpt
+    # The callback destination only needs opaque identifiers. Message text in
+    # a URL would be disclosed to that host, browser history, and link logs.
     query = urlencode(fields)
     return f"{normalize_vercel_base_url(vercel_base_url)}/api/dingtalk-feedback-spike?{query}"
 
@@ -140,20 +135,6 @@ def message_body_without_feedback_callbacks(
     if marker and FEEDBACK_CALLBACK_PATH in callbacks:
         return body
     return text
-
-
-def _feedback_context_excerpt(text: str) -> str:
-    stripped = " ".join(text.strip().split())
-    if len(stripped) <= MAX_FEEDBACK_CONTEXT_CHARS:
-        return stripped
-    return stripped[: max(0, MAX_FEEDBACK_CONTEXT_CHARS - 3)].rstrip() + "..."
-
-
-def _safe_feedback_context_excerpt(text: str) -> str:
-    excerpt = _feedback_context_excerpt(text)
-    if contains_forbidden_leak(excerpt):
-        return ""
-    return excerpt
 
 
 def extract_feedback_link_context(text: str) -> FeedbackLinkContext | None:
