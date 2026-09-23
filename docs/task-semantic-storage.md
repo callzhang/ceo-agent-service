@@ -229,10 +229,14 @@ evidence. The latest explicit proposal membership is persisted separately from
 current eligible membership. Recompute locates items through that desired set,
 so a completed, cancelled, non-relevant, or inactive-anchor Task can return to
 the same attention item when eligibility returns; a newer explicit proposal
-removal changes the desired set and prevents resurrection. Historical Task membership remains available in immutable attention
-event snapshots, so a later resolution signal may be linked to a former member
-after recomputation removes it. Resolution snapshots record the current member
-IDs on both sides of the state transition. Recompute preserves proposal-owned
+removal changes the desired set and prevents resurrection. Every immutable
+attention lifecycle snapshot records both `task_ids` (the current eligible
+members) and `proposal_task_ids` (the explicit desired proposal members).
+Historical resolution lineage reads both snapshot sets as well as the current
+desired set, so an explicit proposal removal changes only future membership and
+does not erase evidence needed to resolve an older item. Resolution snapshots
+record the current member IDs on both sides of the state transition. Recompute
+preserves proposal-owned
 `current_state` text and changes it only through a later explicit proposal.
 When current membership changes, recompute updates the attention item's
 `updated_at` in the same transaction as its membership event. Repeating

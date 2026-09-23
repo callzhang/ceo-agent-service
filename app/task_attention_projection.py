@@ -54,9 +54,14 @@ class BusinessAttentionProjection:
             raise ValueError(f"{field} must not be blank")
 
     @staticmethod
-    def _snapshot(item: BusinessAttentionItem, task_ids: tuple[int, ...] = ()) -> str:
+    def _snapshot(
+        item: BusinessAttentionItem,
+        task_ids: tuple[int, ...] = (),
+        proposal_task_ids: tuple[int, ...] = (),
+    ) -> str:
         payload = item.model_dump(mode="json")
         payload["task_ids"] = list(sorted(task_ids))
+        payload["proposal_task_ids"] = list(sorted(proposal_task_ids))
         return json.dumps(
             payload,
             ensure_ascii=False,
@@ -85,11 +90,12 @@ class BusinessAttentionProjection:
             attention_item_id=item_id, _db=db
         ):
             for snapshot in (event.before_json, event.after_json):
-                task_ids.update(
-                    value
-                    for value in json.loads(snapshot).get("task_ids", [])
-                    if isinstance(value, int) and value > 0
-                )
+                payload = json.loads(snapshot)
+                for field in ("task_ids", "proposal_task_ids"):
+                    task_ids.update(
+                        value for value in payload.get(field, [])
+                        if isinstance(value, int) and value > 0
+                    )
         return tuple(sorted(task_ids))
 
     def _validate_proposal(self, proposal: AttentionProposal, *, db) -> tuple[BusinessTask, ...]:
@@ -195,7 +201,7 @@ class BusinessAttentionProjection:
                 self.store.append_business_attention_event_in_transaction(
                     attention_item_id=item_id, event_type=BusinessAttentionEventType.OPENED,
                     signal_id=proposal.evidence_signal_id, before_json="{}",
-                    after_json=self._snapshot(item, current_task_ids),
+                    after_json=self._snapshot(item, current_task_ids, proposal.task_ids),
                     reason="Business attention opened", _db=db,
                 )
             else:
@@ -246,8 +252,10 @@ class BusinessAttentionProjection:
                     self.store.append_business_attention_event_in_transaction(
                         attention_item_id=item_id, event_type=event_type,
                         signal_id=proposal.evidence_signal_id,
-                        before_json=self._snapshot(existing, before_task_ids),
-                        after_json=self._snapshot(updated, current_task_ids),
+                        before_json=self._snapshot(
+                            existing, before_task_ids, desired_before_task_ids
+                        ),
+                        after_json=self._snapshot(updated, current_task_ids, proposal.task_ids),
                         reason="Business attention updated", _db=db,
                     )
             return item_id
@@ -308,8 +316,10 @@ class BusinessAttentionProjection:
             self.store.update_business_attention_item_in_transaction(item=updated, _db=db)
             self.store.append_business_attention_event_in_transaction(
                 attention_item_id=item_id, event_type=BusinessAttentionEventType.RESOLVED,
-                signal_id=resolution_signal_id, before_json=self._snapshot(item, current_task_ids),
-                after_json=self._snapshot(updated, current_task_ids), reason=reason, _db=db,
+                signal_id=resolution_signal_id,
+                before_json=self._snapshot(item, current_task_ids, desired_task_ids),
+                after_json=self._snapshot(updated, current_task_ids, desired_task_ids),
+                reason=reason, _db=db,
             )
 
     def record_viewed(self, *, item_id: int, viewed_at: str) -> None:
@@ -358,8 +368,8 @@ class BusinessAttentionProjection:
                 self.store.append_business_attention_event_in_transaction(
                     attention_item_id=item.id, event_type=BusinessAttentionEventType.UPDATED,
                     signal_id=item.evidence_signal_id,
-                    before_json=self._snapshot(item, before_task_ids),
-                    after_json=self._snapshot(updated, after_task_ids),
+                    before_json=self._snapshot(item, before_task_ids, desired_task_ids),
+                    after_json=self._snapshot(updated, after_task_ids, desired_task_ids),
                     reason="Business attention membership recomputed", _db=db,
                 )
                 item_ids.append(item.id)

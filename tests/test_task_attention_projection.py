@@ -352,3 +352,33 @@ def test_initial_terminal_proposal_retains_resolution_lineage(projection):
 
     projection.resolve(item_id=item_id, resolution_signal_id=resolution_signal, reason="已解决")
     assert projection.store.get_business_attention_item(item_id).status.value == "resolved"
+
+
+def test_resolution_uses_historical_proposal_membership_after_explicit_removal(projection):
+    first, anchor_id, signal_id = _task_with_anchor(projection, "historical-proposal-first")
+    second, _, _ = _task_with_anchor(projection, "historical-proposal-second")
+    resolver = BusinessResolutionService(projection.store)
+    resolver.confirm_anchor_match(task_id=second, anchor_id=anchor_id, evidence_signal_id=signal_id, reason="同一客户")
+    service = TaskSemanticService(projection.store)
+    for task_id, key in ((first, "first"), (second, "second")):
+        service.update_task(
+            UpdateBusinessTask(
+                task_id=task_id, status=BusinessTaskStatus.DONE,
+                signal=SourceSignal(source_type="message", source_ref=f"historical:{key}", evidence_text="完成", dedupe_key=f"historical:{key}"),
+            )
+        )
+    item_id = projection.upsert(_proposal((first, second), anchor_id, signal_id))
+    projection.upsert(_proposal((second,), anchor_id, signal_id))
+    resolution_signal = projection.store.create_business_task_signal(
+        source_type="message", source_ref="historical:resolution", evidence_text="已解决",
+        dedupe_key="historical:resolution",
+    )
+    projection.store.link_business_task_evidence(
+        task_id=first, signal_id=resolution_signal, evidence_role="resolution"
+    )
+
+    projection.resolve(item_id=item_id, resolution_signal_id=resolution_signal, reason="历史证据解决")
+    assert projection.store.get_business_attention_item(item_id).status.value == "resolved"
+    membership_event = projection.store.list_business_attention_events(item_id)[1]
+    assert '"proposal_task_ids":[%s,%s]' % (first, second) in membership_event.before_json
+    assert '"proposal_task_ids":[%s]' % second in membership_event.after_json
