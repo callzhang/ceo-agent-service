@@ -166,6 +166,11 @@ class AttentionRow(StrictStatusModel):
     detail_url: str | None = None
 
 
+class HumanDecisionRow(AttentionRow):
+    detail_label: str
+    detail: str
+
+
 class DatabaseStatus(StrictStatusModel):
     path: str
 
@@ -190,7 +195,7 @@ class WorkerStatus(StrictStatusModel):
     queues: list[QueueStatus]
     dispatcher_queues: list[DispatcherQueueStatus]
     attention_rows: list[AttentionRow]
-    human_decision_rows: list[AttentionRow] = Field(default_factory=list)
+    human_decision_rows: list[HumanDecisionRow] = Field(default_factory=list)
     database: DatabaseStatus
     summary: QueueSummary
 

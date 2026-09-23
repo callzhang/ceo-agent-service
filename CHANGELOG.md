@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 2026-09-22: The console status response now accepts the evidence label and
+  detail on a human rule-decision row. A valid decision no longer makes the
+  entire status endpoint return HTTP 500.
+
 - 2026-09-22: Current reply-task recovery and Attention now require an
   attempt's Agent run to belong to the task's current execution generation.
   An older OA scan revision can no longer fail a newer task generation or

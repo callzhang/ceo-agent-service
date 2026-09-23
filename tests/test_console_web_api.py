@@ -1197,6 +1197,34 @@ def test_console_status_route_registers_a_response_model(tmp_path: Path):
     assert route.response_model is not None
 
 
+def test_console_status_accepts_human_decision_evidence(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        audit_web_module,
+        "_human_decision_attention_rows",
+        lambda _store: [{
+            "category": "Rule decision",
+            "id": "42",
+            "status": "needs_human",
+            "context": "Approval",
+            "summary": "A rule choice is required",
+            "updated_at": "2026-09-23 04:00:00",
+            "error": "",
+            "root_cause": "Missing rule",
+            "detail_label": "Decision basis",
+            "detail": "The current policy does not cover this case.",
+            "detail_url": "/attempts/42",
+        }],
+    )
+
+    with _client(tmp_path, raise_server_exceptions=False) as client:
+        response = client.get("/api/console/status")
+
+    assert response.status_code == 200
+    assert response.json()["item"]["human_decision_rows"][0]["detail"] == (
+        "The current policy does not cover this case."
+    )
+
+
 @pytest.mark.parametrize(
     ("model", "payload"),
     (
