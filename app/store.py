@@ -144,6 +144,7 @@ from app.task_semantic_models import (
     BusinessTaskStage,
     BusinessTaskStatus,
     BusinessWorkCluster,
+    BusinessWorkClusterTask,
     CommitmentStatus,
     FormalTaskBasis,
 )
@@ -7191,6 +7192,33 @@ class AutoReplyStore:
                 (limit, offset),
             ).fetchall()
             return tuple(BusinessWorkCluster.model_validate(dict(row)) for row in rows)
+
+    def list_business_work_cluster_tasks(
+        self, *, cluster_id: int | None = None, task_id: int | None = None,
+        limit: int = 100, offset: int = 0,
+    ) -> tuple[BusinessWorkClusterTask, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business cluster membership pagination requires positive limit and non-negative offset")
+        if cluster_id is not None and cluster_id < 1:
+            raise ValueError("cluster_id must be positive")
+        if task_id is not None and task_id < 1:
+            raise ValueError("task_id must be positive")
+        clauses = []
+        values: list[int] = []
+        if cluster_id is not None:
+            clauses.append("cluster_id=?")
+            values.append(cluster_id)
+        if task_id is not None:
+            clauses.append("task_id=?")
+            values.append(task_id)
+        where = f"where {' and '.join(clauses)}" if clauses else ""
+        with self._connect() as db:
+            rows = db.execute(
+                f"select * from business_work_cluster_tasks {where} "
+                "order by cluster_id, task_id limit ? offset ?",
+                (*values, limit, offset),
+            ).fetchall()
+            return tuple(BusinessWorkClusterTask.model_validate(dict(row)) for row in rows)
 
     def list_business_anchors(
         self, *, limit: int = 100, offset: int = 0
