@@ -2848,12 +2848,26 @@ def send_attempt_command(
         attempt.trigger_message_id,
         channel=attempt.channel,
     )
+    if attempt.oa_process_instance_id and attempt.oa_task_id:
+        current_oa_task = store.get_reply_task_for_business_object(
+            f"oa:{attempt.oa_process_instance_id}:{attempt.oa_task_id}"
+        )
+        if (
+            current_oa_task is not None
+            and current_oa_task.channel == attempt.channel
+            and current_oa_task.conversation_id == attempt.conversation_id
+        ):
+            task = current_oa_task
     conversation = store.get_conversation(attempt.conversation_id)
     if task is not None:
         trigger_message_json = task.trigger_message_json
         trigger_create_time = task.trigger_create_time
         conversation_title = task.conversation_title
         single_chat = task.single_chat
+        trigger_message_id = task.trigger_message_id
+        trigger_sender = task.trigger_sender
+        trigger_text = task.trigger_text
+        oa_url = task.oa_url or attempt.oa_url
     else:
         if attempt.channel != "dingtalk" or conversation is None:
             raise SystemExit(
@@ -2872,6 +2886,10 @@ def send_attempt_command(
         trigger_create_time = trigger.create_time
         conversation_title = conversation.title
         single_chat = conversation.single_chat
+        trigger_message_id = attempt.trigger_message_id
+        trigger_sender = attempt.trigger_sender
+        trigger_text = attempt.trigger_text
+        oa_url = attempt.oa_url
     # A pending task with an error is a deferred failed generation, not an
     # active duplicate.  Replaying the reviewed attempt must create a fresh
     # generation so it can use repaired runtime behavior immediately.
@@ -2888,15 +2906,15 @@ def send_attempt_command(
             conversation_id=attempt.conversation_id,
             conversation_title=conversation_title,
             single_chat=single_chat,
-            trigger_message_id=attempt.trigger_message_id,
+            trigger_message_id=trigger_message_id,
             trigger_create_time=trigger_create_time,
-            trigger_sender=attempt.trigger_sender,
-            trigger_text=attempt.trigger_text,
+            trigger_sender=trigger_sender,
+            trigger_text=trigger_text,
             trigger_message_json=trigger_message_json,
             suggested_reply_text="",
             reviewer_feedback=reviewed_instruction,
             channel=attempt.channel,
-            oa_url=attempt.oa_url,
+            oa_url=oa_url,
         )
     else:
         queued_attempt_id = attempt.id
@@ -2904,12 +2922,12 @@ def send_attempt_command(
             conversation_id=attempt.conversation_id,
             conversation_title=conversation_title,
             single_chat=single_chat,
-            trigger_message_id=attempt.trigger_message_id,
+            trigger_message_id=trigger_message_id,
             trigger_create_time=trigger_create_time,
-            trigger_sender=attempt.trigger_sender,
-            trigger_text=attempt.trigger_text,
+            trigger_sender=trigger_sender,
+            trigger_text=trigger_text,
             trigger_message_json=trigger_message_json,
-            oa_url=attempt.oa_url,
+            oa_url=oa_url,
             attempt_id=attempt.id,
             channel=attempt.channel,
             force_rotation=force_rotation,
