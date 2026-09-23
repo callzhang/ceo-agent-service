@@ -345,3 +345,35 @@ def test_raise_for_process_failure_attaches_diagnostics_to_runtime_error():
     assert raised.value.detail == (
         "fatal: MCP connection refused | worker crashed"
     )
+
+
+def test_a_result_correction_names_what_the_contract_says_is_wrong() -> None:
+    """Task 384711: two retries were told only `result: value_error`.
+
+    They resent the same result twice. The contract's own sentence says what to
+    change; the rejected model output must still stay out of the detail.
+    """
+    from pydantic import BaseModel, ValidationError, model_validator
+
+    from app.agent_result import ResultParseError
+    from app.agent_turn_runner import _result_parse_error_detail
+
+    class Result(BaseModel):
+        outcome: str
+
+        @model_validator(mode="after")
+        def check(self) -> "Result":
+            raise ValueError(
+                "authorization needs_human requires complete information and rule coverage"
+            )
+
+    try:
+        Result.model_validate({"outcome": "secret model text"})
+    except ValidationError as exc:
+        error = ResultParseError("invalid")
+        error.__cause__ = exc
+
+    detail = _result_parse_error_detail(error)
+
+    assert "requires complete information and rule coverage" in detail
+    assert "secret model text" not in detail

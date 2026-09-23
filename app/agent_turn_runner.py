@@ -642,7 +642,15 @@ def _result_parse_error_detail(exc: ResultParseError) -> str:
                     ".".join(str(part) for part in error.get("loc", ())) or "result"
                 )
                 kind = str(error.get("type") or "validation_error")
-                fields.append(f"{location}: {kind}")
+                # The contract's own sentence, not only its type. Task 384711's
+                # retries were told `result: value_error` and resent the same
+                # result twice; the message said an authorization needs_human
+                # needs complete information and rule coverage. `msg` is the
+                # contract's text; the rejected input stays out.
+                message = str(error.get("msg") or "").strip()
+                fields.append(
+                    f"{location}: {message}" if message else f"{location}: {kind}"
+                )
             if fields:
                 return "; ".join(fields[:8])
         current = current.__cause__ or current.__context__

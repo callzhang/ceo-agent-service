@@ -1038,8 +1038,9 @@ run 才能被持久队列恢复。
   有证据的 `executed` 其 `external_result.operation_id` 由服务从 Audit run 回填（不透明操作号是服务
   自己的，模型抄错不应让任务终态失败）；缺少 `external_result` 则同样进入修正轮。
 - **结果不合契约**：Agent 返回了 JSON 但不满足 wire schema 时，解析器报 `codex_result_invalid`
-  并保留失败字段位置（不保留模型原文）；同一角色、同一 revision 的下一次 turn 会收到
-  `## Result Correction`，把这些位置反馈给模型，要求只返回修正后的结果。只有完全没有 JSON
+  并保留失败字段位置和契约自己的校验说明（不保留模型原文）；同一角色、同一 revision 的下一次 turn 会收到
+  `## Result Correction`，把这些位置和说明反馈给模型，要求只返回修正后的结果。只给类型不给说明
+  （如 `result: value_error`）时模型无从下手：任务 384711 两轮重试原样重交了同一个结果。只有完全没有 JSON
   对象时才是 `codex_result_missing`，此时下一次 turn 同样收到修正块，说明上一轮只有说明文字。
   wire 契约中的 `error_code` 接受 `null` 作为“无错误”（等价于空字符串）；模型无需为无错误结果编造字符串哨兵。
 
