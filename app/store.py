@@ -6651,6 +6651,22 @@ class AutoReplyStore:
             ).fetchall()
             return tuple(self._business_task_evidence_from_row(row) for row in rows)
 
+    def list_business_task_ids_for_conversation(
+        self, *, conversation_id: str, limit: int = 100, offset: int = 0
+    ) -> tuple[int, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business conversation pagination requires positive limit and non-negative offset")
+        if not conversation_id.strip():
+            return ()
+        with self._connect() as db:
+            rows = db.execute(
+                "select distinct evidence.task_id from business_task_evidence evidence "
+                "join business_task_signals signal on signal.id=evidence.signal_id "
+                "where signal.conversation_id=? order by evidence.task_id limit ? offset ?",
+                (conversation_id, limit, offset),
+            ).fetchall()
+            return tuple(int(row["task_id"]) for row in rows)
+
     def list_business_task_events(
         self, task_id: int
     ) -> tuple[BusinessTaskEvent, ...]:
@@ -6936,9 +6952,66 @@ class AutoReplyStore:
             row = db.execute("select * from business_projects where id=?", (project_id,)).fetchone()
             return BusinessProject.model_validate(dict(row)) if row else None
 
-    def list_business_projects(self) -> list[BusinessProject]:
+    def list_business_work_clusters(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessWorkCluster, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business cluster pagination requires positive limit and non-negative offset")
         with self._connect() as db:
-            rows = db.execute("select * from business_projects order by id").fetchall()
+            rows = db.execute(
+                "select * from business_work_clusters order by id limit ? offset ?",
+                (limit, offset),
+            ).fetchall()
+            return tuple(BusinessWorkCluster.model_validate(dict(row)) for row in rows)
+
+    def list_business_anchors(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessAnchor, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business anchor pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_anchors order by id limit ? offset ?",
+                (limit, offset),
+            ).fetchall()
+            return tuple(BusinessAnchor.model_validate(dict(row)) for row in rows)
+
+    def list_business_task_relations(
+        self, *, task_id: int, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessTaskRelation, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business relation pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_task_relations where from_task_id=? or to_task_id=? "
+                "order by from_task_id, to_task_id, relation_type limit ? offset ?",
+                (task_id, task_id, limit, offset),
+            ).fetchall()
+            return tuple(BusinessTaskRelation.model_validate(dict(row)) for row in rows)
+
+    def list_business_task_anchor_links(
+        self, *, task_id: int, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessTaskAnchorLink, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business anchor-link pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_task_anchor_links where task_id=? "
+                "order by id limit ? offset ?",
+                (task_id, limit, offset),
+            ).fetchall()
+            return tuple(BusinessTaskAnchorLink.model_validate(dict(row)) for row in rows)
+
+    def list_business_projects(
+        self, *, limit: int | None = None, offset: int = 0
+    ) -> list[BusinessProject]:
+        if (limit is not None and limit < 1) or offset < 0:
+            raise ValueError("business project pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_projects order by id limit ? offset ?",
+                (limit if limit is not None else -1, offset),
+            ).fetchall()
             return [BusinessProject.model_validate(dict(row)) for row in rows]
 
     # Task 5 attention primitives accept an existing transaction.  The

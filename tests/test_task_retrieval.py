@@ -1,6 +1,8 @@
 import json
 
 from app.store import AutoReplyStore
+from app.task_models import WorkItem
+from app.task_semantic_models import BusinessTaskStage
 from app.task_retrieval import (
     load_project_task_detail,
     render_candidate_prompt,
@@ -8,7 +10,98 @@ from app.task_retrieval import (
     retrieve_project_candidates,
     retrieve_project_task_details,
     resolve_task_owner_display,
+    retrieve_task_semantic_context,
+    render_task_semantic_context,
 )
+
+
+def _work_item(summary: str) -> WorkItem:
+    return WorkItem.model_validate({
+        "source": {"type": "reply_attempt", "ref": "message:42"},
+        "summary": summary,
+        "context": {"source_conversation_kind": "group"},
+    })
+
+
+def test_semantic_context_includes_old_formal_task_and_evidence_beyond_recent_window(tmp_path):
+    store = AutoReplyStore(tmp_path / "semantic-retrieval.sqlite3")
+    matched = store.create_business_task(title="美国客户报价第一版", stage=BusinessTaskStage.FORMAL,
+                                         formal_basis="explicit_assignment", commitment_status="assigned_unaccepted")
+    signal_id = store.create_business_task_signal(source_type="message", source_ref="message:old",
+                                                  evidence_text="王明负责美国客户报价第一版",
+                                                  dedupe_key="message:old")
+    store.link_business_task_evidence(task_id=matched, signal_id=signal_id, evidence_role="assignment")
+    for index in range(501):
+        store.create_business_task(title=f"其他工作 {index}", stage=BusinessTaskStage.CANDIDATE)
+
+    context = retrieve_task_semantic_context(store, _work_item("美国客户报价第一版进展"), limit_per_kind=2)
+    assert [task.id for task in context.formal_tasks] == [matched]
+    assert [(row.task_id, row.signal_id) for row in context.task_evidence] == [(matched, signal_id)]
+    assert len(context.task_candidates) <= 2
+    rendered = render_task_semantic_context(context)
+    assert "rank is context only" in rendered
+    assert "never authority or confirmation" in rendered
+    assert "王明负责美国客户报价第一版" in rendered
+
+
+def test_semantic_context_includes_registry_clusters_and_anchor_links(tmp_path):
+    from app.task_business_resolution import BusinessResolutionService
+
+    store = AutoReplyStore(tmp_path / "semantic-relations.sqlite3")
+    resolver = BusinessResolutionService(store)
+    task_id = store.create_business_task(title="美国客户报价", stage="formal",
+                                         formal_basis="explicit_assignment", commitment_status="assigned_unaccepted")
+    signal_id = store.create_business_task_signal(source_type="message", source_ref="message:anchor",
+                                                  evidence_text="美国客户报价属于美国客户成交",
+                                                  dedupe_key="message:anchor")
+    cluster_id = resolver.create_cluster(title="美国客户成交", task_ids=[task_id])
+    anchor_id = resolver.register_anchor(anchor_type="project", anchor_ref="registry:us",
+                                         title="美国客户成交")
+    project_id = resolver.register_official_project(anchor_id=anchor_id, registry_source="portfolio")
+    resolver.propose_anchor_match(task_id=task_id, anchor_id=anchor_id, evidence_signal_id=signal_id)
+    related_id = store.create_business_task(title="签约准备", stage="formal",
+                                            formal_basis="explicit_assignment", commitment_status="assigned_unaccepted")
+    resolver.add_relation(from_task_id=task_id, to_task_id=related_id,
+                          relation_type="supports", evidence_signal_id=signal_id)
+
+    context = retrieve_task_semantic_context(store, _work_item("美国客户报价"), limit_per_kind=2)
+    assert [cluster.id for cluster in context.clusters] == [cluster_id]
+    assert [anchor.id for anchor in context.anchors] == [anchor_id]
+    assert [project.id for project in context.official_projects] == [project_id]
+    assert [(link.task_id, link.anchor_id) for link in context.task_anchor_links] == [(task_id, anchor_id)]
+    assert [(relation.from_task_id, relation.to_task_id) for relation in context.task_relations] == [(task_id, related_id)]
+    assert "proposed" in render_task_semantic_context(context)
+
+
+def test_semantic_context_can_find_existing_formal_task_from_source_conversation(tmp_path):
+    store = AutoReplyStore(tmp_path / "semantic-conversation.sqlite3")
+    task_id = store.create_business_task(title="客户交付方案", stage="formal",
+                                         formal_basis="explicit_assignment", commitment_status="assigned_unaccepted")
+    signal_id = store.create_business_task_signal(source_type="message", source_ref="message:old",
+                                                  conversation_id="cid-1", evidence_text="请提交客户交付方案",
+                                                  dedupe_key="message:old")
+    store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="assignment")
+    item = _work_item("收到，我负责推进")
+    item.source.conversation_id = "cid-1"
+
+    context = retrieve_task_semantic_context(store, item, limit_per_kind=1)
+    assert [task.id for task in context.formal_tasks] == [task_id]
+    assert context.evidence_signals[0].evidence_text == "请提交客户交付方案"
+
+
+def test_semantic_store_read_methods_use_stable_pages(tmp_path):
+    from app.task_business_resolution import BusinessResolutionService
+
+    store = AutoReplyStore(tmp_path / "semantic-pages.sqlite3")
+    resolver = BusinessResolutionService(store)
+    task_id = store.create_business_task(title="任务", stage="candidate")
+    cluster_ids = [resolver.create_cluster(title=f"业务组 {index}", task_ids=[task_id])
+                   for index in range(3)]
+    anchor_ids = [resolver.register_anchor(anchor_type="customer", anchor_ref=f"cust:{index}",
+                                           title=f"客户 {index}") for index in range(3)]
+
+    assert [row.id for row in store.list_business_work_clusters(limit=1, offset=1)] == [cluster_ids[1]]
+    assert [row.id for row in store.list_business_anchors(limit=1, offset=2)] == [anchor_ids[2]]
 
 
 def test_retrieve_project_candidates_uses_summary_and_project_name(tmp_path):

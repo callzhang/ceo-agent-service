@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.store import AutoReplyStore
-from app.task_models import WorkProject, WorkTodo
+from app.task_models import WorkItem, WorkProject, WorkTodo
+from app.task_semantic_models import (
+    BusinessAnchor, BusinessProject, BusinessTask, BusinessTaskAnchorLink,
+    BusinessTaskEvidence, BusinessTaskRelation, BusinessTaskSignal,
+    BusinessWorkCluster,
+)
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
@@ -27,6 +32,131 @@ class ProjectTaskDetail:
     updates: tuple[object, ...]
     follow_ups_by_todo: dict[int, tuple[object, ...]]
     dingtalk_links_by_todo: dict[int, tuple[object, ...]]
+
+
+@dataclass(frozen=True)
+class TaskSemanticContext:
+    task_candidates: tuple[BusinessTask, ...]
+    formal_tasks: tuple[BusinessTask, ...]
+    task_evidence: tuple[BusinessTaskEvidence, ...]
+    evidence_signals: tuple[BusinessTaskSignal, ...]
+    task_relations: tuple[BusinessTaskRelation, ...]
+    task_anchor_links: tuple[BusinessTaskAnchorLink, ...]
+    clusters: tuple[BusinessWorkCluster, ...]
+    anchors: tuple[BusinessAnchor, ...]
+    official_projects: tuple[BusinessProject, ...]
+
+
+def _all_pages(fetch, *, page_size: int = 100):
+    offset = 0
+    while True:
+        page = fetch(limit=page_size, offset=offset)
+        yield from page
+        if len(page) < page_size:
+            return
+        offset += len(page)
+
+
+def _semantic_score(query_terms: set[str], document: str) -> int:
+    return len(query_terms.intersection(tokenize(document)))
+
+
+def retrieve_task_semantic_context(
+    store: AutoReplyStore, work_item: WorkItem, *, limit_per_kind: int = 20
+) -> TaskSemanticContext:
+    if limit_per_kind < 1:
+        raise ValueError("limit_per_kind must be positive")
+    query_terms = set(tokenize(work_item.summary))
+    conversation_task_ids = set(_all_pages(
+        lambda *, limit, offset: store.list_business_task_ids_for_conversation(
+            conversation_id=work_item.source.conversation_id, limit=limit, offset=offset
+        )
+    ))
+    tasks = _all_pages(store.list_business_tasks)
+    ranked_tasks = sorted(
+        (
+            (
+                _semantic_score(query_terms, f"{task.id} {task.title} {task.description} {task.owner_name}")
+                + (2 if task.id in conversation_task_ids else 0),
+                task,
+            )
+            for task in tasks
+            if task.status.value != "merged"
+        ),
+        key=lambda pair: (-pair[0], -pair[1].id),
+    )
+    candidates = tuple(
+        task for score, task in ranked_tasks
+        if score > 0 and task.stage.value == "candidate"
+    )[:limit_per_kind]
+    formal = tuple(
+        task for score, task in ranked_tasks
+        if score > 0 and task.stage.value == "formal"
+    )[:limit_per_kind]
+    selected = candidates + formal
+    evidence = tuple(
+        row for task in selected
+        for row in store.list_business_task_evidence(task.id)[-limit_per_kind:]
+    )
+    signals = tuple(
+        signal for signal_id in sorted({row.signal_id for row in evidence})
+        if (signal := store.get_business_task_signal(signal_id)) is not None
+    )
+    relations = tuple(dict.fromkeys(
+        row for task in selected
+        for row in _all_pages(
+            lambda *, limit, offset, task_id=task.id: store.list_business_task_relations(
+                task_id=task_id, limit=limit, offset=offset
+            )
+        )
+    ))[:limit_per_kind]
+    links = tuple(
+        row for task in selected
+        for row in _all_pages(
+            lambda *, limit, offset, task_id=task.id: store.list_business_task_anchor_links(
+                task_id=task_id, limit=limit, offset=offset
+            )
+        )
+    )[:limit_per_kind]
+    clusters = sorted(
+        _all_pages(store.list_business_work_clusters),
+        key=lambda cluster: (-_semantic_score(query_terms, cluster.title), cluster.id),
+    )
+    anchors = sorted(
+        _all_pages(store.list_business_anchors),
+        key=lambda anchor: (-_semantic_score(query_terms, anchor.title), anchor.id),
+    )
+    projects = sorted(
+        _all_pages(store.list_business_projects),
+        key=lambda project: (-_semantic_score(query_terms, project.title), project.id),
+    )
+    return TaskSemanticContext(
+        task_candidates=candidates,
+        formal_tasks=formal,
+        task_evidence=evidence,
+        evidence_signals=signals,
+        task_relations=relations,
+        task_anchor_links=links,
+        clusters=tuple(clusters[:limit_per_kind]),
+        anchors=tuple(anchors[:limit_per_kind]),
+        official_projects=tuple(projects[:limit_per_kind]),
+    )
+
+
+def render_task_semantic_context(context: TaskSemanticContext) -> str:
+    payload = {
+        "notice": "Similarity rank is context only; never authority or confirmation for identity, acceptance, anchor match, or official Project creation.",
+        "task_candidates": [_model_payload(value) for value in context.task_candidates],
+        "existing_formal_tasks": [_model_payload(value) for value in context.formal_tasks],
+        "task_evidence": [_model_payload(value) for value in context.task_evidence],
+        "source_signals": [_model_payload(value) for value in context.evidence_signals],
+        "task_relations": [_model_payload(value) for value in context.task_relations],
+        "task_anchor_links": [_model_payload(value) for value in context.task_anchor_links],
+        "work_clusters": [_model_payload(value) for value in context.clusters],
+        "registered_anchors": [_model_payload(value) for value in context.anchors],
+        "official_project_registry": [_model_payload(value) for value in context.official_projects],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def tokenize(text: str) -> list[str]:

@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.fields import FieldInfo
 
 from app.decision_quality import DecisionQualityResult, DecisionRisk, classify_decision_quality
+from app.task_semantic_models import FormalTaskBasis
 
 
 def _null_means_omitted(field: FieldInfo) -> bool:
@@ -257,7 +258,6 @@ class WorkItemTaskSignals(BaseModel):
 class WorkItem(BaseModel):
     source: WorkItemSource
     summary: str
-    project_name: str = ""
     context: WorkItemContext
     task_signals: WorkItemTaskSignals = Field(default_factory=WorkItemTaskSignals)
     scheduled_consumer: dict[str, object] = Field(default_factory=dict)
@@ -359,15 +359,110 @@ class FollowUpDraftChange(StrictTaskModel):
     owner_evidence: dict[str, Any] = Field(default_factory=dict)
 
 
-class TaskAgentDecision(StrictTaskModel):
-    action: Literal["skip", "create_project", "update_project"]
+class TaskDateEvidence(StrictTaskModel):
+    kind: Literal[
+        "assigned_at", "requested_deadline_at", "external_deadline_at",
+        "committed_deadline_at", "estimated_deadline_at", "next_check_at",
+    ]
+    value: str
+    source_ref: str
+    source_excerpt: str
+    actor_user_id: str = ""
+    actor_name: str = ""
+
+    @model_validator(mode="after")
+    def source_is_explicit(self) -> "TaskDateEvidence":
+        if not self.value.strip() or not self.source_ref.strip() or not self.source_excerpt.strip():
+            raise ValueError("date evidence requires a value and exact source provenance")
+        return self
+
+
+class TaskIdentityEvidence(StrictTaskModel):
+    same_external_task_id: bool = False
+    explicit_source_reference: bool = False
+    same_deliverable: bool = False
+    same_owner: bool = False
+    same_context: bool = False
+    compatible_time_window: bool = False
+
+
+class TaskIdentityProposal(StrictTaskModel):
+    source_task_id: int = Field(gt=0)
+    target_task_id: int = Field(gt=0)
+    identity_evidence: TaskIdentityEvidence
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def distinct_tasks(self) -> "TaskIdentityProposal":
+        if self.source_task_id == self.target_task_id:
+            raise ValueError("identity proposal requires distinct Tasks")
+        return self
+
+
+class TaskRelationProposal(StrictTaskModel):
+    from_task_id: int = Field(gt=0)
+    to_task_id: int = Field(gt=0)
+    relation_type: Literal["depends_on", "blocks", "supports", "supersedes", "related_to"]
+    reason: str = ""
+
+
+class TaskClusterProposal(StrictTaskModel):
+    cluster_id: int | None = Field(default=None, gt=0)
+    title: str = ""
+    task_ids: list[int] = Field(default_factory=list)
+    reason: str = ""
+
+
+class TaskAnchorMatchProposal(StrictTaskModel):
+    anchor_id: int = Field(gt=0)
+    reason: str
+
+
+class ProjectCandidateProposal(StrictTaskModel):
+    cluster_id: int = Field(gt=0)
+    title: str
+    reason: str
+
+
+class TaskAttentionProposal(StrictTaskModel):
+    category: Literal["fyi", "watch", "decision", "push"]
+    title: str
+    why_attention: str
+    current_state: str
+    ceo_action: str
+    anchor_id: int = Field(gt=0)
+    material_trigger: Literal[
+        "threatened_commitment", "material_change", "material_dispute",
+        "ceo_decision", "ceo_push", "required_gate", "risk_escalation",
+    ]
+    trigger_evidence: str
+
+
+class TaskDecision(StrictTaskModel):
+    action: Literal["skip", "record_candidate", "create_task", "update_task"]
+    transition: Literal[
+        "none", "promote_candidate", "apply_acceptance", "update_fields", "merge_identity"
+    ]
     skip_reason: str = ""
-    project: TaskProjectPatch | None = None
-    todo_changes: list[TodoChange] = Field(default_factory=list)
-    follow_up_drafts: list[FollowUpDraftDecision] = Field(default_factory=list)
-    follow_up_changes: list[FollowUpDraftChange] = Field(default_factory=list)
+    task_id: int | None = Field(default=None, gt=0)
+    target_task_id: int | None = Field(default=None, gt=0)
+    source_excerpt: str = ""
+    source_ref: str = ""
+    title: str = ""
+    description: str = ""
+    formal_basis: FormalTaskBasis | None = None
+    owner_user_id: str = ""
+    owner_name: str = ""
+    owner_evidence: dict[str, Any] = Field(default_factory=dict)
+    date_evidence: list[TaskDateEvidence] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    identity_proposal: TaskIdentityProposal | None = None
+    relation_proposals: list[TaskRelationProposal] = Field(default_factory=list)
+    cluster_proposal: TaskClusterProposal | None = None
+    anchor_match_proposals: list[TaskAnchorMatchProposal] = Field(default_factory=list)
+    project_candidate_proposal: ProjectCandidateProposal | None = None
+    attention_proposal: TaskAttentionProposal | None = None
     update_summary: str = ""
-    merge_reason: str = ""
     memory_recall_used: bool = False
     risk: DecisionRisk = Field(
         default=DecisionRisk.LOW,
@@ -392,6 +487,31 @@ class TaskAgentDecision(StrictTaskModel):
         description="How complete the evidence needed for this decision is.",
     )
 
+    @model_validator(mode="after")
+    def validate_transition_shape(self) -> "TaskDecision":
+        if self.action != "skip" and (not self.source_excerpt.strip() or not self.source_ref.strip()):
+            raise ValueError("task decisions require an exact source excerpt and reference")
+        if self.action == "create_task" and self.formal_basis is None:
+            raise ValueError("formal Task creation requires formal_basis")
+        if self.action == "record_candidate" and self.formal_basis is not None:
+            raise ValueError("candidate cannot carry formal_basis")
+        if (self.owner_user_id.strip() or self.owner_name.strip()) and not self.owner_evidence:
+            raise ValueError("source-backed owner assignment requires owner_evidence")
+        if self.action in {"skip", "record_candidate", "create_task"} and self.transition != "none":
+            raise ValueError("new/skip decisions cannot transition an existing Task")
+        if self.action == "update_task" and (self.task_id is None or self.transition == "none"):
+            raise ValueError("update_task requires task_id and a dedicated transition")
+        if self.transition == "merge_identity":
+            if (
+                self.identity_proposal is None
+                or self.identity_proposal.source_task_id != self.task_id
+                or self.identity_proposal.target_task_id != self.target_task_id
+            ):
+                raise ValueError("merge_identity requires matching structured identity proposal")
+        if self.transition != "merge_identity" and self.identity_proposal is not None:
+            raise ValueError("identity proposal requires merge_identity transition")
+        return self
+
     def decision_quality(self) -> DecisionQualityResult:
         """Classify this task decision with the shared result-quality rules."""
         return classify_decision_quality(
@@ -400,6 +520,10 @@ class TaskAgentDecision(StrictTaskModel):
             rule_coverage=self.rule_coverage,
             information_completeness=self.information_completeness,
         )
+
+
+class TaskAgentDecision(StrictTaskModel):
+    task_decisions: list[TaskDecision]
 
 
 class WorkProject(BaseModel):

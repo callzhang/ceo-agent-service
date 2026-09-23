@@ -1,454 +1,140 @@
 import pytest
 from pydantic import ValidationError
 
-from app.task_models import (
-    FollowUpDraftStatus,
-    ProjectCategory,
-    ProjectPriority,
-    ProjectStatus,
-    TaskAgentDecision,
-    TodoStatus,
-    WorkItem,
-)
+from app.task_models import TaskAgentDecision, WorkItem
 
 
-def _memory_context():
+def _decision(**changes):
     return {
-        "query": "售前知识库",
-        "summary": "售前知识库历史背景来自 memory_recall。",
-        "memories": [
-            {
-                "source": "memory_recall",
-                "uuid": "mem-1",
-                "text": "售前知识库历史背景：材料沉淀在 business/售前知识库。",
-                "summary": "材料沉淀在 business/售前知识库。",
-                "created_at": "2026-06-05",
-            }
-        ],
+        "action": "record_candidate",
+        "transition": "none",
+        "source_excerpt": "美国报价可以研究一下",
+        "source_ref": "message:42",
+        "title": "研究美国报价",
+        "missing_evidence": ["deliverable", "authority"],
+        **changes,
     }
 
 
-def test_work_item_keeps_input_small():
-    item = WorkItem.model_validate(
-        {
-            "source": {
-                "type": "reply_attempt",
-                "ref": "42",
-                "title": "项目进展",
-                "conversation_id": "cid-1",
-                "conversation_title": "项目群",
-                "created_at": "2026-06-07 09:00:00",
-            },
-            "summary": "客户交付项目今天确认 P0 风险，需要 owner 给 ETA。",
-            "project_name": "客户交付项目",
-            "context": {
-                "sender": "Mina",
-                "participants": ["Mina", "Derek"],
-                "source_conversation_kind": "group",
-                "source_conversation_title": "项目群",
-            },
-        }
-    )
-
-    payload = item.model_dump()
-    assert "project_candidates" not in payload
-    assert "todo_candidates" not in payload
-    assert "facts" not in payload
-    assert item.project_name == "客户交付项目"
+def test_work_item_does_not_require_project_name():
+    item = WorkItem.model_validate({
+        "source": {"type": "reply_attempt", "ref": "42"},
+        "summary": "美国报价可以研究一下",
+        "context": {"source_conversation_kind": "group"},
+    })
+    assert "project_name" not in item.model_dump()
 
 
-def test_project_category_is_fixed_enum():
-    assert ProjectCategory.MANAGEMENT.value == "management"
-    assert ProjectCategory.HR.value == "HR"
-    assert ProjectCategory.OTHER.value == "other"
+def test_vague_source_is_candidate_with_missing_evidence():
+    decision = TaskAgentDecision.model_validate({"task_decisions": [_decision()]})
+    assert decision.task_decisions[0].action == "record_candidate"
+    assert decision.task_decisions[0].formal_basis is None
 
+
+def test_one_source_can_emit_several_source_grounded_tasks():
+    result = TaskAgentDecision.model_validate({"task_decisions": [
+        _decision(source_excerpt="请王明提交报价", title="提交报价",
+                  action="create_task", formal_basis="explicit_assignment",
+                  owner_user_id="wang", owner_name="王明",
+                  owner_evidence={"source_ref": "message:42", "excerpt": "请王明提交报价"},
+                  missing_evidence=[],
+                  date_evidence=[{"kind": "requested_deadline_at", "value": "2026-09-25T18:00:00+08:00",
+                                  "source_ref": "message:42", "source_excerpt": "周五前", "actor_name": "指派人"}]),
+        _decision(source_excerpt="安排客户演示", title="安排演示"),
+    ]})
+    assert len(result.task_decisions) == 2
+    assert result.task_decisions[0].formal_basis.value == "explicit_assignment"
+    assert result.task_decisions[0].date_evidence[0].kind == "requested_deadline_at"
+    assert "project" not in type(result.task_decisions[0]).model_fields
+
+
+def test_acceptance_has_dedicated_transition_and_existing_task_id():
+    accepted = TaskAgentDecision.model_validate({"task_decisions": [
+        _decision(action="update_task", transition="apply_acceptance", task_id=12,
+                  source_excerpt="我接受报价任务，周五交第一版", missing_evidence=[])
+    ]}).task_decisions[0]
+    assert accepted.task_id == 12
+    assert accepted.transition == "apply_acceptance"
+
+
+@pytest.mark.parametrize("payload", [
+    {"action": "create_project"},
+    {"action": "create_task", "commitment_status": "accepted"},
+    {"action": "create_task", "deadline_at": "2026-09-25"},
+    {"action": "create_task", "project": {"title": "美国客户"}},
+    {"action": "create_task", "project_name": "美国客户"},
+])
+def test_old_project_and_model_authored_commitment_fields_are_rejected(payload):
     with pytest.raises(ValidationError):
-        TaskAgentDecision.model_validate(
-            {
-                "action": "create_project",
-                "project": {
-                    "title": "x",
-                    "category": "random",
-                    "status": "active",
-                },
-                "todo_changes": [],
-                "follow_up_drafts": [],
-                "update_summary": "x",
-                "merge_reason": "",
-                "memory_recall_used": False,
-                "confidence": 0.8,
-            }
-        )
+        TaskAgentDecision.model_validate({"task_decisions": [_decision(**payload)]})
 
 
-def test_task_agent_decision_uses_unified_quality_fields_and_rejects_legacy_risk_fields():
-    payload = {
-        "action": "skip",
-        "skip_reason": "没有可更新的工作项。",
-        "risk": "low",
-        "confidence": 0.9,
-        "rule_coverage": 1.0,
-        "information_completeness": 1.0,
-    }
-    decision = TaskAgentDecision.model_validate(payload)
-    assert decision.risk == "low"
-    assert decision.rule_coverage == 1.0
-    assert decision.information_completeness == 1.0
-    assert decision.decision_quality().classification.value == "autonomous"
-
+def test_merge_proposal_requires_ids_and_structured_identity_evidence():
+    valid = _decision(action="update_task", transition="merge_identity", task_id=8,
+                      target_task_id=9,
+                      identity_proposal={"source_task_id": 8, "target_task_id": 9,
+                                         "identity_evidence": {"same_external_task_id": True}})
+    TaskAgentDecision.model_validate({"task_decisions": [valid]})
     with pytest.raises(ValidationError):
-        TaskAgentDecision.model_validate(
-            {
-                **payload,
-                "failure_risk": "legacy",
-                "failure_risk_score": 0.1,
-            }
-        )
+        TaskAgentDecision.model_validate({"task_decisions": [
+            _decision(action="update_task", transition="merge_identity", task_id=8,
+                      identity_proposal={"reason": "sounds similar"})
+        ]})
 
 
-def test_task_agent_decision_accepts_project_todo_and_follow_up():
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": 7,
-                "title": "售前知识库建设",
-                "category": "sales",
-                "tags": ["售前", "知识库"],
-                "status": "active",
-                "priority": "P1",
-                "risk_level": "medium",
-                "needs_derek_attention": True,
-                "owner_user_id": "owner-1",
-                "owner_name": "Alex",
-                "related_people": [],
-                "goal": "沉淀可复用售前材料",
-                "background": "这是销售支持项目。",
-                "memory_context": _memory_context(),
-                "facts": [
-                    {
-                        "description": "已确认放在 business/售前知识库。",
-                        "source": "memory_recall",
-                        "created": "2026-06-05",
-                        "updated": "2026-06-07",
-                    }
-                ],
-                "current_state": "正在整理来源材料。",
-                "blocker": "",
-                "next_step": "确认可复用摘要边界。",
-                "next_follow_up_at": "2026-06-10 09:00:00",
-                "follow_up_mode": "draft",
-                "source_conversations": [],
-            },
-            "todo_changes": [
-                {
-                    "action": "create",
-                    "todo_id": None,
-                    "todo_ref": "source-links",
-                    "title": "补齐售前材料来源链接",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "status": "open",
-                    "priority": "P1",
-                    "deadline_at": "2026-06-10 18:00:00",
-                    "next_follow_up_at": "2026-06-10 09:00:00",
-                    "follow_up_question": "现在来源链接补齐到哪一步了？",
-                    "completion_evidence": None,
-                    "blocker": "",
-                }
-            ],
-            "follow_up_drafts": [
-                {
-                    "todo_id": None,
-                    "todo_ref": "source-links",
-                    "title": "确认来源链接补齐进展",
-                    "description": "基于售前知识库项目，需要确认材料来源链接补齐进展、当前阻塞和下一步。",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "owners": [
-                        {"name": "Alex", "user_id": "owner-1", "role": "owner"}
-                    ],
-                    "target_conversation_id": "cid-1",
-                    "target_kind": "group",
-                    "question_text": "售前材料来源链接现在补齐到哪一步了？",
-                    "scheduled_at": "2026-06-10 09:00:00",
-                    "priority": "P1",
-                    "tags": ["售前", "知识库"],
-                    "participants": [
-                        {"name": "Alex", "user_id": "owner-1", "role": "owner"}
-                    ],
-                    "files": [],
-                    "risk_check": {
-                        "owner_in_group": True,
-                        "sensitive": False,
-                        "reason": "普通项目跟进",
-                        "owner_evidence": {
-                            "source": "reply_attempt:1",
-                            "reason": "来源消息明确说明 owner 是 Alex。",
-                            "description": "售前群消息写明 Alex 负责补齐售前材料来源链接。",
-                        },
-                    },
-                }
-            ],
-            "update_summary": "新增 P1 跟进项。",
-            "merge_reason": "项目名称、owner 和售前知识库事实一致。",
-            "memory_recall_used": True,
-            "confidence": 0.86,
-        }
-    )
-
-    assert decision.project.category == ProjectCategory.SALES
-    assert decision.project.priority == ProjectPriority.P1
-    assert decision.project.status == ProjectStatus.ACTIVE
-    assert decision.project.memory_context.memories[0].uuid == "mem-1"
-    assert decision.todo_changes[0].status == TodoStatus.OPEN
-    assert decision.todo_changes[0].todo_ref == "source-links"
-    assert decision.follow_up_drafts[0].todo_ref == "source-links"
-    assert decision.follow_up_drafts[0].status == FollowUpDraftStatus.DRAFT
+def test_project_candidate_requires_existing_cluster_id_and_cannot_create_project():
+    TaskAgentDecision.model_validate({"task_decisions": [
+        _decision(project_candidate_proposal={"cluster_id": 3, "title": "美国客户成交", "reason": "相关任务持续"})
+    ]})
+    with pytest.raises(ValidationError):
+        TaskAgentDecision.model_validate({"task_decisions": [
+            _decision(project_candidate_proposal={"title": "美国客户成交", "reason": "相关任务持续"})
+        ]})
 
 
-def test_task_agent_decision_treats_null_optional_fields_as_omitted():
-    # MiniMax sends null for optional fields it has nothing to say about.
-    payload = {
-        "action": "update_project",
-        "project": {
-            "id": 7,
-            "title": "售前知识库建设",
-            "memory_context": _memory_context(),
-        },
-        "todo_changes": [
-            {
-                "action": "update",
-                "todo_id": 2423,
-                "owner_evidence": None,
-                "blocker": None,
-                "deadline_at": None,
-                "completion_evidence": None,
-            }
-        ],
-        "follow_up_changes": [
-            {
-                "follow_up_id": 1423,
-                "action": "keep_open",
-                "next_due_at": None,
-                "evidence_check": None,
-                "owner_evidence": None,
-                "reason": None,
-            }
-        ],
-        "memory_recall_used": True,
-    }
-    omitted = {
-        **payload,
-        "todo_changes": [
-            {"action": "update", "todo_id": 2423, "completion_evidence": None}
-        ],
-        "follow_up_changes": [
-            {"follow_up_id": 1423, "action": "keep_open", "next_due_at": None}
-        ],
-    }
-
-    decision = TaskAgentDecision.model_validate(payload)
-
-    assert decision == TaskAgentDecision.model_validate(omitted)
-    todo_change = decision.todo_changes[0]
-    assert todo_change.owner_evidence == {}
-    assert todo_change.blocker == ""
-    assert todo_change.deadline_at == ""
-    assert todo_change.model_fields_set == {"action", "todo_id", "completion_evidence"}
-    assert todo_change.completion_evidence is None
-    follow_up_change = decision.follow_up_changes[0]
-    assert follow_up_change.owner_evidence == {}
-    assert follow_up_change.evidence_check == {}
-    assert follow_up_change.reason == ""
-    assert follow_up_change.next_due_at is None
+def test_attention_proposal_requires_material_trigger_and_confirmed_anchor():
+    with pytest.raises(ValidationError):
+        TaskAgentDecision.model_validate({"task_decisions": [
+            _decision(action="create_task", formal_basis="external_todo", missing_evidence=[],
+                      attention_proposal={"category": "fyi", "title": "买办公用品", "why_attention": "有日期"})
+        ]})
+    TaskAgentDecision.model_validate({"task_decisions": [
+        _decision(action="create_task", formal_basis="external_todo", missing_evidence=[])
+    ]})
 
 
-@pytest.mark.parametrize(
-    ("payload", "field"),
-    [
-        ({"action": None}, "action"),
-        (
-            {
-                "action": "update_project",
-                "follow_up_changes": [{"follow_up_id": None, "action": "keep_open"}],
-            },
-            "follow_up_changes.0.follow_up_id",
-        ),
-        (
-            {
-                "action": "create_project",
-                "follow_up_drafts": [
-                    {
-                        "title": None,
-                        "description": "x",
-                        "target_kind": "group",
-                        "question_text": "x",
-                    }
-                ],
-            },
-            "follow_up_drafts.0.title",
-        ),
-        (
-            {
-                "action": "create_project",
-                "project": {
-                    "title": "x",
-                    "facts": [{"description": "x", "source": None}],
-                },
-            },
-            "project.facts.0.source",
-        ),
-    ],
-)
-def test_task_agent_decision_keeps_required_fields_non_nullable(payload, field):
-    with pytest.raises(ValidationError) as raised:
-        TaskAgentDecision.model_validate(payload)
-
-    assert [
-        ".".join(str(part) for part in error["loc"]) for error in raised.value.errors()
-    ] == [field]
+def test_required_and_optional_null_contract():
+    model = TaskAgentDecision.model_validate({"task_decisions": [
+        _decision(owner_evidence=None, date_evidence=None)
+    ]})
+    assert model.task_decisions[0].owner_evidence == {}
+    assert model.task_decisions[0].date_evidence == []
+    with pytest.raises(ValidationError):
+        TaskAgentDecision.model_validate({"task_decisions": [_decision(action=None)]})
 
 
-def test_task_agent_decision_schema_marks_defaulted_fields_nullable():
-    schema = TaskAgentDecision.model_json_schema()
-    defs = schema["$defs"]
-
-    def nullable(property_schema):
-        return {"type": "null"} in property_schema.get("anyOf", [])
-
-    for property_schema in (
-        defs["TodoChange"]["properties"]["owner_evidence"],
-        defs["TodoChange"]["properties"]["blocker"],
-        defs["FollowUpDraftChange"]["properties"]["owner_evidence"],
-        defs["FollowUpDraftChange"]["properties"]["evidence_check"],
-        defs["TaskProjectPatch"]["properties"]["memory_context"],
-        defs["TaskProjectPatch"]["properties"]["tags"],
-        schema["properties"]["todo_changes"],
-    ):
-        assert nullable(property_schema)
-    assert defs["TodoChange"]["properties"]["blocker"] == {
-        "anyOf": [{"type": "string"}, {"type": "null"}],
-        "default": "",
-        "title": "Blocker",
-    }
-    assert defs["TodoChange"]["properties"]["owner_evidence"]["title"] == "Owner Evidence"
-
-    for property_schema in (
-        defs["TodoChange"]["properties"]["action"],
-        defs["FollowUpDraftChange"]["properties"]["follow_up_id"],
-        defs["FollowUpDraftDecision"]["properties"]["title"],
-        defs["ProjectFact"]["properties"]["source"],
-        schema["properties"]["action"],
-    ):
-        assert not nullable(property_schema)
-        assert "anyOf" not in property_schema
-    assert defs["TodoChange"]["properties"]["completion_evidence"] == {
-        "anyOf": [{"additionalProperties": True, "type": "object"}, {"type": "null"}],
-        "default": None,
-        "title": "Completion Evidence",
-    }
+@pytest.mark.parametrize("change", [
+    {"source_excerpt": ""},
+    {"source_ref": ""},
+    {"action": "create_task", "formal_basis": None},
+    {"action": "record_candidate", "formal_basis": "explicit_assignment"},
+    {"action": "create_task", "formal_basis": "explicit_assignment", "owner_name": "王明",
+     "owner_evidence": {}},
+])
+def test_source_grounding_and_formality_shape(change):
+    with pytest.raises(ValidationError):
+        TaskAgentDecision.model_validate({"task_decisions": [_decision(**change)]})
 
 
-def test_task_agent_decision_rejects_unknown_root_field():
-    with pytest.raises(ValidationError, match="unexpected_root"):
-        TaskAgentDecision.model_validate(
-            {"action": "discard", "unexpected_root": True}
-        )
-
-
-@pytest.mark.parametrize(
-    ("payload", "unknown_field"),
-    [
-        (
-            {
-                "action": "create_project",
-                "project": {"title": "x", "unexpected_project": True},
-            },
-            "unexpected_project",
-        ),
-        (
-            {
-                "action": "create_project",
-                "todo_changes": [
-                    {"action": "create", "unexpected_todo": True}
-                ],
-            },
-            "unexpected_todo",
-        ),
-        (
-            {
-                "action": "create_project",
-                "project": {
-                    "title": "x",
-                    "memory_context": {"unexpected_memory": True},
-                },
-            },
-            "unexpected_memory",
-        ),
-        (
-            {
-                "action": "create_project",
-                "follow_up_drafts": [
-                    {
-                        "title": "x",
-                        "description": "x",
-                        "target_kind": "group",
-                        "question_text": "x",
-                        "unexpected_draft": True,
-                    }
-                ],
-            },
-            "unexpected_draft",
-        ),
-        (
-            {
-                "action": "update_project",
-                "follow_up_changes": [
-                    {
-                        "follow_up_id": 1,
-                        "action": "suppress",
-                        "unexpected_change": True,
-                    }
-                ],
-            },
-            "unexpected_change",
-        ),
-        (
-            {
-                "action": "create_project",
-                "project": {
-                    "title": "x",
-                    "facts": [
-                        {
-                            "description": "x",
-                            "source": "input",
-                            "unexpected_fact": True,
-                        }
-                    ],
-                },
-            },
-            "unexpected_fact",
-        ),
-        (
-            {
-                "action": "create_project",
-                "project": {
-                    "title": "x",
-                    "memory_context": {
-                        "memories": [
-                            {
-                                "source": "memory_recall",
-                                "unexpected_memory_item": True,
-                            }
-                        ]
-                    },
-                },
-            },
-            "unexpected_memory_item",
-        ),
-    ],
-)
-def test_task_agent_decision_rejects_unknown_nested_field(payload, unknown_field):
-    with pytest.raises(ValidationError, match=unknown_field):
-        TaskAgentDecision.model_validate(payload)
+def test_typed_date_requires_provenance_and_merge_target_must_match():
+    with pytest.raises(ValidationError):
+        TaskAgentDecision.model_validate({"task_decisions": [
+            _decision(date_evidence=[{"kind": "estimated_deadline_at", "value": "2026-09-30"}])
+        ]})
+    with pytest.raises(ValidationError):
+        TaskAgentDecision.model_validate({"task_decisions": [
+            _decision(action="update_task", transition="merge_identity", task_id=8,
+                      target_task_id=10,
+                      identity_proposal={"source_task_id": 8, "target_task_id": 9,
+                                         "identity_evidence": {"same_external_task_id": True}})
+        ]})
