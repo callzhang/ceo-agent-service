@@ -164,7 +164,7 @@ OA 每个审批节点只校验当前表单真实存在且明确必填的信息�
 中的字段不能反向成为当前节点的强制条件；Audit 发现这种候选必须退回 Consumer 重新生成。
 
 OA 定时任务冻结传入通用 `dingtalk-oa-approval` 与 Stardust 财务、立项、合同、人员、
-考勤/出差五个业务大类 Skill，并在 Prompt 中记录 Derek 的个人规则。审批 Agent 只按通用
+考勤/出差、云资源六个业务大类 Skill，并在 Prompt 中记录 Derek 的个人规则。审批 Agent 只按通用
 审批 Skill 和适用的 Stardust 业务 Skill 判断；《钉钉审批审阅原则.md》仅为背景参考，不是
 运行时规则来源。Consumer 按 live `processCode` 和表单事实选择适用类别；跨类别事项组合适用 Skill。
 财务 Skill 的规则卡只适用于登记的财务模板，不匹配其他类别不得单独触发升级。适用业务 Skill

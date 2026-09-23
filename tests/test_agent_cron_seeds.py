@@ -114,6 +114,7 @@ def _options(
         "stardust-oa-contract-review",
         "stardust-oa-people-review",
         "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
         *operation_skills,
     }
     for name in required_operation_skills:
@@ -421,6 +422,7 @@ def test_reseeding_preserves_user_edits_when_adopting_a_legacy_fixed_check(
     assert "$stardust-oa-contract-review" in repeated.prompt
     assert "$stardust-oa-people-review" in repeated.prompt
     assert "$stardust-oa-attendance-travel-review" in repeated.prompt
+    assert "$stardust-oa-cloud-resource-review" in repeated.prompt
     assert "钉钉审批审阅原则.md" not in repeated.prompt
     assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in repeated.prompt
     assert "rule_coverage" in repeated.prompt
@@ -434,6 +436,7 @@ def test_reseeding_preserves_user_edits_when_adopting_a_legacy_fixed_check(
         "stardust-oa-contract-review",
         "stardust-oa-people-review",
         "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
     ]
     assert repeated.runtime_id == ""
     assert repeated.command == "scan-oa-approvals"
@@ -469,6 +472,7 @@ def test_oa_seed_binds_generic_and_stardust_finance_review_skills(
     assert "$stardust-oa-contract-review" in task.prompt
     assert "$stardust-oa-people-review" in task.prompt
     assert "$stardust-oa-attendance-travel-review" in task.prompt
+    assert "$stardust-oa-cloud-resource-review" in task.prompt
     assert "钉钉审批审阅原则.md" not in task.prompt
     assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in task.prompt
     assert [ref.skill_name for ref in task.skill_refs] == [
@@ -478,6 +482,7 @@ def test_oa_seed_binds_generic_and_stardust_finance_review_skills(
         "stardust-oa-contract-review",
         "stardust-oa-people-review",
         "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
     ]
 
 
@@ -545,6 +550,7 @@ def test_oa_seed_migrates_previous_repository_default_prompt_and_skill_refs(
         "stardust-oa-contract-review",
         "stardust-oa-people-review",
         "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
     ]
 
 
@@ -1017,6 +1023,7 @@ def test_every_fixed_discovery_check_is_a_service_command(
             "stardust-oa-contract-review",
             "stardust-oa-people-review",
             "stardust-oa-attendance-travel-review",
+            "stardust-oa-cloud-resource-review",
         ],
         "work-source-scan-daily-v1": [
             "ceo-meeting-work",
@@ -1165,6 +1172,7 @@ def test_seed_creates_hourly_oa_check_with_real_operation_skill(
         "stardust-oa-contract-review",
         "stardust-oa-people-review",
         "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
     ]
     assert task.enabled is True
 
@@ -1214,6 +1222,7 @@ def test_reseed_renames_untouched_oa_default_so_the_approval_task_is_discoverabl
         "stardust-oa-contract-review",
         "stardust-oa-people-review",
         "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
     ]
 
 

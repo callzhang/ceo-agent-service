@@ -178,7 +178,8 @@ OA_CONSUMER_PROMPT = (
     "使用 $dingtalk-oa-approval 与适用的 Stardust 业务 Skill 处理 Trigger 发现的真实 "
     "DingTalk OA 待审批事项：$stardust-oa-finance-review、$stardust-oa-project-review、"
     "$stardust-oa-contract-review、$stardust-oa-people-review、"
-    "$stardust-oa-attendance-travel-review。先按 live processCode 和表单事实分类；"
+    "$stardust-oa-attendance-travel-review、$stardust-oa-cloud-resource-review。"
+    "先按 live processCode 和表单事实分类；"
     "跨类别事项必须组合适用的 Skill，不得仅因财务 Skill 无匹配规则卡就升级。"
     "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill 审阅；不要从背景材料自行补充"
     "审批规则。财务规则卡仅用于"
@@ -638,9 +639,20 @@ def _seed_oa_task(
             "stardust-oa-contract-review",
             "stardust-oa-people-review",
             "stardust-oa-attendance-travel-review",
+            "stardust-oa-cloud-resource-review",
         ),
     )
-    legacy_skill_refs = skill_refs
+    legacy_skill_refs = _consumer_skill_refs(
+        options,
+        operation=(
+            "dingtalk-oa-approval",
+            "stardust-oa-finance-review",
+            "stardust-oa-project-review",
+            "stardust-oa-contract-review",
+            "stardust-oa-people-review",
+            "stardust-oa-attendance-travel-review",
+        ),
+    )
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_OA_MIGRATION_KEY,
         command=DINGTALK_OA_SERVICE_COMMAND,
