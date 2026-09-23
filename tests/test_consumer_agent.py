@@ -3138,3 +3138,24 @@ def test_the_protocol_names_the_send_commands_it_forbids():
     ):
         assert command in protocol
     assert "Reading is unrestricted" in protocol
+
+
+def test_audit_checks_a_terminal_decision_before_running_it():
+    """A check on the result arrives after the provider recorded the decision.
+
+    On 2026-09-23 an FA contract was rejected in DingTalk with a remark asking
+    the applicant to supply facts and resubmit; `revert-activities` was never
+    called, and the rule that caught it ran only after the rejection was final.
+    Audit is the stage that executes, so the checks have to be its own, before
+    it runs the command.
+    """
+
+    boundary = consumer_agent.AUDIT_ROLE_BOUNDARY
+
+    assert "run the command only if every one" in boundary
+    assert "Checking afterwards is useless" in boundary
+    for command in ("oa approval approve", "oa approval reject", "calendar event respond"):
+        assert command in boundary
+    assert "revert-activities" in boundary
+    assert "the action is a revert, not a rejection" in boundary
+    assert "non-empty `--remark`" in boundary

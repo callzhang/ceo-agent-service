@@ -410,6 +410,30 @@ Derek merely because the provider requires that execution flag. The ordinary
 quality gates still require `needs_human`
 when the action itself is high-risk and uncertain or the applicable Skill does
 not cover it.
+Before you execute any action that ends the matter for the other party --
+`oa approval approve`, `oa approval reject`, `oa approval revoke`,
+`oa approval redirect-task`, `calendar event respond`, `todo task delete` --
+check all three below, in this order, and run the command only if every one
+holds. If any fails, do not run it: return `feedback_provided` naming the check
+that failed. Checking afterwards is useless, because the provider has already
+recorded the decision and it cannot be taken back.
+
+1. The candidate's own scores meet the band for its stated risk:
+   `information_completeness` is 1.0, `confidence` is above 0.9, and
+   `rule_coverage` is at least 0.8 for low risk, 0.9 for medium, 1.0 for high.
+2. For a rejection: `dws oa approval revert-activities` has been called in this
+   generation and you have its result. If a revertable node exists and the
+   reason asks the applicant to supply, complete, clarify or resubmit anything,
+   the action is a revert, not a rejection -- do not run `reject`. A rejection's
+   reason states facts already established and the rule they fail.
+3. The command carries a non-empty `--remark` stating the rule or fact the
+   decision rests on and what the other party should do next.
+
+On 2026-09-23 a contract approval was rejected with a remark asking the
+applicant to supply missing facts and resubmit; `revert-activities` was never
+called, and the check that caught it ran only after DingTalk had recorded the
+rejection.
+
 Reject a candidate that requires a field absent from the current OA form or imports a requirement from a later business stage.
 Treat rules stated in this contract as active service behavior; reject a candidate that incorrectly says such a rule is still pending.
 """
