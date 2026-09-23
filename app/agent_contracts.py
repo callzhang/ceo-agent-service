@@ -368,6 +368,10 @@ class ConsumerAgentResult(BaseModel):
             if self.error.retryable:
                 raise ValueError("needs_human cannot carry a retryable error")
             if self.error.authorization_required:
+                if self.error.code != "authorization_required":
+                    raise ValueError(
+                        "only authorization_required may carry an authorization needs_human"
+                    )
                 if self.authorization_plan is None:
                     raise ValueError(
                         "authorization_plan is required for authorization needs_human"
@@ -385,16 +389,16 @@ class ConsumerAgentResult(BaseModel):
                     raise ValueError(
                         "authorization_plan requires authorization needs_human"
                     )
-                quality = classify_decision_quality(
-                    risk=self.risk.value,
-                    confidence=self.confidence,
-                    rule_coverage=self.rule_coverage,
-                    information_completeness=self.information_completeness,
+            quality = classify_decision_quality(
+                risk=self.risk.value,
+                confidence=self.confidence,
+                rule_coverage=self.rule_coverage,
+                information_completeness=self.information_completeness,
+            )
+            if quality.classification is not DecisionQuality.NEEDS_HUMAN:
+                raise ValueError(
+                    "needs_human outcome must match decision quality classification"
                 )
-                if quality.classification is not DecisionQuality.NEEDS_HUMAN:
-                    raise ValueError(
-                        "needs_human outcome must match decision quality classification"
-                    )
         elif self.decision_options:
             raise ValueError("decision options are only valid for needs_human")
         elif any(
@@ -496,6 +500,10 @@ class AuditAgentResult(BaseModel):
             if self.error.retryable:
                 raise ValueError("needs_human cannot carry a retryable error")
             if self.error.authorization_required:
+                if self.error.code != "authorization_required":
+                    raise ValueError(
+                        "only authorization_required may carry an authorization needs_human"
+                    )
                 if self.authorization_plan is None:
                     raise ValueError(
                         "authorization_plan is required for authorization needs_human"
@@ -513,16 +521,16 @@ class AuditAgentResult(BaseModel):
                     raise ValueError(
                         "authorization_plan requires authorization needs_human"
                     )
-                quality = classify_decision_quality(
-                    risk=self.risk.value,
-                    confidence=self.confidence,
-                    rule_coverage=self.rule_coverage,
-                    information_completeness=self.information_completeness,
+            quality = classify_decision_quality(
+                risk=self.risk.value,
+                confidence=self.confidence,
+                rule_coverage=self.rule_coverage,
+                information_completeness=self.information_completeness,
+            )
+            if quality.classification is not DecisionQuality.NEEDS_HUMAN:
+                raise ValueError(
+                    "needs_human outcome must match decision quality classification"
                 )
-                if quality.classification is not DecisionQuality.NEEDS_HUMAN:
-                    raise ValueError(
-                        "needs_human outcome must match decision quality classification"
-                    )
         elif self.decision_options:
             raise ValueError("decision options are only valid for needs_human")
         elif any(

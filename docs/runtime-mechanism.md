@@ -96,13 +96,14 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 `instruction` 和 `consequence`/影响；其余由适用 Skill 自主完成。ask-back 不计入 needs_human。
 反馈可同时选择 one-time 与 Skill update；二者复用同一业务对象和同一 attempt，在 provider 仍可访问的
 同一 session 中生成新 revision，不新建 session。技术、provider、读取、路由、schema、Audit 或 retry failure
-永远是 `failed`；领域 `authorization_required` 也不泛化为 `needs_human`，不能用低分绕过失败。
+永远是 `failed`；领域 `authorization_required` 也不泛化为 `needs_human`。只有精确通用码、
+匹配当前动作的授权计划和统一质量门槛全部成立，才可形成结构化人工规则决策。
 provider 返回 `confirmation_required` 也属于运行时失败边界：它表示外部动作尚未执行，
 不是需要 Derek 决定的业务规则缺口。必须保留具体错误并落为 `failed`，不能生成“确认执行/停止”
 这类泛化的人工作业按钮；修复旧投影时同时清空这类选项。
-同理，持久化的 `needs_human` 结果若声称 `error_retryable` 或
-`error_authorization_required` 为真，说明它仍在报告运行时失败，不能作为规则决策展示；启动修复将其
-收口为 `failed` 并保留该结果给 History 排查。
+同理，持久化的 `needs_human` 结果若声称 `error_retryable` 为真，或
+`error_authorization_required` 为真但缺少精确通用码、授权计划或统一门槛，不能作为规则决策
+展示；启动修复将其收口为 `failed` 并保留该结果给 History 排查。
 
 新 wire 结果的四字段均为必填并严格校验。旧 `final_result_json` hydration 仅可受控补齐
 `rule_coverage=1.0`、`information_completeness=1.0`，保留旧的 `risk`/`confidence`；原始历史

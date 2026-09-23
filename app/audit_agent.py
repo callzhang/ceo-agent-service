@@ -259,8 +259,10 @@ class AuditAgentRunner:
             "2-4 mutually exclusive, executable rule/Skill options, with one-time "
             "feedback and Skill update selectable together. Otherwise follow the "
             "Skill autonomously. Technical/provider/read/route/schema/Audit/retry "
-            "failure is always failed. authorization_required is not generic "
-            "needs_human. Feedback reuses the same business object, attempt, and "
+            "failure is always failed. Only the exact generic authorization_required "
+            "code can accompany a needs_human authorization plan, and it must still "
+            "pass the same decision-quality thresholds. Provider confirmation_required "
+            "is failed. Feedback reuses the same business object, attempt, and "
             "compatible session while creating a new revision, not a new session."
         )
         if self.dry_run:

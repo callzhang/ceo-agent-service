@@ -674,14 +674,15 @@ ask-back，继续现有 Audit/send 链路；ask-back 不落新的 outcome，也�
 `instruction` 和 `consequence`/影响；其余由 Skill 自主完成。one-time 与 Skill update 可同时作为
 反馈选择，复用同一业务对象、attempt 和兼容 session，产生新 revision，不新建 session。
 技术、provider、receipt、读取、路由、schema、Audit、retry failure 永远为 `failed`；领域
-`authorization_required` 不泛化为人工升级，低分也不能绕过失败。
+`authorization_required` 不泛化为人工升级；只有精确的通用错误码、匹配当前动作的授权计划和统一质量门槛同时成立，才可形成结构化规则决策。
 provider 返回 `confirmation_required` 同样属于运行时失败边界：外部动作尚未执行，服务必须保留具体
 错误并落为 `failed`，不得创建泛化的“确认执行外部操作/停止当前事项”选项。
 
 新 wire 四字段必填且严格校验。当前投影不兼容旧的“状态字符串 + 服务生成按钮”逻辑：
 `needs_human` 必须能追溯到完整 `final_result_json`，字段缺失、非法值、outer outcome mismatch、
-无 Agent run、选项不完整，或 `error_retryable` / `error_authorization_required` 为真都 fail-closed 为
-`failed`；后两者表示运行时错误而非规则缺口。保留原始历史 run/audit，不改写其内容。
+无 Agent run、选项不完整或 `error_retryable` 为真都 fail-closed 为 `failed`；`error_authorization_required`
+只有精确通用码 `authorization_required`、匹配的单一授权计划和同一质量门槛全部成立才有效。
+保留原始历史 run/audit，不改写其内容。
 服务启动时幂等修复这种 current projection，同时清空服务生成的选项。Quality gate/Attention
 只统计修复后的 current latest projection；reviewed、historical、pending recovery 排除。
 

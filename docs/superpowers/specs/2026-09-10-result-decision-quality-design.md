@@ -76,7 +76,7 @@ else:
 
 技术、依赖、provider、读取、路由、schema、Audit 执行和重试失败始终是 `failed`，不受 `confidence`、`rule_coverage` 或 `information_completeness` 的低值影响。
 
-领域错误即使错误对象包含 `authorization_required=true` 也不能自动进入 `needs_human`；只有通用错误码 `authorization_required` 才表示不可替代的授权边界。
+领域错误即使错误对象包含 `authorization_required=true` 也不能自动进入 `needs_human`；只有通用错误码 `authorization_required` 才表示不可替代的授权边界。该错误码和授权计划只是额外证据，仍必须满足上述信息完整度及风险/置信度或规则覆盖门槛；`confirmation_required` 等 provider 执行错误保持 `failed`。
 
 ## 处理流程
 
