@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from app.cli import build_parser, feedback_spike_command
+from app.codex_decision import append_signature
 from app.dws_client import DwsClient
 from app.feedback_policy import FEEDBACK_REQUIRED_LINK_PREFIX
 from app.store import AutoReplyStore
@@ -99,6 +100,27 @@ def test_build_callback_url_never_embeds_message_context():
     assert "reply_text" not in query
     assert "原话" not in url
     assert "回复样例" not in url
+
+
+def test_prepared_reply_upgrades_legacy_context_links_before_send():
+    legacy = (
+        append_signature("收到。") + "\n\n反馈："
+        "[👍 有帮助](https://feedback.example.com/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_abcd1234&rating=up&original_text=hello&reply_text=world)"
+        "｜[👎 需改进](https://feedback.example.com/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_abcd1234&rating=down&original_text=hello&reply_text=world)"
+    )
+
+    prepared = prepare_outgoing_reply_text(
+        reply_text=legacy,
+        feedback_base_url="https://feedback.example.com",
+    )
+
+    assert prepared.feedback_token == "spike_1_abcd1234"
+    assert prepared.text.startswith(append_signature("收到。"))
+    assert prepared.text.count("/api/dingtalk-feedback-spike") == 2
+    assert "original_text=" not in prepared.text
+    assert "reply_text=" not in prepared.text
 
 
 def test_build_events_url_contains_secret_and_limit():

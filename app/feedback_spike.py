@@ -461,6 +461,21 @@ def prepare_outgoing_reply_text(
             link_prefix=feedback_link_prefix,
         )
         if existing_pair is not None:
+            query = parse_qs(urlparse(existing_pair.callback_url_up).query)
+            if "original_text" in query or "reply_text" in query:
+                upgraded = build_feedback_spike_link_message(
+                    vercel_base_url=feedback_base_url,
+                    reply_text=existing_pair.body,
+                    attempt_id=existing_pair.context.attempt_id,
+                    feedback_token=existing_pair.context.feedback_token,
+                    link_prefix=feedback_link_prefix,
+                )
+                return PreparedOutgoingReplyText(
+                    feedback_token=upgraded.feedback_token,
+                    text=upgraded.text,
+                    callback_url_up=upgraded.callback_url_up,
+                    callback_url_down=upgraded.callback_url_down,
+                )
             return PreparedOutgoingReplyText(
                 feedback_token=existing_pair.context.feedback_token,
                 text=reply_text,
