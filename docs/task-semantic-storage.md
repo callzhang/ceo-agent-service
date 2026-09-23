@@ -355,16 +355,22 @@ the Agent, never as authority to assign an owner, infer acceptance, confirm an
 anchor, or create an official Project. A legacy row marked `formal` is returned
 under `unverified_formal_tasks`, not `existing_formal_tasks`, unless its owner
 identity and source quote are present and the quoted source signal is attached
-to that Task. This preserves old rows for comparison without promoting
-unsupported ownership to a verified task fact.
+to that Task as `assignment` evidence (or `commitment` evidence for explicit
+commitment). A merely linked discovery or correction signal cannot establish
+the formal basis. This preserves old rows for comparison without promoting
+unsupported ownership to a verified task fact. The cited owner signal and its
+Task evidence rows remain in context even when they fall outside the usual
+first/latest/recent evidence window.
 
 The context includes the raw source signals cited by selected Task evidence,
 relations, and anchor links. Relations and anchor links are capped per selected
 Task, not globally, so an earlier Task cannot consume a later Task's entire
 evidence window. Anchors reached through selected links, and official Project
 registry entries whose canonical anchor is among those links, remain in context
-regardless of their title's lexical rank; link status still governs whether the
-match is merely proposed or confirmed. The Store provides paginated
+regardless of their title's lexical rank. Confirmed active links are selected
+before proposed or inactive links when a Task has more links than its context
+limit; link status still governs whether the match is merely proposed or
+confirmed. The Store provides paginated
 `list_business_work_cluster_tasks` reads by cluster and/or Task. Retrieval
 includes selected Tasks' cluster links and bounded members of the returned
 clusters, so a cluster ID is grounded in actual membership rather than its

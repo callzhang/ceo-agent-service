@@ -10,7 +10,7 @@ from app.task_models import WorkItem, WorkProject, WorkTodo
 from app.task_semantic_models import (
     BusinessActorKind, BusinessAnchor, BusinessProject, BusinessTask, BusinessTaskAnchorLink,
     BusinessTaskEvidence, BusinessTaskRelation, BusinessTaskSignal,
-    BusinessWorkCluster, BusinessWorkClusterTask,
+    BusinessWorkCluster, BusinessWorkClusterTask, BusinessRelationStatus, FormalTaskBasis,
 )
 
 
@@ -65,9 +65,10 @@ def _semantic_score(query_terms: set[str], document: str) -> int:
 
 
 def _bounded_task_evidence(
-    rows: tuple[BusinessTaskEvidence, ...], *, recent_limit: int
+    rows: tuple[BusinessTaskEvidence, ...], *, recent_limit: int,
+    pinned_signal_id: int | None = None,
 ) -> tuple[BusinessTaskEvidence, ...]:
-    """Keep each role's original and latest proof plus a bounded recent sample."""
+    """Keep each role's edge proofs, the cited owner proof, and recent rows."""
     first_by_role: dict[str, BusinessTaskEvidence] = {}
     latest_by_role: dict[str, BusinessTaskEvidence] = {}
     for row in rows:
@@ -76,34 +77,41 @@ def _bounded_task_evidence(
         latest_by_role[role] = row
     kept = set(first_by_role.values()) | set(latest_by_role.values())
     kept.update(rows[-recent_limit:])
+    if pinned_signal_id is not None:
+        kept.update(row for row in rows if row.signal_id == pinned_signal_id)
     return tuple(row for row in rows if row in kept)
 
 
-def _has_source_backed_owner(
+def _source_backed_owner_signal_id(
     store: AutoReplyStore, task: BusinessTask, evidence: tuple[BusinessTaskEvidence, ...]
-) -> bool:
+) -> int | None:
     if not (task.owner_name.strip() or task.owner_user_id.strip()):
-        return False
+        return None
     try:
         owner_evidence = json.loads(task.owner_evidence_json)
     except (TypeError, json.JSONDecodeError):
-        return False
+        return None
     if not isinstance(owner_evidence, dict):
-        return False
+        return None
     source_ref = owner_evidence.get("source_ref")
     excerpt = owner_evidence.get("excerpt")
     if not isinstance(source_ref, str) or not isinstance(excerpt, str) or not excerpt.strip():
-        return False
+        return None
     if task.owner_name and task.owner_name not in excerpt:
-        return False
+        return None
+    required_role = (
+        "commitment" if task.formal_basis is FormalTaskBasis.EXPLICIT_COMMITMENT else "assignment"
+    )
     for row in evidence:
+        if row.evidence_role.value != required_role:
+            continue
         signal = store.get_business_task_signal(row.signal_id)
         if signal is None or signal.source_ref != source_ref or excerpt not in signal.evidence_text:
             continue
         if not task.owner_user_id:
-            return bool(task.owner_name)
+            return signal.id if task.owner_name else None
         if not task.owner_name and task.owner_user_id in excerpt:
-            return True
+            return signal.id
         try:
             mapped = json.loads(signal.context_json).get("owner_identity", {})
         except (TypeError, json.JSONDecodeError):
@@ -120,8 +128,8 @@ def _has_source_backed_owner(
             and (not task.owner_name or mapped.get("name") == task.owner_name)
         )
         if author_matches or context_matches:
-            return True
-    return False
+            return signal.id
+    return None
 
 
 def _prioritized_registry_rows(rows, *, linked_ids: set[int], query_terms: set[str], limit: int):
@@ -164,14 +172,18 @@ def retrieve_task_semantic_context(
     formal_rows: list[BusinessTask] = []
     unverified_rows: list[BusinessTask] = []
     evidence_by_task: dict[int, tuple[BusinessTaskEvidence, ...]] = {}
+    owner_signal_by_task: dict[int, int] = {}
     for score, task in ranked_tasks:
         if score <= 0 or task.stage.value != "formal":
             continue
         task_evidence = store.list_business_task_evidence(task.id)
-        bucket = formal_rows if _has_source_backed_owner(store, task, task_evidence) else unverified_rows
+        owner_signal_id = _source_backed_owner_signal_id(store, task, task_evidence)
+        bucket = formal_rows if owner_signal_id is not None else unverified_rows
         if len(bucket) < limit_per_kind:
             bucket.append(task)
             evidence_by_task[task.id] = task_evidence
+            if owner_signal_id is not None:
+                owner_signal_by_task[task.id] = owner_signal_id
         if len(formal_rows) == len(unverified_rows) == limit_per_kind:
             break
     formal = tuple(formal_rows)
@@ -182,6 +194,7 @@ def retrieve_task_semantic_context(
         for row in _bounded_task_evidence(
             evidence_by_task.get(task.id) or store.list_business_task_evidence(task.id),
             recent_limit=limit_per_kind,
+            pinned_signal_id=owner_signal_by_task.get(task.id),
         )
     )
     relations = tuple(dict.fromkeys(
@@ -194,11 +207,14 @@ def retrieve_task_semantic_context(
     ))
     links = tuple(
         row for task in selected
-        for row in islice(_all_pages(
+        for row in sorted(_all_pages(
             lambda *, limit, offset, task_id=task.id: store.list_business_task_anchor_links(
                 task_id=task_id, limit=limit, offset=offset
             )
-        ), limit_per_kind)
+        ), key=lambda link: (
+            not (link.status is BusinessRelationStatus.CONFIRMED and link.active),
+            link.id,
+        ))[:limit_per_kind]
     )
     signal_ids = (
         {row.signal_id for row in evidence}

@@ -79,6 +79,94 @@ def test_semantic_context_requires_attached_owner_source_not_merely_owner_fields
     assert [task.id for task in context.unverified_formal_tasks] == [task_id]
 
 
+def test_semantic_context_requires_formal_role_for_owner_citation(tmp_path):
+    store = AutoReplyStore(tmp_path / "semantic-owner-role.sqlite3")
+    task_id = store.create_business_task(
+        title="美国客户报价", stage="formal", formal_basis="explicit_assignment",
+        owner_name="王明", owner_evidence_json=json.dumps({
+            "source_ref": "message:discovery", "excerpt": "王明负责美国客户报价",
+        }, ensure_ascii=False),
+    )
+    signal_id = store.create_business_task_signal(
+        source_type="message", source_ref="message:discovery",
+        evidence_text="王明负责美国客户报价", dedupe_key="message:discovery",
+    )
+    store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="discovery")
+
+    context = retrieve_task_semantic_context(store, _work_item("美国客户报价"), limit_per_kind=1)
+    assert context.formal_tasks == ()
+    assert [task.id for task in context.unverified_formal_tasks] == [task_id]
+
+
+def test_semantic_context_pins_middle_owner_citation_after_evidence_bounding(tmp_path):
+    store = AutoReplyStore(tmp_path / "semantic-middle-owner.sqlite3")
+    task_id = store.create_business_task(
+        title="美国客户报价", stage="formal", formal_basis="explicit_assignment",
+        owner_name="王明", owner_evidence_json=json.dumps({
+            "source_ref": "message:middle", "excerpt": "王明负责美国客户报价",
+        }, ensure_ascii=False),
+    )
+    owner_signal_id = 0
+    for index in range(7):
+        source_ref = "message:middle" if index == 3 else f"message:other:{index}"
+        signal_id = store.create_business_task_signal(
+            source_type="message", source_ref=source_ref,
+            evidence_text="王明负责美国客户报价" if index == 3 else f"报价进度 {index}",
+            dedupe_key=source_ref,
+        )
+        store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="assignment")
+        store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="correction")
+        if index == 3:
+            owner_signal_id = signal_id
+
+    context = retrieve_task_semantic_context(store, _work_item("美国客户报价"), limit_per_kind=1)
+    assert [task.id for task in context.formal_tasks] == [task_id]
+    assert {(row.signal_id, row.evidence_role.value) for row in context.task_evidence} >= {
+        (owner_signal_id, "assignment"), (owner_signal_id, "correction"),
+    }
+    assert owner_signal_id in {signal.id for signal in context.evidence_signals}
+    assert "王明负责美国客户报价" in render_task_semantic_context(context)
+
+
+def test_semantic_context_prioritizes_confirmed_active_link_over_early_proposals(tmp_path):
+    from app.task_business_resolution import BusinessResolutionService
+
+    store = AutoReplyStore(tmp_path / "semantic-confirmed-link.sqlite3")
+    resolver = BusinessResolutionService(store)
+    task_id = _sourced_formal_task(store, title="美国客户报价", suffix="confirmed")
+    for index in range(3):
+        anchor_id = resolver.register_anchor(
+            anchor_type="project", anchor_ref=f"registry:proposal:{index}",
+            title=f"美国客户报价草案 {index}",
+        )
+        signal_id = store.create_business_task_signal(
+            source_type="message", source_ref=f"message:proposal:{index}",
+            evidence_text=f"可能属于草案 {index}", dedupe_key=f"message:proposal:{index}",
+        )
+        resolver.propose_anchor_match(task_id=task_id, anchor_id=anchor_id, evidence_signal_id=signal_id)
+    confirmed_anchor_id = resolver.register_anchor(
+        anchor_type="project", anchor_ref="registry:confirmed", title="全球营收计划",
+    )
+    official_project_id = resolver.register_official_project(
+        anchor_id=confirmed_anchor_id, registry_source="portfolio",
+    )
+    signal_id = store.create_business_task_signal(
+        source_type="message", source_ref="message:confirmed",
+        evidence_text="美国客户报价正式归属全球营收计划", dedupe_key="message:confirmed",
+    )
+    resolver.confirm_anchor_match(
+        task_id=task_id, anchor_id=confirmed_anchor_id, evidence_signal_id=signal_id,
+    )
+
+    context = retrieve_task_semantic_context(store, _work_item("美国客户报价"), limit_per_kind=1)
+    assert [(link.anchor_id, link.status.value, link.active) for link in context.task_anchor_links] == [
+        (confirmed_anchor_id, "confirmed", True),
+    ]
+    assert confirmed_anchor_id in {anchor.id for anchor in context.anchors}
+    assert official_project_id in {project.id for project in context.official_projects}
+    assert signal_id in {signal.id for signal in context.evidence_signals}
+
+
 def test_semantic_context_relation_and_anchor_support_signals_are_rendered_per_task(tmp_path):
     from app.task_business_resolution import BusinessResolutionService
 
