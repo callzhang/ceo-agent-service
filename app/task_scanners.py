@@ -607,6 +607,21 @@ def scan_pending_oa_approvals(
                 "审批待办扫描发现新增或有新消息的待处理审批："
                 f"{label}\n"
                 f"[查看审批]({oa_url})\n"
+                # Name the principal outright. The turn was only ever handed the
+                # applicant's id, so it had to work out which id was Derek's and
+                # sometimes picked the one it had: on 张丽丽's contract approval it
+                # took her id 144339455824043200 for Derek's, concluded Derek's
+                # own task 103947112757 belonged to someone else, and skipped it
+                # twice.
+                + (
+                    f"本条待办属于审批人 Derek（userId {current_user_id}），"
+                    f"当前任务 taskId {task_id} 就是他的待办；"
+                    "表单与流水里出现的 originatorUserid 是申请人，不是审批人，"
+                    "不要用申请人的 userId 判断待办归属。\n"
+                    if current_user_id
+                    else ""
+                )
+                +
                 # The审批 rules live in our own Skill. Naming the vendor's
                 # dingtalk-misc reference here sent every turn to read that
                 # instead: run 20020 read dingtalk-oa-approval zero times and
@@ -624,6 +639,7 @@ def scan_pending_oa_approvals(
                 "source": "oa_pending_scan",
                 "processInstanceId": process_instance_id,
                 "taskId": task_id,
+                **({"principalUserid": current_user_id} if current_user_id else {}),
                 "processName": process_name,
                 "title": title,
                 **(

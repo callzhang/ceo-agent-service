@@ -1554,3 +1554,61 @@ def test_scan_pending_oa_approvals_points_the_turn_at_our_own_skill(tmp_path):
     # The vendor reference may still be mentioned, but only as command usage.
     assert "dingtalk-misc 的 references/oa.md 只作为 dws 命令用法参考" in task.trigger_text
     assert "审批判断与动作一律以 dingtalk-oa-approval 为准" not in task.trigger_text
+
+
+def test_scan_pending_oa_approvals_names_the_principal_to_the_turn(tmp_path):
+    """The turn was only handed the applicant's id and guessed Derek's from it.
+
+    On 张丽丽's contract approval it took her userId 144339455824043200 for
+    Derek's, concluded that Derek's own task belonged to someone else, and
+    skipped it twice. The scanner already knows the principal -- it used that id
+    to decide the task was his -- so it must say so outright.
+    """
+
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [DwsOaApprovalCandidate(process_instance_id="proc-1", title="合同")]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": "task-1",
+                            "userId": "principal-user-1",
+                            "status": "RUNNING",
+                        }
+                    ]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {
+                "result": {
+                    "operationRecords": [
+                        {
+                            "operationType": "ADD_REMARK",
+                            "operationTime": 1,
+                            "userId": "applicant-user-1",
+                        }
+                    ]
+                }
+            }
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    now = datetime.fromisoformat("2026-09-23T09:00:00+08:00")
+
+    assert scan_pending_oa_approvals(store, FakeDws(), now=now) == 1
+
+    [task] = store.claim_reply_tasks(limit=1)
+    assert "principal-user-1" in task.trigger_text
+    assert "task-1" in task.trigger_text
+    assert "originatorUserid 是申请人" in task.trigger_text
+    payload = json.loads(task.trigger_message_json)["raw_payload"]
+    assert payload["principalUserid"] == "principal-user-1"
