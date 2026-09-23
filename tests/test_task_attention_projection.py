@@ -129,7 +129,6 @@ def test_recompute_is_idempotent_for_same_semantic_snapshot(projection):
     task_id, anchor_id, signal_id = _task_with_anchor(projection, "recompute")
     # Upsert establishes the same stable semantic input recompute derives.
     item_id = projection.upsert(_proposal((task_id,), anchor_id, signal_id))
-    projection.recompute_for_tasks((task_id,))
     before = (
         len(projection.store.list_business_attention_items()),
         len(projection.store.list_business_attention_tasks(item_id)),
@@ -209,3 +208,70 @@ def test_recompute_removes_terminal_tasks_from_attention_membership(projection, 
     assert projection.recompute_for_tasks((task_id,)) == (item_id,)
     assert projection.store.list_business_attention_tasks(item_id) == ()
     assert projection.store.get_business_attention_item(item_id).status.value == "active"
+
+
+def test_resolution_can_use_historical_member_after_recompute_removes_it(projection):
+    task_id, anchor_id, signal_id = _task_with_anchor(projection, "historical-resolution")
+    item_id = projection.upsert(_proposal((task_id,), anchor_id, signal_id))
+    TaskSemanticService(projection.store).update_task(
+        UpdateBusinessTask(
+            task_id=task_id,
+            status=BusinessTaskStatus.DONE,
+            signal=SourceSignal(
+                source_type="message", source_ref="historical-done", evidence_text="任务完成",
+                dedupe_key="historical-done",
+            ),
+        )
+    )
+    projection.recompute_for_tasks((task_id,))
+    resolution_signal = projection.store.create_business_task_signal(
+        source_type="message", source_ref="historical-resolution", evidence_text="关注事项解决",
+        dedupe_key="historical-resolution",
+    )
+    projection.store.link_business_task_evidence(
+        task_id=task_id, signal_id=resolution_signal, evidence_role="resolution"
+    )
+
+    projection.resolve(item_id=item_id, resolution_signal_id=resolution_signal, reason="已解决")
+    resolved = projection.store.get_business_attention_item(item_id)
+    event = projection.store.list_business_attention_events(item_id)[-1]
+    assert resolved.status.value == "resolved"
+    assert '"task_ids":[]' in event.before_json
+    assert '"task_ids":[]' in event.after_json
+
+
+def test_resolved_membership_change_stays_resolved_and_is_not_reopened(projection):
+    first, anchor_id, signal_id = _task_with_anchor(projection, "resolved-first")
+    second, _, _ = _task_with_anchor(projection, "resolved-second")
+    resolver = BusinessResolutionService(projection.store)
+    resolver.confirm_anchor_match(task_id=second, anchor_id=anchor_id, evidence_signal_id=signal_id, reason="同一客户")
+    item_id = projection.upsert(_proposal((first,), anchor_id, signal_id))
+    resolution_signal = projection.store.create_business_task_signal(
+        source_type="message", source_ref="resolved-membership", evidence_text="已解决",
+        dedupe_key="resolved-membership",
+    )
+    projection.store.link_business_task_evidence(task_id=first, signal_id=resolution_signal, evidence_role="resolution")
+    projection.resolve(item_id=item_id, resolution_signal_id=resolution_signal, reason="已解决")
+
+    projection.upsert(_proposal((first, second), anchor_id, signal_id))
+    item = projection.store.get_business_attention_item(item_id)
+    assert item.status.value == "resolved"
+    assert projection.store.list_business_attention_events(item_id)[-1].event_type.value == "updated"
+
+
+def test_resolution_snapshot_includes_current_membership(projection):
+    first, anchor_id, signal_id = _task_with_anchor(projection, "snapshot-first")
+    second, _, _ = _task_with_anchor(projection, "snapshot-second")
+    resolver = BusinessResolutionService(projection.store)
+    resolver.confirm_anchor_match(task_id=second, anchor_id=anchor_id, evidence_signal_id=signal_id, reason="同一客户")
+    item_id = projection.upsert(_proposal((first, second), anchor_id, signal_id))
+    resolution_signal = projection.store.create_business_task_signal(
+        source_type="message", source_ref="snapshot-resolution", evidence_text="已解决",
+        dedupe_key="snapshot-resolution",
+    )
+    projection.store.link_business_task_evidence(task_id=first, signal_id=resolution_signal, evidence_role="resolution")
+    projection.resolve(item_id=item_id, resolution_signal_id=resolution_signal, reason="已解决")
+    event = projection.store.list_business_attention_events(item_id)[-1]
+    expected = '"task_ids":[%s,%s]' % (first, second)
+    assert expected in event.before_json
+    assert expected in event.after_json

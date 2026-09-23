@@ -74,6 +74,19 @@ class BusinessAttentionProjection:
             )
         )
 
+    def _historical_task_ids(self, *, item_id: int, db) -> tuple[int, ...]:
+        task_ids: set[int] = set()
+        for event in self.store.list_business_attention_events_in_transaction(
+            attention_item_id=item_id, _db=db
+        ):
+            for snapshot in (event.before_json, event.after_json):
+                task_ids.update(
+                    value
+                    for value in json.loads(snapshot).get("task_ids", [])
+                    if isinstance(value, int) and value > 0
+                )
+        return tuple(sorted(task_ids))
+
     def _validate_proposal(self, proposal: AttentionProposal, *, db) -> tuple[BusinessTask, ...]:
         for value, field in (
             (proposal.stable_key, "stable key"),
@@ -180,7 +193,7 @@ class BusinessAttentionProjection:
                     self.store.update_business_attention_item_in_transaction(item=updated, _db=db)
                     event_type = (
                         BusinessAttentionEventType.REOPENED
-                        if existing.status is AttentionStatus.RESOLVED
+                        if existing.status is AttentionStatus.RESOLVED and fields_changed
                         else BusinessAttentionEventType.CATEGORY_CHANGED
                         if existing.category is not proposal.category
                         else BusinessAttentionEventType.UPDATED
@@ -207,13 +220,29 @@ class BusinessAttentionProjection:
                 "select 1 from business_task_signals where id=?", (resolution_signal_id,)
             ).fetchone() is None:
                 raise ValueError("resolution evidence signal does not exist")
+            current_task_ids = tuple(
+                link.task_id for link in self.store.list_business_attention_tasks_in_transaction(
+                    attention_item_id=item_id, _db=db
+                )
+            )
+            historical_task_ids = tuple(
+                sorted(set(current_task_ids) | set(self._historical_task_ids(item_id=item_id, db=db)))
+            )
+            if not historical_task_ids:
+                raise ValueError("attention item has no Task lineage")
             if db.execute(
                 """select 1 from business_attention_tasks attention
                    join business_task_evidence evidence on evidence.task_id=attention.task_id
                    where attention.attention_item_id=? and evidence.signal_id=?""",
                 (item_id, resolution_signal_id),
             ).fetchone() is None:
-                raise ValueError("resolution evidence signal must be linked to an underlying Task")
+                placeholders = ", ".join("?" for _ in historical_task_ids)
+                if db.execute(
+                    f"""select 1 from business_task_evidence
+                        where signal_id=? and task_id in ({placeholders})""",
+                    (resolution_signal_id, *historical_task_ids),
+                ).fetchone() is None:
+                    raise ValueError("resolution evidence signal must be linked to an underlying Task")
             if item.status is AttentionStatus.RESOLVED:
                 if item.resolution_signal_id == resolution_signal_id:
                     return
@@ -227,8 +256,8 @@ class BusinessAttentionProjection:
             self.store.update_business_attention_item_in_transaction(item=updated, _db=db)
             self.store.append_business_attention_event_in_transaction(
                 attention_item_id=item_id, event_type=BusinessAttentionEventType.RESOLVED,
-                signal_id=resolution_signal_id, before_json=self._snapshot(item),
-                after_json=self._snapshot(updated), reason=reason, _db=db,
+                signal_id=resolution_signal_id, before_json=self._snapshot(item, current_task_ids),
+                after_json=self._snapshot(updated, current_task_ids), reason=reason, _db=db,
             )
 
     def record_viewed(self, *, item_id: int, viewed_at: str) -> None:
@@ -274,14 +303,9 @@ class BusinessAttentionProjection:
                     ):
                         eligible_task_ids.append(task_id)
                 after_task_ids = tuple(eligible_task_ids)
-                next_state = f"{len(after_task_ids)} 项开放任务"
-                if before_task_ids == after_task_ids and item.current_state == next_state:
+                if before_task_ids == after_task_ids:
                     item_ids.append(item.id)
                     continue
-                updated = item.model_copy(
-                    update={"current_state": next_state, "updated_at": self._timestamp()}
-                )
-                self.store.update_business_attention_item_in_transaction(item=updated, _db=db)
                 self.store.replace_business_attention_tasks_in_transaction(
                     attention_item_id=item.id, task_ids=after_task_ids, _db=db
                 )
@@ -289,7 +313,7 @@ class BusinessAttentionProjection:
                     attention_item_id=item.id, event_type=BusinessAttentionEventType.UPDATED,
                     signal_id=item.evidence_signal_id,
                     before_json=self._snapshot(item, before_task_ids),
-                    after_json=self._snapshot(updated, after_task_ids),
+                    after_json=self._snapshot(item, after_task_ids),
                     reason="Business attention membership recomputed", _db=db,
                 )
                 item_ids.append(item.id)

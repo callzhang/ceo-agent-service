@@ -7060,11 +7060,18 @@ class AutoReplyStore:
 
     def list_business_attention_events(self, attention_item_id: int) -> tuple[BusinessAttentionEvent, ...]:
         with self._connect() as db:
-            rows = db.execute(
-                "select * from business_attention_events where attention_item_id=? order by created_at, id",
-                (attention_item_id,),
-            ).fetchall()
-            return tuple(self._business_attention_event_from_row(row) for row in rows)
+            return self.list_business_attention_events_in_transaction(
+                attention_item_id=attention_item_id, _db=db
+            )
+
+    def list_business_attention_events_in_transaction(
+        self, *, attention_item_id: int, _db: sqlite3.Connection
+    ) -> tuple[BusinessAttentionEvent, ...]:
+        rows = _db.execute(
+            "select * from business_attention_events where attention_item_id=? order by created_at, id",
+            (attention_item_id,),
+        ).fetchall()
+        return tuple(self._business_attention_event_from_row(row) for row in rows)
 
     def list_business_tasks_for_projection(self) -> tuple[BusinessTask, ...]:
         """Business-only input for later projections; keeps non-relevant tasks searchable."""
