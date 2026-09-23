@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import StrEnum
 import json
 import sqlite3
 
@@ -61,6 +62,12 @@ class TaskDateInput:
     actor_kind: BusinessActorKind
     actor_user_id: str = ""
     actor_name: str = ""
+
+
+class AcceptancePolarity(StrEnum):
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    AMBIGUOUS = "ambiguous"
 
 
 @dataclass(frozen=True)
@@ -118,6 +125,7 @@ class ApplyAcceptance:
     task_id: int
     signal: SourceSignal
     acceptance_is_explicit: bool = False
+    acceptance_polarity: AcceptancePolarity = AcceptancePolarity.AMBIGUOUS
     acceptance_excerpt: str = ""
     referenced_signal_id: int | None = None
     reason: str = "Task owner accepted the commitment."
@@ -629,6 +637,8 @@ class TaskSemanticService:
                 raise ValueError("acceptance requires a formal assigned task")
             if not command.acceptance_is_explicit:
                 raise ValueError("acceptance requires explicit owner commitment evidence")
+            if AcceptancePolarity(command.acceptance_polarity) is not AcceptancePolarity.ACCEPTED:
+                raise ValueError("acceptance evidence polarity must be accepted")
             if (
                 not command.acceptance_excerpt.strip()
                 or command.acceptance_excerpt not in command.signal.evidence_text
@@ -655,14 +665,12 @@ class TaskSemanticService:
             referenced_signal = self.store.get_business_task_signal_in_transaction(
                 signal_id=command.referenced_signal_id, _db=db
             )
-            if not (
-                task.title in command.acceptance_excerpt
-                or (
-                    referenced_signal is not None
-                    and referenced_signal.source_ref in command.acceptance_excerpt
-                )
+            source_context = json.loads(command.signal.context_json)
+            if (
+                referenced_signal is None
+                or source_context.get("reply_to_source_ref") != referenced_signal.source_ref
             ):
-                raise ValueError("acceptance must name the target task deliverable")
+                raise ValueError("acceptance reply must reference the assigned task source")
             self._validate_date_facts(
                 command.date_facts, signal=command.signal,
                 may_commit=True, owner_user_id=task.owner_user_id
@@ -737,10 +745,24 @@ class TaskSemanticService:
                         "owner_evidence_json", task.owner_evidence_json
                     ),
                 )
+            next_owner_id = changed.get("owner_user_id", task.owner_user_id)
+            if task.owner_user_id and next_owner_id:
+                owner_identity_changed = next_owner_id != task.owner_user_id
+            else:
+                owner_identity_changed = (
+                    next_owner_id != task.owner_user_id
+                    or changed.get("owner_name", task.owner_name) != task.owner_name
+                )
+            acceptance_reset = (
+                owner_identity_changed
+                and task.commitment_status is CommitmentStatus.ACCEPTED
+            )
             signal_id = self._signal_id_or_create(signal=command.signal, db=db, now=now)
             after = task.model_copy(
                 update={
                     **changed,
+                    **({"commitment_status": CommitmentStatus.ASSIGNED_UNACCEPTED}
+                       if acceptance_reset else {}),
                     "updated_at": self._timestamp(now),
                     "last_activity_at": self._timestamp(now),
                 }
@@ -761,7 +783,10 @@ class TaskSemanticService:
                 signal_id=signal_id,
                 before_json=self._snapshot(task),
                 after_json=self._snapshot(after),
-                reason=command.reason,
+                reason=(
+                    f"{command.reason} Prior owner acceptance reset on reassignment."
+                    if acceptance_reset else command.reason
+                ),
                 _db=db,
             )
             return TaskMutationResult(task_id=task.id, signal_id=signal_id, created=False)
@@ -817,6 +842,9 @@ class TaskSemanticService:
                     evidence_role=evidence.evidence_role,
                     _db=db,
                 )
+            self.store.copy_business_task_date_evidence_in_transaction(
+                source_task_id=source.id, target_task_id=target.id, _db=db
+            )
             self.store.link_business_task_evidence_in_transaction(
                 task_id=target.id,
                 signal_id=signal_id,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import asdict, replace
 
@@ -15,6 +16,7 @@ from app.task_semantic_models import (
     FormalTaskBasis,
 )
 from app.task_semantic_service import (
+    AcceptancePolarity,
     ApplyAcceptance,
     MergeBusinessTasks,
     PromoteCandidate,
@@ -57,6 +59,7 @@ def acceptance_signal(*, dedupe_key: str) -> SourceSignal:
         evidence_text="我接受提交报价。", dedupe_key=dedupe_key,
         author_user_id="wangming", author_name="王明",
         author_kind=BusinessActorKind.HUMAN,
+        context_json='{"reply_to_source_ref":"message:assignment"}',
     )
 
 
@@ -208,6 +211,7 @@ def test_acceptance_requires_owner_actor_explicit_content_and_unique_task_link(s
                         author_kind=BusinessActorKind.HUMAN,
                     ),
                     acceptance_is_explicit=explicit,
+                    acceptance_polarity=AcceptancePolarity.ACCEPTED,
                     referenced_signal_id=reference,
                     acceptance_excerpt=excerpt,
                 )
@@ -252,6 +256,7 @@ def test_acceptance_rejects_source_link_shared_by_two_open_tasks(service):
                     author_kind=BusinessActorKind.HUMAN,
                 ),
                 acceptance_is_explicit=True,
+                acceptance_polarity=AcceptancePolarity.ACCEPTED,
                 referenced_signal_id=first.signal_id,
                 acceptance_excerpt="我接受报价工作",
             )
@@ -301,8 +306,10 @@ def test_assignment_and_acceptance_keep_distinct_source_backed_date_facts(servic
                 source_type="dingtalk_message", source_ref="reply:commit",
                 evidence_text="提交报价我接受，周六提交。", dedupe_key="reply:commit",
                 author_user_id="wangming", author_name="王明", author_kind=BusinessActorKind.HUMAN,
+                context_json='{"reply_to_source_ref":"message:assignment"}',
             ),
             acceptance_is_explicit=True,
+            acceptance_polarity=AcceptancePolarity.ACCEPTED,
             referenced_signal_id=assignment.signal_id,
             acceptance_excerpt="提交报价我接受",
             date_facts=(TaskDateInput(
@@ -475,7 +482,9 @@ def test_transition_reuses_independently_persisted_signal_and_replays(service, o
     elif operation == "accept":
         command = ApplyAcceptance(
             task_id=source.task_id, signal=signal,
-            acceptance_is_explicit=True, acceptance_excerpt="我接受提交报价",
+            acceptance_is_explicit=True,
+            acceptance_polarity=AcceptancePolarity.ACCEPTED,
+            acceptance_excerpt="我接受提交报价",
             referenced_signal_id=source.signal_id,
         )
         transition = service.apply_acceptance
@@ -602,8 +611,10 @@ def test_acceptance_changes_the_same_assigned_task_and_appends_history(service):
                 dedupe_key="message:acceptance",
                 author_user_id="wangming", author_name="王明",
                 author_kind=BusinessActorKind.HUMAN,
+                context_json='{"reply_to_source_ref":"message:assignment"}',
             ),
             acceptance_is_explicit=True,
+            acceptance_polarity=AcceptancePolarity.ACCEPTED,
             acceptance_excerpt="我接受提交报价",
             referenced_signal_id=initial.signal_id,
         )
@@ -638,8 +649,10 @@ def test_event_insert_failure_rolls_back_signal_task_evidence_and_update(service
                     dedupe_key="message:rollback",
                     author_user_id="wangming", author_name="王明",
                     author_kind=BusinessActorKind.HUMAN,
+                    context_json='{"reply_to_source_ref":"message:assignment"}',
                 ),
                 acceptance_is_explicit=True,
+                acceptance_polarity=AcceptancePolarity.ACCEPTED,
                 acceptance_excerpt="我接受提交报价",
                 referenced_signal_id=initial.signal_id,
                 date_facts=(TaskDateInput(
@@ -858,6 +871,7 @@ def test_acceptance_replay_preserves_result_after_task_is_merged(service):
         task_id=task.task_id,
         signal=acceptance_signal(dedupe_key="message:acceptance"),
         acceptance_is_explicit=True,
+        acceptance_polarity=AcceptancePolarity.ACCEPTED,
         acceptance_excerpt="我接受提交报价",
         referenced_signal_id=task.signal_id,
     )
@@ -1333,6 +1347,7 @@ def test_name_only_source_owner_stays_unaccepted_until_identity_resolved(service
             task_id=task.task_id,
             signal=acceptance_signal(dedupe_key="reply:name-only"),
             acceptance_is_explicit=True,
+            acceptance_polarity=AcceptancePolarity.ACCEPTED,
             acceptance_excerpt="我接受提交报价",
             referenced_signal_id=task.signal_id,
         ))
@@ -1362,6 +1377,7 @@ def test_generic_owner_update_requires_new_source_evidence(service):
                 author_user_id="lili", author_name="李丽",
             ),
             acceptance_is_explicit=True,
+            acceptance_polarity=AcceptancePolarity.ACCEPTED,
             acceptance_excerpt="我接受提交报价",
             referenced_signal_id=task.signal_id,
         ))
@@ -1386,6 +1402,7 @@ def test_preexisting_unknown_signal_cannot_be_recast_as_owner_acceptance(service
                 author_user_id="wangming", author_name="王明",
             ),
             acceptance_is_explicit=True,
+            acceptance_polarity=AcceptancePolarity.ACCEPTED,
             acceptance_excerpt="我接受提交报价",
             referenced_signal_id=task.signal_id,
         ))
@@ -1430,7 +1447,7 @@ def test_agent_next_check_can_be_derived_from_quoted_human_source(service):
     assert date.actor_user_id == "ceo-agent-service"
 
 
-def test_acceptance_excerpt_must_name_the_target_deliverable(service):
+def test_acceptance_reply_must_reference_the_target_task_source(service):
     task = record_assignment(service)
     before = semantic_state(service)
     with pytest.raises(ValueError, match="acceptance.*task|acceptance.*deliverable"):
@@ -1441,9 +1458,152 @@ def test_acceptance_excerpt_must_name_the_target_deliverable(service):
                 evidence_text="我接受复核合同。", dedupe_key="reply:other-task",
                 author_kind=BusinessActorKind.HUMAN,
                 author_user_id="wangming", author_name="王明",
+                context_json='{"reply_to_source_ref":"message:other-task"}',
             ),
             acceptance_is_explicit=True,
+            acceptance_polarity=AcceptancePolarity.ACCEPTED,
             acceptance_excerpt="我接受复核合同",
             referenced_signal_id=task.signal_id,
         ))
     assert semantic_state(service) == before
+
+
+def test_owner_reply_metadata_binds_short_acceptance_to_unique_task(service):
+    task = record_assignment(service, dedupe_key="message:assign")
+    result = service.apply_acceptance(ApplyAcceptance(
+        task_id=task.task_id,
+        signal=SourceSignal(
+            source_type="dingtalk_message", source_ref="reply:short-accept",
+            evidence_text="我来做。", dedupe_key="reply:short-accept",
+            author_kind=BusinessActorKind.HUMAN,
+            author_user_id="wangming", author_name="王明",
+            context_json='{"reply_to_source_ref":"message:assign"}',
+        ),
+        acceptance_is_explicit=True,
+        acceptance_polarity=AcceptancePolarity.ACCEPTED,
+        acceptance_excerpt="我来做。",
+        referenced_signal_id=task.signal_id,
+    ))
+    assert result.task_id == task.task_id
+    assert service.store.get_business_task(task.task_id).commitment_status is CommitmentStatus.ACCEPTED
+
+
+def test_negated_owner_reply_cannot_be_accepted_even_with_model_flag(service):
+    task = record_assignment(service, dedupe_key="message:assign")
+    before = semantic_state(service)
+    with pytest.raises(ValueError, match="acceptance"):
+        service.apply_acceptance(ApplyAcceptance(
+            task_id=task.task_id,
+            signal=SourceSignal(
+                source_type="dingtalk_message", source_ref="reply:declined",
+                evidence_text="我不接受提交报价。", dedupe_key="reply:declined",
+                author_kind=BusinessActorKind.HUMAN,
+                author_user_id="wangming", author_name="王明",
+                context_json='{"reply_to_source_ref":"message:assign"}',
+            ),
+            acceptance_is_explicit=True,
+            acceptance_polarity=AcceptancePolarity.DECLINED,
+            acceptance_excerpt="我不接受提交报价。",
+            referenced_signal_id=task.signal_id,
+        ))
+    assert semantic_state(service) == before
+
+
+def test_source_backed_reassignment_resets_prior_owner_acceptance(service):
+    task = record_assignment(service)
+    service.apply_acceptance(ApplyAcceptance(
+        task_id=task.task_id,
+        signal=acceptance_signal(dedupe_key="reply:wangming-accepted"),
+        acceptance_is_explicit=True,
+        acceptance_polarity=AcceptancePolarity.ACCEPTED,
+        acceptance_excerpt="我接受提交报价",
+        referenced_signal_id=task.signal_id,
+    ))
+    service.update_task(UpdateBusinessTask(
+        task_id=task.task_id,
+        signal=SourceSignal(
+            source_type="dingtalk_message", source_ref="message:reassign-lili",
+            evidence_text="李丽负责提交报价。", dedupe_key="message:reassign-lili",
+            context_json='{"owner_identity":{"user_id":"lili","name":"李丽"}}',
+            author_kind=BusinessActorKind.HUMAN,
+            author_user_id="derek", author_name="Derek",
+        ),
+        owner_user_id="lili", owner_name="李丽",
+        owner_evidence_json='{"source_ref":"message:reassign-lili","excerpt":"李丽"}',
+    ))
+    current = service.store.get_business_task(task.task_id)
+    assert current.owner_user_id == "lili"
+    assert current.commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
+    event = service.events(task.task_id)[-1]
+    assert event.event_type.value == "owner_changed"
+    assert json.loads(event.before_json)["commitment_status"] == "accepted"
+    assert json.loads(event.after_json)["commitment_status"] == "assigned_unaccepted"
+    with pytest.raises(ValueError, match="identified owner actor"):
+        service.apply_acceptance(ApplyAcceptance(
+            task_id=task.task_id,
+            signal=acceptance_signal(dedupe_key="reply:old-owner-again"),
+            acceptance_is_explicit=True,
+            acceptance_polarity=AcceptancePolarity.ACCEPTED,
+            acceptance_excerpt="我接受提交报价",
+            referenced_signal_id=task.signal_id,
+        ))
+
+
+def test_same_owner_id_display_name_correction_keeps_acceptance(service):
+    task = record_assignment(service)
+    service.apply_acceptance(ApplyAcceptance(
+        task_id=task.task_id,
+        signal=acceptance_signal(dedupe_key="reply:accepted-before-name-fix"),
+        acceptance_is_explicit=True,
+        acceptance_polarity=AcceptancePolarity.ACCEPTED,
+        acceptance_excerpt="我接受提交报价",
+        referenced_signal_id=task.signal_id,
+    ))
+    service.update_task(UpdateBusinessTask(
+        task_id=task.task_id,
+        signal=SourceSignal(
+            source_type="dingtalk_message", source_ref="message:owner-name-fix",
+            evidence_text="王明（销售）负责提交报价。", dedupe_key="message:owner-name-fix",
+            context_json=(
+                '{"owner_identity":{"user_id":"wangming",'
+                '"name":"王明（销售）"}}'
+            ),
+            author_kind=BusinessActorKind.HUMAN,
+            author_user_id="derek", author_name="Derek",
+        ),
+        owner_name="王明（销售）",
+        owner_evidence_json=(
+            '{"source_ref":"message:owner-name-fix",'
+            '"excerpt":"王明（销售）"}'
+        ),
+    ))
+    current = service.store.get_business_task(task.task_id)
+    assert current.owner_user_id == "wangming"
+    assert current.commitment_status is CommitmentStatus.ACCEPTED
+
+
+def test_merge_preserves_typed_date_evidence_on_surviving_task(service):
+    source = service.record_candidate(RecordCandidate(
+        title="提交报价", signal=dated_assignment_signal(
+            dedupe_key="message:source-date", phrase="2026-09-25T17:00:00Z"
+        ),
+        date_facts=requested_date("2026-09-25T17:00:00Z"),
+    ))
+    target = record_assignment(service, dedupe_key="message:target-date")
+    original_date = service.store.list_business_task_date_evidence(source.task_id)[0]
+    merge_command = MergeBusinessTasks(
+        source_task_id=source.task_id, target_task_id=target.task_id,
+        signal=assignment_signal(dedupe_key="review:merge-date"),
+        identity_evidence=merge_identity(),
+    )
+    service.merge_same_deliverable(merge_command)
+    target_dates = service.store.list_business_task_date_evidence(target.task_id)
+    assert len(target_dates) == 1
+    assert target_dates[0].source_signal_id == original_date.source_signal_id
+    assert target_dates[0].date_type == original_date.date_type
+    assert target_dates[0].value_at == original_date.value_at
+    assert target_dates[0].raw_phrase == original_date.raw_phrase
+    assert target_dates[0].actor_user_id == original_date.actor_user_id
+    assert target_dates[0].created_at == original_date.created_at
+    service.merge_same_deliverable(merge_command)
+    assert len(service.store.list_business_task_date_evidence(target.task_id)) == 1

@@ -6622,6 +6622,35 @@ class AutoReplyStore:
         )
         return int(cursor.lastrowid)
 
+    def copy_business_task_date_evidence_in_transaction(
+        self, *, source_task_id: int, target_task_id: int, _db: sqlite3.Connection
+    ) -> int:
+        """Carry an identical source date fact onto a merged target once."""
+        cursor = _db.execute(
+            """insert into business_task_date_evidence (
+                task_id, date_type, value_at, raw_phrase, source_signal_id,
+                actor_kind, actor_user_id, actor_name, created_at
+            ) select ?, source.date_type, source.value_at, source.raw_phrase,
+                     source.source_signal_id, source.actor_kind, source.actor_user_id,
+                     source.actor_name, source.created_at
+              from business_task_date_evidence source
+             where source.task_id=?
+               and not exists (
+                   select 1 from business_task_date_evidence target
+                    where target.task_id=?
+                      and target.date_type=source.date_type
+                      and target.value_at=source.value_at
+                      and target.raw_phrase=source.raw_phrase
+                      and target.source_signal_id=source.source_signal_id
+                      and target.actor_kind=source.actor_kind
+                      and target.actor_user_id=source.actor_user_id
+                      and target.actor_name=source.actor_name
+                      and target.created_at=source.created_at
+               )""",
+            (target_task_id, source_task_id, target_task_id),
+        )
+        return cursor.rowcount
+
     def list_business_task_date_evidence(self, task_id: int) -> tuple[BusinessTaskDateEvidence, ...]:
         with self._connect() as db:
             rows = db.execute(

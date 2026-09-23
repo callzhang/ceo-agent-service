@@ -69,7 +69,10 @@ two people's names and IDs in prose does not establish a mapping. An ID without
 a name may be cited directly in the excerpt. A source-backed name without a verified ID can be retained,
 but that owner cannot satisfy the owner-ID acceptance requirement. Owner
 changes through the generic update command also need a fresh matching source
-excerpt and source reference.
+excerpt and source reference. If a source-backed reassignment changes the
+identified owner of an accepted Task, the same `owner_changed` event records
+the prior accepted state and the new `assigned_unaccepted` state. The former
+owner's acceptance does not transfer to the new owner.
 
 `business_task_date_evidence` holds append-only typed facts: `assigned_at`,
 `requested_deadline_at`, `external_deadline_at`, `committed_deadline_at`,
@@ -85,6 +88,10 @@ Each date phrase must occur verbatim in its source signal. Source-derived date
 actor kind, ID, and name must match that signal's author. An operational
 `next_check_at` may instead carry an explicit Agent actor ID while quoting the
 human source phrase that supplied the timing.
+Date facts attributed to a different human speaker in meeting minutes require
+structured speaker identity tied to the quoted source span. The current Task
+Agent input does not supply that mapping, so those facts remain unrecorded
+instead of assigning the minutes system author or an inferred participant.
 
 Task events retain a typed transition, optional source signal, before/after JSON
 objects, reason, and creation time. Attention events retain the same evidence
@@ -181,8 +188,15 @@ ownerless formalization are rejected before persistence. An external TODO is
 formal but never proves the human owner accepted it. `ApplyAcceptance` requires
 an explicit source excerpt, a human author ID equal to the Task owner, and a
 prior source signal uniquely linked to that one unmerged formal Task. The
-acceptance excerpt must also identify that Task's deliverable by its title or
-the referenced source's exact external reference. The
+command must supply `AcceptancePolarity.ACCEPTED`; a declined or ambiguous
+semantic finding rejects the transition even when `acceptance_is_explicit` is
+true. The exact acceptance excerpt must occur in the human owner's source,
+and that source's `context_json.reply_to_source_ref` must match the persisted
+referenced signal's source reference. This binds a short reply such as
+“我来做。” to the uniquely linked Task without expecting an opaque source ID or
+full Task title in natural speech. The eventual source adapter must preserve
+and verify reply metadata from the provider; caller-written context is not
+independent proof of a provider reply. The
 acceptance signal and role commit together. Generic `UpdateBusinessTask`
 cannot set commitment status or write the old untyped deadline; date inputs
 create typed evidence rows instead.
@@ -191,6 +205,9 @@ Same-deliverable merging requires structured `IdentityEvidence`. The service
 merges only when the evidence identifies the same external task, cites an
 explicit source reference, or establishes the full deliverable/owner/context/
 time-window match. Weaker identity evidence is insufficient for merging.
+The merge also carries append-only typed date facts to the surviving Task,
+preserving each fact's original signal, actor, phrase, parsed value, and
+creation time. Replays or an already-present identical fact do not duplicate it.
 
 ## Business resolution commands
 
