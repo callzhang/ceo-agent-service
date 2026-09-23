@@ -209,11 +209,10 @@ def test_stored_needs_human_projection_rejects_authorization_error():
     )
 
 
-def test_stored_needs_human_projection_accepts_explicit_authorization_plan():
-    """A typed, bounded action is a business authorization decision."""
+def test_stored_needs_human_projection_authorization_plan_obeys_quality_gate():
+    """A bounded authorization plan is not an extra needs_human route."""
     result = {
         **_rule_gap_result(),
-        "confidence": 0.9,
         "error": {
             "code": "authorization_required",
             "retryable": False,
@@ -244,4 +243,8 @@ def test_stored_needs_human_projection_accepts_explicit_authorization_plan():
     assert (
         classify_stored_needs_human_projection(result)
         is StoredNeedsHumanProjection.NEEDS_HUMAN
+    )
+    assert (
+        classify_stored_needs_human_projection({**result, "confidence": 0.9})
+        is StoredNeedsHumanProjection.INVALID
     )
