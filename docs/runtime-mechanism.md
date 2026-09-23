@@ -115,6 +115,8 @@ pending recovery 排除，ask-back 不计 `needs_human`。
 `done`，但在 Derek 提交决策前仍属于当前待处理项。这类带结构化依据和可执行选项的
 决策在独立的人工决策列表展示，不计入只显示错误的 Attention。无结构化依据或
 `information_completeness<0.5` 的结果是技术失败，保留在 History 和 Attention。
+重跑前写入的 `reviewed_at` 只记录上一轮授权反馈；若本轮最新结果再次是未解决的
+`needs_human`，仍须展示为新的人工决策，直到状态变为已选择或显式解决。
 
 ## 审核反馈闭环
 

@@ -7933,6 +7933,13 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
     assert "1. 同意当前方案" in html
     assert "2. 要求补充材料" in html
     assert f'action="/attempts/{attempt_id}/human-decision?return_to=/history"' in html
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set reviewed_at='2026-08-11 05:00:01' where id=?",
+            (attempt_id,),
+        )
+    decisions = audit_web_module._human_decision_attention_rows(store)
+    assert [row["id"] for row in decisions] == [str(attempt_id)]
 
 
 def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(

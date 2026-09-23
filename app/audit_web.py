@@ -3513,7 +3513,6 @@ def _human_decision_attention_rows(
              limit 1
          )
         where attempts.send_status='needs_human'
-          and attempts.reviewed_at is null
           and trim(coalesce(attempts.resolved_at, ''))=''
           and attempts.id=(
               select max(latest.id) from reply_attempts as latest
