@@ -8255,6 +8255,57 @@ def test_oa_failed_attempt_uses_current_needs_human_task_projection(
     assert reply_attempt_queue["counts"]["needs_human"] == 1
 
 
+def test_reply_attempt_queue_excludes_prior_generation_after_trigger_revision(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "revised-trigger-attempt.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="oa_pending_scan:process-1",
+        conversation_title="OA approval",
+        single_chat=True,
+        trigger_message_id="oa-pending:process-1:revision-1",
+        trigger_create_time="2026-09-21 09:00:00",
+        trigger_sender="Applicant",
+        trigger_text="Review this approval.",
+        channel="dingtalk",
+        business_object_key="oa:process-1:task-1",
+    )
+    with store._connect() as db:
+        old_run = db.execute(
+            "insert into agent_runs (reply_task_id, execution_generation, role, status) "
+            "values (?, ?, 'consumer', 'completed')",
+            (task.id, task.execution_generation),
+        ).lastrowid
+    old_attempt_id = store.record_reply_attempt(
+        channel="dingtalk",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (old_run, old_attempt_id),
+        )
+        db.execute(
+            "update reply_tasks set trigger_message_id=?, execution_generation=?, "
+            "status='done' where id=?",
+            ("oa-pending:process-1:revision-2", "next-generation", task.id),
+        )
+
+    payload = build_worker_status_payload(store)
+    queue = next(
+        item for item in payload["queues"] if item["name"] == "Reply attempts"
+    )
+
+    assert queue["failed"] == 0
+
+
 @pytest.mark.parametrize("successor_status", ("done", "skipped"))
 def test_reply_attempt_queue_hides_failed_history_when_its_task_has_a_terminal_successor(
     tmp_path: Path,

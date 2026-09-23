@@ -3001,6 +3001,15 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
             where a.ordinal=1
               and not exists (
                   select 1
+                  from agent_runs as source_run
+                  join reply_tasks as source_task
+                    on source_task.id=source_run.reply_task_id
+                  where source_run.id=a.agent_run_id
+                    and source_run.execution_generation<>
+                        source_task.execution_generation
+              )
+              and not exists (
+                  select 1
                   from reply_tasks as historical_task
                   join business_object_tasks as current_business_object
                     on current_business_object.business_object_key=

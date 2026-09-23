@@ -112,9 +112,9 @@ run 和 audit 不改写。Quality gate 与 Attention 只按 current latest proje
 pending recovery 排除，ask-back 不计 `needs_human`。
 
 `needs_human` 是 Agent run 的业务决策终态；对应的 `reply_task` 可以已经是
-`done`，但在 Derek 提交决策前仍属于当前待处理项。Attention 必须展示这类满足
-`(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5`、且带 2--4 个可执行选项的
-结构化决策；无结构化依据或 `information_completeness<0.5` 的记录不进入 Attention。
+`done`，但在 Derek 提交决策前仍属于当前待处理项。这类带结构化依据和可执行选项的
+决策在独立的人工决策列表展示，不计入只显示错误的 Attention。无结构化依据或
+`information_completeness<0.5` 的结果是技术失败，保留在 History 和 Attention。
 
 ## 审核反馈闭环
 
@@ -191,6 +191,8 @@ DingTalk 日程卡片改期可能原地覆盖卡片内容而不产生新消息 I
 通过 run 的 task、generation 和关联事件查询。Attempt 页面可以切换多个 Consumer
 或 Audit run，但不能编辑或覆盖旧 run。原始失败、session、runtime attempt、tool
 event 和 provider 结果仍然作为 append-only 事实保留。
+Workers 的当前 attempt 队列统计会排除 `agent_run_id` 指向旧 execution generation
+的记录，即使同一业务对象更新了 trigger message；旧 attempt 仍可在历史详情中查看。
 
 对进入 Consumer/Audit 的 task，当前状态由 task 当前 `execution_generation` 中最后一个
 Agent run 决定：最后一个 run 失败则当前投影为 `failed`；只有该 generation 有明确完成的
