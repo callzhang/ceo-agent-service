@@ -48,12 +48,18 @@ def test_consumer_core_prompt_contains_only_runtime_invariants():
     assert text.startswith("## Application Result Contract\n")
     assert "## Dynamic Skill" in text
     assert "proposal_json" not in text
+    assert "result.values" in text
+    assert "dws auth status.user_id" in text
+    assert "without start/end filters" in text
 
 
 def test_audit_core_prompt_contains_only_runtime_invariants():
     text = _core_prompt(_AUDIT_AGENT_RULES, AUDIT_DYNAMIC_SKILL_BODY)
     assert text.startswith("## Application Result Contract\n")
     assert "## Dynamic Skill" in text
+    assert "result.values" in text
+    assert "dws auth status.user_id" in text
+    assert "without start/end filters" in text
 
 
 @pytest.mark.parametrize(

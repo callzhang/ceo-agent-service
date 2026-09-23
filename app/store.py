@@ -14795,6 +14795,21 @@ class AutoReplyStore:
                 return None
             return self._reply_task_from_row(row)
 
+    def get_reply_task_for_business_object(
+        self, business_object_key: str
+    ) -> ReplyTask | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select tasks.* from business_object_tasks as current_object
+                join reply_tasks as tasks
+                  on tasks.id=current_object.reply_task_id
+                where current_object.business_object_key=?
+                """,
+                (business_object_key,),
+            ).fetchone()
+            return self._reply_task_from_row(row) if row is not None else None
+
     # ---- WeChat channel: reply scopes ----
     def replace_wechat_reply_scopes(
         self, account_id: str, scopes: list[WechatReplyScope]

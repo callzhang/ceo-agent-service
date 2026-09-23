@@ -19,6 +19,7 @@ from app.dws_client import (
     DwsError,
     DwsUserProfile,
 )
+from app.dingtalk_models import DingTalkConversation
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment import (
     consume_meeting_alignment_jobs,
@@ -283,6 +284,9 @@ class FakeDws:
 
     def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
         return list(self.profiles.get(query, []))
+
+    def search_conversations(self, query: str) -> list[DingTalkConversation]:
+        return []
 
     def is_hr_user(self, user_id: str) -> bool:
         return False
@@ -1671,7 +1675,7 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     assert seen_statuses == ["ready_to_send"]
     assert job.status == "sent"
     expected_message = (
-        "【会议跟进】上线评审（2026-07-14 09:00-10:00）\n\n"
+        "时间：2026-07-14 09:00-10:00\n\n"
         f"{consumer_send_decision().final_message}（by明哥分身）"
     )
     assert job.final_message == expected_message
@@ -1693,7 +1697,7 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
             "event_id": "event-1",
             "description": (
                 "【CEO 会议总结】\n"
-                "【会议跟进】上线评审（2026-07-14 09:00-10:00）\n\n"
+                "时间：2026-07-14 09:00-10:00\n\n"
                 f"{consumer_send_decision().final_message}（by明哥分身）\n"
                 "【/CEO 会议总结】"
             ),
@@ -1704,6 +1708,59 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     assert history.output_text.endswith("日历备注：已写入原日程。")
     [run] = store.list_meeting_alignment_runs(job_id)
     assert run.status == "ready_to_send"
+
+
+def test_meeting_agent_receives_live_group_candidates_before_deciding(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    searches: list[str] = []
+
+    def search_conversations(query: str) -> list[DingTalkConversation]:
+        searches.append(query)
+        if query == "上线":
+            return [
+                DingTalkConversation(
+                    open_conversation_id="cid-first",
+                    title="项目群",
+                    single_chat=False,
+                    unread_point=0,
+                )
+            ]
+        return []
+
+    dws.search_conversations = search_conversations
+    seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1
+    ) == 1
+
+    assert "上线" in searches
+    assert "cid-first" in runner.prompts[0]
+    assert "项目群" in runner.prompts[0]
+
+
+def test_meeting_group_discovery_failure_does_not_become_direct_fallback(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+
+    def fail_search(_query: str) -> list[DingTalkConversation]:
+        raise DwsError("group search unavailable")
+
+    dws.search_conversations = fail_search
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert json.loads(job.error)["kind"] == "meeting_group_discovery"
+    assert runner.calls == 0
+    assert dws.send_calls == []
 
 
 def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):
@@ -1794,6 +1851,23 @@ def test_calendar_summary_does_not_update_description_for_other_organizer(tmp_pa
     assert len(dws.send_calls) == 1
 
 
+def test_first_meeting_follow_up_does_not_recall_its_own_send(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.calendar_pages[""]["events"][0].organizer = "A"
+    job_id = seed_consumer_job(store, dws)
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, FakeMeetingRunner(consumer_send_decision()), now=NOW, limit=1
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "sent"
+    assert job.calendar_summary_status == "skipped"
+    assert len(dws.send_calls) == 1
+    assert dws.__dict__.get("recalled") is None
+
+
 def test_transcript_meeting_without_calendar_event_marks_calendar_note_skipped(
     tmp_path,
 ):
@@ -1858,7 +1932,7 @@ def test_consumer_notifies_once_after_confirmed_meeting_send(tmp_path, monkeypat
     sent_job = store.get_meeting_alignment_job(job_id)
     assert sent_job.status == "sent"
     expected_message = (
-        "【会议跟进】上线评审（2026-07-14 09:00-10:00）\n\n"
+        "时间：2026-07-14 09:00-10:00\n\n"
         f"{consumer_send_decision().final_message}（by明哥分身）"
     )
     assert sent_job.final_message == expected_message

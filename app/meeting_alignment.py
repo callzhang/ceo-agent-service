@@ -784,6 +784,29 @@ def _meeting_fts_text(text: str) -> str:
     return " ".join(token for token in tokens if token)
 
 
+def _search_meeting_group_candidates(dws: Any, title: str) -> list[dict[str, str]]:
+    from app.jieba_loader import jieba_lcut
+
+    terms = []
+    for token in jieba_lcut(title):
+        term = str(token).strip()
+        if len(term) >= 2 and term.isalnum() and not term.isdecimal():
+            terms.append(term)
+    queries = sorted(dict.fromkeys(terms), key=len, reverse=True)[:3]
+    candidates: dict[str, dict[str, str]] = {}
+    for query in queries:
+        for conversation in dws.search_conversations(query):
+            candidates.setdefault(
+                conversation.open_conversation_id,
+                {
+                    "conversation_id": conversation.open_conversation_id,
+                    "title": conversation.title,
+                    "search_query": query,
+                },
+            )
+    return list(candidates.values())
+
+
 def _index_meeting_codex_session(
     store: AutoReplyStore,
     runner: Any,
@@ -913,6 +936,21 @@ def _analyze_meeting_job(
         _fail_job(store, job.id, "meeting_source", exc)
         return
 
+    try:
+        group_candidates = _search_meeting_group_candidates(dws, source.title)
+    except DwsError as exc:
+        _retry_or_fail(
+            store,
+            job,
+            kind="meeting_group_discovery",
+            exc=exc,
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
+            external_dependency=True,
+        )
+        return
+
     similar_sessions = _search_similar_meeting_sessions(
         store,
         source,
@@ -939,6 +977,7 @@ def _analyze_meeting_job(
         decision = agent.decide(
             source,
             similar_sessions=similar_sessions,
+            group_candidates=group_candidates,
             run_id=run_id,
             consumer_prompt=(
                 scheduled_consumer.prompt if scheduled_consumer is not None else ""
@@ -1299,6 +1338,7 @@ def _deliver_meeting_job(
             job,
             evidence,
             previous,
+            superseded_send_result_json="",
             now=now,
             retry_delay=retry_delay,
             max_attempts=max_attempts,
@@ -1396,6 +1436,7 @@ def _deliver_meeting_job(
         job_after_send,
         evidence,
         result,
+        superseded_send_result_json=job.send_result_json,
         now=now,
         retry_delay=retry_delay,
         max_attempts=max_attempts,
@@ -1409,13 +1450,11 @@ def _write_meeting_summary_to_calendar_or_retry(
     evidence: CalendarMeetingEvidence,
     delivery: MeetingDeliveryResult,
     *,
+    superseded_send_result_json: str,
     now: datetime,
     retry_delay: timedelta,
     max_attempts: int,
 ) -> None:
-    # Captured before the job records this send: it points at the follow-up the
-    # people in this meeting are already holding, which a re-summary replaces.
-    superseded_send_result = job.send_result_json or ""
     _record_where_the_message_landed(dws, delivery)
     summary = (job.final_message or delivery.message_text).strip()
     if not summary:
@@ -1445,7 +1484,7 @@ def _write_meeting_summary_to_calendar_or_retry(
             calendar_summary_result_json=receipt,
             error="",
         )
-        _withdraw_superseded_follow_up(dws, superseded_send_result)
+        _withdraw_superseded_follow_up(dws, superseded_send_result_json)
         _notify_meeting_sent(job, delivery)
         return
     creator = evidence.creator
@@ -1472,7 +1511,7 @@ def _write_meeting_summary_to_calendar_or_retry(
             calendar_summary_result_json=receipt,
             error="",
         )
-        _withdraw_superseded_follow_up(dws, superseded_send_result)
+        _withdraw_superseded_follow_up(dws, superseded_send_result_json)
         _notify_meeting_sent(job, delivery)
         return
     try:
@@ -1527,7 +1566,7 @@ def _write_meeting_summary_to_calendar_or_retry(
                 calendar_summary_result_json=receipt,
                 error="",
             )
-            _withdraw_superseded_follow_up(dws, superseded_send_result)
+            _withdraw_superseded_follow_up(dws, superseded_send_result_json)
             _notify_meeting_sent(job, delivery)
             return
         receipt = json.dumps(
@@ -1566,7 +1605,7 @@ def _write_meeting_summary_to_calendar_or_retry(
         calendar_summary_result_json=receipt,
         error="",
     )
-    _withdraw_superseded_follow_up(dws, superseded_send_result)
+    _withdraw_superseded_follow_up(dws, superseded_send_result_json)
     _notify_meeting_sent(job, delivery)
 
 

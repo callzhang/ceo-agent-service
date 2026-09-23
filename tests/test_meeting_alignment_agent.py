@@ -314,6 +314,10 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "群内所有人员都必须属于本次会议参会人" not in prompt
     assert "业务承接证据" in prompt
     assert "内容优先于参会人数" in prompt
+    assert "final_message 只写正文" in prompt
+    assert "不要重复会议标题或时间" in prompt
+    assert "不要使用 Markdown 标题或列表符号" in prompt
+    assert "空行分隔" in prompt
 
 
 def test_prompt_allows_shared_sensitive_content_for_an_automatically_matched_hr_group():

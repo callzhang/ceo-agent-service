@@ -4575,6 +4575,53 @@ def test_send_attempt_command_reopens_needs_human_with_reviewed_instruction(
     assert task is not None and task.manual_rerun_attempt_id == reviewed_attempt.id
 
 
+def test_send_attempt_oa_rerun_uses_current_business_object_task(tmp_path):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    conversation_id = "oa_pending_scan:process-1"
+    oa_url = "https://aflow.dingtalk.com/detail?procInstId=process-1&taskId=task-1"
+    key = "oa:process-1:task-1"
+    store.upsert_conversation(conversation_id, "审批待办", True, None)
+    for day in ("2026-09-22", "2026-09-23"):
+        store.enqueue_reply_task(
+            conversation_id=conversation_id,
+            conversation_title="审批待办",
+            single_chat=True,
+            trigger_message_id=f"oa-pending:process-1:{day}",
+            trigger_create_time=f"{day} 00:00:00",
+            trigger_sender="Derek OA",
+            trigger_text=f"审批待办 {oa_url}",
+            oa_url=oa_url,
+            business_object_key=key,
+        )
+    source_attempt_id = store.record_reply_attempt(
+        conversation_id=conversation_id,
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:process-1:2026-09-22",
+        trigger_sender="Derek OA",
+        trigger_text=f"审批待办 {oa_url}",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+        oa_process_instance_id="process-1",
+        oa_task_id="task-1",
+        oa_url=oa_url,
+    )
+
+    result = send_attempt_command(
+        settings, source_attempt_id, instruction="Recheck this approval only."
+    )
+
+    reviewed = store.get_reply_attempt(int(result["attempt_id"]))
+    current = store.get_reply_task_for_business_object(key)
+    assert current is not None
+    assert result["task_id"] == current.id
+    assert current.business_object_key == key
+    assert reviewed is not None
+    assert reviewed.trigger_message_id == current.trigger_message_id
+    assert reviewed.trigger_message_id == "oa-pending:process-1:2026-09-23"
+
+
 def test_send_attempt_command_rotates_pending_task_with_previous_error(
     monkeypatch, tmp_path
 ):
