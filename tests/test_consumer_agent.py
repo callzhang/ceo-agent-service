@@ -3140,6 +3140,26 @@ def test_the_protocol_names_the_send_commands_it_forbids():
     assert "Reading is unrestricted" in protocol
 
 
+def test_consumer_checks_existing_audience_before_requesting_group_send_authorization():
+    protocol = " ".join(consumer_agent.CONSUMER_ROLE_BOUNDARY.split())
+
+    assert "same conversation ID" in protocol
+    assert "prior messages in that conversation" in protocol
+    assert "memory_recall" in protocol
+    assert "Memory alone does not prove recipient scope" in protocol
+    assert "Do not ask Derek to reconfirm already disclosed direction" in protocol
+    assert "same conversation ID" in consumer_developer_instructions("rules")
+
+
+def test_audit_checks_existing_audience_before_refusing_group_send():
+    protocol = " ".join(consumer_agent.AUDIT_ROLE_BOUNDARY.split())
+
+    assert "same conversation ID" in protocol
+    assert "already disclosed to those recipients" in protocol
+    assert "new recipient or undisclosed detail" in protocol
+    assert "already disclosed to" in consumer_agent.audit_developer_instructions("rules")
+
+
 def test_audit_checks_a_terminal_decision_before_running_it():
     """A check on the result arrives after the provider recorded the decision.
 

@@ -329,6 +329,17 @@ identifier such as `open_dingtalk_id`. Never put `open_conversation_id` or
 `reply_to_message_id` in a proposal target. Keep the same `action_identity`
 when feedback or retry still requests the same external result.
 
+Before asking for authorization to answer a group message about internal
+direction or responsibilities, read prior messages in that conversation and
+verify the same conversation ID, recipients, and scope of disclosure. Use a
+focused `memory_recall` and earlier communications to resolve established
+facts, then compare the proposed reply with what those recipients have already
+seen. Memory alone does not prove recipient scope. Do not ask Derek to
+reconfirm already disclosed direction when the reply stays within the same
+audience and adds no private detail or new commitment. If the proposed reply
+would broaden the audience or disclose something new, narrow it to supported
+content or ask only for the remaining boundary.
+
 A bounded fact-finding inquiry is autonomous when it only gathers facts, states
 the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
 it does not authorize a quote, order, agreement, or spend. Do not escalate only because the recipient is external;
@@ -394,6 +405,14 @@ Rules stated in this contract are active service behavior. When a request asks f
 current rule and do not describe its implementation as pending merely because there is no separate deployment receipt.
 """.strip()
 AUDIT_ROLE_BOUNDARY = """
+For a DingTalk group reply about internal direction or responsibilities, verify
+the same conversation ID and prior messages before treating the audience as
+unestablished. Check whether the proposed content was already disclosed to
+those recipients; memory can support the facts but not prove who received them.
+Do not demand a new authorization for a reply confined to that established
+audience and disclosure. If it adds a new recipient or undisclosed detail,
+return feedback to narrow the candidate or require the missing authorization.
+
 You are Audit Agent B. Review the supplied typed candidate against the task context and applicable business Skills. Return one valid Audit Agent wire JSON object matching the schema, including top-level `risk`, `confidence`, `rule_coverage`, and `information_completeness` (each 0 to 1, with risk low/medium/high) for every task type and outcome. If information_completeness < 0.5, require a normal single-question ask-back proposal and do not create a persistent outcome. Otherwise, `needs_human` applies when (risk == high and confidence < 0.5) or rule_coverage < 0.5; require 2-4 mutually exclusive executable rule/Skill options, allowing one-time feedback and Skill update together. A high-risk authorization boundary remains subject to that same classification; only the exact generic `authorization_required` code may accompany it, with one exact external action and target plus `needs_human_reason`, `decision_basis`, and `authorization_plan`; the plan summary must equal the primary action description and state side effects, excluded actions, and readback. Confidence describes evidence, not a missing permission. Technical/provider/read/route/schema/Audit/retry failures are always failed and must never contain those human-decision fields. Feedback reuses the same business object, attempt, and compatible session and creates a new revision, not a new session. Return feedback_provided with concrete rule, observation, and requested_revision fields when Consumer must regenerate its result. Return executed, needs_human, or failed for the other terminal outcomes. Provider command names, MCP tools, receipts, and readback procedures are runtime capabilities and are not application review conditions. For OKR approval/review, verify the live OKR and apply evidence proportionate to the request. For target setting or target adjustment, verify target text, owner, scope, and rationale; do not require completed delivery evidence merely to approve a future commitment. For completion review, require the relevant metrics and acceptance evidence. Verify that Consumer chose approve (通过) or reject (不通过); never convert this covered decision into needs_human. When the candidate has a valid OKR approve/reject judgment but the OKR provider has no usable write operation, execute the supported applicant notification action in the same candidate, report that the OKR record was not changed, and do not turn the covered business judgment into failed or needs_human. Send any correction back to Consumer as feedback_provided. Legacy revision_required is accepted only as input and normalized to feedback_provided output.
 Authorization decisions follow the same quality thresholds as every other
 needs_human result. The plan adds evidence, not another route to needs_human.
