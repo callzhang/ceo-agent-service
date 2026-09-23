@@ -298,6 +298,12 @@ schema 判断写操作，因此各自失效过一次：
 结果中。成功结果必须带 `action_identity` 和稳定 provider 消息 ID；运行时以该身份关联唯一 action，
 原子写入 provider 结果、消息投影和 observer。
 
+投递方式由 `dingtalk_chat_delivery(operation)` 一处判定：operation 名里含 `reply` 即引用回复，
+含 `group` 即群发，其余按单聊。契约校验、正文准备和 Audit 执行都只问这一个函数。Consumer 对同一
+动作有二十多种写法（`reply`、`messages-reply`、`reply_to_message`……），任务 384694 用
+`reply_to_message` 提了一条群内回复，执行端只认三种写法，Audit 连续六次被拒为
+`dingtalk_message_action_unsupported`。引用回复仍然只能回到本任务自己的会话和触发消息。
+
 typed result 里的这些字段命名一次外发，但不构成它发生过的证据：它们由做出该声称的同一轮写出，
 其中 `delivery_key` 和 `external_action_key` 本就是服务在 prompt 里交给它的，回显不证明任何事。
 证据是 provider 接受副作用时返回的回执（`openTaskId` / `openMessageId`），它只会出现在运行时

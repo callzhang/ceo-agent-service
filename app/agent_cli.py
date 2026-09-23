@@ -135,7 +135,7 @@ def send_approved_dingtalk_message(
     dws_client=None,
 ) -> dict[str, object]:
     """Send one prepared message from the proposal under the active Audit run."""
-    from app.agent_contracts import ConsumerAgentResult
+    from app.agent_contracts import ConsumerAgentResult, dingtalk_chat_delivery
     from app.consumer_agent import structured_dingtalk_outgoing_text_key
     from app.dingtalk_models import DingTalkConversation, DingTalkMessage
     from app.dws_client import DwsClient
@@ -210,7 +210,7 @@ def send_approved_dingtalk_message(
         raise AgentReadOnlyViolationError("dingtalk_message_target_missing")
     dws = dws_client or DwsClient()
     sender = ServiceMessageSender(store=store, dingtalk=dws)
-    if action.operation in {"messages-reply", "message.reply", "reply"}:
+    if dingtalk_chat_delivery(action.operation) == "reply":
         message_id = str(
             target.get("message_id") or target.get("source_message_id") or ""
         ).strip()

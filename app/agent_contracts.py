@@ -142,6 +142,25 @@ class ConsumerOutcome(StrEnum):
     FAILED = "failed"
 
 
+def dingtalk_chat_delivery(operation: str) -> Literal["reply", "group", "direct"]:
+    """How a `dingtalk-chat` action is delivered, read from its operation name.
+
+    Consumers name the same operation more than twenty ways (`reply`,
+    `messages-reply`, `reply_to_message`, `dws chat +messages-reply`, ...).
+    Task 384694 proposed a group reply as `reply_to_message`; the executor only
+    knew three spellings, so Audit was refused six times with
+    `dingtalk_message_action_unsupported` and the task failed. Every place that
+    routes a chat action asks this one function instead of keeping its own set.
+    """
+
+    name = operation.strip().lower()
+    if "reply" in name:
+        return "reply"
+    if "group" in name:
+        return "group"
+    return "direct"
+
+
 class ProposedAction(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -189,15 +208,10 @@ class ProposedAction(BaseModel):
             or self.target.get("verified_participant_open_dingtalk_id")
             or ""
         ).strip()
-        if (
-            self.operation
-            in {"send_to_group", "messages-send-to-group", "send_group_message"}
-            and not conversation_id
-        ):
+        delivery = dingtalk_chat_delivery(self.operation)
+        if delivery == "group" and not conversation_id:
             raise ValueError("DingTalk group target requires conversation_id")
-        if self.operation in {"messages-reply", "message.reply", "reply"} and not (
-            conversation_id and message_id
-        ):
+        if delivery == "reply" and not (conversation_id and message_id):
             raise ValueError(
                 "DingTalk reply target requires conversation_id and message_id"
             )

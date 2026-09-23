@@ -1431,3 +1431,61 @@ def test_agent_message_json_objects_scans_fences_and_prose():
 
     assert agent_message_json_objects(text) == [{"a": 1}, {"b": {"nested": [1, 2]}}]
     assert agent_message_json_objects("no objects here") == []
+
+
+@pytest.mark.parametrize(
+    ("operation", "delivery"),
+    [
+        ("reply", "reply"),
+        ("messages-reply", "reply"),
+        ("reply_to_message", "reply"),
+        ("dws chat +messages-reply", "reply"),
+        ("reply_to_group_message", "reply"),
+        ("send_group_message", "group"),
+        ("messages-send-to-group", "group"),
+        ("send_direct_message", "direct"),
+        ("messages-send", "direct"),
+    ],
+)
+def test_every_spelling_of_a_chat_operation_routes_the_same_way(
+    operation: str, delivery: str
+) -> None:
+    from app.agent_contracts import dingtalk_chat_delivery
+
+    assert dingtalk_chat_delivery(operation) == delivery
+
+
+def test_a_group_reply_named_reply_to_message_is_executable() -> None:
+    """Task 384694: Audit was refused six times on a valid reply.
+
+    The Consumer called it `reply_to_message`; the executor knew three other
+    spellings, found no recipient for a "direct" send, and reported
+    `dingtalk_message_action_unsupported`.
+    """
+    from app.consumer_agent import structured_dingtalk_outgoing_text_key
+
+    action = ProposedAction(
+        action_identity="reply_to_msgv7E5f7wwrk+BJ7RIjou51A==_settlement-policy-boundary",
+        capability="dingtalk-chat",
+        operation="reply_to_message",
+        description="在星尘-财务管理群中回复触发消息",
+        target={
+            "conversation_id": "cidFaNFX+QuPxKF3hNNAjhbVw==",
+            "message_id": "msgv7E5f7wwrk+BJ7RIjou51A==",
+        },
+        payload={"content": "先作为讨论稿，正式执行前再确认计算口径。"},
+    )
+
+    assert structured_dingtalk_outgoing_text_key(action) == "content"
+
+
+def test_a_reply_by_any_name_still_needs_the_message_it_replies_to() -> None:
+    with pytest.raises(ValidationError, match="reply target requires"):
+        ProposedAction(
+            action_identity="a",
+            capability="dingtalk-chat",
+            operation="reply_to_message",
+            description="d",
+            target={"conversation_id": "cid"},
+            payload={"content": "x"},
+        )

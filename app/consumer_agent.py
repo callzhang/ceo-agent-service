@@ -13,6 +13,7 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     ConsumerOutcome,
     ProposedAction,
+    dingtalk_chat_delivery,
 )
 from app.agent_effect_claim import (
     EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
@@ -864,13 +865,10 @@ def structured_dingtalk_outgoing_text_key(action: ProposedAction) -> str | None:
         or target.get("sender_open_dingtalk_id")
         or ""
     ).strip()
-    if action.operation in {"messages-reply", "message.reply", "reply"}:
+    delivery = dingtalk_chat_delivery(action.operation)
+    if delivery == "reply":
         return text_key if conversation_id and message_id else None
-    if action.operation in {
-        "send_to_group",
-        "messages-send-to-group",
-        "send_group_message",
-    }:
+    if delivery == "group":
         return text_key if conversation_id else None
     return text_key if recipient else None
 
