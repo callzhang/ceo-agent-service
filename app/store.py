@@ -116,6 +116,7 @@ from app.task_models import (
     WorkUpdate,
 )
 from app.task_semantic_models import (
+    AttentionCategory,
     BusinessAnchor,
     BusinessAnchorType,
     BusinessEvidenceRole,
@@ -131,6 +132,10 @@ from app.task_semantic_models import (
     BusinessTaskEventType,
     BusinessTaskRelation,
     BusinessTaskSignal,
+    BusinessAttentionEvent,
+    BusinessAttentionEventType,
+    BusinessAttentionItem,
+    BusinessAttentionTask,
     BusinessTaskStage,
     BusinessTaskStatus,
     BusinessWorkCluster,
@@ -6158,6 +6163,18 @@ class AutoReplyStore:
     def _business_task_event_from_row(row: sqlite3.Row) -> BusinessTaskEvent:
         return BusinessTaskEvent.model_validate(dict(row))
 
+    @staticmethod
+    def _business_attention_item_from_row(row: sqlite3.Row) -> BusinessAttentionItem:
+        return BusinessAttentionItem.model_validate(dict(row))
+
+    @staticmethod
+    def _business_attention_task_from_row(row: sqlite3.Row) -> BusinessAttentionTask:
+        return BusinessAttentionTask.model_validate(dict(row))
+
+    @staticmethod
+    def _business_attention_event_from_row(row: sqlite3.Row) -> BusinessAttentionEvent:
+        return BusinessAttentionEvent.model_validate(dict(row))
+
     @contextmanager
     def business_task_transaction(self) -> Iterator[sqlite3.Connection]:
         """Run one semantic Task transition in a single write transaction."""
@@ -6889,6 +6906,130 @@ class AutoReplyStore:
         with self._connect() as db:
             rows = db.execute("select * from business_projects order by id").fetchall()
             return [BusinessProject.model_validate(dict(row)) for row in rows]
+
+    # Task 5 attention primitives accept an existing transaction.  The
+    # projection service owns eligibility and event policy so these methods do
+    # not make semantic decisions on their own.
+    def get_business_attention_item_in_transaction(
+        self, *, item_id: int, _db: sqlite3.Connection
+    ) -> BusinessAttentionItem | None:
+        row = _db.execute(
+            "select * from business_attention_items where id=?", (item_id,)
+        ).fetchone()
+        return self._business_attention_item_from_row(row) if row is not None else None
+
+    def get_business_attention_item_by_stable_key_in_transaction(
+        self, *, stable_key: str, _db: sqlite3.Connection
+    ) -> BusinessAttentionItem | None:
+        row = _db.execute(
+            "select * from business_attention_items where stable_key=?", (stable_key,)
+        ).fetchone()
+        return self._business_attention_item_from_row(row) if row is not None else None
+
+    def create_business_attention_item_in_transaction(
+        self,
+        *,
+        stable_key: str,
+        category: AttentionCategory | str,
+        title: str,
+        business_area: str,
+        why_attention: str,
+        current_state: str,
+        ceo_action: str,
+        anchor_id: int,
+        evidence_signal_id: int,
+        now: str,
+        _db: sqlite3.Connection,
+    ) -> int:
+        item = BusinessAttentionItem(
+            id=0, stable_key=stable_key, category=category, title=title,
+            business_area=business_area, why_attention=why_attention,
+            current_state=current_state, ceo_action=ceo_action, anchor_id=anchor_id,
+            evidence_signal_id=evidence_signal_id, created_at=now, updated_at=now,
+        )
+        return int(_db.execute(
+            """insert into business_attention_items
+               (stable_key, category, status, title, business_area, why_attention,
+                current_state, ceo_action, anchor_id, evidence_signal_id, created_at, updated_at)
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (item.stable_key, item.category.value, item.status.value, item.title,
+             item.business_area, item.why_attention, item.current_state, item.ceo_action,
+             item.anchor_id, item.evidence_signal_id, item.created_at, item.updated_at),
+        ).lastrowid)
+
+    def update_business_attention_item_in_transaction(
+        self, *, item: BusinessAttentionItem, _db: sqlite3.Connection
+    ) -> None:
+        _db.execute(
+            """update business_attention_items set
+               category=?, status=?, title=?, business_area=?, why_attention=?, current_state=?,
+               ceo_action=?, anchor_id=?, evidence_signal_id=?, resolution_signal_id=?,
+               resolved_at=?, updated_at=? where id=?""",
+            (item.category.value, item.status.value, item.title, item.business_area,
+             item.why_attention, item.current_state, item.ceo_action, item.anchor_id,
+             item.evidence_signal_id, item.resolution_signal_id, item.resolved_at,
+             item.updated_at, item.id),
+        )
+
+    def link_business_attention_task_in_transaction(
+        self, *, attention_item_id: int, task_id: int, _db: sqlite3.Connection
+    ) -> None:
+        _db.execute(
+            """insert into business_attention_tasks (attention_item_id, task_id)
+               values (?, ?) on conflict(attention_item_id, task_id) do nothing""",
+            (attention_item_id, task_id),
+        )
+
+    def append_business_attention_event_in_transaction(
+        self,
+        *,
+        attention_item_id: int,
+        event_type: BusinessAttentionEventType | str,
+        signal_id: int,
+        before_json: str,
+        after_json: str,
+        reason: str,
+        _db: sqlite3.Connection,
+    ) -> int:
+        event = BusinessAttentionEvent(
+            id=0, attention_item_id=attention_item_id, event_type=event_type,
+            signal_id=signal_id, before_json=before_json, after_json=after_json,
+            reason=reason, created_at="",
+        )
+        return int(_db.execute(
+            """insert into business_attention_events
+               (attention_item_id, event_type, signal_id, before_json, after_json, reason)
+               values (?, ?, ?, ?, ?, ?)""",
+            (event.attention_item_id, event.event_type.value, event.signal_id,
+             event.before_json, event.after_json, event.reason),
+        ).lastrowid)
+
+    def get_business_attention_item(self, item_id: int) -> BusinessAttentionItem | None:
+        with self._connect() as db:
+            return self.get_business_attention_item_in_transaction(item_id=item_id, _db=db)
+
+    def list_business_attention_items(self) -> tuple[BusinessAttentionItem, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_attention_items order by updated_at, id"
+            ).fetchall()
+            return tuple(self._business_attention_item_from_row(row) for row in rows)
+
+    def list_business_attention_tasks(self, attention_item_id: int) -> tuple[BusinessAttentionTask, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_attention_tasks where attention_item_id=? order by task_id",
+                (attention_item_id,),
+            ).fetchall()
+            return tuple(self._business_attention_task_from_row(row) for row in rows)
+
+    def list_business_attention_events(self, attention_item_id: int) -> tuple[BusinessAttentionEvent, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_attention_events where attention_item_id=? order by created_at, id",
+                (attention_item_id,),
+            ).fetchall()
+            return tuple(self._business_attention_event_from_row(row) for row in rows)
 
     def list_business_tasks_for_projection(self) -> tuple[BusinessTask, ...]:
         """Business-only input for later projections; keeps non-relevant tasks searchable."""

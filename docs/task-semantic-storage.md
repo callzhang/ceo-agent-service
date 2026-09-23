@@ -1,7 +1,7 @@
-# Task-first semantic storage and business resolution (Tasks 1–4)
+# Task-first semantic storage, business resolution, and attention projection (Tasks 1–5)
 
 This document describes the storage, atomic commands, decision rules, and business
-resolution commands introduced by Tasks 1–4 of the approved
+resolution commands introduced by Tasks 1–5 of the approved
 [implementation plan](superpowers/plans/2026-09-22-task-first-tasks.md). It does
 not describe a deployed Task Agent cutover. The runtime, console, providers,
 and legacy import workflow still belong to later tasks.
@@ -83,8 +83,9 @@ Task event APIs; attention projections remain later work.
   title, business area, why attention is needed, current state, CEO action,
   anchor, and supporting signal. Resolution requires a signal and resolution
   time; active items cannot carry those resolution fields. Reading is not a
-  resolution status. Eligibility, aggregation, and recomputation remain later
-  projection-service work.
+  resolution status. `BusinessAttentionProjection` owns the persisted
+  eligibility, aggregation, update, resolution, and idempotent recomputation
+  commands described below.
 - Legacy links use explicit nullable foreign-key columns, exactly one semantic
   endpoint and exactly one legacy endpoint (`work_projects`, `work_todos`, or
   `work_updates`). Each legacy row can be linked once; additional task evidence
@@ -190,6 +191,30 @@ The default projection input includes `unknown` and `relevant` Tasks. Confirmed
 are excluded from that projection input. No command treats free text, model
 confidence, a cluster, or a Project candidate as authority for relevance or
 official Project creation.
+
+## CEO attention projection
+
+`BusinessAttentionProjection` accepts a typed `AttentionProposal` and uses its
+`stable_key` as the durable attention identity. A proposal requires nonblank
+title, why, current-state, and CEO-action text; all linked Tasks must exist and
+be unmerged; at least one must be relevant; and its registered anchor must be
+confirmed and active for at least one linked Task. Its supporting signal must
+exist and already be linked to an underlying Task. A proposal may say
+`当前无需处理`, while still recording material information, risk, decision, or
+push context through its category and explanatory fields.
+
+The command creates an `opened` event for a new item and keeps the same item ID
+when fields or category change. It records `updated`, `category_changed`, or
+`reopened` events with before/after snapshots only when the semantic item fields
+change. Attention Task links are idempotent membership facts, so one item can
+aggregate several independently open Tasks. Resolution requires a persisted
+signal already linked to an underlying Task and appends one `resolved` event.
+`record_viewed` performs no authoritative write and cannot resolve an item.
+
+`recompute_for_tasks` derives a stable `anchor:<anchor_id>:open` watch item for
+each confirmed active anchor represented by relevant, unmerged input Tasks. It
+uses the anchor-link evidence and open-task count as the semantic snapshot.
+Repeating a recomputation with unchanged rows adds no attention event or link.
 
 ## Repair verification
 
