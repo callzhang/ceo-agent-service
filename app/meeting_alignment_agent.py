@@ -390,6 +390,7 @@ def build_meeting_alignment_prompt(
 - 使用历史内容时，historical_sources 必须逐项记录来源。未经 memory_recall 核验时，唯一允许的历史来源是服务端注入的工作人格来源 `{work_profile_source}`；不使用历史内容则返回空列表。
 - 能只靠会议证据解释时，historical_sources 必须为空数组。只有实际引用了工作人格中的具体判断或案例时才记录工作人格来源。
 - 记录注入的工作人格来源时，historical_sources 的数组元素必须逐字填写 `{work_profile_source}`，不得改写、加标题或写成说明性文字。
+- final_message 只写正文；发送层会加会议标题和时间，不要重复会议标题或时间。按实际内容使用“结论”“后续行动”“待确认”等简短小节标签，每节用空行分隔；没有内容的小节不要占位。每个行动单独成段，写清责任人、动作与时间或验收点。不要使用 Markdown 标题或列表符号，钉钉会把列表压成难读的一段；保留真实 @ 在相关行动句内。
 - final_message 和 sensitive_private_message.message 都不要暴露工具、审计过程、本地路径或置信度。
 
 目标合同：

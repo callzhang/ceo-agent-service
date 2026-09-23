@@ -262,9 +262,10 @@ def test_group_delivery_uses_first_candidate_and_real_mentions(tmp_path):
     assert dws.sent[0]["conversation_id"] == "cid-first"
     assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-a", "open-b"]
     assert dws.sent[0]["at_open_dingtalk_names"] == ["A", "B"]
+    assert dws.sent[0]["title"] == "会议跟进｜上线评审"
     assert dws.sent[0].get("user_id") is None
     assert dws.sent[0]["text"].startswith(
-        "【会议跟进】上线评审（2026-07-14 09:00-10:00）\n\n"
+        "时间：2026-07-14 09:00-10:00\n\n"
     )
     assert send_decision().final_message in dws.sent[0]["text"]
     assert dws.sent[0]["text"].endswith("（by明哥分身）")
@@ -351,9 +352,11 @@ def test_mixed_recruiting_summary_sends_sanitized_group_message_and_private_hr_n
     assert result.sensitive_private_delivery is not None
     assert result.sensitive_private_delivery.target_id == "u-a"
     assert dws.sent[0]["conversation_id"] == "cid-first"
+    assert dws.sent[0]["title"] == "会议跟进｜上线评审"
     assert "管理成熟度" not in dws.sent[0]["text"]
     assert dws.sent[1]["conversation_id"] is None
     assert dws.sent[1]["user_id"] == "u-a"
+    assert dws.sent[1]["title"] == "会议跟进｜上线评审"
     assert "管理成熟度" in dws.sent[1]["text"]
     assert replay.send_result == result.send_result
     assert len(dws.sent) == 2
@@ -556,6 +559,7 @@ def test_business_direct_delivery_sends_to_stable_meeting_organizer():
     assert result.target_title == "A"
     assert dws.sent[0]["conversation_id"] is None
     assert dws.sent[0]["user_id"] == "u-a"
+    assert dws.sent[0]["title"] == "会议跟进｜上线评审"
     assert dws.search_queries == []
 
 
@@ -1038,6 +1042,5 @@ def test_followup_header_says_when_a_meeting_is_summarised_again():
         meeting_source().model_copy(update={"resummary": True})
     )
 
-    assert first == "【会议跟进】上线评审（2026-07-14 09:00-10:00）"
-    assert again.startswith(first)
-    assert "第二次总结" in again
+    assert first == "时间：2026-07-14 09:00-10:00"
+    assert again == first + "\n说明：第二次总结，已合并后续录制内容"

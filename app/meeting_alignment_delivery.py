@@ -280,6 +280,7 @@ def deliver_meeting_alignment(
         original_text=source.summary,
     )
     message_text = prepared.final_body
+    message_title = f"会议跟进｜{source.title}"
     try:
         if target_kind == "group":
             send_result = message_sender.send_dingtalk_prepared(
@@ -287,7 +288,7 @@ def deliver_meeting_alignment(
                 conversation_id=target_id,
                 at_open_dingtalk_ids=mention_ids,
                 at_open_dingtalk_names=mention_display_names,
-                title=target_title,
+                title=message_title,
             ).provider_result
         else:
             direct_target = (
@@ -299,7 +300,7 @@ def deliver_meeting_alignment(
                 prepared,
                 conversation_id=None,
                 **direct_target,
-                title=target_title,
+                title=message_title,
             ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         raise MeetingDeliveryRetry("meeting send failed") from exc
@@ -390,7 +391,7 @@ def _deliver_sensitive_private_message(
             prepared,
             conversation_id=None,
             user_id=recipient.user_id,
-            title=recipient.name,
+            title=f"会议跟进｜{source.title}",
         ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         raise MeetingDeliveryRetry("sensitive meeting message send failed") from exc
@@ -770,12 +771,12 @@ def _meeting_followup_header(source: MeetingSource) -> str:
         time_range = f"{started:%Y-%m-%d %H:%M}-{ended:%H:%M}"
     else:
         time_range = f"{started:%Y-%m-%d %H:%M}-{ended:%Y-%m-%d %H:%M}"
-    header = f"【会议跟进】{source.title}（{time_range}）"
+    header = f"时间：{time_range}"
     if source.resummary:
         # The people in this meeting already received a follow-up covering part of
         # it. Say plainly that this one replaces it, rather than looking like a
         # duplicate of the message they have.
-        header += "（第二次总结，已合并后续录制内容）"
+        header += "\n说明：第二次总结，已合并后续录制内容"
     return header
 
 
