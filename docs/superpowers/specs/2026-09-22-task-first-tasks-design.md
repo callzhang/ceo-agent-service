@@ -6,6 +6,67 @@
 
 **Scope:** CEO Agent Service Tasks domain model, derivation flow, migration boundary, and console information architecture
 
+## Task 6 implementation amendments (approved 2026-09-22)
+
+These constraints refine Sections 5, 7, 8, and 11 and take precedence over any
+earlier wording that conflicts with them:
+
+1. **One source item may yield zero or multiple task decisions.** A meeting or
+   message may contain several independent deliverables. Each decision must
+   identify the exact source excerpt/evidence it represents. The Agent may
+   extract work from source context, but must never invent a task or an
+   assignee that the source does not establish.
+2. **Assignee identity must be explicit and source-backed.** An assignment may
+   be formalized only when the responsible person/team is identified by the
+   source or authoritative source metadata. If ownership is ambiguous, retain
+   a candidate or missing-evidence state; do not infer an owner from role,
+   participation, similarity, or Agent-authored text.
+3. **Commitment state is derived from evidence, not model assertion.** An
+   explicit assignment creates a formal Task with `assigned_unaccepted` unless
+   the identified owner has explicit acceptance/commitment evidence. An
+   external TODO proves that a formal task record exists, not that its assignee
+   accepted it. “收到” alone is receipt acknowledgement, not acceptance of a
+   deliverable or its date. Acceptance must resolve to one existing Task by
+   explicit reference/reply linkage or a unique evidenced match; otherwise it
+   remains unmatched evidence/candidate. Preserve the human/system/Agent actor
+   and source of each assignment and acceptance.
+4. **Dates have named meanings and provenance.** Never overload one generic
+   date as task creation, assignment, due date, and next check. Persist and
+   expose distinct meanings: `created_at` is when the system recorded the
+   Task; `assigned_at` is when a source shows the assignment occurred;
+   `requested_deadline_at` is an assigner's explicit requested due date;
+   `external_deadline_at` is a due date recorded in an external system;
+   `committed_deadline_at` is a concrete due date explicitly accepted by the
+   identified owner; `estimated_deadline_at` is only an estimate; and
+   `next_check_at` is an operational check time. Preserve each source-derived
+   date's source signal and actor. Keep non-parseable estimates as raw evidence
+   rather than inventing a timestamp. Missing dates are allowed for Business
+   Tasks. A concrete, parseable date remains required only for the
+   legacy/DingTalk TODO mirror, not for Task existence.
+5. **Task Agent transitions are explicit.** The result contains a
+   `task_decisions` list, each with a typed transition (candidate recording,
+   formal creation, candidate promotion, acceptance, field correction,
+   identity merge, or skip). Acceptance, promotion, and merge call their
+   dedicated semantic-service operations; generic updates cannot set
+   `commitment_status` directly. Retrieval supplies existing formal Tasks,
+   their source evidence/relations/anchor links, candidates, clusters, anchors,
+   and the official Project registry. Ranking is context only and never grants
+   authority or identity.
+6. **Attention requires a concrete trigger.** Confirmed business relevance is
+   necessary but not sufficient. An item may enter 需关注 only for a material
+   change, threatened accepted commitment, unresolved material assignment or
+   commitment dispute, CEO decision/push, required Gate, or meaningful risk
+   escalation. Relevance, acceptance, proximity to a date, or normal progress
+   alone is not a trigger. FYI also requires materiality and a new meaningful
+   change; a static fact must not recur as a new item.
+7. **The loaded work-tracking Skill must agree with this model.**
+   `ceo-work-tracking` must stop directing the Agent to choose Project versus
+   TODO first or discard every routine low-impact action. It must require
+   source-derived multi-item extraction, explicit assignee evidence, distinct
+   date semantics, evidence-derived acceptance, and Task-first project/anchor
+   proposals. Real low-impact work can be retained where the source workflow
+   requires tracking, but it does not automatically enter CEO attention.
+
 ## 1. Outcome
 
 Replace the current Project-first interpretation of work with a Task-first semantic layer. The service will first identify possible tasks, promote evidence-backed tasks independently of projects, merge only true duplicates, cluster related work, resolve official project membership separately, and derive a small CEO-facing list of **需关注事项**.
