@@ -262,7 +262,7 @@ def test_a_calendar_response_is_held_to_the_same_band():
 def test_an_action_whose_provider_has_no_reason_field_is_not_faulted_for_it():
     assert (
         decision_violations(
-            result=_result(risk="low", rule_coverage=0.85, confidence=0.95),
+            result=_result(risk="low", rule_coverage=1.0, confidence=0.95),
             tool_events=[_shell("dws calendar event respond --id ev-1 --status accepted")],
         )
         == ()
@@ -355,3 +355,19 @@ def test_every_registered_write_is_classified():
         "每个受审写操作都必须在 DECISION_ACTIONS 里明确分档："
         f"{unclassified}"
     )
+
+
+def test_low_risk_needs_full_rule_coverage_too():
+    """Derek, 2026-09-23: the band follows the generic OA Skill, rc = 1.0 at every level.
+
+    It was 0.8 for low risk, which let a low-risk decision through on a rule
+    that did not fully cover the case while the Skill told the model 1.0.
+    """
+
+    [violation] = decision_violations(
+        result=_result(risk="low", rule_coverage=0.9, confidence=0.95),
+        tool_events=[_shell(APPROVE)],
+    )
+
+    assert violation.code == "decision_below_score_band"
+    assert "rule_coverage=0.9" in violation.detail

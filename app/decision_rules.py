@@ -29,10 +29,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 # `rule_coverage` required to decide at each risk level. `ic` must be 1.0 and
-# `confidence` above 0.9 at every level. Derek set these on 2026-09-17: there
-# is no category that may never be decided automatically, but the higher the
-# risk the more complete the written basis has to be.
-RULE_COVERAGE_BANDS = {"low": 0.8, "medium": 0.9, "high": 1.0}
+# `confidence` above 0.9 at every level. There is no category that may never be
+# decided automatically (Derek, 2026-09-17). The bands were 0.8 / 0.9 / 1.0;
+# on 2026-09-23 Derek set them to follow the generic OA Skill's decision table,
+# which requires a fully covered rule at every risk level.
+RULE_COVERAGE_BANDS = {"low": 1.0, "medium": 1.0, "high": 1.0}
 
 
 class DecisionTier(StrEnum):

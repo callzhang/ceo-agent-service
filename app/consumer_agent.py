@@ -439,7 +439,7 @@ recorded the decision and it cannot be taken back.
 
 1. The candidate's own scores meet the band for its stated risk:
    `information_completeness` is 1.0, `confidence` is above 0.9, and
-   `rule_coverage` is at least 0.8 for low risk, 0.9 for medium, 1.0 for high.
+   `rule_coverage` is 1.0 at every risk level.
 2. For a rejection: `dws oa approval revert-activities` has been called in this
    generation and you have its result. If a revertable node exists and the
    reason asks the applicant to supply, complete, clarify or resubmit anything,
