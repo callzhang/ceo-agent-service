@@ -44,6 +44,40 @@ def test_semantic_context_includes_old_formal_task_and_evidence_beyond_recent_wi
     assert "王明负责美国客户报价第一版" in rendered
 
 
+def test_semantic_context_keeps_early_assignment_and_acceptance_after_many_later_signals(tmp_path):
+    store = AutoReplyStore(tmp_path / "semantic-source-proof.sqlite3")
+    task_id = store.create_business_task(
+        title="美国客户报价第一版", stage=BusinessTaskStage.FORMAL,
+        formal_basis="explicit_assignment", commitment_status="accepted",
+    )
+    source_signal_ids = []
+    for role, ref, excerpt in (
+        ("assignment", "message:assign", "负责人指派王明交报价第一版"),
+        ("acceptance", "message:accept", "王明答应交报价第一版"),
+    ):
+        signal_id = store.create_business_task_signal(
+            source_type="message", source_ref=ref, evidence_text=excerpt, dedupe_key=ref,
+        )
+        store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role=role)
+        source_signal_ids.append(signal_id)
+    for index in range(12):
+        ref = f"message:progress:{index}"
+        signal_id = store.create_business_task_signal(
+            source_type="message", source_ref=ref, evidence_text=f"报价进度 {index}", dedupe_key=ref,
+        )
+        store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="discovery")
+
+    context = retrieve_task_semantic_context(
+        store, _work_item("美国客户报价第一版进度"), limit_per_kind=2,
+    )
+    assert [task.id for task in context.formal_tasks] == [task_id]
+    assert set(source_signal_ids) <= {row.signal_id for row in context.task_evidence}
+    assert len(context.task_evidence) <= 20
+    rendered = render_task_semantic_context(context)
+    assert "负责人指派王明交报价第一版" in rendered
+    assert "王明答应交报价第一版" in rendered
+
+
 def test_semantic_context_includes_registry_clusters_and_anchor_links(tmp_path):
     from app.task_business_resolution import BusinessResolutionService
 

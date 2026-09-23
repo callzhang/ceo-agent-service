@@ -374,16 +374,22 @@ class TaskDateEvidence(StrictTaskModel):
     def source_is_explicit(self) -> "TaskDateEvidence":
         if not self.value.strip() or not self.source_ref.strip() or not self.source_excerpt.strip():
             raise ValueError("date evidence requires a value and exact source provenance")
+        if self.kind == "committed_deadline_at" and not (
+            self.actor_user_id.strip() or self.actor_name.strip()
+        ):
+            raise ValueError("committed deadline requires a named source actor")
         return self
 
 
 class TaskIdentityEvidence(StrictTaskModel):
-    same_external_task_id: bool = False
-    explicit_source_reference: bool = False
-    same_deliverable: bool = False
-    same_owner: bool = False
-    same_context: bool = False
-    compatible_time_window: bool = False
+    """Untrusted match proposal; the service verifies both signals and derives identity."""
+
+    basis: Literal[
+        "same_external_task_id", "explicit_source_reference",
+        "same_deliverable_owner_context_time",
+    ]
+    source_signal_id: int = Field(strict=True, gt=0)
+    target_signal_id: int = Field(strict=True, gt=0)
 
 
 class TaskIdentityProposal(StrictTaskModel):

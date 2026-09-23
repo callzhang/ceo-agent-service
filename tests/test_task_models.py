@@ -73,7 +73,11 @@ def test_merge_proposal_requires_ids_and_structured_identity_evidence():
     valid = _decision(action="update_task", transition="merge_identity", task_id=8,
                       target_task_id=9,
                       identity_proposal={"source_task_id": 8, "target_task_id": 9,
-                                         "identity_evidence": {"same_external_task_id": True}})
+                                         "identity_evidence": {
+                                             "basis": "same_external_task_id",
+                                             "source_signal_id": 21,
+                                             "target_signal_id": 22,
+                                         }})
     TaskAgentDecision.model_validate({"task_decisions": [valid]})
     with pytest.raises(ValidationError):
         TaskAgentDecision.model_validate({"task_decisions": [
@@ -136,5 +140,39 @@ def test_typed_date_requires_provenance_and_merge_target_must_match():
             _decision(action="update_task", transition="merge_identity", task_id=8,
                       target_task_id=10,
                       identity_proposal={"source_task_id": 8, "target_task_id": 9,
-                                         "identity_evidence": {"same_external_task_id": True}})
+                                         "identity_evidence": {
+                                             "basis": "same_external_task_id",
+                                             "source_signal_id": 21,
+                                             "target_signal_id": 22,
+                                         }})
+        ]})
+
+
+@pytest.mark.parametrize("identity_evidence", [
+    {"same_external_task_id": True},
+    {"same_deliverable": True, "same_owner": True, "same_context": True,
+     "compatible_time_window": True},
+    {"basis": "same_external_task_id", "source_signal_id": 21},
+    {"basis": "same_external_task_id", "source_signal_id": 0, "target_signal_id": 22},
+])
+def test_merge_identity_cannot_use_unverifiable_agent_assertions(identity_evidence):
+    with pytest.raises(ValidationError):
+        TaskAgentDecision.model_validate({"task_decisions": [
+            _decision(action="update_task", transition="merge_identity", task_id=8,
+                      target_task_id=9, identity_proposal={
+                          "source_task_id": 8, "target_task_id": 9,
+                          "identity_evidence": identity_evidence,
+                      })
+        ]})
+
+
+@pytest.mark.parametrize("actor", [{}, {"actor_name": "  ", "actor_user_id": ""}])
+def test_committed_deadline_requires_nonblank_actor_provenance(actor):
+    with pytest.raises(ValidationError, match="committed deadline"):
+        TaskAgentDecision.model_validate({"task_decisions": [
+            _decision(date_evidence=[{
+                "kind": "committed_deadline_at", "value": "2026-09-30T18:00:00+08:00",
+                "source_ref": "message:42", "source_excerpt": "我周三交付",
+                **actor,
+            }])
         ]})

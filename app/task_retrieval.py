@@ -61,6 +61,21 @@ def _semantic_score(query_terms: set[str], document: str) -> int:
     return len(query_terms.intersection(tokenize(document)))
 
 
+def _bounded_task_evidence(
+    rows: tuple[BusinessTaskEvidence, ...], *, recent_limit: int
+) -> tuple[BusinessTaskEvidence, ...]:
+    """Keep each role's original and latest proof plus a bounded recent sample."""
+    first_by_role: dict[str, BusinessTaskEvidence] = {}
+    latest_by_role: dict[str, BusinessTaskEvidence] = {}
+    for row in rows:
+        role = row.evidence_role.value
+        first_by_role.setdefault(role, row)
+        latest_by_role[role] = row
+    kept = set(first_by_role.values()) | set(latest_by_role.values())
+    kept.update(rows[-recent_limit:])
+    return tuple(row for row in rows if row in kept)
+
+
 def retrieve_task_semantic_context(
     store: AutoReplyStore, work_item: WorkItem, *, limit_per_kind: int = 20
 ) -> TaskSemanticContext:
@@ -96,7 +111,9 @@ def retrieve_task_semantic_context(
     selected = candidates + formal
     evidence = tuple(
         row for task in selected
-        for row in store.list_business_task_evidence(task.id)[-limit_per_kind:]
+        for row in _bounded_task_evidence(
+            store.list_business_task_evidence(task.id), recent_limit=limit_per_kind
+        )
     )
     signals = tuple(
         signal for signal_id in sorted({row.signal_id for row in evidence})
