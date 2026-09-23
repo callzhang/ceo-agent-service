@@ -631,8 +631,14 @@ def scan_pending_oa_approvals(
                 "并按其中的原则、风险与确信度口径、information_completeness 与 "
                 "rule_coverage 评分规则和动作选择执行；"
                 "dingtalk-misc 的 references/oa.md 只作为 dws 命令用法参考，"
-                "通用 Skill 只定义审批机制与材料核验边界；模板级动作服从本次 "
-                "Scheduled Consumer 所选、且与 live processCode 精确匹配的业务规则卡。"
+                # The action mapping is the generic Skill's decision table.
+                # This sentence used to make every template's action obey a
+                # processCode-matched rule card; only the finance templates have
+                # cards, so every other approval had no action authority and
+                # stopped at needs_human from 2026-09-22.
+                "判断标准由本次所选的星尘业务 Skill 提供，动作一律按通用 Skill 的完整决策表；"
+                "只有财务模板（processCode 在财务 Skill 登记表内）按其规则卡处理，"
+                "其他审批类型没有规则卡不是规则缺口。规则只在 Skill 里，不读参考文档。"
                 "在此前提下审阅完整审批材料、历史处理记录和当前节点。"
             ),
             raw_payload={
