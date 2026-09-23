@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 2026-09-22: Attention now counts only error rows. Valid `needs_human` rule
+  decisions remain visible in the separate human-decision list and no longer
+  inflate the Attention API or status summary.
+
 - 2026-09-22: The console status response now accepts the evidence label and
   detail on a human rule-decision row. A valid decision no longer makes the
   entire status endpoint return HTTP 500.

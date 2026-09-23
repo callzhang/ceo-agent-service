@@ -2183,7 +2183,7 @@ def build_worker_status_payload(
         max(0, int(row.get("count") or 1))
         for row in attention_rows
         if isinstance(row, Mapping)
-    ) + len(human_decision_rows)
+    )
     payload: dict[str, object] = {
         "service": service,
         "components": _service_component_snapshots(store),
@@ -10661,10 +10661,7 @@ def create_audit_app(
         """Read the current Attention snapshot without serving stale status data."""
 
         with audit_store.read_snapshot():
-            return [
-                *_queue_attention_rows(audit_store),
-                *_human_decision_attention_rows(audit_store),
-            ]
+            return _queue_attention_rows(audit_store)
 
     def read_fresh_feedback_backlog() -> dict[str, object]:
         """Read authoritative queue counts straight from SQLite.
@@ -10768,7 +10765,7 @@ def create_audit_app(
             max(0, int(row.get("count") or 1))
             for row in attention_rows
             if isinstance(row, Mapping)
-        ) + len(human_decision_rows)
+        )
         connector_statuses = connector_status_cache.get_or_refresh(
             _connector_status_snapshots,
             lambda: {},
@@ -10953,10 +10950,7 @@ def create_audit_app(
         attention_rows_factory=(
             read_cached_attention_rows
             if spa_enabled
-            else lambda: [
-                *_queue_attention_rows(audit_store),
-                *_human_decision_attention_rows(audit_store),
-            ]
+            else lambda: _queue_attention_rows(audit_store)
         ),
         task_row_builder=_task_row_payload,
         history_chart_factory=render_history_chart,

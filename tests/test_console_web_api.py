@@ -1218,11 +1218,15 @@ def test_console_status_accepts_human_decision_evidence(monkeypatch, tmp_path: P
 
     with _client(tmp_path, raise_server_exceptions=False) as client:
         response = client.get("/api/console/status")
+        attention = client.get("/api/console/attention")
 
     assert response.status_code == 200
     assert response.json()["item"]["human_decision_rows"][0]["detail"] == (
         "The current policy does not cover this case."
     )
+    assert response.json()["item"]["summary"]["attention"] == 0
+    assert attention.status_code == 200
+    assert attention.json()["meta"]["total"] == 0
 
 
 @pytest.mark.parametrize(
