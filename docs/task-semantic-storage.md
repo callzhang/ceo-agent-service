@@ -192,9 +192,12 @@ command must supply `AcceptancePolarity.ACCEPTED`; a declined or ambiguous
 semantic finding rejects the transition even when `acceptance_is_explicit` is
 true. The exact acceptance excerpt must occur in the human owner's source,
 and that source's `context_json.reply_to_source_ref` must match the persisted
-referenced signal's source reference. The referenced signal must uniquely link
-to one unmerged formal Task, and all signals with the same `source_type` and
-`source_ref` must collectively link to only that Task. A document-level reply
+referenced signal's source reference. The reply and referenced signal must
+have the same `conversation_id`: two matching IDs or two absent IDs are valid;
+an ID on only one side is not enough to establish a reply link. The referenced
+signal must uniquely link to one unmerged formal Task, and all signals with
+the same `source_type`, `source_ref`, and `conversation_id` must collectively
+link to only that Task. A document-level reply
 reference shared by multiple formal meeting actions is ambiguous even if the
 caller supplies one action's signal ID; it cannot transition either Task to
 accepted. This binds a short reply such as “我来做。” only when the actual reply

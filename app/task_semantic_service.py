@@ -671,9 +671,12 @@ class TaskSemanticService:
                 or source_context.get("reply_to_source_ref") != referenced_signal.source_ref
             ):
                 raise ValueError("acceptance reply must reference the assigned task source")
+            if command.signal.conversation_id != referenced_signal.conversation_id:
+                raise ValueError("acceptance reply must share the assigned task conversation")
             source_task_ids = self.store.list_unmerged_formal_business_task_ids_for_source_in_transaction(
                 source_type=referenced_signal.source_type,
                 source_ref=referenced_signal.source_ref,
+                conversation_id=referenced_signal.conversation_id,
                 _db=db,
             )
             if source_task_ids != (task.id,):

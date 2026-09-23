@@ -1528,6 +1528,77 @@ def test_short_owner_reply_to_shared_document_cannot_select_arbitrary_task(
     assert semantic_state(service) == before
 
 
+@pytest.mark.parametrize("source_conversation_id,reply_conversation_id", (
+    ("cid-A", "cid-B"), ("cid-A", ""), ("", "cid-B"),
+))
+def test_owner_reply_cannot_accept_assignment_from_another_conversation(
+    service, source_conversation_id, reply_conversation_id
+):
+    source = replace(
+        assignment_signal(dedupe_key="msg:42:cid-A"),
+        source_ref="msg:42", conversation_id=source_conversation_id,
+    )
+    task = service.record_formal_task(RecordFormalTask(
+        title="提交报价", signal=source,
+        formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+        owner_user_id="wangming", owner_name="王明",
+        owner_evidence_json='{"source_ref":"msg:42","excerpt":"王明"}',
+    ))
+    before = semantic_state(service)
+
+    with pytest.raises(ValueError, match="conversation"):
+        service.apply_acceptance(ApplyAcceptance(
+            task_id=task.task_id,
+            signal=SourceSignal(
+                source_type="dingtalk_message", source_ref="reply:msg:42",
+                evidence_text="我来做。", dedupe_key="reply:msg:42",
+                conversation_id=reply_conversation_id,
+                author_kind=BusinessActorKind.HUMAN,
+                author_user_id="wangming", author_name="王明",
+                context_json='{"reply_to_source_ref":"msg:42"}',
+            ),
+            acceptance_is_explicit=True,
+            acceptance_polarity=AcceptancePolarity.ACCEPTED,
+            acceptance_excerpt="我来做。",
+            referenced_signal_id=task.signal_id,
+        ))
+    assert semantic_state(service) == before
+
+
+def test_owner_reply_reference_is_unique_within_its_conversation(service):
+    tasks = []
+    for conversation_id in ("cid-A", "cid-B"):
+        source = replace(
+            assignment_signal(dedupe_key=f"msg:42:{conversation_id}"),
+            source_ref="msg:42", conversation_id=conversation_id,
+        )
+        tasks.append(service.record_formal_task(RecordFormalTask(
+            title=f"提交报价 {conversation_id}", signal=source,
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json='{"source_ref":"msg:42","excerpt":"王明"}',
+        )))
+
+    result = service.apply_acceptance(ApplyAcceptance(
+        task_id=tasks[0].task_id,
+        signal=SourceSignal(
+            source_type="dingtalk_message", source_ref="reply:cid-A",
+            evidence_text="我来做。", dedupe_key="reply:cid-A",
+            conversation_id="cid-A",
+            author_kind=BusinessActorKind.HUMAN,
+            author_user_id="wangming", author_name="王明",
+            context_json='{"reply_to_source_ref":"msg:42"}',
+        ),
+        acceptance_is_explicit=True,
+        acceptance_polarity=AcceptancePolarity.ACCEPTED,
+        acceptance_excerpt="我来做。",
+        referenced_signal_id=tasks[0].signal_id,
+    ))
+    assert result.task_id == tasks[0].task_id
+    assert service.store.get_business_task(tasks[0].task_id).commitment_status is CommitmentStatus.ACCEPTED
+    assert service.store.get_business_task(tasks[1].task_id).commitment_status is CommitmentStatus.ASSIGNED_UNACCEPTED
+
+
 def test_negated_owner_reply_cannot_be_accepted_even_with_model_flag(service):
     task = record_assignment(service, dedupe_key="message:assign")
     before = semantic_state(service)
