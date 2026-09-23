@@ -23,6 +23,7 @@ from app.agent_cron.scheduler import (
 )
 from app.agent_cron.seeds import (
     DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT,
+    LEGACY_OA_CONSUMER_PROMPT,
     seed_scheduled_tasks,
 )
 from app.agent_runtime_contracts import (
@@ -469,6 +470,65 @@ def test_oa_seed_binds_generic_and_stardust_finance_review_skills(
     assert "$stardust-oa-attendance-travel-review" in task.prompt
     assert "钉钉审批审阅原则.md" in task.prompt
     assert [ref.skill_name for ref in task.skill_refs] == [
+        "dingtalk-oa-approval",
+        "stardust-oa-finance-review",
+        "stardust-oa-project-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
+    ]
+
+
+def test_oa_seed_migrates_previous_repository_default_prompt_and_skill_refs(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "oa-default-prompt-migration.sqlite3")
+    options = _options(
+        tmp_path,
+        store,
+        healthy_routes={"codex_oauth"},
+        operation_skills=("stardust-oa-finance-review",),
+    )
+    old_refs = tuple(
+        ScheduledTaskSkillRef(
+            skill_source="operation",
+            skill_name=name,
+            position=index,
+        )
+        for index, name in enumerate(
+            ("dingtalk-oa-approval", "stardust-oa-finance-review")
+        )
+    )
+    original = store.create_scheduled_task(
+        migration_key="dingtalk-oa-check-v1",
+        name="用户自定义名称",
+        description="用户自定义描述",
+        prompt=LEGACY_OA_CONSUMER_PROMPT,
+        command="scan-oa-approvals",
+        cron_expression="0 0 * * * *",
+        timezone_name="Asia/Shanghai",
+        skill_refs=old_refs,
+        enabled=True,
+        now=NOW,
+    )
+
+    updated = _task_by_key(
+        seed_scheduled_tasks(
+            store=store,
+            options=options,
+            working_directory=tmp_path,
+            now=NOW + timedelta(minutes=1),
+        ),
+        "dingtalk-oa-check-v1",
+    )
+
+    assert updated.id == original.id
+    assert updated.version == original.version + 1
+    assert updated.name == original.name
+    assert updated.description == original.description
+    assert updated.prompt != LEGACY_OA_CONSUMER_PROMPT
+    assert "钉钉审批审阅原则.md" in updated.prompt
+    assert [ref.skill_name for ref in updated.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
         "stardust-oa-project-review",
