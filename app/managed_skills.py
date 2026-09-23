@@ -141,6 +141,7 @@ REPOSITORY_MANAGED_SKILL_NAMES = (
 RUNTIME_ONLY_VERSIONED_SKILL_NAMES = (
     "dingtalk-oa-approval",
     "stardust-oa-attendance-travel-review",
+    "stardust-oa-cloud-resource-review",
     "stardust-oa-contract-review",
     "stardust-oa-finance-review",
     "stardust-oa-people-review",
