@@ -258,13 +258,17 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
   `dingtalk-misc/references/oa.md`，导致我们自己的审批规则从未进入模型；官方技能还会被
   `dws upgrade` 覆盖，规则写在那里留不住。
 
-决策规则在 Skill 里，不在代码里：通用的完整决策表、`information_completeness` /
-`rule_coverage` 评分口径、退回优先于评论搁置、拒绝前必须先查 `revert-activities`、`--remark`
-必填，都在 `dingtalk-oa-approval` 的版本化修订中。财务主导的 Stardust 模板再由
-`stardust-oa-finance-review` 按 live `processCode` 精确匹配规则卡；匹配的有效规则卡是该模板
-动作的唯一公司权威，没有完整规则卡不得自动决定。两份 Skill 都只存在于运行时目录，没有仓库
-副本，按 `RUNTIME_ONLY_VERSIONED_SKILL_NAMES` 版本化，**不得带 `metadata.managed_by` 标记**——
-操作 Skill 目录会拒绝带标记的文件，定时任务也就不能选择它们。
+决策规则在 Skill 和被引用的制度原文里，不在代码里：通用的完整决策表、
+`information_completeness` / `rule_coverage` 评分口径、退回优先于评论搁置、拒绝前必须先查
+`revert-activities`、`--remark` 必填，都在 `dingtalk-oa-approval` 中。OA 定时任务冻结绑定
+`dingtalk-oa-approval` 以及 Stardust 财务、立项、合同、人员、考勤/出差五个业务 Skill，Prompt
+还引用原始《钉钉审批审阅原则.md》和 Derek 的个人规则。Consumer 按 live `processCode` 与表单事实
+分类，交叉事项组合适用类别；财务规则卡仅约束登记的财务模板。制度和业务 Skill 必须共同覆盖
+当前事项的规则条件、例外、权限和动作映射，来源有效时才允许 `rule_coverage=1.0`；其他情况
+低于 1.0，规则缺口 `needs_human`，不得自动批准/拒绝。申请人可补材料但不能关闭并存的政策升级。
+五份 Stardust Skill 都只存在于运行时目录，没有仓库副本，按 `RUNTIME_ONLY_VERSIONED_SKILL_NAMES`
+版本化，**不得带 `metadata.managed_by` 标记**——操作 Skill 目录会拒绝带标记的文件，定时任务
+也就不能选择它们。Derek 的个人规则仅写在 OA 定时任务 Prompt，不得推广为公司规则。
 
 ### 没有 runtime schema 的 DWS 写操作
 

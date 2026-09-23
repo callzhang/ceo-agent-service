@@ -109,6 +109,10 @@ def _options(
         "dingtalk-calendar",
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
+        "stardust-oa-project-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
         *operation_skills,
     }
     for name in required_operation_skills:
@@ -412,9 +416,22 @@ def test_reseeding_preserves_user_edits_when_adopting_a_legacy_fixed_check(
     assert repeated.name == original.name
     assert "$dingtalk-oa-approval" in repeated.prompt
     assert "$stardust-oa-finance-review" in repeated.prompt
+    assert "$stardust-oa-project-review" in repeated.prompt
+    assert "$stardust-oa-contract-review" in repeated.prompt
+    assert "$stardust-oa-people-review" in repeated.prompt
+    assert "$stardust-oa-attendance-travel-review" in repeated.prompt
+    assert "钉钉审批审阅原则.md" in repeated.prompt
+    assert "rule_coverage" in repeated.prompt
+    assert "needs_human" in repeated.prompt
+    assert "审批人必须是申请人的下属" in repeated.prompt
+    assert "算法部门绩效或薪酬" in repeated.prompt
     assert [ref.skill_name for ref in repeated.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
+        "stardust-oa-project-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
     ]
     assert repeated.runtime_id == ""
     assert repeated.command == "scan-oa-approvals"
@@ -446,9 +463,18 @@ def test_oa_seed_binds_generic_and_stardust_finance_review_skills(
 
     assert "$dingtalk-oa-approval" in task.prompt
     assert "$stardust-oa-finance-review" in task.prompt
+    assert "$stardust-oa-project-review" in task.prompt
+    assert "$stardust-oa-contract-review" in task.prompt
+    assert "$stardust-oa-people-review" in task.prompt
+    assert "$stardust-oa-attendance-travel-review" in task.prompt
+    assert "钉钉审批审阅原则.md" in task.prompt
     assert [ref.skill_name for ref in task.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
+        "stardust-oa-project-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
     ]
 
 
@@ -917,6 +943,10 @@ def test_every_fixed_discovery_check_is_a_service_command(
         "dingtalk-oa-check-v1": [
             "dingtalk-oa-approval",
             "stardust-oa-finance-review",
+            "stardust-oa-project-review",
+            "stardust-oa-contract-review",
+            "stardust-oa-people-review",
+            "stardust-oa-attendance-travel-review",
         ],
         "work-source-scan-daily-v1": [
             "ceo-meeting-work",
@@ -1061,6 +1091,10 @@ def test_seed_creates_hourly_oa_check_with_real_operation_skill(
     assert [ref.skill_name for ref in task.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
+        "stardust-oa-project-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
     ]
     assert task.enabled is True
 
@@ -1106,6 +1140,10 @@ def test_reseed_renames_untouched_oa_default_so_the_approval_task_is_discoverabl
     assert [ref.skill_name for ref in reseeded.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
+        "stardust-oa-project-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
     ]
 
 

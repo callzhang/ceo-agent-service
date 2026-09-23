@@ -163,11 +163,15 @@ Consumer 在 invocation 开始时接收这个 immutable snapshot；同一次调�
 OA 每个审批节点只校验当前表单真实存在且明确必填的信息。后续业务阶段、其他表单或评审偏好
 中的字段不能反向成为当前节点的强制条件；Audit 发现这种候选必须退回 Consumer 重新生成。
 
-财务主导的 Stardust OA 由定时任务冻结传入通用 `dingtalk-oa-approval` 与公司
-`stardust-oa-finance-review` 两份 Skill。后一份只在 live `processCode` 精确匹配的规则卡上
-定义该模板的动作；没有完整、生效且覆盖当前事项的规则卡时，`rule_coverage` 不得记为 100%。
-申请人可以补足事实或材料，Consumer 应在原审批评论明确缺口；规则、例外、授权或动作映射缺口
-仍必须进入 `needs_human`，申请人回复不能把这一政策缺口关闭。
+OA 定时任务冻结传入通用 `dingtalk-oa-approval` 与 Stardust 财务、立项、合同、人员、
+考勤/出差五个业务大类 Skill，并在 Prompt 中引用原始审批原则文档及 Derek 的个人规则。
+Consumer 按 live `processCode` 和表单事实选择适用类别；跨类别事项组合适用 Skill。
+财务 Skill 的规则卡只适用于登记的财务模板，不匹配其他类别不得单独触发升级。原始制度与
+业务 Skill 必须共同覆盖当前事项的规则条件、例外、权限和动作映射，且来源有效，
+`rule_coverage` 才能为 1.0；否则低于 1.0，规则缺口进入 `needs_human`，不得自动批准或拒绝。
+申请人可以补足事实或材料，Consumer 应在原审批评论明确缺口；若同时存在政策缺口，须另行
+进入 `needs_human`，申请人回复不能关闭政策升级。个人审批偏好只存在于定时任务 Prompt，不是
+公司通用规则。
 
 ### Business Object、Task、Agent Run 与 Reply Attempt 的关系
 
