@@ -1027,7 +1027,7 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
             ),
             "sync-minutes-once": lambda: (
                 "sync-minutes-once "
-                f"queued={sync_minutes_once_command(settings)}"
+                f"{sync_minutes_once_command(settings)}"
             ),
             # Cron owns the timing, so the command runs on the trigger rather
             # than re-deciding whether today is its scheduled Sunday.
@@ -2234,7 +2234,7 @@ def scan_meeting_todos_once_command(
     return queued
 
 
-def sync_minutes_once_command(settings: WorkerSettings) -> int:
+def sync_minutes_once_command(settings: WorkerSettings) -> str:
     """Mirror new DingTalk AI minutes into the local archive.
 
     Deterministic throughout, and it sends nothing outward. A partial result
@@ -2265,7 +2265,7 @@ def sync_minutes_once_command(settings: WorkerSettings) -> int:
     print(f"sync-minutes-once {result.summary()}", flush=True)
     if result.failed or result.permission_pending:
         raise RuntimeError(f"sync-minutes-once incomplete: {result.summary()}")
-    return result.synced
+    return result.summary()
 
 
 def authorize_memory_connector_command(settings: WorkerSettings) -> int:
