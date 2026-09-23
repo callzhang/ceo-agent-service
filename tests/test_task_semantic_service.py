@@ -1488,6 +1488,46 @@ def test_owner_reply_metadata_binds_short_acceptance_to_unique_task(service):
     assert service.store.get_business_task(task.task_id).commitment_status is CommitmentStatus.ACCEPTED
 
 
+@pytest.mark.parametrize("selected_task_index", (0, 1))
+def test_short_owner_reply_to_shared_document_cannot_select_arbitrary_task(
+    service, selected_task_index
+):
+    tasks = []
+    for index, title in enumerate(("提交报价", "复核合同"), start=1):
+        task = service.record_formal_task(RecordFormalTask(
+            title=title,
+            signal=SourceSignal(
+                source_type="meeting_minutes", source_ref="doc:one",
+                evidence_text=f"王明负责{title}。", dedupe_key=f"doc:one:action:{index}",
+                author_kind=BusinessActorKind.HUMAN,
+                author_user_id="derek", author_name="Derek",
+                context_json='{"owner_identity":{"user_id":"wangming","name":"王明"}}',
+            ),
+            formality=formality_evidence(FormalTaskBasis.MEETING_ACTION_ITEM),
+            owner_user_id="wangming", owner_name="王明",
+            owner_evidence_json='{"source_ref":"doc:one","excerpt":"王明"}',
+        ))
+        tasks.append(task)
+    before = semantic_state(service)
+
+    with pytest.raises(ValueError, match="uniquely|multiple|ambiguous"):
+        service.apply_acceptance(ApplyAcceptance(
+            task_id=tasks[selected_task_index].task_id,
+            signal=SourceSignal(
+                source_type="dingtalk_message", source_ref="reply:shared-doc",
+                evidence_text="我来做。", dedupe_key="reply:shared-doc",
+                author_kind=BusinessActorKind.HUMAN,
+                author_user_id="wangming", author_name="王明",
+                context_json='{"reply_to_source_ref":"doc:one"}',
+            ),
+            acceptance_is_explicit=True,
+            acceptance_polarity=AcceptancePolarity.ACCEPTED,
+            acceptance_excerpt="我来做。",
+            referenced_signal_id=tasks[selected_task_index].signal_id,
+        ))
+    assert semantic_state(service) == before
+
+
 def test_negated_owner_reply_cannot_be_accepted_even_with_model_flag(service):
     task = record_assignment(service, dedupe_key="message:assign")
     before = semantic_state(service)

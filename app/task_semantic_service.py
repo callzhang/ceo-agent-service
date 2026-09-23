@@ -671,6 +671,13 @@ class TaskSemanticService:
                 or source_context.get("reply_to_source_ref") != referenced_signal.source_ref
             ):
                 raise ValueError("acceptance reply must reference the assigned task source")
+            source_task_ids = self.store.list_unmerged_formal_business_task_ids_for_source_in_transaction(
+                source_type=referenced_signal.source_type,
+                source_ref=referenced_signal.source_ref,
+                _db=db,
+            )
+            if source_task_ids != (task.id,):
+                raise ValueError("acceptance reply source must uniquely identify one formal task")
             self._validate_date_facts(
                 command.date_facts, signal=command.signal,
                 may_commit=True, owner_user_id=task.owner_user_id

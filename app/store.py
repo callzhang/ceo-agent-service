@@ -6671,6 +6671,20 @@ class AutoReplyStore:
         ).fetchall()
         return tuple(int(row["id"]) for row in rows)
 
+    def list_unmerged_formal_business_task_ids_for_source_in_transaction(
+        self, *, source_type: str, source_ref: str, _db: sqlite3.Connection
+    ) -> tuple[int, ...]:
+        rows = _db.execute(
+            """select distinct task.id from business_task_signals as signal
+               join business_task_evidence as evidence on evidence.signal_id=signal.id
+               join business_tasks as task on task.id=evidence.task_id
+               where signal.source_type=? and signal.source_ref=?
+                 and task.stage='formal' and task.status<>'merged'
+               order by task.id""",
+            (source_type, source_ref),
+        ).fetchall()
+        return tuple(int(row["id"]) for row in rows)
+
     def append_business_task_event(
         self,
         *,

@@ -192,9 +192,14 @@ command must supply `AcceptancePolarity.ACCEPTED`; a declined or ambiguous
 semantic finding rejects the transition even when `acceptance_is_explicit` is
 true. The exact acceptance excerpt must occur in the human owner's source,
 and that source's `context_json.reply_to_source_ref` must match the persisted
-referenced signal's source reference. This binds a short reply such as
-“我来做。” to the uniquely linked Task without expecting an opaque source ID or
-full Task title in natural speech. The eventual source adapter must preserve
+referenced signal's source reference. The referenced signal must uniquely link
+to one unmerged formal Task, and all signals with the same `source_type` and
+`source_ref` must collectively link to only that Task. A document-level reply
+reference shared by multiple formal meeting actions is ambiguous even if the
+caller supplies one action's signal ID; it cannot transition either Task to
+accepted. This binds a short reply such as “我来做。” only when the actual reply
+reference identifies one Task, without expecting an opaque source ID or full
+Task title in natural speech. The eventual source adapter must preserve
 and verify reply metadata from the provider; caller-written context is not
 independent proof of a provider reply. The
 acceptance signal and role commit together. Generic `UpdateBusinessTask`
