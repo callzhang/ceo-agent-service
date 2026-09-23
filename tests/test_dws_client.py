@@ -3992,14 +3992,14 @@ def test_read_recent_messages_high_level_method_uses_group_command(monkeypatch):
 
 def test_search_conversations_parses_group_results():
     payload = {
-        "result": {
-            "value": [
-                {
-                    "openConversationId": "cid-1",
-                    "title": "【招聘】大模型项目经理/大模型数据解决方案专家",
-                }
-            ]
-        }
+        "chats": [
+            {
+                "openConversationId": "cid-1",
+                "name": "【招聘】大模型项目经理/大模型数据解决方案专家",
+            }
+        ],
+        "complete": True,
+        "hasMore": False,
     }
     client = RecordingDwsClient(payload)
 
@@ -4009,15 +4009,25 @@ def test_search_conversations_parses_group_results():
         [
             "dws",
             "chat",
-            "search",
+            "+chat-search",
             "--query",
             "大模型项目经理",
+            "--page-all",
             "--format",
             "json",
         ]
     ]
     assert conversations[0].open_conversation_id == "cid-1"
     assert conversations[0].title == "【招聘】大模型项目经理/大模型数据解决方案专家"
+
+
+def test_search_conversations_does_not_treat_partial_results_as_no_group():
+    client = RecordingDwsClient(
+        {"chats": [], "complete": False, "hasMore": True, "failures": []}
+    )
+
+    with pytest.raises(DwsError, match="group search incomplete"):
+        client.search_conversations("Friday")
 
 
 def test_client_conversation_id_uses_conversation_info():

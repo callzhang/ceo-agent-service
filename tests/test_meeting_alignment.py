@@ -19,6 +19,7 @@ from app.dws_client import (
     DwsError,
     DwsUserProfile,
 )
+from app.dingtalk_models import DingTalkConversation
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment import (
     consume_meeting_alignment_jobs,
@@ -283,6 +284,9 @@ class FakeDws:
 
     def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
         return list(self.profiles.get(query, []))
+
+    def search_conversations(self, query: str) -> list[DingTalkConversation]:
+        return []
 
     def is_hr_user(self, user_id: str) -> bool:
         return False
@@ -1704,6 +1708,59 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     assert history.output_text.endswith("日历备注：已写入原日程。")
     [run] = store.list_meeting_alignment_runs(job_id)
     assert run.status == "ready_to_send"
+
+
+def test_meeting_agent_receives_live_group_candidates_before_deciding(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    searches: list[str] = []
+
+    def search_conversations(query: str) -> list[DingTalkConversation]:
+        searches.append(query)
+        if query == "上线":
+            return [
+                DingTalkConversation(
+                    open_conversation_id="cid-first",
+                    title="项目群",
+                    single_chat=False,
+                    unread_point=0,
+                )
+            ]
+        return []
+
+    dws.search_conversations = search_conversations
+    seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1
+    ) == 1
+
+    assert "上线" in searches
+    assert "cid-first" in runner.prompts[0]
+    assert "项目群" in runner.prompts[0]
+
+
+def test_meeting_group_discovery_failure_does_not_become_direct_fallback(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+
+    def fail_search(_query: str) -> list[DingTalkConversation]:
+        raise DwsError("group search unavailable")
+
+    dws.search_conversations = fail_search
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert json.loads(job.error)["kind"] == "meeting_group_discovery"
+    assert runner.calls == 0
+    assert dws.send_calls == []
 
 
 def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):

@@ -548,9 +548,10 @@ class DwsClient:
         return [
             self.dws_bin,
             "chat",
-            "search",
+            "+chat-search",
             "--query",
             query,
+            "--page-all",
             "--format",
             "json",
         ]
@@ -1938,6 +1939,8 @@ class DwsClient:
 
     def search_conversations(self, query: str) -> list[DingTalkConversation]:
         payload = self.run_json(self.build_search_conversations_command(query))
+        if payload.get("complete") is not True:
+            raise DwsError("group search incomplete")
         return self.parse_search_conversations(payload)
 
     def client_conversation_id(self, open_conversation_id: str) -> str:
@@ -4228,13 +4231,13 @@ class DwsClient:
 
     @staticmethod
     def parse_search_conversations(payload: dict[str, Any]) -> list[DingTalkConversation]:
-        conversations = payload.get("result", {}).get("value", [])
+        conversations = payload.get("chats")
         if not isinstance(conversations, list):
-            return []
+            raise DwsError("group search response has no chats")
         return [
             DingTalkConversation(
                 open_conversation_id=conversation["openConversationId"],
-                title=conversation["title"],
+                title=conversation["name"],
                 single_chat=False,
                 unread_point=0,
                 last_message_create_at=None,
@@ -4242,7 +4245,7 @@ class DwsClient:
             for conversation in conversations
             if isinstance(conversation, dict)
             and conversation.get("openConversationId")
-            and conversation.get("title")
+            and conversation.get("name")
         ]
 
     @staticmethod

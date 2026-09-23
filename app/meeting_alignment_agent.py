@@ -98,6 +98,7 @@ class MeetingAlignmentAgent:
         source: MeetingSource,
         *,
         similar_sessions: list[CodexSessionSearchResult] | None = None,
+        group_candidates: list[dict[str, str]] | None = None,
         run_id: int | None = None,
         consumer_prompt: str = "",
         skill_protocol: str = "",
@@ -107,6 +108,7 @@ class MeetingAlignmentAgent:
             work_profile=work_profile_instruction(),
             work_profile_source=str(work_profile_path()),
             similar_sessions=similar_sessions or [],
+            group_candidates=group_candidates or [],
             consumer_prompt=consumer_prompt,
             skill_protocol=skill_protocol,
         )
@@ -336,6 +338,7 @@ def build_meeting_alignment_prompt(
     work_profile: str,
     work_profile_source: str,
     similar_sessions: list[CodexSessionSearchResult] | None = None,
+    group_candidates: list[dict[str, str]] | None = None,
     consumer_prompt: str = "",
     skill_protocol: str = "",
 ) -> str:
@@ -344,7 +347,7 @@ def build_meeting_alignment_prompt(
     )
     target_contract = """每场会议都必须生成并发送一条会议总结，action 只能是 send；不得返回 no_action。
 - 内容优先于参会人数：客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动一律是业务内容，必须返回 audience_scope=business，并使用 DWS 做群发现、按业务承接证据给候选群排序，以最强候选作为 target.kind=group。
-- 不能因为是 1:1、群可访问、议题相似或参会人部分重合而随意私信；业务群发现失败时，使用日历中已确认的会议组织者作为 direct fallback，不得伪装成 no_action，也不得按姓名模糊搜索目标。
+- 先审阅下方实时群搜索候选，并用 DWS 核对业务承接、受众和可发送性；候选只是线索，不得仅凭群名发送。必要时继续以业务或受众线索搜索。确认业务群发现失败时，使用日历中已确认的会议组织者作为 direct fallback；不得因 1:1、初次搜索零命中或未搜索就私信，也不得按姓名模糊搜索目标。
 - personal 只适用于整场会议均为个人事项，必须返回 audience_scope=personal；只有完整日历 1:1（attendee_evidence=calendar、attendee_roster_complete=true、恰好两名参会人）时，才可以使用 target.kind=direct，目标只能是另一位参会人。
 - 业务会议中出现人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，先按受众决定是否拆分：如果 DWS 实时群发现证明目标是 HR 专属或已匹配的群，且讨论是会议中 HR 参会人的共同事项、不是针对未参会的具体个人，可以把敏感详情放进 final_message，并将 sensitive_private_message=null；只要群受众不明确、含非授权成员，或讨论针对具体个人，就必须去掉群消息中的敏感详情，写入 sensitive_private_message。
 - sensitive_private_message.target 必须是 direct，并使用参会人中经 DWS 实时身份和职责确认的 HR/人员负责人稳定 user_id；没有可确认的 HR/人员负责人时发给当前用户本人。recipient_evidence 写清实时身份或职责依据。不得按姓名猜测接收人，也不得发给被评价人或无关参会人。
@@ -352,6 +355,9 @@ def build_meeting_alignment_prompt(
 - 没有实质观点分歧时，仍须发送简短的会议结论、已确认事项和下一步；不得因议题平稳而跳过。"""
 
     similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
+    group_candidates_text = json.dumps(
+        group_candidates or [], ensure_ascii=False, separators=(",", ":")
+    )
     scheduled_consumer_block = ""
     if consumer_prompt.strip() or skill_protocol.strip():
         scheduled_consumer_block = f"""## Scheduled Consumer Prompt
@@ -404,6 +410,9 @@ MeetingAlignmentDecision Pydantic JSON schema:
 
 相似历史 Codex sessions（仅作上下文复用；当前会议证据优先）：
 {similar_sessions_text}
+
+实时钉钉群搜索候选（仅供进一步核验，不是直接发送授权）：
+{group_candidates_text}
 
 完整会议来源 JSON：
 {source_json}
