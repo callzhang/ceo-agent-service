@@ -62,7 +62,16 @@ def test_approved_dingtalk_message_tool_reaches_service_helper(monkeypatch, tmp_
     assert calls == [(db_path, 17, "clarify-scope")]
 
 
-def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(tmp_path):
+@pytest.mark.parametrize(
+    "proposal_target",
+    [
+        {"open_dingtalk_id": "open-recipient"},
+        {"conversation_id": "cid-trigger", "open_dingtalk_id": "open-recipient"},
+    ],
+)
+def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(
+    tmp_path, proposal_target
+):
     from app.service_message_sender import agent_message_delivery_key
     from app.store import AgentRole, AutoReplyStore
 
@@ -102,7 +111,7 @@ def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(tmp_p
                         "capability": "dingtalk-chat",
                         "operation": "send_direct_message",
                         "effect": "external",
-                        "target": {"open_dingtalk_id": "open-recipient"},
+                        "target": proposal_target,
                         "payload": {"content": "Which scope?"},
                     }
                 ],

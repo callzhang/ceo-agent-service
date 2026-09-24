@@ -208,6 +208,13 @@ def send_approved_dingtalk_message(
     user_id = str(target.get("user_id") or "").strip()
     if not conversation_id and not open_dingtalk_id and not user_id:
         raise AgentReadOnlyViolationError("dingtalk_message_target_missing")
+    if (
+        task.single_chat
+        and conversation_id == task.conversation_id
+        and open_dingtalk_id
+        and not user_id
+    ):
+        conversation_id = None
     dws = dws_client or DwsClient()
     sender = ServiceMessageSender(store=store, dingtalk=dws)
     if dingtalk_chat_delivery(action.operation) == "reply":
