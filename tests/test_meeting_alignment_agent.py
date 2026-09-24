@@ -349,7 +349,8 @@ def test_prompt_contains_scheduled_consumer_prompt_and_targeted_skills():
     assert "target.kind=group" in prompt
     assert "audience_scope=personal" in prompt
     assert "完整日历 1:1" in prompt
-    assert "业务群发现失败时，使用日历中已确认的会议组织者" in prompt
+    assert "仍没有可核验且可发送的业务群时" in prompt
+    assert "使用日历中已确认的会议组织者作为 direct fallback" in prompt
     assert "不得按姓名模糊搜索目标" in prompt
     assert "只保留 audit_summary 与 confidence" not in prompt
     assert "真实 @" in prompt
@@ -375,7 +376,27 @@ def test_prompt_makes_business_content_group_first_even_for_one_to_one():
     assert "audience_scope=business" in prompt
     assert "DWS 做群发现" in prompt
     assert "target.kind=group" in prompt
-    assert "业务群发现失败时，使用日历中已确认的会议组织者" in prompt
+    assert "仍没有可核验且可发送的业务群时" in prompt
+    assert "使用日历中已确认的会议组织者作为 direct fallback" in prompt
+
+
+def test_prompt_requires_content_based_group_discovery_before_direct_fallback():
+    prompt = build_meeting_alignment_prompt(
+        source(participant_count=2), work_profile="", work_profile_source="profile",
+        group_candidates=[],
+    )
+
+    assert "会议标题只是线索" in prompt
+    assert "优先核对会议材料中明确提及或分享的讨论群" in prompt
+    assert "从会议结论、行动项和负责人提炼业务主题" in prompt
+    assert "使用原文中的中文业务词与英文术语分别搜索" in prompt
+    assert "搜索会议标题和核心议题对应的群消息" in prompt
+    assert "核对群内近期消息是否讨论同一工作线" in prompt
+    assert "写清候选群的来源、业务承接关系和受众证据" in prompt
+    assert "排除仅名称相似、成员重合但业务不符的群" in prompt
+    assert "没有预置候选或首次搜索零命中，不等于业务群发现失败" in prompt
+    assert "不得为完成发送而选择宽泛群" in prompt
+    assert "候选群中含非授权受众" in prompt
 
 
 def test_prompt_requires_a_summary_even_for_candidate_interviews():
