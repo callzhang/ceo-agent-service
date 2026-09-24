@@ -72,6 +72,10 @@ class _LedgerClaimLifecycle:
             now=now,
         )
 
+    def let_go(self, envelope: DispatchEnvelope, *, owner: str) -> None:
+        """Hand back a claim whose handler has already finished."""
+        _let_go_of_lease(self.store, envelope=envelope, owner=owner)
+
 
 class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
     name = "scheduled"
@@ -1687,6 +1691,34 @@ def _complete_ledger_in_db(
         "select rowid from dispatcher_claim_leases where terminal_at<>'' "
         "order by terminal_at desc, rowid desc limit 10000)"
     )
+
+
+def _let_go_of_lease(
+    store: AutoReplyStore,
+    *,
+    envelope: DispatchEnvelope,
+    owner: str,
+) -> None:
+    """Mark a claim as held by nobody alive, so the queue's own rules reclaim it.
+
+    A handler that ended in an error left its lease owned by the running
+    service. Once that lease expired, the live-owner guard kept skipping the
+    source, because a live owner might still be working on it -- but this one
+    had finished. Task 384735 sat pending for thirty minutes that way, until a
+    restart ended the owning process. Fenced on owner and generation, so a
+    claim someone else has since taken is untouched.
+    """
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update dispatcher_claim_leases set owner_pid=0, lease_expires_at='' "
+            "where adapter_name=? and source_id=? and owner=? and generation=?",
+            (
+                envelope.adapter_name,
+                envelope.source_id,
+                owner,
+                envelope.generation,
+            ),
+        )
 
 
 def _record_ledger_error(

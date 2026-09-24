@@ -666,6 +666,7 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 - 生产入口是 launchd 管理的 `com.ceo-agent-service.main`，由 supervisor 管理 worker 和 audit-web。
 - 同一 `conversation_id` 同时只能有一个执行 Agent 持有 Codex session lock。
 - 每个执行/审核 run 都有独立 lease、revision 和 transcript 范围。
+- Dispatcher 对“租约已过期但 owner 进程仍存活”的来源不重新领取，以免重复执行。处理函数已经返回、只是以错误结束（记下 lease error）时，dispatcher 会把该租约标成“owner 已不在”（`owner_pid=0`、清空到期时间，按 owner 与 generation 围栏），来源随即按常规规则可再领取。此前这种租约要等服务重启才释放：任务 384735 重排后空等了三十分钟。
 - History 解析本地 Codex session 路径时，按 `session_path_index.jsonl` 的文件签名缓存最新索引
   记录；多个 retry/run 复用同一 session 不会重复解析完整索引。索引被 Codex 或维护程序更新后，
   文件签名变化会使缓存自动失效，因此页面不会因缓存遗漏新 session。

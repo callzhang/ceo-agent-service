@@ -283,6 +283,7 @@ class ConsumerDispatcher:
                     now=now,
                 )
                 guard.mark_lost()
+                self._let_go(guard)
         else:
             guard.adapter.record_lease_error(
                 guard.envelope,
@@ -291,7 +292,19 @@ class ConsumerDispatcher:
                 now=now,
             )
             guard.mark_lost()
+            self._let_go(guard)
         self._signal_future_completion()
+
+    @staticmethod
+    def _let_go(guard: ClaimGuard) -> None:
+        """The handler has returned, so nothing here still works on the source."""
+        let_go = getattr(guard.adapter, "let_go", None)
+        if let_go is None:
+            return
+        try:
+            let_go(guard.envelope, owner=guard.token.owner)
+        except Exception:  # noqa: BLE001 - the recorded lease error stays the evidence
+            LOGGER.exception("dispatcher could not let go of a finished claim")
 
     def _signal_future_completion(self) -> None:
         self.wake_event.set()
