@@ -1239,6 +1239,36 @@ def test_update_dedupe_identity_preserves_a_real_status_transition(tmp_path):
     assert len(store.list_business_task_signals()) == 3
 
 
+def test_update_task_decision_applies_evidence_backed_description_change(tmp_path):
+    store = AutoReplyStore(tmp_path / "description-update.sqlite3")
+    task = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="核对客户材料",
+        description="整理收到的客户材料。",
+        signal=SourceSignal(
+            source_type="seed", source_ref="seed:description-update",
+            evidence_text="核对客户材料", dedupe_key="seed:description-update",
+        ),
+    ))
+    item = _work_item().model_copy(update={
+        "summary": "客户材料已到齐并补齐缺项",
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "update_fields", "task_id": task.task_id,
+        "source_excerpt": "客户材料已到齐并补齐缺项", "source_ref": item.source.ref,
+        "title": "核对客户材料", "description": "客户材料已到齐，核对后补齐缺项。",
+        "update_summary": "The latest source clarifies the remaining deliverable.",
+    }]})
+
+    apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    updated = store.get_business_task(task.task_id)
+    assert updated.title == "核对客户材料"
+    assert updated.description == "客户材料已到齐，核对后补齐缺项。"
+    assert store.list_business_task_events(task.task_id)[-1].event_type.value == "details_changed"
+
+
 def _seed_identity_task(store, source_ref, *, external_task_id=""):
     context = {"owner_identity": {"name": "Alex", "user_id": "alex-id"}}
     if external_task_id:

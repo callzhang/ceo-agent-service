@@ -1620,7 +1620,10 @@ class AgentTurnProcess(Generic[ResultT]):
             or persisted_attempt.status != "failed"
             or persisted_attempt.session_mode != RuntimeAttemptSessionMode.RESUME
             or persisted_attempt.failure_class != RuntimeFailureClass.SESSION.value
-            or persisted_attempt.failure_code != "session_route_incompatible"
+            or persisted_attempt.failure_code not in {
+                "session_route_incompatible",
+                "codex_context_window_exceeded",
+            }
             or not persisted_attempt.source_session_id
         ):
             raise ValueError("fresh session retry lacks persisted resume evidence")

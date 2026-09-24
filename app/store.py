@@ -221,7 +221,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-24.1"
+STORE_SCHEMA_VERSION = "2026-09-24.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -3707,7 +3707,7 @@ class AutoReplyStore:
                     event_type text not null check(event_type in (
                         'created', 'promoted', 'commitment_changed', 'owner_changed',
                         'deadline_changed', 'date_evidence_recorded', 'status_changed',
-                        'relevance_changed', 'merged'
+                        'relevance_changed', 'details_changed', 'fields_changed', 'merged'
                     )),
                     signal_id integer,
                     before_json text not null
@@ -4358,7 +4358,7 @@ class AutoReplyStore:
             event_table_sql = db.execute(
                 "select sql from sqlite_master where type='table' and name='business_task_events'"
             ).fetchone()["sql"]
-            if "date_evidence_recorded" not in event_table_sql:
+            if "details_changed" not in event_table_sql:
                 db.execute("savepoint migrate_business_task_events_date_evidence")
                 try:
                     db.execute(
@@ -4372,7 +4372,7 @@ class AutoReplyStore:
                         event_type text not null check(event_type in (
                             'created', 'promoted', 'commitment_changed', 'owner_changed',
                             'deadline_changed', 'date_evidence_recorded', 'status_changed',
-                            'relevance_changed', 'merged'
+                            'relevance_changed', 'details_changed', 'fields_changed', 'merged'
                         )),
                         signal_id integer,
                         before_json text not null

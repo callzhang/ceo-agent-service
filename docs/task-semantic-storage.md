@@ -94,7 +94,10 @@ Agent input does not supply that mapping, so those facts remain unrecorded
 instead of assigning the minutes system author or an inferred participant.
 
 Task events retain a typed transition, optional source signal, before/after JSON
-objects, reason, and creation time. Attention events retain the same evidence
+objects, reason, and creation time. Source-backed title/description edits use
+`details_changed`; edits combined with status, owner, relevance, or commitment
+fields use `fields_changed`. Both preserve the new source signal as Task evidence
+and commit the Task snapshot and event atomically. Attention events retain the same evidence
 shape with a required signal. Task 2 adds atomic Task transitions and append-only
 Task event APIs; attention projections remain later work.
 
@@ -167,7 +170,7 @@ history in insertion order. Readers do not classify the old `deadline_at`.
 ## Atomic semantic commands
 
 `TaskSemanticService` records candidates/formal tasks, promotes candidates,
-applies acceptance, updates Task state, and merges the same deliverable. Each
+applies acceptance, updates Task state or source-backed title/description, and merges the same deliverable. Each
 command commits its signal, Task changes, evidence links, and events together.
 A signal previously collected through `create_business_task_signal` is reused
 by deduplication key when its first semantic command is applied. Signal

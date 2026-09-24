@@ -1002,7 +1002,7 @@ def test_previous_semantic_schema_migrates_without_classifying_legacy_deadline(t
         event_sql = db.execute(
             "select sql from sqlite_master where type='table' and name='business_task_events'"
         ).fetchone()["sql"]
-        old_event_sql = event_sql.replace("'date_evidence_recorded', ", "")
+        old_event_sql = event_sql.replace("'details_changed', 'fields_changed', ", "")
         assert old_event_sql != event_sql
         db.execute("drop table business_task_events")
         db.execute(old_event_sql)
@@ -1030,6 +1030,11 @@ def test_previous_semantic_schema_migrates_without_classifying_legacy_deadline(t
     assert [event.id for event in migrated.list_business_task_events(task_id)] == [original_event_id]
     with migrated._connect() as db:
         assert db.execute("pragma foreign_key_check").fetchall() == []
+        migrated_event_sql = db.execute(
+            "select sql from sqlite_master where type='table' and name='business_task_events'"
+        ).fetchone()["sql"]
+        assert "details_changed" in migrated_event_sql
+        assert "fields_changed" in migrated_event_sql
         assert "'skipped'" in db.execute(
             "select sql from sqlite_master where type='table' and name='task_todo_sync_outbox'"
         ).fetchone()["sql"]
@@ -1061,7 +1066,7 @@ def test_event_constraint_migration_rolls_back_when_copy_fails(tmp_path):
         event_sql = db.execute(
             "select sql from sqlite_master where type='table' and name='business_task_events'"
         ).fetchone()[0]
-        old_event_sql = event_sql.replace("'date_evidence_recorded', ", "")
+        old_event_sql = event_sql.replace("'details_changed', 'fields_changed', ", "")
         db.execute("drop table business_task_events")
         db.execute(old_event_sql)
         db.execute(
@@ -1086,7 +1091,7 @@ def test_event_constraint_migration_rolls_back_when_copy_fails(tmp_path):
         sql = db.execute(
             "select sql from sqlite_master where type='table' and name='business_task_events'"
         ).fetchone()[0]
-        assert "date_evidence_recorded" not in sql
+        assert "details_changed" not in sql
 
 
 def test_event_constraint_migration_recovers_stranded_rename(tmp_path):

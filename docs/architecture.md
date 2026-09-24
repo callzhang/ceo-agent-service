@@ -623,12 +623,14 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 ### Task-first 工作跟踪（Task 6 与 Task 7；代码未部署）
 
 Task Agent 的结构化结果是 `task_decisions` 列表，同一来源可以得到 0 到多个决定。每个非 skip 项必须引用原始来源中的精确摘录与来源引用；Task、负责人、日期和承诺不得由 Agent 自行补造。正式 Task 必须有来源支持的明确负责人；正式指派先记为 `assigned_unaccepted`。只有负责人本人对唯一现存 Task 的明确接受证据才能进入 `accepted`。外部 TODO 的存在只证明有一条外部记录，不证明负责人接受。
+更新既有 Task 时，Agent 可用本轮来源证据修订标题或描述；内容变更、新信号证据链接及 before/after 事件原子提交。纯内容更新记为 `details_changed`，内容与其他 Task 字段同时更新记为 `fields_changed`。重复回放不重复追加事件；只有新证据、没有字段实际变化的更新会被拒绝。
 
 Task Agent 使用一个统一的 `TaskAgentDecision` 生命周期契约：同一来源可同时产生 0..N 个新建/更新 Task 决定，以及适用的既有 TODO 完成或 follow-up 状态转换。completion 操作分别使用 envelope 顶层类型化的 `todo_changes` 和 `follow_up_changes` 字段，不嵌套在单个 `task_decisions` 内。共享 work-summary consumer 仍按精确 source type 选择上下文准备和服务端应用操作，但不启动另一个 Agent，也不使用第二套结果协议。`todo_completion_check` 只可关闭输入明确链接的既有 TODO；证据候选只更新其自身状态；follow-up completion/repair 只可转换输入明确链接的既有 follow-up。没有完成证据时仍记录 `search_trace` 与检查摘要并保持 TODO 开放。无效身份/操作使输入和 run 失败且不提交领域变化；Task 转换、TODO 本地完成、关联 follow-up 完成、候选状态、work-summary input/run 终态在同一事务中提交。事务提交后，外部 TODO 完成与类型化 Task 完成都按受影响 Task 重算当前 Attention 成员；完成的 Task 从成员列表退出，但不会仅凭读取或完成动作把 Attention 标成已解决。
 
 completion apply 会在事务中校验队列 source_type/ref 与持久化 TODO/project/follow-up/candidate 绑定；trace source_kind、来源时间、服务记录的检索时间、来源数和可观察工具调用数按 Work Item 的 search_policy 校验，并要求 source locator 能在本次运行的工具结果中匹配。candidate 来源时间须与持久化候选一致。receipt 不构成外部内容真实性的独立证明；`completed_at` 只验证可解析且不晚于检查时间，并不证明该时间来自来源正文。当前 audit event 不含可信的 search-vs-raw-read 分类，因此 `max_raw_reads` 没有独立运行时计数；这是当前 prompt/runtime 能力限制，超出已批准范围，不是 Task 6 发布阻断。Task Agent prompt 明确要求只读发现，不得通过 CLI/API/MCP 工具创建、更新、删除、发送或完成外部记录；这是 prompt-only 的 best-effort 指引，不是运行时权限边界，Codex route 仍没有 per-turn MCP 写工具 allowlist。外部完成只由现有 outbox 同步。
 
 普通 Task 提取和 TODO/follow-up 完成检查共用稳定的 `task-agent:work-tracking:v1` 会话范围；每个 Work Item 仍有独立 `workload_key`、run 和运行记录。会话按 runtime route 分开保存，同一路由的后续 Task Agent 输入会续接该路由的 session。`process-work-items` 在领取输入前持有共享 SQLite session lock，并在处理期间续租；锁被其他进程占用时不领取、不增加输入尝试次数。锁续租失败会在领域事务提交前终止本轮并安排输入重试。此前 run 使用的 `task:<run_id>` 会话记录保留不迁移。Agent 每轮以当前 Work Item、当前检索状态和新来源证据作判断，会话历史只作背景；Codex CLI 的 context compaction 由 Codex 原生机制管理，不是事实存储，也不替代当前来源证据。
+若 Codex 明确报告 context compaction 自身超过模型窗口，当前 run 会在同一路由清除该 route 的共享 session 指针并用 fresh session 重试一次；若新 session 仍超限，则进入既有 runtime route fallback，不循环新建 session。其他 session 错误不触发该恢复路径。
 
 定时完成检查还会从语义存储选择开放的正式 Business Task，不要求 Task 已有 Project；Work Item 携带链接的来源信号、类型化日期、Task follow-up 和外部 TODO 上下文，并按有界批次逐日入队。关闭来源上的 Task 后，Attention 成员在领域提交后更新；同一关注项中仍开放的兄弟 Task 继续保留。
 

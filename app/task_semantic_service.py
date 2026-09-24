@@ -137,6 +137,8 @@ class ApplyAcceptance:
 class UpdateBusinessTask:
     task_id: int
     signal: SourceSignal
+    title: str | None = None
+    description: str | None = None
     commitment_status: CommitmentStatus | None = None
     owner_user_id: str | None = None
     owner_name: str | None = None
@@ -764,6 +766,8 @@ class TaskSemanticService:
         self._validate_date_facts(command.date_facts, signal=command.signal, may_commit=False)
         now = self._now()
         fields = {
+            "title": command.title,
+            "description": command.description,
             "commitment_status": command.commitment_status,
             "owner_user_id": command.owner_user_id,
             "owner_name": command.owner_name,
@@ -771,13 +775,6 @@ class TaskSemanticService:
             "status": command.status,
             "business_relevance": command.business_relevance,
         }
-        changed = {name: value for name, value in fields.items() if value is not None}
-        if not changed and not command.date_facts:
-            raise ValueError("task update must change at least one field")
-        event_type = (
-            self._update_event_type(changed)
-            if changed else BusinessTaskEventType.DATE_EVIDENCE_RECORDED
-        )
         transaction = (
             nullcontext(_db)
             if _db is not None
@@ -793,6 +790,18 @@ class TaskSemanticService:
             )
             if task.status is BusinessTaskStatus.MERGED:
                 raise ValueError("cannot update a merged task")
+            changed = {name: value for name, value in fields.items() if value is not None}
+            changed = {
+                name: value for name, value in changed.items()
+                if name not in {"title", "description"}
+                or getattr(task, name) != value
+            }
+            if not changed and not command.date_facts:
+                raise ValueError("task update must change at least one field")
+            event_type = (
+                self._update_event_type(changed)
+                if changed else BusinessTaskEventType.DATE_EVIDENCE_RECORDED
+            )
             if set(changed) & {"owner_user_id", "owner_name", "owner_evidence_json"}:
                 self._require_source_backed_owner(
                     signal=command.signal,
@@ -858,6 +867,10 @@ class TaskSemanticService:
             return BusinessTaskEventType.STATUS_CHANGED
         if set(changed) == {"business_relevance"}:
             return BusinessTaskEventType.RELEVANCE_CHANGED
+        if set(changed) <= {"title", "description"}:
+            return BusinessTaskEventType.DETAILS_CHANGED
+        if set(changed) & {"title", "description"}:
+            return BusinessTaskEventType.FIELDS_CHANGED
         raise ValueError("each task update must describe one state transition")
 
     def merge_same_deliverable(

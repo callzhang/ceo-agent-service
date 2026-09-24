@@ -172,6 +172,7 @@ Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返�
 每个保留决策都必须引用 WorkItem 的准确 `source_ref`，并提供确实出现在来源摘要中的原文
 `source_excerpt`；检索到的 Task、Project 候选及 memory 只能提供背景，不能替代来源证据或授权。
 `skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。
+更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
 
 Task Agent 使用统一的 `TaskAgentDecision` 结果协议，既可返回 0..N 个新建/更新 Task 决定，
 也可在同一个决定里返回对已绑定 TODO 或 follow-up 的适用状态转换。CLI 仍按 Work Item 的精确
@@ -212,6 +213,9 @@ session，同一 route 上的后续输入续接既有 session。`process-work-it
 旧 `task:<run_id>` 会话记录不会迁移或覆盖。Task Agent prompt 将此前会话内容限定为背景，决定须依据当轮
 Work Item、当前存储/检索状态和新来源证据。Codex CLI 自己管理上下文自动压缩；其他 route 使用其自身
 会话能力，压缩后的会话仍不能替代 Work Item、数据库或来源证据。
+若 CLI 明确报告 compaction 自身因模型 context window 超限而失败，当前 run 会清除此 route 的共享
+session 指针并在同一路由的新 session 重试一次；若 fresh session 仍超限，则转入既有 runtime route
+fallback，不循环创建 session。普通会话冲突或其他错误不会清除共享 session。
 
 正式指派不等于负责人接受：有授权来源、明确交付物和明确负责人的指派可成为
 `assigned_unaccepted` Task；只有负责人本人明确接受并且来源上下文带有可信、精确的

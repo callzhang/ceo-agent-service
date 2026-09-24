@@ -92,6 +92,8 @@ class BusinessTaskEventType(StrEnum):
     DATE_EVIDENCE_RECORDED = "date_evidence_recorded"
     STATUS_CHANGED = "status_changed"
     RELEVANCE_CHANGED = "relevance_changed"
+    DETAILS_CHANGED = "details_changed"
+    FIELDS_CHANGED = "fields_changed"
     MERGED = "merged"
 
 

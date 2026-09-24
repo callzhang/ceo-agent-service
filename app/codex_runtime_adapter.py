@@ -185,6 +185,15 @@ class CodexRuntimeAdapter:
         # classifying a nominally successful process so configured fallback
         # routes can take over genuine provider failures.
         if terminal_succeeded:
+            detail, _ = _provider_failure_text(stdout, stderr)
+            if _is_codex_context_window_exceeded(detail):
+                return RuntimeFailure(
+                    failure_class=RuntimeFailureClass.SESSION,
+                    code="codex_context_window_exceeded",
+                    detail="Codex context compaction exceeded the selected model's context window.",
+                    retryable_on_same_route=True,
+                    failover_permitted=True,
+                )
             return RuntimeFailure(
                 failure_class=RuntimeFailureClass.UNCLASSIFIED,
                 code="runtime_unclassified",
@@ -227,6 +236,14 @@ class CodexRuntimeAdapter:
                 code="codex_session_writer_conflict",
                 detail="Codex session persistence has another active writer.",
                 retryable_on_same_route=True,
+            )
+        if _is_codex_context_window_exceeded(detail):
+            return RuntimeFailure(
+                failure_class=RuntimeFailureClass.SESSION,
+                code="codex_context_window_exceeded",
+                detail="Codex context compaction exceeded the selected model's context window.",
+                retryable_on_same_route=True,
+                failover_permitted=True,
             )
         process_code = classify_codex_process_failure(detail, "")
         if process_code == CODEX_PROVIDER_AUTH_FAILED or _is_structured_invalid_api_key(
@@ -353,9 +370,18 @@ def _provider_failure_text(stdout: str, stderr: str) -> tuple[str, list[str]]:
         if not isinstance(event, dict) or event.get("type") not in {
             "error",
             "turn.failed",
+            "event_msg",
         }:
             continue
-        event_messages = _event_error_messages(event)
+        payload = event.get("payload")
+        if (
+            event.get("type") == "event_msg"
+            and isinstance(payload, dict)
+            and payload.get("type") == "task_complete"
+        ):
+            event_messages = _event_error_messages(payload)
+        else:
+            event_messages = _event_error_messages(event)
         messages.extend(event_messages)
         structured_messages.extend(event_messages)
     return "\n".join(message for message in messages if message), structured_messages
@@ -368,11 +394,21 @@ def _event_error_messages(event: dict[str, object]) -> list[str]:
         if isinstance(value, str):
             values.append(value)
         elif isinstance(value, dict):
-            for nested_key in ("message", "code"):
+            for nested_key in ("message", "code", "codex_error_info"):
                 nested = value.get(nested_key)
                 if isinstance(nested, str):
                     values.append(nested)
     return values
+
+
+def _is_codex_context_window_exceeded(detail: str) -> bool:
+    normalized = detail.casefold().replace("model's", "model").replace(
+        "model’s", "model"
+    )
+    return (
+        "context_window_exceeded" in normalized
+        or "out of room in the model context window" in normalized
+    )
 
 
 def _is_structured_invalid_api_key(messages: list[str]) -> bool:
