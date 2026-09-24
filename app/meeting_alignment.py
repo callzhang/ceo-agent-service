@@ -22,7 +22,7 @@ from app.decision_quality import DecisionQuality, DecisionRisk, classify_decisio
 from app.dingtalk_models import DingTalkConversation
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.dispatcher.models import ClaimGuard
-from app.external_retry import is_external_dependency_error
+from app.external_retry import is_external_dependency_error, retry_delay_seconds
 from app.meeting_alignment_agent import (
     MeetingAlignmentAgent,
     MeetingAlignmentTargetError,
@@ -1507,6 +1507,7 @@ def _deliver_meeting_job(
             retry_delay=retry_delay,
             max_attempts=max_attempts,
             extra_values=values,
+            external_dependency=is_external_dependency_error(exc),
         )
         return
     except MeetingDeliveryError as exc:
@@ -1793,10 +1794,18 @@ def _retry_or_fail(
             **(extra_values or {}),
         )
         return
+    delay = retry_delay
+    if external_dependency:
+        delay = timedelta(
+            seconds=retry_delay_seconds(
+                retry_delay.total_seconds(),
+                max(job.attempts - 1, 0),
+            )
+        )
     store.update_meeting_alignment_job(
         job.id,
         status="retry",
-        available_at=(now + retry_delay).isoformat(),
+        available_at=(now + delay).isoformat(),
         error=error,
         **(extra_values or {}),
     )

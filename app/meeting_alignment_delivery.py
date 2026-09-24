@@ -304,7 +304,7 @@ def deliver_meeting_alignment(
                 title=message_title,
             ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
-        raise MeetingDeliveryRetry("meeting send failed") from exc
+        raise MeetingDeliveryRetry(f"meeting send failed: {exc}") from exc
     sensitive_delivery = None
     sensitive_private_merged = False
     if decision.sensitive_private_message is not None and not hr_primary:

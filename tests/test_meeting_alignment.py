@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from datetime import datetime, timedelta
 
 from types import SimpleNamespace
@@ -2118,6 +2119,35 @@ def test_ready_delivery_source_failure_uses_counted_retry(tmp_path):
     assert json.loads(job.error)["kind"] == "meeting_source"
     assert dws.send_calls == []
     assert runner.calls == 0
+
+
+def test_ready_delivery_retries_provider_outage_after_attempt_limit(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    decision = consumer_send_decision()
+    store.update_meeting_alignment_job(
+        job_id,
+        status="ready_to_send",
+        decision_json=decision.model_dump_json(),
+        final_message=decision.final_message,
+    )
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        db.execute("update meeting_alignment_jobs set attempts=3 where id=?", (job_id,))
+
+    def unavailable_send(conversation_id, text, **kwargs):
+        raise DwsError("THREADPOOL_BUSY", retryable_external_dependency=True)
+
+    dws.send_message = unavailable_send
+    assert deliver_ready_meeting_alignment_jobs(
+        store, dws, now=NOW, limit=1
+    ) == {job_id}
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert "THREADPOOL_BUSY" in job.error
+    assert job.available_at == "2026-07-14T10:14:00+08:00"
+    assert job.send_result_json == "{}"
 
 
 def test_ready_delivery_normalizes_legacy_scope_before_sending(tmp_path):
