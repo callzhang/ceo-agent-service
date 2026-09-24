@@ -7942,6 +7942,99 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
     assert [row["id"] for row in decisions] == [str(attempt_id)]
 
 
+def test_rule_decision_attention_uses_attempt_linked_run_not_unrelated_latest_run(
+    tmp_path: Path,
+):
+    """A later audit turn must not hide the current Attempt's rule decision."""
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer_claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer-current-rule-decision",
+    )
+    consumer_run = store.complete_agent_run(
+        consumer_claim.run.id,
+        {
+            "outcome": "needs_human",
+            "summary": "A reusable management rule is required.",
+            "proposal": None,
+            "needs_human_reason": "The applicable rule does not define this decision.",
+            "decision_basis": {
+                "verified_facts": [{"assertion": "Facts are complete.", "references": ["record:current"]}],
+                "rule_evidence": [{"assertion": "The applicable rule has no branch for this class.", "references": ["policy:current"]}],
+                "quality_explanation": "Risk is high and rule coverage is below the threshold.",
+                "no_external_action_evidence": [{"assertion": "No external action was performed.", "references": ["receipt:none"]}],
+                "conclusion": "A reusable rule is required.",
+            },
+            "decision_options": [
+                {"key": "A", "label": "采用规则 A", "instruction": "以后按规则 A 处理。", "consequence": "允许执行已核验动作。"},
+                {"key": "B", "label": "采用规则 B", "instruction": "以后按规则 B 处理。", "consequence": "保持外部动作不执行。"},
+            ],
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+            "risk": "high",
+            "confidence": 0.4,
+            "rule_coverage": 0.4,
+            "information_completeness": 1.0,
+        },
+        owner="consumer-current-rule-decision",
+    )
+    later_audit_claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=1,
+        parent_agent_run_id=consumer_run.id,
+        operation_id="audit-later-turn",
+        owner="audit-later-turn",
+    )
+    store.complete_agent_run(
+        later_audit_claim.run.id,
+        {
+            "outcome": "executed",
+            "summary": "Audit completed a later turn.",
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+        },
+        owner="audit-later-turn",
+    )
+    attempt_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=consumer_run.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="A reusable management rule is required.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="A reusable management rule is required.",
+        human_decision_options_json=json.dumps(consumer_run.final_result_json),
+        send_status="needs_human",
+        send_error="needs_human",
+        channel="dingtalk",
+    )
+
+    decisions = audit_web_module._human_decision_attention_rows(store)
+
+    assert [row["id"] for row in decisions] == [str(attempt_id)]
+
+
 def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
     tmp_path: Path,
 ):

@@ -137,6 +137,9 @@ pending recovery 排除，ask-back 不计 `needs_human`。
 `done`，但在 Derek 提交决策前仍属于当前待处理项。这类带结构化依据和可执行选项的
 决策在独立的人工决策列表展示，不计入只显示错误的 Attention。无结构化依据或
 `information_completeness<0.5` 的结果是技术失败，保留在 History 和 Attention。
+人工决策列表以当前 `reply_attempt.agent_run_id` 关联的已完成 run 为准，并同时校验
+任务代次和当前 Business Object；不能再用一个按 turn 顺序挑出的“最新 run”覆盖该关联。
+这样，较晚的 Audit turn 不会把当前 Attempt 指向的 Consumer 规则决策从 Attention 投影中隐藏。
 重跑前写入的 `reviewed_at` 只记录上一轮授权反馈；若本轮最新结果再次是未解决的
 `needs_human`，仍须展示为新的人工决策，直到状态变为已选择或显式解决。
 

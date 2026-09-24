@@ -3504,14 +3504,10 @@ def _human_decision_attention_rows(
          and runs.reply_task_id=tasks.id
          and runs.execution_generation=tasks.execution_generation
          and runs.status='completed'
-         and runs.id=(
-             select latest_run.id from agent_runs as latest_run
-             where latest_run.reply_task_id=tasks.id
-               and latest_run.execution_generation=tasks.execution_generation
-             order by latest_run.turn_attempt desc,
-                      latest_run.proposal_revision desc, latest_run.id desc
-             limit 1
-         )
+        -- The current Attempt projection explicitly points to its run. Do not
+        -- replace that link with an unrelated later audit turn: a completed
+        -- audit run can be newer in turn order while the Attempt still
+        -- intentionally represents the Consumer's current rule decision.
         where attempts.send_status='needs_human'
           and trim(coalesce(attempts.resolved_at, ''))=''
           and attempts.id=(
