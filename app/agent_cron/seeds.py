@@ -3,15 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import shlex
 
 from app.agent_cron.models import ScheduledTask, ScheduledTaskSkillRef
 from app.agent_cron.options import RuntimeOption, ScheduledTaskOptionService
+from app.runtime_environment import central_python
 from app.store import AutoReplyStore
 
 
 MINUTES_SYNC_MIGRATION_KEY = "ceo-minutes-sync-daily-v1"
 MINUTES_ACCESS_MIGRATION_KEY = "ceo-minutes-access-daily-v1"
 WEEKLY_REPORT_MIGRATION_KEY = "ceo-weekly-report-saturday-v1"
+DAILY_REPORT_MIGRATION_KEY = "ceo-daily-report-daily-v1"
 WEEKLY_OKR_MIGRATION_KEY = "weekly-okr-report-sunday-v1"
 WEEKLY_OKR_SERVICE_COMMAND = "weekly-okr-report"
 DINGTALK_MESSAGE_MIGRATION_KEY = "dingtalk-message-check-v1"
@@ -58,6 +61,12 @@ SCHEDULED_TASK_DEFAULT_COPY = {
     WEEKLY_REPORT_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="准备 CEO 管理周报",
         description="按本周的听记、群消息和四条业务线来源报告整理 CEO 管理周报草稿，核对上期未结问题，产出可校验的报告数据；发布到钉钉文档需要 Derek 明确授权，本任务不自行发布。",
+        old_name="",
+        old_description="",
+    ),
+    DAILY_REPORT_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="发送 CEO 每日总结",
+        description="每晚汇总当天的会议、Tasks 项目变化、已处理和等你处理的事项，并扫描当天群消息，写成重要进展、风险、需介入、需关注和管理建议；发布为钉钉文档，由机器人单聊把要点和链接发给 Derek。",
         old_name="",
         old_description="",
     ),
@@ -319,6 +328,9 @@ def seed_scheduled_tasks(
     weekly_report = _seed_weekly_report_task(
         store=store, options=options, working_directory=working_directory, now=now
     )
+    daily_report = _seed_daily_report_task(
+        store=store, options=options, working_directory=working_directory, now=now
+    )
     minutes_access = _seed_minutes_access_task(
         store=store, options=options, working_directory=working_directory, now=now
     )
@@ -341,6 +353,7 @@ def seed_scheduled_tasks(
             meeting_todos,
             weekly_okr,
             weekly_report,
+            daily_report,
             minutes_access,
             minutes,
             follow_up_delivery,
@@ -820,6 +833,62 @@ def _seed_weekly_report_task(
         prompt=WEEKLY_REPORT_PROMPT,
         runtime_id=runtime_id,
         cron_expression="0 0 12 * * 6",
+        timezone_name="Asia/Shanghai",
+        skill_refs=skill_refs,
+        enabled=False,
+        now=now,
+    )
+
+
+def daily_report_prompt() -> str:
+    facts_command = (
+        f"{shlex.quote(str(central_python()))} -m app.cli daily-report-facts --date <报告日期>"
+    )
+    return (
+        "按 $ceo-daily-report 生成今天的 CEO 每日总结。报告日期是本次触发时间换算成北京时间的日期。"
+        f"先运行 `{facts_command}` 取得服务记录的当天事实，再用 $dingtalk-chat 扫描当天全部群消息，"
+        "按需用 $dingtalk-minutes 补读会议摘要；写成报告后用 $dingtalk-wiki 与 $dingtalk-doc "
+        "发布到钉钉文档并读回核对，最后由机器人单聊把要点和文档链接发给 Derek。"
+        "某个来源读不到时写进覆盖说明，照常发布，不要向 Derek 追问材料。"
+    )
+
+
+def _seed_daily_report_task(
+    *,
+    store: AutoReplyStore,
+    options: ScheduledTaskOptionService,
+    working_directory: Path,
+    now: datetime | None,
+) -> ScheduledTask:
+    """Seed the nightly CEO report as an Agent task.
+
+    Unlike the weekly report, which needs source reports only people can
+    supply, every required input here is something the service already
+    recorded, so the run never has to stop and ask for material.
+    """
+    del working_directory
+    existing = _existing_task(store, DAILY_REPORT_MIGRATION_KEY, now=now)
+    if existing is not None:
+        return existing
+    skill_refs = _consumer_skill_refs(
+        options,
+        managed=("ceo-daily-report",),
+        operation=("dingtalk-chat", "dingtalk-minutes", "dingtalk-wiki", "dingtalk-doc"),
+    )
+    runtime_options = options.list_runtime_options()
+    if not runtime_options:
+        raise ValueError("no runtime is configured for the daily report")
+    runtime_id = next(
+        (option.route_name for option in runtime_options if option.available),
+        runtime_options[0].route_name,
+    )
+    return store.create_scheduled_task(
+        migration_key=DAILY_REPORT_MIGRATION_KEY,
+        name=_default_copy(DAILY_REPORT_MIGRATION_KEY).name,
+        description=_default_copy(DAILY_REPORT_MIGRATION_KEY).description,
+        prompt=daily_report_prompt(),
+        runtime_id=runtime_id,
+        cron_expression="0 0 21 * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
         enabled=False,

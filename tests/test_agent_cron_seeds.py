@@ -106,6 +106,8 @@ def _options(
     required_operation_skills = {
         "dingtalk-chat",
         "dingtalk-minutes",
+        "dingtalk-wiki",
+        "dingtalk-doc",
         "dingtalk-calendar",
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
@@ -160,6 +162,10 @@ FIXED_DISCOVERY_KEYS = frozenset(
 
 
 READABLE_BUILTIN_COPY = {
+    "ceo-daily-report-daily-v1": (
+        "发送 CEO 每日总结",
+        "每晚汇总当天的会议、Tasks 项目变化、已处理和等你处理的事项，并扫描当天群消息，写成重要进展、风险、需介入、需关注和管理建议；发布为钉钉文档，由机器人单聊把要点和链接发给 Derek。",
+    ),
     "ceo-weekly-report-saturday-v1": (
         "准备 CEO 管理周报",
         "按本周的听记、群消息和四条业务线来源报告整理 CEO 管理周报草稿，核对上期未结问题，产出可校验的报告数据；发布到钉钉文档需要 Derek 明确授权，本任务不自行发布。",
@@ -971,15 +977,29 @@ def test_every_fixed_discovery_check_is_a_service_command(
         ]
         assert task.enabled is False
 
-    # Every discovery check is a service command. The weekly management report
-    # is the one Agent task: which meetings matter and what the evidence
+    # Every discovery check is a service command. The weekly and daily reports
+    # are the Agent tasks: which meetings matter and what the evidence
     # supports is judgement, not a fixed rule.
     weekly_report = _task_by_key(tasks, "ceo-weekly-report-saturday-v1")
+    daily_report = _task_by_key(tasks, "ceo-daily-report-daily-v1")
     assert all(
         task.command
         for task in tasks
-        if task.migration_key != weekly_report.migration_key
+        if task.migration_key
+        not in {weekly_report.migration_key, daily_report.migration_key}
     )
+    assert daily_report.command == "" and daily_report.runtime_id
+    assert daily_report.cron_expression == "0 0 21 * * *"
+    assert daily_report.timezone_name == "Asia/Shanghai"
+    assert daily_report.enabled is False
+    assert [ref.skill_name for ref in daily_report.skill_refs] == [
+        "ceo-daily-report",
+        "dingtalk-chat",
+        "dingtalk-minutes",
+        "dingtalk-wiki",
+        "dingtalk-doc",
+    ]
+    assert "-m app.cli daily-report-facts --date" in daily_report.prompt
     assert weekly_report.command == "" and weekly_report.runtime_id
     assert weekly_report.cron_expression == "0 0 12 * * 6"
     assert [ref.skill_name for ref in weekly_report.skill_refs] == [
@@ -1523,11 +1543,14 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         assert reply.trigger_text == task.prompt
         assert task.name in reply.trigger_message_json
     # Every discovery check is a service command running in-process on its own
-    # trigger, so a Cron tick creates exactly one scheduled reply task: the
-    # Agent turn that prepares the weekly management report.
-    weekly_report = _task_by_key(tasks, "ceo-weekly-report-saturday-v1")
+    # trigger, so a Cron tick creates one scheduled reply task per report: the
+    # Agent turns that prepare the weekly management report and the daily report.
+    reports = {
+        _task_by_key(tasks, "ceo-weekly-report-saturday-v1").prompt,
+        _task_by_key(tasks, "ceo-daily-report-daily-v1").prompt,
+    }
     scheduled = store.list_reply_tasks(channel="scheduled")
-    assert [task.trigger_text for task in scheduled] == [weekly_report.prompt]
+    assert sorted(task.trigger_text for task in scheduled) == sorted(reports)
 
 
 def test_seed_is_idempotent_and_preserves_user_edits(tmp_path: Path) -> None:
@@ -1576,11 +1599,11 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
         store=store, options=options, working_directory=tmp_path, now=NOW
     )
 
-    assert len(tasks) == 13
-    weekly_report = _task_by_key(tasks, "ceo-weekly-report-saturday-v1")
+    assert len(tasks) == 14
+    agent_tasks = {"ceo-weekly-report-saturday-v1", "ceo-daily-report-daily-v1"}
     for task in tasks:
         assert task.enabled is False
-        if task.migration_key == weekly_report.migration_key:
+        if task.migration_key in agent_tasks:
             continue
         assert task.command, task.migration_key
         if task.command in {

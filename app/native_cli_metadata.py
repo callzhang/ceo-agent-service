@@ -18,7 +18,7 @@ from app.runtime_environment import central_python
 
 _SHELL_CONNECTORS = frozenset({"&&", "||", "|", ";"})
 _SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset(
-    {"read-oa-approval-detail", "read-dingteam-okr"}
+    {"read-oa-approval-detail", "read-dingteam-okr", "daily-report-facts"}
 )
 MATERIAL_OUTPUT_ROOT = Path("/tmp").resolve() / "ceo-agent-service-materials"
 _LOCAL_OUTPUT_FLAGS = frozenset(
@@ -419,7 +419,11 @@ def _service_read_target_identifiers(argv: tuple[str, ...]) -> dict[str, str]:
     if argv[3] == "read-oa-approval-detail":
         return {"instance-id": argv[5]}
     identifiers: dict[str, str] = {}
-    for flag, key in (("--user-id", "user-id"), ("--period-label", "period-label")):
+    for flag, key in (
+        ("--user-id", "user-id"),
+        ("--period-label", "period-label"),
+        ("--date", "date"),
+    ):
         try:
             value = argv[argv.index(flag) + 1]
         except (ValueError, IndexError):
@@ -550,6 +554,12 @@ def _is_service_read_only_python_command(argv: tuple[str, ...]) -> bool:
                 command == "read-dingteam-okr"
                 and _has_required_flag_value(argv, "--user-id")
                 and _has_required_flag_value(argv, "--period-label")
+            )
+            or (
+                command == "daily-report-facts"
+                and len(argv) == 6
+                and argv[4] == "--date"
+                and _has_required_flag_value(argv, "--date")
             )
         )
     )

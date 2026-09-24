@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from pydantic import BaseModel, NonNegativeInt, PositiveInt, field_validator
@@ -367,6 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
         "scan-oa-approvals",
         "read-oa-approval-detail",
         "read-dingteam-okr",
+        "daily-report-facts",
         "process-follow-ups",
         "check-follow-up-completions",
         "daily-task-maintenance",
@@ -516,6 +517,13 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "read-dingteam-okr":
             subparser.add_argument("--user-id", required=True)
             subparser.add_argument("--period-label", required=True)
+        if command == "daily-report-facts":
+            subparser.add_argument(
+                "--date",
+                required=True,
+                type=date.fromisoformat,
+                help="Beijing calendar date to report, YYYY-MM-DD",
+            )
         if command == "repository-updater":
             subparser.add_argument("--operation-id", required=True)
         if command == "repair-task-projects-plan":
@@ -2562,6 +2570,21 @@ def read_oa_approval_detail_command(
     )
     payload = dws.read_oa_process_instance_openapi(process_id)
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+    return payload
+
+
+def daily_report_facts_command(
+    settings: WorkerSettings, *, report_date: date
+) -> dict[str, object]:
+    """Print one Beijing day of service-recorded facts for the daily report."""
+    from app.daily_report_facts import collect_daily_report_facts
+
+    payload = collect_daily_report_facts(AutoReplyStore(settings.db_path), report_date)
+    payload["delivery"] = {
+        "robot_code": settings.ding_robot_code,
+        "robot_name": settings.ding_robot_name,
+    }
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), flush=True)
     return payload
 
 
@@ -5017,6 +5040,8 @@ def main() -> None:
             user_id=args.user_id,
             period_label=args.period_label,
         )
+    elif args.command == "daily-report-facts":
+        daily_report_facts_command(settings, report_date=args.date)
     elif args.command == "process-follow-ups":
         ensure_live_send_allowed(settings)
         process_follow_ups_command(settings)

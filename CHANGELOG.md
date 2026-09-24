@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- 2026-09-24: New paused Agent task “发送 CEO 每日总结” (21:00 Asia/Shanghai,
+  Skill `ceo-daily-report`). Its required input comes from the new read-only
+  command `app.cli daily-report-facts --date <Beijing date>`: the day's sent
+  meeting follow-ups, business Tasks that changed that day with their events,
+  active business attention items, handled items, and what waits on Derek.
+  The Agent adds that day's group messages, writes a seven-section report,
+  publishes it as that day's DingTalk document and sends Derek the link by bot.
+  A source it cannot read goes into the report's coverage section instead of
+  becoming a question for Derek.
+
 - 2026-09-24: Tasks now use a semantic Task-first model instead of treating
   every work item as a Project. The Tasks console opens on business “需关注”
   and separates attention, all Tasks, official Projects, provisional Project

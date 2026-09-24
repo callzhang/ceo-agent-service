@@ -126,6 +126,7 @@ WECHAT_SKILL_NAME = "ceo-wechat"
 EMAIL_CLASSIFIER_SKILL_NAME = "ceo-email-classifier"
 MINUTES_SYNC_SKILL_NAME = "ceo-minutes-sync"
 WEEKLY_REPORT_SKILL_NAME = "ceo-weekly-report"
+DAILY_REPORT_SKILL_NAME = "ceo-daily-report"
 REPOSITORY_MANAGED_SKILL_NAMES = (
     *BUNDLED_BUSINESS_SKILL_NAMES,
     FEEDBACK_ITERATION_SKILL_NAME,
@@ -133,6 +134,7 @@ REPOSITORY_MANAGED_SKILL_NAMES = (
     EMAIL_CLASSIFIER_SKILL_NAME,
     MINUTES_SYNC_SKILL_NAME,
     WEEKLY_REPORT_SKILL_NAME,
+    DAILY_REPORT_SKILL_NAME,
 )
 
 # Skills the service depends on that live only in the runtime tree: they have no
@@ -187,6 +189,7 @@ def _repository_managed_skills() -> tuple[tuple[str, str], ...]:
         (EMAIL_CLASSIFIER_SKILL_NAME, load_runtime_skill(EMAIL_CLASSIFIER_SKILL_NAME)),
         (MINUTES_SYNC_SKILL_NAME, load_runtime_skill(MINUTES_SYNC_SKILL_NAME)),
         (WEEKLY_REPORT_SKILL_NAME, load_runtime_skill(WEEKLY_REPORT_SKILL_NAME)),
+        (DAILY_REPORT_SKILL_NAME, load_runtime_skill(DAILY_REPORT_SKILL_NAME)),
     )
 
 
