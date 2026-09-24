@@ -1412,6 +1412,114 @@ class TaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
             )
 
 
+class BusinessTaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
+    """Dispatch Task-keyed DingTalk effects with the normal receipt lease."""
+
+    name = "business_task_todo_sync_outbox"
+
+    def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
+        self.store = store
+        self.owner_alive = owner_alive
+
+    def metrics(self, now: datetime) -> QueueMetrics:
+        now_text = _sqlite_time(now)
+        with self.store._connect() as db:
+            pending = db.execute(
+                "select count(*) from business_task_todo_sync_outbox "
+                "where status='queued' or (status='failed' and attempt_count<3)"
+            ).fetchone()[0]
+            due = db.execute(
+                "select count(*) from business_task_todo_sync_outbox "
+                "where status='queued' or (status='failed' and attempt_count<3 "
+                "and next_attempt_at<=?)", (now_text,),
+            ).fetchone()[0]
+            running = db.execute(
+                "select count(*) from business_task_todo_sync_outbox where status='running'"
+            ).fetchone()[0]
+            oldest = db.execute(
+                "select min(created_at) from business_task_todo_sync_outbox "
+                "where status='queued' or (status='failed' and attempt_count<3 and next_attempt_at<=?)",
+                (now_text,),
+            ).fetchone()[0]
+        return QueueMetrics(
+            pending=int(pending), due=int(due), running=int(running),
+            oldest_available_at=_source_time(str(oldest), fallback=now) if oldest else None,
+            latest_error="",
+        )
+
+    def claim(self, now: datetime, *, owner: str, owner_pid: int | None = None, lease: timedelta) -> DispatchEnvelope | None:
+        owner_pid = os.getpid() if owner_pid is None else owner_pid
+        _validate_claim(owner, lease)
+        now_text = _sqlite_time(now)
+        lease_text = _lease_expiry(now, lease)
+        with self.store._immediate_write_transaction() as db:
+            db.execute(
+                "update business_task_todo_sync_outbox set status='unknown', lease_owner='', lease_expires_at='', "
+                "error='receipt_reconciliation_required', updated_at=? where status='running' and lease_expires_at<=?",
+                (now_text, now_text),
+            )
+            row = db.execute(
+                "select * from business_task_todo_sync_outbox where (status='queued' or "
+                "(status='failed' and attempt_count<3 and next_attempt_at<=?)) order by id limit 1",
+                (now_text,),
+            ).fetchone()
+            if row is None:
+                return None
+            if db.execute(
+                "update business_task_todo_sync_outbox set status='running', lease_owner=?, lease_expires_at=?, "
+                "attempt_count=attempt_count+1, updated_at=? where id=? and status in ('queued','failed')",
+                (owner, lease_text, now_text, row["id"]),
+            ).rowcount != 1:
+                return None
+            generation = _acquire_lease(db, adapter_name=self.name, source_id=str(row["id"]), owner=owner, owner_pid=owner_pid, lease_expires_at=lease_text, now=now_text)
+        return DispatchEnvelope(adapter_name=self.name, source_id=str(row["id"]), available_at=now, priority=0, attempt=int(row["attempt_count"]) + 1, generation=generation)
+
+    def finish_delivery(self, envelope: DispatchEnvelope, *, owner: str, now: datetime, status: str, receipt_json: str = "{}", error: str = "") -> None:
+        now_text = _sqlite_time(now)
+        with self.store._immediate_write_transaction() as db:
+            _assert_ledger_current_in_db(db, envelope=envelope, owner=owner, now=now_text)
+            if status == "failed":
+                self.store.retry_business_task_todo_sync_outbox(outbox_id=int(envelope.source_id), owner=owner, error=error, now=now_text, _db=db)
+            else:
+                self.store.finish_business_task_todo_sync_outbox(outbox_id=int(envelope.source_id), owner=owner, status=status, receipt_json=receipt_json, error=error, _db=db)
+            _complete_ledger_in_db(db, envelope=envelope, owner=owner, now=now_text)
+
+    def release(self, envelope: DispatchEnvelope, *, owner: str, now: datetime) -> None:
+        _validate_release(self.name, envelope, owner, now)
+        now_text = _sqlite_time(now)
+        with self.store._immediate_write_transaction() as db:
+            _release_lease(db, envelope=envelope, owner=owner, now=now_text)
+            changed = db.execute(
+                "update business_task_todo_sync_outbox set status=case when attempt_count>1 then 'failed' else 'queued' end, "
+                "attempt_count=max(attempt_count-1, 0), lease_owner='', lease_expires_at='', updated_at=? "
+                "where id=? and status='running' and lease_owner=?",
+                (now_text, int(envelope.source_id), owner),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("business Task Todo outbox dispatch claim is no longer owned")
+
+    def renew(self, envelope: DispatchEnvelope, *, owner: str, now: datetime, lease: timedelta) -> None:
+        _validate_release(self.name, envelope, owner, now)
+        now_text = _sqlite_time(now)
+        lease_text = _lease_expiry(now, lease)
+        with self.store._immediate_write_transaction() as db:
+            _renew_lease_in_db(db, envelope=envelope, owner=owner, now=now_text, lease_expires_at=lease_text)
+            changed = db.execute(
+                "update business_task_todo_sync_outbox set lease_expires_at=?, updated_at=? where id=? "
+                "and status='running' and lease_owner=? and lease_expires_at>?",
+                (lease_text, now_text, int(envelope.source_id), owner, now_text),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("business Task Todo outbox dispatch claim is no longer owned")
+
+    def finish(self, envelope: DispatchEnvelope, *, owner: str, now: datetime, status: str, reason: str = "") -> None:
+        del reason
+        row = self.store.get_business_task_todo_sync_outbox(int(envelope.source_id))
+        if row is None or str(row["status"]) != status:
+            raise ValueError("business Task Todo outbox terminal status was not persisted")
+        _complete_ledger(self.store, envelope=envelope, owner=owner, now=now)
+
+
 def _lease_seconds(lease: timedelta) -> int:
     seconds = int(lease.total_seconds())
     if seconds <= 0:

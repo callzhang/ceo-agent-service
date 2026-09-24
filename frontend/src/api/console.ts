@@ -88,6 +88,77 @@ function query(params: Record<string, string | number | undefined>) {
 }
 
 export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; integrity_issues?: string[]; }
+export type TaskView = "attention" | "all" | "projects";
+export type AttentionCategory = "fyi" | "watch" | "decision" | "push";
+export interface BusinessAttentionSummary {
+  id: string;
+  category: AttentionCategory;
+  business_area: string;
+  title: string;
+  why_attention: string;
+  current_state: string;
+  ceo_action: string;
+  anchor_label: string;
+  linked_task_count: number;
+  updated_at: string;
+  detail_url: string;
+}
+export interface BusinessTaskSummary {
+  id: string;
+  title: string;
+  stage: "candidate" | "formal";
+  status: string;
+  commitment_status: string;
+  owner: string;
+  deadline_at: string;
+  business_relevance: string;
+  anchor_labels: string[];
+  updated_at: string;
+  detail_url: string;
+}
+export interface BusinessProjectSummary {
+  id: string;
+  title: string;
+  registry_source: string;
+  canonical_anchor_id: number;
+  confirmed_task_count: number;
+  detail_url: string;
+}
+export interface BusinessProjectCandidateSummary { id: string; title: string; reason: string; status: string; cluster_id: number; provisional: boolean; confirmed_project_id: number | null; }
+export interface BusinessProjectList extends ConsoleList<BusinessProjectSummary> {
+  candidates: BusinessProjectCandidateSummary[];
+  candidate_meta: ConsoleListMeta;
+}
+export type BusinessAttentionList = ConsoleList<BusinessAttentionSummary>;
+export type BusinessTaskList = ConsoleList<BusinessTaskSummary>;
+export interface BusinessAttentionDetail {
+  summary: BusinessAttentionSummary;
+  anchor?: Record<string, unknown> | null;
+  linked_tasks: BusinessTaskSummary[];
+  evidence_signals: Array<Record<string, unknown>>;
+  events: Array<Record<string, unknown>>;
+}
+export interface BusinessTaskDetail {
+  summary: BusinessTaskSummary;
+  description?: string;
+  formal_basis?: string;
+  owner_user_id?: string;
+  missing_evidence?: string[];
+  evidence: Array<Record<string, unknown>>;
+  date_evidence: Array<Record<string, unknown>>;
+  events: Array<Record<string, unknown>>;
+  relations: Array<Record<string, unknown>>;
+  clusters: Array<Record<string, unknown>>;
+  anchors: Array<Record<string, unknown>>;
+  official_projects: BusinessProjectSummary[];
+  follow_ups: Array<Record<string, unknown>>;
+  dingtalk_todos: Array<Record<string, unknown>>;
+}
+export interface BusinessProjectDetail {
+  summary: BusinessProjectSummary;
+  anchor?: Record<string, unknown> | null;
+  confirmed_tasks: BusinessTaskSummary[];
+}
 export interface TaskFilters { categories: string[]; task_states: string[]; }
 export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
 export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
@@ -677,6 +748,58 @@ export function listTasks(params: Record<string, string | number | undefined> = 
     const taskStates = Array.isArray(filters.task_states) ? filters.task_states.map(displayValue).filter((item) => item !== "未提供") : [];
     return { ...page, items: page.items.map(mapTaskSummary), filters: { categories, task_states: taskStates } } satisfies TaskList;
   });
+}
+
+function semanticList<T>(value: unknown, kind: "attention" | "task" | "project", valid: (item: Record<string, unknown>) => boolean): ConsoleList<T> {
+  const page = parseConsoleList<unknown>(value);
+  if (!page.items.every((item) => isRecord(item) && valid(item))) throw new Error(`invalid business ${kind} response`);
+  return page as ConsoleList<T>;
+}
+
+const isString = (value: unknown): value is string => typeof value === "string";
+const isIdentity = (value: unknown) => isString(value) || typeof value === "number";
+const isAttentionSummary = (item: Record<string, unknown>) => isIdentity(item.id)
+  && ["fyi", "watch", "decision", "push"].includes(String(item.category))
+  && ["business_area", "title", "why_attention", "current_state", "ceo_action", "anchor_label", "updated_at", "detail_url"].every((field) => isString(item[field]))
+  && typeof item.linked_task_count === "number";
+const isTaskSummary = (item: Record<string, unknown>) => isIdentity(item.id)
+  && (item.stage === "candidate" || item.stage === "formal")
+  && ["title", "status", "commitment_status", "owner", "deadline_at", "business_relevance", "updated_at", "detail_url"].every((field) => isString(item[field]))
+  && Array.isArray(item.anchor_labels) && item.anchor_labels.every(isString);
+const isProjectSummary = (item: Record<string, unknown>) => isIdentity(item.id)
+  && ["title", "registry_source", "detail_url"].every((field) => isString(item[field]))
+  && typeof item.canonical_anchor_id === "number" && typeof item.confirmed_task_count === "number";
+
+export function listBusinessAttention(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal): Promise<BusinessAttentionList> {
+  return request<unknown>(`/api/console/tasks/attention${query(params)}`, { signal }).then((value) => semanticList<BusinessAttentionSummary>(value, "attention", isAttentionSummary));
+}
+export function listBusinessTasks(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal): Promise<BusinessTaskList> {
+  return request<unknown>(`/api/console/tasks/all${query(params)}`, { signal }).then((value) => semanticList<BusinessTaskSummary>(value, "task", isTaskSummary));
+}
+export function listBusinessProjects(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal): Promise<BusinessProjectList> {
+  return request<unknown>(`/api/console/tasks/projects${query(params)}`, { signal }).then((value) => {
+    const page = semanticList<BusinessProjectSummary>(value, "project", isProjectSummary);
+    const candidates = isRecord(value) && Array.isArray(value.candidates) ? value.candidates : [];
+    if (!isRecord(value) || !isListMeta(value.candidate_meta)) throw new Error("invalid business project candidate page");
+    if (!candidates.every((candidate) => isRecord(candidate) && isIdentity(candidate.id) && isString(candidate.title) && isString(candidate.reason) && isString(candidate.status) && typeof candidate.cluster_id === "number" && typeof candidate.provisional === "boolean")) throw new Error("invalid business project response");
+    return { ...page, candidates: candidates as BusinessProjectCandidateSummary[], candidate_meta: value.candidate_meta };
+  });
+}
+function semanticDetail<T>(value: unknown, kind: string, valid: (item: Record<string, unknown>) => boolean): ConsoleResource<T> {
+  if (!isRecord(value) || !isRecord(value.item) || !isRecord(value.meta) || !isString(value.meta.snapshot_at) || !valid(value.item)) throw new Error(`invalid business ${kind} detail`);
+  return value as unknown as ConsoleResource<T>;
+}
+export function getBusinessAttentionDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessAttentionDetail>> {
+  return request<unknown>(`/api/console/tasks/attention/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessAttentionDetail>(value, "attention", (item) => isRecord(item.summary) && isAttentionSummary(item.summary) && Array.isArray(item.linked_tasks) && Array.isArray(item.events)));
+}
+export function getBusinessTaskDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessTaskDetail>> {
+  return request<unknown>(`/api/console/tasks/items/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessTaskDetail>(value, "task", (item) => isRecord(item.summary) && isTaskSummary(item.summary) && Array.isArray(item.evidence) && Array.isArray(item.events)));
+}
+export function getBusinessProjectDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessProjectDetail>> {
+  return request<unknown>(`/api/console/tasks/projects/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessProjectDetail>(value, "project", (item) => isRecord(item.summary) && isProjectSummary(item.summary) && Array.isArray(item.confirmed_tasks)));
+}
+export function getLegacyProjectDetail(id: string, signal?: AbortSignal) {
+  return request<ConsoleResource<unknown>>(`/api/console/tasks/legacy-projects/${encodeURIComponent(id)}`, { signal }).then((response) => ({ ...response, item: mapTaskDetail(response.item) }));
 }
 
 export function listSentTodos(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal) {

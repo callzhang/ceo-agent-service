@@ -12,6 +12,16 @@ function mediumStyles() {
 }
 
 describe("Tasks responsive layout contract", () => {
+  it("scopes dark readable tokens to Tasks and keeps card text on theme variables", () => {
+    expect(workbenchStyles).toMatch(/@media \(prefers-color-scheme: dark\)\s*\{\s*\.task-domain-route\s*\{[^}]*--canvas:\s*#111411;[^}]*--ink:\s*#f0f3ed;[^}]*--accent:\s*#61d0a6;/);
+    expect(workbenchStyles).toMatch(/\.business-attention-card\s*\{[^}]*color:\s*var\(--ink\);[^}]*background:\s*var\(--surface\);/);
+    expect(workbenchStyles).toMatch(/\.business-attention-action dd\s*\{[^}]*color:\s*var\(--ink\);/);
+  });
+
+  it("keeps the CEO action visible and text wrapping at phone width", () => {
+    expect(workbenchStyles).toMatch(/@media \(max-width:\s*600px\)\s*\{[\s\S]*?\.business-attention-card dl > div\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+    expect(workbenchStyles).toMatch(/\.business-attention-card dd\s*\{[^}]*overflow-wrap:\s*anywhere;/);
+  });
   it("lets the console grid and page shrink below their intrinsic content width", () => {
     expect(workbenchStyles).toMatch(
       /\.console-root\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,

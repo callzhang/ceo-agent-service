@@ -8,6 +8,105 @@ from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
 from app.task_models import ProjectPriority, ProjectStatus, TodoStatus, WorkItem
 
+
+def close_business_task_with_completion_evidence(
+    store: AutoReplyStore,
+    *,
+    business_task_id: int,
+    evidence: dict[str, object],
+    source_type: str,
+    _db: sqlite3.Connection,
+) -> bool:
+    task = store.get_business_task_in_transaction(task_id=business_task_id, _db=_db)
+    if task is None or task.status.value in {"done", "merged"}:
+        return False
+    source_ref = str(evidence.get("source") or "").strip()
+    if not source_ref or not str(evidence.get("reason") or "").strip():
+        raise ValueError("Business Task completion requires sourced evidence and reason")
+    dedupe_key = f"business-task-completion:{business_task_id}:{source_type}:{source_ref}"
+    signal = store.get_business_task_signal_by_dedupe_key(dedupe_key=dedupe_key, _db=_db)
+    signal_id = signal.id if signal is not None else store.create_business_task_signal_in_transaction(
+        source_type=source_type, source_ref=source_ref,
+        evidence_text=json.dumps(evidence, ensure_ascii=False),
+        dedupe_key=dedupe_key, _db=_db,
+    )
+    store.link_business_task_evidence_in_transaction(
+        task_id=business_task_id, signal_id=signal_id, evidence_role="completion", _db=_db,
+    )
+    before = {"status": task.status.value, "commitment_status": task.commitment_status.value}
+    after = {"status": "done", "commitment_status": "completed", "completion_evidence": evidence}
+    _db.execute(
+        "update business_tasks set status='done', commitment_status='completed', "
+        "updated_at=current_timestamp where id=?", (business_task_id,),
+    )
+    store.append_business_task_event(
+        task_id=business_task_id, event_type="status_changed", signal_id=signal_id,
+        before_json=json.dumps(before, ensure_ascii=False),
+        after_json=json.dumps(after, ensure_ascii=False),
+        reason=str(evidence["reason"]), _db=_db,
+    )
+    _db.execute(
+        "update business_task_follow_ups set status='completed', evidence_check_json=?, "
+        "suppressed_reason=?, updated_at=current_timestamp where business_task_id=? "
+        "and status in ('draft','approved','sent')",
+        (json.dumps(evidence, ensure_ascii=False), str(evidence["reason"]), business_task_id),
+    )
+    return True
+
+
+def complete_business_task_from_external_todo(
+    store: AutoReplyStore,
+    *,
+    business_task_id: int,
+    evidence: dict[str, object],
+) -> bool:
+    """Close one authoritative Task from a completed mirrored DingTalk TODO."""
+    with store._immediate_write_transaction() as db:
+        task = store.get_business_task_in_transaction(task_id=business_task_id, _db=db)
+        if task is None or task.status.value == "merged" or task.status.value == "done":
+            return False
+        source_ref = str(evidence.get("source") or "").strip()
+        link = db.execute(
+            "select * from business_task_dingtalk_links where business_task_id=? "
+            "and status in ('active','done') and dingtalk_task_id=? order by id desc limit 1",
+            (business_task_id, source_ref.removeprefix("dingtalk_todo:")),
+        ).fetchone()
+        if not source_ref.startswith("dingtalk_todo:") or link is None:
+            return False
+        signal = store.get_business_task_signal_by_dedupe_key(
+            dedupe_key=f"external-todo-completion:{business_task_id}:{source_ref}", _db=db
+        )
+        signal_id = signal.id if signal is not None else store.create_business_task_signal_in_transaction(
+            source_type="dingtalk_todo", source_ref=source_ref,
+            evidence_text=json.dumps(evidence, ensure_ascii=False),
+            dedupe_key=f"external-todo-completion:{business_task_id}:{source_ref}", _db=db,
+        )
+        store.link_business_task_evidence_in_transaction(
+            task_id=business_task_id, signal_id=signal_id, evidence_role="completion", _db=db
+        )
+        before = {"status": task.status.value, "commitment_status": task.commitment_status.value}
+        db.execute(
+            "update business_tasks set status='done', commitment_status='completed', updated_at=current_timestamp where id=?",
+            (business_task_id,),
+        )
+        after = {"status": "done", "commitment_status": "completed", "completion_evidence": evidence}
+        store.append_business_task_event(
+            task_id=business_task_id, event_type="status_changed", signal_id=signal_id,
+            before_json=json.dumps(before, ensure_ascii=False),
+            after_json=json.dumps(after, ensure_ascii=False),
+            reason=str(evidence.get("reason") or "DingTalk Todo marked done by owner"), _db=db,
+        )
+        db.execute(
+            "update business_task_follow_ups set status='completed', evidence_check_json=?, "
+            "suppressed_reason=?, updated_at=current_timestamp where business_task_id=? "
+            "and status in ('draft','approved','sent')",
+            (json.dumps(evidence, ensure_ascii=False), str(evidence.get("reason") or ""), business_task_id),
+        )
+    from app.task_agent import _project_task_attention
+
+    _project_task_attention(store, (), (business_task_id,))
+    return True
+
 FOLLOW_UP_COMPLETION_CHECK_SCANNER = "follow_up_completion_check"
 TODO_COMPLETION_EVIDENCE_SCANNER = "todo_completion_evidence"
 FOLLOW_UP_COMPLETION_CHECK_LOOKBACK_DAYS = 14
@@ -25,8 +124,9 @@ def close_todo_with_completion_evidence(
     source_ref: str,
     merge_reason: str,
     confidence: float = 1.0,
+    _db: sqlite3.Connection | None = None,
 ) -> bool:
-    todo = store.get_work_todo(todo_id)
+    todo = store.get_work_todo(todo_id, _db=_db)
     if todo is None or str(todo.status) == TodoStatus.DONE.value:
         return False
     normalized_evidence = _completion_evidence(evidence, now=now)
@@ -35,12 +135,14 @@ def close_todo_with_completion_evidence(
         status=TodoStatus.DONE.value,
         completion_evidence_json=json.dumps(normalized_evidence, ensure_ascii=False),
         completed_at=now,
+        _db=_db,
     )
     complete_follow_ups_for_todo(
         store,
         todo_id=todo.id,
         evidence=normalized_evidence,
         now=now,
+        _db=_db,
     )
     store.create_work_update(
         project_id=todo.project_id,
@@ -57,6 +159,7 @@ def close_todo_with_completion_evidence(
         ),
         merge_reason=merge_reason,
         confidence=confidence,
+        _db=_db,
     )
     return True
 
@@ -125,9 +228,12 @@ def enqueue_todo_completion_evidence_checks(
         return 0
     if not (feature_registry or FeatureRegistry()).feature_enabled("work_tracking"):
         return 0
-    todos_checked = 0
-    candidates_enqueued = 0
     workspace_changed_since = _last_todo_completion_checked_at(store)
+    candidates_enqueued = _enqueue_business_task_completion_checks(
+        store, now=now, limit=limit, require_follow_up=require_follow_up,
+        workspace=workspace, workspace_changed_since=workspace_changed_since,
+    )
+    todos_checked = candidates_enqueued
     for project, todo, drafts, dingtalk_links in _todo_completion_check_candidates(
         store,
         now=now,
@@ -231,6 +337,93 @@ def enqueue_todo_completion_evidence_checks(
         last_error="",
     )
     return todos_checked
+
+
+def _enqueue_business_task_completion_checks(
+    store: AutoReplyStore,
+    *,
+    now: str,
+    limit: int,
+    require_follow_up: bool,
+    workspace: Path | None,
+    workspace_changed_since: str,
+) -> int:
+    """Queue each open formal Task once per day, independently of a Project."""
+    enqueued = 0
+    offset = 0
+    while enqueued < limit:
+        tasks = store.list_business_tasks(
+            stages=("formal",), statuses=("open", "waiting"), limit=200, offset=offset,
+        )
+        if not tasks:
+            break
+        offset += len(tasks)
+        for task in tasks:
+            if enqueued >= limit:
+                break
+            source_ref = f"business-task-completion-check:{task.id}:{_date_part(now)}"
+            with store._connect() as db:
+                existing = db.execute(
+                    "select 1 from work_summary_inputs where source_type='todo_completion_check' "
+                    "and source_ref=?", (source_ref,),
+                ).fetchone()
+            if existing is not None:
+                continue
+            drafts = store.list_business_task_follow_ups(
+                business_task_id=task.id, statuses=("draft", "approved", "sent"),
+            )
+            if require_follow_up and not drafts:
+                continue
+            signals = [
+                store.get_business_task_signal(signal_id)
+                for signal_id in dict.fromkeys(
+                    evidence.signal_id for evidence in store.list_business_task_evidence(task.id)
+                )
+            ]
+            links = store.list_business_task_dingtalk_links(business_task_id=task.id)
+            search_policy = _todo_completion_search_policy(
+                todo=task, drafts=[], workspace=workspace,
+                workspace_changed_since=workspace_changed_since, now=now,
+            )
+            primary_draft = drafts[0] if drafts else None
+            summary = {
+                "instruction": (
+                    "这是已存在 Business Task 的完成核查。使用只读工具检索当前来源，"
+                    "只有直接确认该任务完成的证据才能在顶层 todo_changes 返回 "
+                    "action=close 与 business_task_id；不要填写 legacy todo_id。"
+                    "提供完整 completion_evidence 和 search_trace；没有完成证据时保持任务开放。"
+                    "follow_ups 和钉钉 TODO 只是该 Task 的关联上下文，不代表其他 Task 已完成。"
+                ),
+                "business_task": task.model_dump(mode="json"),
+                "source_signals": [signal.model_dump(mode="json") for signal in signals if signal is not None],
+                "date_evidence": [fact.model_dump(mode="json") for fact in store.list_business_task_date_evidence(task.id)],
+                "follow_ups": [dict(draft) for draft in drafts],
+                "dingtalk_todos": [dict(link) for link in links],
+                "search_policy": search_policy,
+            }
+            item = WorkItem.model_validate({
+                "source": {
+                    "type": "todo_completion_check", "ref": source_ref,
+                    "title": f"Task completion check #{task.id}", "created_at": now,
+                    "conversation_id": primary_draft["target_conversation_id"] if primary_draft else "",
+                },
+                "summary": json.dumps(summary, ensure_ascii=False),
+                "context": {
+                    "sender": "CEO task completion checker",
+                    "participants": [task.owner_name] if task.owner_name else [],
+                    "source_conversation_kind": primary_draft["target_kind"] if primary_draft else "direct",
+                },
+                "task_signals": {
+                    "possible_task_update": True, "mentions_follow_up": bool(drafts),
+                    "progress_claim": True, "signal_reason": "business Task completion check",
+                },
+            })
+            store.enqueue_work_summary_input(
+                source_type=item.source.type.value, source_ref=item.source.ref,
+                payload_json=item.model_dump_json(),
+            )
+            enqueued += 1
+    return enqueued
 
 
 def _todo_completion_check_candidates(
@@ -545,6 +738,7 @@ def _todo_completion_search_policy(
             "max_sources_to_return": 3,
         },
         "allowed_sources": [
+            "dingtalk_todo",
             "dws_message",
             "dws_minutes",
             "lark_message",
@@ -574,15 +768,29 @@ def _todo_completion_evidence_work_item(
     now: str,
 ) -> WorkItem:
     updates = store.list_work_updates(todo.project_id, limit=10)
+    search_policy = _todo_completion_search_policy(
+        todo=todo,
+        drafts=drafts,
+        workspace=None,
+        workspace_changed_since=candidate.source_created_at or now,
+        now=now,
+    )
+    if candidate.source_type not in search_policy["allowed_sources"]:
+        search_policy["allowed_sources"].append(candidate.source_type)
+    if candidate.source_created_at:
+        search_policy["time_window"]["prefer_since"] = candidate.source_created_at
     summary = {
         "instruction": (
-            "这是 TODO 完成状态的环境证据候选。请结合候选证据、项目/TODO 上下文、"
+            "这是 Task Agent 的 TODO 生命周期核查。返回统一 TaskAgentDecision，提供 task_decisions（没有新/更新 Task 时为空）和顶层 search_trace；"
+            "请结合候选证据、项目/TODO 上下文、"
             "相关 follow-up、钉钉 TODO 和最近 updates 判断 TODO 是否已经明确完成。"
             "只有证据明确完成时才 close TODO；自动关闭必须写完整 "
             "completion_evidence.source/reason/description/completed_at/checked_at。"
-            "弱证据、进展信息或上下文不足时不要关闭，输出更新后的 task JSON 或 skip。"
+            "弱证据、进展信息或上下文不足时不要关闭。遵循 search_policy，仅报告来源证据；"
+            "memory_recall 只能作为背景，不能成为完成依据。"
             "需要历史背景时按现有权限使用 memory_recall。"
         ),
+        "search_policy": search_policy,
         "project": {
             "id": project.id,
             "title": project.title,

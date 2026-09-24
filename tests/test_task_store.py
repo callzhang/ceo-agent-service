@@ -15,6 +15,59 @@ def _store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "task.sqlite3")
 
 
+def test_task_execution_schema_migrates_existing_store_and_has_required_columns(tmp_path):
+    path = tmp_path / "task-execution-migration.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        for table in (
+            "business_task_dingtalk_links",
+            "business_task_follow_ups",
+            "business_task_follow_up_send_attempts",
+            "business_task_todo_sync_outbox",
+        ):
+            db.execute(f"drop table if exists {table}")
+        db.execute(
+            "update service_state set value='2026-09-23.1' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    migrated = AutoReplyStore(path)
+    assert store_module.STORE_SCHEMA_VERSION > "2026-09-23.1"
+    assert migrated._schema_is_current()
+    with sqlite3.connect(path) as db:
+        for table in (
+            "business_task_dingtalk_links",
+            "business_task_follow_ups",
+            "business_task_follow_up_send_attempts",
+            "business_task_todo_sync_outbox",
+        ):
+            columns = {row[1] for row in db.execute(f"pragma table_info({table})")}
+            assert set(store_module.STORE_SCHEMA_REQUIRED_COLUMNS[table]) <= columns
+        follow_up_cols = {row[1] for row in db.execute("pragma table_info(business_task_follow_ups)")}
+        assert {
+            "source_signal_id", "target_conversation_id", "target_kind",
+            "question_text", "scheduled_at", "revision", "send_result_json",
+        } <= follow_up_cols
+
+
+def test_business_task_dingtalk_links_list_filters_status_and_paginates(tmp_path):
+    store = _store(tmp_path)
+    task_ids = [store.create_business_task(title=f"Task {index}", stage="candidate") for index in range(3)]
+    for index, task_id in enumerate(task_ids):
+        store.create_business_task_dingtalk_link(
+            business_task_id=task_id,
+            dingtalk_task_id=f"dt-{index}",
+            status="active" if index < 2 else "done",
+        )
+
+    first = store.list_business_task_dingtalk_links(statuses=("active",), limit=1)
+    second = store.list_business_task_dingtalk_links(statuses=("active",), limit=1, offset=1)
+
+    assert [row["business_task_id"] for row in first] == [task_ids[0]]
+    assert [row["business_task_id"] for row in second] == [task_ids[1]]
+    assert len(store.list_business_task_dingtalk_links(statuses=("done",))) == 1
+
+
 def _email_task_values(trigger_message_id: str) -> dict[str, object]:
     return {
         "channel": "email",

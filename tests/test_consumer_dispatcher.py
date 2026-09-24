@@ -139,6 +139,75 @@ def _todo_outbox(store: AutoReplyStore, *, index: int = 1) -> int:
     return int(store.list_task_todo_sync_outbox()[-1]["id"])
 
 
+def _business_task_todo_outbox(store: AutoReplyStore, *, index: int = 1) -> int:
+    task_id = store.create_business_task(
+        title=f"Business Task {index}", stage="formal",
+        formal_basis="explicit_assignment", commitment_status="accepted",
+        owner_user_id="owner-1", owner_name="Alex",
+    )
+    store.enqueue_business_task_todo_sync_outbox(
+        operation_key=f"task-agent:{index}:business-task:{task_id}:create",
+        business_task_id=task_id, operation="create",
+    )
+    return int(store.list_business_task_todo_sync_outbox()[-1]["id"])
+
+
+def test_business_task_todo_outbox_adapter_claims_and_finishes_receipted_work(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source_id = _business_task_todo_outbox(store)
+    adapter = dispatcher_adapters.BusinessTaskTodoSyncOutboxQueueAdapter(store)
+
+    envelope = adapter.claim(NOW, owner="dispatcher-a", owner_pid=101, lease=timedelta(minutes=5))
+
+    assert envelope is not None
+    assert envelope.source_id == str(source_id)
+    adapter.finish_delivery(
+        envelope, owner="dispatcher-a", now=NOW, status="completed",
+        receipt_json='{"dingtalk_task_id":"dt-1"}',
+    )
+    completed = store.get_business_task_todo_sync_outbox(source_id)
+    assert completed["status"] == "completed"
+    assert completed["receipt_json"] == '{"dingtalk_task_id":"dt-1"}'
+
+
+def test_business_task_todo_outbox_adapter_release_fences_owner(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _business_task_todo_outbox(store)
+    adapter = dispatcher_adapters.BusinessTaskTodoSyncOutboxQueueAdapter(store)
+    envelope = adapter.claim(NOW, owner="dispatcher-a", owner_pid=101, lease=timedelta(minutes=5))
+    assert envelope is not None
+
+    with pytest.raises(ValueError, match="no longer owned"):
+        adapter.release(envelope, owner="dispatcher-b", now=NOW)
+
+
+def test_business_task_todo_failed_delivery_waits_before_bounded_retry(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    source_id = _business_task_todo_outbox(store)
+    adapter = dispatcher_adapters.BusinessTaskTodoSyncOutboxQueueAdapter(store)
+    first = adapter.claim(NOW, owner="dispatcher-a", owner_pid=101, lease=timedelta(minutes=5))
+    assert first is not None
+
+    adapter.finish_delivery(first, owner="dispatcher-a", now=NOW, status="failed", error="temporary outage")
+
+    failed = store.get_business_task_todo_sync_outbox(source_id)
+    assert failed["status"] == "failed"
+    assert failed["next_attempt_at"] == (NOW + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+    assert adapter.claim(NOW, owner="dispatcher-b", owner_pid=202, lease=timedelta(minutes=5)) is None
+    second = adapter.claim(NOW + timedelta(minutes=1), owner="dispatcher-b", owner_pid=202, lease=timedelta(minutes=5))
+    assert second is not None and second.attempt == 2
+
+    adapter.finish_delivery(second, owner="dispatcher-b", now=NOW + timedelta(minutes=1), status="failed", error="temporary outage")
+    assert adapter.claim(NOW + timedelta(minutes=2), owner="dispatcher-c", owner_pid=303, lease=timedelta(minutes=5)) is None
+    third = adapter.claim(NOW + timedelta(minutes=3), owner="dispatcher-c", owner_pid=303, lease=timedelta(minutes=5))
+    assert third is not None and third.attempt == 3
+    adapter.finish_delivery(third, owner="dispatcher-c", now=NOW + timedelta(minutes=3), status="failed", error="temporary outage")
+    assert adapter.claim(NOW + timedelta(hours=1), owner="dispatcher-d", owner_pid=404, lease=timedelta(minutes=5)) is None
+    assert "retry_exhausted" in store.get_business_task_todo_sync_outbox(source_id)["error"]
+
+
 def test_task_todo_outbox_adapter_claims_due_failed_work_without_new_input(
     tmp_path: Path,
 ) -> None:

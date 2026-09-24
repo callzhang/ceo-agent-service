@@ -91,6 +91,7 @@ from app.org_cache import (
 )
 from app.scheduled_task_recovery import close_superseded_scheduled_reply_tasks
 from app.store import AgentRunLeaseLostError, AutoReplyStore
+from app.task_agent_session import TaskAgentSessionLease, TaskAgentSessionLeaseLost
 from app.task_agent import (
     TaskAgentCodexRunner,
     TaskAgentRunner,
@@ -112,6 +113,7 @@ from app.task_owner_backfill import (
 )
 from app.todo_completion import enqueue_todo_completion_evidence_checks
 from app.todo_sync import (
+    dispatch_claimed_business_task_todo_sync_outbox,
     dispatch_claimed_task_todo_sync_outbox,
     pull_dingtalk_todo_statuses,
     retry_failed_dingtalk_todo_links,
@@ -388,6 +390,8 @@ def build_parser() -> argparse.ArgumentParser:
         "repository-updater",
         "repair-task-projects-plan",
         "repair-task-projects-apply",
+        "task-semantic-import-plan",
+        "task-semantic-import-apply",
     ):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--db", default=os.getenv("CEO_WORKER_DB", str(defaults.db_path)))
@@ -520,6 +524,12 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "repair-task-projects-apply":
             subparser.add_argument("--manifest", required=True)
             subparser.add_argument("--archive-limit", type=_non_negative_int)
+        if command == "task-semantic-import-plan":
+            subparser.add_argument("--output", required=True)
+            subparser.add_argument("--limit", type=_positive_int)
+        if command == "task-semantic-import-apply":
+            subparser.add_argument("--manifest", required=True)
+            subparser.add_argument("--limit", type=_positive_int)
         if command == "retry-work-summary-input":
             subparser.add_argument("--input-id", type=_positive_int, required=True)
         if command == "release-failed-email-unsubscribe":
@@ -1108,6 +1118,7 @@ def run_agent_cron_dispatcher_loop(
     )
     from app.agent_runtime_production import build_production_agent_runtime
     from app.dispatcher.adapters import (
+        BusinessTaskTodoSyncOutboxQueueAdapter,
         MeetingQueueAdapter,
         OkrReviewQueueAdapter,
         ReplyQueueAdapter,
@@ -1274,6 +1285,21 @@ def run_agent_cron_dispatcher_loop(
         if not guard.resolved:
             guard.finish_source(now, status=status)
 
+    def consume_business_task_todo_sync_outbox(envelope, guard) -> None:
+        if todo_dws is None:
+            guard.release(datetime.now(timezone.utc))
+            return
+        item = store.get_business_task_todo_sync_outbox(int(envelope.source_id))
+        if item is None:
+            raise ValueError("business Task Todo outbox dispatch source does not exist")
+        now = datetime.now(timezone.utc)
+        status = dispatch_claimed_business_task_todo_sync_outbox(
+            store, todo_dws, item=item, owner=guard.token.owner,
+            now=now.strftime("%Y-%m-%d %H:%M:%S"), claim_guard=guard,
+        )
+        if not guard.resolved:
+            guard.finish_source(now, status=status)
+
     adapters = (
         ScheduledTaskQueueAdapter(store),
         ScheduledExecutionQueueAdapter(store),
@@ -1281,7 +1307,10 @@ def run_agent_cron_dispatcher_loop(
         MeetingQueueAdapter(store),
         WorkSummaryQueueAdapter(store),
         OkrReviewQueueAdapter(store),
-    ) + (() if settings.dry_run else (TaskTodoSyncOutboxQueueAdapter(store),))
+    ) + (() if settings.dry_run else (
+        TaskTodoSyncOutboxQueueAdapter(store),
+        BusinessTaskTodoSyncOutboxQueueAdapter(store),
+    ))
     consumers = {
         "scheduled": trigger_consumer,
         "scheduled_execution": execution_consumer,
@@ -1292,6 +1321,7 @@ def run_agent_cron_dispatcher_loop(
     }
     if not settings.dry_run:
         consumers["task_todo_sync_outbox"] = consume_task_todo_sync_outbox
+        consumers["business_task_todo_sync_outbox"] = consume_business_task_todo_sync_outbox
     agent_adapters = frozenset(
         {
             "scheduled_execution",
@@ -1523,6 +1553,36 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     if limit <= 0:
         print("process-work-items processed=0", flush=True)
         return 0
+    lease = TaskAgentSessionLease.try_acquire(store)
+    if lease is None:
+        print("process-work-items processed=0", flush=True)
+        return 0
+    with lease:
+        try:
+            lease.assert_owned()
+        except TaskAgentSessionLeaseLost:
+            print("process-work-items processed=0", flush=True)
+            return 0
+        return _process_work_items_with_session_lease(
+            settings,
+            store,
+            limit,
+            lease,
+            build_production_routed_codex_execution,
+            TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
+            TASK_AGENT_MAX_TIMEOUT_SECONDS,
+        )
+
+
+def _process_work_items_with_session_lease(
+    settings,
+    store,
+    limit,
+    lease,
+    build_production_routed_codex_execution,
+    task_agent_max_idle_timeout_seconds,
+    task_agent_max_timeout_seconds,
+) -> int:
     store.recover_orphaned_task_agent_runs()
     store.recover_orphaned_agent_runs_for_terminal_reply_tasks()
     store.recover_expired_terminal_task_runtime_attempts()
@@ -1534,11 +1594,11 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         workspace=settings.workspace,
         total_timeout_seconds=min(
             settings.task_codex_timeout_seconds,
-            TASK_AGENT_MAX_TIMEOUT_SECONDS,
+            task_agent_max_timeout_seconds,
         ),
         idle_timeout_seconds=min(
             settings.task_codex_idle_timeout_seconds,
-            TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
+            task_agent_max_idle_timeout_seconds,
         ),
     )
     runner = TaskAgentRunner(
@@ -1555,26 +1615,75 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         )
     processed = 0
     for _ in range(limit):
+        try:
+            lease.assert_owned()
+        except TaskAgentSessionLeaseLost:
+            break
         if store.active_codex_capacity_pause(now=datetime.now(timezone.utc)):
             break
         claimed = store.claim_work_summary_inputs(limit=1)
         if not claimed:
             break
         work_input = claimed[0]
-        if _process_claimed_work_summary_input(store, runner, work_input, dws=dws):
+        if _process_claimed_work_summary_input(
+            store,
+            runner,
+            work_input,
+            dws=dws,
+            session_lease=lease,
+        ):
             processed += 1
     print(f"process-work-items processed={processed}", flush=True)
     return processed
 
 
-def _process_claimed_work_summary_input(store, runner, work_input, *, dws=None) -> bool:
+def _process_claimed_work_summary_input(
+    store,
+    runner,
+    work_input,
+    *,
+    dws=None,
+    session_lease: TaskAgentSessionLease | None = None,
+) -> bool:
     capacity_recovery_active = store.codex_capacity_failure_count() > 0
     try:
-        process_work_item(store, runner, work_input, dws=dws)
+        if session_lease is not None:
+            session_lease.assert_owned()
+        from app.task_completion_agent import (
+            COMPLETION_SOURCE_TYPES,
+            process_task_completion_work_item,
+        )
+
+        if work_input.source_type in COMPLETION_SOURCE_TYPES:
+            process_task_completion_work_item(
+                store,
+                runner.codex,
+                work_input,
+                dws=dws,
+                session_lease=session_lease,
+            )
+        else:
+            process_work_item(
+                store,
+                runner,
+                work_input,
+                dws=dws,
+                session_lease=session_lease,
+            )
         store.clear_codex_capacity_pause()
         return True
     except Exception as exc:
         error = _normalize_codex_stop_error_reason(str(exc))
+        if isinstance(exc, TaskAgentSessionLeaseLost):
+            if _should_retry_work_summary_input(exc, work_input.attempts):
+                store.schedule_work_summary_input_retry(
+                    work_input.id,
+                    error,
+                    available_at=_work_summary_retry_available_at(work_input.attempts),
+                )
+            else:
+                store.mark_work_summary_input_failed(work_input.id, error)
+            return False
         if _is_runtime_outage_error(exc):
             # No route was entered, or the only entered route failed on
             # capacity/transport and every other route is paused: either way
@@ -1727,6 +1836,8 @@ def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> b
         # treats the identical code as retryable for the same reason; here it
         # fell through every predicate and terminalized the item on its first
         # attempt, taking a Service error with it.
+        return True
+    if isinstance(error, TaskAgentSessionLeaseLost):
         return True
     if isinstance(error, Exception) and is_external_dependency_error(error):
         return True
@@ -2284,7 +2395,6 @@ def authorize_memory_connector_command(settings: WorkerSettings) -> int:
 
     from app.memory_connector_client import (
         authorization_url,
-        credential_path,
         exchange_code,
         pkce_pair,
         register_client,
@@ -2494,7 +2604,10 @@ def process_follow_ups_command(
     refresh_evidence: bool = True,
     limit: int = 50,
 ) -> int:
-    from app.follow_up import process_due_follow_ups
+    from app.follow_up import (
+        process_due_business_task_follow_ups,
+        process_due_follow_ups,
+    )
 
     if refresh_evidence:
         scan_task_sources_command(settings, max_new_items=settings.max_batches)
@@ -2505,13 +2618,19 @@ def process_follow_ups_command(
         ding_robot_name=settings.ding_robot_name,
         ding_receiver_user_id=settings.ding_receiver_user_id,
     )
+    store = AutoReplyStore(settings.db_path)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     sent = process_due_follow_ups(
-        AutoReplyStore(settings.db_path),
+        store,
         dws,
-        now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        now=now,
         auto_send=not settings.dry_run,
         feedback_base_url=feedback_spike_vercel_base_url(),
         limit=limit,
+    )
+    sent += process_due_business_task_follow_ups(
+        store, dws, now=now, auto_send=not settings.dry_run,
+        feedback_base_url=feedback_spike_vercel_base_url(), limit=limit,
     )
     print(f"process-follow-ups sent={sent}", flush=True)
     return sent
@@ -4955,6 +5074,31 @@ def main() -> None:
             settings.db_path,
             read_manifest(_expand_path_arg(args.manifest)),
             archive_limit=args.archive_limit,
+        )
+        print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
+    elif args.command == "task-semantic-import-plan":
+        from app.task_semantic_import import (
+            build_task_semantic_import_manifest,
+            write_task_semantic_import_manifest,
+        )
+
+        manifest = build_task_semantic_import_manifest(settings.db_path, limit=args.limit)
+        write_task_semantic_import_manifest(manifest, _expand_path_arg(args.output))
+        counts = {name: sum(item.disposition == name for item in manifest.items) for name in (
+            "formal_task", "official_project_match", "history_only"
+        )}
+        print(json.dumps({"manifest_id": manifest.manifest_id, "items": len(manifest.items),
+                          **counts}, ensure_ascii=False, sort_keys=True))
+    elif args.command == "task-semantic-import-apply":
+        from app.task_semantic_import import (
+            apply_task_semantic_import_manifest,
+            read_task_semantic_import_manifest,
+        )
+
+        result = apply_task_semantic_import_manifest(
+            settings.db_path,
+            read_task_semantic_import_manifest(_expand_path_arg(args.manifest)),
+            limit=args.limit,
         )
         print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
     elif args.command == "doctor-mcp":

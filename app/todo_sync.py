@@ -5,7 +5,10 @@ from typing import Any
 from app.dws_client import DwsError
 from app.store import AutoReplyStore
 from app.task_models import ProjectPriority, TodoStatus
-from app.todo_completion import close_todo_with_completion_evidence
+from app.todo_completion import (
+    close_todo_with_completion_evidence,
+    complete_business_task_from_external_todo,
+)
 
 DINGTALK_TODO_TITLE_LIMIT = 80
 DINGTALK_TODO_CONTEXT_LIMIT = 42
@@ -53,6 +56,15 @@ def _deadline_has_passed(value: str, now: str) -> bool:
     elif deadline.tzinfo is not None and current.tzinfo is None:
         current = current.replace(tzinfo=deadline.tzinfo)
     return deadline < current
+
+
+def _committed_deadline(store: AutoReplyStore, business_task_id: int) -> str:
+    values = [
+        fact.value_at
+        for fact in store.list_business_task_date_evidence(business_task_id)
+        if fact.date_type.value == "committed_deadline_at" and _deadline_to_iso(fact.value_at)
+    ]
+    return values[-1] if values else ""
 
 
 def _priority_to_dingtalk(priority: str) -> int:
@@ -431,9 +443,80 @@ def maybe_create_dingtalk_todo(
     store: AutoReplyStore,
     dws: Any,
     *,
-    work_todo_id: int,
+    business_task_id: int | None = None,
+    work_todo_id: int | None = None,
     now: str,
 ):
+    if business_task_id is not None:
+        task = store.get_business_task(business_task_id)
+        if task is None or task.status.value == "merged":
+            return None
+        if (
+            task.stage.value != "formal"
+            or task.status.value not in {"open", "waiting"}
+            or task.commitment_status.value != "accepted"
+            or not task.owner_user_id.strip()
+            or not task.title.strip()
+            or not _committed_deadline(store, business_task_id)
+        ):
+            return None
+        link = store.get_active_business_task_dingtalk_link(business_task_id)
+        if link is not None:
+            if link["status"] == "active" or not link["dingtalk_task_id"]:
+                return link
+            try:
+                readback = dws.get_todo_task(link["dingtalk_task_id"])
+                store.update_business_task_dingtalk_link(
+                    link["id"], status="active",
+                    last_dingtalk_done=_payload_done(readback),
+                    last_dingtalk_payload_json=json.dumps(readback, ensure_ascii=False),
+                    last_pull_at=now, last_error="",
+                )
+            except (DwsError, RuntimeError) as exc:
+                store.update_business_task_dingtalk_link(link["id"], last_error=str(exc))
+            return store.get_business_task_dingtalk_link(link["id"])
+        link_id, created = store.claim_business_task_dingtalk_link(
+            business_task_id=business_task_id,
+            executor_user_id=task.owner_user_id,
+            executor_name=task.owner_name,
+            title_snapshot=_trim_inline_text(task.title, DINGTALK_TODO_TITLE_LIMIT),
+            deadline_at_snapshot=_committed_deadline(store, business_task_id),
+            priority_snapshot="P2",
+            status="creating",
+        )
+        if not created:
+            return store.get_business_task_dingtalk_link(link_id)
+        try:
+            payload = dws.create_todo_task(
+                title=_trim_inline_text(task.title, DINGTALK_TODO_TITLE_LIMIT),
+                executor_user_id=task.owner_user_id,
+                due=_deadline_to_iso(_committed_deadline(store, business_task_id)),
+                priority=_priority_to_dingtalk("P2"),
+                description=_dingtalk_todo_description(task),
+                tags=[],
+                participants=_dingtalk_todo_participants(task),
+                files=[],
+            )
+            dingtalk_task_id = _payload_task_id(payload)
+            if not dingtalk_task_id:
+                raise RuntimeError("DingTalk todo create response did not include task id")
+            store.update_business_task_dingtalk_link(
+                link_id, dingtalk_task_id=dingtalk_task_id, last_push_at=now
+            )
+            readback = dws.get_todo_task(dingtalk_task_id)
+            store.update_business_task_dingtalk_link(
+                link_id, dingtalk_task_id=dingtalk_task_id, status="active",
+                last_dingtalk_done=_payload_done(readback),
+                last_dingtalk_payload_json=json.dumps(readback, ensure_ascii=False),
+                last_push_at=now, last_pull_at=now, last_error="",
+            )
+        except (DwsError, RuntimeError) as exc:
+            persisted = store.get_business_task_dingtalk_link(link_id)
+            status = "creating" if persisted["dingtalk_task_id"] else "failed"
+            store.update_business_task_dingtalk_link(link_id, status=status, last_error=str(exc))
+        return store.get_business_task_dingtalk_link(link_id)
+    if work_todo_id is None:
+        raise TypeError("business_task_id is required")
     todo = store.get_work_todo(work_todo_id)
     if todo is None:
         return None
@@ -498,6 +581,20 @@ def pull_dingtalk_todo_statuses(
     limit: int = 100,
 ) -> int:
     closed_count = 0
+    for pending in store.list_unknown_business_task_todo_creates_with_receipts(limit=limit):
+        task_id = str(pending["dingtalk_task_id"])
+        try:
+            readback = dws.get_todo_task(task_id)
+            if _payload_task_id(readback) != task_id:
+                raise ValueError("DingTalk TODO read-back identity does not match the saved receipt")
+            store.complete_unknown_business_task_todo_sync_outbox_from_receipt(
+                outbox_id=int(pending["outbox_id"]),
+                provider_readback_json=json.dumps(readback, ensure_ascii=False),
+            )
+        except (DwsError, RuntimeError, ValueError) as exc:
+            store.update_business_task_dingtalk_link(
+                int(pending["link_id"]), last_error=str(exc)
+            )
     links = store.list_work_todo_dingtalk_links(statuses=("active",), limit=limit)
     for link in links:
         task_id = link.dingtalk_task_id.strip()
@@ -524,6 +621,36 @@ def pull_dingtalk_todo_statuses(
                 store.update_work_todo_dingtalk_link(link.id, status="done")
         except (DwsError, RuntimeError) as exc:
             store.update_work_todo_dingtalk_link(link.id, last_error=str(exc))
+    for link in store.list_business_task_dingtalk_links(statuses=("active",), limit=limit):
+        task_id = str(link["dingtalk_task_id"] or "").strip()
+        if not task_id:
+            store.update_business_task_dingtalk_link(
+                link["id"], last_pull_at=now,
+                last_error="active DingTalk todo link has no task id",
+            )
+            continue
+        try:
+            payload = dws.get_todo_task(task_id)
+            done = _payload_done(payload)
+            store.update_business_task_dingtalk_link(
+                link["id"], last_dingtalk_done=done,
+                last_dingtalk_payload_json=json.dumps(payload, ensure_ascii=False),
+                last_pull_at=now, last_error="",
+            )
+            if done:
+                if complete_business_task_from_external_todo(
+                    store, business_task_id=int(link["business_task_id"]),
+                    evidence={
+                        "source": f"dingtalk_todo:{task_id}",
+                        "reason": "DingTalk TODO marked done",
+                        "description": payload,
+                        "checked_at": now,
+                    },
+                ):
+                    closed_count += 1
+                store.update_business_task_dingtalk_link(link["id"], status="done")
+        except (DwsError, RuntimeError) as exc:
+            store.update_business_task_dingtalk_link(link["id"], last_error=str(exc))
     return closed_count
 
 
@@ -687,6 +814,112 @@ def dispatch_task_todo_sync_outbox(
         if status == "completed":
             delivered += 1
     return delivered
+
+
+def sync_completed_task_to_dingtalk(
+    store: AutoReplyStore,
+    dws: Any,
+    *,
+    business_task_id: int,
+    evidence: dict[str, object],
+    now: str,
+) -> str:
+    """Apply a completed Business Task to its already-mirrored DingTalk TODO."""
+    del evidence
+    task = store.get_business_task(business_task_id)
+    if task is None or task.status.value == "merged":
+        raise ValueError("business Task is missing or merged")
+    link = store.get_active_business_task_dingtalk_link(business_task_id)
+    if link is None:
+        return "skipped"
+    task_id = str(link["dingtalk_task_id"] or "").strip()
+    if not task_id:
+        store.update_business_task_dingtalk_link(
+            link["id"], last_error="active DingTalk todo link has no task id"
+        )
+        return "failed"
+    try:
+        payload = dws.mark_todo_task_done(task_id, done=True)
+        store.update_business_task_dingtalk_link(
+            link["id"], status="done", last_dingtalk_done=True,
+            last_dingtalk_payload_json=json.dumps(payload, ensure_ascii=False),
+            last_push_at=now, last_error="",
+        )
+        return "completed"
+    except (DwsError, RuntimeError) as exc:
+        store.update_business_task_dingtalk_link(link["id"], last_error=str(exc))
+        return "failed"
+
+
+def dispatch_claimed_business_task_todo_sync_outbox(
+    store: AutoReplyStore,
+    dws: Any,
+    *,
+    item: Any,
+    owner: str,
+    now: str,
+    claim_guard: Any | None = None,
+) -> str:
+    """Deliver one Task-keyed external effect and persist its receipt."""
+    if str(item["status"]) != "running" or str(item["lease_owner"]) != owner:
+        raise ValueError("business task todo sync dispatch source is not claimed by owner")
+    current = datetime.strptime(now, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    if claim_guard is not None:
+        claim_guard.assert_current(current)
+
+    def persist(status: str, *, receipt_json: str = "{}", error: str = "") -> None:
+        if claim_guard is not None:
+            claim_guard.adapter.finish_delivery(
+                claim_guard.envelope, owner=owner, now=current,
+                status=status, receipt_json=receipt_json, error=error,
+            )
+            claim_guard.accept_atomic_source_completion()
+        else:
+            if status == "failed":
+                store.retry_business_task_todo_sync_outbox(
+                    outbox_id=int(item["id"]), owner=owner, error=error, now=now,
+                )
+            else:
+                store.finish_business_task_todo_sync_outbox(
+                    outbox_id=int(item["id"]), owner=owner, status=status,
+                    receipt_json=receipt_json, error=error,
+                )
+
+    try:
+        task_id = int(item["business_task_id"])
+        if item["operation"] == "create":
+            link = maybe_create_dingtalk_todo(
+                store, dws, business_task_id=task_id, now=now
+            )
+            if link is None:
+                persist("skipped", error="dingtalk_todo_not_eligible_for_mirror")
+                return "skipped"
+            if link["status"] != "active":
+                persist("unknown", error=str(link["last_error"] or "provider_create_receipt_unconfirmed"))
+                return "unknown"
+            receipt = {
+                "link_id": int(link["id"]),
+                "dingtalk_task_id": str(link["dingtalk_task_id"]),
+            }
+        else:
+            outcome = sync_completed_task_to_dingtalk(
+                store, dws, business_task_id=task_id,
+                evidence=json.loads(item["evidence_json"]), now=now,
+            )
+            if outcome != "completed":
+                persist(
+                    outcome,
+                    error="dingtalk_todo_not_mirrored" if outcome == "skipped" else "dingtalk_todo_effect_not_delivered",
+                )
+                return outcome
+            receipt = {"delivered": True}
+        persist("completed", receipt_json=json.dumps(receipt, ensure_ascii=False))
+        return "completed"
+    except Exception as exc:
+        # Once the provider call has started, only readback can resolve an
+        # uncertain outcome. Never replay a possibly delivered effect.
+        persist("unknown", error=str(exc))
+        return "unknown"
 
 
 def dispatch_claimed_task_todo_sync_outbox(

@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.fields import FieldInfo
 
 from app.decision_quality import DecisionQualityResult, DecisionRisk, classify_decision_quality
+from app.task_semantic_models import FormalTaskBasis
 
 
 def _null_means_omitted(field: FieldInfo) -> bool:
@@ -240,6 +241,10 @@ class WorkItemSource(BaseModel):
 class WorkItemContext(BaseModel):
     sender: str = ""
     sender_user_id: str = ""
+    owner_identity: dict[str, str] = Field(default_factory=dict)
+    assignment_authorized: bool = False
+    external_task_id: str = ""
+    reply_to_source_ref: str = ""
     participants: list[str] = Field(default_factory=list)
     source_conversation_kind: WorkItemSourceKind
     source_conversation_title: str = ""
@@ -257,17 +262,9 @@ class WorkItemTaskSignals(BaseModel):
 class WorkItem(BaseModel):
     source: WorkItemSource
     summary: str
-    project_name: str = ""
     context: WorkItemContext
     task_signals: WorkItemTaskSignals = Field(default_factory=WorkItemTaskSignals)
     scheduled_consumer: dict[str, object] = Field(default_factory=dict)
-
-
-class ProjectFact(StrictTaskModel):
-    description: str
-    source: str
-    created: str = ""
-    updated: str = ""
 
 
 class ProjectMemoryContextItem(StrictTaskModel):
@@ -284,90 +281,122 @@ class ProjectMemoryContext(StrictTaskModel):
     memories: list[ProjectMemoryContextItem] = Field(default_factory=list)
 
 
-class TaskProjectPatch(StrictTaskModel):
-    id: int | None = None
+class TaskDateEvidence(StrictTaskModel):
+    kind: Literal[
+        "assigned_at", "requested_deadline_at", "external_deadline_at",
+        "committed_deadline_at", "estimated_deadline_at", "next_check_at",
+    ]
+    value: str = ""
+    source_ref: str
+    source_excerpt: str
+    actor_user_id: str = ""
+    actor_name: str = ""
+
+    @model_validator(mode="after")
+    def source_is_explicit(self) -> "TaskDateEvidence":
+        if not self.source_ref.strip() or not self.source_excerpt.strip():
+            raise ValueError("date evidence requires exact source provenance")
+        if self.kind == "committed_deadline_at" and not (
+            self.actor_user_id.strip() or self.actor_name.strip()
+        ):
+            raise ValueError("committed deadline requires a named source actor")
+        if self.kind == "committed_deadline_at" and not self.value.strip():
+            raise ValueError("committed deadline requires a concrete ISO date or datetime")
+        return self
+
+
+class TaskIdentityEvidence(StrictTaskModel):
+    """Untrusted match proposal; the service verifies both signals and derives identity."""
+
+    basis: Literal[
+        "same_external_task_id", "explicit_source_reference",
+        "same_deliverable_owner_context_time",
+    ]
+    source_signal_id: int = Field(strict=True, gt=0)
+    target_signal_id: int = Field(strict=True, gt=0)
+
+
+class TaskIdentityProposal(StrictTaskModel):
+    source_task_id: int = Field(gt=0)
+    target_task_id: int = Field(gt=0)
+    identity_evidence: TaskIdentityEvidence
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def distinct_tasks(self) -> "TaskIdentityProposal":
+        if self.source_task_id == self.target_task_id:
+            raise ValueError("identity proposal requires distinct Tasks")
+        return self
+
+
+class TaskRelationProposal(StrictTaskModel):
+    from_task_id: int = Field(gt=0)
+    to_task_id: int = Field(gt=0)
+    relation_type: Literal["depends_on", "blocks", "supports", "supersedes", "related_to"]
+    reason: str = ""
+
+
+class TaskClusterProposal(StrictTaskModel):
+    cluster_id: int | None = Field(default=None, gt=0)
     title: str = ""
-    category: ProjectCategory = ProjectCategory.OTHER
-    tags: list[str] = Field(default_factory=list)
-    status: ProjectStatus = ProjectStatus.ACTIVE
-    priority: ProjectPriority = ProjectPriority.NONE
-    risk_level: RiskLevel = RiskLevel.NONE
-    needs_derek_attention: bool = False
-    owner_user_id: str = ""
-    owner_name: str = ""
-    owner_evidence: dict[str, Any] = Field(default_factory=dict)
-    related_people: list[dict[str, str]] = Field(default_factory=list)
-    goal: str = ""
-    background: str = ""
-    memory_context: ProjectMemoryContext = Field(default_factory=ProjectMemoryContext)
-    facts: list[ProjectFact] = Field(default_factory=list)
-    current_state: str = ""
-    blocker: str = ""
-    next_step: str = ""
-    next_follow_up_at: str = ""
-    follow_up_mode: FollowUpMode = FollowUpMode.NONE
-    source_conversations: list[dict[str, Any]] = Field(default_factory=list)
+    task_ids: list[int] = Field(default_factory=list)
+    reason: str = ""
 
 
-class TodoChange(StrictTaskModel):
-    action: Literal["create", "update", "close", "cancel"]
-    todo_id: int | None = None
-    todo_ref: str = ""
+class TaskAnchorMatchProposal(StrictTaskModel):
+    anchor_id: int = Field(gt=0)
+    reason: str
+
+
+class ProjectCandidateProposal(StrictTaskModel):
+    cluster_id: int = Field(gt=0)
+    title: str
+    reason: str
+
+
+class TaskAttentionProposal(StrictTaskModel):
+    category: Literal["fyi", "watch", "decision", "push"]
+    title: str
+    why_attention: str
+    current_state: str
+    ceo_action: str
+    anchor_id: int = Field(gt=0)
+    material_trigger: Literal[
+        "threatened_commitment", "material_change", "material_dispute",
+        "ceo_decision", "ceo_push", "required_gate", "risk_escalation",
+    ]
+    trigger_evidence: str
+
+
+class TaskDecision(StrictTaskModel):
+    action: Literal["skip", "record_candidate", "create_task", "update_task"]
+    transition: Literal[
+        "none", "promote_candidate", "apply_acceptance", "update_fields", "merge_identity"
+    ]
+    skip_reason: str = ""
+    task_id: int | None = Field(default=None, gt=0)
+    target_task_id: int | None = Field(default=None, gt=0)
+    source_excerpt: str = ""
+    source_ref: str = ""
     title: str = ""
     description: str = ""
+    formal_basis: FormalTaskBasis | None = None
+    acceptance_polarity: Literal["accepted", "declined", "ambiguous"] | None = None
+    acceptance_target_signal_id: int | None = Field(default=None, gt=0)
+    status: Literal["open", "waiting", "done", "cancelled"] | None = None
+    business_relevance: Literal["unknown", "not_relevant", "relevant"] | None = None
     owner_user_id: str = ""
     owner_name: str = ""
-    status: TodoStatus = TodoStatus.OPEN
-    priority: ProjectPriority = ProjectPriority.NONE
-    deadline_at: str = ""
-    next_follow_up_at: str = ""
-    follow_up_question: str = ""
     owner_evidence: dict[str, Any] = Field(default_factory=dict)
-    completion_evidence: dict[str, Any] | None = None
-    blocker: str = ""
-
-
-class FollowUpDraftDecision(StrictTaskModel):
-    todo_id: int | None = None
-    todo_ref: str = ""
-    title: str
-    description: str
-    owner_user_id: str = ""
-    owner_name: str = ""
-    owners: list[dict[str, str]] = Field(default_factory=list)
-    target_conversation_id: str = ""
-    target_kind: Literal["group", "direct"]
-    question_text: str
-    scheduled_at: str = ""
-    priority: ProjectPriority = ProjectPriority.NONE
-    tags: list[str] = Field(default_factory=list)
-    participants: list[dict[str, str]] = Field(default_factory=list)
-    files: list[dict[str, str]] = Field(default_factory=list)
-    risk_check: dict[str, Any] = Field(default_factory=dict)
-    status: FollowUpDraftStatus = FollowUpDraftStatus.DRAFT
-
-
-class FollowUpDraftChange(StrictTaskModel):
-    follow_up_id: int
-    todo_id: int | None = None
-    action: Literal["suppress", "close", "reschedule", "reassign", "keep_open"]
-    reason: str = ""
-    evidence_check: dict[str, Any] = Field(default_factory=dict)
-    next_due_at: str | None = None
-    owner_user_id: str | None = None
-    owner_name: str | None = None
-    owner_evidence: dict[str, Any] = Field(default_factory=dict)
-
-
-class TaskAgentDecision(StrictTaskModel):
-    action: Literal["skip", "create_project", "update_project"]
-    skip_reason: str = ""
-    project: TaskProjectPatch | None = None
-    todo_changes: list[TodoChange] = Field(default_factory=list)
-    follow_up_drafts: list[FollowUpDraftDecision] = Field(default_factory=list)
-    follow_up_changes: list[FollowUpDraftChange] = Field(default_factory=list)
+    date_evidence: list[TaskDateEvidence] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    identity_proposal: TaskIdentityProposal | None = None
+    relation_proposals: list[TaskRelationProposal] = Field(default_factory=list)
+    cluster_proposal: TaskClusterProposal | None = None
+    anchor_match_proposals: list[TaskAnchorMatchProposal] = Field(default_factory=list)
+    project_candidate_proposal: ProjectCandidateProposal | None = None
+    attention_proposal: TaskAttentionProposal | None = None
     update_summary: str = ""
-    merge_reason: str = ""
     memory_recall_used: bool = False
     risk: DecisionRisk = Field(
         default=DecisionRisk.LOW,
@@ -392,6 +421,41 @@ class TaskAgentDecision(StrictTaskModel):
         description="How complete the evidence needed for this decision is.",
     )
 
+    @model_validator(mode="after")
+    def validate_transition_shape(self) -> "TaskDecision":
+        if self.action != "skip" and (not self.source_excerpt.strip() or not self.source_ref.strip()):
+            raise ValueError("task decisions require an exact source excerpt and reference")
+        if self.action == "create_task" and self.formal_basis is None:
+            raise ValueError("formal Task creation requires formal_basis")
+        if self.action == "record_candidate" and self.formal_basis is not None:
+            raise ValueError("candidate cannot carry formal_basis")
+        if (self.owner_user_id.strip() or self.owner_name.strip()) and not self.owner_evidence:
+            raise ValueError("source-backed owner assignment requires owner_evidence")
+        if self.action in {"skip", "record_candidate", "create_task"} and self.transition != "none":
+            raise ValueError("new/skip decisions cannot transition an existing Task")
+        if self.action == "update_task" and (self.task_id is None or self.transition == "none"):
+            raise ValueError("update_task requires task_id and a dedicated transition")
+        if self.transition != "update_fields" and (self.status is not None or self.business_relevance is not None):
+            raise ValueError("status and business relevance require update_fields transition")
+        if self.transition == "merge_identity":
+            if (
+                self.identity_proposal is None
+                or self.identity_proposal.source_task_id != self.task_id
+                or self.identity_proposal.target_task_id != self.target_task_id
+            ):
+                raise ValueError("merge_identity requires matching structured identity proposal")
+        if self.transition != "merge_identity" and self.identity_proposal is not None:
+            raise ValueError("identity proposal requires merge_identity transition")
+        if self.transition == "apply_acceptance" and self.acceptance_polarity != "accepted":
+            raise ValueError("apply_acceptance requires explicit accepted polarity")
+        if self.transition == "apply_acceptance" and self.acceptance_target_signal_id is None:
+            raise ValueError("apply_acceptance requires an explicitly cited assignment signal")
+        if self.acceptance_polarity is not None and self.transition != "apply_acceptance":
+            raise ValueError("acceptance polarity requires apply_acceptance transition")
+        if self.acceptance_target_signal_id is not None and self.transition != "apply_acceptance":
+            raise ValueError("acceptance target signal requires apply_acceptance transition")
+        return self
+
     def decision_quality(self) -> DecisionQualityResult:
         """Classify this task decision with the shared result-quality rules."""
         return classify_decision_quality(
@@ -400,6 +464,56 @@ class TaskAgentDecision(StrictTaskModel):
             rule_coverage=self.rule_coverage,
             information_completeness=self.information_completeness,
         )
+
+
+class CompletionSearchTrace(StrictTaskModel):
+    source_kind: str
+    result: str
+    source_ref: str
+    reason: str
+    source_created_at: str | None = None
+    retrieved_at: str = ""
+    audit_call_ids: list[str] = Field(default_factory=list, max_length=8)
+
+
+class CompletionTodoChange(StrictTaskModel):
+    action: Literal["close"]
+    todo_id: int | None = Field(default=None, gt=0)
+    business_task_id: int | None = Field(default=None, gt=0)
+    completion_evidence: dict[str, Any]
+
+    @model_validator(mode="after")
+    def one_target(self) -> "CompletionTodoChange":
+        if (self.todo_id is None) == (self.business_task_id is None):
+            raise ValueError("completion requires exactly one Task or legacy TODO ID")
+        return self
+
+
+class CompletionFollowUpChange(StrictTaskModel):
+    follow_up_id: int = Field(gt=0)
+    todo_id: int | None = Field(default=None, gt=0)
+    action: Literal["suppress", "close", "reschedule", "reassign", "keep_open"]
+    reason: str = ""
+    evidence_check: dict[str, Any] = Field(default_factory=dict)
+    next_due_at: str | None = None
+    owner_user_id: str | None = None
+    owner_name: str | None = None
+    owner_evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskAgentDecision(StrictTaskModel):
+    task_decisions: list[TaskDecision] = Field(default_factory=list)
+    todo_changes: list[CompletionTodoChange] = Field(default_factory=list)
+    follow_up_changes: list[CompletionFollowUpChange] = Field(default_factory=list)
+    search_trace: list[CompletionSearchTrace] = Field(default_factory=list, max_length=3)
+    update_summary: str = ""
+    memory_recall_used: bool = False
+
+    @model_validator(mode="after")
+    def at_most_one_todo_close(self) -> "TaskAgentDecision":
+        if len(self.todo_changes) > 1:
+            raise ValueError("a Task Agent decision may close at most one TODO")
+        return self
 
 
 class WorkProject(BaseModel):

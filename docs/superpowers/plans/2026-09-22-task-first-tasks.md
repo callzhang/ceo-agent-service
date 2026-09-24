@@ -31,7 +31,7 @@
 
 ```bash
 .venv/bin/pytest -q tests/test_task_models.py tests/test_task_store.py tests/test_task_agent.py tests/test_console_web_api.py tests/test_web_api_task_sort.py
-npm --prefix frontend test -- --run frontend/src/pages/TasksPage.test.tsx frontend/src/pages/TaskDetailPage.test.tsx frontend/src/api/console.test.ts
+npm --prefix frontend test -- --run src/pages/TasksPage.test.tsx src/pages/TaskDetailPage.test.tsx src/api/console.test.ts
 ```
 
 Expected: record the exact baseline pass/fail counts before changing code. Existing unrelated failures remain explicit and must not be converted into acceptance.
@@ -601,23 +601,116 @@ git commit -m "feat(tasks): derive traceable CEO attention items"
 - Modify: `docs/architecture.md`
 - Modify: `docs/runtime-mechanism.md`
 
+**Approved Task 7 semantic limits (2026-09-24):**
+
+- Mirror only a formal Task with an explicit source-backed owner, `accepted`
+  commitment, and a parseable `committed_deadline_at` fact. Do not derive a
+  DingTalk TODO due date from requested, external, estimated, or next-check
+  dates.
+- Create a Task follow-up only when its linked source signal carries the exact
+  conversation/recipient context and the Task has a parseable `next_check_at`.
+  Preserve that source target exactly; do not infer a target or schedule from a
+  deadline. The follow-up question may summarize the current Task state but
+  must not create a new Task.
+- Modify: `app/task_semantic_models.py`, `app/store.py`, `app/task_semantic_service.py`, and `app/task_semantic_rules.py` for typed date evidence and evidence-derived transitions
+- Modify: relevant semantic storage/service/rules tests
+- Modify: `/Users/derek/.agents/skills/ceo-work-tracking/SKILL.md`, the Skill loaded by the Task Agent
+
+### Approved implementation amendments
+
+The following requirements refine the original Task 6 sketch and override any
+conflicting field or behavior below:
+
+- A source WorkItem may produce zero or multiple `task_decisions`. Each item
+  decision must cite an exact source excerpt/reference; the Agent extracts
+  tasks from supplied context but cannot invent a task or assignee. Assignees
+  must be explicitly identified by source text or authoritative metadata. If
+  not, keep candidate/missing evidence rather than guessing.
+- Commitment state is calculated by semantic rules from linked evidence; the
+  model cannot set `commitment_status`. Assignment evidence can create a formal
+  `assigned_unaccepted` Task. External TODO existence proves a formal record,
+  not owner acceptance. Acceptance requires explicit owner acceptance evidence
+  uniquely linked to an existing Task; “收到” alone is acknowledgement, not
+  accepted scope or deadline. Preserve actor/origin for assignment and
+  acceptance, and never treat Agent-authored output as the owner's evidence.
+- A formal Task must have a source-backed, explicitly identified owner/team. If
+  a meeting action item or other deliverable lacks an owner, retain it as a
+  candidate or unmatched evidence; do not write a formal assignment with an
+  inferred or blank owner.
+- Use an explicit transition discriminator for `promote_candidate`,
+  `apply_acceptance`, `update_fields`, and `merge_identity`; each calls its
+  dedicated semantic-service/rule path. Generic updates cannot change
+  commitment status. A merge supplies source/target IDs plus structured
+  identity evidence. Project-candidate proposals require a supplied existing
+  cluster ID. Existing formal Tasks and their evidence, relations, and anchor
+  links must be retrieved for acceptance/update matching; semantic rank is
+  context only and never authorizes a transition.
+- Dates must not be overloaded. The system owns `created_at`; source-backed
+  dates are typed as `assigned_at`, `requested_deadline_at`,
+  `external_deadline_at`, `committed_deadline_at`, `estimated_deadline_at`, or
+  `next_check_at`, each with source/actor provenance. Only an explicit owner
+  commitment/acceptance can establish `committed_deadline_at`; estimated and
+  check dates never mean owner default. No date is required to retain a
+  Business Task. Task 7's DingTalk TODO mirror continues to require a real,
+  parseable due date.
+- CEO attention requires a confirmed relevant anchor and a concrete material
+  trigger: threatened accepted commitment, material change, unresolved
+  material assignment/commitment dispute, CEO decision or push, required Gate,
+  or meaningful risk escalation. Relevance, acceptance, normal progress, or
+  date proximity alone is insufficient; FYI requires materiality and a new
+  meaningful change.
+- When one source contains multiple action items, each Task signal needs a
+  stable item-level dedupe identity while preserving the same original source
+  reference. Reusing one source-level dedupe key for every action would cause
+  replay handling to collapse distinct Tasks.
+- Update the loaded work-tracking Skill in the same behavior change so it no
+  longer directs Project/TODO-first routing or discards all routine low-impact
+  work. Retained routine work is not CEO attention.
+- Do not deploy Task 6 alone. Task 7 must preserve the separate date gate for
+  DingTalk TODO creation, and the Task Agent cutover ships only with downstream
+  workflow changes complete.
+- TODO completion and follow-up repair are lifecycle operations on the same
+  `TaskAgentDecision` envelope, not Project-first writes or a second Agent
+  result contract. Their typed `todo_changes` and `follow_up_changes` fields
+  are top-level siblings of `task_decisions`; source-specific Work Items may
+  add zero or more applicable operations only for records linked in that
+  Work Item. A successful operation requires current evidence tied to the
+  bounded `search_trace` and observed tool receipts; insufficient completion
+  evidence records the check without closing the TODO. Task changes, local
+  TODO completion, follow-up updates, candidate bookkeeping, input status and
+  run status commit atomically; configured external TODO completion continues
+  through the existing outbox. The shared consumer may select context and
+  service-side application by source type, but it must not start a separate
+  Completion Agent or use a second decision schema.
+
 - [ ] **Step 1: Replace old decision fixtures with failing Task-first fixtures**
 
-The new result contract is:
+The new result contract is an envelope containing `task_decisions`, one entry
+per source-backed action. Each entry's `action` and `transition` are separate:
+`action` is `skip|record_candidate|create_task|update_task`; `transition` is
+`none|promote_candidate|apply_acceptance|update_fields|merge_identity`. Each
+task decision carries a source excerpt/reference. It has no direct
+`commitment_status` or generic `deadline_at` output; dates use typed evidence.
 
 ```python
 class TaskAgentDecision(StrictTaskModel):
+    task_decisions: list[TaskDecision]
+
+class TaskDecision(StrictTaskModel):
     action: Literal["skip", "record_candidate", "create_task", "update_task"]
+    transition: Literal["none", "promote_candidate", "apply_acceptance", "update_fields", "merge_identity"]
     skip_reason: str = ""
     task_id: int | None = None
+    target_task_id: int | None = None
+    source_excerpt: str = ""
+    source_ref: str = ""
     title: str = ""
     description: str = ""
     formal_basis: FormalTaskBasis | None = None
-    commitment_status: CommitmentStatus = CommitmentStatus.NONE
     owner_user_id: str = ""
     owner_name: str = ""
     owner_evidence: dict[str, Any] = Field(default_factory=dict)
-    deadline_at: str = ""
+    date_evidence: list[TaskDateEvidence] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
     identity_proposal: TaskIdentityProposal | None = None
     relation_proposals: list[TaskRelationProposal] = Field(default_factory=list)
@@ -636,10 +729,19 @@ class TaskAgentDecision(StrictTaskModel):
 Delete test expectations for `create_project`, `update_project`, `TaskProjectPatch`, and `project_name`. Add tests proving:
 
 - “美国报价可以研究一下” fixture becomes `record_candidate`;
+- one source containing several action items produces a separate decision per
+  item, preserving its source excerpt, explicit assignee, and typed dates;
 - explicit assignment creates a formal Task without any Project field;
-- acceptance targets the existing task ID;
+- external TODO existence or “收到” alone cannot set owner acceptance;
+- acceptance targets exactly one existing task ID and uses the dedicated
+  acceptance transition;
+- missing/ambiguous assignee stays unresolved instead of being invented;
+- creation, assignment, requested/external/committed DDL, estimate, and
+  `next_check_at` remain distinct; only owner-accepted DDL is a committed date;
 - anchor/project proposals cannot directly create an official Project;
 - small non-business work may still create a Task but cannot emit an eligible attention proposal.
+- relevance, acceptance, and date proximity alone cannot emit attention without
+  a concrete material trigger.
 
 - [ ] **Step 2: Run the focused tests and confirm failure**
 
@@ -649,12 +751,20 @@ Expected: FAIL on the old Project-first schema and prompt.
 
 - [ ] **Step 3: Change retrieval from Projects to semantic context**
 
-Replace `ProjectCandidate` retrieval with bounded candidate Task, cluster, anchor, and official Project retrieval. The prompt context must label each collection so semantic similarity cannot be mistaken for authority.
+Replace `ProjectCandidate` retrieval with bounded candidate and formal Task,
+evidence, relation, anchor-link, cluster, anchor, and official Project retrieval.
+Use public Store APIs with complete pagination, not private SQL or a fixed recent
+window. The prompt context must label each collection so semantic similarity
+cannot be mistaken for authority.
 
 ```python
 @dataclass(frozen=True)
 class TaskSemanticContext:
     task_candidates: tuple[BusinessTask, ...]
+    formal_tasks: tuple[BusinessTask, ...]
+    task_evidence: tuple[BusinessTaskEvidence, ...]
+    task_relations: tuple[BusinessTaskRelation, ...]
+    task_anchor_links: tuple[BusinessTaskAnchorLink, ...]
     clusters: tuple[BusinessWorkCluster, ...]
     anchors: tuple[BusinessAnchor, ...]
     official_projects: tuple[BusinessProject, ...]
@@ -677,23 +787,38 @@ Do not use a fixed recent-500 window. Retrieval may rank candidates, but the pro
 The prompt must explicitly state:
 
 - first decide candidate vs formal Task;
-- assignment creates `assigned_unaccepted`; acceptance updates the same Task;
+- extract zero or more tasks, each tied to an exact source excerpt/reference;
+- never invent a task or assignee; use only source-backed owners;
+- assignment creates `assigned_unaccepted`; evidence rules derive acceptance and update the same Task;
 - same deliverable may merge; related deliverables may cluster or link only;
 - official Projects come only from the supplied official registry;
 - Agent anchor matches and project candidates are proposals;
 - no confirmed anchor means no business relevance and no CEO attention;
 - routine low-impact work is retained outside the default view;
 - `skip` means no plausible retained task signal, not “no project found”.
+- no committed DDL without explicit owner acceptance; estimates/check dates are not DDL;
+- attention requires a material trigger, not only business relevance or date proximity.
 
 Update `_validate_task_agent_decision` to enforce required fields by action and to invoke the pure rules from Task 3. Remove `_apply_project`, protected Project-patch validation, and Project creation/update branches.
 
 - [ ] **Step 5: Apply the decision through semantic services in one transaction**
 
-`apply_task_agent_decision` returns `task_id: int | None`, records the Task Agent run as before, persists signal/evidence/task/events/relations/proposals atomically, and invokes attention recomputation only after semantic state is valid. It must not write `work_projects`, `work_todos`, or `work_updates`.
+`apply_task_agent_decision` returns the resulting Task IDs, records the Task
+Agent run as before, and persists signals, evidence, typed dates, Task/event
+transitions, relations, and proposals as one semantic transaction. It then
+invokes attention recomputation from committed semantic truth. Projection
+failure is reportable/rebuildable and must not roll back valid Task/evidence
+state or appear as fabricated empty-success attention. It must not write
+`work_projects`, `work_todos`, or `work_updates`.
 
 - [ ] **Step 6: Update runtime truth documents in the same behavior commit**
 
-In `docs/architecture.md` and `docs/runtime-mechanism.md`, replace every current statement that the Task Agent creates/updates Projects and TODOs as its primary truth. Document the new decision actions, candidate/formal threshold, separate commitment state, proposal/confirmation boundary, and the absence of dual-write.
+In `docs/architecture.md` and `docs/runtime-mechanism.md`, replace every current
+statement that the Task Agent creates/updates Projects and TODOs as its primary
+truth. Document multi-task extraction, explicit owner evidence, dedicated
+transitions, evidence-derived commitment state, typed dates, attention triggers,
+proposal/confirmation boundary, and absence of dual-write. Update the loaded
+`ceo-work-tracking` Skill in the same change.
 
 - [ ] **Step 7: Run tests and commit**
 
@@ -703,7 +828,10 @@ Run:
 .venv/bin/pytest -q tests/test_task_models.py tests/test_task_agent.py tests/test_task_retrieval.py tests/test_task_semantic_rules.py tests/test_task_semantic_service.py
 ```
 
-Expected: PASS with no `create_project` or `update_project` decision fixture remaining in the active Task Agent tests.
+Expected: PASS with no `create_project` or `update_project` decision fixture
+remaining in active Task Agent tests; all source action items are preserved;
+direct commitment-status changes cannot bypass semantic evidence rules; typed
+date and attention-trigger cases pass.
 
 ```bash
 git add app/task_models.py app/task_agent.py app/task_retrieval.py tests/test_task_models.py tests/test_task_agent.py tests/test_task_retrieval.py docs/architecture.md docs/runtime-mechanism.md
@@ -720,11 +848,15 @@ git commit -m "refactor(tasks): make task agent task-first"
 - Modify: `app/task_progress.py`
 - Modify: `app/task_lifecycle.py`
 - Modify: `app/cli.py`
+- Modify: `app/dispatcher/adapters.py`
+- Modify: `app/task_completion_agent.py`
 - Modify: `tests/test_follow_up.py`
 - Modify: `tests/test_todo_sync.py`
 - Modify: `tests/test_todo_completion.py`
 - Modify: `tests/test_task_lifecycle.py`
 - Modify: `tests/test_task_store.py`
+- Modify: `tests/test_consumer_dispatcher.py`
+- Modify: `tests/test_task_completion_agent.py`
 - Modify: `docs/architecture.md`
 - Modify: `docs/runtime-mechanism.md`
 
@@ -836,7 +968,7 @@ Expected: FAIL because import planner is absent.
 class LegacyImportItem:
     legacy_project_id: int
     legacy_todo_ids: tuple[int, ...]
-    disposition: Literal["formal_task", "candidate", "official_project_match", "unresolved"]
+    disposition: Literal["formal_task", "official_project_match", "history_only"]
     evidence_refs: tuple[str, ...]
     semantic_task: dict[str, object] | None
     official_project_registry_key: str
@@ -851,7 +983,7 @@ class TaskSemanticImportManifest:
     items: tuple[LegacyImportItem, ...]
 ```
 
-The planner may import a legacy TODO as a formal Task only when its stored source evidence proves one of the four formal bases. A legacy Project becomes official only when it matches a pre-registered official Project key. Everything else gets `unresolved` and remains reachable through legacy history.
+The planner may import a legacy TODO as a formal Task only when its stored source evidence proves one of the four formal bases. A legacy Project becomes official only when it matches a pre-registered official Project key. Evidence-insufficient and candidate-only records are `history_only`: they stay reachable through the existing history route and are not copied into candidates, semantic signals, or default Attention. Rows are not merged on title similarity; only exact same-deliverable evidence (such as the same external Task ID) may authorize consolidation, preserving each source-row link. Before proposing a merge, count duplicate nonblank external Task IDs; title-only matches are explicitly not merge evidence.
 
 - [ ] **Step 4: Implement plan/apply CLI commands**
 
@@ -875,7 +1007,7 @@ cp data/service.sqlite3 "$tmp_dir/service.sqlite3"
 CEO_DB_PATH="$tmp_dir/service.sqlite3" .venv/bin/python -m app.cli task-semantic-import-plan --output "$tmp_dir/manifest.json" --limit 100
 ```
 
-Expected: tests PASS; the plan reports formal/candidate/project-match/unresolved counts and makes no database writes. Do not run `task-semantic-import-apply` on the live database in this task.
+Expected: tests PASS; the plan reports formal-task, exact project-match, and history-only counts and makes no database writes. Do not run `task-semantic-import-apply` on the live database in this task.
 
 - [ ] **Step 6: Commit**
 
@@ -1108,7 +1240,7 @@ Add CSS contract tests proving `.task-domain-route` owns dark tokens and attenti
 Run:
 
 ```bash
-npm --prefix frontend test -- --run frontend/src/api/console.test.ts frontend/src/pages/TasksPage.test.tsx frontend/src/pages/TaskDetailPage.test.tsx frontend/src/pages/TaskAttentionDetailPage.test.tsx frontend/src/pages/TaskProjectDetailPage.test.tsx frontend/src/app/AppShell.test.tsx frontend/src/styles.tasks-responsive.test.ts
+npm --prefix frontend test -- --run src/api/console.test.ts src/pages/TasksPage.test.tsx src/pages/TaskDetailPage.test.tsx src/pages/TaskAttentionDetailPage.test.tsx src/pages/TaskProjectDetailPage.test.tsx src/app/AppShell.test.tsx src/styles.tasks-responsive.test.ts
 npm --prefix frontend run build
 ```
 
@@ -1194,13 +1326,13 @@ Run:
   tests/test_history.py
 
 npm --prefix frontend test -- --run \
-  frontend/src/api/console.test.ts \
-  frontend/src/pages/TasksPage.test.tsx \
-  frontend/src/pages/TaskDetailPage.test.tsx \
-  frontend/src/pages/TaskAttentionDetailPage.test.tsx \
-  frontend/src/pages/TaskProjectDetailPage.test.tsx \
-  frontend/src/app/AppShell.test.tsx \
-  frontend/src/styles.tasks-responsive.test.ts
+  src/api/console.test.ts \
+  src/pages/TasksPage.test.tsx \
+  src/pages/TaskDetailPage.test.tsx \
+  src/pages/TaskAttentionDetailPage.test.tsx \
+  src/pages/TaskProjectDetailPage.test.tsx \
+  src/app/AppShell.test.tsx \
+  src/styles.tasks-responsive.test.ts
 
 npm --prefix frontend run build
 ```
@@ -1247,8 +1379,8 @@ Create and verify a SQLite online backup using the repository’s established ba
 - formal Tasks proposed;
 - candidates proposed;
 - official Project matches proposed;
-- unresolved legacy rows;
-- duplicate/dedupe counts;
+- history-only legacy rows;
+- duplicate nonblank external Task IDs eligible for a merge (never title-only guesses), plus rows missing an external ID;
 - manifest ID and database fingerprint.
 
 Do not run the live `apply` command without Derek’s explicit approval after he sees this report.

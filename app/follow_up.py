@@ -9,7 +9,9 @@ from app.service_message_sender import ServiceMessageSender
 from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
 from app.task_models import ProjectStatus, TodoStatus, WorkItem
+from app.todo_completion import complete_business_task_from_external_todo
 from app.todo_sync import (
+    _payload_done,
     refresh_dingtalk_todo_before_follow_up,
 )
 
@@ -24,6 +26,182 @@ LOCAL_WORK_END_HOUR = 18
 FOLLOW_UP_FIELD_LIMIT = 96
 FOLLOW_UP_DESCRIPTION_LIMIT = 240
 FOLLOW_UP_QUESTION_LIMIT = 140
+
+
+def _refresh_business_task_todo_before_follow_up(
+    store: AutoReplyStore, dws, *, business_task_id: int, now: str,
+) -> bool:
+    link = store.get_active_business_task_dingtalk_link(business_task_id)
+    if link is None or not str(link["dingtalk_task_id"]).strip():
+        return False
+    task_id = str(link["dingtalk_task_id"])
+    try:
+        payload = dws.get_todo_task(task_id)
+    except (DwsError, RuntimeError) as exc:
+        store.update_business_task_dingtalk_link(link["id"], last_error=str(exc))
+        return False
+    done = _payload_done(payload)
+    store.update_business_task_dingtalk_link(
+        link["id"], status="active", last_dingtalk_done=done,
+        last_dingtalk_payload_json=json.dumps(payload, ensure_ascii=False),
+        last_pull_at=now, last_error="",
+    )
+    if not done:
+        return False
+    complete_business_task_from_external_todo(
+        store, business_task_id=business_task_id,
+        evidence={
+            "source": f"dingtalk_todo:{task_id}", "reason": "DingTalk TODO marked done",
+            "description": payload, "checked_at": now,
+        },
+    )
+    store.update_business_task_dingtalk_link(link["id"], status="done")
+    return True
+
+
+def process_due_business_task_follow_ups(
+    store: AutoReplyStore,
+    dws,
+    *,
+    now: str,
+    auto_send: bool,
+    feedback_base_url: str = "",
+    limit: int = 50,
+) -> int:
+    """Send due Task follow-ups with a Task-keyed receipt and claim ledger."""
+    for expired in store.recover_expired_business_task_follow_up_sends(now=now):
+        _enqueue_business_task_follow_up_repair(
+            store, draft=expired, now=now,
+            send_result_json=json.dumps({
+                "error": "send lease expired; provider outcome unknown",
+                "idempotency_uuid": expired["idempotency_uuid"],
+            }, ensure_ascii=False),
+        )
+    if not auto_send or not _is_local_working_time(now):
+        return 0
+    sent = 0
+    for _ in range(limit):
+        claim_token = str(uuid4())
+        lease_owner = f"business-task-follow-up:{uuid4()}"
+        revision_uuid = str(uuid4())
+        draft = store.claim_due_business_task_follow_up(
+            now=now, claim_token=claim_token, lease_owner=lease_owner,
+            lease_until=_lease_until(now, FOLLOW_UP_SEND_LEASE),
+            idempotency_uuid=revision_uuid,
+        )
+        if draft is None:
+            break
+        if _refresh_business_task_todo_before_follow_up(
+            store, dws, business_task_id=int(draft["business_task_id"]), now=now,
+        ):
+            with store._immediate_write_transaction() as db:
+                db.execute(
+                    "update business_task_follow_up_send_attempts set state='expired_before_send', "
+                    "lease_owner='', lease_until='', result_json=?, updated_at=? "
+                    "where draft_id=? and draft_revision=? and claim_token=? and state='claimed'",
+                    (json.dumps({"reason": "dingtalk_todo_completed_before_follow_up"}),
+                     now, draft["id"], draft["revision"], claim_token),
+                )
+            continue
+        if not store.transition_business_task_follow_up_to_sending(
+            draft_id=int(draft["id"]), revision=int(draft["revision"]),
+            claim_token=claim_token,
+        ):
+            continue
+        try:
+            owner_user_id, open_dingtalk_id, at_name = _owner_dingtalk_target(
+                store, dws, owner_user_id=str(draft["owner_user_id"]),
+                fallback_name=str(draft["owner_name"]),
+            )
+            if not owner_user_id:
+                raise ValueError("Task follow-up owner is unresolved")
+            task = store.get_business_task(int(draft["business_task_id"]))
+            if task is None or task.status.value not in {"open", "waiting"}:
+                raise ValueError("Task follow-up Task is no longer open")
+            body = f"**请确认：** {draft['question_text']}\n\n**事项**\n- {task.title}"
+            sender = ServiceMessageSender(store=store, dingtalk=dws)
+            prepared = sender.prepare(
+                channel="dingtalk", delivery_key=f"business-task-follow-up:{revision_uuid}",
+                body=body, original_text=body, feedback_base_url=feedback_base_url,
+            )
+            is_group = draft["target_kind"] == "group"
+            receipt = sender.send_dingtalk_prepared(
+                prepared,
+                conversation_id=str(draft["target_conversation_id"]) if is_group else None,
+                at_users=[owner_user_id] if is_group else [],
+                at_open_dingtalk_ids=[open_dingtalk_id] if is_group and open_dingtalk_id else [],
+                at_open_dingtalk_names=[at_name] if is_group and at_name else [],
+                user_id=None if is_group or open_dingtalk_id else owner_user_id,
+                open_dingtalk_id=open_dingtalk_id if not is_group else None,
+                idempotency_uuid=revision_uuid,
+            )
+            provider_result = receipt.provider_result
+            status = (
+                "failed" if isinstance(provider_result, dict)
+                and provider_result.get("success") is False else "sent"
+            )
+            result_json = json.dumps(
+                {"send_result": provider_result or {},
+                 "target_conversation_id": draft["target_conversation_id"],
+                 "idempotency_uuid": revision_uuid,
+                 "delivered_text": prepared.final_body}, ensure_ascii=False,
+            )
+        except Exception as exc:
+            # A call may have reached DingTalk before its exception was observed.
+            # Retain the uncertain attempt for explicit receipt reconciliation.
+            status = "unknown"
+            result_json = json.dumps({"error": str(exc), "idempotency_uuid": revision_uuid}, ensure_ascii=False)
+        finished = store.finish_business_task_follow_up_send(
+            draft_id=int(draft["id"]), revision=int(draft["revision"]),
+            claim_token=claim_token, status=status,
+            result_json=result_json, now=now,
+        )
+        if finished and status == "sent":
+            sent += 1
+        elif finished and status in {"failed", "unknown"}:
+            _enqueue_business_task_follow_up_repair(
+                store, draft=draft, now=now, send_result_json=result_json,
+            )
+    return sent
+
+
+def _enqueue_business_task_follow_up_repair(
+    store: AutoReplyStore, *, draft, now: str, send_result_json: str,
+) -> int:
+    task = store.get_business_task(int(draft["business_task_id"]))
+    if task is None or task.status.value not in {"open", "waiting"}:
+        return 0
+    source_ref = f"business-task-follow-up-repair:{draft['id']}:{draft['revision']}"
+    summary = {
+        "business_task": {"id": task.id, "title": task.title, "status": task.status.value},
+        "follow_up": {
+            "id": draft["id"], "status": "failed",
+            "target_conversation_id": draft["target_conversation_id"],
+            "target_kind": draft["target_kind"],
+            "question_text": draft["question_text"],
+            "scheduled_at": draft["scheduled_at"],
+            "send_result": _json_dict(send_result_json),
+        },
+        "search_policy": {
+            "time_window": {"prefer_since": draft["scheduled_at"], "end": now},
+            "limits": {"max_tool_calls": 8, "max_sources_to_return": 3},
+            "allowed_sources": ["dws_message", "dingtalk_todo"],
+        },
+    }
+    item = WorkItem.model_validate({
+        "source": {
+            "type": "follow_up_completion_check", "ref": source_ref,
+            "title": task.title,
+            "conversation_id": draft["target_conversation_id"],
+            "created_at": now,
+        },
+        "summary": json.dumps(summary, ensure_ascii=False),
+        "context": {"source_conversation_kind": draft["target_kind"]},
+    })
+    return store.enqueue_work_summary_input(
+        source_type=item.source.type.value, source_ref=source_ref,
+        payload_json=item.model_dump_json(),
+    )
 
 
 def _parse_follow_up_datetime(value: str) -> datetime | None:
@@ -509,6 +687,21 @@ def _work_tracking_review_item(
             "summary": json.dumps(
                 {
                     "reason": reason,
+                    "search_policy": {
+                        "time_window": {
+                            "prefer_since": (
+                                (_parse_follow_up_datetime(now) - timedelta(days=30)).isoformat(sep=" ")
+                                if _parse_follow_up_datetime(now) is not None
+                                else now
+                            ),
+                            "end": now,
+                        },
+                        "limits": {"max_tool_calls": 8, "max_sources_to_return": 3},
+                        "allowed_sources": [
+                            "dingtalk_todo", "dws_message", "dws_minutes", "lark_message", "lark_doc",
+                            "lark_task", "email",
+                        ],
+                    },
                     "project": (
                         {"id": project.id, "title": project.title}
                         if project is not None

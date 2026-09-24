@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus } from "./console";
+import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects } from "./console";
 
 function statusEnvelope() {
   return {
@@ -142,6 +142,25 @@ describe("console API helpers", () => {
     }
   });
 
+  it("requires the separately paged project candidate metadata", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      expect(String(input)).toBe("/api/console/tasks/projects?page=1&candidate_page=2&candidate_page_size=20");
+      return new Response(JSON.stringify({
+        items: [],
+        candidates: [],
+        meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "now" },
+        candidate_meta: { page: 2, page_size: 20, total: 21, next_cursor: "next", has_more: true, snapshot_at: "now" },
+      }), { status: 200 });
+    };
+    try {
+      const result = await listBusinessProjects({ page: 1, candidate_page: 2, candidate_page_size: 20 });
+      expect(result.candidate_meta).toMatchObject({ page: 2, total: 21, has_more: true });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("surfaces FastAPI detail messages for actionable validation errors", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response(
@@ -219,6 +238,31 @@ describe("console API helpers", () => {
       const { listTasks } = await import("./console");
       const page = await listTasks();
       expect(page.items[0].owner).toBe("Avery");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects a legacy Project row in the semantic Tasks list", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      items: [{ id: 836, title: "客户项目", status: "active", category: "projects" }],
+      meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" },
+    }), { status: 200 });
+    try {
+      const { listBusinessTasks } = await import("./console");
+      await expect(listBusinessTasks()).rejects.toThrow("invalid business task response");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects a legacy Project detail in the semantic Task detail endpoint", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({ item: { project: { id: 836, title: "旧项目" } }, meta: { snapshot_at: "2026-09-24" } }), { status: 200 });
+    try {
+      const { getBusinessTaskDetail } = await import("./console");
+      await expect(getBusinessTaskDetail("836")).rejects.toThrow("invalid business task detail");
     } finally {
       globalThis.fetch = originalFetch;
     }

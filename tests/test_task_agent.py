@@ -7,27 +7,33 @@ import pytest
 from app.store import AutoReplyStore
 from app.agent_runtime_router import CodexCommandFactory, RoutedResultValidationError
 from app.task_agent import (
-    RepairableTaskDecisionValidationError,
     TaskAgentCodexRunner,
     TaskAgentRunner,
     apply_task_agent_decision,
-    build_owner_resolution_prompt,
     build_task_agent_prompt,
     process_work_item,
     _parse_task_agent_decision,
-    _normalize_follow_up_time,
     _task_result_validation_repair_prompt,
 )
 from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.task_models import TaskAgentDecision, WorkItem, WorkItemSourceType
+from app.task_business_resolution import BusinessResolutionService
+from app.task_semantic_service import (
+    RecordCandidate,
+    RecordFormalTask,
+    SourceSignal,
+    TaskSemanticService,
+)
+from app.task_semantic_rules import FormalityEvidence
+from app.task_semantic_models import BusinessActorKind, BusinessTaskDateType, FormalTaskBasis
+from app.task_agent_session import TaskAgentSessionLeaseLost
 
 
 def test_task_agent_parser_uses_valid_result_after_failed_tool_event():
-    decision = {
-        "action": "skip",
+    decision = {"task_decisions": [{
+        "action": "skip", "transition": "none",
         "skip_reason": "No durable work was identified.",
-        "memory_recall_used": True,
-    }
+    }]}
     raw = "\n".join(
         [
             json.dumps(
@@ -54,50 +60,15 @@ def test_task_agent_parser_uses_valid_result_after_failed_tool_event():
     assert _parse_task_agent_decision(raw) == TaskAgentDecision.model_validate(decision)
 
 
-def test_task_agent_parser_migrates_known_legacy_project_fields():
-    decision = {
-        "action": "update_project",
-        "project": {
-            "id": 42,
-            "title": "Legacy project",
-            "owner": {
-                "user_id": "owner-42",
-                "name": "Alex",
-            },
-        },
-        "follow_up_mode": "draft",
-        "source_conversations": [{"title": "Legacy source"}],
-    }
 
-    parsed = _parse_task_agent_decision(json.dumps(decision))
-
-    assert parsed.project is not None
-    assert parsed.project.owner_user_id == "owner-42"
-    assert parsed.project.owner_name == "Alex"
-    assert parsed.project.follow_up_mode == "draft"
-    assert parsed.project.source_conversations == [{"title": "Legacy source"}]
-
-
-def test_normalize_follow_up_time_uses_business_timezone_for_aware_input():
-    assert _normalize_follow_up_time("2026-08-30T09:30:00-07:00") == (
-        "2026-08-31T09:00:00+08:00"
-    )
-
-
-def test_normalize_follow_up_time_preserves_valid_business_window():
-    assert _normalize_follow_up_time("2026-08-31T10:30:00+08:00") == (
-        "2026-08-31T10:30:00+08:00"
-    )
 
 
 def test_task_agent_parser_recovers_complete_object_with_repeated_continuation():
-    decision = {
-        "action": "skip",
+    decision = {"task_decisions": [{
+        "action": "skip", "transition": "none",
         "skip_reason": "The source is informational only.",
-        "memory_recall_used": False,
-        "confidence": 0.99,
-    }
-    malformed = json.dumps(decision) + ',"todo_changes":[],"confidence":0.99}'
+    }]}
+    malformed = json.dumps(decision) + ',"task_decisions":[]}'
 
     assert _parse_task_agent_decision(malformed) == TaskAgentDecision.model_validate(decision)
 
@@ -117,35 +88,10 @@ def _agent_message_jsonl(*messages: str) -> str:
 
 
 def _null_evidence_decision(**overrides) -> dict:
-    # The MiniMax shape behind task runs 7472/7475: null owner_evidence /
-    # blocker (accepted as "not provided") and update_project without a
-    # project (a business rule, not a schema error); the only schema defect
-    # is null on the required follow_up_id.
-    decision = {
-        "action": "update_project",
-        "project": None,
-        "todo_changes": [
-            {
-                "action": "update",
-                "todo_id": 12,
-                "title": "Confirm the vendor quote with Zhang",
-                "owner_evidence": None,
-                "blocker": None,
-            }
-        ],
-        "follow_up_changes": [
-            {
-                "follow_up_id": None,
-                "action": "keep_open",
-                "next_due_at": "2026-07-16T09:00:00+08:00",
-                "reason": "Vendor quote still pending.",
-                "owner_evidence": None,
-            }
-        ],
-        "update_summary": "Vendor quote still pending.",
-        "memory_recall_used": True,
-        "confidence": 0.7,
-    }
+    decision = {"task_decisions": [{
+        "action": "skip", "transition": "none", "skip_reason": "No change.",
+        "untrusted_runtime_value": "Confirm the vendor quote with Zhang",
+    }]}
     decision.update(overrides)
     return decision
 
@@ -155,89 +101,22 @@ def test_task_agent_parser_reports_field_errors_of_last_candidate():
 
     with pytest.raises(
         RoutedResultValidationError,
-        match=r"follow_up_changes\.0\.follow_up_id: Input should be a valid integer",
+        match=r"task_decisions\.0\.untrusted_runtime_value: Extra inputs are not permitted",
     ) as raised:
         _parse_task_agent_decision(raw)
 
     message = str(raised.value)
-    assert "todo_changes.0.owner_evidence" not in message
-    assert "todo_changes.0.blocker" not in message
+    assert "untrusted_runtime_value" in message
     assert "No TaskAgentDecision JSON found" not in message
     assert raised.value.raw_output == raw
 
 
 def test_task_agent_parser_accepts_minimax_null_optional_fields():
-    # Task runs 7472/7475/7491: null for owner_evidence / blocker /
-    # evidence_check where nothing is provided, alongside complete evidence.
-    completion_evidence = {
-        "source": "reply_attempt:1",
-        "reason": "Zhang confirmed the quote in the group.",
-        "description": "The vendor quote was accepted on 2026-07-15.",
-        "completed_at": "2026-07-15 18:00:00",
-    }
-    decision = {
-        "action": "update_project",
-        "project": {
-            "id": 3,
-            "title": "Vendor quote",
-            "memory_context": _memory_context(),
-        },
-        "todo_changes": [
-            {
-                "action": "close",
-                "todo_id": 12,
-                "status": "done",
-                "owner_evidence": None,
-                "completion_evidence": completion_evidence,
-                "blocker": None,
-            }
-        ],
-        "follow_up_changes": [
-            {
-                "follow_up_id": 5,
-                "action": "keep_open",
-                "next_due_at": "2026-07-16T09:00:00+08:00",
-                "reason": "Waiting for the signed copy.",
-                "evidence_check": None,
-                "owner_evidence": None,
-            }
-        ],
-        "update_summary": "Quote accepted, signed copy pending.",
-        "memory_recall_used": True,
-        "confidence": 0.8,
-    }
-    without_nulls = json.loads(json.dumps(decision))
-    for change in without_nulls["todo_changes"] + without_nulls["follow_up_changes"]:
-        for field in ("owner_evidence", "blocker", "evidence_check"):
-            if field in change and change[field] is None:
-                del change[field]
-
+    decision = {"task_decisions": [{"action": "skip", "transition": "none",
+        "skip_reason": "No source-grounded Task."}]}
     parsed = _parse_task_agent_decision(_agent_message_jsonl(json.dumps(decision)))
+    assert parsed == TaskAgentDecision.model_validate(decision)
 
-    assert parsed == TaskAgentDecision.model_validate(without_nulls)
-    assert parsed.todo_changes[0].owner_evidence == {}
-    assert parsed.todo_changes[0].blocker == ""
-    assert parsed.todo_changes[0].completion_evidence == completion_evidence
-    assert parsed.follow_up_changes[0].evidence_check == {}
-
-
-def test_task_agent_parser_reports_misplaced_project_fields():
-    # Task run 7460: the model closed `project` early and put its remaining
-    # fields at the decision top level.
-    decision = {
-        "action": "update_project",
-        "project": {"id": 3, "title": "Office move"},
-        "facts": [],
-        "tags": ["ops"],
-        "memory_recall_used": True,
-    }
-
-    with pytest.raises(RoutedResultValidationError) as raised:
-        _parse_task_agent_decision(_agent_message_jsonl(json.dumps(decision)))
-
-    message = str(raised.value)
-    assert "facts: Extra inputs are not permitted" in message
-    assert "tags: Extra inputs are not permitted" in message
 
 
 def test_task_agent_parser_ignores_event_objects_when_naming_failing_candidate():
@@ -259,7 +138,7 @@ def test_task_agent_parser_ignores_event_objects_when_naming_failing_candidate()
         _parse_task_agent_decision(raw)
 
     message = str(raised.value)
-    assert "follow_up_changes.0.follow_up_id" in message
+    assert "task_decisions.0.untrusted_runtime_value" in message
     assert "type:" not in message
     assert "item:" not in message
     assert "usage:" not in message
@@ -267,9 +146,9 @@ def test_task_agent_parser_ignores_event_objects_when_naming_failing_candidate()
 
 
 def test_task_agent_parser_message_never_echoes_field_values():
-    decision = _null_evidence_decision(
-        update_summary="Read /tmp/ceo-agent-service/notes.md with sk-proj-abcdefghijklmnop"
-    )
+    decision = _null_evidence_decision()
+    decision["task_decisions"][0]["untrusted_runtime_value"] = \
+        "Read /tmp/ceo-agent-service/notes.md with sk-proj-abcdefghijklmnop"
     raw = json.dumps(decision)
     assert contains_local_runtime_leak(raw)
     assert contains_credential(raw)
@@ -280,7 +159,7 @@ def test_task_agent_parser_message_never_echoes_field_values():
     message = str(raised.value)
     assert not contains_local_runtime_leak(message)
     assert not contains_credential(message)
-    assert "Confirm the vendor quote" not in message
+    assert "notes.md" not in message
 
 
 def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
@@ -288,17 +167,12 @@ def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
 
     prompt = _task_result_validation_repair_prompt(raw)
 
-    assert (
-        "- follow_up_changes.0.follow_up_id: Input should be a valid integer"
-    ) in prompt
-    assert "todo_changes.0" not in prompt
-    assert 'return action="skip" with a skip_reason' in prompt
-    assert "update_project requires project with the stable integer id" in prompt
-    assert "project.memory_context" in prompt
-    assert "null on an optional field means the field is not provided" in prompt
-    assert "owner_evidence with source, reason, description" in prompt
-    assert "completion_evidence with source, reason, description and completed_at" in prompt
-    assert "belongs inside the project object" in prompt
+    assert "- task_decisions.0.untrusted_runtime_value: Extra inputs are not permitted" in prompt
+    assert "task_decisions" in prompt
+    assert "apply_acceptance requires accepted polarity" in prompt
+    assert "verified reply-to source reference" in prompt
+    assert "memory_recall" in prompt
+    assert "live directory read" in prompt
     assert (
         "A source path may appear only in an evidence field whose key is "
         "exactly source or source_ref"
@@ -317,10 +191,8 @@ def test_task_result_validation_repair_prompt_for_prose_only_output():
 
 def test_task_result_validation_repair_prompt_after_runtime_path_leak():
     decision = {
-        "action": "skip",
-        "skip_reason": "Nothing to change.",
-        "update_summary": "Could not read /tmp/ceo-agent-service/todo.md",
-        "memory_recall_used": True,
+        "task_decisions": [{"action": "skip", "transition": "none",
+            "skip_reason": "Could not read /tmp/ceo-agent-service/todo.md"}],
     }
 
     prompt = _task_result_validation_repair_prompt(_agent_message_jsonl(json.dumps(decision)))
@@ -331,20 +203,17 @@ def test_task_result_validation_repair_prompt_after_runtime_path_leak():
 
 
 def test_task_result_validation_repair_prompt_caps_problem_list():
-    decision = _null_evidence_decision(
-        todo_changes=[
-            {"action": None, "todo_id": index, "owner_evidence": None}
-            for index in range(15)
-        ]
-    )
+    decision = {"task_decisions": [
+        {"action": "skip", "transition": "none", "untrusted_field": str(index)}
+        for index in range(15)
+    ]}
 
     prompt = _task_result_validation_repair_prompt(json.dumps(decision))
 
     problem_section = prompt.split("Rules that must hold:")[0]
     assert problem_section.count("\n- ") == 12
-    assert "todo_changes.11.action" in problem_section
-    assert "todo_changes.12.action" not in problem_section
-    assert "owner_evidence" not in problem_section
+    assert "task_decisions.11.untrusted_field" in problem_section
+    assert "task_decisions.12.untrusted_field" not in problem_section
 
 
 class FakeCodex:
@@ -355,9 +224,16 @@ class FakeCodex:
     def __init__(self, payload):
         self.payload = payload
         self.prompts = []
+        self.calls = []
 
     def decide(self, *, prompt, session_id=None, workload_key=None, session_scope_id=None):
         self.prompts.append(prompt)
+        self.calls.append(
+            {
+                "workload_key": workload_key,
+                "session_scope_id": session_scope_id,
+            }
+        )
         return TaskAgentDecision.model_validate(self.payload)
 
 
@@ -416,188 +292,8 @@ def _work_item(project_name="售前知识库"):
     )
 
 
-def test_update_project_rejects_empty_defaults_that_would_erase_metadata(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = store.create_work_project(
-        title="融资 Demo 交付",
-        goal="完成可复跑演示",
-        background="已确认背景",
-        facts_json='[{"description":"fact","source":"source"}]',
-        source_conversations_json='[{"conversation_id":"cid"}]',
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "",
-                "goal": "",
-                "background": "",
-                "facts": [],
-                "source_conversations": [],
-                "memory_context": {
-                    "query": "融资 Demo 当前状态",
-                    "summary": "未发现新的完成证据。",
-                },
-            },
-            "memory_recall_used": True,
-        }
-    )
-
-    with pytest.raises(
-        RepairableTaskDecisionValidationError,
-        match="erase protected project fields",
-    ):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-            record_run=False,
-        )
-
-    restored = store.get_work_project(project_id)
-    assert restored is not None
-    assert restored.title == "融资 Demo 交付"
-    assert restored.goal == "完成可复跑演示"
-    assert restored.background == "已确认背景"
-    assert restored.facts_json == '[{"description":"fact","source":"source"}]'
-    assert restored.source_conversations_json == '[{"conversation_id":"cid"}]'
 
 
-def test_create_project_rejects_missing_title(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "  ",
-                "memory_context": {
-                    "query": "融资 Demo 当前状态",
-                    "summary": "未找到已有项目。",
-                },
-            },
-            "memory_recall_used": True,
-        }
-    )
-
-    with pytest.raises(
-        RepairableTaskDecisionValidationError,
-        match="create_project requires a non-empty project.title",
-    ):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-            record_run=False,
-        )
-
-    assert store.list_work_projects() == []
-
-
-def test_local_file_source_cannot_create_project(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    item = _low_confidence_minutes_work_item()
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "历史会议材料",
-                "memory_context": {
-                    "query": "历史会议材料",
-                    "summary": "未找到已有项目。",
-                },
-            },
-            "memory_recall_used": True,
-        }
-    )
-
-    with pytest.raises(
-        RepairableTaskDecisionValidationError,
-        match="local_file sources cannot create projects",
-    ):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=item,
-            decision=decision,
-            record_run=False,
-        )
-
-
-@pytest.mark.parametrize(
-    "source_type",
-    ["todo_completion_check", "follow_up_completion_check"],
-)
-def test_completion_check_without_lifecycle_transition_must_skip(
-    tmp_path,
-    source_type,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = store.create_work_project(title="客户交付")
-    item = _work_item()
-    item.source.type = WorkItemSourceType(source_type)
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "current_state": "仍未找到完成证据。",
-                "memory_context": {
-                    "query": "客户交付完成状态",
-                    "summary": "没有生命周期变化。",
-                },
-            },
-            "memory_recall_used": True,
-        }
-    )
-
-    with pytest.raises(
-        RepairableTaskDecisionValidationError,
-        match="completion check without a lifecycle transition must skip",
-    ):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=item,
-            decision=decision,
-            record_run=False,
-        )
-
-
-def test_completion_check_cannot_change_durable_project_metadata(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = store.create_work_project(title="客户交付")
-    item = _work_item()
-    item.source.type = WorkItemSourceType.TODO_COMPLETION_CHECK
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "完成检查擅自改名",
-                "status": "waiting",
-                "memory_context": {
-                    "query": "客户交付完成状态",
-                    "summary": "发现等待状态。",
-                },
-            },
-            "memory_recall_used": True,
-        }
-    )
-
-    with pytest.raises(
-        RepairableTaskDecisionValidationError,
-        match="completion checks cannot change protected project fields: title",
-    ):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=item,
-            decision=decision,
-            record_run=False,
-        )
 
 
 def _low_confidence_minutes_work_item() -> WorkItem:
@@ -633,288 +329,6 @@ def _low_confidence_minutes_work_item() -> WorkItem:
     )
 
 
-def _follow_up_reply_work_item(
-    *,
-    source_ref: str,
-    summary: str,
-    conversation_id: str,
-    conversation_title: str,
-    sender: str,
-    sender_user_id: str,
-    created_at: str,
-    project_name: str = "",
-) -> WorkItem:
-    return WorkItem.model_validate(
-        {
-            "source": {
-                "type": "reply_attempt",
-                "ref": source_ref,
-                "title": sender,
-                "conversation_id": conversation_id,
-                "conversation_title": conversation_title,
-                "created_at": created_at,
-            },
-            "summary": summary,
-            "project_name": project_name,
-            "context": {
-                "sender": sender,
-                "sender_user_id": sender_user_id,
-                "participants": [sender],
-                "source_conversation_kind": "direct",
-                "source_conversation_title": conversation_title,
-            },
-            "task_signals": {
-                "possible_task_update": True,
-                "mentions_follow_up": True,
-                "signal_reason": "reply_attempt is near a recent follow-up candidate",
-            },
-        }
-    )
-
-
-def _todo_completion_candidate_work_item(
-    *,
-    candidate_id: int,
-    project_id: int,
-    todo_id: int,
-    project_name: str,
-    evidence_text: str,
-) -> WorkItem:
-    return WorkItem.model_validate(
-        {
-            "source": {
-                "type": "todo_completion_evidence_candidate",
-                "ref": f"todo-evidence:{candidate_id}",
-                "title": f"TODO completion evidence #{candidate_id}",
-                "conversation_id": "",
-                "conversation_title": "",
-                "created_at": "2026-06-28 12:00:00",
-            },
-            "summary": json.dumps(
-                {
-                    "project": {"id": project_id, "title": project_name},
-                    "todo": {"id": todo_id, "title": "确认客户验收完成"},
-                    "evidence_candidate": {
-                        "id": candidate_id,
-                        "evidence_text": evidence_text,
-                    },
-                },
-                ensure_ascii=False,
-            ),
-            "project_name": project_name,
-            "context": {
-                "sender": "CEO task completion checker",
-                "participants": ["Alex"],
-                "source_conversation_kind": "group",
-                "source_conversation_title": "",
-            },
-            "task_signals": {
-                "possible_task_update": True,
-                "mentions_follow_up": True,
-                "progress_claim": True,
-                "signal_reason": "todo completion evidence candidate",
-            },
-        }
-    )
-
-
-def _enqueue_and_process_work_item(
-    store: AutoReplyStore,
-    *,
-    item: WorkItem,
-    codex: FakeCodex,
-) -> int:
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-    return input_id
-
-
-def test_process_todo_completion_candidate_marks_accepted_when_todo_closes(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="客户验收",
-        category="projects",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="确认客户验收完成",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="open",
-        priority="P1",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="请确认客户验收是否完成。",
-        scheduled_at="2026-06-28 09:00:00",
-        status="sent",
-    )
-    candidate = store.upsert_todo_evidence_candidate(
-        project_id=project_id,
-        todo_id=todo_id,
-        source_type="dws_message",
-        source_ref="dws_message:msg-1",
-        source_created_at="2026-06-28 10:00:00",
-        evidence_text="Alex 明确回复客户验收已经完成。",
-        reason="消息明确说明验收完成。",
-        confidence=0.95,
-    )
-    item = _todo_completion_candidate_work_item(
-        candidate_id=candidate.id,
-        project_id=project_id,
-        todo_id=todo_id,
-        project_name="客户验收",
-        evidence_text=candidate.evidence_text,
-    )
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    store.mark_todo_evidence_candidate_enqueued(candidate.id, input_id)
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-
-    process_work_item(
-        store,
-        TaskAgentRunner(
-            FakeCodex(
-                {
-                    "action": "update_project",
-                    "project": {
-                        "id": project_id,
-                        "title": "客户验收",
-                        "category": "projects",
-                        "status": "active",
-                        "priority": "P1",
-                        "risk_level": "medium",
-                        "memory_context": {
-                            "query": "客户验收",
-                            "summary": "客户验收背景",
-                            "memories": [],
-                        },
-                    },
-                    "todo_changes": [
-                        {
-                            "action": "close",
-                            "todo_id": todo_id,
-                            "completion_evidence": {
-                                "source": "dws_message:msg-1",
-                                "reason": "Alex 明确回复客户验收已经完成。",
-                                "description": "群消息明确说明客户验收已经完成。",
-                                "completed_at": "2026-06-28 10:00:00",
-                                "checked_at": "2026-06-28 12:00:00",
-                            },
-                        }
-                    ],
-                    "follow_up_drafts": [],
-                    "follow_up_changes": [],
-                    "update_summary": "确认客户验收已经完成。",
-                    "merge_reason": "todo completion evidence accepted",
-                    "memory_recall_used": True,
-                    "confidence": 0.95,
-                    "risk": "low",
-                    "rule_coverage": 1.0,
-                    "information_completeness": 1.0,
-                }
-            )
-        ),
-        work_input,
-        dws=object(),
-        now="2026-06-28 12:00:00",
-    )
-
-    updated_candidate = store.get_todo_evidence_candidate(candidate.id)
-    assert updated_candidate is not None
-    assert updated_candidate.status == "accepted"
-    assert json.loads(updated_candidate.decision_json)["todo_changes"][0]["action"] == "close"
-    assert store.get_work_todo(todo_id).status == "done"
-    assert store.get_follow_up_draft(follow_up_id).status == "completed"
-
-
-def test_process_todo_completion_candidate_marks_rejected_when_agent_skips(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="客户验收",
-        category="projects",
-        status="active",
-        priority="P2",
-        risk_level="low",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="确认客户验收完成",
-        status="open",
-        priority="P2",
-    )
-    candidate = store.upsert_todo_evidence_candidate(
-        project_id=project_id,
-        todo_id=todo_id,
-        source_type="dws_minutes",
-        source_ref="dws_minutes:minutes-1",
-        source_created_at="2026-06-28 10:00:00",
-        evidence_text="会议里只是说继续推进验收。",
-        reason="只看到进展，没有完成证据。",
-        confidence=0.3,
-    )
-    item = _todo_completion_candidate_work_item(
-        candidate_id=candidate.id,
-        project_id=project_id,
-        todo_id=todo_id,
-        project_name="客户验收",
-        evidence_text=candidate.evidence_text,
-    )
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    store.mark_todo_evidence_candidate_enqueued(candidate.id, input_id)
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-
-    process_work_item(
-        store,
-        TaskAgentRunner(
-            FakeCodex(
-                {
-                    "action": "skip",
-                    "skip_reason": "证据只说明有进展，不能证明 TODO 已完成。",
-                    "project": None,
-                    "todo_changes": [],
-                    "follow_up_drafts": [],
-                    "follow_up_changes": [],
-                    "update_summary": "不关闭 TODO。",
-                    "merge_reason": "",
-                    "memory_recall_used": True,
-                    "confidence": 0.7,
-                    "risk": "low",
-                    "rule_coverage": 1.0,
-                    "information_completeness": 1.0,
-                }
-            )
-        ),
-        work_input,
-        now="2026-06-28 12:00:00",
-    )
-
-    updated_candidate = store.get_todo_evidence_candidate(candidate.id)
-    assert updated_candidate is not None
-    assert updated_candidate.status == "rejected"
-    assert store.get_work_todo(todo_id).status == "open"
-
-
 def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tmp_path):
     store = AutoReplyStore(tmp_path / "task-lifecycle.sqlite3")
     item = _work_item()
@@ -922,21 +336,8 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
         item.source.type.value, item.source.ref, item.model_dump_json()
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
-    payload = {
-        "action": "skip",
-        "skip_reason": "no durable update",
-        "project": None,
-        "todo_changes": [],
-        "follow_up_drafts": [],
-        "follow_up_changes": [],
-        "update_summary": "skipped",
-        "merge_reason": "",
-        "memory_recall_used": False,
-        "confidence": 0.8,
-        "risk": "low",
-        "rule_coverage": 1.0,
-        "information_completeness": 1.0,
-    }
+    payload = {"task_decisions": [{"action": "skip", "transition": "none",
+        "skip_reason": "no durable update"}]}
 
     class LifecycleCodex(FakeCodex):
         last_audit_tool_events = []
@@ -950,7 +351,8 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
             assert row["status"] == "running"
             return super().decide(**kwargs)
 
-    process_work_item(store, TaskAgentRunner(LifecycleCodex(payload)), work_input)
+    codex = LifecycleCodex(payload)
+    process_work_item(store, TaskAgentRunner(codex), work_input)
 
     with store._connect() as db:
         runs = db.execute(
@@ -958,112 +360,118 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
         ).fetchall()
     assert len(runs) == 1
     assert runs[0]["status"] == "completed"
-    assert json.loads(runs[0]["decision_json"])["action"] == "skip"
+    assert json.loads(runs[0]["decision_json"])["task_decisions"][0]["action"] == "skip"
+    assert store.get_work_summary_input(input_id).status.value == "skipped"
+    assert codex.calls[0]["session_scope_id"] == "task-agent:work-tracking:v1"
 
 
-def _memory_context():
-    return {
-        "query": "售前知识库",
-        "summary": "售前知识库历史背景来自 memory_recall。",
-        "memories": [
-            {
-                "source": "memory_recall",
-                "uuid": "mem-1",
-                "text": "售前知识库历史背景：材料沉淀在 business/售前知识库。",
-                "summary": "材料沉淀在 business/售前知识库。",
-                "created_at": "2026-06-05",
-            }
-        ],
-    }
-
-
-def _owner_evidence(user_id="owner-1", name="Alex", source="reply_attempt:1"):
-    return {
-        "user_id": user_id,
-        "name": name,
-        "source": source,
-        "reason": "The source explicitly assigns this owner.",
-        "description": "The stable owner identity is verified by the cited source.",
-    }
-
-
-def _follow_up_draft_payload(**overrides):
-    payload = {
-        "title": "确认项目边界",
-        "description": (
-            "基于售前群提到的售前知识库建设事项，需要确认项目目标、"
-            "当前状态和下一步，避免 owner 不清楚背景。"
-        ),
-        "owner_user_id": "owner-1",
-        "owner_name": "Alex",
-        "owners": [{"user_id": "owner-1", "name": "Alex", "role": "owner"}],
-        "target_conversation_id": "cid-1",
-        "target_kind": "group",
-        "question_text": "项目目标和 owner 是否确认？",
-        "scheduled_at": "2026-06-08 09:00:00",
-        "priority": "P1",
-        "tags": ["售前", "知识库"],
-        "participants": [{"user_id": "owner-1", "name": "Alex", "role": "owner"}],
-        "files": [],
-        "risk_check": {
-            "owner_in_group": True,
-            "sensitive": False,
-            "reason": "普通项目进展确认",
-            "owner_evidence": {
-                "user_id": "owner-1",
-                "name": "Alex",
-                "source": "reply_attempt:1",
-                "reason": "来源消息明确说明 owner 是 Alex。",
-                "description": "售前群消息写明售前知识库需要补齐来源链接，owner 是 Alex。",
-            },
-        },
-        "status": "draft",
-    }
-    payload.update(overrides)
-    return payload
-
-
-def _decision_with_follow_up_change(
-    *,
-    project_id: int,
-    follow_up_id: int,
-    todo_id: int | None = None,
-    action: str = "suppress",
-    next_due_at: str | None = None,
-    owner_user_id: str | None = None,
-    owner_name: str | None = None,
-) -> TaskAgentDecision:
-    return TaskAgentDecision.model_validate(
+def test_process_work_items_keep_run_keys_but_share_task_agent_session_scope(tmp_path):
+    store = AutoReplyStore(tmp_path / "task-shared-session-scope.sqlite3")
+    first_item = _work_item()
+    second_payload = first_item.model_dump(mode="json")
+    second_payload["source"]["ref"] = "2"
+    second_item = WorkItem.model_validate(second_payload)
+    for item in (first_item, second_item):
+        store.enqueue_work_summary_input(
+            item.source.type.value,
+            item.source.ref,
+            item.model_dump_json(),
+        )
+    work_inputs = store.claim_work_summary_inputs(limit=2)
+    codex = FakeCodex(
         {
-            "action": "create_project",
-            "skip_reason": "",
-            "project": {
-                "id": project_id,
-                "title": "售前知识库",
-                "category": "sales",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [
+            "task_decisions": [
                 {
-                    "follow_up_id": follow_up_id,
-                    "todo_id": todo_id,
-                    "action": action,
-                    "reason": "reply context updated follow-up state",
-                    "evidence_check": {"source": "reply_attempt:1"},
-                    "next_due_at": next_due_at,
-                    "owner_user_id": owner_user_id,
-                    "owner_name": owner_name,
+                    "action": "skip",
+                    "transition": "none",
+                    "skip_reason": "No new durable work.",
                 }
-            ],
-            "update_summary": "更新跟进状态。",
-            "merge_reason": "follow-up reply context",
-            "memory_recall_used": True,
-            "confidence": 0.8,
+            ]
         }
     )
+    runner = TaskAgentRunner(codex)
+
+    for work_input in work_inputs:
+        process_work_item(store, runner, work_input)
+
+    assert [call["session_scope_id"] for call in codex.calls] == [
+        "task-agent:work-tracking:v1",
+        "task-agent:work-tracking:v1",
+    ]
+    assert codex.calls[0]["workload_key"] != codex.calls[1]["workload_key"]
+
+
+def test_process_work_item_does_not_apply_decision_after_session_lease_loss(tmp_path):
+    store = AutoReplyStore(tmp_path / "task-session-lease-lost.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    decision = {
+        "task_decisions": [
+            {
+                "action": "record_candidate",
+                "transition": "none",
+                "source_excerpt": "补齐来源链接",
+                "source_ref": item.source.ref,
+                "title": "补齐报价来源链接",
+                "missing_evidence": ["owner"],
+            }
+        ]
+    }
+
+    class LeaseLostBeforeApply:
+        calls = 0
+
+        def assert_owned(self):
+            self.calls += 1
+            if self.calls == 2:
+                raise TaskAgentSessionLeaseLost("session lease expired")
+
+    with pytest.raises(TaskAgentSessionLeaseLost):
+        process_work_item(
+            store,
+            TaskAgentRunner(FakeCodex(decision)),
+            work_input,
+            session_lease=LeaseLostBeforeApply(),
+        )
+
+    assert not store.list_business_tasks()
+    assert store.get_work_summary_input(input_id).status.value == "failed"
+    with store._connect() as db:
+        run = db.execute(
+            "select status from task_agent_runs where summary_input_id=?",
+            (input_id,),
+        ).fetchone()
+    assert run["status"] == "failed"
+
+
+def test_process_work_item_success_commits_task_and_terminal_run_and_input(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task-success-lifecycle.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    payload = {"task_decisions": [{
+        "action": "record_candidate", "transition": "none",
+        "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
+        "title": "补齐报价来源链接", "missing_evidence": ["owner"],
+    }]}
+
+    process_work_item(store, TaskAgentRunner(FakeCodexWithAuditEvents(payload, [])), work_input)
+
+    assert len(store.list_business_tasks()) == 1
+    assert store.get_work_summary_input(input_id).status.value == "done"
+    with sqlite3.connect(tmp_path / "task-success-lifecycle.sqlite3") as db:
+        run = db.execute(
+            "select status, error from task_agent_runs where summary_input_id=?", (input_id,)
+        ).fetchone()
+    assert run == ("completed", "")
 
 
 def test_work_item_accepts_task_routing_signals():
@@ -1104,93 +512,6 @@ def test_work_item_accepts_task_routing_signals():
     assert "追错owner" in item.task_signals.signal_reason
 
 
-def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="海外数据合规与中美开发隔离闭环",
-        category="strategy",
-        status="active",
-        priority="P0",
-        risk_level="high",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="李明恢复海外数据合规项目当前状态与未完成清单",
-        owner_user_id="100000000000000001",
-        owner_name="李明(Riley)",
-        status="open",
-        priority="P0",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="100000000000000001",
-        owner_name="李明(Riley)",
-        target_conversation_id="cid-lily",
-        target_kind="direct",
-        question_text="海外数据合规 P0 当前状态是什么？",
-        status="sent",
-        sent_at="2026-06-28 09:00:00",
-    )
-    item = WorkItem.model_validate(
-        {
-            "source": {
-                "type": "reply_attempt",
-                "ref": "1992",
-                "title": "Riley",
-                "conversation_id": "cid-lily",
-                "conversation_title": "Riley",
-                "created_at": "2026-06-28 09:44:05",
-            },
-            "summary": "Riley反馈海外数据合规P0追错owner，这个是胡明和运维负责。",
-            "project_name": "",
-            "context": {
-                "sender": "Riley",
-                "sender_user_id": "100000000000000001",
-                "participants": ["Riley"],
-                "source_conversation_kind": "direct",
-                "source_conversation_title": "Riley",
-            },
-            "task_signals": {
-                "possible_task_update": True,
-                "mentions_follow_up": True,
-                "signal_reason": "recent follow-up candidate exists",
-            },
-        }
-    )
-    store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = FakeCodex(
-        {
-            "action": "skip",
-            "skip_reason": "prompt inspection only",
-            "project": None,
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "不更新。",
-            "merge_reason": "",
-            "memory_recall_used": False,
-            "confidence": 0.5,
-            "risk": "low",
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        }
-    )
-
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    prompt = codex.prompts[0]
-    assert "近期 follow-up 候选" in prompt
-    assert f'"id": {follow_up_id}' in prompt
-    assert f'"follow_up_id": {follow_up_id}' in prompt
-    assert "海外数据合规 P0 当前状态是什么？" in prompt
-    assert "李明恢复海外数据合规项目当前状态与未完成清单" in prompt
-
 
 def test_task_agent_prompt_does_not_embed_candidate_specific_workflow():
     item = WorkItem.model_validate(
@@ -1226,3050 +547,7 @@ def test_task_agent_prompt_does_not_embed_candidate_specific_workflow():
     assert "刘芸婷一面记录显示需要判断后续推进状态" in prompt
 
 
-def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="海外数据合规与中美开发隔离闭环",
-        category="strategy",
-        status="active",
-        priority="P0",
-        risk_level="high",
-        owner_user_id="100000000000000001",
-        owner_name="李明(Riley)",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="李明恢复海外数据合规项目当前状态与未完成清单",
-        owner_user_id="100000000000000001",
-        owner_name="李明(Riley)",
-        status="open",
-        priority="P0",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="100000000000000001",
-        owner_name="李明(Riley)",
-        target_conversation_id="cid-lily",
-        target_kind="direct",
-        question_text="海外数据合规 P0 当前状态是什么？",
-        status="sent",
-        sent_at="2026-06-28 09:00:00",
-    )
-    item = _follow_up_reply_work_item(
-        source_ref="1992",
-        summary="Riley反馈海外数据合规P0追错owner，应由胡明和运维负责。",
-        conversation_id="cid-lily",
-        conversation_title="Riley",
-        sender="Riley",
-        sender_user_id="100000000000000001",
-        created_at="2026-06-28 09:44:05",
-    )
-    codex = FakeCodex(
-        {
-            "action": "update_project",
-            "skip_reason": "",
-            "project": {
-                "id": project_id,
-                "title": "海外数据合规与中美开发隔离闭环",
-                "category": "strategy",
-                "tags": [],
-                "status": "active",
-                "priority": "P0",
-                "risk_level": "high",
-                "needs_derek_attention": False,
-                "owner_user_id": "02412744671048909",
-                "owner_name": "Ming Hu(胡明)/运维",
-                "owner_evidence": _owner_evidence(
-                    "02412744671048909",
-                    "Ming Hu(胡明)/运维",
-                    "reply_attempt:1992",
-                ),
-                "related_people": [],
-                "goal": "完成海外数据合规和中美开发隔离闭环。",
-                "background": "Riley反馈该P0事项应由胡明和运维负责，不能继续追Riley。",
-                "memory_context": _memory_context(),
-                "facts": [
-                    {
-                        "description": "Riley反馈海外数据合规P0 owner应为胡明和运维。",
-                        "source": "reply_attempt:1992",
-                        "created": "2026-06-28 09:44:05",
-                        "updated": "2026-06-28 09:44:05",
-                    }
-                ],
-                "current_state": "已纠正owner归属，原Riley follow-up应停止。",
-                "blocker": "",
-                "next_step": "后续如需确认进展，应问胡明或运维。",
-                "next_follow_up_at": "",
-                "follow_up_mode": "none",
-                "source_conversations": [
-                    {"conversation_id": "cid-lily", "title": "Riley"}
-                ],
-            },
-            "todo_changes": [
-                {
-                    "action": "update",
-                    "todo_id": todo_id,
-                    "title": "确认海外数据合规 P0 当前状态与真实 owner 分工",
-                    "owner_user_id": "02412744671048909",
-                    "owner_name": "Ming Hu(胡明)",
-                    "owner_evidence": _owner_evidence(
-                        "02412744671048909",
-                        "Ming Hu(胡明)",
-                        "reply_attempt:1992",
-                    ),
-                    "status": "open",
-                    "priority": "P0",
-                    "completion_evidence": None,
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [
-                {
-                    "follow_up_id": follow_up_id,
-                    "todo_id": todo_id,
-                    "action": "suppress",
-                    "reason": "owner_corrected_by_reply",
-                    "evidence_check": {
-                        "source": "reply_attempt:1992",
-                        "summary": "Riley说明该事项由胡明和运维负责。",
-                    },
-                    "next_due_at": None,
-                    "owner_user_id": None,
-                    "owner_name": None,
-                }
-            ],
-            "update_summary": "停止追Riley并修正海外数据合规owner。",
-            "merge_reason": "follow-up reply corrected owner",
-            "memory_recall_used": True,
-            "confidence": 0.86,
-            "risk": "low",
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        }
-    )
 
-    input_id = _enqueue_and_process_work_item(store, item=item, codex=codex)
-
-    prompt = codex.prompts[0]
-    assert "近期 follow-up 候选" in prompt
-    assert f'"follow_up_id": {follow_up_id}' in prompt
-    project = store.get_work_project(project_id)
-    assert project is not None
-    assert project.owner_name == "Ming Hu(胡明)/运维"
-    todo = store.get_work_todo(todo_id)
-    assert todo is not None
-    assert todo.status == "open"
-    assert todo.owner_name == "Ming Hu(胡明)"
-    assert todo.completion_evidence_json == "{}"
-    skipped = store.get_follow_up_draft(follow_up_id)
-    assert skipped is not None
-    assert skipped.status == "skipped"
-    assert skipped.suppressed_reason == "owner_corrected_by_reply"
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-    assert input_row == ("done", "")
-
-
-def test_process_work_item_accepts_clear_follow_up_completion_reply(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="客户验收交付",
-        category="projects",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="给客户同步验收 ETA",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="open",
-        priority="P1",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-delivery",
-        target_kind="direct",
-        question_text="客户验收 ETA 同步了吗？",
-        status="sent",
-        sent_at="2026-06-28 09:30:00",
-    )
-    item = _follow_up_reply_work_item(
-        source_ref="2001",
-        summary="Alex回复客户验收 ETA 已经同步完成，并发到了客户群。",
-        conversation_id="cid-delivery",
-        conversation_title="Alex",
-        sender="Alex",
-        sender_user_id="owner-1",
-        created_at="2026-06-28 10:00:00",
-        project_name="客户验收交付",
-    )
-    codex = FakeCodex(
-        {
-            "action": "update_project",
-            "skip_reason": "",
-            "project": {
-                "id": project_id,
-                "title": "客户验收交付",
-                "category": "projects",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "close",
-                    "todo_id": todo_id,
-                    "title": "给客户同步验收 ETA",
-                    "status": "done",
-                    "completion_evidence": {
-                        "source": "reply_attempt:2001",
-                        "reason": "Alex明确回复客户验收 ETA 已同步完成。",
-                        "description": "Alex明确回复客户验收 ETA 已同步完成。",
-                        "completed_at": "2026-06-27 12:00:00",
-                        "summary": "Alex明确回复客户验收 ETA 已同步完成。",
-                        "confidence": 0.95,
-                    },
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "根据回复关闭客户验收 ETA TODO。",
-            "merge_reason": "reply explicitly completed the follow-up TODO",
-            "memory_recall_used": True,
-            "confidence": 0.95,
-            "risk": "low",
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        }
-    )
-
-    input_id = _enqueue_and_process_work_item(store, item=item, codex=codex)
-
-    assert f'"follow_up_id": {follow_up_id}' in codex.prompts[0]
-    todo = store.get_work_todo(todo_id)
-    assert todo is not None
-    assert todo.status == "done"
-    assert len(store.list_work_todos(project_id=project_id)) == 1
-    completion_evidence = json.loads(todo.completion_evidence_json)
-    assert completion_evidence["source"] == "reply_attempt:2001"
-    assert "已同步完成" in completion_evidence["summary"]
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    assert follow_up is not None
-    assert follow_up.status == "completed"
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-    assert input_row == ("done", "")
-
-
-def test_process_work_item_discards_ambiguous_follow_up_reply_without_changes(
-    tmp_path,
-):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="售前方案推进",
-        category="sales",
-        status="active",
-        priority="P2",
-        risk_level="low",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="补齐售前方案材料",
-        owner_user_id="owner-2",
-        owner_name="Avery",
-        status="open",
-        priority="P2",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-2",
-        owner_name="Avery",
-        target_conversation_id="cid-presales",
-        target_kind="direct",
-        question_text="售前方案材料补齐了吗？",
-        status="sent",
-        sent_at="2026-06-28 11:00:00",
-    )
-    item = _follow_up_reply_work_item(
-        source_ref="2002",
-        summary="Avery只回复已处理，但没有说明处理了什么，也没有完成证据。",
-        conversation_id="cid-presales",
-        conversation_title="Avery",
-        sender="Avery",
-        sender_user_id="owner-2",
-        created_at="2026-06-28 12:00:00",
-        project_name="售前方案推进",
-    )
-    codex = FakeCodex(
-        {
-            "action": "skip",
-            "skip_reason": "回复过于模糊，不能证明TODO完成或需要更新follow-up。",
-            "project": None,
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "模糊回复不更新任务。",
-            "merge_reason": "",
-            "memory_recall_used": False,
-            "confidence": 0.72,
-            "risk": "low",
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        }
-    )
-
-    input_id = _enqueue_and_process_work_item(store, item=item, codex=codex)
-
-    assert f'"follow_up_id": {follow_up_id}' in codex.prompts[0]
-    todo = store.get_work_todo(todo_id)
-    assert todo is not None
-    assert todo.status == "open"
-    assert todo.completion_evidence_json == "{}"
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    assert follow_up is not None
-    assert follow_up.status == "sent"
-    assert follow_up.suppressed_reason == ""
-    assert store.list_work_updates(project_id=project_id) == []
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-    assert input_row == (
-        "skipped",
-        "回复过于模糊，不能证明TODO完成或需要更新follow-up。",
-    )
-
-
-def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        source_type=item.source.type.value,
-        source_ref=item.source.ref,
-        payload_json=item.model_dump_json(),
-    )
-    assert input_id > 0
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = FakeCodex(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "tags": ["售前"],
-                "status": "active",
-                "priority": "P1",
-                "risk_level": "medium",
-                "needs_derek_attention": False,
-                "owner_user_id": "owner-1",
-                "owner_name": "Alex",
-                "owner_evidence": _owner_evidence(),
-                "related_people": [],
-                "goal": "沉淀售前材料",
-                "background": "售前知识库项目。",
-                "memory_context": _memory_context(),
-                "facts": [
-                    {
-                        "description": "需要补齐来源链接。",
-                        "source": "reply_attempt:1",
-                        "created": "2026-06-07",
-                        "updated": "2026-06-07",
-                    }
-                ],
-                "current_state": "已识别来源链接缺口。",
-                "blocker": "",
-                "next_step": "Alex 补齐来源链接。",
-                "next_follow_up_at": "2026-06-10 09:00:00",
-                "follow_up_mode": "draft",
-                "source_conversations": [{"conversation_id": "cid-1", "title": "售前群"}],
-            },
-            "todo_changes": [
-                {
-                    "action": "create",
-                    "deadline_at": "2026-12-31T18:00:00+08:00",
-                    "title": "补齐来源链接",
-                    "description": "基于售前群 2026-06-07 的讨论，Alex 需要补齐售前知识库材料来源链接，写清每份材料对应的客户场景、缺口 owner 和可验收的完成状态。",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "owner_evidence": _owner_evidence(),
-                    "status": "open",
-                    "priority": "P1",
-                    "next_follow_up_at": "2026-06-10 09:00:00",
-                    "follow_up_question": "来源链接现在补齐到哪一步了？",
-                    "completion_evidence": None,
-                    "blocker": "",
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "创建售前知识库项目。",
-            "merge_reason": "无现有项目匹配，且事项名称稳定。",
-            "memory_recall_used": True,
-            "confidence": 0.9,
-        }
-    )
-
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    projects = store.list_work_projects()
-    assert len(projects) == 1
-    assert projects[0].title == "售前知识库建设"
-    assert json.loads(projects[0].memory_context_json) == _memory_context()
-    todo = store.list_work_todos(project_id=projects[0].id)[0]
-    assert todo.title == "补齐来源链接"
-    assert todo.description == (
-        "基于售前群 2026-06-07 的讨论，Alex 需要补齐售前知识库材料来源链接，"
-        "写清每份材料对应的客户场景、缺口 owner 和可验收的完成状态。"
-    )
-    assert store.list_work_updates(project_id=projects[0].id)[0].summary == "创建售前知识库项目。"
-    assert store.claim_work_summary_inputs(limit=1) == []
-    assert "memory_recall" in codex.prompts[0]
-    assert "Required evidence sequence for every non-skip decision" in codex.prompts[0]
-    assert "applicable live DWS read" in codex.prompts[0]
-    assert "候选项目" in codex.prompts[0]
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        run_row = db.execute(
-            """
-            select summary_input_id, codex_session_id, audit_summary, memory_recall_used
-            from task_agent_runs
-            """,
-        ).fetchone()
-    assert input_row == ("done", "")
-    assert run_row == (input_id, "task-session-1", "创建售前知识库项目。", 1)
-
-
-def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-        priority="P0",
-        risk_level="high",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="给出交付 ETA",
-        status="open",
-        priority="P0",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_kind="direct",
-        question_text="请确认交付 ETA 是否已给客户。",
-        status="sent",
-        sent_at="2026-06-27 09:00:00",
-        send_result_json=json.dumps({"message_id": "msg-1"}, ensure_ascii=False),
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "客户交付",
-                "category": "projects",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "close",
-                    "todo_id": todo_id,
-                    "title": "给出交付 ETA",
-                    "status": "done",
-                    "completion_evidence": {
-                        "source": "ai_minutes:minutes-1",
-                        "reason": "会议纪要明确 ETA 已发送客户。",
-                        "description": "会议纪要明确 ETA 已发送客户。",
-                        "completed_at": "2026-06-27 12:00:00",
-                        "summary": "会议纪要明确 ETA 已发送客户。",
-                        "confidence": 0.93,
-                    },
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "关闭 ETA 待办。",
-            "merge_reason": "同一客户交付项目。",
-            "memory_recall_used": True,
-            "confidence": 0.93,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item("客户交付"),
-        decision=decision,
-        codex_session_id="session-1",
-    )
-
-    todo = store.list_work_todos(project_id=project_id)[0]
-    assert todo.status == "done"
-    assert "ETA 已发送客户" in todo.completion_evidence_json
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    assert follow_up is not None
-    assert follow_up.status == "completed"
-    assert json.loads(follow_up.send_result_json) == {"message_id": "msg-1"}
-    check = json.loads(follow_up.evidence_check_json)
-    assert check["source"] == "ai_minutes:minutes-1"
-    assert check["reason"] == "会议纪要明确 ETA 已发送客户。"
-
-
-def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="海外数据合规与中美开发隔离闭环",
-        category="strategy",
-        status="active",
-        priority="P0",
-        risk_level="high",
-        owner_name="李明(Riley)",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="李明恢复海外数据合规项目当前状态与未完成清单",
-        owner_user_id="100000000000000001",
-        owner_name="李明(Riley)",
-        status="open",
-        priority="P0",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="100000000000000001",
-        owner_name="李明(Riley)",
-        target_conversation_id="cid-lily",
-        target_kind="direct",
-        question_text="海外数据合规 P0 当前状态是什么？",
-        status="sent",
-        sent_at="2026-06-27 02:45:30",
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "skip_reason": "",
-            "project": {
-                "id": project_id,
-                "title": "海外数据合规与中美开发隔离闭环",
-                "category": "strategy",
-                "tags": [],
-                "status": "active",
-                "priority": "P0",
-                "risk_level": "high",
-                "needs_derek_attention": False,
-                "owner_user_id": "02412744671048909",
-                "owner_name": "Ming Hu(胡明)/运维",
-                "owner_evidence": _owner_evidence(
-                    "02412744671048909",
-                    "Ming Hu(胡明)/运维",
-                    "reply_attempt:1992",
-                ),
-                "related_people": [],
-                "goal": "",
-                "background": "Riley反馈该P0事项由胡明和运维负责，不能继续追Riley。",
-                "memory_context": _memory_context(),
-                "facts": [
-                    {
-                        "description": "Riley反馈海外数据合规P0 owner应为胡明和运维。",
-                        "source": "reply_attempt:1992",
-                        "created": "2026-06-28 09:44:05",
-                        "updated": "2026-06-28 09:44:05",
-                    }
-                ],
-                "current_state": "",
-                "blocker": "",
-                "next_step": "后续如需确认进展，应问胡明或运维。",
-                "next_follow_up_at": "",
-                "follow_up_mode": "none",
-                "source_conversations": [],
-            },
-            "todo_changes": [
-                {
-                    "action": "update",
-                    "todo_id": todo_id,
-                    "todo_ref": "",
-                    "title": "确认海外数据合规 P0 当前状态与真实 owner 分工",
-                    "owner_user_id": "02412744671048909",
-                    "owner_name": "Ming Hu(胡明)",
-                    "owner_evidence": _owner_evidence(
-                        "02412744671048909",
-                        "Ming Hu(胡明)",
-                        "reply_attempt:1992",
-                    ),
-                    "status": "open",
-                    "priority": "P0",
-                    "deadline_at": "2026-06-28T23:00:00+08:00",
-                    "next_follow_up_at": "",
-                    "follow_up_question": "",
-                    "completion_evidence": None,
-                    "blocker": "",
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [
-                {
-                    "follow_up_id": follow_up_id,
-                    "todo_id": todo_id,
-                    "action": "suppress",
-                    "reason": "owner_corrected_by_reply",
-                    "evidence_check": {
-                        "source": "reply_attempt:1992",
-                        "summary": "Riley说明该事项由胡明和运维负责。",
-                    },
-                    "next_due_at": None,
-                    "owner_user_id": None,
-                    "owner_name": None,
-                }
-            ],
-            "update_summary": "停止追Riley并修正海外数据合规owner。",
-            "merge_reason": "follow-up reply corrected owner",
-            "memory_recall_used": True,
-            "confidence": 0.86,
-            "risk": "low",
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(project_name=""),
-        decision=decision,
-    )
-
-    todo = store.get_work_todo(todo_id)
-    assert todo is not None
-    assert todo.status == "open"
-    assert todo.owner_name == "Ming Hu(胡明)"
-    assert todo.completion_evidence_json == "{}"
-    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
-    assert skipped.id == follow_up_id
-    assert skipped.suppressed_reason == "owner_corrected_by_reply"
-    assert "reply_attempt:1992" in skipped.evidence_check_json
-    update = store.list_work_updates(project_id=project_id)[0]
-    assert "follow_up_changes" in update.changes_json
-
-
-def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-        memory_context_json=json.dumps(
-            _memory_context(),
-            ensure_ascii=False,
-        ),
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 L5/对外总监 title 的 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="钱芳(Avery)",
-        owner_evidence_json=json.dumps(
-            _owner_evidence("mina-user-1", "钱芳(Avery)")
-        ),
-        status="open",
-        priority="P1",
-        deadline_at="2026-07-03 18:00:00",
-        next_follow_up_at="2026-07-02 10:00:00",
-        follow_up_question="唐华 offer 和试用目标一页纸完成了吗？",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="mina-user-1",
-        owner_name="钱芳(Avery)",
-        target_conversation_id="cid-mina",
-        target_kind="direct",
-        question_text="基于唐华 offer 推进事项，这个一页纸完成了吗？",
-        status="draft",
-        scheduled_at="2026-07-02 10:00:00",
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "【招聘】Marketing L4-L5",
-                "category": "recruiting",
-                "status": "active",
-                "memory_context": _memory_context(),
-                "facts": [
-                    {
-                        "description": "Avery clarified that routine HR offer-flow steps should not become separate reminders.",
-                        "source": "reply_attempt:2163",
-                        "created": "2026-07-01 10:50:17",
-                        "updated": "2026-07-01 10:50:17",
-                    }
-                ],
-            },
-            "todo_changes": [
-                {
-                    "action": "cancel",
-                    "todo_id": todo_id,
-                    "title": "将唐华 L5/对外总监 title 的 offer 和试用目标压实成一页纸",
-                    "status": "cancelled",
-                    "blocker": "Routine HR offer-flow step; not an important task to track.",
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [
-                {
-                    "follow_up_id": follow_up_id,
-                    "todo_id": todo_id,
-                    "action": "suppress",
-                    "reason": "Routine HR offer-flow step should not be followed up separately.",
-                    "evidence_check": {
-                        "source": "reply_attempt:2163",
-                        "supports_suppression": True,
-                    },
-                }
-            ],
-            "update_summary": "Canceled noisy routine-process TODO after Avery feedback.",
-            "merge_reason": "matched existing Marketing recruiting project and TODO",
-            "memory_recall_used": True,
-            "confidence": 0.86,
-            "risk": "low",
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        }
-    )
-
-    work_item = _work_item()
-    work_item.summary = (
-        "磊哥分身，就类似这种事情，没必要创建待办，"
-        "我这些事儿不办，这人也没法发offer啊。"
-    )
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=work_item,
-        decision=decision,
-    )
-
-    todo = store.get_work_todo(todo_id)
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    updates = store.list_work_updates(project_id=project_id)
-
-    assert todo is not None
-    assert todo.status == "cancelled"
-    assert todo.blocker == "Routine HR offer-flow step; not an important task to track."
-    assert follow_up is not None
-    assert follow_up.status == "skipped"
-    assert (
-        follow_up.suppressed_reason
-        == "Routine HR offer-flow step should not be followed up separately."
-    )
-    assert "Canceled noisy routine-process TODO" in updates[-1].summary
-
-
-@pytest.mark.parametrize("initial_status", ["draft", "approved"])
-def test_follow_up_close_skips_pending_follow_up_without_closing_todo(
-    tmp_path,
-    initial_status,
-):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="售前知识库",
-        category="sales",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="确认方案交付时间",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="open",
-        priority="P1",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="方案交付时间确认了吗？",
-        status=initial_status,
-        scheduled_at="2026-06-29 09:00:00",
-    )
-    decision = _decision_with_follow_up_change(
-        project_id=project_id,
-        follow_up_id=follow_up_id,
-        todo_id=todo_id,
-        action="close",
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    due_drafts = store.list_follow_up_drafts(
-        statuses=("draft", "approved"),
-        due_before="2026-06-29 10:00:00",
-    )
-    assert [draft.id for draft in due_drafts] == []
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    assert follow_up is not None
-    assert follow_up.status == "skipped"
-    assert follow_up.reaction_status == "completed"
-    assert "reply context updated follow-up state" in follow_up.reaction_summary
-    todo = store.get_work_todo(todo_id)
-    assert todo is not None
-    assert todo.status == "open"
-    assert todo.completion_evidence_json == "{}"
-
-
-def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="会议治理",
-        category="management",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="整理本周最需要改的3场会议",
-        owner_user_id="mina-user-1",
-        owner_name="钱芳(Avery)",
-        owner_evidence_json=json.dumps(
-            _owner_evidence("mina-user-1", "钱芳(Avery)")
-        ),
-        status="open",
-        priority="P1",
-        deadline_at="2026-07-17T18:00:00+08:00",
-        next_follow_up_at="2026-07-16T10:00:00+08:00",
-        follow_up_question="旧问题：本周会议分析完成了吗？",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="mina-user-1",
-        owner_name="钱芳(Avery)",
-        target_conversation_id="cid-mina",
-        target_kind="direct",
-        question_text="旧问题：本周会议分析完成了吗？",
-        status="draft",
-        suppressed_reason="stale_follow_up_requires_agent_review",
-        scheduled_at="2026-07-16T10:00:00+08:00",
-    )
-    updated_question = (
-        "Avery，基于你反馈待办必须有真实事项和 context，"
-        "本周最需要改的3场具体会议是否已写清问题、改法和用途？"
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "会议治理",
-                "category": "management",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "update",
-                    "todo_id": todo_id,
-                    "title": "整理本周最需要改的3场具体会议，并写清问题、改法和用途",
-                    "owner_user_id": "mina-user-1",
-                    "owner_name": "钱芳(Avery)",
-                    "status": "open",
-                    "priority": "P1",
-                    "deadline_at": "2026-07-17T18:00:00+08:00",
-                    "next_follow_up_at": "2026-07-16T10:00:00+08:00",
-                    "follow_up_question": updated_question,
-                    "blocker": "待办若不写清具体事项和用途，owner 无法判断交付内容。",
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [
-                {
-                    "follow_up_id": follow_up_id,
-                    "todo_id": todo_id,
-                    "action": "keep_open",
-                    "reason": "保留跟进，但按 Avery 的反馈更新问题上下文。",
-                    "evidence_check": {"source": "reply_attempt:2704"},
-                    "next_due_at": "2026-07-17T10:00:00+08:00",
-                }
-            ],
-            "update_summary": "按 Avery 反馈更新待办上下文。",
-            "merge_reason": "matched existing meeting-governance TODO",
-            "memory_recall_used": True,
-            "confidence": 0.88,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(project_name="会议治理"),
-        decision=decision,
-        now="2026-07-16 01:00:00",
-    )
-
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    assert follow_up is not None
-    assert follow_up.status == "draft"
-    assert follow_up.suppressed_reason == ""
-    assert follow_up.question_text == updated_question
-    assert follow_up.reaction_summary == "保留跟进，但按 Avery 的反馈更新问题上下文。"
-
-
-def test_follow_up_change_rejects_missing_positive_follow_up_id(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="售前知识库",
-        category="sales",
-        status="active",
-    )
-    decision = _decision_with_follow_up_change(
-        project_id=project_id,
-        follow_up_id=999,
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="follow_up_change.follow_up_id not found: 999",
-    ):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-        )
-
-    assert store.list_work_updates(project_id=project_id) == []
-
-
-def test_follow_up_change_reschedule_requires_next_due_at(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="售前知识库",
-        category="sales",
-        status="active",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=1,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="项目目标和 owner 是否确认？",
-        status="sent",
-    )
-    decision = _decision_with_follow_up_change(
-        project_id=project_id,
-        follow_up_id=follow_up_id,
-        action="reschedule",
-        next_due_at=" ",
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="follow_up_change.next_due_at is required for reschedule",
-    ):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-        )
-
-    drafts = store.list_follow_up_drafts(statuses=("sent",))
-    assert drafts[0].id == follow_up_id
-    assert drafts[0].scheduled_at == ""
-
-
-@pytest.mark.parametrize(
-    ("next_due_at", "now", "error"),
-    [
-        ("", "2026-07-16 01:00:00", "required for keep_open"),
-        (
-            "2026-07-16T20:00:00+08:00",
-            "2026-07-16 01:00:00",
-            "within local work hours",
-        ),
-        (
-            "2026-07-16T09:00:00+08:00",
-            "2026-07-16 02:00:00",
-            "must be in the future",
-        ),
-    ],
-)
-def test_follow_up_keep_open_requires_future_work_hours_schedule(
-    tmp_path,
-    next_due_at,
-    now,
-    error,
-):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="Schedule validation")
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        status="draft",
-    )
-    decision = _decision_with_follow_up_change(
-        project_id=project_id,
-        follow_up_id=follow_up_id,
-        action="keep_open",
-        next_due_at=next_due_at,
-    )
-
-    if "within local work hours" in error:
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-            now=now,
-        )
-        draft = store.get_follow_up_draft(follow_up_id)
-        assert draft is not None
-        assert draft.scheduled_at == "2026-07-17T09:00:00+08:00"
-    else:
-        with pytest.raises(ValueError, match=error):
-            apply_task_agent_decision(
-                store,
-                summary_input_id=1,
-                work_item=_work_item(),
-                decision=decision,
-                    now=now,
-            )
-
-
-def test_task_agent_prompt_anchors_follow_up_schedule_to_execution_time():
-    prompt = build_task_agent_prompt(
-        _work_item(),
-        "候选上下文为空。",
-        current_time="2026-08-20T05:30:00+00:00",
-    )
-
-    normalized = " ".join(prompt.split())
-    assert "Current execution time: 2026-08-20T05:30:00+00:00" in normalized
-    assert "strictly later than this execution time" in normalized
-    assert "Do not reuse the source creation time" in normalized
-
-
-def test_follow_up_change_reassign_requires_owner_identity(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="售前知识库",
-        category="sales",
-        status="active",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=1,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="项目目标和 owner 是否确认？",
-        status="sent",
-    )
-    decision = _decision_with_follow_up_change(
-        project_id=project_id,
-        follow_up_id=follow_up_id,
-        action="reassign",
-        owner_user_id=" ",
-        owner_name=None,
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="follow_up_change.owner_user_id or owner_name is required for reassign",
-    ):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-        )
-
-    drafts = store.list_follow_up_drafts(statuses=("sent",))
-    assert drafts[0].id == follow_up_id
-    assert drafts[0].owner_user_id == "owner-1"
-    assert drafts[0].owner_name == "Alex"
-
-
-def test_apply_decision_creates_dingtalk_todo_for_high_confidence_todo(
-    tmp_path,
-    monkeypatch,
-):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    calls = []
-
-    def fake_create(store_arg, dws_arg, *, work_todo_id, now):
-        calls.append((store_arg, dws_arg, work_todo_id, now))
-        return None
-
-    monkeypatch.setattr("app.task_agent.maybe_create_dingtalk_todo", fake_create)
-
-    dws = object()
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "客户交付",
-                "category": "projects",
-                "status": "active",
-                "priority": "P1",
-                "risk_level": "medium",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "create",
-                    "todo_ref": "eta",
-                    "title": "给客户同步验收 ETA",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "owner_evidence": _owner_evidence(),
-                    "status": "open",
-                    "priority": "P1",
-                    "deadline_at": "2026-07-01 18:00:00",
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "新增交付 ETA task item。",
-            "merge_reason": "新项目。",
-            "memory_recall_used": True,
-            "confidence": 0.9,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item("客户交付"),
-        decision=decision,
-        dws=dws,
-        now="2026-06-27 10:00:00",
-    )
-
-    todo_id = store.list_work_todos()[0].id
-    assert calls == [(store, dws, todo_id, "2026-06-27 10:00:00")]
-
-
-def test_apply_decision_creates_dingtalk_todo_for_updated_todo(
-    tmp_path,
-    monkeypatch,
-):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="给客户同步验收 ETA",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="open",
-        priority="P1",
-    )
-    calls = []
-
-    def fake_create(store_arg, dws_arg, *, work_todo_id, now):
-        calls.append((store_arg, dws_arg, work_todo_id, now))
-        return None
-
-    monkeypatch.setattr("app.task_agent.maybe_create_dingtalk_todo", fake_create)
-
-    dws = object()
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "客户交付",
-                "category": "projects",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "update",
-                    "todo_id": todo_id,
-                    "title": "给客户同步最新验收 ETA",
-                    "owner_user_id": "owner-2",
-                    "owner_name": "Avery",
-                    "owner_evidence": _owner_evidence(
-                        "owner-2", "Avery", "reply_attempt:owner-change"
-                    ),
-                    "deadline_at": "2026-07-02 18:00:00",
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "更新交付 ETA task item。",
-            "merge_reason": "同一客户交付项目。",
-            "memory_recall_used": True,
-            "confidence": 0.88,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item("客户交付"),
-        decision=decision,
-        dws=dws,
-        now="2026-06-27 11:00:00",
-    )
-
-    assert calls == [(store, dws, todo_id, "2026-06-27 11:00:00")]
-
-
-def test_apply_decision_does_not_create_dingtalk_todo_for_closed_todo(
-    tmp_path,
-    monkeypatch,
-):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-        priority="P0",
-        risk_level="high",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="给出交付 ETA",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="open",
-        priority="P0",
-    )
-    calls = []
-
-    def fake_create(store_arg, dws_arg, *, work_todo_id, now):
-        calls.append((store_arg, dws_arg, work_todo_id, now))
-        return None
-
-    monkeypatch.setattr("app.task_agent.maybe_create_dingtalk_todo", fake_create)
-
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "客户交付",
-                "category": "projects",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "close",
-                    "todo_id": todo_id,
-                    "title": "给出交付 ETA",
-                    "status": "done",
-                    "completion_evidence": {
-                        "source": "ai_minutes:minutes-1",
-                        "reason": "会议纪要明确 ETA 已发送客户。",
-                        "description": "会议纪要明确 ETA 已发送客户。",
-                        "completed_at": "2026-06-27 12:00:00",
-                        "summary": "会议纪要明确 ETA 已发送客户。",
-                        "confidence": 0.93,
-                    },
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "关闭 ETA 待办。",
-            "merge_reason": "同一客户交付项目。",
-            "memory_recall_used": True,
-            "confidence": 0.93,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item("客户交付"),
-        decision=decision,
-        dws=object(),
-        now="2026-06-27 12:00:00",
-    )
-
-    assert calls == []
-
-
-def test_apply_decision_pushes_completed_todo_to_dingtalk(tmp_path, monkeypatch):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="给客户同步验收 ETA",
-        owner_user_id="owner-1",
-        status="open",
-        deadline_at="2026-07-01 18:00:00",
-    )
-    calls = []
-
-    def fake_push(store_arg, dws_arg, *, work_todo_id, evidence, now):
-        calls.append((store_arg, dws_arg, work_todo_id, evidence, now))
-        return True
-
-    monkeypatch.setattr("app.task_agent.sync_completed_todo_to_dingtalk", fake_push)
-
-    dws = object()
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "客户交付",
-                "category": "projects",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "close",
-                    "todo_id": todo_id,
-                    "completion_evidence": {
-                        "source": "reply_attempt:1",
-                        "reason": "已发客户",
-                        "description": "已发客户",
-                        "completed_at": "2026-06-27 12:00:00",
-                        "summary": "已发客户",
-                    },
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "关闭 task item。",
-            "merge_reason": "明确完成。",
-            "memory_recall_used": True,
-            "confidence": 1.0,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item("客户交付"),
-        decision=decision,
-        dws=dws,
-        now="2026-06-27 12:00:00",
-    )
-
-    assert calls == [
-        (
-            store,
-            dws,
-            todo_id,
-            {
-                "source": "reply_attempt:1",
-                "reason": "已发客户",
-                "description": "已发客户",
-                "completed_at": "2026-06-27 12:00:00",
-                "summary": "已发客户",
-            },
-            "2026-06-27 12:00:00",
-        )
-    ]
-
-
-def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
-    tmp_path,
-    monkeypatch,
-):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-    )
-    todo_without_evidence_id = store.create_work_todo(
-        project_id=project_id,
-        title="给客户同步验收 ETA",
-        owner_user_id="owner-1",
-        status="open",
-    )
-    todo_with_empty_evidence_id = store.create_work_todo(
-        project_id=project_id,
-        title="确认客户验收结论",
-        owner_user_id="owner-1",
-        status="open",
-    )
-    todo_with_incomplete_evidence_id = store.create_work_todo(
-        project_id=project_id,
-        title="确认客户验收完成时间",
-        owner_user_id="owner-1",
-        status="open",
-    )
-    todo_without_dws_id = store.create_work_todo(
-        project_id=project_id,
-        title="归档客户验收材料",
-        owner_user_id="owner-1",
-        status="open",
-    )
-    calls = []
-
-    def fake_push(store_arg, dws_arg, *, work_todo_id, evidence, now):
-        calls.append((store_arg, dws_arg, work_todo_id, evidence, now))
-        return True
-
-    monkeypatch.setattr("app.task_agent.sync_completed_todo_to_dingtalk", fake_push)
-
-    base_project = {
-        "id": project_id,
-        "title": "客户交付",
-        "category": "projects",
-        "status": "active",
-        "memory_context": _memory_context(),
-    }
-    for todo_id, evidence in (
-        (todo_without_evidence_id, None),
-        (todo_with_empty_evidence_id, {}),
-        (
-            todo_with_incomplete_evidence_id,
-            {
-                "source": "reply_attempt:2",
-                "reason": "客户已确认",
-                "description": "客户已确认",
-            },
-        ),
-    ):
-        payload = {
-            "action": "update_project",
-            "project": base_project,
-            "todo_changes": [
-                {
-                    "action": "close",
-                    "todo_id": todo_id,
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "关闭缺少 evidence 的 task item。",
-            "merge_reason": "明确完成。",
-            "memory_recall_used": True,
-            "confidence": 1.0,
-        }
-        if evidence is not None:
-            payload["todo_changes"][0]["completion_evidence"] = evidence
-        with pytest.raises(ValueError, match="completion_evidence"):
-            apply_task_agent_decision(
-                store,
-                summary_input_id=0,
-                work_item=_work_item("客户交付"),
-                decision=TaskAgentDecision.model_validate(payload),
-                dws=object(),
-                now="2026-06-27 12:00:00",
-            )
-    apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item("客户交付"),
-        decision=TaskAgentDecision.model_validate(
-            {
-                "action": "update_project",
-                "project": base_project,
-                "todo_changes": [
-                    {
-                        "action": "close",
-                        "todo_id": todo_without_dws_id,
-                        "completion_evidence": {
-                            "source": "reply_attempt:2",
-                            "reason": "客户已确认",
-                            "description": "客户已确认",
-                            "completed_at": "2026-06-27 12:00:00",
-                            "summary": "客户已确认",
-                        },
-                    }
-                ],
-                "follow_up_drafts": [],
-                "follow_up_changes": [],
-                "update_summary": "关闭无 dws 的 task item。",
-                "merge_reason": "明确完成。",
-                "memory_recall_used": True,
-                "confidence": 1.0,
-            }
-        ),
-        dws=None,
-        now="2026-06-27 12:00:00",
-    )
-
-    assert calls == []
-
-
-def test_discard_decision_records_run_and_marks_input_discarded(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = FakeCodex(
-        {
-            "action": "skip",
-            "skip_reason": "不是稳定任务。",
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "丢弃输入。",
-            "merge_reason": "",
-            "memory_recall_used": False,
-            "confidence": 0.8,
-        }
-    )
-
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        run_row = db.execute(
-            "select summary_input_id, audit_summary from task_agent_runs",
-        ).fetchone()
-    assert input_row == ("skipped", "不是稳定任务。")
-    assert run_row == (input_id, "丢弃输入。")
-
-
-def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "create",
-                    "deadline_at": "2026-12-31T18:00:00+08:00",
-                    "todo_ref": "confirm-project-boundary",
-                    "title": "确认项目边界",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "owner_evidence": _owner_evidence(),
-                    "status": "open",
-                    "priority": "P1",
-                    "follow_up_question": "项目目标和 owner 是否确认？",
-                    "completion_evidence": None,
-                    "blocker": "",
-                }
-            ],
-            "follow_up_drafts": [
-                _follow_up_draft_payload(todo_ref="confirm-project-boundary")
-            ],
-            "follow_up_changes": [],
-            "update_summary": "需要追问项目边界。",
-            "merge_reason": "",
-            "memory_recall_used": True,
-            "confidence": 0.7,
-        }
-    )
-
-    project_id = apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    drafts = store.list_follow_up_drafts(statuses=("draft",))
-    todos = store.list_work_todos(project_id=project_id)
-    assert project_id is not None
-    assert drafts[0].project_id == project_id
-    assert drafts[0].todo_id == todos[0].id
-    assert drafts[0].title == "确认项目边界"
-    assert "售前群" in drafts[0].description
-    assert json.loads(drafts[0].owners_json)[0]["user_id"] == "owner-1"
-    assert drafts[0].priority == "P1"
-    assert json.loads(drafts[0].tags_json) == ["售前", "知识库"]
-    assert drafts[0].question_text == "项目目标和 owner 是否确认？"
-    assert json.loads(drafts[0].risk_check_json) == {
-        "owner_in_group": True,
-        "sensitive": False,
-        "reason": "普通项目进展确认",
-        "owner_evidence": {
-            "user_id": "owner-1",
-            "name": "Alex",
-            "source": "reply_attempt:1",
-            "reason": "来源消息明确说明 owner 是 Alex。",
-            "description": "售前群消息写明售前知识库需要补齐来源链接，owner 是 Alex。",
-        },
-    }
-
-
-def test_follow_up_draft_scheduled_after_hours_moves_to_next_workday(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "create",
-                    "deadline_at": "2026-12-31T18:00:00+08:00",
-                    "todo_ref": "confirm-project-boundary",
-                    "title": "确认项目边界",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "owner_evidence": _owner_evidence(),
-                    "status": "open",
-                    "priority": "P1",
-                    "next_follow_up_at": "2026-07-04T21:30:00+08:00",
-                    "follow_up_question": "项目目标和 owner 是否确认？",
-                }
-            ],
-            "follow_up_drafts": [
-                _follow_up_draft_payload(
-                    todo_ref="confirm-project-boundary",
-                    scheduled_at="2026-07-04T21:30:00+08:00",
-                )
-            ],
-            "follow_up_changes": [],
-            "update_summary": "需要追问项目边界。",
-            "merge_reason": "",
-            "memory_recall_used": True,
-            "confidence": 0.7,
-        }
-    )
-
-    project_id = apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    assert project_id is not None
-    todos = store.list_work_todos(project_id=project_id)
-    drafts = store.list_follow_up_drafts(statuses=("draft",))
-    assert todos[0].next_follow_up_at == "2026-07-06T09:00:00+08:00"
-    assert drafts[0].scheduled_at == "2026-07-06T09:00:00+08:00"
-
-
-def test_terminal_todo_does_not_create_follow_up_draft(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="售前知识库建设",
-        category="sales",
-        status="active",
-        memory_context_json='{"query":"existing"}',
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="确认项目边界",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="cancelled",
-        priority="P1",
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [
-                _follow_up_draft_payload(todo_id=todo_id)
-            ],
-            "follow_up_changes": [],
-            "update_summary": "尝试重复跟进已取消 TODO。",
-            "merge_reason": "",
-            "memory_recall_used": True,
-            "confidence": 0.7,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    assert store.list_follow_up_drafts(statuses=("draft",)) == []
-
-
-def test_service_does_not_rejudge_agent_owner_evidence_from_message_text(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "HR工商变更",
-                "category": "HR",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "create",
-                    "deadline_at": "2026-12-31T18:00:00+08:00",
-                    "todo_ref": "wangdongcui-business-change",
-                    "title": "确认王东翠工商变更真实 owner",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "刘瑞安",
-                    "owner_evidence": _owner_evidence(
-                        "owner-1", "刘瑞安", "dws_contact:owner-1"
-                    ),
-                    "status": "open",
-                    "priority": "P1",
-                    "follow_up_question": "王东翠工商变更真实 owner 是谁？",
-                    "completion_evidence": None,
-                    "blocker": "听记说话人标签低可信，不能直接把 speaker 当 owner。",
-                }
-            ],
-            "follow_up_drafts": [
-                _follow_up_draft_payload(
-                    todo_ref="wangdongcui-business-change",
-                    title="确认王东翠工商变更真实 owner",
-                    description=(
-                        "基于 HR 周例会听记，但说话人标签低可信，"
-                        "只能确认真实 owner 和当前状态，不能直接把 speaker 当 owner。"
-                    ),
-                    owner_name="刘瑞安",
-                    owners=[
-                        {"user_id": "owner-1", "name": "刘瑞安", "role": "owner"}
-                    ],
-                    target_conversation_id="",
-                    target_kind="direct",
-                    question_text="王东翠工商变更目前到哪一步了？",
-                    scheduled_at="2026-06-26T10:00:00+08:00",
-                    tags=["HR", "工商变更"],
-                    participants=[
-                        {"user_id": "owner-1", "name": "刘瑞安", "role": "owner"}
-                    ],
-                    risk_check={
-                        "owner_in_group": False,
-                        "sensitive": False,
-                        "reason": "直接确认真实 owner",
-                        "owner_evidence": {
-                            "user_id": "owner-1",
-                            "name": "刘瑞安",
-                            "source": "dws_contact:owner-1",
-                            "reason": "通讯录唯一匹配刘瑞安，但低可信听记仍不能直接私聊。",
-                            "description": "只确认到刘瑞安的 userId，未证明该事项可以从听记直接私聊追问。",
-                        },
-                    },
-                )
-            ],
-            "follow_up_changes": [],
-            "update_summary": "低可信听记只建 TODO，不私聊。",
-            "merge_reason": "",
-            "memory_recall_used": True,
-            "confidence": 0.7,
-        }
-    )
-
-    work_item = _low_confidence_minutes_work_item()
-    work_item.source.type = WorkItemSourceType.AI_MINUTES
-    project_id = apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=work_item,
-        decision=decision,
-    )
-
-    assert project_id is not None
-    assert len(store.list_work_todos(project_id=project_id)) == 1
-    drafts = store.list_follow_up_drafts(statuses=("draft",))
-    assert len(drafts) == 1
-    assert drafts[0].owner_user_id == "owner-1"
-
-
-def test_project_owner_create_rejects_missing_evidence_before_persistence(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "Owner validation",
-                "owner_user_id": "uid-1",
-                "owner_name": "Display One",
-                "memory_context": _memory_context(),
-            },
-            "memory_recall_used": True,
-        }
-    )
-
-    with pytest.raises(ValueError, match="project.owner_evidence"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-        )
-
-    assert store.list_work_projects() == []
-
-
-def test_project_owner_create_rejects_name_only_identity(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "Owner validation",
-                "owner_name": "Display One",
-                "owner_evidence": _owner_evidence("", "Display One"),
-                "memory_context": _memory_context(),
-            },
-            "memory_recall_used": True,
-        }
-    )
-
-    with pytest.raises(ValueError, match="stable owner ID"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-        )
-    assert store.list_work_projects() == []
-
-
-def test_project_owner_create_persists_coherent_evidence(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    evidence = _owner_evidence("uid-1", "Display One")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "Owner validation",
-                "owner_user_id": "uid-1",
-                "owner_name": "Display One",
-                "owner_evidence": evidence,
-                "memory_context": _memory_context(),
-            },
-            "memory_recall_used": True,
-        }
-    )
-
-    project_id = apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    project = store.get_work_project(project_id)
-    assert project is not None
-    assert json.loads(project.owner_evidence_json) == evidence
-
-
-def test_project_update_preserves_unchanged_legacy_owner_without_evidence(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="Owner validation",
-        owner_user_id="uid-1",
-        owner_name="Display One",
-        owner_evidence_json="{}",
-        status="active",
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "Owner validation",
-                "owner_user_id": "uid-1",
-                "owner_name": "Display One",
-                "current_state": "仍在等待交付证据。",
-                "memory_context": _memory_context(),
-            },
-            "memory_recall_used": True,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    project = store.get_work_project(project_id)
-    assert project is not None
-    assert project.owner_user_id == "uid-1"
-    assert project.owner_name == "Display One"
-    assert project.owner_evidence_json == "{}"
-    assert project.current_state == "仍在等待交付证据。"
-
-
-def test_todo_update_preserves_unchanged_legacy_owner_without_evidence(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="Owner validation", status="active")
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="Validate owner",
-        owner_user_id="uid-1",
-        owner_name="Display One",
-        owner_evidence_json="{}",
-        status="open",
-        priority="P1",
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "Owner validation",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "update",
-                    "todo_id": todo_id,
-                    "owner_user_id": "uid-1",
-                    "owner_name": "Display One",
-                    "blocker": "等待可验证的负责人来源。",
-                }
-            ],
-            "memory_recall_used": True,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    todo = store.get_work_todo(todo_id)
-    assert todo is not None
-    assert todo.owner_user_id == "uid-1"
-    assert todo.owner_name == "Display One"
-    assert todo.owner_evidence_json == "{}"
-    assert todo.blocker == "等待可验证的负责人来源。"
-
-
-def test_todo_owner_update_rejects_cross_record_evidence(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="Owner validation")
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="Validate owner",
-        owner_user_id="uid-old",
-        owner_name="Display Old",
-        owner_evidence_json=json.dumps(
-            _owner_evidence("uid-old", "Display Old")
-        ),
-        status="open",
-        priority="P1",
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "Owner validation",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "update",
-                    "todo_id": todo_id,
-                    "owner_user_id": "uid-new",
-                    "owner_name": "Display New",
-                    "owner_evidence": {
-                        "records": [
-                            _owner_evidence("uid-new", "Display Other"),
-                            _owner_evidence("uid-other", "Display New"),
-                        ],
-                        "source": "verified resolution set",
-                        "reason": "candidate records",
-                        "description": "No single record supports both fields.",
-                    },
-                }
-            ],
-            "memory_recall_used": True,
-        }
-    )
-
-    with pytest.raises(ValueError, match="does not support assigned owner"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-        )
-
-    assert store.get_work_todo(todo_id).owner_user_id == "uid-old"
-
-
-def test_todo_owner_create_rejects_name_only_identity(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "Owner validation",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "create",
-                    "deadline_at": "2026-12-31T18:00:00+08:00",
-                    "title": "Validate owner",
-                    "owner_name": "Display One",
-                    "owner_evidence": _owner_evidence("", "Display One"),
-                }
-            ],
-            "memory_recall_used": True,
-        }
-    )
-
-    with pytest.raises(ValueError, match="requires a stable owner ID"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-        )
-    assert store.list_work_todos() == []
-
-
-def test_todo_create_rejects_open_item_without_stable_owner_id(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "Owner validation",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "create",
-                    "deadline_at": "2026-12-31T18:00:00+08:00",
-                    "title": "Validate owner",
-                    "description": "This actionable TODO still needs a stable owner.",
-                    "status": "open",
-                    "priority": "P1",
-                }
-            ],
-            "memory_recall_used": True,
-        }
-    )
-
-    with pytest.raises(ValueError, match="todo_change.owner_user_id"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-        )
-
-    assert store.list_work_projects() == []
-    assert store.list_work_todos() == []
-
-
-@pytest.mark.parametrize("owner_evidence", [None, {}])
-def test_todo_owner_update_treats_null_evidence_as_none_given(tmp_path, owner_evidence):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="Owner validation")
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="Validate owner",
-        owner_user_id="uid-old",
-        owner_name="Display Old",
-        status="open",
-        priority="P1",
-    )
-
-    def decision(**change):
-        return TaskAgentDecision.model_validate(
-            {
-                "action": "update_project",
-                "project": {
-                    "id": project_id,
-                    "title": "Owner validation",
-                    "memory_context": _memory_context(),
-                },
-                "todo_changes": [
-                    {
-                        "action": "update",
-                        "todo_id": todo_id,
-                        "owner_evidence": owner_evidence,
-                        "blocker": None,
-                        **change,
-                    }
-                ],
-                "memory_recall_used": True,
-            }
-        )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(),
-        decision=decision(owner_user_id="uid-old", owner_name="Display Old"),
-    )
-    todo = store.get_work_todo(todo_id)
-    assert todo.owner_user_id == "uid-old"
-    assert todo.blocker == ""
-
-    with pytest.raises(
-        ValueError, match="todo_change.owner_evidence.source is required"
-    ):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision(owner_user_id="uid-new", owner_name="Display New"),
-        )
-    assert store.get_work_todo(todo_id).owner_user_id == "uid-old"
-
-
-def test_todo_owner_update_persists_coherent_evidence(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="Owner validation")
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="Validate owner",
-        status="open",
-        priority="P1",
-    )
-    evidence = _owner_evidence("uid-new", "Display New")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "Owner validation",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "update",
-                    "todo_id": todo_id,
-                    "owner_user_id": "uid-new",
-                    "owner_name": "Display New",
-                    "owner_evidence": evidence,
-                }
-            ],
-            "memory_recall_used": True,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    todo = store.get_work_todo(todo_id)
-    assert todo is not None
-    assert todo.owner_user_id == "uid-new"
-    assert json.loads(todo.owner_evidence_json) == evidence
-
-
-def test_unchanged_todo_owner_does_not_require_reverification(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="Owner validation")
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="Validate owner",
-        owner_user_id="uid-1",
-        owner_name="Display One",
-        status="open",
-        priority="P1",
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "Owner validation",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "update",
-                    "todo_id": todo_id,
-                    "owner_user_id": "uid-1",
-                    "owner_name": "Display One",
-                }
-            ],
-            "memory_recall_used": True,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    todo = store.get_work_todo(todo_id)
-    assert todo is not None
-    assert todo.owner_user_id == "uid-1"
-    assert todo.owner_name == "Display One"
-    assert todo.owner_evidence_json == "{}"
-
-
-def test_unchanged_todo_owner_reuses_persisted_verified_evidence(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="Owner validation")
-    evidence = _owner_evidence("uid-1", "Display One")
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="Validate owner",
-        owner_user_id="uid-1",
-        owner_name="Display One",
-        owner_evidence_json=json.dumps(evidence),
-        status="open",
-        priority="P1",
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "Owner validation",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "update",
-                    "todo_id": todo_id,
-                    "owner_user_id": "uid-1",
-                    "owner_name": "Display One",
-                    "description": "Owner reconfirmed the current plan.",
-                }
-            ],
-            "memory_recall_used": True,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    todo = store.get_work_todo(todo_id)
-    assert todo is not None
-    assert todo.description == "Owner reconfirmed the current plan."
-    assert json.loads(todo.owner_evidence_json) == evidence
-
-
-def test_follow_up_reassign_rejects_missing_evidence_before_update(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="Owner validation")
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        owner_user_id="uid-old",
-        owner_name="Display Old",
-        status="sent",
-    )
-    decision = _decision_with_follow_up_change(
-        project_id=project_id,
-        follow_up_id=follow_up_id,
-        action="reassign",
-        owner_user_id="uid-new",
-        owner_name="Display New",
-    )
-
-    with pytest.raises(ValueError, match="follow_up_change.owner_evidence"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-        )
-
-    assert store.get_follow_up_draft(follow_up_id).owner_user_id == "uid-old"
-
-
-def test_follow_up_reassign_cannot_clear_stable_owner_id(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="Owner validation")
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        owner_user_id="uid-old",
-        owner_name="Display Old",
-        risk_check_json=json.dumps(
-            {"owner_evidence": _owner_evidence("uid-old", "Display Old")}
-        ),
-        status="sent",
-    )
-    decision = _decision_with_follow_up_change(
-        project_id=project_id,
-        follow_up_id=follow_up_id,
-        action="reassign",
-        owner_user_id="",
-        owner_name="Display New",
-    )
-    decision.follow_up_changes[0].owner_evidence = _owner_evidence(
-        "uid-new", "Display New"
-    )
-
-    with pytest.raises(ValueError, match="requires a stable owner ID"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-        )
-    unchanged = store.get_follow_up_draft(follow_up_id)
-    assert unchanged is not None
-    assert unchanged.owner_user_id == "uid-old"
-
-
-def test_follow_up_reassign_accepts_coherent_evidence(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="Owner validation")
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        owner_user_id="uid-old",
-        owner_name="Display Old",
-        status="sent",
-    )
-    evidence = _owner_evidence("uid-new", "Display New")
-    decision = _decision_with_follow_up_change(
-        project_id=project_id,
-        follow_up_id=follow_up_id,
-        action="reassign",
-        owner_user_id="uid-new",
-        owner_name="Display New",
-    )
-    decision.follow_up_changes[0].owner_evidence = evidence
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    assert follow_up is not None
-    assert follow_up.owner_user_id == "uid-new"
-    assert json.loads(follow_up.risk_check_json)["owner_evidence"] == evidence
-    assert "owner_evidence" not in json.loads(follow_up.evidence_check_json)
-
-
-def test_follow_up_reassign_reuses_canonical_current_owner_evidence(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(title="Owner validation")
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        owner_user_id="uid-old",
-        owner_name="Display Old",
-        risk_check_json=json.dumps(
-            {
-                "sensitive": False,
-                "owner_evidence": _owner_evidence("uid-old", "Display Old"),
-            }
-        ),
-        status="sent",
-    )
-    new_evidence = _owner_evidence("uid-new", "Display New")
-    verified_reassign = _decision_with_follow_up_change(
-        project_id=project_id,
-        follow_up_id=follow_up_id,
-        action="reassign",
-        owner_user_id="uid-new",
-        owner_name="Display New",
-    )
-    verified_reassign.follow_up_changes[0].owner_evidence = new_evidence
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=1,
-        work_item=_work_item(),
-        decision=verified_reassign,
-    )
-
-    unchanged_reassign = _decision_with_follow_up_change(
-        project_id=project_id,
-        follow_up_id=follow_up_id,
-        action="reassign",
-        owner_user_id="uid-new",
-        owner_name="Display New",
-    )
-    apply_task_agent_decision(
-        store,
-        summary_input_id=2,
-        work_item=_work_item(),
-        decision=unchanged_reassign,
-    )
-
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    assert follow_up is not None
-    current_risk_check = json.loads(follow_up.risk_check_json)
-    assert current_risk_check["sensitive"] is False
-    assert current_risk_check["owner_evidence"] == new_evidence
-
-    cross_identity = _decision_with_follow_up_change(
-        project_id=project_id,
-        follow_up_id=follow_up_id,
-        action="reassign",
-        owner_user_id="uid-new",
-        owner_name="Display Old",
-    )
-    with pytest.raises(ValueError, match="follow_up_change.owner_evidence"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=3,
-            work_item=_work_item(),
-            decision=cross_identity,
-        )
-    unchanged = store.get_follow_up_draft(follow_up_id)
-    assert unchanged is not None
-    assert unchanged.owner_user_id == "uid-new"
-    assert unchanged.owner_name == "Display New"
-    assert json.loads(unchanged.risk_check_json) == current_risk_check
-
-
-def test_follow_up_draft_requires_owner_evidence(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "create",
-                    "deadline_at": "2026-12-31T18:00:00+08:00",
-                    "todo_ref": "confirm-project-boundary",
-                    "title": "确认项目边界",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "status": "open",
-                    "priority": "P1",
-                    "follow_up_question": "项目目标和 owner 是否确认？",
-                }
-            ],
-            "follow_up_drafts": [
-                _follow_up_draft_payload(
-                    todo_ref="confirm-project-boundary",
-                    risk_check={
-                        "owner_in_group": True,
-                        "sensitive": False,
-                        "reason": "只有风险判断，没有 owner 事实证据。",
-                    },
-                )
-            ],
-            "follow_up_changes": [],
-            "update_summary": "尝试生成缺少 owner 证据的跟进。",
-            "merge_reason": "",
-            "memory_recall_used": True,
-            "confidence": 0.7,
-        }
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="follow_up_draft.risk_check.owner_evidence",
-    ):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=0,
-            work_item=_work_item(),
-            decision=decision,
-        )
-
-    assert store.list_follow_up_drafts(statuses=("draft",)) == []
-
-
-def test_follow_up_draft_rejects_name_only_owner(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "Owner validation",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "create",
-                    "deadline_at": "2026-12-31T18:00:00+08:00",
-                    "todo_ref": "bound-todo",
-                    "title": "Bound TODO",
-                    "owner_user_id": "uid-1",
-                    "owner_name": "Display One",
-                    "owner_evidence": _owner_evidence("uid-1", "Display One"),
-                }
-            ],
-            "follow_up_drafts": [
-                {
-                    "todo_ref": "bound-todo",
-                    "title": "Follow up",
-                    "description": "Check progress",
-                    "owner_name": "Display One",
-                    "target_kind": "direct",
-                    "question_text": "Current progress?",
-                    "scheduled_at": "2026-07-16 09:00:00",
-                    "risk_check": {
-                        "owner_evidence": _owner_evidence("", "Display One")
-                    },
-                }
-            ],
-            "memory_recall_used": True,
-        }
-    )
-
-    with pytest.raises(ValueError, match="stable owner ID"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=1,
-            work_item=_work_item(),
-            decision=decision,
-        )
-    assert store.list_follow_up_drafts(statuses=("draft",)) == []
-
-
-def test_follow_up_draft_requires_todo_binding(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [
-                _follow_up_draft_payload()
-            ],
-            "follow_up_changes": [],
-            "update_summary": "需要追问项目边界。",
-            "merge_reason": "",
-            "memory_recall_used": True,
-            "confidence": 0.7,
-        }
-    )
-
-    with pytest.raises(ValueError, match="follow_up_draft requires todo_id or todo_ref"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=0,
-            work_item=_work_item(),
-            decision=decision,
-        )
-
-
-def test_follow_up_draft_rejects_todo_from_another_project(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    other_project_id = store.create_work_project(
-        title="另一个项目",
-        category="sales",
-        status="active",
-    )
-    other_todo_id = store.create_work_todo(
-        project_id=other_project_id,
-        title="不属于当前项目的 TODO",
-        owner_user_id="owner-1",
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [
-                _follow_up_draft_payload(todo_id=other_todo_id)
-            ],
-            "follow_up_changes": [],
-            "update_summary": "需要追问项目边界。",
-            "merge_reason": "",
-            "memory_recall_used": True,
-            "confidence": 0.7,
-        }
-    )
-
-    with pytest.raises(ValueError, match="does not belong to project"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=0,
-            work_item=_work_item(),
-            decision=decision,
-        )
-
-
-def test_follow_up_draft_requires_owner_user_id_at_generation(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "Henry/BMW 自动驾驶数据挖掘商机技术响应推进",
-                "category": "sales",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [
-                _follow_up_draft_payload(
-                    title="确认 Henry/BMW 数据挖掘客户沟通结果",
-                    description=(
-                        "基于 Henry/BMW 自动驾驶数据挖掘商机，需要确认昨天客户沟通结果、"
-                        "当前阻塞和下一步安排。"
-                    ),
-                    owner_user_id="",
-                    owner_name="Jack He(Yunguang He)",
-                    owners=[],
-                    target_conversation_id="cid-henry",
-                    question_text="Henry/BMW 数据挖掘昨天客户沟通结果怎样？",
-                    scheduled_at="2026-06-11 09:00:00",
-                    tags=["商机", "BMW"],
-                )
-            ],
-            "follow_up_changes": [],
-            "update_summary": "生成跟进草稿。",
-            "merge_reason": "",
-            "memory_recall_used": True,
-            "confidence": 0.7,
-        }
-    )
-
-    with pytest.raises(ValueError, match="follow_up_draft.owner_user_id"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=0,
-            work_item=_work_item("Henry/BMW 自动驾驶数据挖掘商机技术响应推进"),
-            decision=decision,
-        )
-
-    assert store.list_follow_up_drafts(statuses=("draft",)) == []
-
-
-def test_non_skip_decision_uses_structured_memory_context_without_boolean_gate(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "创建项目。",
-            "merge_reason": "事项需要持续跟进。",
-            "memory_recall_used": False,
-            "confidence": 0.8,
-        }
-    )
-
-    project_id = apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item(),
-        decision=decision,
-    )
-
-    assert project_id is not None
-
-
-def test_non_discard_decision_requires_memory_context(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "创建项目。",
-            "merge_reason": "事项需要持续跟进。",
-            "memory_recall_used": True,
-            "confidence": 0.8,
-        }
-    )
-
-    with pytest.raises(ValueError, match="memory_context"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=0,
-            work_item=_work_item(),
-            decision=decision,
-        )
-
-
-def test_process_work_item_repairs_missing_memory_context(tmp_path, monkeypatch):
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    invalid = {
-        "action": "create_project",
-        "project": {
-            "title": "售前知识库建设",
-            "category": "sales",
-            "status": "active",
-        },
-        "todo_changes": [],
-        "follow_up_drafts": [],
-        "follow_up_changes": [],
-        "update_summary": "创建项目。",
-        "merge_reason": "事项需要持续跟进。",
-        "memory_recall_used": False,
-        "confidence": 0.8,
-    }
-    repaired = {
-        **invalid,
-        "project": {
-            **invalid["project"],
-            "memory_context": _memory_context(),
-        },
-        "memory_recall_used": True,
-    }
-
-    class RepairingCodex(FakeCodexWithAuditEvents):
-        def __init__(self):
-            super().__init__(invalid, [])
-            self.payloads = [invalid, repaired]
-            self.calls = 0
-
-        def decide(self, **kwargs):
-            self.prompts.append(kwargs["prompt"])
-            payload = self.payloads[self.calls]
-            self.calls += 1
-            self.last_audit_tool_events = (
-                [] if self.calls == 1 else [{"tool": "memory_recall"}]
-            )
-            return TaskAgentDecision.model_validate(payload)
-
-    codex = RepairingCodex()
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        runs = db.execute(
-            "select status, error from task_agent_runs "
-            "where summary_input_id=? order by id",
-            (input_id,),
-        ).fetchall()
-    assert input_row == ("done", "")
-    assert runs == [
-        ("failed", "non-skip task decision requires project.memory_context"),
-        ("completed", ""),
-    ]
-    assert codex.calls == 2
-    assert "Call memory_recall now" in codex.prompts[1]
-
-
-def test_process_work_item_does_not_audit_memory_recall_tool_event(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        source_type=item.source.type.value,
-        source_ref=item.source.ref,
-        payload_json=item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    payload = {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "创建项目。",
-            "merge_reason": "事项需要持续跟进。",
-            "memory_recall_used": True,
-            "confidence": 0.8,
-    }
-
-    class RepairingCodex(FakeCodexWithAuditEvents):
-        def __init__(self):
-            super().__init__(payload, audit_tool_events=[])
-            self.calls = 0
-
-        def decide(self, **kwargs):
-            self.calls += 1
-            self.last_audit_tool_events = [{"tool": "exec_command", "command": "rg 售前"}]
-            return TaskAgentDecision.model_validate(self.payload)
-
-    codex = RepairingCodex()
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        run_row = db.execute(
-            """
-            select summary_input_id, codex_session_id, audit_summary, memory_recall_used
-            from task_agent_runs
-            """
-        ).fetchone()
-    assert input_row == ("done", "")
-    assert run_row == (input_id, "task-session-1", "创建项目。", 1)
-    assert codex.calls == 1
-
-
-def test_process_work_item_allows_memory_recall_runtime_failure_with_tool_event(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        source_type=item.source.type.value,
-        source_ref=item.source.ref,
-        payload_json=item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    memory_fallback_context = {
-        "query": "售前知识库",
-        "summary": "已尝试调用 memory_recall，但工具运行时失败；改用 Work Item 和候选项目作为替代证据。",
-        "memories": [
-            {
-                "source": "memory_recall_runtime_failure",
-                "text": "memory_recall 调用失败，未获得可用记忆证据。",
-                "summary": "使用替代证据。",
-            }
-        ],
-    }
-    codex = FakeCodexWithAuditEvents(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-                "memory_context": memory_fallback_context,
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "创建项目。",
-            "merge_reason": "事项需要持续跟进。",
-            "memory_recall_used": False,
-            "confidence": 0.8,
-        },
-        audit_tool_events=[
-            {
-                "tool": "mcp__memory_connector__memory_recall",
-                "output": "transport error",
-            }
-        ],
-    )
-
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        run_row = db.execute(
-            """
-            select summary_input_id, codex_session_id, audit_summary, memory_recall_used
-            from task_agent_runs
-            """
-        ).fetchone()
-        project_memory_context = db.execute(
-            "select memory_context_json from work_projects",
-        ).fetchone()[0]
-    assert input_row == ("done", "")
-    assert run_row == (input_id, "task-session-1", "创建项目。", 0)
-    stored_memory_context = json.loads(project_memory_context)
-    assert stored_memory_context["query"] == memory_fallback_context["query"]
-    assert stored_memory_context["summary"] == memory_fallback_context["summary"]
-    assert stored_memory_context["memories"][0]["source"] == (
-        "memory_recall_runtime_failure"
-    )
-
-
-def test_process_work_item_allows_memory_tool_discovery_unavailable_evidence(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        source_type=item.source.type.value,
-        source_ref=item.source.ref,
-        payload_json=item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = FakeCodexWithAuditEvents(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-                "memory_context": {
-                    "query": "售前知识库",
-                    "summary": "memory_recall 工具在当前运行时未暴露，改用 Work Item 和候选项目。",
-                    "memories": [
-                        {
-                            "source": "memory_connector_runtime_unavailable",
-                            "text": "已检查工具面，未发现可直接调用的 memory_recall。",
-                            "summary": "工具不可见，使用替代证据。",
-                        }
-                    ],
-                },
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "创建项目。",
-            "merge_reason": "事项需要持续跟进。",
-            "memory_recall_used": False,
-            "confidence": 0.8,
-        },
-        audit_tool_events=[{"tool": "list_mcp_resources", "output": "[]"}],
-    )
-
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        run_row = db.execute(
-            "select summary_input_id, memory_recall_used from task_agent_runs",
-        ).fetchone()
-    assert input_row == ("done", "")
-    assert run_row == (input_id, 0)
-
-
-def test_process_work_item_allows_structured_memory_unavailable_without_audit_events(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        source_type=item.source.type.value,
-        source_ref=item.source.ref,
-        payload_json=item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = FakeCodexWithAuditEvents(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "既有项目",
-                "category": "sales",
-                "status": "active",
-                "memory_context": {
-                    "query": "项目上下文",
-                    "summary": "memory_recall 在当前运行时不可用，使用实时工作项证据。",
-                    "memories": [
-                        {
-                            "source": "memory_connector_runtime_unavailable",
-                            "summary": "memory_recall 未提供",
-                        }
-                    ],
-                },
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "补充当前证据。",
-            "memory_recall_used": False,
-            "confidence": 0.8,
-        },
-        audit_tool_events=[],
-    )
-
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        assert db.execute(
-            "select status from work_summary_inputs where id=?", (input_id,)
-        ).fetchone() == ("done",)
 
 
 def test_process_work_item_continues_when_memory_connector_unavailable(
@@ -4288,31 +566,9 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
         item.model_dump_json(),
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
-    memory_unavailable_context = {
-        "query": "售前知识库",
-        "summary": (
-            "memory_connector 不可用：memory connector token is expired；"
-            "改用 Work Item 和候选项目判断。"
-        ),
-        "memories": [],
-    }
     codex = FakeCodexWithAuditEvents(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "status": "active",
-                "memory_context": memory_unavailable_context,
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "创建项目。",
-            "merge_reason": "事项需要持续跟进。",
-            "memory_recall_used": False,
-            "confidence": 0.8,
-        },
+        {"task_decisions": [{"action": "skip", "transition": "none",
+            "skip_reason": "No source-grounded task."}]},
         audit_tool_events=[],
     )
 
@@ -4324,41 +580,18 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
             (input_id,),
         ).fetchone()
         run_count = db.execute("select count(*) from task_agent_runs").fetchone()[0]
-        memory_context_json = db.execute(
-            "select memory_context_json from work_projects"
-        ).fetchone()[0]
-    assert input_row == ("done", "")
+    assert input_row[0] == "skipped"
     assert run_count == 1
-    assert json.loads(memory_context_json) == memory_unavailable_context
-    assert (
-        "Memory connector status facts:\n不可用：memory connector token is expired"
-        in codex.prompts[0]
-    )
-    memory_section = (
-        codex.prompts[0]
-        .split("Memory connector status facts:\n", 1)[1]
-        .split("\n\nRequired evidence sequence", 1)[0]
-    )
-    assert memory_section == "不可用：memory connector token is expired"
-    assert "继续处理" not in memory_section
-    assert "替代证据" not in memory_section
+    assert "不可用：memory connector token is expired" in codex.prompts[0]
+    assert "Memory is background only" in codex.prompts[0]
 
 
 def test_task_agent_codex_runner_uses_standard_runtime_factory():
     routed = FakeRoutedTaskExecution(
         json.dumps(
             {
-                "action": "skip",
-                "skip_reason": "输入不足以形成稳定项目。",
-                "todo_changes": [],
-                "follow_up_drafts": [],
-                "follow_up_changes": [],
-                "update_summary": "跳过。",
-                "risk": "low",
-                "rule_coverage": 1.0,
-                "information_completeness": 1.0,
-                "memory_recall_used": False,
-                "confidence": 0.8,
+                "task_decisions": [{"action": "skip", "transition": "none",
+                    "skip_reason": "输入不足以形成稳定事项。"}],
             }
         )
     )
@@ -4379,9 +612,14 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
 
     assert "# CEO Work Tracking" in prompt
     assert '"title": "TaskAgentDecision"' in prompt
-    assert "Memory connector status facts" in prompt
-    assert "memory_connector_runtime_unavailable" in prompt
-    assert '"summary":' in prompt
+    assert "Memory connector status:" in prompt
+    assert "Memory is background only" in prompt
+    assert "focused live directory/contact lookup" in prompt
+    prompt = " ".join(prompt.split())
+    assert "use connected tools only for read-only discovery" in prompt.lower()
+    assert "Do not use CLI, API, or MCP tools to create, update, delete, send, or complete" in prompt
+    assert "the service validates and applies supported operations" in prompt.lower()
+    assert "Prior session turns are background only" in prompt
 
 
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():
@@ -4392,7 +630,7 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():
         "scheduled_task_run_id": 11,
         "prompt": "只处理 $ceo-work-tracking 能确认的真实工作项。",
         "skill_names": ["ceo-work-tracking"],
-        "skill_protocol": "# Targeted Work Tracking Skill",
+        "skill_protocol": "# Old Work Tracking Snapshot\nReturn update_project with todo_changes.",
     }
 
     prompt = build_task_agent_prompt(
@@ -4402,58 +640,14 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():
 
     assert "## Scheduled Consumer Prompt" in prompt
     assert "只处理 $ceo-work-tracking 能确认的真实工作项。" in prompt
-    assert "# Targeted Work Tracking Skill" in prompt
-    assert "# CEO Work Tracking" not in prompt
+    assert "# Old Work Tracking Snapshot" in prompt
+    assert "Return update_project with todo_changes." in prompt
+    assert prompt.count("Return update_project with todo_changes.") == 1
+    assert "# CEO Work Tracking" in prompt
+    assert "task_decisions" in prompt
+    assert "Current Task-first decision envelope controls output" in prompt
 
 
-def test_task_agent_prompts_require_stable_follow_up_participants():
-    prompt = build_task_agent_prompt(_work_item(), "无候选项目")
-    rejected = TaskAgentDecision.model_validate(
-        {
-            "action": "skip",
-            "skip_reason": "Previous follow-up draft lacked a stable participant.",
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "Discard invalid follow-up.",
-            "merge_reason": "",
-            "memory_recall_used": False,
-            "confidence": 1.0,
-        }
-    )
-    repair_prompt = build_owner_resolution_prompt(
-        _work_item(),
-        "无候选项目",
-        rejected,
-        validation_error="follow_up_draft.participants is required",
-    )
-
-    assert "participant has a stable user_id from a focused live" in prompt
-    assert "do not emit a\n  follow_up_draft" in prompt
-    assert "todo_changes[*].owner_evidence" in prompt
-    assert "repeat that same stable user_id and name" in prompt
-    assert "participants must be a non-empty list of\nstable user identities" in repair_prompt
-
-
-def test_task_agent_prompt_requires_existing_follow_up_repair_without_inventing_owner_evidence():
-    item = _work_item()
-    item.summary = json.dumps(
-        {
-            "reason": "target_requires_agent_review",
-            "follow_up": {
-                "id": 42,
-                "owner_user_id": "owner-1",
-                "risk_check": {"sensitive": True},
-            },
-        },
-        ensure_ascii=False,
-    )
-
-    prompt = build_task_agent_prompt(item, "候选上下文为空。")
-
-    assert "follow_up_change for that id" in prompt
-    assert "persisted owner id or name is not owner evidence" in prompt
-    assert "Do not send a message as part of this repair decision." in prompt
 
 
 def test_task_agent_prompt_uses_skill_for_important_vs_routine_process_boundary():
@@ -4464,8 +658,8 @@ def test_task_agent_prompt_uses_skill_for_important_vs_routine_process_boundary(
         candidate_prompt="候选上下文为空。",
     )
 
-    assert "`routine_process_is_discarded`" in prompt
-    assert "Decide whether the input deserves durable tracking" in prompt
+    assert "source-backed low-impact work when its source workflow needs a record" in prompt
+    assert "keep it outside attention" in prompt
     assert "Do not use keyword routers" in prompt
 
 
@@ -4489,14 +683,10 @@ def test_task_agent_prompt_discards_non_actionable_reference_material():
 
     prompt = build_task_agent_prompt(item, "候选上下文为空。")
 
-    assert "Material-to-task boundary:" in prompt
-    assert "document, script, presentation" in prompt
-    assert 'return action="skip"' in prompt
-    assert "Never infer an owner from the author, speaker" in prompt
-    assert "local_file source may update a clearly matched existing project" in prompt
-    assert "may\n  not create a new project" in prompt
-    assert "completion_check that finds no TODO" in prompt
-
+    assert "If the source contains no plausible action or decision, skip it" in prompt
+    assert "Never invent a task" in prompt
+    assert "source-backed deliverable" in prompt
+    assert "Project" in prompt
 
 def test_task_agent_prompt_does_not_inject_retrieved_business_examples():
     work_item = _work_item(project_name="宝马项目客户 Demo 推进")
@@ -4515,261 +705,8 @@ def test_task_agent_prompt_does_not_inject_retrieved_business_examples():
     assert "候选上下文为空。" in prompt
 
 
-def test_update_project_without_id_raises_value_error(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "title": "客户交付",
-                "category": "projects",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "更新客户交付。",
-            "merge_reason": "",
-            "memory_recall_used": True,
-            "confidence": 0.5,
-        }
-    )
-
-    with pytest.raises(ValueError, match="project.id"):
-        apply_task_agent_decision(
-            store,
-            summary_input_id=0,
-            work_item=_work_item("客户交付"),
-            decision=decision,
-        )
 
 
-def test_process_work_item_repairs_update_project_without_id(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item("客户交付")
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    invalid_update = {
-        "action": "update_project",
-        "project": {
-            "title": "客户交付",
-            "category": "projects",
-            "memory_context": _memory_context(),
-        },
-        "update_summary": "并入已有客户交付项目。",
-        "memory_recall_used": True,
-        "confidence": 0.8,
-    }
-    repaired_skip = {
-        "action": "skip",
-        "skip_reason": "无法取得已有项目的稳定整数 ID，跳过而不是创建重复项目。",
-        "update_summary": "未修改项目。",
-        "memory_recall_used": True,
-        "confidence": 0.9,
-    }
-
-    class RepairingCodex(FakeCodexWithAuditEvents):
-        def __init__(self):
-            super().__init__(invalid_update, [{"tool": "memory_recall"}])
-            self.payloads = [invalid_update, repaired_skip]
-            self.calls = 0
-
-        def decide(self, **kwargs):
-            self.prompts.append(kwargs["prompt"])
-            payload = self.payloads[self.calls]
-            self.calls += 1
-            self.last_audit_tool_events = [{"tool": "memory_recall"}]
-            return TaskAgentDecision.model_validate(payload)
-
-    codex = RepairingCodex()
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        runs = db.execute(
-            "select status, error from task_agent_runs "
-            "where summary_input_id=? order by id",
-            (input_id,),
-        ).fetchall()
-        project_count = db.execute("select count(*) from work_projects").fetchone()[0]
-
-    assert input_row == ("skipped", "无法取得已有项目的稳定整数 ID，跳过而不是创建重复项目。")
-    assert runs == [
-        ("failed", "update_project requires project.id"),
-        ("completed", ""),
-    ]
-    assert project_count == 0
-    assert codex.calls == 2
-    assert "update_project requires project.id" in codex.prompts[1]
-    assert "不得改成 create_project" in codex.prompts[1]
-
-
-def test_process_work_item_repairs_update_project_without_project(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item("客户交付")
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    invalid_update = {
-        "action": "update_project",
-        "update_summary": "并入已有客户交付项目。",
-        "memory_recall_used": True,
-        "confidence": 0.8,
-    }
-    repaired_skip = {
-        "action": "skip",
-        "skip_reason": "无法取得已有项目上下文，跳过而不是创建重复项目。",
-        "update_summary": "未修改项目。",
-        "memory_recall_used": True,
-        "confidence": 0.9,
-    }
-
-    class RepairingCodex(FakeCodexWithAuditEvents):
-        def __init__(self):
-            super().__init__(invalid_update, [{"tool": "memory_recall"}])
-            self.payloads = [invalid_update, repaired_skip]
-            self.calls = 0
-
-        def decide(self, **kwargs):
-            self.prompts.append(kwargs["prompt"])
-            payload = self.payloads[self.calls]
-            self.calls += 1
-            self.last_audit_tool_events = [{"tool": "memory_recall"}]
-            return TaskAgentDecision.model_validate(payload)
-
-    codex = RepairingCodex()
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        runs = db.execute(
-            "select status, error from task_agent_runs "
-            "where summary_input_id=? order by id",
-            (input_id,),
-        ).fetchall()
-        project_count = db.execute("select count(*) from work_projects").fetchone()[0]
-
-    assert input_row == (
-        "skipped",
-        "无法取得已有项目上下文，跳过而不是创建重复项目。",
-    )
-    assert runs == [
-        ("failed", "update_project requires project"),
-        ("completed", ""),
-    ]
-    assert project_count == 0
-    assert codex.calls == 2
-    assert "update_project requires project" in codex.prompts[1]
-    assert "不得改成 create_project" in codex.prompts[1]
-
-
-def test_process_work_item_restores_structured_project_for_update_repair(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    memory_context = _memory_context()
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-        memory_context_json=json.dumps(memory_context, ensure_ascii=False),
-    )
-    item = WorkItem.model_validate(
-        {
-            "source": {
-                "type": "reply_attempt",
-                "ref": "structured-project",
-                "title": "客户交付进展",
-                "conversation_id": "cid-1",
-                "conversation_title": "客户群",
-                "created_at": "2026-06-07 09:00:00",
-            },
-            "summary": json.dumps(
-                {"project": {"id": project_id}, "todo": {"title": "交付"}},
-                ensure_ascii=False,
-            ),
-            "project_name": "客户交付",
-            "context": {
-                "sender": "Avery",
-                "participants": [],
-                "source_conversation_kind": "group",
-                "source_conversation_title": "客户群",
-            },
-        }
-    )
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    invalid_update = {
-        "action": "update_project",
-        "project": None,
-        "todo_changes": [],
-        "follow_up_drafts": [],
-        "follow_up_changes": [],
-        "update_summary": "更新客户交付。",
-        "merge_reason": "事项属于已有项目。",
-        "memory_recall_used": True,
-        "confidence": 0.8,
-    }
-
-    class RepairingCodex(FakeCodexWithAuditEvents):
-        def __init__(self):
-            super().__init__(invalid_update, [{"tool": "memory_recall"}])
-            self.calls = 0
-
-        def decide(self, **kwargs):
-            self.prompts.append(kwargs["prompt"])
-            self.calls += 1
-            self.last_audit_tool_events = [{"tool": "memory_recall"}]
-            return TaskAgentDecision.model_validate(invalid_update)
-
-    codex = RepairingCodex()
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        runs = db.execute(
-            "select status, error from task_agent_runs "
-            "where summary_input_id=? order by id",
-            (input_id,),
-        ).fetchall()
-    assert input_row == ("done", "")
-    assert runs == [
-        ("failed", "update_project requires project"),
-        ("completed", ""),
-    ]
-    assert codex.calls == 2
 
 
 def test_process_work_item_does_not_require_memory_recall_receipt(
@@ -4785,25 +722,8 @@ def test_process_work_item_does_not_require_memory_recall_receipt(
         item.model_dump_json(),
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-    update = {
-        "action": "update_project",
-        "project": {
-            "id": project_id,
-            "title": "客户交付",
-            "category": "projects",
-            "memory_context": _memory_context(),
-        },
-        "update_summary": "保留已有项目，等待完成证据。",
-        "memory_recall_used": False,
-        "confidence": 0.8,
-    }
+    update = {"task_decisions": [{"action": "skip", "transition": "none",
+        "skip_reason": "No source-grounded task; memory receipt is not a service gate."}]}
 
     class CodexWithoutMemoryRecallReceipt(FakeCodexWithAuditEvents):
         def __init__(self):
@@ -4823,620 +743,49 @@ def test_process_work_item_does_not_require_memory_recall_receipt(
             (input_id,),
         ).fetchall()
 
-    assert input_row == ("done", "")
+    assert input_row[0] == "skipped"
     assert runs == [("completed", "")]
     assert len(codex.prompts) == 1
 
 
-def test_process_work_item_rejects_missing_id_repair_that_creates_duplicate(
-    tmp_path,
-    monkeypatch,
-):
+def test_process_work_item_rolls_back_batch_and_marks_input_and_run_failed(tmp_path, monkeypatch):
     monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item("客户交付")
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    invalid_update = {
-        "action": "update_project",
-        "project": {
-            "title": "客户交付",
-            "category": "projects",
-            "memory_context": _memory_context(),
-        },
-        "update_summary": "并入已有客户交付项目。",
-        "memory_recall_used": True,
-        "confidence": 0.8,
-    }
-    invalid_create_repair = {
-        "action": "create_project",
-        "project": {
-            "title": "客户交付",
-            "category": "projects",
-            "memory_context": _memory_context(),
-        },
-        "update_summary": "创建同名客户交付项目。",
-        "memory_recall_used": True,
-        "confidence": 0.8,
-    }
-
-    class DuplicateCreatingCodex(FakeCodexWithAuditEvents):
-        def __init__(self):
-            super().__init__(invalid_update, [{"tool": "memory_recall"}])
-            self.payloads = [invalid_update, invalid_create_repair]
-            self.calls = 0
-
-        def decide(self, **_kwargs):
-            payload = self.payloads[self.calls]
-            self.calls += 1
-            self.last_audit_tool_events = [{"tool": "memory_recall"}]
-            return TaskAgentDecision.model_validate(payload)
-
-    with pytest.raises(ValueError, match="cannot convert unresolved update_project"):
-        process_work_item(
-            store,
-            TaskAgentRunner(DuplicateCreatingCodex()),
-            work_input,
-        )
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        project_count = db.execute("select count(*) from work_projects").fetchone()[0]
-        runs = db.execute(
-            "select status from task_agent_runs where summary_input_id=? order by id",
-            (input_id,),
-        ).fetchall()
-
-    assert input_row == (
-        "failed",
-        "validation repair cannot convert unresolved update_project to create_project",
-    )
-    assert project_count == 0
-    assert runs == [("failed",), ("failed",)]
-
-
-def test_process_work_item_rejects_missing_project_repair_that_creates_duplicate(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item("客户交付")
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    invalid_update = {
-        "action": "update_project",
-        "update_summary": "并入已有客户交付项目。",
-        "memory_recall_used": True,
-        "confidence": 0.8,
-    }
-    invalid_create_repair = {
-        "action": "create_project",
-        "project": {
-            "title": "客户交付",
-            "category": "projects",
-            "memory_context": _memory_context(),
-        },
-        "update_summary": "创建同名客户交付项目。",
-        "memory_recall_used": True,
-        "confidence": 0.8,
-    }
-
-    class DuplicateCreatingCodex(FakeCodexWithAuditEvents):
-        def __init__(self):
-            super().__init__(invalid_update, [{"tool": "memory_recall"}])
-            self.payloads = [invalid_update, invalid_create_repair]
-            self.calls = 0
-
-        def decide(self, **_kwargs):
-            payload = self.payloads[self.calls]
-            self.calls += 1
-            self.last_audit_tool_events = [{"tool": "memory_recall"}]
-            return TaskAgentDecision.model_validate(payload)
-
-    with pytest.raises(ValueError, match="cannot convert unresolved update_project"):
-        process_work_item(
-            store,
-            TaskAgentRunner(DuplicateCreatingCodex()),
-            work_input,
-        )
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        project_count = db.execute("select count(*) from work_projects").fetchone()[0]
-        runs = db.execute(
-            "select status from task_agent_runs where summary_input_id=? order by id",
-            (input_id,),
-        ).fetchall()
-
-    assert input_row == (
-        "failed",
-        "validation repair cannot convert unresolved update_project to create_project",
-    )
-    assert project_count == 0
-    assert runs == [("failed",), ("failed",)]
-
-
-def test_process_work_item_failure_does_not_create_partial_project(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    store = AutoReplyStore(tmp_path / "task-batch-failure.sqlite3")
     item = _work_item()
     input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
+        item.source.type.value, item.source.ref, item.model_dump_json()
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = FakeCodex(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [{"action": "close", "title": "补齐来源链接"}],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "坏的待办更新。",
-            "merge_reason": "",
-            "memory_recall_used": True,
-            "confidence": 0.4,
-        }
-    )
+    payload = {"task_decisions": [
+        {"action": "record_candidate", "transition": "none",
+         "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
+         "title": "有效候选", "missing_evidence": ["owner"]},
+        {"action": "record_candidate", "transition": "none",
+         "source_excerpt": "不在原文中的内容", "source_ref": item.source.ref,
+         "title": "必须回滚", "missing_evidence": ["owner"]},
+    ]}
+    codex = FakeCodexWithAuditEvents(payload, [])
 
-    with pytest.raises(ValueError, match="requires todo_id"):
+    with pytest.raises(ValueError, match="exact source substring"):
         process_work_item(store, TaskAgentRunner(codex), work_input)
 
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        project_count = db.execute("select count(*) from work_projects").fetchone()
-        update_count = db.execute("select count(*) from work_updates").fetchone()
-        run_count = db.execute("select count(*) from task_agent_runs").fetchone()
-    assert input_row == ("failed",)
-    assert project_count == (0,)
-    assert update_count == (0,)
-    assert run_count == (1,)
-
-
-def test_process_work_item_domain_apply_failure_terminalizes_the_active_run(
-    tmp_path,
-    monkeypatch,
-):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = FakeCodexWithAuditEvents(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "创建售前知识库项目。",
-            "merge_reason": "新工作项。",
-            "memory_recall_used": True,
-            "confidence": 0.9,
-        },
-        [{"tool": "memory_recall"}],
-    )
-
-    def fail_domain_apply(*_args, **_kwargs):
-        raise RuntimeError("domain apply interrupted")
-
-    monkeypatch.setattr("app.task_agent._apply_project", fail_domain_apply)
-
-    with pytest.raises(RuntimeError, match="domain apply interrupted"):
-        process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with store._connect() as db:
+    assert store.list_business_tasks() == ()
+    with sqlite3.connect(tmp_path / "task-batch-failure.sqlite3") as db:
+        input_status = db.execute(
+            "select status from work_summary_inputs where id=?", (input_id,)
+        ).fetchone()[0]
         run = db.execute(
             "select status, error from task_agent_runs where summary_input_id=?",
             (input_id,),
         ).fetchone()
-    assert run["status"] == "failed"
-    assert run["error"] == "domain apply interrupted"
+    assert input_status == "failed"
+    assert run[0] == "failed"
+    assert "exact source substring" in run[1]
 
 
-def test_process_work_item_rolls_back_domain_changes_when_apply_is_interrupted(
-    tmp_path,
-    monkeypatch,
-):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = FakeCodexWithAuditEvents(
-        {
-            "action": "create_project",
-            "project": {
-                "title": "售前知识库建设",
-                "category": "sales",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "create",
-                    "deadline_at": "2026-12-31T18:00:00+08:00",
-                    "title": "补齐来源链接",
-                    "owner_user_id": "owner-1",
-                    "owner_name": "Alex",
-                    "owner_evidence": _owner_evidence(),
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "创建售前知识库项目。",
-            "merge_reason": "新工作项。",
-            "memory_recall_used": True,
-            "confidence": 0.9,
-        },
-        [{"tool": "memory_recall"}],
-    )
-
-    def interrupt_after_project(*_args, **_kwargs):
-        raise RuntimeError("todo apply interrupted")
-
-    monkeypatch.setattr("app.task_agent._apply_todo_change", interrupt_after_project)
-
-    with pytest.raises(RuntimeError, match="todo apply interrupted"):
-        process_work_item(store, TaskAgentRunner(codex), work_input, dws=object())
-
-    with store._connect() as db:
-        project_count = db.execute("select count(*) from work_projects").fetchone()[0]
-        update_count = db.execute("select count(*) from work_updates").fetchone()[0]
-        run = db.execute(
-            "select status from task_agent_runs where summary_input_id=?", (input_id,)
-        ).fetchone()
-    assert project_count == 0
-    assert update_count == 0
-    assert run["status"] == "failed"
-    assert store.list_task_todo_sync_outbox() == []
 
 
-def test_process_work_item_leaves_committed_task_todo_for_shared_dispatcher(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    store.enqueue_work_summary_input(
-        item.source.type.value, item.source.ref, item.model_dump_json()
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    decision = {
-        "action": "create_project",
-        "project": {
-            "title": "售前知识库建设",
-            "category": "sales",
-            "memory_context": _memory_context(),
-        },
-        "todo_changes": [{
-            "action": "create",
-            "todo_ref": "sources",
-            "title": "补齐来源链接",
-            "owner_user_id": "owner-1",
-            "owner_name": "Alex",
-            "owner_evidence": _owner_evidence(),
-            "status": "open",
-            "priority": "P1",
-            "deadline_at": "2026-07-01 18:00:00",
-        }],
-        "follow_up_drafts": [],
-        "follow_up_changes": [],
-        "update_summary": "创建项目并补齐来源。",
-        "merge_reason": "新工作项。",
-        "memory_recall_used": True,
-        "confidence": 0.9,
-    }
 
-    class CommitAwareDws:
-        def __init__(self):
-            self.visible_todo_counts = []
-
-        def create_todo_task(self, **_kwargs):
-            self.visible_todo_counts.append(len(store.list_work_todos()))
-            return {"todoTaskId": "dt-after-commit"}
-
-        def get_todo_task(self, task_id):
-            return {"id": task_id, "done": False}
-
-    dws = CommitAwareDws()
-    process_work_item(
-        store,
-        TaskAgentRunner(FakeCodexWithAuditEvents(decision, [{"tool": "memory_recall"}])),
-        work_input,
-        dws=dws,
-        now="2026-06-27 10:00:00",
-    )
-
-    assert dws.visible_todo_counts == []
-    assert store.list_task_todo_sync_outbox(statuses=("queued",))[0]["operation"] == "create"
-
-
-def test_process_work_item_repairs_unsupported_project_owner_evidence(tmp_path):
-    class RepairingCodex:
-        last_session_id = "task-session-1"
-        last_transcript_start_line = 0
-        last_transcript_end_line = 0
-        last_audit_tool_events = [{"tool": "memory_recall"}]
-
-        def __init__(self):
-            self.prompts = []
-            self.session_ids = []
-            self.decisions = [
-                {
-                    "action": "create_project",
-                    "project": {
-                        "title": "售前知识库建设",
-                        "category": "sales",
-                        "owner_user_id": "owner-1",
-                        "owner_name": "Alex",
-                        "owner_evidence": {
-                            "source": "reply_attempt:1",
-                            "reason": "The source assigns Alex.",
-                            "description": "The initial decision omitted evidence identity fields.",
-                        },
-                        "memory_context": _memory_context(),
-                    },
-                    "todo_changes": [],
-                    "follow_up_drafts": [],
-                    "follow_up_changes": [],
-                    "update_summary": "记录售前知识库建设。",
-                    "merge_reason": "新工作项。",
-                    "memory_recall_used": True,
-                    "confidence": 0.7,
-                },
-                {
-                    "action": "create_project",
-                    "project": {
-                        "title": "售前知识库建设",
-                        "category": "sales",
-                        "owner_user_id": "",
-                        "owner_name": "",
-                        "owner_evidence": {},
-                        "memory_context": _memory_context(),
-                    },
-                    "todo_changes": [],
-                    "follow_up_drafts": [],
-                    "follow_up_changes": [],
-                    "update_summary": "记录售前知识库建设，待后续材料确认负责人。",
-                    "merge_reason": "新工作项。",
-                    "memory_recall_used": True,
-                    "confidence": 0.7,
-                },
-            ]
-
-        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
-            self.prompts.append(prompt)
-            self.session_ids.append(session_scope_id)
-            return TaskAgentDecision.model_validate(self.decisions.pop(0))
-
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = RepairingCodex()
-
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-        project_row = db.execute(
-            "select owner_user_id, owner_name, owner_evidence_json from work_projects"
-        ).fetchone()
-        run_count = db.execute(
-            "select count(*) from task_agent_runs where summary_input_id=?",
-            (input_id,),
-        ).fetchone()
-
-    assert input_row == ("done", "")
-    assert project_row == ("", "", "{}")
-    assert run_count == (2,)
-    assert len(codex.session_ids) == 2
-    assert codex.session_ids[0] == codex.session_ids[1] == "task:1"
-    assert "does not support assigned owner identity" in codex.prompts[1]
-    assert "user_id and" in codex.prompts[1]
-    assert "not create a TODO or follow-up" in codex.prompts[1]
-
-
-def test_process_work_item_repairs_project_owner_evidence_missing_source(tmp_path):
-    class RepairingCodex:
-        last_session_id = "task-session-1"
-        last_transcript_start_line = 0
-        last_transcript_end_line = 0
-        last_audit_tool_events = [{"tool": "memory_recall"}]
-
-        def __init__(self):
-            self.prompts = []
-            self.decisions = [
-                {
-                    "action": "create_project",
-                    "project": {
-                        "title": "售前知识库建设",
-                        "category": "sales",
-                        "owner_user_id": "owner-1",
-                        "owner_name": "Alex",
-                        "owner_evidence": {},
-                        "memory_context": _memory_context(),
-                    },
-                    "memory_recall_used": True,
-                    "update_summary": "记录售前知识库建设。",
-                },
-                {
-                    "action": "create_project",
-                    "project": {
-                        "title": "售前知识库建设",
-                        "category": "sales",
-                        "owner_user_id": "",
-                        "owner_name": "",
-                        "owner_evidence": {},
-                        "memory_context": _memory_context(),
-                    },
-                    "memory_recall_used": True,
-                    "update_summary": "记录售前知识库建设，待确认负责人。",
-                },
-            ]
-
-        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
-            self.prompts.append(prompt)
-            return TaskAgentDecision.model_validate(self.decisions.pop(0))
-
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = RepairingCodex()
-
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-
-    # A missing evidence field goes back to the Agent like any other
-    # unsupported owner, instead of failing the work item outright.
-    assert input_row == ("done", "")
-    assert len(codex.prompts) == 2
-    assert "project.owner_evidence.source is required" in codex.prompts[1]
-
-
-def test_sparse_todo_update_preserves_existing_status_and_priority(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-        priority="P0",
-        risk_level="high",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="给出交付 ETA",
-        status="waiting_owner",
-        priority="P0",
-    )
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "客户交付",
-                "category": "projects",
-                "memory_context": _memory_context(),
-            },
-            "todo_changes": [
-                {
-                    "action": "update",
-                    "todo_id": todo_id,
-                    "description": "客户交付 ETA 需要说明当前阻塞、责任人、下一次对客户同步的时间，以及是否影响原承诺。",
-                    "blocker": "等待 owner 回复",
-                }
-            ],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "补充阻塞原因。",
-            "merge_reason": "同一客户交付项目。",
-            "memory_recall_used": True,
-            "confidence": 0.8,
-        }
-    )
-
-    apply_task_agent_decision(
-        store,
-        summary_input_id=0,
-        work_item=_work_item("客户交付"),
-        decision=decision,
-    )
-
-    todo = store.list_work_todos(project_id=project_id)[0]
-    assert todo.status == "waiting_owner"
-    assert todo.priority == "P0"
-    assert todo.description == (
-        "客户交付 ETA 需要说明当前阻塞、责任人、下一次对客户同步的时间，以及是否影响原承诺。"
-    )
-    assert todo.blocker == "等待 owner 回复"
-    update = store.list_work_updates(project_id=project_id)[0]
-    todo_change = json.loads(update.changes_json)["todo_changes"][0]
-    assert todo_change == {
-        "action": "update",
-        "todo_id": todo_id,
-        "description": "客户交付 ETA 需要说明当前阻塞、责任人、下一次对客户同步的时间，以及是否影响原承诺。",
-        "blocker": "等待 owner 回复",
-    }
-
-
-def test_discard_with_malformed_todo_change_marks_failed(tmp_path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    item = _work_item()
-    input_id = store.enqueue_work_summary_input(
-        item.source.type.value,
-        item.source.ref,
-        item.model_dump_json(),
-    )
-    work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = FakeCodex(
-        {
-            "action": "skip",
-            "skip_reason": "不是稳定任务。",
-            "todo_changes": [{"action": "close", "title": "补齐来源链接"}],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "丢弃输入。",
-            "merge_reason": "",
-            "memory_recall_used": False,
-            "confidence": 0.8,
-        }
-    )
-
-    with pytest.raises(ValueError, match="requires todo_id"):
-        process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status from work_summary_inputs where id=?",
-            (input_id,),
-        ).fetchone()
-    assert input_row == ("failed",)
 
 
 def test_process_work_item_accepts_none_session_id(tmp_path):
@@ -5449,17 +798,8 @@ def test_process_work_item_accepts_none_session_id(tmp_path):
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
     codex = FakeCodexWithoutSession(
-        {
-            "action": "skip",
-            "skip_reason": "一次性对话。",
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "丢弃。",
-            "merge_reason": "",
-            "memory_recall_used": False,
-            "confidence": 0.9,
-        }
+        {"task_decisions": [{"action": "skip", "transition": "none",
+            "skip_reason": "一次性对话。"}]}
     )
 
     process_work_item(store, TaskAgentRunner(codex), work_input)
@@ -5475,20 +815,12 @@ def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):
     from app.task_agent import TaskAgentCodexRunner
 
     def executor(command, prompt):
-        return (
-            '{"type":"session_meta","payload":{"id":"session-task-1"}}\n'
-            '{"item":{"type":"agent_message","text":"'
-                '{\\"action\\":\\"skip\\",'
-            '\\"skip_reason\\":\\"没有状态变化\\",'
-            '\\"todo_changes\\":[],'
-            '\\"follow_up_drafts\\":[],'
-            '\\"follow_up_changes\\":[],'
-            '\\"update_summary\\":\\"无变化\\",'
-            '\\"merge_reason\\":\\"\\",'
-            '\\"memory_recall_used\\":false,'
-            '\\"confidence\\":0.7}'
-            '"}}\n'
-        )
+        return "\n".join([
+            json.dumps({"type": "session_meta", "payload": {"id": "session-task-1"}}),
+            json.dumps({"item": {"type": "agent_message", "text": json.dumps({
+                "task_decisions": [{"action": "skip", "transition": "none", "skip_reason": "没有状态变化"}]
+            }, ensure_ascii=False)}}, ensure_ascii=False),
+        ])
 
     runner = TaskAgentCodexRunner(
         routed_execution=FakeRoutedTaskExecution(
@@ -5497,7 +829,7 @@ def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):
     )
     decision = runner.decide(prompt="x", workload_key="1")
 
-    assert decision.action == "skip"
+    assert decision.task_decisions[0].action == "skip"
     assert runner.last_session_id == "session-task-1"
 
 
@@ -5517,18 +849,10 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
                             "content": [
                                 {
                                     "type": "output_text",
-                                    "text": json.dumps(
-                                        {
-                                            "action": "skip",
-                                            "skip_reason": "只是确认收到",
-                                            "project": None,
-                                            "todo_changes": [],
-                                            "follow_up_drafts": [],
-                                            "follow_up_changes": [],
-                                            "update_summary": "无新增事项",
-                                            "merge_reason": "",
-                                            "memory_recall_used": False,
-                                            "confidence": 0.8,
+                                        "text": json.dumps(
+                                            {
+                                                "task_decisions": [{"action": "skip", "transition": "none",
+                                                    "skip_reason": "只是确认收到"}],
                                         },
                                         ensure_ascii=False,
                                     ),
@@ -5548,8 +872,8 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
     )
     decision = runner.decide(prompt="x", workload_key="1")
 
-    assert decision.action == "skip"
-    assert decision.skip_reason == "只是确认收到"
+    assert decision.task_decisions[0].action == "skip"
+    assert decision.task_decisions[0].skip_reason == "只是确认收到"
     assert runner.last_session_id == "session-task-2"
 
 
@@ -5571,105 +895,14 @@ def test_task_agent_prompt_schema_is_generated_from_validation_model():
     assert prompt_schema == TaskAgentDecision.model_json_schema()
 
 
-def test_task_agent_decision_supports_follow_up_changes():
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "update_project",
-            "skip_reason": "",
-            "project": {
-                "id": 372,
-                "title": "海外数据合规与中美开发隔离闭环",
-                "category": "strategy",
-                "tags": [],
-                "status": "active",
-                "priority": "P0",
-                "risk_level": "high",
-                "needs_derek_attention": False,
-                "owner_user_id": "02412744671048909",
-                "owner_name": "Ming Hu(胡明)/运维",
-                "related_people": [],
-                "goal": "",
-                "background": "Riley反馈该P0事项应由胡明和运维负责。",
-                "memory_context": _memory_context(),
-                "facts": [],
-                "current_state": "",
-                "blocker": "",
-                "next_step": "",
-                "next_follow_up_at": "",
-                "follow_up_mode": "none",
-                "source_conversations": [],
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [
-                {
-                    "follow_up_id": 1566,
-                    "todo_id": 3720,
-                    "action": "reassign",
-                    "reason": "Riley clarified the P0 follow-up belongs to Ming Hu and ops.",
-                    "evidence_check": {
-                        "source": "reply_attempt:1992",
-                        "summary": "Riley说明该事项由胡明和运维负责。",
-                    },
-                    "next_due_at": None,
-                    "owner_user_id": "02412744671048909",
-                    "owner_name": "Ming Hu(胡明)/运维",
-                }
-            ],
-            "update_summary": "停止追Riley并修正owner口径。",
-            "merge_reason": "follow-up reply corrected owner",
-            "memory_recall_used": True,
-            "confidence": 0.86,
-            "risk": "low",
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        }
-    )
-
-    assert decision.follow_up_changes[0].follow_up_id == 1566
-    assert decision.follow_up_changes[0].todo_id == 3720
-    assert decision.follow_up_changes[0].action == "reassign"
-    assert decision.follow_up_changes[0].reason.startswith("Riley clarified")
-    assert decision.follow_up_changes[0].next_due_at is None
-    assert decision.follow_up_changes[0].owner_user_id == "02412744671048909"
-
-
-def test_task_agent_decision_exposes_unified_quality_fields():
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "skip",
-            "skip_reason": "只是一次性账号配置。",
-            "project": None,
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "不创建 task。",
-            "merge_reason": "",
-            "memory_recall_used": False,
-            "confidence": 0.8,
-            "risk": "low",
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        }
-    )
-    assert decision.risk == "low"
-    assert decision.rule_coverage == 1.0
-    assert decision.information_completeness == 1.0
 
 
 def test_task_agent_codex_runner_uses_routed_execution_contract():
     routed = FakeRoutedTaskExecution(
         json.dumps(
             {
-                "action": "skip",
-                "skip_reason": "没有状态变化",
-                "todo_changes": [],
-                "follow_up_drafts": [],
-                "follow_up_changes": [],
-                "update_summary": "无变化",
-                "merge_reason": "",
-                "memory_recall_used": False,
-                "confidence": 0.7,
+                "task_decisions": [{"action": "skip", "transition": "none",
+                    "skip_reason": "没有状态变化"}],
             },
             ensure_ascii=False,
         )
@@ -5678,7 +911,7 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
 
     decision = runner.decide(prompt="decide", workload_key="9")
 
-    assert decision.action == "skip"
+    assert decision.task_decisions[0].action == "skip"
     assert routed.calls[0]["workload_key"] == "9"
     assert routed.calls[0]["conversation_id"] is None
     assert routed.calls[0]["required_capabilities"] == frozenset(
@@ -5689,33 +922,6 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
     )
 
 
-def test_task_agent_codex_runner_preserves_unset_project_patch_fields():
-    routed = FakeRoutedTaskExecution(
-        json.dumps(
-            {
-                "action": "update_project",
-                "project": {
-                    "id": 7,
-                    "current_state": "周报已生成。",
-                    "memory_context": _memory_context(),
-                },
-                "memory_recall_used": True,
-                "confidence": 0.9,
-            },
-            ensure_ascii=False,
-        )
-    )
-    runner = TaskAgentCodexRunner(routed_execution=routed)
-
-    decision = runner.decide(prompt="decide", workload_key="7")
-
-    assert decision.project is not None
-    assert decision.project.model_fields_set == {
-        "id",
-        "current_state",
-        "memory_context",
-    }
-
 
 def test_task_agent_codex_runner_requires_injected_execution():
     with pytest.raises(TypeError):
@@ -5725,22 +931,9 @@ def test_task_agent_codex_runner_requires_injected_execution():
 def test_task_agent_codex_runner_reads_audit_events_from_session():
     routed = FakeRoutedTaskExecution(
         json.dumps(
-                {
-                    "action": "create_project",
-                    "project": {
-                        "title": "候选人跟进",
-                        "category": "recruiting",
-                        "memory_context": _memory_context(),
-                    },
-                    "todo_changes": [],
-                    "follow_up_drafts": [],
-                    "follow_up_changes": [],
-                    "update_summary": "记录候选人跟进。",
-                    "merge_reason": "",
-                    "memory_recall_used": True,
-                    "confidence": 0.7,
-                },
-                ensure_ascii=False,
+            {"task_decisions": [{"action": "skip", "transition": "none",
+                "skip_reason": "无需记录候选人 follow-up。"}]},
+            ensure_ascii=False,
         ),
         session_id="019f0000-0000-7000-8000-000000000000",
         transcript_end=8,
@@ -5758,7 +951,7 @@ def test_task_agent_codex_runner_reads_audit_events_from_session():
 
     decision = runner.decide(prompt="decide", workload_key="1")
 
-    assert decision.action == "create_project"
+    assert decision.task_decisions[0].action == "skip"
     assert runner.last_transcript_start_line == 0
     assert runner.last_transcript_end_line == 8
     assert observed_limits == [200]
@@ -5822,16 +1015,12 @@ def test_task_agent_codex_runner_keeps_nonretryable_routed_failures_terminal(
 
 
 def test_task_agent_parser_finds_decision_embedded_in_prose():
-    decision = {
-        "action": "skip",
-        "skip_reason": "No completion evidence was found; the TODO stays open.",
-        "memory_recall_used": True,
-        "confidence": 0.9,
-    }
+    decision = {"task_decisions": [{"action": "skip", "transition": "none",
+        "skip_reason": "No source-grounded task was found."}]}
     message = (
         "Based on my search within the allowed sources, I found:\n\n"
         "1. **Memory**: background only {not a decision}.\n\n"
-        + json.dumps({"action": "skip", "skip_reason": "draft"})
+        + json.dumps({"task_decisions": []})
         + "\n\nFinal decision:\n\n"
         + json.dumps(decision, indent=2)
         + "\n"
@@ -5876,257 +1065,933 @@ def _claimed_work_input(store):
     return input_id, store.claim_work_summary_inputs(limit=1)[0]
 
 
-def test_process_work_item_repairs_a_second_repairable_rule(tmp_path, monkeypatch):
-    """A repaired decision that trips another repairable rule gets its own repair turn."""
-    from app.task_agent import TASK_DECISION_REPAIR_ROUNDS
-
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    input_id, work_input = _claimed_work_input(store)
-    base = {
-        "todo_changes": [],
-        "follow_up_drafts": [],
-        "follow_up_changes": [],
-        "update_summary": "创建项目。",
-        "merge_reason": "事项需要持续跟进。",
-        "confidence": 0.8,
-    }
-    project = {"title": "售前知识库建设", "category": "sales", "status": "active"}
-    # Turn 1: memory_context missing entirely.
-    first = {**base, "action": "create_project", "project": project, "memory_recall_used": False}
-    # Repair 1: a query but neither summary nor memories — still repairable.
-    second = {
-        **first,
-        "project": {**project, "memory_context": {"query": "售前知识库", "summary": "", "memories": []}},
-        "memory_recall_used": True,
-    }
-    third = {**second, "project": {**project, "memory_context": _memory_context()}}
-    codex = _repair_codex([first, second, third])
-
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?", (input_id,)
-        ).fetchone()
-        runs = db.execute(
-            "select status, error from task_agent_runs where summary_input_id=? order by id",
-            (input_id,),
-        ).fetchall()
-    assert TASK_DECISION_REPAIR_ROUNDS == 2
-    assert input_row == ("done", "")
-    assert runs == [
-        ("failed", "non-skip task decision requires project.memory_context"),
-        ("failed", "non-skip task decision requires project.memory_context"),
-        ("completed", ""),
-    ]
-    assert codex.calls == 3
 
 
-def test_process_work_item_repairs_project_patch_that_would_erase_metadata(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="售前知识库",
-        category="sales",
-        tags_json='["customer"]',
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        related_people_json='[{"user_id":"reviewer-1","name":"Avery"}]',
-        goal="完成可复用知识库",
-        background="客户交付材料持续沉淀",
-    )
-    input_id, work_input = _claimed_work_input(store)
-    base = {
-        "action": "update_project",
-        "todo_changes": [],
-        "follow_up_drafts": [],
-        "follow_up_changes": [],
-        "update_summary": "记录本周 OKR 周报进展。",
-        "merge_reason": "周报属于现有项目。",
-        "memory_recall_used": True,
-        "confidence": 0.9,
-    }
-    first = {
-        **base,
-        "project": {
-            "id": project_id,
-            "title": "",
-            "category": "other",
-            "tags": [],
-            "owner_user_id": "",
-            "owner_name": "",
-            "related_people": [],
-            "goal": "",
-            "background": "",
-            "current_state": "周报已生成。",
-            "memory_context": _memory_context(),
-        },
-    }
-    second = {
-        **base,
-        "project": {
-            "id": project_id,
-            "current_state": "周报已生成。",
-            "memory_context": _memory_context(),
-        },
-    }
-    codex = _repair_codex([first, second])
-
-    process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    project = store.get_work_project(project_id)
-    assert project is not None
-    assert project.title == "售前知识库"
-    assert project.category.value == "sales"
-    assert project.tags_json == '["customer"]'
-    assert project.owner_user_id == "owner-1"
-    assert project.owner_name == "Alex"
-    assert project.related_people_json == '[{"user_id":"reviewer-1","name":"Avery"}]'
-    assert project.goal == "完成可复用知识库"
-    assert project.background == "客户交付材料持续沉淀"
-    assert project.current_state == "周报已生成。"
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?", (input_id,)
-        ).fetchone()
-        runs = db.execute(
-            "select status, error from task_agent_runs where summary_input_id=? order by id",
-            (input_id,),
-        ).fetchall()
-    assert input_row == ("done", "")
-    assert runs == [
-        (
-            "failed",
-            "update_project would erase protected project fields with schema defaults: "
-            "background, category, goal, owner_name, owner_user_id, related_people, tags, title",
-        ),
-        ("completed", ""),
-    ]
-    assert codex.calls == 2
-    assert "omit every unchanged project field" in codex.prompts[1]
 
 
-def test_process_work_item_repair_exhaustion_is_typed_not_silent(tmp_path, monkeypatch):
-    from app.task_agent import TaskDecisionRepairExhausted
-
-    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    input_id, work_input = _claimed_work_input(store)
-    invalid = {
-        "action": "create_project",
-        "project": {"title": "售前知识库建设", "category": "sales", "status": "active"},
-        "todo_changes": [],
-        "follow_up_drafts": [],
-        "follow_up_changes": [],
-        "update_summary": "创建项目。",
-        "merge_reason": "事项需要持续跟进。",
-        "memory_recall_used": True,
-        "confidence": 0.8,
-    }
-    codex = _repair_codex([invalid, invalid, invalid, invalid])
-
-    with pytest.raises(TaskDecisionRepairExhausted, match="repair exhausted after 2 rounds"):
-        process_work_item(store, TaskAgentRunner(codex), work_input)
-
-    assert codex.calls == 3  # one decision turn plus two repair turns
-    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
-        input_row = db.execute(
-            "select status, error from work_summary_inputs where id=?", (input_id,)
-        ).fetchone()
-    assert input_row[0] == "failed"
-    assert input_row[1].startswith("task decision repair exhausted after 2 rounds")
-
-
-def test_validation_repair_prompt_states_the_memory_context_contract():
-    from app.task_agent import build_task_agent_validation_repair_prompt
-
-    decision = TaskAgentDecision.model_validate(
-        {
-            "action": "skip",
-            "skip_reason": "draft",
-            "memory_recall_used": False,
-            "confidence": 0.5,
-        }
-    )
-    prompt = build_task_agent_validation_repair_prompt(
-        _work_item(),
-        "[]",
-        decision,
-        validation_error="non-skip task decision requires project.memory_context",
-    )
-
-    assert "Call memory_recall now" in prompt
-    assert "project.memory_context contract" in prompt
-    assert "no relevant memory was found for the query" in prompt
-    assert "memory_connector_runtime_unavailable" in prompt
-    assert 'return action="skip"' in prompt
-    assert "unless the new session\nReturn" not in prompt
-
-
-def _create_todo_decision(deadline_at: str) -> TaskAgentDecision:
-    return TaskAgentDecision.model_validate({
-        "action": "update_project",
-        "project": {"id": 3, "title": "Vendor quote", "memory_context": _memory_context()},
-        "todo_changes": [
-            {
-                "action": "create",
-                "todo_ref": "send-quote",
-                "title": "给客户发送正式报价",
-                "deadline_at": deadline_at,
-            }
-        ],
-        "update_summary": "Quote TODO created.",
-        "memory_recall_used": True,
-        "confidence": 0.8,
-    })
-
-
-@pytest.mark.parametrize("deadline_at", ["", "   ", "尽快", "not-a-date"])
-def test_creating_a_todo_without_a_usable_deadline_is_repairable(deadline_at):
-    """Derek 2026-09-17: every TODO must have a deadline. 318 open TODOs had
-    none and could never be mirrored to DingTalk Todo."""
-    from app.task_agent import _validate_task_agent_decision
-
-    with pytest.raises(RepairableTaskDecisionValidationError, match="deadline_at is required"):
-        _validate_task_agent_decision(_create_todo_decision(deadline_at))
-
-
-def test_creating_a_todo_with_a_concrete_deadline_passes():
-    from app.task_agent import _validate_task_agent_decision
-
-    _validate_task_agent_decision(_create_todo_decision("2026-09-25T18:00:00+08:00"))
-
-
-def test_the_task_agent_prompt_requires_a_todo_deadline():
-    item = WorkItem.model_validate({
+def _work_item(project_name="售前知识库", **context):
+    return WorkItem.model_validate({
         "source": {
-            "type": "local_file",
-            "ref": "/tmp/报价沟通.md#sha256=abc",
-            "title": "报价沟通",
-            "conversation_id": "",
-            "conversation_title": "",
-            "created_at": "2026-09-16T10:00:00+08:00",
+            "type": "reply_attempt", "ref": "message:1", "title": project_name,
+            "conversation_id": "conversation:1", "conversation_title": "客户群",
+            "created_at": "2026-09-20T09:00:00+08:00",
         },
-        "summary": "客户要求下周给出正式报价。",
-        "project_name": "客户正式报价",
+        "summary": "补齐来源链接；owner 是 Alex。",
         "context": {
-            "sender": "张静",
-            "participants": ["张静"],
-            "source_conversation_kind": "minutes",
-            "source_conversation_title": "报价沟通",
-        },
-        "task_signals": {
-            "possible_task_update": True,
-            "mentions_follow_up": False,
-            "signal_reason": "客户明确要求报价。",
+            "sender": "Avery", "sender_user_id": "avery-id",
+            "source_conversation_kind": "group", **context,
         },
     })
 
-    prompt = build_task_agent_prompt(item, "候选项目:\n[]\n\n近期 follow-up 候选:\n[]")
 
-    assert "Every TODO you create must have deadline_at" in prompt
-    assert "never leave deadline_at empty" in prompt
+def _candidate_decision(item, *, excerpt="补齐来源链接", title="补齐报价来源链接"):
+    return TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none",
+        "source_excerpt": excerpt, "source_ref": item.source.ref,
+        "title": title, "missing_evidence": ["owner"],
+    }]})
+
+
+def test_parser_accepts_zero_to_many_task_decisions():
+    assert _parse_task_agent_decision('{"task_decisions": []}').task_decisions == []
+    decision = _parse_task_agent_decision(json.dumps({"task_decisions": [
+        {"action": "skip", "transition": "none", "skip_reason": "no task"},
+        {"action": "record_candidate", "transition": "none", "source_excerpt": "补齐来源链接",
+         "source_ref": "message:1", "title": "补齐来源链接", "missing_evidence": ["owner"]},
+    ]}, ensure_ascii=False))
+    assert len(decision.task_decisions) == 2
+
+
+def test_parser_rejects_project_first_decision():
+    with pytest.raises(ValueError, match="No TaskAgentDecision"):
+        _parse_task_agent_decision('{"action":"update_project","project":{"id":1}}')
+
+
+def test_multi_decision_batch_records_each_source_grounded_item(tmp_path):
+    store = AutoReplyStore(tmp_path / "multi-task.sqlite3")
+    item = _work_item(assignment_authorized=True)
+    decision = TaskAgentDecision.model_validate({"task_decisions": [
+        {"action": "record_candidate", "transition": "none", "source_excerpt": "补齐来源链接",
+         "source_ref": item.source.ref, "title": "补齐报价来源链接", "missing_evidence": ["owner"]},
+        {"action": "create_task", "transition": "none", "source_excerpt": "owner 是 Alex",
+         "source_ref": item.source.ref, "title": "确认负责人", "formal_basis": "explicit_assignment",
+         "owner_name": "Alex", "owner_evidence": {"source_ref": item.source.ref, "excerpt": "owner 是 Alex"}},
+    ]})
+
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+
+    assert len(result.task_ids) == 2
+    assert [task.stage.value for task in store.list_business_tasks()] == ["candidate", "formal"]
+    assert len(store.list_business_task_signals()) == 2
+
+
+def test_source_dedupe_distinguishes_owner_but_replays_identical_decision(tmp_path):
+    store = AutoReplyStore(tmp_path / "owner-sensitive-dedupe.sqlite3")
+    excerpt = "Alex and Bob are assigned to prepare the release report."
+    work_items = [
+        _work_item(assignment_authorized=True,
+            owner_identity={"name": "Alex", "user_id": "alex-id"}).model_copy(
+                update={"summary": excerpt}
+            ),
+        _work_item(assignment_authorized=True,
+            owner_identity={"name": "Bob", "user_id": "bob-id"}).model_copy(
+                update={"summary": excerpt}
+            ),
+    ]
+    decisions = [TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none", "formal_basis": "explicit_assignment",
+        "source_excerpt": excerpt, "source_ref": item.source.ref, "title": "Prepare release report",
+        "owner_name": owner_name,
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": excerpt,
+            "name": owner_name, "user_id": owner_id},
+    }]}) for item, owner_name, owner_id in zip(
+        work_items, ("Alex", "Bob"), ("alex-id", "bob-id"), strict=True
+    )]
+
+    (alex_task_id,) = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=work_items[0], decision=decisions[0], record_run=False
+    )
+    (replayed_alex_task_id,) = apply_task_agent_decision(
+        store, summary_input_id=2, work_item=work_items[0], decision=decisions[0], record_run=False
+    )
+    (bob_task_id,) = apply_task_agent_decision(
+        store, summary_input_id=3, work_item=work_items[1], decision=decisions[1], record_run=False
+    )
+
+    assert replayed_alex_task_id == alex_task_id
+    assert bob_task_id != alex_task_id
+    assert len(store.list_business_tasks()) == 2
+    assert {task.owner_user_id for task in store.list_business_tasks()} == {"alex-id", "bob-id"}
+
+
+def test_creation_replay_ignores_description_and_audit_wording(tmp_path):
+    store = AutoReplyStore(tmp_path / "presentation-independent-dedupe.sqlite3")
+    item = _work_item(assignment_authorized=True,
+        owner_identity={"name": "Alex", "user_id": "alex-id"}).model_copy(update={
+            "summary": "Alex is assigned to prepare the release report."
+        })
+    base = {
+        "action": "create_task", "transition": "none", "formal_basis": "explicit_assignment",
+        "source_excerpt": item.summary, "source_ref": item.source.ref,
+        "title": "Prepare release report", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": item.summary, "name": "Alex"},
+    }
+    first = TaskAgentDecision.model_validate({"task_decisions": [{
+        **base, "description": "Prepare the report for launch.", "update_summary": "Owner confirmed."
+    }]})
+    replay = TaskAgentDecision.model_validate({"task_decisions": [{
+        **base, "description": "The release report needs preparation.", "update_summary": "Clear owner evidence."
+    }]})
+
+    (first_id,) = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=first, record_run=False
+    )
+    (replay_id,) = apply_task_agent_decision(
+        store, summary_input_id=2, work_item=item, decision=replay, record_run=False
+    )
+
+    assert replay_id == first_id
+    assert len(store.list_business_tasks()) == 1
+
+
+def test_replayed_creation_with_new_date_requires_explicit_task_update(tmp_path):
+    store = AutoReplyStore(tmp_path / "replay-date-effect.sqlite3")
+    item = _work_item().model_copy(update={"summary": "补齐来源链接；Requested due 2026-09-25."})
+    common = {
+        "action": "record_candidate", "transition": "none",
+        "source_excerpt": item.summary, "source_ref": item.source.ref,
+        "title": "报价候选", "missing_evidence": ["owner"],
+    }
+    without_date = TaskAgentDecision.model_validate({"task_decisions": [common]})
+    with_new_date = TaskAgentDecision.model_validate({"task_decisions": [{
+        **common, "date_evidence": [{"kind": "requested_deadline_at", "value": "2026-09-25",
+            "source_ref": item.source.ref, "source_excerpt": "2026-09-25"}],
+    }]})
+
+    (task_id,) = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=without_date, record_run=False)
+    with pytest.raises(ValueError, match="update the existing Task explicitly"):
+        apply_task_agent_decision(store, summary_input_id=2, work_item=item,
+            decision=with_new_date, record_run=False)
+
+    assert [task.id for task in store.list_business_tasks()] == [task_id]
+    assert store.list_business_task_date_evidence(task_id) == ()
+
+
+def test_update_dedupe_identity_preserves_a_real_status_transition(tmp_path):
+    store = AutoReplyStore(tmp_path / "status-effect-dedupe.sqlite3")
+    task = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="报价跟进", signal=SourceSignal(source_type="seed", source_ref="seed:status",
+            evidence_text="报价跟进", dedupe_key="seed:status")
+    ))
+    item = _work_item().model_copy(update={"summary": "报价任务状态已更新"})
+
+    for status in ("waiting", "done"):
+        decision = TaskAgentDecision.model_validate({"task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": task.task_id,
+            "source_excerpt": item.summary, "source_ref": item.source.ref,
+            "title": "报价跟进", "status": status,
+        }]})
+        apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+            decision=decision, record_run=False)
+
+    assert store.get_business_task(task.task_id).status.value == "done"
+    assert len(store.list_business_task_signals()) == 3
+
+
+def _seed_identity_task(store, source_ref, *, external_task_id=""):
+    context = {"owner_identity": {"name": "Alex", "user_id": "alex-id"}}
+    if external_task_id:
+        context["external_task_id"] = external_task_id
+    return TaskSemanticService(store).record_formal_task(RecordFormalTask(
+        title="提交周报",
+        signal=SourceSignal(source_type="message", source_ref=source_ref,
+            evidence_text="Alex 负责提交周报", dedupe_key=source_ref,
+            conversation_id="conversation:weekly", author_user_id="avery-id",
+            author_name="Avery", author_kind=BusinessActorKind.HUMAN,
+            context_json=json.dumps(context)),
+        formality=FormalityEvidence(basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+            assigner_is_authorized=True, deliverable_is_explicit=True, owner_is_explicit=True),
+        owner_user_id="alex-id", owner_name="Alex",
+        owner_evidence_json=json.dumps({"source_ref": source_ref, "excerpt": "Alex 负责提交周报",
+            "user_id": "alex-id", "name": "Alex"}),
+    ))
+
+
+def test_recurring_same_title_tasks_cannot_be_identity_merged(tmp_path):
+    store = AutoReplyStore(tmp_path / "weekly-no-merge.sqlite3")
+    first = _seed_identity_task(store, "message:week-1")
+    second = _seed_identity_task(store, "message:week-2")
+    item = _work_item().model_copy(update={"summary": "本周周报已提交"})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "merge_identity", "task_id": first.task_id,
+        "target_task_id": second.task_id, "source_excerpt": "本周周报已提交",
+        "source_ref": item.source.ref, "title": "提交周报",
+        "identity_proposal": {"source_task_id": first.task_id, "target_task_id": second.task_id,
+            "identity_evidence": {"basis": "same_deliverable_owner_context_time",
+                "source_signal_id": first.signal_id, "target_signal_id": second.signal_id}},
+    }]})
+
+    with pytest.raises(ValueError, match="can link or cluster Tasks but cannot merge identity"):
+        apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+    assert store.get_business_task(first.task_id).status.value != "merged"
+    assert store.get_business_task(second.task_id).status.value != "merged"
+
+
+def test_same_external_task_id_can_support_identity_merge_and_recompute_both_tasks(tmp_path, monkeypatch):
+    from app.task_agent import BusinessAttentionProjection
+
+    store = AutoReplyStore(tmp_path / "external-id-merge.sqlite3")
+    first = _seed_identity_task(store, "message:external-1", external_task_id="dingtalk:task-44")
+    second = _seed_identity_task(store, "message:external-2", external_task_id="dingtalk:task-44")
+    item = _work_item().model_copy(update={"summary": "同步外部待办记录"})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "merge_identity", "task_id": first.task_id,
+        "target_task_id": second.task_id, "source_excerpt": "同步外部待办记录",
+        "source_ref": item.source.ref, "title": "提交周报",
+        "identity_proposal": {"source_task_id": first.task_id, "target_task_id": second.task_id,
+            "reason": "Same external task ID dingtalk:task-44",
+            "identity_evidence": {"basis": "same_external_task_id",
+                "source_signal_id": first.signal_id, "target_signal_id": second.signal_id}},
+    }]})
+
+    recomputed = []
+    original_recompute = BusinessAttentionProjection.recompute_for_tasks
+
+    def capture_recompute(self, task_ids):
+        recomputed.append(tuple(task_ids))
+        return original_recompute(self, task_ids)
+
+    monkeypatch.setattr(BusinessAttentionProjection, "recompute_for_tasks", capture_recompute)
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=decision, record_run=False)
+
+    assert result.task_ids == (second.task_id,)
+    assert result.affected_task_ids == (second.task_id, first.task_id)
+    assert recomputed == [(second.task_id, first.task_id)]
+    assert store.get_business_task(first.task_id).status.value == "merged"
+    assert store.get_business_task(second.task_id).status.value != "merged"
+
+
+def test_batch_rolls_back_task_signal_and_all_proposals_on_later_invalid_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "atomic-batch.sqlite3")
+    semantic = TaskSemanticService(store)
+    source_id = semantic.record_candidate(RecordCandidate(
+        title="报价跟进", signal=SourceSignal(source_type="seed", source_ref="seed:1", evidence_text="报价", dedupe_key="seed:1")
+    )).task_id
+    target_id = semantic.record_candidate(RecordCandidate(
+        title="准备客户材料", signal=SourceSignal(source_type="seed", source_ref="seed:2", evidence_text="材料", dedupe_key="seed:2")
+    )).task_id
+    resolution = BusinessResolutionService(store)
+    cluster_id = resolution.create_cluster(title="客户事项", task_ids=[source_id, target_id])
+    anchor_id = resolution.register_anchor(anchor_type="customer", anchor_ref="customer:1", title="客户")
+    item = _work_item()
+    decision = TaskAgentDecision.model_validate({"task_decisions": [
+        {"action": "update_task", "transition": "update_fields", "task_id": source_id,
+         "source_excerpt": "补齐来源链接", "source_ref": item.source.ref, "title": "报价跟进",
+         "status": "waiting", "relation_proposals": [{"from_task_id": source_id, "to_task_id": target_id,
+         "relation_type": "related_to", "reason": "共享客户目标"}],
+         "cluster_proposal": {"cluster_id": cluster_id, "task_ids": [source_id, target_id], "reason": "同一目标"},
+         "anchor_match_proposals": [{"anchor_id": anchor_id, "reason": "客户事项"}],
+         "project_candidate_proposal": {"cluster_id": cluster_id, "title": "客户项目候选", "reason": "持续任务"}},
+        {"action": "record_candidate", "transition": "none", "source_excerpt": "不存在的原文",
+         "source_ref": item.source.ref, "title": "无来源候选", "missing_evidence": ["source"]},
+    ]})
+    original = store.get_business_task(source_id)
+
+    with pytest.raises(ValueError, match="exact source substring"):
+        apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+
+    assert store.get_business_task(source_id) == original
+    assert store.list_business_task_relations(task_id=source_id) == ()
+    assert store.list_business_task_anchor_links(task_id=source_id) == ()
+    assert len(store.list_business_task_signals()) == 2
+    assert len(store.list_business_work_cluster_tasks(cluster_id=cluster_id)) == 2
+    with store._connect() as db:
+        assert db.execute("select count(*) from business_project_candidates").fetchone()[0] == 0
+
+
+def test_same_task_multiple_decisions_keep_positional_task_signal_mapping(tmp_path):
+    store = AutoReplyStore(tmp_path / "same-task.sqlite3")
+    service = TaskSemanticService(store)
+    created = service.record_candidate(RecordCandidate(
+        title="报价跟进", signal=SourceSignal(source_type="seed", source_ref="seed:1", evidence_text="报价跟进", dedupe_key="seed:1")
+    ))
+    item = _work_item()
+    decision = TaskAgentDecision.model_validate({"task_decisions": [
+        {"action": "update_task", "transition": "update_fields", "task_id": created.task_id,
+         "source_excerpt": "补齐来源链接", "source_ref": item.source.ref, "title": "报价跟进", "status": "waiting",
+         "attention_proposal": {"category": "watch", "title": "报价延期风险", "why_attention": "有明确风险",
+         "current_state": "待补来源", "ceo_action": "确认推进", "anchor_id": 1,
+         "material_trigger": "risk_escalation", "trigger_evidence": "补齐来源链接"}},
+        {"action": "update_task", "transition": "update_fields", "task_id": created.task_id,
+         "source_excerpt": "owner 是 Alex", "source_ref": item.source.ref, "title": "报价跟进",
+         "business_relevance": "relevant"},
+    ]})
+
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+
+    assert result.task_ids == (created.task_id, created.task_id)
+    assert len(result.attention_proposals) == 1
+    assert result.attention_proposals[0][1] == created.task_id
+    assert result.attention_proposals[0][2] != created.signal_id
+
+
+def test_attention_projection_runs_after_outer_domain_transaction_commit(tmp_path, monkeypatch):
+    from app.task_agent import BusinessAttentionProjection
+    from app.task_semantic_service import TaskDateInput
+
+    store = AutoReplyStore(tmp_path / "attention-after-commit.sqlite3")
+    deadline = "2026-09-25"
+    seed = TaskSemanticService(store).record_formal_task(RecordFormalTask(
+        title="报价方案",
+        signal=SourceSignal(source_type="message", source_ref="message:attention-assignment",
+            evidence_text=f"Alex 承诺 {deadline} 交付报价方案", dedupe_key="seed:attention",
+            conversation_id="conversation:1", author_kind=BusinessActorKind.HUMAN,
+            author_user_id="alex-id", author_name="Alex"),
+        formality=FormalityEvidence(basis=FormalTaskBasis.EXPLICIT_COMMITMENT,
+            assigner_is_authorized=True, deliverable_is_explicit=True, owner_is_explicit=True),
+        owner_user_id="alex-id", owner_name="Alex",
+        owner_evidence_json=json.dumps({"source_ref": "message:attention-assignment",
+            "excerpt": f"Alex 承诺 {deadline} 交付报价方案", "user_id": "alex-id", "name": "Alex"}),
+        date_facts=(TaskDateInput(
+            date_type=BusinessTaskDateType.COMMITTED_DEADLINE_AT, value_at=deadline,
+            raw_phrase=deadline, actor_kind=BusinessActorKind.HUMAN,
+            actor_user_id="alex-id", actor_name="Alex",
+        ),),
+    ))
+    resolution = BusinessResolutionService(store)
+    anchor_id = resolution.register_anchor(anchor_type="customer", anchor_ref="customer:attention",
+        title="关键客户交付")
+    resolution.confirm_anchor_match(task_id=seed.task_id, anchor_id=anchor_id,
+        evidence_signal_id=seed.signal_id, reason="确认是关键客户业务事项")
+    item = _work_item(sender="Alex", sender_user_id="alex-id").model_copy(update={
+        "summary": "Alex says the delivery is at risk."
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+        "source_excerpt": item.summary, "source_ref": item.source.ref,
+        "title": "报价方案", "business_relevance": "relevant",
+        "attention_proposal": {"category": "watch", "title": "承诺交付风险", "why_attention": "负责人报告已接受承诺有风险",
+         "current_state": "交付存在风险", "ceo_action": "核实交付状态", "anchor_id": anchor_id,
+         "material_trigger": "threatened_commitment", "trigger_evidence": "delivery is at risk"},
+    }]})
+    seen = []
+    original_upsert = BusinessAttentionProjection.upsert
+
+    def check_committed(self, proposal):
+        with store._connect() as other:
+            task = other.execute(
+                "select business_relevance from business_tasks where id=?", (seed.task_id,)
+            ).fetchone()
+            linked = other.execute(
+                "select count(*) from business_task_evidence where task_id=? and signal_id=?",
+                (seed.task_id, proposal.evidence_signal_id),
+            ).fetchone()[0]
+            confirmed = other.execute(
+                "select count(*) from business_task_anchor_links where task_id=? and anchor_id=? "
+                "and status='confirmed' and active=1", (seed.task_id, anchor_id),
+            ).fetchone()[0]
+        seen.append((task[0], linked, confirmed))
+        return original_upsert(self, proposal)
+
+    monkeypatch.setattr(BusinessAttentionProjection, "upsert", check_committed)
+    with store.task_agent_domain_apply_transaction() as db:
+        result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+            decision=decision, record_run=False, _db=db)
+        assert seen == []
+    from app.task_agent import _project_task_attention
+    _project_task_attention(store, result.attention_proposals, result.affected_task_ids)
+
+    assert seen == [("relevant", 1, 1)]
+    (attention_item,) = store.list_business_attention_items()
+    assert "threatened_commitment" in attention_item.why_attention
+    assert "delivery is at risk" in attention_item.why_attention
+
+
+def test_routine_progress_without_attention_proposal_is_not_projected(tmp_path):
+    store = AutoReplyStore(tmp_path / "ordinary-progress-not-attention.sqlite3")
+    seed = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="报价跟进", signal=SourceSignal(source_type="seed", source_ref="seed:attention-candidate",
+            evidence_text="报价跟进", dedupe_key="seed:attention-candidate")
+    ))
+    item = _work_item().model_copy(update={"summary": "补齐来源链接"})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+        "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
+        "title": "报价跟进", "business_relevance": "relevant",
+    }]})
+
+    apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=decision, record_run=False)
+
+    assert store.list_business_attention_items() == ()
+
+
+@pytest.mark.parametrize("change", [
+    {"status": "done"},
+    {"status": "cancelled"},
+    {"business_relevance": "not_relevant"},
+])
+def test_agent_recomputes_existing_attention_after_terminal_or_irrelevant_change(tmp_path, change):
+    from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
+
+    store = AutoReplyStore(tmp_path / f"attention-recompute-{next(iter(change.values()))}.sqlite3")
+    seed = _seed_identity_task(store, f"message:attention-recompute-{next(iter(change.values()))}")
+    relevance_item = _work_item().model_copy(update={"summary": "报价任务进入主营业务范围"})
+    relevance = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+        "source_excerpt": relevance_item.summary, "source_ref": relevance_item.source.ref,
+        "title": "提交周报", "business_relevance": "relevant",
+    }]})
+    apply_task_agent_decision(store, summary_input_id=1, work_item=relevance_item,
+        decision=relevance, record_run=False)
+    resolution = BusinessResolutionService(store)
+    anchor_id = resolution.register_anchor(anchor_type="customer", anchor_ref=f"customer:{seed.task_id}",
+        title="客户交付")
+    resolution.confirm_anchor_match(task_id=seed.task_id, anchor_id=anchor_id,
+        evidence_signal_id=seed.signal_id, reason="已确认主营业务锚点")
+    projection = BusinessAttentionProjection(store)
+    attention_id = projection.upsert(AttentionProposal(
+        stable_key=f"test:task:{seed.task_id}", category="watch", title="任务需关注",
+        business_area="客户交付", why_attention="source-backed material trigger: 交付受到影响",
+        current_state="处理中", ceo_action="核实推进", anchor_id=anchor_id,
+        task_ids=(seed.task_id,), evidence_signal_id=seed.signal_id,
+    ))
+    change_item = _work_item().model_copy(update={"summary": "Task finished."})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+        "source_excerpt": change_item.summary, "source_ref": change_item.source.ref,
+        "title": "提交周报", **change,
+    }]})
+
+    result = apply_task_agent_decision(store, summary_input_id=2, work_item=change_item,
+        decision=decision, record_run=False)
+
+    assert result.affected_task_ids == (seed.task_id,)
+    assert store.list_business_attention_tasks(attention_id) == ()
+
+
+def test_unlinked_owner_reply_does_not_accept_any_task(tmp_path):
+    store = AutoReplyStore(tmp_path / "unlinked-acceptance.sqlite3")
+    service = TaskSemanticService(store)
+    assigned = service.record_formal_task(RecordFormalTask(
+        title="报价方案", signal=SourceSignal(source_type="message", source_ref="message:assignment",
+            evidence_text="Alex 负责报价方案", dedupe_key="assignment:1", author_user_id="alex-id",
+            author_name="Alex", author_kind=BusinessActorKind.HUMAN),
+        formality=FormalityEvidence(basis=FormalTaskBasis.MEETING_ACTION_ITEM,
+            assigner_is_authorized=True, deliverable_is_explicit=True, owner_is_explicit=True),
+        owner_user_id="alex-id", owner_name="Alex",
+        owner_evidence_json=json.dumps({"source_ref": "message:assignment",
+            "excerpt": "Alex 负责报价方案", "user_id": "alex-id", "name": "Alex"}),
+    ))
+    item = _work_item(sender="Alex", sender_user_id="alex-id")
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "apply_acceptance", "task_id": assigned.task_id,
+        "acceptance_polarity": "accepted", "acceptance_target_signal_id": assigned.signal_id,
+        "source_excerpt": "补齐来源链接", "source_ref": item.source.ref, "title": "报价方案",
+    }]})
+
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+
+    task = store.get_business_task(assigned.task_id)
+    assert result.task_ids == ()
+    assert result.skipped_reasons and "no verified reply-to reference" in result.skipped_reasons[0]
+    assert task.commitment_status.value == "assigned_unaccepted"
+
+
+def test_owner_evidence_does_not_itself_authorize_assignment(tmp_path):
+    store = AutoReplyStore(tmp_path / "unauthorized-assignment.sqlite3")
+    item = _work_item()
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none", "source_excerpt": "owner 是 Alex",
+        "source_ref": item.source.ref, "title": "确认负责人", "formal_basis": "explicit_assignment",
+        "owner_name": "Alex", "owner_evidence": {"source_ref": item.source.ref, "excerpt": "owner 是 Alex"},
+    }]})
+
+    with pytest.raises(ValueError, match="authorized source metadata"):
+        apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+    assert store.list_business_tasks() == ()
+
+
+@pytest.mark.parametrize("sender, sender_user_id, accepted", [
+    ("Avery", "avery-id", False),
+    ("Alex", "alex-id", True),
+])
+def test_new_commitment_requires_the_named_owner_to_author_it(tmp_path, sender, sender_user_id, accepted):
+    store = AutoReplyStore(tmp_path / f"owner-authored-commitment-{sender}.sqlite3")
+    excerpt = "Alex 承诺 2026-09-25 交付报价方案"
+    item = _work_item(
+        sender=sender, sender_user_id=sender_user_id,
+        owner_identity={"name": "Alex", "user_id": "alex-id"},
+    ).model_copy(update={"summary": excerpt})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none", "formal_basis": "explicit_commitment",
+        "source_excerpt": excerpt, "source_ref": item.source.ref, "title": "交付报价方案",
+        "owner_name": "Alex", "owner_evidence": {"source_ref": item.source.ref,
+            "excerpt": excerpt, "name": "Alex", "user_id": "alex-id"},
+        "date_evidence": [{"kind": "committed_deadline_at", "value": "2026-09-25",
+            "source_ref": item.source.ref, "source_excerpt": "2026-09-25",
+            "actor_user_id": "alex-id", "actor_name": "Alex"}],
+    }]})
+
+    if accepted:
+        (task_id,) = apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+        )
+        task = store.get_business_task(task_id)
+        assert task.commitment_status.value == "accepted"
+        date_fact = next(
+            fact for fact in store.list_business_task_date_evidence(task_id)
+            if fact.date_type.value == "committed_deadline_at"
+        )
+        assert (date_fact.actor_user_id, date_fact.actor_name) == ("alex-id", "Alex")
+    else:
+        with pytest.raises(ValueError, match="authored by its identified owner"):
+            apply_task_agent_decision(
+                store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+            )
+        assert store.list_business_tasks() == ()
+
+
+@pytest.mark.parametrize(
+    "basis, expected_error",
+    [
+        ("meeting_action_item", "sourced meeting action-item record"),
+        ("external_todo", "trusted external TODO source metadata"),
+    ],
+)
+def test_formal_basis_cannot_be_selected_for_an_unrelated_reply_source(
+    tmp_path, basis, expected_error
+):
+    store = AutoReplyStore(tmp_path / f"invalid-source-basis-{basis}.sqlite3")
+    item = _work_item(
+        owner_identity={"name": "Alex", "user_id": "alex-id"},
+        external_task_id="dingtalk-task-1",
+    )
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none", "formal_basis": basis,
+        "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
+        "title": "补齐报价来源链接", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": "补齐来源链接; owner 是 Alex",
+            "name": "Alex", "user_id": "alex-id"},
+    }]})
+
+    with pytest.raises(ValueError, match=expected_error):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+        )
+    assert store.list_business_tasks() == ()
+
+
+def test_meeting_action_item_requires_minutes_action_item_source(tmp_path):
+    store = AutoReplyStore(tmp_path / "minutes-action-item-source.sqlite3")
+    item = WorkItem.model_validate({
+        "source": {"type": "ai_minutes", "ref": "minutes-1#todos-sha256=abc",
+            "title": "客户交付会议行动项", "created_at": "2026-09-20T09:00:00+08:00"},
+        "summary": "Alex 负责补齐报价来源链接。",
+        "context": {"sender": "", "source_conversation_kind": "minutes",
+            "owner_identity": {"name": "Alex", "user_id": "alex-id"}},
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none", "formal_basis": "meeting_action_item",
+        "source_excerpt": "Alex 负责补齐报价来源链接。", "source_ref": item.source.ref,
+        "title": "补齐报价来源链接", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref,
+            "excerpt": "Alex 负责补齐报价来源链接。", "name": "Alex", "user_id": "alex-id"},
+    }]})
+
+    (task_id,) = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+    )
+
+    assert store.get_business_task(task_id).commitment_status.value == "assigned_unaccepted"
+
+
+def test_next_check_date_uses_identified_agent_actor(tmp_path):
+    store = AutoReplyStore(tmp_path / "next-check-date.sqlite3")
+    item = _work_item().model_copy(update={
+        "summary": "补齐来源链接；下次检查 2026-10-01T09:00:00+08:00"
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none", "source_excerpt": item.summary,
+        "source_ref": item.source.ref, "title": "补齐报价来源链接", "missing_evidence": ["owner"],
+        "date_evidence": [{"kind": "next_check_at", "value": "2026-10-01T09:00:00+08:00",
+            "source_ref": item.source.ref, "source_excerpt": "2026-10-01T09:00:00+08:00"}],
+    }]})
+
+    (task_id,) = apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+    (date_fact,) = store.list_business_task_date_evidence(task_id)
+    assert (date_fact.actor_kind.value, date_fact.actor_user_id, date_fact.actor_name) == ("agent", "task-agent", "CEO Agent")
+
+
+def test_source_target_and_next_check_create_task_keyed_follow_up(tmp_path):
+    store = AutoReplyStore(tmp_path / "task-follow-up.sqlite3")
+    item = _work_item(
+        assignment_authorized=True,
+        owner_identity={"name": "Alex", "user_id": "alex-id"},
+    ).model_copy(update={
+        "summary": "Avery assigns Alex to confirm quote. Check 2026-10-01T09:00:00+08:00."
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none", "formal_basis": "explicit_assignment",
+        "source_excerpt": item.summary, "source_ref": item.source.ref,
+        "title": "Confirm quote", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref,
+            "excerpt": "Avery assigns Alex", "name": "Alex", "user_id": "alex-id"},
+        "date_evidence": [{"kind": "next_check_at", "value": "2026-10-01T09:00:00+08:00",
+            "source_ref": item.source.ref, "source_excerpt": "2026-10-01T09:00:00+08:00"}],
+    }]})
+
+    (task_id,) = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+    )
+
+    [draft] = store.list_business_task_follow_ups(business_task_id=task_id)
+    assert draft["business_task_id"] == task_id
+    assert draft["target_conversation_id"] == item.source.conversation_id
+    assert draft["target_kind"] == "group"
+    assert draft["owner_user_id"] == "alex-id"
+    assert draft["scheduled_at"] == "2026-10-01T09:00:00+08:00"
+
+
+def test_noncommitment_date_types_keep_exact_source_and_human_actor(tmp_path):
+    store = AutoReplyStore(tmp_path / "typed-date-provenance.sqlite3")
+    item = _work_item(sender="Avery", sender_user_id="avery-id", assignment_authorized=True,
+        owner_identity={"name": "Alex", "user_id": "alex-id"}).model_copy(update={
+            "summary": "Avery assigns Alex on 2026-09-20. Request due 2026-09-25; "
+                       "external deadline 2026-09-26; estimate 2026-09-27."
+        })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none", "formal_basis": "explicit_assignment",
+        "source_excerpt": item.summary, "source_ref": item.source.ref,
+        "title": "客户报价跟进", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": "Avery assigns Alex",
+            "name": "Alex", "user_id": "alex-id"},
+        "date_evidence": [
+            {"kind": "requested_deadline_at", "value": "2026-09-25",
+             "source_ref": item.source.ref, "source_excerpt": "2026-09-25"},
+            {"kind": "external_deadline_at", "value": "2026-09-26",
+             "source_ref": item.source.ref, "source_excerpt": "2026-09-26"},
+            {"kind": "estimated_deadline_at", "value": "2026-09-27",
+             "source_ref": item.source.ref, "source_excerpt": "2026-09-27"},
+        ],
+    }]})
+
+    (task_id,) = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+    )
+
+    facts = store.list_business_task_date_evidence(task_id)
+    facts_by_type = {fact.date_type.value: fact for fact in facts}
+    assert set(facts_by_type) == {
+        "assigned_at", "requested_deadline_at", "external_deadline_at", "estimated_deadline_at"
+    }
+    assert {kind: fact.value_at for kind, fact in facts_by_type.items()} == {
+        "assigned_at": item.source.created_at,
+        "requested_deadline_at": "2026-09-25",
+        "external_deadline_at": "2026-09-26",
+        "estimated_deadline_at": "2026-09-27",
+    }
+    assert all(fact.source_signal_id == store.list_business_task_evidence(task_id)[0].signal_id for fact in facts)
+    assert {kind: fact.raw_phrase for kind, fact in facts_by_type.items()} == {
+        "assigned_at": item.source.created_at,
+        "requested_deadline_at": "2026-09-25",
+        "external_deadline_at": "2026-09-26",
+        "estimated_deadline_at": "2026-09-27",
+    }
+    assert {kind: (fact.actor_kind.value, fact.actor_user_id, fact.actor_name)
+            for kind, fact in facts_by_type.items()} == {
+        "assigned_at": ("human", "avery-id", "Avery"),
+        "requested_deadline_at": ("human", "avery-id", "Avery"),
+        "external_deadline_at": ("human", "avery-id", "Avery"),
+        "estimated_deadline_at": ("human", "avery-id", "Avery"),
+    }
+
+
+@pytest.mark.parametrize("date_patch, message", [
+    ({"source_ref": "message:other"}, "date evidence source_ref must match"),
+    ({"source_excerpt": "猜测出来的日期"}, "date evidence source_excerpt must be an exact source substring"),
+    ({"value": "2026-09-26"}, "date value must match an exact, parseable date phrase"),
+    ({"value": "2026-09-25T00:00:00"}, "date value must match an exact, parseable date phrase"),
+    ({"actor_user_id": "other-id"}, "date actor_user_id must match the trusted date actor"),
+    ({"actor_name": "Other person"}, "date actor_name must match the trusted date actor"),
+])
+def test_date_evidence_rejects_wrong_reference_or_non_source_excerpt(tmp_path, date_patch, message):
+    store = AutoReplyStore(tmp_path / "invalid-date-provenance.sqlite3")
+    item = _work_item().model_copy(update={
+        "summary": "补齐来源链接；请求截止日期为 2026-09-25。"
+    })
+    date_fact = {"kind": "requested_deadline_at", "value": "2026-09-25",
+        "source_ref": item.source.ref, "source_excerpt": "2026-09-25", **date_patch}
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none",
+        "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
+        "title": "报价候选", "missing_evidence": ["owner"], "date_evidence": [date_fact],
+    }]})
+
+    with pytest.raises(ValueError, match=message):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+        )
+    assert store.list_business_tasks() == ()
+
+
+def test_ai_minutes_date_actor_requires_trusted_speaker_mapping(tmp_path):
+    store = AutoReplyStore(tmp_path / "minutes-date-attribution.sqlite3")
+    item = _work_item(sender="Meeting host", sender_user_id="host-id").model_copy(update={
+        "source": _work_item().source.model_copy(update={"type": WorkItemSourceType.AI_MINUTES}),
+        "summary": "Alex 承诺 2026-09-25 交付报价方案",
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none", "source_excerpt": item.summary,
+        "source_ref": item.source.ref, "title": "报价方案", "missing_evidence": ["owner"],
+        "date_evidence": [{"kind": "requested_deadline_at", "value": "2026-09-25",
+            "source_ref": item.source.ref, "source_excerpt": "2026-09-25",
+            "actor_user_id": "alex-id", "actor_name": "Alex"}],
+    }]})
+
+    with pytest.raises(ValueError, match="AI Minutes date actor cannot be attributed"):
+        apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+    assert store.list_business_tasks() == ()
+
+
+def test_candidate_cannot_record_committed_deadline_without_owner_acceptance(tmp_path):
+    store = AutoReplyStore(tmp_path / "unaccepted-commitment-date.sqlite3")
+    item = _work_item().model_copy(update={"summary": "补齐来源链接；2026-09-25"})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none",
+        "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
+        "title": "报价候选", "missing_evidence": ["owner"],
+        "date_evidence": [{"kind": "committed_deadline_at", "value": "2026-09-25",
+            "source_ref": item.source.ref, "source_excerpt": "2026-09-25",
+            "actor_user_id": "avery-id", "actor_name": "Avery"}],
+    }]})
+
+    with pytest.raises(ValueError, match="committed deadline requires owner acceptance"):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+        )
+    assert store.list_business_tasks() == ()
+
+
+def test_promoting_candidate_derives_assigned_at_from_explicit_assignment_source(tmp_path):
+    store = AutoReplyStore(tmp_path / "promote-assignment-date.sqlite3")
+    candidate = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="提交报价", signal=SourceSignal(source_type="seed", source_ref="seed:promotion",
+            evidence_text="报价", dedupe_key="seed:promotion")
+    ))
+    item = _work_item(assignment_authorized=True,
+        owner_identity={"name": "Alex", "user_id": "alex-id"}).model_copy(update={
+            "summary": "Avery formally assigns Alex on 2026-09-22."
+        })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "promote_candidate", "task_id": candidate.task_id,
+        "formal_basis": "explicit_assignment", "source_excerpt": item.summary,
+        "source_ref": item.source.ref, "title": "提交报价", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": item.summary,
+            "name": "Alex", "user_id": "alex-id"},
+    }]})
+
+    apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=decision, record_run=False)
+
+    (date_fact,) = store.list_business_task_date_evidence(candidate.task_id)
+    assert (date_fact.date_type.value, date_fact.value_at, date_fact.raw_phrase) == (
+        "assigned_at", item.source.created_at, item.source.created_at
+    )
+
+
+def test_unparseable_relative_date_stays_only_in_linked_source_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "relative-date-not-normalized.sqlite3")
+    item = _work_item().model_copy(update={"summary": "提交报价，下周五前完成"})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none", "source_excerpt": item.summary,
+        "source_ref": item.source.ref, "title": "提交报价", "missing_evidence": ["owner"],
+        "date_evidence": [{"kind": "requested_deadline_at", "value": "2026-09-25",
+            "source_ref": item.source.ref, "source_excerpt": "下周五前"}],
+    }]})
+
+    (task_id,) = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=decision, record_run=False)
+
+    assert store.list_business_task_date_evidence(task_id) == ()
+    (evidence,) = store.list_business_task_evidence(task_id)
+    signal = store.get_business_task_signal(evidence.signal_id)
+    assert "下周五前" in signal.evidence_text
+
+
+def test_estimate_keeps_source_speaker_and_rejects_model_attribution_override(tmp_path):
+    store = AutoReplyStore(tmp_path / "estimate-source-actor.sqlite3")
+    item = _work_item(sender="Avery", sender_user_id="avery-id").model_copy(update={
+        "summary": "Avery estimates completion on 2026-09-27."
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none", "source_excerpt": item.summary,
+        "source_ref": item.source.ref, "title": "报价交付", "missing_evidence": ["owner"],
+        "date_evidence": [{"kind": "estimated_deadline_at", "value": "2026-09-27",
+            "source_ref": item.source.ref, "source_excerpt": "2026-09-27",
+            "actor_user_id": "alex-id", "actor_name": "Alex"}],
+    }]})
+
+    with pytest.raises(ValueError, match="date actor_user_id must match the trusted date actor"):
+        apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+            decision=decision, record_run=False)
+    assert store.list_business_tasks() == ()
+
+
+def _assigned_formal_task_for_acceptance(store):
+    service = TaskSemanticService(store)
+    return service.record_formal_task(RecordFormalTask(
+        title="报价方案",
+        signal=SourceSignal(
+            source_type="message", source_ref="message:assignment",
+            evidence_text="Alex 负责报价方案", dedupe_key="assignment:exact",
+            conversation_id="conversation:1", author_user_id="avery-id",
+            author_name="Avery", author_kind=BusinessActorKind.HUMAN,
+            context_json=json.dumps({"owner_identity": {"name": "Alex", "user_id": "alex-id"},
+                                     "assignment_authorized": True}),
+        ),
+        formality=FormalityEvidence(
+            basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT, assigner_is_authorized=True,
+            deliverable_is_explicit=True, owner_is_explicit=True,
+        ),
+        owner_user_id="alex-id", owner_name="Alex",
+        owner_evidence_json=json.dumps({"source_ref": "message:assignment",
+            "excerpt": "Alex 负责报价方案", "user_id": "alex-id", "name": "Alex"}),
+    ))
+
+
+def test_exact_owner_reply_accepts_only_cited_assignment_and_records_committed_date(tmp_path):
+    store = AutoReplyStore(tmp_path / "linked-acceptance.sqlite3")
+    assigned = _assigned_formal_task_for_acceptance(store)
+    item = _work_item(
+        sender="Alex", sender_user_id="alex-id", reply_to_source_ref="message:assignment"
+    ).model_copy(update={"summary": "我接受报价方案，承诺于 2026-09-25 交付"})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "apply_acceptance", "task_id": assigned.task_id,
+        "acceptance_polarity": "accepted", "acceptance_target_signal_id": assigned.signal_id,
+        "source_excerpt": "我接受报价方案，承诺于 2026-09-25 交付", "source_ref": item.source.ref,
+        "title": "报价方案",
+        "date_evidence": [{"kind": "committed_deadline_at", "value": "2026-09-25",
+            "source_ref": item.source.ref, "source_excerpt": "2026-09-25",
+            "actor_user_id": "alex-id", "actor_name": "Alex"}],
+    }]})
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+    )
+
+    assert result.task_ids == (assigned.task_id,)
+    task = store.get_business_task(assigned.task_id)
+    assert task.commitment_status.value == "accepted"
+    (fact,) = store.list_business_task_date_evidence(assigned.task_id)
+    assert (fact.date_type.value, fact.value_at, fact.raw_phrase) == (
+        "committed_deadline_at", "2026-09-25", "2026-09-25"
+    )
+    assert (fact.source_signal_id, fact.actor_kind.value, fact.actor_user_id, fact.actor_name) == (
+        result.task_ids[0] and store.list_business_task_evidence(assigned.task_id)[-1].signal_id,
+        "human", "alex-id", "Alex",
+    )
+    [mirror_intent] = store.list_business_task_todo_sync_outbox()
+    assert mirror_intent["business_task_id"] == assigned.task_id
+    assert mirror_intent["operation"] == "create"
+
+
+def test_source_grounded_completion_updates_task_status_without_todo_write(tmp_path):
+    store = AutoReplyStore(tmp_path / "source-task-completion.sqlite3")
+    assigned = _assigned_formal_task_for_acceptance(store)
+    store.create_business_task_dingtalk_link(
+        business_task_id=assigned.task_id,
+        dingtalk_task_id="dt-task-1", status="active",
+    )
+    item = _work_item().model_copy(update={
+        "summary": "客户验收已完成，报价方案交付物通过验收。"
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "update_fields", "task_id": assigned.task_id,
+        "source_excerpt": "客户验收已完成，报价方案交付物通过验收。",
+        "source_ref": item.source.ref, "title": "报价方案", "status": "done",
+        "update_summary": "来源明确记录交付物通过客户验收。",
+    }]})
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+    )
+
+    assert result.task_ids == (assigned.task_id,)
+    assert store.get_business_task(assigned.task_id).status.value == "done"
+    with store._connect() as db:
+        assert db.execute("select count(*) from work_todos").fetchone()[0] == 0
+    [intent] = store.list_business_task_todo_sync_outbox()
+    assert intent["business_task_id"] == assigned.task_id
+    assert intent["operation"] == "complete"
+
+
+@pytest.mark.parametrize("reply_context", [
+    {"conversation_id": "conversation:other", "reply_to_source_ref": "message:assignment"},
+    {"conversation_id": "conversation:1", "reply_to_source_ref": "message:other"},
+])
+def test_acceptance_with_wrong_conversation_or_reply_reference_is_not_applied(tmp_path, reply_context):
+    store = AutoReplyStore(tmp_path / "mismatched-acceptance.sqlite3")
+    assigned = _assigned_formal_task_for_acceptance(store)
+    item = _work_item(sender="Alex", sender_user_id="alex-id",
+        reply_to_source_ref=reply_context["reply_to_source_ref"]).model_copy(
+            update={"source": _work_item().source.model_copy(update={
+                "conversation_id": reply_context["conversation_id"]
+            }), "summary": "我接受报价方案"}
+        )
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "apply_acceptance", "task_id": assigned.task_id,
+        "acceptance_polarity": "accepted", "acceptance_target_signal_id": assigned.signal_id,
+        "source_excerpt": "我接受报价方案", "source_ref": item.source.ref, "title": "报价方案",
+    }]})
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+    )
+
+    assert result.task_ids == ()
+    assert result.skipped_reasons
+    assert store.get_business_task(assigned.task_id).commitment_status.value == "assigned_unaccepted"
+    assert store.list_business_task_date_evidence(assigned.task_id) == ()

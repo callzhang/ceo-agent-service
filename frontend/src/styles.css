@@ -1797,3 +1797,89 @@ h1, h2, h3, p { margin-top: 0; }
 /* A column header that needs a sentence to be honest about what it counts. */
 .metric-hint { width: 15px; height: 15px; margin-left: 5px; padding: 0; border: 1px solid var(--line-strong, var(--line)); border-radius: 999px; color: var(--ink-soft); background: var(--surface); cursor: help; font-size: .62rem; font-weight: 700; line-height: 1; vertical-align: middle; }
 .metric-hint:hover { color: var(--on-accent); border-color: var(--accent); background: var(--accent); }
+/* Semantic Tasks console */
+.task-domain-page { min-width: 0; width: 100%; color: var(--ink); }
+.business-task-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.business-task-tabs a { padding: 10px 14px; border-bottom: 3px solid transparent; color: var(--ink-soft); font-size: .86rem; font-weight: 650; text-decoration: none; }
+.business-task-tabs a[aria-current="page"] { border-bottom-color: var(--accent); color: var(--ink); }
+.business-task-tabs a:focus-visible, .business-task-toolbar button:focus-visible, .business-task-pagination button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.business-task-toolbar { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 18px; }
+.business-task-toolbar button, .business-task-pagination button { min-height: 36px; padding: 7px 12px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: var(--surface); cursor: pointer; }
+.business-task-toolbar button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.business-task-search { display: grid; gap: 6px; max-width: 430px; margin-bottom: 18px; color: var(--ink-soft); font-size: .78rem; font-weight: 650; }
+.business-task-search input { min-width: 0; min-height: 38px; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: var(--surface); }
+.business-attention-list, .business-task-list { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.business-attention-card { min-width: 0; padding: 17px 19px; border: 1px solid var(--line); border-left: 4px solid var(--attention-accent, var(--accent)); border-radius: 11px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow); }
+.business-attention-card.category-fyi { --attention-accent: var(--status-progress-ink); }
+.business-attention-card.category-watch { --attention-accent: var(--status-warning-ink); }
+.business-attention-card.category-decision { --attention-accent: var(--status-danger-ink); }
+.business-attention-card.category-push { --attention-accent: var(--accent); }
+.business-attention-card header { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; color: var(--ink-soft); font-size: .76rem; }
+.business-attention-category { color: var(--attention-accent, var(--accent)); font-weight: 750; }
+.business-attention-card h2 { margin: 9px 0 13px; color: var(--ink); font-size: 1rem; line-height: 1.42; }
+.business-attention-card h2 a, .business-task-row a, .business-project-row a, .business-linked-list a { color: var(--ink); text-decoration: none; }
+.business-attention-card h2 a:hover, .business-task-row a:hover, .business-project-row a:hover, .business-linked-list a:hover { color: var(--accent); text-decoration: underline; }
+.business-attention-card dl { display: grid; gap: 9px; margin: 0; }
+.business-attention-card dl > div { display: grid; grid-template-columns: minmax(84px, .14fr) minmax(0, 1fr); gap: 10px; min-width: 0; }
+.business-attention-card dt { color: var(--ink-soft); font-size: .75rem; font-weight: 650; }
+.business-attention-card dd { min-width: 0; margin: 0; color: var(--ink); font-size: .83rem; line-height: 1.5; overflow-wrap: anywhere; }
+.business-attention-action dd { color: var(--ink); font-weight: 720; }
+.business-attention-card footer { display: flex; gap: 8px 16px; flex-wrap: wrap; margin-top: 13px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: .72rem; }
+.business-task-row, .business-project-row { min-width: 0; padding: 14px 17px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: var(--surface); }
+.business-project-row.is-provisional { border-style: dashed; background: var(--surface-muted); }
+.business-task-row-main { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: .91rem; font-weight: 700; }
+.business-task-row p, .business-project-row p { margin: 7px 0 4px; color: var(--ink); font-size: .8rem; }
+.business-task-row small, .business-project-row small { color: var(--ink-soft); font-size: .72rem; }
+.business-stage { display: inline-flex; padding: 3px 7px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--ink-soft); background: var(--surface-muted); font-size: .68rem; font-weight: 700; }
+.business-stage.candidate { border-style: dashed; }
+.business-stage.formal { border-color: var(--status-success-line); color: var(--status-success-ink); background: var(--status-success-surface); }
+.business-project-count { color: var(--ink-soft); font-size: .8rem; }
+.business-project-candidates { margin-top: 26px; }
+.business-project-candidates h2, .business-detail-section h2 { margin: 0 0 12px; color: var(--ink); font-size: .91rem; }
+.business-task-pagination { display: flex; gap: 10px; align-items: center; justify-content: flex-end; margin-top: 18px; color: var(--ink-soft); font-size: .78rem; }
+.business-task-pagination button:disabled { opacity: .48; cursor: not-allowed; }
+.business-detail-page { display: grid; gap: 13px; }
+.business-detail-section { min-width: 0; color: var(--ink); background: var(--surface); }
+.business-detail-area { margin-left: 10px; color: var(--ink-soft); }
+.business-detail-badges { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+.business-detail-facts { display: grid; gap: 10px; margin: 14px 0 0; }
+.business-detail-facts > div { display: grid; grid-template-columns: minmax(100px, .16fr) minmax(0, 1fr); gap: 12px; }
+.business-detail-facts dt { color: var(--ink-soft); font-size: .78rem; }
+.business-detail-facts dd { min-width: 0; margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.business-source-list, .business-linked-list { display: grid; gap: 8px; margin: 0; padding-left: 20px; }
+.business-source-list li, .business-linked-list li { min-width: 0; overflow-wrap: anywhere; }
+.business-source-list li small, .business-linked-list li span { display: block; color: var(--ink-soft); font-size: .72rem; }
+
+@media (prefers-color-scheme: dark) {
+  .task-domain-route {
+    color-scheme: dark;
+    --canvas: #111411;
+    --panel: #171b17;
+    --surface: #1b1f1b;
+    --surface-muted: #242924;
+    --ink: #f0f3ed;
+    --ink-soft: #b3bab0;
+    --line: #363d36;
+    --line-strong: #555f55;
+    --accent: #61d0a6;
+    --accent-hover: #86dfbd;
+    --accent-soft: #193a2e;
+    --on-accent: #071a13;
+    --focus: #72bef2;
+    --status-success-ink: #86dfbd;
+    --status-success-line: #3f765f;
+    --status-success-surface: #193a2e;
+    --status-progress-ink: #8dcef5;
+    --status-warning-ink: #f4c56a;
+    --status-danger-ink: #ffaaa5;
+    --shadow: 0 14px 32px rgb(0 0 0 / 18%);
+  }
+}
+
+@media (max-width: 600px) {
+  .business-attention-card dl > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .business-attention-card { padding: 14px; }
+  .business-attention-card footer { display: grid; gap: 5px; }
+  .business-detail-facts > div { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .business-task-tabs a { padding: 9px 10px; }
+}

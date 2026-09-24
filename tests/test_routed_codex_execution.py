@@ -759,6 +759,68 @@ def test_result_validation_retry_can_resume_same_persisted_session_once(store, c
     assert [attempt.source_session_id for attempt in attempts] == ["", "session-171"]
 
 
+def test_shared_task_agent_scope_resumes_across_workload_keys(store, config):
+    first_key = seed_structured_parent(store, 181)
+    second_key = seed_structured_parent(store, 182)
+    adapter = FakeAdapter()
+    calls = []
+
+    def executor(command, **kwargs):
+        calls.append(command)
+        session_id = command[-1]
+        session_id = "shared-task-agent-session" if session_id == "fresh" else session_id
+        return ProcessRunResult(
+            0,
+            "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": session_id}),
+                    json.dumps({"type": "result", "value": len(calls)}),
+                ]
+            ),
+            "",
+        )
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=adapter,
+        executor=executor,
+        session_line_counter=lambda _session_id: 2,
+    )
+    common = {
+        "workload_kind": "structured",
+        "conversation_id": "task-agent:work-tracking:v1",
+        "prompt": "Return the current Work Item decision.",
+        "command_factory": CodexCommandFactory.standard(
+            developer_instructions="reviewed reads only"
+        ),
+        "parser": lambda raw: json.loads(raw.splitlines()[-1])["value"],
+        "result_codec": INT_CODEC,
+        "required_capabilities": CAPABILITIES,
+    }
+
+    first = routed.execute(workload_key=first_key, **common)
+    second = routed.execute(workload_key=second_key, **common)
+
+    assert first.value == 1
+    assert second.value == 2
+    assert [call[1] for call in adapter.commands] == [
+        None,
+        "shared-task-agent-session",
+    ]
+    assert store.get_conversation_runtime_session(
+        "task-agent:work-tracking:v1", "codex_oauth"
+    ) == "shared-task-agent-session"
+    assert store.get_conversation_runtime_session(
+        "task-agent:work-tracking:v1", "codex_api"
+    ) is None
+    first_attempts = store.list_runtime_operation_attempts("structured", first_key)
+    second_attempts = store.list_runtime_operation_attempts("structured", second_key)
+    assert first_attempts[0].workload_key == first_key
+    assert second_attempts[0].workload_key == second_key
+
+
 def test_persisted_result_validation_failure_resumes_one_same_route_correction(
     store, config
 ):

@@ -13,7 +13,7 @@ describe("console router", () => {
     ["/history/meeting-attempts/1", "Meeting Attempt"],
     ["/history/oa-approvals/unknown", "OA Approval"],
     ["/tasks", "Tasks"],
-    ["/tasks/836", "Task 836"],
+    ["/tasks/item/836", "任务详情"],
     ["/scheduled-tasks", "定时任务"],
     ["/settings?tab=status", "Settings"],
     ["/user-feedback", "用户反馈"],
@@ -33,6 +33,9 @@ describe("console router", () => {
           : { items: [], meta: { total: 0, snapshot_at: "" } };
         return new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
       }));
+    }
+    if (path === "/tasks/item/836") {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "not found" }), { status: 404, headers: { "Content-Type": "application/json" } })));
     }
     window.history.replaceState({}, "", path);
     render(<ConsoleRouter />);

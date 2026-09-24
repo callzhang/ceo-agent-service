@@ -9,12 +9,14 @@ from app.dispatcher.models import ClaimGuard
 from app.dws_client import DwsError
 from app.store import AutoReplyStore
 from app.todo_sync import (
+    dispatch_claimed_business_task_todo_sync_outbox,
     dispatch_task_todo_sync_outbox,
     maybe_create_dingtalk_todo,
     pull_dingtalk_todo_statuses,
     refresh_dingtalk_todo_before_follow_up,
     retry_failed_dingtalk_todo_links,
     sync_completed_todo_to_dingtalk,
+    sync_completed_task_to_dingtalk,
 )
 
 
@@ -100,6 +102,275 @@ def _project_and_todo(store: AutoReplyStore, **todo_values):
     }
     defaults.update(todo_values)
     return project_id, store.create_work_todo(**defaults)
+
+
+def _formal_business_task(store: AutoReplyStore, **values) -> int:
+    defaults = {
+        "title": "给客户同步验收 ETA",
+        "description": "来源：客户要求本周确认验收安排。",
+        "stage": "formal",
+        "formal_basis": "explicit_assignment",
+        "commitment_status": "accepted",
+        "owner_user_id": "owner-1",
+        "owner_name": "Alex",
+        "deadline_at": "2026-07-01 18:00:00",
+    }
+    defaults.update(values)
+    task_id = store.create_business_task(**defaults)
+    with store._immediate_write_transaction() as db:
+        signal_id = store.create_business_task_signal_in_transaction(
+            source_type="dingtalk_message", source_ref=f"task:{task_id}:commitment",
+            evidence_text="Alex confirmed the committed deadline.",
+            dedupe_key=f"task:{task_id}:commitment", _db=db,
+        )
+        store.create_business_task_date_evidence_in_transaction(
+            task_id=task_id, source_signal_id=signal_id,
+            date_type="committed_deadline_at", value_at="2026-07-01 18:00:00",
+            raw_phrase="2026-07-01 18:00", actor_kind="human",
+            actor_user_id="owner-1", actor_name="Alex", _db=db,
+        )
+    return task_id
+
+
+def test_maybe_create_dingtalk_todo_mirrors_eligible_standalone_business_task(tmp_path):
+    store = _store(tmp_path)
+    business_task_id = _formal_business_task(store)
+    dws = FakeTodoDws()
+
+    link = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        business_task_id=business_task_id,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert link is not None
+    assert link["business_task_id"] == business_task_id
+    assert link["dingtalk_task_id"] == "dt-task-1"
+    assert len(dws.created) == 1
+
+
+def test_maybe_create_dingtalk_todo_retains_unaccepted_task_without_mirror(tmp_path):
+    store = _store(tmp_path)
+    business_task_id = _formal_business_task(
+        store, commitment_status="assigned_unaccepted"
+    )
+
+    link = maybe_create_dingtalk_todo(
+        store,
+        FakeTodoDws(),
+        business_task_id=business_task_id,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert link is None
+    assert store.get_business_task(business_task_id) is not None
+
+
+def test_business_task_allows_only_one_active_external_todo_link(tmp_path):
+    store = _store(tmp_path)
+    task_id = _formal_business_task(store)
+
+    first = store.create_business_task_dingtalk_link(
+        business_task_id=task_id, status="creating"
+    )
+    second = store.create_business_task_dingtalk_link(
+        business_task_id=task_id, status="creating"
+    )
+
+    assert second == first
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from business_task_dingtalk_links where business_task_id=? "
+            "and status in ('creating','active')", (task_id,)
+        ).fetchone()[0] == 1
+
+
+def test_business_task_create_readback_failure_preserves_external_id_without_duplicate(tmp_path):
+    store = _store(tmp_path)
+    task_id = _formal_business_task(store)
+    dws = FakeTodoDws()
+    dws.get_errors["dt-task-1"] = DwsError("readback unavailable")
+
+    first = maybe_create_dingtalk_todo(
+        store, dws, business_task_id=task_id, now="2026-06-27 10:00:00"
+    )
+    assert first["dingtalk_task_id"] == "dt-task-1"
+    assert first["status"] == "creating"
+    dws.get_errors.clear()
+    second = maybe_create_dingtalk_todo(
+        store, dws, business_task_id=task_id, now="2026-06-27 10:05:00"
+    )
+
+    assert second["status"] == "active"
+    assert len(dws.created) == 1
+
+
+def test_unknown_business_task_create_with_known_id_settles_after_provider_readback(tmp_path):
+    store = _store(tmp_path)
+    task_id = _formal_business_task(store)
+    store.enqueue_business_task_todo_sync_outbox(
+        operation_key=f"business-task:{task_id}:create",
+        business_task_id=task_id, operation="create",
+    )
+    claimed = store.claim_business_task_todo_sync_outbox(
+        owner="worker-a", now="2026-06-27 10:00:00"
+    )
+    assert claimed is not None
+    dws = FakeTodoDws()
+    dws.get_errors["dt-task-1"] = DwsError("readback unavailable")
+
+    assert dispatch_claimed_business_task_todo_sync_outbox(
+        store, dws, item=store.get_business_task_todo_sync_outbox(claimed["id"]),
+        owner="worker-a", now="2026-06-27 10:00:00",
+    ) == "unknown"
+    assert store.get_business_task_todo_sync_outbox(claimed["id"])["status"] == "unknown"
+    dws.get_errors.clear()
+
+    pull_dingtalk_todo_statuses(store, dws, now="2026-06-27 11:00:00")
+
+    link = store.get_active_business_task_dingtalk_link(task_id)
+    assert link is not None and link["status"] == "active"
+    settled = store.get_business_task_todo_sync_outbox(claimed["id"])
+    assert settled["status"] == "completed"
+    assert json.loads(settled["receipt_json"])["dingtalk_task_id"] == "dt-task-1"
+    assert len(dws.created) == 1
+
+
+def test_unknown_business_task_create_without_receipt_blocks_new_create_operation(tmp_path):
+    store = _store(tmp_path)
+    task_id = _formal_business_task(store)
+    store.enqueue_business_task_todo_sync_outbox(
+        operation_key=f"task-agent:1:business-task:{task_id}:create",
+        business_task_id=task_id, operation="create",
+    )
+    claimed = store.claim_business_task_todo_sync_outbox(
+        owner="worker-a", now="2026-06-27 10:00:00"
+    )
+    assert claimed is not None
+    dws = FakeTodoDws()
+    dws.create_error = DwsError("provider result unknown")
+    assert dispatch_claimed_business_task_todo_sync_outbox(
+        store, dws, item=store.get_business_task_todo_sync_outbox(claimed["id"]),
+        owner="worker-a", now="2026-06-27 10:00:00",
+    ) == "unknown"
+
+    store.enqueue_business_task_todo_sync_outbox(
+        operation_key=f"task-agent:2:business-task:{task_id}:create",
+        business_task_id=task_id, operation="create",
+    )
+
+    rows = store.list_business_task_todo_sync_outbox()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "unknown"
+    assert len(dws.created) == 1
+
+
+def test_business_task_outbox_idempotency_key_is_task_keyed(tmp_path):
+    store = _store(tmp_path)
+    business_task_id = _formal_business_task(store)
+
+    store.enqueue_business_task_todo_sync_outbox(
+        operation_key=f"task-agent:1:business-task:{business_task_id}:create",
+        business_task_id=business_task_id,
+        operation="create",
+    )
+    store.enqueue_business_task_todo_sync_outbox(
+        operation_key=f"task-agent:1:business-task:{business_task_id}:create",
+        business_task_id=business_task_id,
+        operation="create",
+    )
+
+    with store._connect() as db:
+        rows = db.execute("select * from business_task_todo_sync_outbox").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["business_task_id"] == business_task_id
+
+
+def test_business_task_outbox_expired_claim_becomes_unknown_without_replay(tmp_path):
+    store = _store(tmp_path)
+    business_task_id = _formal_business_task(store)
+    store.enqueue_business_task_todo_sync_outbox(
+        operation_key=f"business-task:{business_task_id}:create",
+        business_task_id=business_task_id,
+        operation="create",
+    )
+    assert store.claim_business_task_todo_sync_outbox(
+        owner="worker-a", now="2026-06-27 10:00:00", lease_seconds=1
+    ) is not None
+
+    assert store.claim_business_task_todo_sync_outbox(
+        owner="worker-b", now="2026-06-27 10:01:00"
+    ) is None
+    [unknown] = store.list_business_task_todo_sync_outbox(statuses=("unknown",))
+    assert unknown["error"] == "receipt_reconciliation_required"
+
+
+def test_business_task_outbox_dispatch_creates_receipted_mirror(tmp_path):
+    store = _store(tmp_path)
+    task_id = _formal_business_task(store)
+    store.enqueue_business_task_todo_sync_outbox(
+        operation_key=f"business-task:{task_id}:create",
+        business_task_id=task_id,
+        operation="create",
+    )
+    item = store.claim_business_task_todo_sync_outbox(
+        owner="worker-a", now="2026-06-27 10:00:00"
+    )
+    assert item is not None
+    item = store.get_business_task_todo_sync_outbox(item["id"])
+    assert item is not None
+    dws = FakeTodoDws()
+
+    result = dispatch_claimed_business_task_todo_sync_outbox(
+        store, dws, item=item, owner="worker-a", now="2026-06-27 10:00:00"
+    )
+
+    assert result == "completed"
+    saved = store.get_business_task_todo_sync_outbox(item["id"])
+    assert saved["status"] == "completed"
+    assert json.loads(saved["receipt_json"])["dingtalk_task_id"] == "dt-task-1"
+    assert len(dws.created) == 1
+
+
+def test_completed_business_task_sync_marks_linked_external_todo_done(tmp_path):
+    store = _store(tmp_path)
+    task_id = _formal_business_task(store)
+    dws = FakeTodoDws()
+    maybe_create_dingtalk_todo(
+        store, dws, business_task_id=task_id, now="2026-06-27 10:00:00"
+    )
+
+    result = sync_completed_task_to_dingtalk(
+        store, dws, business_task_id=task_id,
+        evidence={"source": "message:1", "reason": "owner confirmed completion"},
+        now="2026-06-28 10:00:00",
+    )
+
+    assert result == "completed"
+    assert dws.done_calls == [{"task_id": "dt-task-1", "done": True}]
+    link = store.get_active_business_task_dingtalk_link(task_id)
+    assert link is None
+
+
+def test_pull_external_todo_done_closes_only_its_business_task(tmp_path):
+    store = _store(tmp_path)
+    first = _formal_business_task(store)
+    sibling = _formal_business_task(store, title="Separate quote")
+    store.create_business_task_dingtalk_link(
+        business_task_id=first, dingtalk_task_id="dt-task-1", status="active"
+    )
+    dws = FakeTodoDws()
+    dws.get_payloads["dt-task-1"] = {"id": "dt-task-1", "done": True}
+
+    closed = pull_dingtalk_todo_statuses(
+        store, dws, now="2026-06-29 01:00:00"
+    )
+
+    assert closed == 1
+    assert store.get_business_task(first).status.value == "done"
+    assert store.get_business_task(sibling).status.value == "open"
+    assert store.list_business_task_dingtalk_links(business_task_id=first)[0]["status"] == "done"
 
 
 def test_task_todo_outbox_expired_delivery_becomes_unknown_without_replay(tmp_path):

@@ -615,10 +615,30 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 | `ceo-meeting-work` | 听记、静默会、会议总结与行动项 | `dingtalk-minutes`、`dingtalk-chat` |
 | `ceo-mail-review` | 完整邮件线程审阅和回复 | `dingtalk-mail` |
 | `ceo-personnel-communication` | 人事信息的受众、可见性和最小披露 | 候选人/通讯录操作 Skill |
-| `ceo-work-tracking` | 任务提取、项目/TODO、跟进和关闭 | `dingtalk-todo`、`dingtalk-chat` |
+| `ceo-work-tracking` | 从来源提取 Task、证据化归属/承诺、关联正式 Project 与关注事项 | Task Agent 不直接写外部 TODO；合格 Task 经 Task 7 outbox 镜像 |
 | `ceo-sales-weekly-report` | 按需核对销售目标、CRM 实际、公司及业务线进度评分并生成 workspace 周报 | `ceo-weekly-report`、`fxiaoke-crm-cli` |
 
 `ceo-sales-weekly-report` 没有独立 producer 或功能开关。它由 Consumer 根据明确的销售周报请求动态选择，直接使用安装用户已有的 `sharecrm` 登录态；CRM 只读限制由 Skill 和 Codex automatic review 约束，不表示 service 建立了 `sharecrm` 命令白名单。
+
+### Task-first 工作跟踪（Task 6 与 Task 7；代码未部署）
+
+Task Agent 的结构化结果是 `task_decisions` 列表，同一来源可以得到 0 到多个决定。每个非 skip 项必须引用原始来源中的精确摘录与来源引用；Task、负责人、日期和承诺不得由 Agent 自行补造。正式 Task 必须有来源支持的明确负责人；正式指派先记为 `assigned_unaccepted`。只有负责人本人对唯一现存 Task 的明确接受证据才能进入 `accepted`。外部 TODO 的存在只证明有一条外部记录，不证明负责人接受。
+
+Task Agent 使用一个统一的 `TaskAgentDecision` 生命周期契约：同一来源可同时产生 0..N 个新建/更新 Task 决定，以及适用的既有 TODO 完成或 follow-up 状态转换。completion 操作分别使用 envelope 顶层类型化的 `todo_changes` 和 `follow_up_changes` 字段，不嵌套在单个 `task_decisions` 内。共享 work-summary consumer 仍按精确 source type 选择上下文准备和服务端应用操作，但不启动另一个 Agent，也不使用第二套结果协议。`todo_completion_check` 只可关闭输入明确链接的既有 TODO；证据候选只更新其自身状态；follow-up completion/repair 只可转换输入明确链接的既有 follow-up。没有完成证据时仍记录 `search_trace` 与检查摘要并保持 TODO 开放。无效身份/操作使输入和 run 失败且不提交领域变化；Task 转换、TODO 本地完成、关联 follow-up 完成、候选状态、work-summary input/run 终态在同一事务中提交。事务提交后，外部 TODO 完成与类型化 Task 完成都按受影响 Task 重算当前 Attention 成员；完成的 Task 从成员列表退出，但不会仅凭读取或完成动作把 Attention 标成已解决。
+
+completion apply 会在事务中校验队列 source_type/ref 与持久化 TODO/project/follow-up/candidate 绑定；trace source_kind、来源时间、服务记录的检索时间、来源数和可观察工具调用数按 Work Item 的 search_policy 校验，并要求 source locator 能在本次运行的工具结果中匹配。candidate 来源时间须与持久化候选一致。receipt 不构成外部内容真实性的独立证明；`completed_at` 只验证可解析且不晚于检查时间，并不证明该时间来自来源正文。当前 audit event 不含可信的 search-vs-raw-read 分类，因此 `max_raw_reads` 没有独立运行时计数；这是当前 prompt/runtime 能力限制，超出已批准范围，不是 Task 6 发布阻断。Task Agent prompt 明确要求只读发现，不得通过 CLI/API/MCP 工具创建、更新、删除、发送或完成外部记录；这是 prompt-only 的 best-effort 指引，不是运行时权限边界，Codex route 仍没有 per-turn MCP 写工具 allowlist。外部完成只由现有 outbox 同步。
+
+普通 Task 提取和 TODO/follow-up 完成检查共用稳定的 `task-agent:work-tracking:v1` 会话范围；每个 Work Item 仍有独立 `workload_key`、run 和运行记录。会话按 runtime route 分开保存，同一路由的后续 Task Agent 输入会续接该路由的 session。`process-work-items` 在领取输入前持有共享 SQLite session lock，并在处理期间续租；锁被其他进程占用时不领取、不增加输入尝试次数。锁续租失败会在领域事务提交前终止本轮并安排输入重试。此前 run 使用的 `task:<run_id>` 会话记录保留不迁移。Agent 每轮以当前 Work Item、当前检索状态和新来源证据作判断，会话历史只作背景；Codex CLI 的 context compaction 由 Codex 原生机制管理，不是事实存储，也不替代当前来源证据。
+
+定时完成检查还会从语义存储选择开放的正式 Business Task，不要求 Task 已有 Project；Work Item 携带链接的来源信号、类型化日期、Task follow-up 和外部 TODO 上下文，并按有界批次逐日入队。关闭来源上的 Task 后，Attention 成员在领域提交后更新；同一关注项中仍开放的兄弟 Task 继续保留。
+
+这是代码分支的运行时契约，不等于服务已部署或发布。Task 6 不得单独部署；Task 7 在 Task 键控的执行表中实现 TODO 镜像、follow-up、回执和完成转换。只有正式、未关闭、来源支持明确负责人且已接受承诺，并有来源支持的可解析 `committed_deadline_at` 的 Task 才排入 TODO 创建 outbox；不得由请求期限、估算或下次检查日期推算镜像期限。创建后保存外部 ID 并读回；若首次读回失败但 provider ID 已知，后续状态拉取会按该 ID 重新读回并收口链接/outbox；若创建结果未知且没有 ID，不会以新的操作键再次创建。同一 Task 有未结清创建 intent 时不再排第二个创建；已知的 `failed` 操作使用有界退避，未到 `next_attempt_at` 时不被再次领取。缺少可信 producer 提供的 `external_task_id` 时也不猜测该 ID。
+
+新 follow-up 只有在已链接来源信号提供精确会话目标和可解析 `next_check_at` 时才创建；问题可概括 Task 状态，但目标与检查时间不能从截止日或历史会话推断。群聊在精确来源群中发送并提及 Task 的证据化负责人；单聊只发送给来源明确指定的负责人账号，来源会话 ID 保留作核对，不把消息误发给可能不是任务负责人的原发件人。发送前先读回已链接的外部 TODO；若其已完成，则关闭精确绑定的 Task/follow-up、保存 provider 状态并释放未发送 claim，不发消息。发送尝试以 Task follow-up 的 revision、租约和幂等 UUID 留存，成功记录回执；发送中断或租约过期的结果标为未知并排入 Task Agent 核查，不自动重发。外部 TODO 完成仅关闭其明确链接的 Task 和 follow-up，不触及同一聚类的兄弟 Task。历史 `work_todos`、`follow_up_drafts` 和旧 outbox 仍可读取；旧 follow-up 定时发送暂保留以处理未迁移记录，Task 8 导入与生产切换之前不能将其误称为新 Task 写入路径。
+
+系统首先在一个语义事务中写入来源信号、候选或正式 Task、证据、类型化日期、显式 Task 转换和关系/锚点/Project 候选提议；随后从已提交的语义事实重算关注投影。候选提升、接受、字段更正和同一事项合并使用不同转换；模型相似度仅用于提示，不授权身份转换。`created_at` 是系统记录时间；`assigned_at` 仅从明确正式指派的可信源时间戳派生，日期值必须与精确摘录中的可解析日期一致。周级或不可解析日期短语只留在关联的来源信号中，不生成 typed date fact 或猜测时间戳。估算由可信来源发言人署名，抽取 Agent 不冒充估算者；Task 6 的 `next_check_at` 由 Agent 署名但只记录来源明确给出的检查日期，不安排 cadence、不将 due date 转成检查时间；其他日期要求可识别来源行为人。当前 AI Minutes producer 没有可信 speaker→identity 映射，故不把转述者或模型填写的人作为日期行为人，相关日期暂不记录。指派日、请求/外部/承诺 DDL、估算和下次检查分别保存为独立类型。Project 只能引用注册表中的正式对象；Project 候选和锚点匹配不会自动创建正式 Project。
+
+需关注必须同时有已确认的业务锚点、相关 Task、已链接来源信号、明确 CEO action 和当前来源的精确 trigger 摘录。trigger 类型和原因是 Agent 对来源的语义分类并写入 Attention provenance；它不等于机器独立证明其重大性，系统不做关键词重大性推断。提交后还要按所有受影响 Task 重算当前关注成员，完成、取消、不相关及合并都会更新/移除成员；投影失败不回滚已提交 Task。仅相关、已接受、正常进度或临近日期不足以进入关注。Task Agent 不再把 `work_projects` / `work_todos` / `work_updates` 当新语义事实的双写目标；外部 TODO 镜像走 Task 7 的独立 Task 键控 outbox，Task 6 单独不得部署。
 
 业务 Skill 说明“如何判断”，操作 Skill 说明“如何读取或执行”。OA、面试和 OKR 已有成熟的专业
 Skill，CEO Skill 只负责识别需要委派的场景，不复制专业规则：分别加载
@@ -729,11 +749,12 @@ turn 可以复用仍有效的对话 session，或在该 session 已失效时安�
 
 ### 任务提取与 follow-up 是一个生命周期
 
-`ceo-work-tracking` 把同一事项从识别到关闭作为一个流程：从对话、会议或材料中提取可执行事项，
-关联或创建项目和 TODO，确定 owner、截止时间和验证条件，到期时生成针对缺口的 follow-up，读取
-后续回复或外部 TODO 状态，最后以明确完成证据关闭。Follow-up 不是第二套路由或回复引擎；它产生的
-消息仍进入同一个 A/B 审阅、执行、读回和去重流程。修订后的 follow-up 是新 revision，不能被旧
-正文的去重结果拦截。
+`ceo-work-tracking` 把同一事项从识别到关闭作为一个流程：从对话、会议或材料中提取有证据的
+Task，按需链接正式 Project，记录负责人及类型化日期。只有符合承诺与期限条件的 Task 才通过
+outbox 镜像为钉钉 TODO；只有来源明确给出下次检查时间与目标会话才创建 follow-up。发送由
+Task 键控的 follow-up worker 负责，并记录 revision、租约、幂等 ID 与 provider 回执；
+结果未知先进入核查而不是自动重发。读取后续回复或外部 TODO 状态后，仅凭明确完成证据关闭
+对应 Task 与其 follow-up。旧 Project/TODO/follow-up 记录保留在历史边界，等待 Task 8 导入。
 
 ## Audit Rules
 

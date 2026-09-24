@@ -2,10 +2,16 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from itertools import islice
 from typing import Any
 
 from app.store import AutoReplyStore
-from app.task_models import WorkProject, WorkTodo
+from app.task_models import WorkItem, WorkProject, WorkTodo
+from app.task_semantic_models import (
+    BusinessActorKind, BusinessAnchor, BusinessProject, BusinessTask, BusinessTaskAnchorLink,
+    BusinessTaskEvidence, BusinessTaskRelation, BusinessTaskSignal,
+    BusinessWorkCluster, BusinessWorkClusterTask, BusinessRelationStatus, FormalTaskBasis,
+)
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
@@ -27,6 +33,267 @@ class ProjectTaskDetail:
     updates: tuple[object, ...]
     follow_ups_by_todo: dict[int, tuple[object, ...]]
     dingtalk_links_by_todo: dict[int, tuple[object, ...]]
+
+
+@dataclass(frozen=True)
+class TaskSemanticContext:
+    task_candidates: tuple[BusinessTask, ...]
+    formal_tasks: tuple[BusinessTask, ...]
+    unverified_formal_tasks: tuple[BusinessTask, ...]
+    task_evidence: tuple[BusinessTaskEvidence, ...]
+    evidence_signals: tuple[BusinessTaskSignal, ...]
+    task_relations: tuple[BusinessTaskRelation, ...]
+    task_anchor_links: tuple[BusinessTaskAnchorLink, ...]
+    clusters: tuple[BusinessWorkCluster, ...]
+    cluster_memberships: tuple[BusinessWorkClusterTask, ...]
+    anchors: tuple[BusinessAnchor, ...]
+    official_projects: tuple[BusinessProject, ...]
+
+
+def _all_pages(fetch, *, page_size: int = 100):
+    offset = 0
+    while True:
+        page = fetch(limit=page_size, offset=offset)
+        yield from page
+        if len(page) < page_size:
+            return
+        offset += len(page)
+
+
+def _semantic_score(query_terms: set[str], document: str) -> int:
+    return len(query_terms.intersection(tokenize(document)))
+
+
+def _bounded_task_evidence(
+    rows: tuple[BusinessTaskEvidence, ...], *, recent_limit: int,
+    pinned_signal_id: int | None = None,
+) -> tuple[BusinessTaskEvidence, ...]:
+    """Keep each role's edge proofs, the cited owner proof, and recent rows."""
+    first_by_role: dict[str, BusinessTaskEvidence] = {}
+    latest_by_role: dict[str, BusinessTaskEvidence] = {}
+    for row in rows:
+        role = row.evidence_role.value
+        first_by_role.setdefault(role, row)
+        latest_by_role[role] = row
+    kept = set(first_by_role.values()) | set(latest_by_role.values())
+    kept.update(rows[-recent_limit:])
+    if pinned_signal_id is not None:
+        kept.update(row for row in rows if row.signal_id == pinned_signal_id)
+    return tuple(row for row in rows if row in kept)
+
+
+def _source_backed_owner_signal_id(
+    store: AutoReplyStore, task: BusinessTask, evidence: tuple[BusinessTaskEvidence, ...]
+) -> int | None:
+    if not (task.owner_name.strip() or task.owner_user_id.strip()):
+        return None
+    try:
+        owner_evidence = json.loads(task.owner_evidence_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(owner_evidence, dict):
+        return None
+    source_ref = owner_evidence.get("source_ref")
+    excerpt = owner_evidence.get("excerpt")
+    if not isinstance(source_ref, str) or not isinstance(excerpt, str) or not excerpt.strip():
+        return None
+    if task.owner_name and task.owner_name not in excerpt:
+        return None
+    required_role = (
+        "commitment" if task.formal_basis is FormalTaskBasis.EXPLICIT_COMMITMENT else "assignment"
+    )
+    for row in evidence:
+        if row.evidence_role.value != required_role:
+            continue
+        signal = store.get_business_task_signal(row.signal_id)
+        if signal is None or signal.source_ref != source_ref or excerpt not in signal.evidence_text:
+            continue
+        if not task.owner_user_id:
+            return signal.id if task.owner_name else None
+        if not task.owner_name and task.owner_user_id in excerpt:
+            return signal.id
+        try:
+            mapped = json.loads(signal.context_json).get("owner_identity", {})
+        except (TypeError, json.JSONDecodeError):
+            mapped = {}
+        if not isinstance(mapped, dict):
+            mapped = {}
+        author_matches = (
+            signal.author_kind is BusinessActorKind.HUMAN
+            and signal.author_user_id == task.owner_user_id
+            and (not task.owner_name or signal.author_name == task.owner_name)
+        )
+        context_matches = (
+            mapped.get("user_id") == task.owner_user_id
+            and (not task.owner_name or mapped.get("name") == task.owner_name)
+        )
+        if author_matches or context_matches:
+            return signal.id
+    return None
+
+
+def _prioritized_registry_rows(rows, *, linked_ids: set[int], query_terms: set[str], limit: int):
+    linked = [row for row in rows if row.id in linked_ids]
+    remaining = sorted(
+        (row for row in rows if row.id not in linked_ids),
+        key=lambda row: (-_semantic_score(query_terms, row.title), row.id),
+    )
+    return tuple(linked + remaining[:limit])
+
+
+def retrieve_task_semantic_context(
+    store: AutoReplyStore, work_item: WorkItem, *, limit_per_kind: int = 20
+) -> TaskSemanticContext:
+    if limit_per_kind < 1:
+        raise ValueError("limit_per_kind must be positive")
+    query_terms = set(tokenize(work_item.summary))
+    conversation_task_ids = set(_all_pages(
+        lambda *, limit, offset: store.list_business_task_ids_for_conversation(
+            conversation_id=work_item.source.conversation_id, limit=limit, offset=offset
+        )
+    ))
+    tasks = _all_pages(store.list_business_tasks)
+    ranked_tasks = sorted(
+        (
+            (
+                _semantic_score(query_terms, f"{task.id} {task.title} {task.description} {task.owner_name}")
+                + (2 if task.id in conversation_task_ids else 0),
+                task,
+            )
+            for task in tasks
+            if task.status.value != "merged"
+        ),
+        key=lambda pair: (-pair[0], -pair[1].id),
+    )
+    candidates = tuple(
+        task for score, task in ranked_tasks
+        if score > 0 and task.stage.value == "candidate"
+    )[:limit_per_kind]
+    formal_rows: list[BusinessTask] = []
+    unverified_rows: list[BusinessTask] = []
+    evidence_by_task: dict[int, tuple[BusinessTaskEvidence, ...]] = {}
+    owner_signal_by_task: dict[int, int] = {}
+    for score, task in ranked_tasks:
+        if score <= 0 or task.stage.value != "formal":
+            continue
+        task_evidence = store.list_business_task_evidence(task.id)
+        owner_signal_id = _source_backed_owner_signal_id(store, task, task_evidence)
+        bucket = formal_rows if owner_signal_id is not None else unverified_rows
+        if len(bucket) < limit_per_kind:
+            bucket.append(task)
+            evidence_by_task[task.id] = task_evidence
+            if owner_signal_id is not None:
+                owner_signal_by_task[task.id] = owner_signal_id
+        if len(formal_rows) == len(unverified_rows) == limit_per_kind:
+            break
+    formal = tuple(formal_rows)
+    unverified = tuple(unverified_rows)
+    selected = candidates + formal + unverified
+    evidence = tuple(
+        row for task in selected
+        for row in _bounded_task_evidence(
+            evidence_by_task.get(task.id) or store.list_business_task_evidence(task.id),
+            recent_limit=limit_per_kind,
+            pinned_signal_id=owner_signal_by_task.get(task.id),
+        )
+    )
+    relations = tuple(dict.fromkeys(
+        row for task in selected
+        for row in islice(_all_pages(
+            lambda *, limit, offset, task_id=task.id: store.list_business_task_relations(
+                task_id=task_id, limit=limit, offset=offset
+            )
+        ), limit_per_kind)
+    ))
+    links = tuple(
+        row for task in selected
+        for row in sorted(_all_pages(
+            lambda *, limit, offset, task_id=task.id: store.list_business_task_anchor_links(
+                task_id=task_id, limit=limit, offset=offset
+            )
+        ), key=lambda link: (
+            not (link.status is BusinessRelationStatus.CONFIRMED and link.active),
+            link.id,
+        ))[:limit_per_kind]
+    )
+    signal_ids = (
+        {row.signal_id for row in evidence}
+        | {row.supporting_signal_id for row in relations}
+        | {row.evidence_signal_id for row in links}
+    )
+    signals = tuple(
+        signal for signal_id in sorted(signal_ids)
+        if (signal := store.get_business_task_signal(signal_id)) is not None
+    )
+    selected_memberships = tuple(dict.fromkeys(
+        row for task in selected
+        for row in _all_pages(
+            lambda *, limit, offset, task_id=task.id: store.list_business_work_cluster_tasks(
+                task_id=task_id, limit=limit, offset=offset
+            )
+        )
+    ))
+    all_clusters = tuple(_all_pages(store.list_business_work_clusters))
+    clusters = _prioritized_registry_rows(
+        all_clusters,
+        linked_ids={row.cluster_id for row in selected_memberships},
+        query_terms=query_terms,
+        limit=limit_per_kind,
+    )
+    cluster_memberships = tuple(dict.fromkeys(tuple(
+        row for cluster in clusters
+        for row in islice(_all_pages(
+            lambda *, limit, offset, cluster_id=cluster.id: store.list_business_work_cluster_tasks(
+                cluster_id=cluster_id, limit=limit, offset=offset
+            )
+        ), max(20, limit_per_kind))
+    ) + selected_memberships))
+    all_anchors = tuple(_all_pages(store.list_business_anchors))
+    anchors = _prioritized_registry_rows(
+        all_anchors,
+        linked_ids={row.anchor_id for row in links},
+        query_terms=query_terms,
+        limit=limit_per_kind,
+    )
+    all_projects = tuple(_all_pages(store.list_business_projects))
+    linked_anchor_ids = {row.anchor_id for row in links}
+    projects = _prioritized_registry_rows(
+        all_projects,
+        linked_ids={project.id for project in all_projects if project.canonical_anchor_id in linked_anchor_ids},
+        query_terms=query_terms,
+        limit=limit_per_kind,
+    )
+    return TaskSemanticContext(
+        task_candidates=candidates,
+        formal_tasks=formal,
+        unverified_formal_tasks=unverified,
+        task_evidence=evidence,
+        evidence_signals=signals,
+        task_relations=relations,
+        task_anchor_links=links,
+        clusters=clusters,
+        cluster_memberships=cluster_memberships,
+        anchors=anchors,
+        official_projects=projects,
+    )
+
+
+def render_task_semantic_context(context: TaskSemanticContext) -> str:
+    payload = {
+        "notice": "Similarity rank is context only; never authority or confirmation for identity, acceptance, anchor match, or official Project creation. Legacy formal rows without source-backed owner evidence are unverified, not owner commitments.",
+        "task_candidates": [_model_payload(value) for value in context.task_candidates],
+        "existing_formal_tasks": [_model_payload(value) for value in context.formal_tasks],
+        "unverified_formal_tasks": [_model_payload(value) for value in context.unverified_formal_tasks],
+        "task_evidence": [_model_payload(value) for value in context.task_evidence],
+        "source_signals": [_model_payload(value) for value in context.evidence_signals],
+        "task_relations": [_model_payload(value) for value in context.task_relations],
+        "task_anchor_links": [_model_payload(value) for value in context.task_anchor_links],
+        "work_clusters": [_model_payload(value) for value in context.clusters],
+        "cluster_memberships": [_model_payload(value) for value in context.cluster_memberships],
+        "registered_anchors": [_model_payload(value) for value in context.anchors],
+        "official_project_registry": [_model_payload(value) for value in context.official_projects],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def tokenize(text: str) -> list[str]:

@@ -5,6 +5,9 @@ import { AppShell } from "./AppShell";
 
 const AgentPage = lazy(() => import("../app").then((module) => ({ default: module.App })));
 const TaskDetailPage = lazy(() => import("../pages/TaskDetailPage").then((module) => ({ default: module.TaskDetailPage })));
+const LegacyProjectDetailPage = lazy(() => import("../pages/TaskDetailPage").then((module) => ({ default: module.LegacyProjectDetailPage })));
+const TaskAttentionDetailPage = lazy(() => import("../pages/TaskAttentionDetailPage").then((module) => ({ default: module.TaskAttentionDetailPage })));
+const TaskProjectDetailPage = lazy(() => import("../pages/TaskProjectDetailPage").then((module) => ({ default: module.TaskProjectDetailPage })));
 const TasksPage = lazy(() => import("../pages/TasksPage").then((module) => ({ default: module.TasksPage })));
 const ScheduledTasksPage = lazy(() => import("../pages/ScheduledTasksPage").then((module) => ({ default: module.ScheduledTasksPage })));
 const AttentionPage = lazy(() => import("../pages/AttentionPage").then((module) => ({ default: module.AttentionPage })));
@@ -42,8 +45,23 @@ function SettingsRoute() {
 }
 
 function TaskDetailRoute() {
+  const { taskId } = useParams();
+  return <TaskDetailPage taskId={taskId || ""} />;
+}
+
+function TaskAttentionDetailRoute() {
+  const { attentionId } = useParams();
+  return <TaskAttentionDetailPage attentionId={attentionId || ""} />;
+}
+
+function TaskProjectDetailRoute() {
   const { projectId } = useParams();
-  return <TaskDetailPage projectId={projectId || ""} />;
+  return <TaskProjectDetailPage projectId={projectId || ""} />;
+}
+
+function LegacyProjectDetailRoute() {
+  const { legacyProjectId } = useParams();
+  return <LegacyProjectDetailPage legacyProjectId={legacyProjectId || ""} />;
 }
 
 function CodexDetailRoute() {
@@ -60,7 +78,10 @@ function ConsoleRoutes() {
       <Route path="/history/meeting-attempts/:runId" element={<MeetingAttemptPage endpoint="/api/console/meeting-attempts/:id" />} />
       <Route path="/history/oa-approvals/:processInstanceId" element={<BusinessDetailPage kind="OA Approval" endpoint="/api/console/oa-approvals/:id" />} />
       <Route path="/tasks" element={<TasksPage />} />
-      <Route path="/tasks/:projectId" element={<TaskDetailRoute />} />
+      <Route path="/tasks/attention/:attentionId" element={<TaskAttentionDetailRoute />} />
+      <Route path="/tasks/item/:taskId" element={<TaskDetailRoute />} />
+      <Route path="/tasks/project/:projectId" element={<TaskProjectDetailRoute />} />
+      <Route path="/tasks/legacy-project/:legacyProjectId" element={<LegacyProjectDetailRoute />} />
       <Route path="/scheduled-tasks" element={<ScheduledTasksPage />} />
       <Route path="/settings" element={<SettingsRoute />} />
       <Route path="/user-feedback" element={<FeedbackPage />} />

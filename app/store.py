@@ -116,6 +116,38 @@ from app.task_models import (
     WorkTodoDingTalkLink,
     WorkUpdate,
 )
+from app.task_semantic_models import (
+    AttentionCategory,
+    BusinessActorKind,
+    BusinessAnchor,
+    BusinessAnchorType,
+    BusinessEvidenceRole,
+    BusinessProject,
+    BusinessProjectCandidate,
+    BusinessRelationStatus,
+    BusinessRelationType,
+    BusinessRelevance,
+    BusinessTask,
+    BusinessTaskDateEvidence,
+    BusinessTaskDateType,
+    BusinessTaskAnchorLink,
+    BusinessTaskEvidence,
+    BusinessTaskEvent,
+    BusinessTaskEventType,
+    BusinessTaskRelation,
+    BusinessTaskSignal,
+    BusinessAttentionEvent,
+    BusinessAttentionEventType,
+    BusinessAttentionItem,
+    BusinessAttentionProposalTask,
+    BusinessAttentionTask,
+    BusinessTaskStage,
+    BusinessTaskStatus,
+    BusinessWorkCluster,
+    BusinessWorkClusterTask,
+    CommitmentStatus,
+    FormalTaskBasis,
+)
 from app.wechat.models import WechatReplyScope
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
@@ -189,7 +221,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-22.1"
+STORE_SCHEMA_VERSION = "2026-09-24.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -232,6 +264,27 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_iteration_decision_items",
     "outbound_postfixes",
     "outbound_postfix_receipts",
+    "business_task_signals",
+    "business_tasks",
+    "business_task_dingtalk_links",
+    "business_task_follow_ups",
+    "business_task_follow_up_send_attempts",
+    "business_task_todo_sync_outbox",
+    "business_task_evidence",
+    "business_task_date_evidence",
+    "business_task_events",
+    "business_task_relations",
+    "business_work_clusters",
+    "business_work_cluster_tasks",
+    "business_anchors",
+    "business_task_anchor_links",
+    "business_projects",
+    "business_project_candidates",
+    "business_attention_items",
+    "business_attention_tasks",
+    "business_attention_proposal_tasks",
+    "business_attention_events",
+    "business_legacy_links",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_items_status",
@@ -281,6 +334,28 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_meeting_memory_write_events_lease",
     "idx_feedback_iteration_decisions_batch",
     "idx_feedback_iteration_decision_items_feedback_round",
+    "idx_business_task_signals_source",
+    "idx_business_tasks_updated_id",
+    "idx_business_tasks_list",
+    "idx_business_tasks_relevance",
+    "idx_business_task_dingtalk_links_task",
+    "idx_business_task_dingtalk_links_one_active",
+    "idx_business_task_follow_ups_due",
+    "idx_business_task_follow_up_send_attempts_state",
+    "idx_business_task_todo_sync_outbox_status",
+    "idx_business_task_evidence_task",
+    "idx_business_task_date_evidence_task",
+    "idx_business_task_events_task",
+    "idx_business_task_relations_from",
+    "idx_business_task_relations_to",
+    "idx_business_work_cluster_tasks_task",
+    "idx_business_task_anchor_links_task",
+    "idx_business_project_candidates_cluster",
+    "idx_business_attention_items_list",
+    "idx_business_attention_tasks_task",
+    "idx_business_attention_proposal_tasks_task",
+    "idx_business_attention_events_item",
+    "idx_business_legacy_links_task",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
@@ -290,6 +365,91 @@ STORE_SCHEMA_REMOVED_COLUMNS = {
     "agent_runs": ("tool_events_json",),
 }
 STORE_SCHEMA_REQUIRED_COLUMNS = {
+    "business_task_signals": (
+        "id", "source_type", "source_ref", "source_time", "conversation_id",
+        "conversation_title", "author_user_id", "author_name", "evidence_text",
+        "context_json", "dedupe_key", "created_at", "author_kind",
+    ),
+    "business_tasks": (
+        "id", "title", "description", "stage", "status", "formal_basis",
+        "commitment_status", "owner_user_id", "owner_name", "owner_evidence_json",
+        "deadline_at", "business_relevance", "missing_evidence_json",
+        "merged_into_task_id", "created_at", "updated_at", "last_activity_at",
+    ),
+    "business_task_dingtalk_links": (
+        "id", "business_task_id", "dingtalk_task_id", "executor_user_id",
+        "executor_name", "title_snapshot", "deadline_at_snapshot",
+        "priority_snapshot", "status", "last_dingtalk_done",
+        "last_dingtalk_payload_json", "last_pull_at", "last_push_at",
+        "last_error", "retry_count", "created_at", "updated_at",
+    ),
+    "business_task_follow_ups": (
+        "id", "business_task_id", "source_signal_id", "owner_user_id",
+        "owner_name", "target_conversation_id", "target_kind",
+        "question_text", "scheduled_at", "sent_at", "status",
+        "revision", "send_result_json", "evidence_check_json",
+        "suppressed_reason", "dedupe_key", "created_at", "updated_at",
+    ),
+    "business_task_follow_up_send_attempts": (
+        "id", "draft_id", "draft_revision", "claim_token",
+        "idempotency_uuid", "state", "lease_owner", "claimed_at",
+        "lease_until", "result_json", "created_at", "updated_at",
+    ),
+    "business_task_todo_sync_outbox": (
+        "id", "operation_key", "business_task_id", "operation", "status",
+        "evidence_json", "receipt_json", "error", "attempt_count",
+        "lease_owner", "lease_expires_at", "next_attempt_at", "completed_at",
+        "created_at", "updated_at",
+    ),
+    "business_task_evidence": (
+        "task_id", "signal_id", "evidence_role", "created_at",
+    ),
+    "business_task_date_evidence": (
+        "id", "task_id", "date_type", "value_at", "raw_phrase",
+        "source_signal_id", "actor_kind", "actor_user_id", "actor_name", "created_at",
+    ),
+    "business_task_events": (
+        "id", "task_id", "event_type", "signal_id", "before_json", "after_json",
+        "reason", "created_at",
+    ),
+    "business_task_relations": (
+        "from_task_id", "to_task_id", "relation_type", "status",
+        "supporting_signal_id", "reason", "created_at",
+    ),
+    "business_work_clusters": ("id", "title", "created_at"),
+    "business_work_cluster_tasks": ("cluster_id", "task_id", "created_at"),
+    "business_anchors": (
+        "id", "anchor_type", "anchor_ref", "title", "active", "created_at",
+    ),
+    "business_task_anchor_links": (
+        "id", "task_id", "anchor_id", "status", "active",
+        "evidence_signal_id", "reason", "created_at",
+    ),
+    "business_projects": (
+        "id", "canonical_anchor_id", "anchor_type", "title", "registry_source",
+        "created_at",
+    ),
+    "business_project_candidates": (
+        "id", "cluster_id", "title", "reason", "status", "confirmed_project_id",
+        "confirmation_signal_id", "created_at",
+    ),
+    "business_attention_items": (
+        "id", "stable_key", "category", "status", "title", "business_area",
+        "why_attention", "current_state", "ceo_action", "anchor_id",
+        "evidence_signal_id", "resolution_signal_id", "resolved_at",
+        "created_at", "updated_at",
+    ),
+    "business_attention_tasks": ("attention_item_id", "task_id", "created_at"),
+    "business_attention_proposal_tasks": ("attention_item_id", "task_id", "created_at"),
+    "business_attention_events": (
+        "id", "attention_item_id", "event_type", "signal_id", "before_json",
+        "after_json", "reason", "created_at",
+    ),
+    "business_legacy_links": (
+        "id", "signal_id", "task_id", "cluster_id", "anchor_id", "project_id",
+        "project_candidate_id", "attention_item_id", "work_project_id",
+        "work_todo_id", "work_update_id", "created_at",
+    ),
     "scheduled_tasks": (
         "migration_key",
         "description",
@@ -389,6 +549,12 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
+    "trg_business_task_signals_immutable_update",
+    "trg_business_task_signals_immutable_delete",
+    "trg_business_task_signals_immutable_replace",
+    "trg_business_task_date_evidence_immutable_update",
+    "trg_business_task_date_evidence_immutable_delete",
+    "trg_business_task_date_evidence_immutable_replace",
     "trg_feedback_processing_round_integer_v2_insert",
     "trg_feedback_processing_round_integer_v2_update",
     "trg_runtime_attempt_session_evidence_trim_insert",
@@ -618,6 +784,24 @@ RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
         "workbench",
     }
 )
+
+
+def _business_nonblank_sql(column: str) -> str:
+    """Match Python str.strip() in SQLite CHECKs without changing stored text.
+
+    SQLite's default trim only removes U+0020. These 29 codepoints include
+    Python's ASCII/C0 and Unicode whitespace. Native trim/char keep the CHECK
+    usable by independent SQLite connections without a registered Python UDF.
+    The column is a trusted schema identifier, never caller-supplied input.
+    """
+    whitespace = (
+        "char(9,10,11,12,13,28,29,30,31,32,133,160,5760,"
+        "8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,"
+        "8232,8233,8239,8287,12288)"
+    )
+    return f"trim({column}, {whitespace}) <> ''"
+
+
 def _meeting_alignment_job_span(
     job: "MeetingAlignmentJob",
 ) -> tuple[datetime | None, datetime | None]:
@@ -3313,6 +3497,427 @@ class AutoReplyStore:
                     item_json text not null default '{}',
                     created_at text not null default current_timestamp
                 );
+                """
+                f"""
+                create table if not exists business_task_signals (
+                    id integer primary key autoincrement,
+                    source_type text not null check({_business_nonblank_sql("source_type")}),
+                    source_ref text not null check({_business_nonblank_sql("source_ref")}),
+                    source_time text not null default '',
+                    conversation_id text not null default '',
+                    conversation_title text not null default '',
+                    author_user_id text not null default '',
+                    author_name text not null default '',
+                    evidence_text text not null check({_business_nonblank_sql("evidence_text")}),
+                    context_json text not null default '{{}}'
+                        check(json_valid(context_json) and json_type(context_json) = 'object'),
+                    dedupe_key text not null unique check({_business_nonblank_sql("dedupe_key")}),
+                    created_at text not null default current_timestamp,
+                    author_kind text not null default 'unknown'
+                        check(author_kind in ('human', 'system', 'agent', 'unknown'))
+                );
+                create index if not exists idx_business_task_signals_source
+                    on business_task_signals(source_type, source_ref, source_time, id);
+                create trigger if not exists trg_business_task_signals_immutable_update
+                before update on business_task_signals
+                begin
+                    select raise(abort, 'business task signals are immutable');
+                end;
+                create trigger if not exists trg_business_task_signals_immutable_delete
+                before delete on business_task_signals
+                begin
+                    select raise(abort, 'business task signals are immutable');
+                end;
+                create trigger if not exists trg_business_task_signals_immutable_replace
+                before insert on business_task_signals
+                when exists (
+                    select 1 from business_task_signals
+                    where id = new.id or dedupe_key = new.dedupe_key
+                )
+                begin
+                    select raise(abort, 'business task signals are immutable: UNIQUE id or dedupe_key');
+                end;
+                create table if not exists business_tasks (
+                    id integer primary key autoincrement,
+                    title text not null check({_business_nonblank_sql("title")}),
+                    description text not null default '',
+                    stage text not null check(stage in ('candidate', 'formal')),
+                    status text not null default 'open' check(status in (
+                        'open', 'waiting', 'done', 'cancelled', 'merged'
+                    )),
+                    commitment_status text not null default 'none' check(commitment_status in (
+                        'none', 'assigned_unaccepted', 'accepted', 'disputed', 'completed', 'cancelled'
+                    )),
+                    formal_basis text check(formal_basis in (
+                        'explicit_assignment', 'explicit_commitment', 'external_todo', 'meeting_action_item'
+                    )),
+                    business_relevance text not null default 'unknown' check(business_relevance in (
+                        'unknown', 'not_relevant', 'relevant'
+                    )),
+                    merged_into_task_id integer,
+                    owner_user_id text not null default '',
+                    owner_name text not null default '',
+                    owner_evidence_json text not null default '{{}}'
+                        check(json_valid(owner_evidence_json) and json_type(owner_evidence_json) = 'object'),
+                    deadline_at text not null default '',
+                    missing_evidence_json text not null default '[]'
+                        check(json_valid(missing_evidence_json) and json_type(missing_evidence_json) = 'array'),
+                    last_activity_at text not null default current_timestamp,
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    check(
+                        (stage = 'formal' and formal_basis is not null)
+                        or (stage = 'candidate' and formal_basis is null)
+                    ),
+                    check(
+                        (status = 'merged' and merged_into_task_id is not null)
+                        or (status <> 'merged' and merged_into_task_id is null)
+                    ),
+                    check(merged_into_task_id is null or merged_into_task_id <> id),
+                    foreign key(merged_into_task_id) references business_tasks(id)
+                );
+                create index if not exists idx_business_tasks_updated_id
+                    on business_tasks(updated_at, id);
+                create index if not exists idx_business_tasks_list
+                    on business_tasks(stage, status, updated_at, id);
+                create index if not exists idx_business_tasks_relevance
+                    on business_tasks(business_relevance, updated_at, id);
+                create table if not exists business_task_dingtalk_links (
+                    id integer primary key autoincrement,
+                    business_task_id integer not null,
+                    dingtalk_task_id text not null default '',
+                    executor_user_id text not null default '',
+                    executor_name text not null default '',
+                    title_snapshot text not null default '',
+                    deadline_at_snapshot text not null default '',
+                    priority_snapshot text not null default '',
+                    status text not null check(status in ('creating','active','done','cancelled','failed')),
+                    last_dingtalk_done integer,
+                    last_dingtalk_payload_json text not null default '{{}}',
+                    last_pull_at text not null default '', last_push_at text not null default '',
+                    last_error text not null default '', retry_count integer not null default 0,
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(business_task_id) references business_tasks(id)
+                );
+                create index if not exists idx_business_task_dingtalk_links_task
+                    on business_task_dingtalk_links(business_task_id, status, id);
+                create unique index if not exists idx_business_task_dingtalk_links_one_active
+                    on business_task_dingtalk_links(business_task_id)
+                    where status in ('creating','active');
+                create table if not exists business_task_follow_ups (
+                    id integer primary key autoincrement,
+                    business_task_id integer not null,
+                    source_signal_id integer not null,
+                    owner_user_id text not null default '',
+                    owner_name text not null default '',
+                    target_conversation_id text not null,
+                    target_kind text not null check(target_kind in ('group','direct')),
+                    question_text text not null,
+                    scheduled_at text not null,
+                    sent_at text not null default '',
+                    status text not null default 'draft' check(status in ('draft','approved','sent','completed','skipped','cancelled','failed')),
+                    revision integer not null default 1,
+                    send_result_json text not null default '{{}}',
+                    evidence_check_json text not null default '{{}}',
+                    suppressed_reason text not null default '',
+                    dedupe_key text not null unique,
+                    created_at text not null default current_timestamp, updated_at text not null default current_timestamp,
+                    foreign key(business_task_id) references business_tasks(id),
+                    foreign key(source_signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_follow_ups_due
+                    on business_task_follow_ups(status, scheduled_at, id);
+                create table if not exists business_task_follow_up_send_attempts (
+                    id integer primary key autoincrement,
+                    draft_id integer not null,
+                    draft_revision integer not null,
+                    claim_token text not null unique,
+                    idempotency_uuid text not null,
+                    state text not null check(state in ('claimed','expired_before_send','sending','sent','failed','unknown')),
+                    lease_owner text not null default '',
+                    claimed_at text not null default '',
+                    lease_until text not null default '',
+                    result_json text not null default '{{}}',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(draft_id) references business_task_follow_ups(id)
+                );
+                create index if not exists idx_business_task_follow_up_send_attempts_state
+                    on business_task_follow_up_send_attempts(state, lease_until, id);
+                create table if not exists business_task_todo_sync_outbox (
+                    id integer primary key autoincrement,
+                    operation_key text not null unique, business_task_id integer not null,
+                    operation text not null check(operation in ('create','complete')),
+                    status text not null default 'queued' check(status in ('queued','running','completed','skipped','failed','unknown')),
+                    evidence_json text not null default '{{}}', receipt_json text not null default '{{}}', error text not null default '',
+                    attempt_count integer not null default 0, lease_owner text not null default '', lease_expires_at text not null default '',
+                    next_attempt_at text not null default '', completed_at text not null default '',
+                    created_at text not null default current_timestamp, updated_at text not null default current_timestamp,
+                    foreign key(business_task_id) references business_tasks(id)
+                );
+                create index if not exists idx_business_task_todo_sync_outbox_status
+                    on business_task_todo_sync_outbox(status, next_attempt_at, id);
+                create table if not exists business_task_evidence (
+                    task_id integer not null,
+                    signal_id integer not null,
+                    evidence_role text not null check(evidence_role in (
+                        'discovery', 'commitment', 'assignment', 'acceptance', 'completion',
+                        'correction', 'merge_identity', 'relevance', 'resolution'
+                    )),
+                    created_at text not null default current_timestamp,
+                    primary key(task_id, signal_id, evidence_role),
+                    foreign key(task_id) references business_tasks(id),
+                    foreign key(signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_evidence_task
+                    on business_task_evidence(task_id, created_at, signal_id);
+                create table if not exists business_task_date_evidence (
+                    id integer primary key autoincrement,
+                    task_id integer not null,
+                    date_type text not null check(date_type in (
+                        'assigned_at', 'requested_deadline_at', 'external_deadline_at',
+                        'committed_deadline_at', 'estimated_deadline_at', 'next_check_at'
+                    )),
+                    value_at text not null default '',
+                    raw_phrase text not null check({_business_nonblank_sql("raw_phrase")}),
+                    source_signal_id integer not null,
+                    actor_kind text not null check(actor_kind in ('human', 'system', 'agent', 'unknown')),
+                    actor_user_id text not null default '',
+                    actor_name text not null default '',
+                    created_at text not null default current_timestamp,
+                    foreign key(task_id) references business_tasks(id),
+                    foreign key(source_signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_date_evidence_task
+                    on business_task_date_evidence(task_id, id);
+                create trigger if not exists trg_business_task_date_evidence_immutable_update
+                before update on business_task_date_evidence
+                begin select raise(abort, 'business task date evidence is immutable'); end;
+                create trigger if not exists trg_business_task_date_evidence_immutable_delete
+                before delete on business_task_date_evidence
+                begin select raise(abort, 'business task date evidence is immutable'); end;
+                create trigger if not exists trg_business_task_date_evidence_immutable_replace
+                before insert on business_task_date_evidence
+                when exists (select 1 from business_task_date_evidence where id=new.id)
+                begin select raise(abort, 'business task date evidence is immutable'); end;
+                create table if not exists business_task_events (
+                    id integer primary key autoincrement,
+                    task_id integer not null,
+                    event_type text not null check(event_type in (
+                        'created', 'promoted', 'commitment_changed', 'owner_changed',
+                        'deadline_changed', 'date_evidence_recorded', 'status_changed',
+                        'relevance_changed', 'merged'
+                    )),
+                    signal_id integer,
+                    before_json text not null
+                        check(json_valid(before_json) and json_type(before_json) = 'object'),
+                    after_json text not null
+                        check(json_valid(after_json) and json_type(after_json) = 'object'),
+                    reason text not null check({_business_nonblank_sql("reason")}),
+                    created_at text not null default current_timestamp,
+                    foreign key(task_id) references business_tasks(id),
+                    foreign key(signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_events_task
+                    on business_task_events(task_id, created_at, id);
+                create table if not exists business_task_relations (
+                    from_task_id integer not null,
+                    to_task_id integer not null,
+                    relation_type text not null check(relation_type in (
+                        'depends_on', 'blocks', 'supports', 'supersedes', 'related_to'
+                    )),
+                    status text not null default 'proposed'
+                        check(status in ('proposed', 'confirmed', 'rejected')),
+                    supporting_signal_id integer not null,
+                    reason text not null default '',
+                    created_at text not null default current_timestamp,
+                    primary key(from_task_id, to_task_id, relation_type),
+                    check(from_task_id <> to_task_id),
+                    foreign key(from_task_id) references business_tasks(id),
+                    foreign key(to_task_id) references business_tasks(id),
+                    foreign key(supporting_signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_relations_from
+                    on business_task_relations(from_task_id, relation_type, to_task_id);
+                create index if not exists idx_business_task_relations_to
+                    on business_task_relations(to_task_id, relation_type, from_task_id);
+                create table if not exists business_work_clusters (
+                    id integer primary key autoincrement,
+                    title text not null check({_business_nonblank_sql("title")}),
+                    created_at text not null default current_timestamp
+                );
+                create table if not exists business_work_cluster_tasks (
+                    cluster_id integer not null,
+                    task_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(cluster_id, task_id),
+                    foreign key(cluster_id) references business_work_clusters(id),
+                    foreign key(task_id) references business_tasks(id)
+                );
+                create index if not exists idx_business_work_cluster_tasks_task
+                    on business_work_cluster_tasks(task_id, cluster_id);
+                create table if not exists business_anchors (
+                    id integer primary key autoincrement,
+                    anchor_type text not null check(anchor_type in (
+                        'project', 'okr', 'customer', 'product', 'revenue', 'financing',
+                        'cash', 'key_hire', 'personnel', 'company_priority', 'matter'
+                    )),
+                    anchor_ref text not null check({_business_nonblank_sql("anchor_ref")}),
+                    title text not null check({_business_nonblank_sql("title")}),
+                    active integer not null default 1 check(active in (0, 1)),
+                    created_at text not null default current_timestamp,
+                    unique(anchor_type, anchor_ref),
+                    unique(id, anchor_type)
+                );
+                create table if not exists business_task_anchor_links (
+                    id integer primary key autoincrement,
+                    task_id integer not null,
+                    anchor_id integer not null,
+                    status text not null default 'proposed'
+                        check(status in ('proposed', 'confirmed', 'rejected')),
+                    active integer not null default 1 check(active in (0, 1)),
+                    evidence_signal_id integer not null,
+                    reason text not null default '',
+                    created_at text not null default current_timestamp,
+                    unique(task_id, anchor_id),
+                    foreign key(task_id) references business_tasks(id),
+                    foreign key(anchor_id) references business_anchors(id),
+                    foreign key(evidence_signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_anchor_links_task
+                    on business_task_anchor_links(task_id, status, active, anchor_id);
+                create table if not exists business_projects (
+                    id integer primary key autoincrement,
+                    canonical_anchor_id integer not null unique,
+                    anchor_type text not null default 'project' check(anchor_type = 'project'),
+                    title text not null check({_business_nonblank_sql("title")}),
+                    registry_source text not null
+                        check({_business_nonblank_sql("registry_source")}),
+                    created_at text not null default current_timestamp,
+                    foreign key(canonical_anchor_id, anchor_type)
+                        references business_anchors(id, anchor_type)
+                );
+                create table if not exists business_project_candidates (
+                    id integer primary key autoincrement,
+                    cluster_id integer not null,
+                    title text not null check({_business_nonblank_sql("title")}),
+                    reason text not null check({_business_nonblank_sql("reason")}),
+                    status text not null default 'proposed'
+                        check(status in ('proposed', 'confirmed', 'rejected')),
+                    confirmed_project_id integer,
+                    confirmation_signal_id integer,
+                    created_at text not null default current_timestamp,
+                    check((status = 'confirmed') = (confirmed_project_id is not null)),
+                    check((status = 'confirmed') = (confirmation_signal_id is not null)),
+                    foreign key(cluster_id) references business_work_clusters(id),
+                    foreign key(confirmed_project_id) references business_projects(id),
+                    foreign key(confirmation_signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_project_candidates_cluster
+                    on business_project_candidates(cluster_id, status, id);
+                create table if not exists business_attention_items (
+                    id integer primary key autoincrement,
+                    stable_key text not null unique check({_business_nonblank_sql("stable_key")}),
+                    category text not null check(category in ('fyi', 'watch', 'decision', 'push')),
+                    status text not null default 'active' check(status in ('active', 'resolved')),
+                    title text not null check({_business_nonblank_sql("title")}),
+                    business_area text not null default '',
+                    why_attention text not null check({_business_nonblank_sql("why_attention")}),
+                    current_state text not null check({_business_nonblank_sql("current_state")}),
+                    ceo_action text not null check({_business_nonblank_sql("ceo_action")}),
+                    anchor_id integer not null,
+                    evidence_signal_id integer not null,
+                    resolution_signal_id integer,
+                    resolved_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    check(
+                        (status = 'active' and resolution_signal_id is null and resolved_at = '')
+                        or (status = 'resolved' and resolution_signal_id is not null
+                            and {_business_nonblank_sql("resolved_at")})
+                    ),
+                    foreign key(anchor_id) references business_anchors(id),
+                    foreign key(evidence_signal_id) references business_task_signals(id),
+                    foreign key(resolution_signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_attention_items_list
+                    on business_attention_items(status, category, updated_at, id);
+                create table if not exists business_attention_tasks (
+                    attention_item_id integer not null,
+                    task_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(attention_item_id, task_id),
+                    foreign key(attention_item_id) references business_attention_items(id),
+                    foreign key(task_id) references business_tasks(id)
+                );
+                create index if not exists idx_business_attention_tasks_task
+                    on business_attention_tasks(task_id, attention_item_id);
+                create table if not exists business_attention_proposal_tasks (
+                    attention_item_id integer not null,
+                    task_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(attention_item_id, task_id),
+                    foreign key(attention_item_id) references business_attention_items(id),
+                    foreign key(task_id) references business_tasks(id)
+                );
+                create index if not exists idx_business_attention_proposal_tasks_task
+                    on business_attention_proposal_tasks(task_id, attention_item_id);
+                create table if not exists business_attention_events (
+                    id integer primary key autoincrement,
+                    attention_item_id integer not null,
+                    event_type text not null check(event_type in (
+                        'opened', 'updated', 'category_changed', 'resolved', 'reopened'
+                    )),
+                    signal_id integer not null,
+                    before_json text not null
+                        check(json_valid(before_json) and json_type(before_json) = 'object'),
+                    after_json text not null
+                        check(json_valid(after_json) and json_type(after_json) = 'object'),
+                    reason text not null check({_business_nonblank_sql("reason")}),
+                    created_at text not null default current_timestamp,
+                    foreign key(attention_item_id) references business_attention_items(id),
+                    foreign key(signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_attention_events_item
+                    on business_attention_events(attention_item_id, created_at, id);
+                create table if not exists business_legacy_links (
+                    id integer primary key autoincrement,
+                    signal_id integer,
+                    task_id integer,
+                    cluster_id integer,
+                    anchor_id integer,
+                    project_id integer,
+                    project_candidate_id integer,
+                    attention_item_id integer,
+                    work_project_id integer unique,
+                    work_todo_id integer unique,
+                    work_update_id integer unique,
+                    created_at text not null default current_timestamp,
+                    check(
+                        (signal_id is not null) + (task_id is not null) + (cluster_id is not null)
+                        + (anchor_id is not null) + (project_id is not null)
+                        + (project_candidate_id is not null) + (attention_item_id is not null) = 1
+                    ),
+                    check(
+                        (work_project_id is not null) + (work_todo_id is not null)
+                        + (work_update_id is not null) = 1
+                    ),
+                    foreign key(signal_id) references business_task_signals(id),
+                    foreign key(task_id) references business_tasks(id),
+                    foreign key(cluster_id) references business_work_clusters(id),
+                    foreign key(anchor_id) references business_anchors(id),
+                    foreign key(project_id) references business_projects(id),
+                    foreign key(project_candidate_id) references business_project_candidates(id),
+                    foreign key(attention_item_id) references business_attention_items(id),
+                    foreign key(work_project_id) references work_projects(id),
+                    foreign key(work_todo_id) references work_todos(id),
+                    foreign key(work_update_id) references work_updates(id)
+                );
+                create index if not exists idx_business_legacy_links_task
+                    on business_legacy_links(task_id, id);
+                """
+                """
                 create table if not exists work_projects (
                     id integer primary key autoincrement,
                     title text not null,
@@ -3687,6 +4292,115 @@ class AutoReplyStore:
                 );
                 """
             )
+            signal_columns = {
+                row["name"] for row in db.execute("pragma table_info(business_task_signals)")
+            }
+            if "author_kind" not in signal_columns:
+                db.execute(
+                    "alter table business_task_signals add column author_kind text not null "
+                    "default 'unknown' check(author_kind in ('human', 'system', 'agent', 'unknown'))"
+                )
+            stranded_event_table = db.execute(
+                "select 1 from sqlite_master where type='table' "
+                "and name='business_task_events_before_date_evidence'"
+            ).fetchone()
+            if stranded_event_table is not None:
+                db.execute("savepoint recover_business_task_events_date_evidence")
+                try:
+                    current_event_table = db.execute(
+                        "select 1 from sqlite_master where type='table' "
+                        "and name='business_task_events'"
+                    ).fetchone()
+                    if current_event_table is None:
+                        db.execute(
+                            "alter table business_task_events_before_date_evidence "
+                            "rename to business_task_events"
+                        )
+                    else:
+                        conflict = db.execute(
+                            """select 1 from business_task_events_before_date_evidence old
+                               join business_task_events current on current.id=old.id
+                               where old.task_id is not current.task_id
+                                  or old.event_type is not current.event_type
+                                  or old.signal_id is not current.signal_id
+                                  or old.before_json is not current.before_json
+                                  or old.after_json is not current.after_json
+                                  or old.reason is not current.reason
+                                  or old.created_at is not current.created_at
+                               limit 1"""
+                        ).fetchone()
+                        if conflict is not None:
+                            raise ValueError(
+                                "stranded business task event migration has conflicting rows"
+                            )
+                        db.execute(
+                            """insert into business_task_events (
+                                id, task_id, event_type, signal_id, before_json,
+                                after_json, reason, created_at
+                            ) select old.id, old.task_id, old.event_type, old.signal_id,
+                                     old.before_json, old.after_json, old.reason, old.created_at
+                              from business_task_events_before_date_evidence old
+                             where not exists (
+                                 select 1 from business_task_events current
+                                  where current.id=old.id
+                             )"""
+                        )
+                        db.execute("drop table business_task_events_before_date_evidence")
+                        db.execute(
+                            "create index if not exists idx_business_task_events_task "
+                            "on business_task_events(task_id, created_at, id)"
+                        )
+                except BaseException:
+                    db.execute("rollback to recover_business_task_events_date_evidence")
+                    db.execute("release recover_business_task_events_date_evidence")
+                    raise
+                db.execute("release recover_business_task_events_date_evidence")
+            event_table_sql = db.execute(
+                "select sql from sqlite_master where type='table' and name='business_task_events'"
+            ).fetchone()["sql"]
+            if "date_evidence_recorded" not in event_table_sql:
+                db.execute("savepoint migrate_business_task_events_date_evidence")
+                try:
+                    db.execute(
+                        "alter table business_task_events rename to "
+                        "business_task_events_before_date_evidence"
+                    )
+                    db.execute(
+                        f"""create table business_task_events (
+                        id integer primary key autoincrement,
+                        task_id integer not null,
+                        event_type text not null check(event_type in (
+                            'created', 'promoted', 'commitment_changed', 'owner_changed',
+                            'deadline_changed', 'date_evidence_recorded', 'status_changed',
+                            'relevance_changed', 'merged'
+                        )),
+                        signal_id integer,
+                        before_json text not null
+                            check(json_valid(before_json) and json_type(before_json) = 'object'),
+                        after_json text not null
+                            check(json_valid(after_json) and json_type(after_json) = 'object'),
+                        reason text not null check({_business_nonblank_sql('reason')}),
+                        created_at text not null default current_timestamp,
+                        foreign key(task_id) references business_tasks(id),
+                        foreign key(signal_id) references business_task_signals(id)
+                    )"""
+                    )
+                    db.execute(
+                        """insert into business_task_events (
+                        id, task_id, event_type, signal_id, before_json, after_json, reason, created_at
+                    ) select id, task_id, event_type, signal_id, before_json, after_json, reason, created_at
+                    from business_task_events_before_date_evidence"""
+                    )
+                    db.execute("drop table business_task_events_before_date_evidence")
+                    db.execute(
+                        "create index idx_business_task_events_task "
+                        "on business_task_events(task_id, created_at, id)"
+                    )
+                except BaseException:
+                    db.execute("rollback to migrate_business_task_events_date_evidence")
+                    db.execute("release migrate_business_task_events_date_evidence")
+                    raise
+                db.execute("release migrate_business_task_events_date_evidence")
             delivery_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(wechat_deliveries)").fetchall()
@@ -5724,6 +6438,1207 @@ class AutoReplyStore:
                 f"{deleted_filter} order by id"
             ).fetchall()
             return tuple(self._scheduled_task_from_row(db, row) for row in rows)
+
+    @staticmethod
+    def _business_task_signal_from_row(row: sqlite3.Row) -> BusinessTaskSignal:
+        return BusinessTaskSignal.model_validate(dict(row))
+
+    @staticmethod
+    def _business_task_from_row(row: sqlite3.Row) -> BusinessTask:
+        return BusinessTask.model_validate(dict(row))
+
+    @staticmethod
+    def _business_task_evidence_from_row(row: sqlite3.Row) -> BusinessTaskEvidence:
+        return BusinessTaskEvidence.model_validate(dict(row))
+
+    @staticmethod
+    def _business_task_date_evidence_from_row(row: sqlite3.Row) -> BusinessTaskDateEvidence:
+        return BusinessTaskDateEvidence.model_validate(dict(row))
+
+    @staticmethod
+    def _business_task_event_from_row(row: sqlite3.Row) -> BusinessTaskEvent:
+        return BusinessTaskEvent.model_validate(dict(row))
+
+    @staticmethod
+    def _business_attention_item_from_row(row: sqlite3.Row) -> BusinessAttentionItem:
+        return BusinessAttentionItem.model_validate(dict(row))
+
+    @staticmethod
+    def _business_attention_task_from_row(row: sqlite3.Row) -> BusinessAttentionTask:
+        return BusinessAttentionTask.model_validate(dict(row))
+
+    @staticmethod
+    def _business_attention_proposal_task_from_row(
+        row: sqlite3.Row,
+    ) -> BusinessAttentionProposalTask:
+        return BusinessAttentionProposalTask.model_validate(dict(row))
+
+    @staticmethod
+    def _business_attention_event_from_row(row: sqlite3.Row) -> BusinessAttentionEvent:
+        return BusinessAttentionEvent.model_validate(dict(row))
+
+    @contextmanager
+    def business_task_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Run one semantic Task transition in a single write transaction."""
+        with self._immediate_write_transaction() as db:
+            yield db
+
+    def get_business_task_signal_by_dedupe_key(
+        self, *, dedupe_key: str, _db: sqlite3.Connection
+    ) -> BusinessTaskSignal | None:
+        row = _db.execute(
+            "select * from business_task_signals where dedupe_key=?", (dedupe_key,)
+        ).fetchone()
+        return self._business_task_signal_from_row(row) if row is not None else None
+
+    def create_business_task_signal_in_transaction(
+        self,
+        *,
+        source_type: str,
+        source_ref: str,
+        evidence_text: str,
+        dedupe_key: str,
+        source_time: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        author_user_id: str = "",
+        author_name: str = "",
+        author_kind: BusinessActorKind | str = BusinessActorKind.UNKNOWN,
+        context_json: str = "{}",
+        now: datetime | None = None,
+        _db: sqlite3.Connection,
+    ) -> int:
+        timestamp = ensure_utc_datetime(
+            now or datetime.now(timezone.utc), field="business task signal now"
+        ).isoformat(timespec="seconds")
+        signal = BusinessTaskSignal(
+            id=0,
+            source_type=source_type,
+            source_ref=source_ref,
+            source_time=source_time,
+            conversation_id=conversation_id,
+            conversation_title=conversation_title,
+            author_user_id=author_user_id,
+            author_name=author_name,
+            author_kind=author_kind,
+            evidence_text=evidence_text,
+            context_json=context_json,
+            dedupe_key=dedupe_key,
+            created_at=timestamp,
+        )
+        cursor = _db.execute(
+            """
+            insert into business_task_signals (
+                source_type, source_ref, source_time, conversation_id, conversation_title,
+                author_user_id, author_name, evidence_text, context_json, dedupe_key,
+                created_at, author_kind
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                signal.source_type,
+                signal.source_ref,
+                signal.source_time,
+                signal.conversation_id,
+                signal.conversation_title,
+                signal.author_user_id,
+                signal.author_name,
+                signal.evidence_text,
+                signal.context_json,
+                signal.dedupe_key,
+                signal.created_at,
+                signal.author_kind.value,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def create_business_task_in_transaction(
+        self,
+        *,
+        title: str,
+        stage: BusinessTaskStage | str,
+        status: BusinessTaskStatus | str = BusinessTaskStatus.OPEN,
+        commitment_status: CommitmentStatus | str = CommitmentStatus.NONE,
+        formal_basis: FormalTaskBasis | str | None = None,
+        business_relevance: BusinessRelevance | str = BusinessRelevance.UNKNOWN,
+        description: str = "",
+        owner_user_id: str = "",
+        owner_name: str = "",
+        owner_evidence_json: str = "{}",
+        deadline_at: str = "",
+        missing_evidence_json: str = "[]",
+        merged_into_task_id: int | None = None,
+        last_activity_at: str | None = None,
+        now: datetime | None = None,
+        _db: sqlite3.Connection,
+    ) -> int:
+        timestamp = ensure_utc_datetime(
+            now or datetime.now(timezone.utc), field="business task now"
+        ).isoformat(timespec="seconds")
+        task = BusinessTask(
+            id=0,
+            title=title,
+            description=description,
+            stage=stage,
+            status=status,
+            commitment_status=commitment_status,
+            formal_basis=formal_basis,
+            business_relevance=business_relevance,
+            merged_into_task_id=merged_into_task_id,
+            owner_user_id=owner_user_id,
+            owner_name=owner_name,
+            owner_evidence_json=owner_evidence_json,
+            deadline_at=deadline_at,
+            missing_evidence_json=missing_evidence_json,
+            last_activity_at=timestamp if last_activity_at is None else last_activity_at,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        cursor = _db.execute(
+            """
+            insert into business_tasks (
+                title, description, stage, status, commitment_status, formal_basis,
+                business_relevance, merged_into_task_id, owner_user_id, owner_name,
+                owner_evidence_json, deadline_at, missing_evidence_json,
+                last_activity_at, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task.title,
+                task.description,
+                task.stage.value,
+                task.status.value,
+                task.commitment_status.value,
+                task.formal_basis.value if task.formal_basis is not None else None,
+                task.business_relevance.value,
+                task.merged_into_task_id,
+                task.owner_user_id,
+                task.owner_name,
+                task.owner_evidence_json,
+                task.deadline_at,
+                task.missing_evidence_json,
+                task.last_activity_at,
+                task.created_at,
+                task.updated_at,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def get_business_task_in_transaction(
+        self, *, task_id: int, _db: sqlite3.Connection
+    ) -> BusinessTask | None:
+        row = _db.execute(
+            "select * from business_tasks where id=?", (task_id,)
+        ).fetchone()
+        return self._business_task_from_row(row) if row is not None else None
+
+    def update_business_task_in_transaction(
+        self, *, task: BusinessTask, _db: sqlite3.Connection
+    ) -> None:
+        _db.execute(
+            """
+            update business_tasks set
+                title=?, description=?, stage=?, status=?, commitment_status=?, formal_basis=?,
+                business_relevance=?, merged_into_task_id=?, owner_user_id=?, owner_name=?,
+                owner_evidence_json=?, deadline_at=?, missing_evidence_json=?,
+                last_activity_at=?, updated_at=?
+            where id=?
+            """,
+            (
+                task.title,
+                task.description,
+                task.stage.value,
+                task.status.value,
+                task.commitment_status.value,
+                task.formal_basis.value if task.formal_basis is not None else None,
+                task.business_relevance.value,
+                task.merged_into_task_id,
+                task.owner_user_id,
+                task.owner_name,
+                task.owner_evidence_json,
+                task.deadline_at,
+                task.missing_evidence_json,
+                task.last_activity_at,
+                task.updated_at,
+                task.id,
+            ),
+        )
+
+    def link_business_task_evidence_in_transaction(
+        self,
+        *,
+        task_id: int,
+        signal_id: int,
+        evidence_role: BusinessEvidenceRole | str,
+        _db: sqlite3.Connection,
+    ) -> None:
+        evidence = BusinessTaskEvidence(
+            task_id=task_id,
+            signal_id=signal_id,
+            evidence_role=evidence_role,
+            created_at="",
+        )
+        _db.execute(
+            """
+            insert into business_task_evidence (task_id, signal_id, evidence_role)
+            values (?, ?, ?)
+            on conflict(task_id, signal_id, evidence_role) do nothing
+            """,
+            (evidence.task_id, evidence.signal_id, evidence.evidence_role.value),
+        )
+
+    def list_business_task_evidence_in_transaction(
+        self, *, task_id: int, _db: sqlite3.Connection
+    ) -> tuple[BusinessTaskEvidence, ...]:
+        rows = _db.execute(
+            "select * from business_task_evidence where task_id=? "
+            "order by created_at, signal_id, evidence_role",
+            (task_id,),
+        ).fetchall()
+        return tuple(self._business_task_evidence_from_row(row) for row in rows)
+
+    def get_business_task_signal_for_task_source_ref_in_transaction(
+        self, *, task_id: int, source_ref: str, _db: sqlite3.Connection
+    ) -> BusinessTaskSignal | None:
+        row = _db.execute(
+            """select signal.* from business_task_signals as signal
+               join business_task_evidence as evidence on evidence.signal_id=signal.id
+               where evidence.task_id=? and signal.source_ref=?
+               order by signal.id desc limit 1""",
+            (task_id, source_ref),
+        ).fetchone()
+        return self._business_task_signal_from_row(row) if row is not None else None
+
+    def create_business_task_date_evidence_in_transaction(
+        self, *, task_id: int, source_signal_id: int,
+        date_type: BusinessTaskDateType | str, value_at: str, raw_phrase: str,
+        actor_kind: BusinessActorKind | str, actor_user_id: str = "", actor_name: str = "",
+        _db: sqlite3.Connection,
+    ) -> int:
+        fact = BusinessTaskDateEvidence(
+            id=0, task_id=task_id, source_signal_id=source_signal_id,
+            date_type=date_type, value_at=value_at, raw_phrase=raw_phrase,
+            actor_kind=actor_kind, actor_user_id=actor_user_id, actor_name=actor_name,
+            created_at="",
+        )
+        cursor = _db.execute(
+            """insert into business_task_date_evidence (
+                task_id, date_type, value_at, raw_phrase, source_signal_id,
+                actor_kind, actor_user_id, actor_name
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                fact.task_id, fact.date_type.value, fact.value_at, fact.raw_phrase,
+                fact.source_signal_id, fact.actor_kind.value, fact.actor_user_id, fact.actor_name,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def copy_business_task_date_evidence_in_transaction(
+        self, *, source_task_id: int, target_task_id: int, _db: sqlite3.Connection
+    ) -> int:
+        """Carry an identical source date fact onto a merged target once."""
+        cursor = _db.execute(
+            """insert into business_task_date_evidence (
+                task_id, date_type, value_at, raw_phrase, source_signal_id,
+                actor_kind, actor_user_id, actor_name, created_at
+            ) select ?, source.date_type, source.value_at, source.raw_phrase,
+                     source.source_signal_id, source.actor_kind, source.actor_user_id,
+                     source.actor_name, source.created_at
+              from business_task_date_evidence source
+             where source.task_id=?
+               and not exists (
+                   select 1 from business_task_date_evidence target
+                    where target.task_id=?
+                      and target.date_type=source.date_type
+                      and target.value_at=source.value_at
+                      and target.raw_phrase=source.raw_phrase
+                      and target.source_signal_id=source.source_signal_id
+                      and target.actor_kind=source.actor_kind
+                      and target.actor_user_id=source.actor_user_id
+                      and target.actor_name=source.actor_name
+                      and target.created_at=source.created_at
+               )""",
+            (target_task_id, source_task_id, target_task_id),
+        )
+        return cursor.rowcount
+
+    def list_business_task_date_evidence(self, task_id: int) -> tuple[BusinessTaskDateEvidence, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_task_date_evidence where task_id=? order by id",
+                (task_id,),
+            ).fetchall()
+            return tuple(self._business_task_date_evidence_from_row(row) for row in rows)
+
+    def list_unmerged_formal_business_task_ids_for_signal_in_transaction(
+        self, *, signal_id: int, _db: sqlite3.Connection
+    ) -> tuple[int, ...]:
+        rows = _db.execute(
+            """select distinct task.id from business_task_evidence as evidence
+               join business_tasks as task on task.id=evidence.task_id
+               where evidence.signal_id=? and task.stage='formal' and task.status<>'merged'
+               order by task.id""",
+            (signal_id,),
+        ).fetchall()
+        return tuple(int(row["id"]) for row in rows)
+
+    def list_unmerged_formal_business_task_ids_for_source_in_transaction(
+        self, *, source_type: str, source_ref: str, conversation_id: str,
+        _db: sqlite3.Connection
+    ) -> tuple[int, ...]:
+        rows = _db.execute(
+            """select distinct task.id from business_task_signals as signal
+               join business_task_evidence as evidence on evidence.signal_id=signal.id
+               join business_tasks as task on task.id=evidence.task_id
+               where signal.source_type=? and signal.source_ref=?
+                 and signal.conversation_id=?
+                 and task.stage='formal' and task.status<>'merged'
+               order by task.id""",
+            (source_type, source_ref, conversation_id),
+        ).fetchall()
+        return tuple(int(row["id"]) for row in rows)
+
+    def append_business_task_event(
+        self,
+        *,
+        task_id: int,
+        event_type: BusinessTaskEventType | str,
+        signal_id: int | None,
+        before_json: str,
+        after_json: str,
+        reason: str,
+        _db: sqlite3.Connection,
+    ) -> int:
+        event = BusinessTaskEvent(
+            id=0,
+            task_id=task_id,
+            event_type=event_type,
+            signal_id=signal_id,
+            before_json=before_json,
+            after_json=after_json,
+            reason=reason,
+            created_at="",
+        )
+        cursor = _db.execute(
+            """
+            insert into business_task_events
+                (task_id, event_type, signal_id, before_json, after_json, reason)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.task_id,
+                event.event_type.value,
+                event.signal_id,
+                event.before_json,
+                event.after_json,
+                event.reason,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def create_business_task_signal(
+        self,
+        *,
+        source_type: str,
+        source_ref: str,
+        evidence_text: str,
+        dedupe_key: str,
+        source_time: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        author_user_id: str = "",
+        author_name: str = "",
+        author_kind: BusinessActorKind | str = BusinessActorKind.UNKNOWN,
+        context_json: str = "{}",
+        now: datetime | None = None,
+    ) -> int:
+        timestamp = ensure_utc_datetime(
+            now or datetime.now(timezone.utc), field="business task signal now"
+        ).isoformat(timespec="seconds")
+        signal = BusinessTaskSignal(
+            id=0, source_type=source_type, source_ref=source_ref, source_time=source_time,
+            conversation_id=conversation_id, conversation_title=conversation_title,
+            author_user_id=author_user_id, author_name=author_name,
+            author_kind=author_kind,
+            evidence_text=evidence_text, context_json=context_json,
+            dedupe_key=dedupe_key, created_at=timestamp,
+        )
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                insert into business_task_signals (
+                    source_type, source_ref, source_time, conversation_id, conversation_title,
+                    author_user_id, author_name, evidence_text, context_json, dedupe_key,
+                    created_at, author_kind
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    signal.source_type, signal.source_ref, signal.source_time,
+                    signal.conversation_id, signal.conversation_title,
+                    signal.author_user_id, signal.author_name, signal.evidence_text,
+                    signal.context_json, signal.dedupe_key, signal.created_at,
+                    signal.author_kind.value,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_business_task_signals(self) -> tuple[BusinessTaskSignal, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_task_signals order by id"
+            ).fetchall()
+            return tuple(self._business_task_signal_from_row(row) for row in rows)
+
+    def get_business_task_signal(self, signal_id: int) -> BusinessTaskSignal | None:
+        with self._connect() as db:
+            return self.get_business_task_signal_in_transaction(signal_id=signal_id, _db=db)
+
+    def get_business_task_signal_in_transaction(
+        self, *, signal_id: int, _db: sqlite3.Connection
+    ) -> BusinessTaskSignal | None:
+        row = _db.execute(
+            "select * from business_task_signals where id=?", (signal_id,)
+        ).fetchone()
+        return self._business_task_signal_from_row(row) if row else None
+
+    def create_business_task(
+        self,
+        *,
+        title: str,
+        stage: BusinessTaskStage | str,
+        status: BusinessTaskStatus | str = BusinessTaskStatus.OPEN,
+        commitment_status: CommitmentStatus | str = CommitmentStatus.NONE,
+        formal_basis: FormalTaskBasis | str | None = None,
+        business_relevance: BusinessRelevance | str = BusinessRelevance.UNKNOWN,
+        description: str = "",
+        owner_user_id: str = "",
+        owner_name: str = "",
+        owner_evidence_json: str = "{}",
+        deadline_at: str = "",
+        missing_evidence_json: str = "[]",
+        merged_into_task_id: int | None = None,
+        last_activity_at: str | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        timestamp = ensure_utc_datetime(
+            now or datetime.now(timezone.utc), field="business task now"
+        ).isoformat(timespec="seconds")
+        # Validate the model before writing so the Python and SQLite contracts
+        # reject the same invalid stage and merge combinations.
+        task = BusinessTask(
+            id=0,
+            title=title,
+            description=description,
+            stage=stage,
+            status=status,
+            commitment_status=commitment_status,
+            formal_basis=formal_basis,
+            business_relevance=business_relevance,
+            merged_into_task_id=merged_into_task_id,
+            owner_user_id=owner_user_id,
+            owner_name=owner_name,
+            owner_evidence_json=owner_evidence_json,
+            deadline_at=deadline_at,
+            missing_evidence_json=missing_evidence_json,
+            last_activity_at=timestamp if last_activity_at is None else last_activity_at,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                insert into business_tasks (
+                    title, description, stage, status, commitment_status, formal_basis,
+                    business_relevance, merged_into_task_id, owner_user_id, owner_name,
+                    owner_evidence_json, deadline_at, missing_evidence_json,
+                    last_activity_at, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task.title, task.description, task.stage.value, task.status.value,
+                    task.commitment_status.value,
+                    task.formal_basis.value if task.formal_basis is not None else None,
+                    task.business_relevance.value, task.merged_into_task_id,
+                    task.owner_user_id, task.owner_name, task.owner_evidence_json,
+                    task.deadline_at, task.missing_evidence_json, task.last_activity_at,
+                    task.created_at, task.updated_at,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def get_business_task(self, task_id: int) -> BusinessTask | None:
+        with self._connect() as db:
+            row = db.execute("select * from business_tasks where id=?", (task_id,)).fetchone()
+            return self._business_task_from_row(row) if row is not None else None
+
+    def list_business_tasks(
+        self, *, stages: Collection[BusinessTaskStage | str] | None = None,
+        statuses: Collection[BusinessTaskStatus | str] | None = None,
+        relevance: Collection[BusinessRelevance | str] | None = None,
+        limit: int = 100, offset: int = 0,
+    ) -> tuple[BusinessTask, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business task pagination must be non-negative with a positive limit")
+        where: list[str] = []
+        values: list[object] = []
+        for column, items, enum in (
+            ("stage", stages, BusinessTaskStage),
+            ("status", statuses, BusinessTaskStatus),
+            ("business_relevance", relevance, BusinessRelevance),
+        ):
+            if items is not None:
+                selected = tuple(enum(item).value for item in items)
+                where.append(f"{column} in ({', '.join('?' for _ in selected)})")
+                values.extend(selected)
+        clause = f" where {' and '.join(where)}" if where else ""
+        with self._connect() as db:
+            rows = db.execute(
+                f"select * from business_tasks{clause} order by updated_at, id limit ? offset ?",
+                (*values, limit, offset),
+            ).fetchall()
+            return tuple(self._business_task_from_row(row) for row in rows)
+
+    def link_business_task_evidence(
+        self,
+        *,
+        task_id: int,
+        signal_id: int,
+        evidence_role: BusinessEvidenceRole | str,
+    ) -> BusinessTaskEvidence:
+        evidence = BusinessTaskEvidence(
+            task_id=task_id, signal_id=signal_id,
+            evidence_role=evidence_role, created_at="",
+        )
+        with self._immediate_write_transaction() as db:
+            db.execute(
+                """
+                insert into business_task_evidence (
+                    task_id, signal_id, evidence_role
+                ) values (?, ?, ?)
+                """,
+                (evidence.task_id, evidence.signal_id, evidence.evidence_role.value),
+            )
+            row = db.execute(
+                "select * from business_task_evidence where task_id=? and signal_id=? and evidence_role=?",
+                (evidence.task_id, evidence.signal_id, evidence.evidence_role.value),
+            ).fetchone()
+            assert row is not None
+            return self._business_task_evidence_from_row(row)
+
+    def list_business_task_evidence(
+        self, task_id: int
+    ) -> tuple[BusinessTaskEvidence, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_task_evidence where task_id=? "
+                "order by created_at, signal_id, evidence_role",
+                (task_id,),
+            ).fetchall()
+            return tuple(self._business_task_evidence_from_row(row) for row in rows)
+
+    def list_business_task_ids_for_conversation(
+        self, *, conversation_id: str, limit: int = 100, offset: int = 0
+    ) -> tuple[int, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business conversation pagination requires positive limit and non-negative offset")
+        if not conversation_id.strip():
+            return ()
+        with self._connect() as db:
+            rows = db.execute(
+                "select distinct evidence.task_id from business_task_evidence evidence "
+                "join business_task_signals signal on signal.id=evidence.signal_id "
+                "where signal.conversation_id=? order by evidence.task_id limit ? offset ?",
+                (conversation_id, limit, offset),
+            ).fetchall()
+            return tuple(int(row["task_id"]) for row in rows)
+
+    def list_business_task_events(
+        self, task_id: int
+    ) -> tuple[BusinessTaskEvent, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_task_events where task_id=? "
+                "order by created_at, id",
+                (task_id,),
+            ).fetchall()
+            return tuple(self._business_task_event_from_row(row) for row in rows)
+
+    def list_business_task_project_links(self, *, task_id: int) -> list[BusinessProject]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select p.* from business_projects p
+                join business_task_anchor_links l on l.anchor_id = p.canonical_anchor_id
+                join business_anchors a on a.id = l.anchor_id
+                where l.task_id=? and l.status='confirmed' and l.active=1 and a.active=1
+                order by p.id
+                """,
+                (task_id,),
+            ).fetchall()
+            return [BusinessProject.model_validate(dict(row)) for row in rows]
+
+    # Task 4 resolution primitives deliberately accept an existing transaction.
+    # The resolution service owns the policy and composes these rows atomically.
+    def create_business_work_cluster_in_transaction(
+        self, *, title: str, _db: sqlite3.Connection
+    ) -> int:
+        cluster = BusinessWorkCluster(id=0, title=title, created_at="")
+        return int(_db.execute(
+            "insert into business_work_clusters (title) values (?)", (cluster.title,)
+        ).lastrowid)
+
+    def add_business_work_cluster_task_in_transaction(
+        self, *, cluster_id: int, task_id: int, _db: sqlite3.Connection
+    ) -> None:
+        _db.execute(
+            "insert into business_work_cluster_tasks (cluster_id, task_id) values (?, ?)",
+            (cluster_id, task_id),
+        )
+
+    def get_business_anchor_in_transaction(
+        self, *, anchor_id: int, _db: sqlite3.Connection
+    ) -> BusinessAnchor | None:
+        row = _db.execute(
+            "select * from business_anchors where id=?", (anchor_id,)
+        ).fetchone()
+        return BusinessAnchor.model_validate(dict(row)) if row is not None else None
+
+    def get_business_anchor_by_identity_in_transaction(
+        self,
+        *,
+        anchor_type: BusinessAnchorType | str,
+        anchor_ref: str,
+        _db: sqlite3.Connection,
+    ) -> BusinessAnchor | None:
+        selected_type = BusinessAnchorType(anchor_type)
+        row = _db.execute(
+            "select * from business_anchors where anchor_type=? and anchor_ref=?",
+            (selected_type.value, anchor_ref),
+        ).fetchone()
+        return BusinessAnchor.model_validate(dict(row)) if row is not None else None
+
+    def get_business_task_anchor_link_in_transaction(
+        self, *, task_id: int, anchor_id: int, _db: sqlite3.Connection
+    ) -> BusinessTaskAnchorLink | None:
+        row = _db.execute(
+            "select * from business_task_anchor_links where task_id=? and anchor_id=?",
+            (task_id, anchor_id),
+        ).fetchone()
+        return (
+            BusinessTaskAnchorLink.model_validate(dict(row))
+            if row is not None
+            else None
+        )
+
+    def get_business_project_candidate_in_transaction(
+        self, *, candidate_id: int, _db: sqlite3.Connection
+    ) -> BusinessProjectCandidate | None:
+        row = _db.execute(
+            "select * from business_project_candidates where id=?", (candidate_id,)
+        ).fetchone()
+        return (
+            BusinessProjectCandidate.model_validate(dict(row))
+            if row is not None
+            else None
+        )
+
+    def get_business_project_in_transaction(
+        self, *, project_id: int, _db: sqlite3.Connection
+    ) -> BusinessProject | None:
+        row = _db.execute(
+            "select * from business_projects where id=?", (project_id,)
+        ).fetchone()
+        return BusinessProject.model_validate(dict(row)) if row is not None else None
+
+    def derive_business_task_relevance_in_transaction(
+        self, *, task_id: int, _db: sqlite3.Connection
+    ) -> BusinessRelevance:
+        rows = _db.execute(
+            """
+            select link.status, link.active as link_active, anchor.active as anchor_active
+            from business_task_anchor_links as link
+            join business_anchors as anchor on anchor.id=link.anchor_id
+            where link.task_id=?
+            """,
+            (task_id,),
+        ).fetchall()
+        if any(
+            row["status"] == BusinessRelationStatus.CONFIRMED.value
+            and bool(row["link_active"])
+            and bool(row["anchor_active"])
+            for row in rows
+        ):
+            return BusinessRelevance.RELEVANT
+        if any(
+            row["status"] == BusinessRelationStatus.CONFIRMED.value
+            and not bool(row["link_active"])
+            for row in rows
+        ):
+            return BusinessRelevance.NOT_RELEVANT
+        return BusinessRelevance.UNKNOWN
+
+    def create_business_task_relation_in_transaction(
+        self, *, from_task_id: int, to_task_id: int,
+        relation_type: BusinessRelationType | str,
+        status: BusinessRelationStatus | str,
+        supporting_signal_id: int, reason: str = "", _db: sqlite3.Connection,
+    ) -> int:
+        relation = BusinessTaskRelation(
+            from_task_id=from_task_id, to_task_id=to_task_id, relation_type=relation_type,
+            status=status, supporting_signal_id=supporting_signal_id, reason=reason, created_at="",
+        )
+        existing = _db.execute(
+            """select rowid as relation_id, * from business_task_relations
+               where from_task_id=? and to_task_id=? and relation_type=?""",
+            (relation.from_task_id, relation.to_task_id, relation.relation_type.value),
+        ).fetchone()
+        if existing is None:
+            return int(_db.execute(
+                """insert into business_task_relations
+                   (from_task_id, to_task_id, relation_type, status, supporting_signal_id, reason)
+                   values (?, ?, ?, ?, ?, ?)""",
+                (relation.from_task_id, relation.to_task_id, relation.relation_type.value,
+                 relation.status.value, relation.supporting_signal_id, relation.reason),
+            ).lastrowid)
+        relation_id = int(existing["relation_id"])
+        existing_status = BusinessRelationStatus(existing["status"])
+        if existing_status is relation.status:
+            if int(existing["supporting_signal_id"]) == relation.supporting_signal_id:
+                return relation_id
+            raise ValueError("relation replay with the same status requires the same evidence")
+        if existing_status is not BusinessRelationStatus.PROPOSED:
+            if relation.status is BusinessRelationStatus.PROPOSED:
+                return relation_id
+            raise ValueError("conflicting relation decision")
+        if relation.status is BusinessRelationStatus.PROPOSED:
+            raise AssertionError("same proposed status handled above")
+        _db.execute(
+            """update business_task_relations
+               set status=?, supporting_signal_id=?, reason=?
+               where rowid=?""",
+            (
+                relation.status.value,
+                relation.supporting_signal_id,
+                relation.reason,
+                relation_id,
+            ),
+        )
+        return relation_id
+
+    def create_business_anchor_in_transaction(
+        self, *, anchor_type: BusinessAnchorType | str, anchor_ref: str, title: str,
+        active: bool = True, _db: sqlite3.Connection,
+    ) -> int:
+        anchor = BusinessAnchor(
+            id=0, anchor_type=anchor_type, anchor_ref=anchor_ref, title=title,
+            active=active, created_at="",
+        )
+        return int(_db.execute(
+            """insert into business_anchors (anchor_type, anchor_ref, title, active)
+               values (?, ?, ?, ?)""",
+            (anchor.anchor_type.value, anchor.anchor_ref, anchor.title, int(anchor.active)),
+        ).lastrowid)
+
+    def create_business_task_anchor_link_in_transaction(
+        self, *, task_id: int, anchor_id: int, status: BusinessRelationStatus | str,
+        active: bool, evidence_signal_id: int, reason: str = "", _db: sqlite3.Connection,
+    ) -> int:
+        link = BusinessTaskAnchorLink(
+            id=0, task_id=task_id, anchor_id=anchor_id, status=status, active=active,
+            evidence_signal_id=evidence_signal_id, reason=reason, created_at="",
+        )
+        _db.execute(
+            """insert into business_task_anchor_links
+               (task_id, anchor_id, status, active, evidence_signal_id, reason)
+               values (?, ?, ?, ?, ?, ?)
+               on conflict(task_id, anchor_id) do update set
+                 status=excluded.status, active=excluded.active,
+                 evidence_signal_id=excluded.evidence_signal_id, reason=excluded.reason""",
+            (link.task_id, link.anchor_id, link.status.value, int(link.active),
+             link.evidence_signal_id, link.reason),
+        )
+        row = _db.execute(
+            "select id from business_task_anchor_links where task_id=? and anchor_id=?",
+            (link.task_id, link.anchor_id),
+        ).fetchone()
+        assert row is not None
+        return int(row["id"])
+
+    def create_business_project_in_transaction(
+        self,
+        *,
+        canonical_anchor_id: int,
+        title: str,
+        registry_source: str,
+        _db: sqlite3.Connection,
+    ) -> int:
+        project = BusinessProject(
+            id=0,
+            canonical_anchor_id=canonical_anchor_id,
+            title=title,
+            registry_source=registry_source,
+            created_at="",
+        )
+        return int(_db.execute(
+            """insert into business_projects
+               (canonical_anchor_id, title, registry_source) values (?, ?, ?)""",
+            (project.canonical_anchor_id, project.title, project.registry_source),
+        ).lastrowid)
+
+    def create_business_project_candidate_in_transaction(
+        self, *, cluster_id: int, title: str, reason: str, _db: sqlite3.Connection
+    ) -> int:
+        candidate = BusinessProjectCandidate(
+            id=0, cluster_id=cluster_id, title=title, reason=reason, created_at=""
+        )
+        return int(_db.execute(
+            "insert into business_project_candidates (cluster_id, title, reason) values (?, ?, ?)",
+            (candidate.cluster_id, candidate.title, candidate.reason),
+        ).lastrowid)
+
+    def confirm_business_project_candidate_in_transaction(
+        self,
+        *,
+        candidate_id: int,
+        project_id: int,
+        confirmation_signal_id: int,
+        _db: sqlite3.Connection,
+    ) -> None:
+        candidate = self.get_business_project_candidate_in_transaction(
+            candidate_id=candidate_id, _db=_db
+        )
+        if candidate is None:
+            raise ValueError("project candidate must exist")
+        if candidate.status is BusinessRelationStatus.CONFIRMED:
+            if (
+                candidate.confirmed_project_id == project_id
+                and candidate.confirmation_signal_id == confirmation_signal_id
+            ):
+                return
+            if candidate.confirmed_project_id != project_id:
+                raise ValueError("project candidate is already confirmed to a different project")
+            raise ValueError("project candidate is already confirmed with different evidence")
+        cursor = _db.execute(
+            """update business_project_candidates
+               set status='confirmed', confirmed_project_id=?, confirmation_signal_id=?
+               where id=? and status='proposed'""",
+            (project_id, confirmation_signal_id, candidate_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("project candidate must exist and be proposed")
+
+    def get_business_project_candidate(self, candidate_id: int) -> BusinessProjectCandidate | None:
+        with self._connect() as db:
+            row = db.execute("select * from business_project_candidates where id=?", (candidate_id,)).fetchone()
+            return BusinessProjectCandidate.model_validate(dict(row)) if row else None
+
+    def get_business_project(self, project_id: int) -> BusinessProject | None:
+        with self._connect() as db:
+            row = db.execute("select * from business_projects where id=?", (project_id,)).fetchone()
+            return BusinessProject.model_validate(dict(row)) if row else None
+
+    def list_business_work_clusters(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessWorkCluster, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business cluster pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_work_clusters order by id limit ? offset ?",
+                (limit, offset),
+            ).fetchall()
+            return tuple(BusinessWorkCluster.model_validate(dict(row)) for row in rows)
+
+    def list_business_work_cluster_tasks(
+        self, *, cluster_id: int | None = None, task_id: int | None = None,
+        limit: int = 100, offset: int = 0,
+    ) -> tuple[BusinessWorkClusterTask, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business cluster membership pagination requires positive limit and non-negative offset")
+        if cluster_id is not None and cluster_id < 1:
+            raise ValueError("cluster_id must be positive")
+        if task_id is not None and task_id < 1:
+            raise ValueError("task_id must be positive")
+        clauses = []
+        values: list[int] = []
+        if cluster_id is not None:
+            clauses.append("cluster_id=?")
+            values.append(cluster_id)
+        if task_id is not None:
+            clauses.append("task_id=?")
+            values.append(task_id)
+        where = f"where {' and '.join(clauses)}" if clauses else ""
+        with self._connect() as db:
+            rows = db.execute(
+                f"select * from business_work_cluster_tasks {where} "
+                "order by cluster_id, task_id limit ? offset ?",
+                (*values, limit, offset),
+            ).fetchall()
+            return tuple(BusinessWorkClusterTask.model_validate(dict(row)) for row in rows)
+
+    def list_business_anchors(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessAnchor, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business anchor pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_anchors order by id limit ? offset ?",
+                (limit, offset),
+            ).fetchall()
+            return tuple(BusinessAnchor.model_validate(dict(row)) for row in rows)
+
+    def list_business_task_relations(
+        self, *, task_id: int, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessTaskRelation, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business relation pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_task_relations where from_task_id=? or to_task_id=? "
+                "order by from_task_id, to_task_id, relation_type limit ? offset ?",
+                (task_id, task_id, limit, offset),
+            ).fetchall()
+            return tuple(BusinessTaskRelation.model_validate(dict(row)) for row in rows)
+
+    def list_business_task_anchor_links(
+        self, *, task_id: int, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessTaskAnchorLink, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business anchor-link pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_task_anchor_links where task_id=? "
+                "order by id limit ? offset ?",
+                (task_id, limit, offset),
+            ).fetchall()
+            return tuple(BusinessTaskAnchorLink.model_validate(dict(row)) for row in rows)
+
+    def list_business_projects(
+        self, *, limit: int | None = None, offset: int = 0
+    ) -> list[BusinessProject]:
+        if (limit is not None and limit < 1) or offset < 0:
+            raise ValueError("business project pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_projects order by id limit ? offset ?",
+                (limit if limit is not None else -1, offset),
+            ).fetchall()
+            return [BusinessProject.model_validate(dict(row)) for row in rows]
+
+    # Task 5 attention primitives accept an existing transaction.  The
+    # projection service owns eligibility and event policy so these methods do
+    # not make semantic decisions on their own.
+    def get_business_attention_item_in_transaction(
+        self, *, item_id: int, _db: sqlite3.Connection
+    ) -> BusinessAttentionItem | None:
+        row = _db.execute(
+            "select * from business_attention_items where id=?", (item_id,)
+        ).fetchone()
+        return self._business_attention_item_from_row(row) if row is not None else None
+
+    def get_business_attention_item_by_stable_key_in_transaction(
+        self, *, stable_key: str, _db: sqlite3.Connection
+    ) -> BusinessAttentionItem | None:
+        row = _db.execute(
+            "select * from business_attention_items where stable_key=?", (stable_key,)
+        ).fetchone()
+        return self._business_attention_item_from_row(row) if row is not None else None
+
+    def create_business_attention_item_in_transaction(
+        self,
+        *,
+        stable_key: str,
+        category: AttentionCategory | str,
+        title: str,
+        business_area: str,
+        why_attention: str,
+        current_state: str,
+        ceo_action: str,
+        anchor_id: int,
+        evidence_signal_id: int,
+        now: str,
+        _db: sqlite3.Connection,
+    ) -> int:
+        item = BusinessAttentionItem(
+            id=0, stable_key=stable_key, category=category, title=title,
+            business_area=business_area, why_attention=why_attention,
+            current_state=current_state, ceo_action=ceo_action, anchor_id=anchor_id,
+            evidence_signal_id=evidence_signal_id, created_at=now, updated_at=now,
+        )
+        return int(_db.execute(
+            """insert into business_attention_items
+               (stable_key, category, status, title, business_area, why_attention,
+                current_state, ceo_action, anchor_id, evidence_signal_id, created_at, updated_at)
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (item.stable_key, item.category.value, item.status.value, item.title,
+             item.business_area, item.why_attention, item.current_state, item.ceo_action,
+             item.anchor_id, item.evidence_signal_id, item.created_at, item.updated_at),
+        ).lastrowid)
+
+    def update_business_attention_item_in_transaction(
+        self, *, item: BusinessAttentionItem, _db: sqlite3.Connection
+    ) -> None:
+        _db.execute(
+            """update business_attention_items set
+               category=?, status=?, title=?, business_area=?, why_attention=?, current_state=?,
+               ceo_action=?, anchor_id=?, evidence_signal_id=?, resolution_signal_id=?,
+               resolved_at=?, updated_at=? where id=?""",
+            (item.category.value, item.status.value, item.title, item.business_area,
+             item.why_attention, item.current_state, item.ceo_action, item.anchor_id,
+             item.evidence_signal_id, item.resolution_signal_id, item.resolved_at,
+             item.updated_at, item.id),
+        )
+
+    def link_business_attention_task_in_transaction(
+        self, *, attention_item_id: int, task_id: int, _db: sqlite3.Connection
+    ) -> None:
+        _db.execute(
+            """insert into business_attention_tasks (attention_item_id, task_id)
+               values (?, ?) on conflict(attention_item_id, task_id) do nothing""",
+            (attention_item_id, task_id),
+        )
+
+    def replace_business_attention_tasks_in_transaction(
+        self, *, attention_item_id: int, task_ids: tuple[int, ...], _db: sqlite3.Connection
+    ) -> bool:
+        """Make current projection membership equal the supplied Task IDs."""
+        selected = tuple(sorted(set(task_ids)))
+        rows = _db.execute(
+            "select task_id from business_attention_tasks where attention_item_id=? order by task_id",
+            (attention_item_id,),
+        ).fetchall()
+        current = tuple(int(row["task_id"]) for row in rows)
+        if current == selected:
+            return False
+        if selected:
+            _db.execute(
+                f"delete from business_attention_tasks where attention_item_id=? and task_id not in ({', '.join('?' for _ in selected)})",
+                (attention_item_id, *selected),
+            )
+        else:
+            _db.execute(
+                "delete from business_attention_tasks where attention_item_id=?",
+                (attention_item_id,),
+            )
+        for task_id in selected:
+            self.link_business_attention_task_in_transaction(
+                attention_item_id=attention_item_id, task_id=task_id, _db=_db
+            )
+        return True
+
+    def replace_business_attention_proposal_tasks_in_transaction(
+        self, *, attention_item_id: int, task_ids: tuple[int, ...], _db: sqlite3.Connection
+    ) -> bool:
+        """Persist the latest explicit proposal membership, independent of eligibility."""
+        selected = tuple(sorted(set(task_ids)))
+        rows = _db.execute(
+            "select task_id from business_attention_proposal_tasks where attention_item_id=? order by task_id",
+            (attention_item_id,),
+        ).fetchall()
+        current = tuple(int(row["task_id"]) for row in rows)
+        if current == selected:
+            return False
+        if selected:
+            _db.execute(
+                f"delete from business_attention_proposal_tasks where attention_item_id=? and task_id not in ({', '.join('?' for _ in selected)})",
+                (attention_item_id, *selected),
+            )
+        else:
+            _db.execute(
+                "delete from business_attention_proposal_tasks where attention_item_id=?",
+                (attention_item_id,),
+            )
+        for task_id in selected:
+            _db.execute(
+                """insert into business_attention_proposal_tasks (attention_item_id, task_id)
+                   values (?, ?) on conflict(attention_item_id, task_id) do nothing""",
+                (attention_item_id, task_id),
+            )
+        return True
+
+    def append_business_attention_event_in_transaction(
+        self,
+        *,
+        attention_item_id: int,
+        event_type: BusinessAttentionEventType | str,
+        signal_id: int,
+        before_json: str,
+        after_json: str,
+        reason: str,
+        _db: sqlite3.Connection,
+    ) -> int:
+        event = BusinessAttentionEvent(
+            id=0, attention_item_id=attention_item_id, event_type=event_type,
+            signal_id=signal_id, before_json=before_json, after_json=after_json,
+            reason=reason, created_at="",
+        )
+        return int(_db.execute(
+            """insert into business_attention_events
+               (attention_item_id, event_type, signal_id, before_json, after_json, reason)
+               values (?, ?, ?, ?, ?, ?)""",
+            (event.attention_item_id, event.event_type.value, event.signal_id,
+             event.before_json, event.after_json, event.reason),
+        ).lastrowid)
+
+    def get_business_attention_item(self, item_id: int) -> BusinessAttentionItem | None:
+        with self._connect() as db:
+            return self.get_business_attention_item_in_transaction(item_id=item_id, _db=db)
+
+    def list_business_attention_items(self) -> tuple[BusinessAttentionItem, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from business_attention_items order by updated_at, id"
+            ).fetchall()
+            return tuple(self._business_attention_item_from_row(row) for row in rows)
+
+    def list_business_attention_tasks(self, attention_item_id: int) -> tuple[BusinessAttentionTask, ...]:
+        with self._connect() as db:
+            return self.list_business_attention_tasks_in_transaction(
+                attention_item_id=attention_item_id, _db=db
+            )
+
+    def list_business_attention_tasks_in_transaction(
+        self, *, attention_item_id: int, _db: sqlite3.Connection
+    ) -> tuple[BusinessAttentionTask, ...]:
+        rows = _db.execute(
+            "select * from business_attention_tasks where attention_item_id=? order by task_id",
+            (attention_item_id,),
+        ).fetchall()
+        return tuple(self._business_attention_task_from_row(row) for row in rows)
+
+    def list_business_attention_proposal_tasks_in_transaction(
+        self, *, attention_item_id: int, _db: sqlite3.Connection
+    ) -> tuple[BusinessAttentionProposalTask, ...]:
+        rows = _db.execute(
+            "select * from business_attention_proposal_tasks where attention_item_id=? order by task_id",
+            (attention_item_id,),
+        ).fetchall()
+        return tuple(self._business_attention_proposal_task_from_row(row) for row in rows)
+
+    def list_business_attention_events(self, attention_item_id: int) -> tuple[BusinessAttentionEvent, ...]:
+        with self._connect() as db:
+            return self.list_business_attention_events_in_transaction(
+                attention_item_id=attention_item_id, _db=db
+            )
+
+    def list_business_attention_events_in_transaction(
+        self, *, attention_item_id: int, _db: sqlite3.Connection
+    ) -> tuple[BusinessAttentionEvent, ...]:
+        rows = _db.execute(
+            "select * from business_attention_events where attention_item_id=? order by created_at, id",
+            (attention_item_id,),
+        ).fetchall()
+        return tuple(self._business_attention_event_from_row(row) for row in rows)
+
+    def list_business_tasks_for_projection(self) -> tuple[BusinessTask, ...]:
+        """Business-only input for later projections; keeps non-relevant tasks searchable."""
+        with self._connect() as db:
+            rows = db.execute(
+                """select * from business_tasks
+                   where business_relevance in ('unknown', 'relevant')
+                   order by updated_at, id"""
+            ).fetchall()
+            return tuple(self._business_task_from_row(row) for row in rows)
 
     def backfill_scheduled_task_runtime_capabilities(
         self,
@@ -25122,6 +27037,426 @@ class AutoReplyStore:
             link = self._normalize_dingtalk_todo_link_row(row)
             result.setdefault(link.work_todo_id, []).append(link)
         return result
+
+    def create_business_task_dingtalk_link(self, *, business_task_id: int, **values) -> int:
+        link_id, _ = self.claim_business_task_dingtalk_link(
+            business_task_id=business_task_id, **values
+        )
+        return link_id
+
+    def claim_business_task_dingtalk_link(self, *, business_task_id: int, **values) -> tuple[int, bool]:
+        allowed = {"dingtalk_task_id", "executor_user_id", "executor_name", "title_snapshot", "deadline_at_snapshot", "priority_snapshot", "status", "last_dingtalk_done", "last_dingtalk_payload_json", "last_pull_at", "last_push_at", "last_error", "retry_count"}
+        filtered = self._filter_allowed_values(values, allowed)
+        filtered["business_task_id"] = business_task_id
+        columns = ", ".join(filtered)
+        with self._immediate_write_transaction() as db:
+            active = db.execute(
+                "select id from business_task_dingtalk_links where business_task_id=? "
+                "and status in ('creating','active') order by id desc limit 1",
+                (business_task_id,),
+            ).fetchone()
+            if active is not None:
+                return int(active["id"]), False
+            cursor = db.execute(
+                f"insert into business_task_dingtalk_links ({columns}) values ({', '.join('?' for _ in filtered)})",
+                list(filtered.values()),
+            )
+            return int(cursor.lastrowid), True
+
+    def create_business_task_follow_up(
+        self, *, business_task_id: int, source_signal_id: int,
+        target_conversation_id: str, target_kind: str, question_text: str,
+        scheduled_at: str, owner_user_id: str, owner_name: str,
+        dedupe_key: str, _db: sqlite3.Connection | None = None,
+    ) -> int:
+        if target_kind not in {"group", "direct"} or not target_conversation_id.strip():
+            raise ValueError("Task follow-up requires exact source conversation target")
+        if not scheduled_at.strip() or not owner_user_id.strip() or not question_text.strip():
+            raise ValueError("Task follow-up requires schedule, owner and question")
+        try:
+            datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Task follow-up requires parseable next_check_at") from exc
+        with self._optional_connection(_db) as db:
+            signal = db.execute(
+                "select s.conversation_id from business_task_signals s "
+                "join business_task_evidence e on e.signal_id=s.id "
+                "where e.task_id=? and s.id=? limit 1",
+                (business_task_id, source_signal_id),
+            ).fetchone()
+            if signal is None or signal["conversation_id"] != target_conversation_id:
+                raise ValueError("Task follow-up target must match linked source signal")
+            db.execute(
+                "insert or ignore into business_task_follow_ups "
+                "(business_task_id, source_signal_id, owner_user_id, owner_name, "
+                "target_conversation_id, target_kind, question_text, scheduled_at, dedupe_key) "
+                "values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (business_task_id, source_signal_id, owner_user_id, owner_name,
+                 target_conversation_id, target_kind, question_text, scheduled_at, dedupe_key),
+            )
+            row = db.execute(
+                "select id from business_task_follow_ups where dedupe_key=?", (dedupe_key,)
+            ).fetchone()
+            return int(row["id"])
+
+    def list_business_task_follow_ups(
+        self, *, business_task_id: int | None = None,
+        statuses: tuple[str, ...] | None = None,
+        due_before: str | None = None,
+        limit: int = 200, offset: int = 0,
+    ) -> list[sqlite3.Row]:
+        if limit < 1 or offset < 0:
+            raise ValueError("Task follow-up pagination must be non-negative and nonempty")
+        clauses: list[str] = []
+        args: list[str | int] = []
+        if business_task_id is not None:
+            clauses.append("business_task_id=?")
+            args.append(business_task_id)
+        if statuses:
+            clauses.append(f"status in ({','.join('?' for _ in statuses)})")
+            args.extend(statuses)
+        if due_before is not None:
+            clauses.append("datetime(scheduled_at)<=datetime(?)")
+            args.append(due_before)
+        query = "select * from business_task_follow_ups"
+        if clauses:
+            query += " where " + " and ".join(clauses)
+        query += " order by scheduled_at, id limit ? offset ?"
+        args.extend((limit, offset))
+        with self._connect() as db:
+            return list(db.execute(query, args))
+
+    def list_business_task_follow_up_send_attempts(
+        self, *, draft_id: int,
+    ) -> list[sqlite3.Row]:
+        with self._connect() as db:
+            return list(db.execute(
+                "select * from business_task_follow_up_send_attempts "
+                "where draft_id=? order by id", (draft_id,)
+            ))
+
+    def claim_due_business_task_follow_up(
+        self, *, now: str, claim_token: str, lease_owner: str,
+        lease_until: str, idempotency_uuid: str,
+    ) -> sqlite3.Row | None:
+        with self._immediate_write_transaction() as db:
+            db.execute(
+                "update business_task_follow_up_send_attempts set state='expired_before_send', "
+                "lease_owner='', updated_at=? where state='claimed' and lease_until<=?",
+                (now, now),
+            )
+            row = db.execute(
+                "select f.* from business_task_follow_ups f "
+                "join business_tasks t on t.id=f.business_task_id "
+                "where f.status in ('draft','approved') and datetime(f.scheduled_at)<=datetime(?) "
+                "and t.status in ('open','waiting') and not exists ("
+                "select 1 from business_task_follow_up_send_attempts a "
+                "where a.draft_id=f.id and a.draft_revision=f.revision "
+                "and a.state<>'expired_before_send') "
+                "order by f.scheduled_at, f.id limit 1",
+                (now,),
+            ).fetchone()
+            if row is None:
+                return None
+            db.execute(
+                "insert into business_task_follow_up_send_attempts "
+                "(draft_id, draft_revision, claim_token, idempotency_uuid, state, "
+                "lease_owner, claimed_at, lease_until) values (?, ?, ?, ?, 'claimed', ?, ?, ?)",
+                (row["id"], row["revision"], claim_token, idempotency_uuid,
+                 lease_owner, now, lease_until),
+            )
+            return row
+
+    def recover_expired_business_task_follow_up_sends(
+        self, *, now: str,
+    ) -> list[sqlite3.Row]:
+        """Quarantine an expired in-flight send; its provider outcome is unknown."""
+        with self._immediate_write_transaction() as db:
+            rows = list(db.execute(
+                "select f.*, a.idempotency_uuid from business_task_follow_ups f "
+                "join business_task_follow_up_send_attempts a on a.draft_id=f.id "
+                "and a.draft_revision=f.revision "
+                "where a.state='sending' and a.lease_until<=?",
+                (now,),
+            ))
+            for row in rows:
+                result_json = json.dumps(
+                    {"error": "send lease expired; provider outcome unknown",
+                     "idempotency_uuid": row["idempotency_uuid"]}, ensure_ascii=False,
+                )
+                db.execute(
+                    "update business_task_follow_up_send_attempts set state='unknown', "
+                    "result_json=?, lease_owner='', lease_until='', updated_at=? "
+                    "where draft_id=? and draft_revision=? and state='sending'",
+                    (result_json, now, row["id"], row["revision"]),
+                )
+                db.execute(
+                    "update business_task_follow_ups set status='failed', "
+                    "send_result_json=?, updated_at=? where id=? and revision=? "
+                    "and status in ('draft','approved')",
+                    (result_json, now, row["id"], row["revision"]),
+                )
+            return rows
+
+    def transition_business_task_follow_up_to_sending(
+        self, *, draft_id: int, revision: int, claim_token: str,
+    ) -> bool:
+        with self._immediate_write_transaction() as db:
+            return db.execute(
+                "update business_task_follow_up_send_attempts set state='sending', "
+                "updated_at=current_timestamp where draft_id=? and draft_revision=? "
+                "and claim_token=? and state='claimed'",
+                (draft_id, revision, claim_token),
+            ).rowcount == 1
+
+    def finish_business_task_follow_up_send(
+        self, *, draft_id: int, revision: int, claim_token: str,
+        status: str, result_json: str, now: str,
+    ) -> bool:
+        if status not in {"sent", "failed", "unknown"}:
+            raise ValueError("business Task follow-up send terminal status is invalid")
+        with self._immediate_write_transaction() as db:
+            changed = db.execute(
+                "update business_task_follow_up_send_attempts set state=?, result_json=?, "
+                "lease_owner='', lease_until='', updated_at=? where draft_id=? "
+                "and draft_revision=? and claim_token=? and state='sending'",
+                (status, result_json, now, draft_id, revision, claim_token),
+            ).rowcount
+            if changed != 1:
+                return False
+            db.execute(
+                "update business_task_follow_ups set status=?, send_result_json=?, "
+                "sent_at=case when ?='sent' then ? else sent_at end, "
+                "updated_at=? where id=? and revision=? and status in ('draft','approved')",
+                (status if status != "unknown" else "failed", result_json,
+                 status, now, now, draft_id, revision),
+            )
+            return True
+
+    def get_business_task_dingtalk_link(self, link_id: int):
+        with self._connect() as db:
+            return db.execute("select * from business_task_dingtalk_links where id=?", (link_id,)).fetchone()
+
+    def list_business_task_dingtalk_links(
+        self, *, business_task_id: int | None = None,
+        statuses: tuple[str, ...] | None = None,
+        limit: int = 200, offset: int = 0,
+    ) -> list[sqlite3.Row]:
+        if limit < 1 or offset < 0:
+            raise ValueError("Task TODO link pagination must be non-negative and nonempty")
+        clauses: list[str] = []
+        args: list[str | int] = []
+        if business_task_id is not None:
+            clauses.append("business_task_id=?")
+            args.append(business_task_id)
+        if statuses:
+            clauses.append(f"status in ({','.join('?' for _ in statuses)})")
+            args.extend(statuses)
+        query = "select * from business_task_dingtalk_links"
+        if clauses:
+            query += " where " + " and ".join(clauses)
+        query += " order by id limit ? offset ?"
+        args.extend((limit, offset))
+        with self._connect() as db:
+            return list(db.execute(query, args))
+
+    def get_active_business_task_dingtalk_link(self, business_task_id: int):
+        with self._connect() as db:
+            return db.execute("select * from business_task_dingtalk_links where business_task_id=? and status in ('creating','active') order by id desc limit 1", (business_task_id,)).fetchone()
+
+    def update_business_task_dingtalk_link(self, link_id: int, **values) -> None:
+        allowed = {"dingtalk_task_id", "executor_user_id", "executor_name", "title_snapshot", "deadline_at_snapshot", "priority_snapshot", "status", "last_dingtalk_done", "last_dingtalk_payload_json", "last_pull_at", "last_push_at", "last_error", "retry_count"}
+        filtered = self._filter_allowed_values(values, allowed)
+        if not filtered:
+            return
+        with self._connect() as db:
+            db.execute(f"update business_task_dingtalk_links set {', '.join(f'{key}=?' for key in filtered)}, updated_at=current_timestamp where id=?", [*filtered.values(), link_id])
+
+    def enqueue_business_task_todo_sync_outbox(
+        self,
+        *,
+        operation_key: str,
+        business_task_id: int,
+        operation: str,
+        evidence_json: str = "{}",
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        if operation not in {"create", "complete"}:
+            raise ValueError("business task todo sync operation is invalid")
+        transaction = self._immediate_write_transaction() if _db is None else self._optional_connection(_db)
+        with transaction as db:
+            if operation == "create" and db.execute(
+                "select 1 from business_task_todo_sync_outbox where business_task_id=? "
+                "and operation='create' and status in ('queued','running','unknown','failed') limit 1",
+                (business_task_id,),
+            ).fetchone() is not None:
+                return
+            db.execute(
+                "insert or ignore into business_task_todo_sync_outbox "
+                "(operation_key, business_task_id, operation, evidence_json) values (?, ?, ?, ?)",
+                (operation_key, business_task_id, operation, evidence_json),
+            )
+
+    def list_unknown_business_task_todo_creates_with_receipts(
+        self, *, limit: int = 100,
+    ) -> list[sqlite3.Row]:
+        with self._connect() as db:
+            return list(db.execute(
+                "select o.id as outbox_id, l.id as link_id, l.dingtalk_task_id "
+                "from business_task_todo_sync_outbox o "
+                "join business_task_dingtalk_links l on l.business_task_id=o.business_task_id "
+                "where o.operation='create' and o.status='unknown' "
+                "and l.status in ('creating','active') and trim(l.dingtalk_task_id)<>'' "
+                "order by o.id limit ?",
+                (limit,),
+            ))
+
+    def complete_unknown_business_task_todo_sync_outbox_from_receipt(
+        self, *, outbox_id: int, provider_readback_json: str,
+    ) -> bool:
+        try:
+            readback = json.loads(provider_readback_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("provider read-back must be JSON") from exc
+        if not isinstance(readback, dict) or not readback:
+            raise ValueError("provider read-back is required")
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select business_task_id from business_task_todo_sync_outbox "
+                "where id=? and operation='create' and status='unknown'",
+                (outbox_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            link = db.execute(
+                "select id, dingtalk_task_id from business_task_dingtalk_links "
+                "where business_task_id=? and status in ('creating','active') "
+                "and trim(dingtalk_task_id)<>'' order by id desc limit 1",
+                (row["business_task_id"],),
+            ).fetchone()
+            if link is None:
+                return False
+            db.execute(
+                "update business_task_dingtalk_links set status='active', last_error='', "
+                "last_dingtalk_done=?, last_dingtalk_payload_json=?, "
+                "last_pull_at=current_timestamp, updated_at=current_timestamp where id=?",
+                (readback.get("done") is True, provider_readback_json, link["id"]),
+            )
+            return db.execute(
+                "update business_task_todo_sync_outbox set status='completed', error='', "
+                "receipt_json=?, lease_owner='', lease_expires_at='', "
+                "completed_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and status='unknown'",
+                (json.dumps({"link_id": link["id"], "dingtalk_task_id": link["dingtalk_task_id"]}, ensure_ascii=False), outbox_id),
+            ).rowcount == 1
+
+    def list_business_task_todo_sync_outbox(
+        self, *, statuses: tuple[str, ...] | None = None
+    ) -> list[sqlite3.Row]:
+        query = "select * from business_task_todo_sync_outbox"
+        args: list[str] = []
+        if statuses:
+            query += f" where status in ({','.join('?' for _ in statuses)})"
+            args.extend(statuses)
+        with self._connect() as db:
+            return list(db.execute(f"{query} order by id", args).fetchall())
+
+    def get_business_task_todo_sync_outbox(self, outbox_id: int) -> sqlite3.Row | None:
+        with self._connect() as db:
+            return db.execute(
+                "select * from business_task_todo_sync_outbox where id=?", (outbox_id,)
+            ).fetchone()
+
+    def claim_business_task_todo_sync_outbox(
+        self, *, owner: str, now: str, lease_seconds: int = 300
+    ) -> sqlite3.Row | None:
+        lease_until = (
+            datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=lease_seconds)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        with self._agent_run_write_transaction(now) as (db, _):
+            db.execute(
+                "update business_task_todo_sync_outbox set status='unknown', lease_owner='', "
+                "lease_expires_at='', error='receipt_reconciliation_required', updated_at=? "
+                "where status='running' and lease_expires_at<=?", (now, now)
+            )
+            row = db.execute(
+                "select * from business_task_todo_sync_outbox where "
+                "(status='queued' or (status='failed' and attempt_count<3 and next_attempt_at<=?)) "
+                "order by id limit 1", (now,)
+            ).fetchone()
+            if row is None:
+                return None
+            changed = db.execute(
+                "update business_task_todo_sync_outbox set status='running', lease_owner=?, "
+                "lease_expires_at=?, attempt_count=attempt_count+1, updated_at=? "
+                "where id=? and status in ('queued', 'failed')",
+                (owner, lease_until, now, row["id"]),
+            )
+            return row if changed.rowcount == 1 else None
+
+    def finish_business_task_todo_sync_outbox(
+        self, *, outbox_id: int, owner: str, status: str, receipt_json: str = "{}",
+        error: str = "", _db: sqlite3.Connection | None = None,
+    ) -> None:
+        if status not in {"completed", "skipped", "failed", "unknown"}:
+            raise ValueError("business task todo sync terminal status is invalid")
+        with self._optional_connection(_db) as db:
+            changed = db.execute(
+                "update business_task_todo_sync_outbox set status=?, receipt_json=?, error=?, "
+                "lease_owner='', lease_expires_at='', completed_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and status='running' and lease_owner=?",
+                (status, receipt_json, error, outbox_id, owner),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("business task todo sync receipt ownership lost")
+
+    def retry_business_task_todo_sync_outbox(
+        self, *, outbox_id: int, owner: str, error: str, now: str,
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        with self._optional_connection(_db) as db:
+            row = db.execute(
+                "select attempt_count from business_task_todo_sync_outbox where id=?", (outbox_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("business task todo sync outbox does not exist")
+            attempts = int(row["attempt_count"])
+            exhausted = attempts >= 3
+            next_attempt_at = "" if exhausted else (
+                datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=60 * attempts)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            changed = db.execute(
+                "update business_task_todo_sync_outbox set status=?, error=?, next_attempt_at=?, "
+                "lease_owner='', lease_expires_at='', updated_at=? where id=? and status='running' and lease_owner=?",
+                ("failed", f"business_task_todo_sync_retry_exhausted:{error}" if exhausted else error,
+                 next_attempt_at, now, outbox_id, owner),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("business task todo sync receipt ownership lost")
+
+    def reconcile_unknown_business_task_todo_sync_outbox(
+        self, *, outbox_id: int, provider_absent_evidence: str,
+    ) -> bool:
+        evidence = provider_absent_evidence.strip()
+        if not evidence:
+            raise ValueError("provider evidence that the task is absent is required")
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select business_task_id, operation, status, evidence_json from business_task_todo_sync_outbox where id=?",
+                (outbox_id,),
+            ).fetchone()
+            if row is None or row["status"] != "unknown" or row["operation"] != "create":
+                return False
+            db.execute(
+                "update business_task_dingtalk_links set status='cancelled', last_error=?, updated_at=current_timestamp "
+                "where business_task_id=? and status='creating' and trim(dingtalk_task_id)=''",
+                (f"reconciled_absent_after_unknown_create: {evidence}"[:500], row["business_task_id"]),
+            )
+            return db.execute(
+                "update business_task_todo_sync_outbox set status='queued', error='', lease_owner='', "
+                "lease_expires_at='', next_attempt_at='', updated_at=current_timestamp where id=? and status='unknown'",
+                (outbox_id,),
+            ).rowcount == 1
 
     def enqueue_task_todo_sync_outbox(
         self,
