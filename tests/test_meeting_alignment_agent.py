@@ -418,6 +418,92 @@ def test_agent_accepts_business_direct_fallback_to_calendar_organizer():
     assert decision.target.direct_user_id == "alex"
 
 
+def test_agent_rejects_direct_fallback_with_verified_recurring_group():
+    direct = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "alex",
+        "title": "Alex",
+        "candidates": [],
+    }
+    group = {
+        "kind": "group",
+        "conversation_id": "cid-project",
+        "direct_user_id": "",
+        "title": "项目群",
+        "candidates": [
+            {"conversation_id": "cid-project", "title": "项目群", "evidence": ["历史投递和当前成员均已核验"]}
+        ],
+    }
+    codex = SequencedMeetingCodex(
+        [send_payload_with_target(direct), send_payload_with_target(group)]
+    )
+    decision = MeetingAlignmentAgent(codex).decide(
+        source(),
+        group_candidates=[
+            {
+                "conversation_id": "cid-project",
+                "title": "项目群",
+                "verified_recurring_group": True,
+                "prior_sent_count": 3,
+                "participant_coverage": "2/2",
+            }
+        ],
+    )
+    assert decision.target is not None
+    assert decision.target.conversation_id == "cid-project"
+    assert "verified recurring group" in codex.prompts[1]
+
+
+def test_agent_rejects_direct_fallback_with_live_attendee_group_coverage():
+    direct = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "alex",
+        "title": "Alex", "candidates": [],
+    }
+    group = {
+        "kind": "group", "conversation_id": "cid-project", "direct_user_id": "",
+        "title": "项目群",
+        "candidates": [{
+            "conversation_id": "cid-project", "title": "项目群",
+            "evidence": ["实时群成员覆盖全部会议参会人"],
+        }],
+    }
+    codex = SequencedMeetingCodex(
+        [send_payload_with_target(direct), send_payload_with_target(group)]
+    )
+
+    decision = MeetingAlignmentAgent(codex).decide(
+        source(),
+        group_candidates=[{
+            "conversation_id": "cid-project", "title": "项目群",
+            "verified_attendee_coverage": True, "participant_coverage": "3/3",
+            "member_count": 4,
+        }],
+    )
+
+    assert decision.target is not None
+    assert decision.target.conversation_id == "cid-project"
+    assert "verified attendee coverage" in codex.prompts[1]
+
+
+def test_agent_allows_direct_fallback_when_group_roster_does_not_match():
+    direct = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "alex",
+        "title": "Alex", "candidates": [],
+    }
+    decision = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(direct))
+    ).decide(
+        source(),
+        group_candidates=[{
+            "conversation_id": "cid-unrelated", "title": "项目群",
+            "participant_coverage": "1/3", "member_count": 8,
+        }],
+    )
+    assert decision.target is not None
+    assert decision.target.kind == "direct"
+
+
 def test_business_direct_identity_error_is_typed_and_preserves_decision():
     target = {
         "kind": "direct",

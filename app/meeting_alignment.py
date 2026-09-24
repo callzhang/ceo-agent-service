@@ -39,6 +39,7 @@ from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
     MeetingAlignmentRun,
     MeetingParticipant,
+    MeetingSource,
     load_persisted_meeting_alignment_decision,
 )
 from app.meeting_alignment_source import (
@@ -784,16 +785,18 @@ def _meeting_fts_text(text: str) -> str:
     return " ".join(token for token in tokens if token)
 
 
-def _search_meeting_group_candidates(dws: Any, title: str) -> list[dict[str, str]]:
+def _search_meeting_group_candidates(
+    dws: Any, source: MeetingSource, store: AutoReplyStore
+) -> list[dict[str, Any]]:
     from app.jieba_loader import jieba_lcut
 
     terms = []
-    for token in jieba_lcut(title):
+    for token in jieba_lcut(source.title):
         term = str(token).strip()
         if len(term) >= 2 and term.isalnum() and not term.isdecimal():
             terms.append(term)
     queries = sorted(dict.fromkeys(terms), key=len, reverse=True)[:3]
-    candidates: dict[str, dict[str, str]] = {}
+    candidates: dict[str, dict[str, Any]] = {}
     for query in queries:
         for conversation in dws.search_conversations(query):
             candidates.setdefault(
@@ -804,7 +807,64 @@ def _search_meeting_group_candidates(dws: Any, title: str) -> list[dict[str, str
                     "search_query": query,
                 },
             )
-    return list(candidates.values())
+    if source.attendee_evidence == "calendar" and source.attendee_roster_complete:
+        attendees = {
+            participant.open_dingtalk_id
+            for participant in source.participants
+            if participant.open_dingtalk_id
+        }
+        if len(attendees) >= 2:
+            member_sets: dict[str, set[str]] = {}
+            for group_id, group_title, sent_count in store.recurring_meeting_group_targets(
+                source.title
+            ):
+                if group_id not in candidates:
+                    for conversation in dws.search_conversations(group_title):
+                        if conversation.open_conversation_id == group_id:
+                            candidates[group_id] = {
+                                "conversation_id": group_id,
+                                "title": conversation.title,
+                                "search_query": group_title,
+                            }
+                if group_id not in candidates:
+                    continue
+                members = set(dws.list_group_member_open_dingtalk_ids(group_id))
+                member_sets[group_id] = members
+                overlap = len(attendees & members)
+                if overlap >= 2 and overlap * 5 >= len(attendees) * 3:
+                    candidates[group_id].update(
+                        verified_recurring_group=True,
+                        prior_sent_count=sent_count,
+                        participant_coverage=f"{overlap}/{len(attendees)}",
+                        attendee_overlap=overlap,
+                        member_count=len(members),
+                    )
+            verified_query = ""
+            for group_id, candidate in list(candidates.items())[:12]:
+                if verified_query and candidate["search_query"] != verified_query:
+                    break
+                members = member_sets.get(group_id)
+                if members is None:
+                    members = set(dws.list_group_member_open_dingtalk_ids(group_id))
+                overlap = len(attendees & members)
+                candidate.update(
+                    attendee_overlap=overlap,
+                    member_count=len(members),
+                    participant_coverage=f"{overlap}/{len(attendees)}",
+                )
+                if overlap >= 3 and overlap * 4 >= len(attendees) * 3:
+                    candidate["verified_attendee_coverage"] = True
+                    verified_query = candidate["search_query"]
+    return sorted(
+        candidates.values(),
+        key=lambda item: (
+            not item.get("verified_recurring_group", False),
+            not item.get("verified_attendee_coverage", False),
+            -item.get("prior_sent_count", 0),
+            -item.get("attendee_overlap", 0),
+            item.get("member_count", 0),
+        ),
+    )
 
 
 def _index_meeting_codex_session(
@@ -937,7 +997,7 @@ def _analyze_meeting_job(
         return
 
     try:
-        group_candidates = _search_meeting_group_candidates(dws, source.title)
+        group_candidates = _search_meeting_group_candidates(dws, source, store)
     except DwsError as exc:
         _retry_or_fail(
             store,

@@ -14800,6 +14800,27 @@ class AutoReplyStore:
             ).fetchall()
         return [self._meeting_alignment_job_from_row(row) for row in rows]
 
+    def recurring_meeting_group_targets(self, title: str) -> list[tuple[str, str, int]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select target_id, max(target_title) as target_title,
+                       count(*) as sent_count
+                from meeting_alignment_jobs
+                where title=? and status='sent' and target_kind='group'
+                  and trim(target_id)<>'' and trim(final_message)<>''
+                group by target_id
+                having count(*) >= 2
+                order by sent_count desc, max(id) desc
+                limit 5
+                """,
+                (title,),
+            ).fetchall()
+        return [
+            (str(row["target_id"]), str(row["target_title"]), int(row["sent_count"]))
+            for row in rows
+        ]
+
     @staticmethod
     def _meeting_memory_write_event_from_row(
         row: sqlite3.Row,
