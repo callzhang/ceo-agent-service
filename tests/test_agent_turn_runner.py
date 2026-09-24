@@ -8,6 +8,7 @@ from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_turn_runner import (
     AgentTurnProcess,
     RuntimeRouteUnavailableError,
+    _fallback_requested_session_id,
     _decode_runtime_domain_result,
     _encode_runtime_domain_result,
     _process_failure_detail,
@@ -15,6 +16,30 @@ from app.agent_turn_runner import (
 )
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore, RuntimeRoutePausedError
+
+
+def test_same_route_capacity_retry_resumes_observed_audit_session():
+    assert _fallback_requested_session_id(
+        previous_route_name="codex_oauth",
+        next_route_name="codex_oauth",
+        fresh_session=False,
+        initial_session_id=None,
+        failed_session_id="audit-session-1",
+    ) == "audit-session-1"
+    assert _fallback_requested_session_id(
+        previous_route_name="codex_api",
+        next_route_name="codex_oauth",
+        fresh_session=False,
+        initial_session_id=None,
+        failed_session_id="api-session-1",
+    ) is None
+    assert _fallback_requested_session_id(
+        previous_route_name="codex_oauth",
+        next_route_name="codex_oauth",
+        fresh_session=True,
+        initial_session_id=None,
+        failed_session_id="audit-session-1",
+    ) is None
 
 
 def test_runner_has_no_application_effect_recovery_policy_helpers():

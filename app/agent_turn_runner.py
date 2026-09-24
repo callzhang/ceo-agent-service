@@ -97,6 +97,19 @@ _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 32 * 1024
 _RUNTIME_RESULT_SUMMARY_MAX_CHARS = 2048
 
 
+def _fallback_requested_session_id(
+    *,
+    previous_route_name: str,
+    next_route_name: str,
+    fresh_session: bool,
+    initial_session_id: str | None,
+    failed_session_id: str,
+) -> str | None:
+    if not fresh_session and previous_route_name == next_route_name:
+        return failed_session_id or initial_session_id
+    return initial_session_id
+
+
 def _normalized_key(key: str) -> str:
     return "".join(character for character in key.casefold() if character.isalnum())
 
@@ -1033,6 +1046,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,
                     excluded_routes=excluded_routes,
                 )
+                previous_route_name = route.name
                 route = decision.route
             else:
                 decision = None
@@ -1333,7 +1347,13 @@ class AgentTurnProcess(Generic[ResultT]):
                     else self._session_for_route(
                         route,
                         role=run.role,
-                        requested_session_id=session_id,
+                        requested_session_id=_fallback_requested_session_id(
+                            previous_route_name=previous_route_name,
+                            next_route_name=route.name,
+                            fresh_session=decision.fresh_session,
+                            initial_session_id=session_id,
+                            failed_session_id=failed_session_id,
+                        ),
                         conversation_contract_hash=conversation_contract_hash,
                     )
                 )
