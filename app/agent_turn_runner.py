@@ -97,6 +97,19 @@ _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 32 * 1024
 _RUNTIME_RESULT_SUMMARY_MAX_CHARS = 2048
 
 
+def _fallback_requested_session_id(
+    *,
+    previous_route_name: str,
+    next_route_name: str,
+    fresh_session: bool,
+    initial_session_id: str | None,
+    failed_session_id: str,
+) -> str | None:
+    if not fresh_session and previous_route_name == next_route_name:
+        return failed_session_id or initial_session_id
+    return initial_session_id
+
+
 def _normalized_key(key: str) -> str:
     return "".join(character for character in key.casefold() if character.isalnum())
 
@@ -642,7 +655,15 @@ def _result_parse_error_detail(exc: ResultParseError) -> str:
                     ".".join(str(part) for part in error.get("loc", ())) or "result"
                 )
                 kind = str(error.get("type") or "validation_error")
-                fields.append(f"{location}: {kind}")
+                # The contract's own sentence, not only its type. Task 384711's
+                # retries were told `result: value_error` and resent the same
+                # result twice; the message said an authorization needs_human
+                # needs complete information and rule coverage. `msg` is the
+                # contract's text; the rejected input stays out.
+                message = str(error.get("msg") or "").strip()
+                fields.append(
+                    f"{location}: {message}" if message else f"{location}: {kind}"
+                )
             if fields:
                 return "; ".join(fields[:8])
         current = current.__cause__ or current.__context__
@@ -1312,6 +1333,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 if decision.route is None:
                     self._raise_for_process_failure(process, run=run)
                     raise AssertionError("unreachable process failure")
+                previous_route_name = route.name
                 route = decision.route
                 if decision.fresh_session:
                     self._clear_incompatible_route_session_for_fresh_retry(
@@ -1325,7 +1347,13 @@ class AgentTurnProcess(Generic[ResultT]):
                     else self._session_for_route(
                         route,
                         role=run.role,
-                        requested_session_id=session_id,
+                        requested_session_id=_fallback_requested_session_id(
+                            previous_route_name=previous_route_name,
+                            next_route_name=route.name,
+                            fresh_session=decision.fresh_session,
+                            initial_session_id=session_id,
+                            failed_session_id=failed_session_id,
+                        ),
                         conversation_contract_hash=conversation_contract_hash,
                     )
                 )

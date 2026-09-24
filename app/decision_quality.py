@@ -141,11 +141,23 @@ def parse_stored_needs_human_decision(result: object):
             result = json.loads(result)
         except (TypeError, json.JSONDecodeError):
             return None
-    if not isinstance(result, dict) or result.get("outcome") != "needs_human":
+    if not isinstance(result, dict):
         return None
     from pydantic import ValidationError
 
     from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
+
+    if result.get("outcome") == "proposal":
+        # A proposal that also asked Derek an independent question. Its action
+        # was executed by Audit; the Attempt points at this run for the
+        # question (Derek, 2026-09-23).
+        try:
+            proposal = ConsumerAgentResult.model_validate(result)
+        except ValidationError:
+            return None
+        return proposal if proposal.escalates else None
+    if result.get("outcome") != "needs_human":
+        return None
 
     for model in (ConsumerAgentResult, AuditAgentResult):
         try:

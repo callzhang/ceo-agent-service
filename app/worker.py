@@ -22,7 +22,7 @@ from app.agent_context import (
     MaterialReference,
     PriorReceipt,
 )
-from app.agent_contracts import ConsumerAgentResult, DecisionOption
+from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult, DecisionOption
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.audit_agent import AuditAgentRunner
@@ -2543,10 +2543,21 @@ class DingTalkAutoReplyWorker:
             task_status = "failed"
             send_status = "failed"
             send_error = "invalid_needs_human_result"
+        # A proposal that also escalated: the Attempt is the question, so it
+        # points at the Consumer run that asked it. The executing Audit run
+        # stays the source of the tool events and the delivery record.
+        decision_run_id = run.id
+        if (
+            result.status == "needs_human"
+            and result.consumer_result is not None
+            and result.consumer_result.escalates
+            and run.parent_agent_run_id is not None
+        ):
+            decision_run_id = run.parent_agent_run_id
         attempt_id = self.store.finalize_orchestrated_reply_task(
             task_id=task.id,
             expected_execution_generation=task.execution_generation,
-            run_id=run.id,
+            run_id=decision_run_id,
             task_status=task_status,
             task_error=send_error,
             available_at=available_at,
@@ -2600,10 +2611,16 @@ class DingTalkAutoReplyWorker:
         audit_run: AgentRun,
         store: AutoReplyStore | None = None,
     ) -> AgentMessageDeliveryProjection | None:
-        if task.channel != "dingtalk" or result.status != "executed":
+        if task.channel != "dingtalk":
             return None
+        # Keyed on what Audit did, not the task's end state: a proposal that
+        # also escalates ends needs_human after its message was delivered.
         audit_result = result.audit_result
-        if audit_result is None or audit_result.external_result is None:
+        if (
+            audit_result is None
+            or audit_result.outcome is not AuditOutcome.EXECUTED
+            or audit_result.external_result is None
+        ):
             return None
         # The ledger records what a provider did.  The reference below is
         # written by the turn making the claim, and the delivery key in it was
@@ -2788,6 +2805,30 @@ class DingTalkAutoReplyWorker:
         if task.manual_rerun_attempt_id:
             source_attempt = self.store.get_reply_attempt(task.manual_rerun_attempt_id)
             if source_attempt is not None:
+                prior_audit_feedback = []
+                source_run = (
+                    self.store.get_agent_run(source_attempt.agent_run_id)
+                    if source_attempt.agent_run_id
+                    else None
+                )
+                if source_run is not None:
+                    for run in self.store.list_agent_runs_for_task_generation(
+                        task.id, source_run.execution_generation
+                    ):
+                        if (
+                            run.role is not AgentRole.AUDIT
+                            or run.status != "completed"
+                            or not run.final_result_json
+                        ):
+                            continue
+                        audit_result = AuditAgentResult.model_validate_json(
+                            run.final_result_json
+                        )
+                        if (
+                            audit_result.outcome is AuditOutcome.FEEDBACK_PROVIDED
+                            and audit_result.feedback is not None
+                        ):
+                            prior_audit_feedback.append(audit_result.feedback)
                 manual_rerun = ManualRerunInstruction(
                     source_attempt_id=source_attempt.id,
                     reviewer_feedback=source_attempt.reviewer_feedback.strip(),
@@ -2799,6 +2840,7 @@ class DingTalkAutoReplyWorker:
                     feedback_scope=source_attempt.feedback_scope or "one_time",
                     skill_update_requested=source_attempt.skill_update_requested,
                     skill_update_receipts_json=source_attempt.skill_update_receipts_json,
+                    prior_audit_feedback=tuple(prior_audit_feedback),
                 )
         trigger_raw_payload = _inject_oa_applicant_identity(
             store=self.store,

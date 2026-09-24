@@ -57,7 +57,7 @@ def test_failed_agent_task_is_closed_after_service_command_migration(
     current = store.adopt_scheduled_task_service_command(
         migration_key="weekly-okr-report-sunday-v1",
         command="weekly-okr-report",
-        seed_enabled=True,
+       
         now=NOW + timedelta(minutes=1),
     )
     assert current is not None

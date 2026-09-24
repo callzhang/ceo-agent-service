@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from datetime import datetime, timedelta
 
 from types import SimpleNamespace
@@ -28,7 +29,7 @@ from app.meeting_alignment import (
     queue_recent_meeting_alignment_replay,
     recover_meeting_alignment_jobs,
 )
-from app.meeting_alignment_models import MeetingAlignmentDecision
+from app.meeting_alignment_models import MeetingAlignmentDecision, MeetingSource
 from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
 
@@ -607,7 +608,7 @@ def test_producer_queues_ad_hoc_one_to_one_from_two_speaker_transcript(
             return {
                 "paragraphs": [
                     {"nickName": "Derek", "paragraph": "先确认投入产出。"},
-                    {"nickName": "Claire", "paragraph": "我补齐调研。"},
+                    {"nickName": "Casey", "paragraph": "我补齐调研。"},
                 ]
             }
 
@@ -618,9 +619,9 @@ def test_producer_queues_ad_hoc_one_to_one_from_two_speaker_transcript(
                     name="Derek",
                     open_dingtalk_id="open-derek",
                 ),
-                "Claire": DwsUserProfile(
+                "Casey": DwsUserProfile(
                     user_id="u-claire",
-                    name="Claire",
+                    name="Casey",
                     open_dingtalk_id="open-claire",
                 ),
             }
@@ -647,7 +648,7 @@ def test_producer_queues_ad_hoc_one_to_one_from_two_speaker_transcript(
                 "open_dingtalk_id": "open-derek",
         },
         {
-            "name": "Claire",
+            "name": "Casey",
             "user_id": "u-claire",
             "open_dingtalk_id": "open-claire",
         },
@@ -665,7 +666,7 @@ def test_producer_queues_transcript_roster_for_multi_speaker_recording(
             return {
                 "paragraphs": [
                     {"nickName": "Derek", "paragraph": "先确认范围。"},
-                    {"nickName": "Claire", "paragraph": "我补齐调研。"},
+                    {"nickName": "Casey", "paragraph": "我补齐调研。"},
                     {"nickName": "外部专家", "paragraph": "我补充案例。"},
                 ]
             }
@@ -673,7 +674,7 @@ def test_producer_queues_transcript_roster_for_multi_speaker_recording(
         def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
             profiles = {
                 "Derek": DwsUserProfile(user_id="u-derek", name="Derek"),
-                "Claire": DwsUserProfile(user_id="u-claire", name="Claire"),
+                "Casey": DwsUserProfile(user_id="u-claire", name="Casey"),
             }
             return [profiles[query]] if query in profiles else []
 
@@ -690,7 +691,7 @@ def test_producer_queues_transcript_roster_for_multi_speaker_recording(
     assert job.status == "pending"
     assert json.loads(job.source_json)["calendar_evidence"]["participants"] == [
         {"name": "Derek", "user_id": "u-derek", "open_dingtalk_id": ""},
-        {"name": "Claire", "user_id": "u-claire", "open_dingtalk_id": ""},
+        {"name": "Casey", "user_id": "u-claire", "open_dingtalk_id": ""},
         {"name": "外部专家", "user_id": "", "open_dingtalk_id": ""},
     ]
 
@@ -1675,7 +1676,7 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     assert seen_statuses == ["ready_to_send"]
     assert job.status == "sent"
     expected_message = (
-        "时间：2026-07-14 09:00-10:00\n\n"
+        "上线评审\n时间：2026-07-14 09:00-10:00\n\n"
         f"{consumer_send_decision().final_message}（by明哥分身）"
     )
     assert job.final_message == expected_message
@@ -1697,7 +1698,7 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
             "event_id": "event-1",
             "description": (
                 "【CEO 会议总结】\n"
-                "时间：2026-07-14 09:00-10:00\n\n"
+                "上线评审\n时间：2026-07-14 09:00-10:00\n\n"
                 f"{consumer_send_decision().final_message}（by明哥分身）\n"
                 "【/CEO 会议总结】"
             ),
@@ -1739,6 +1740,130 @@ def test_meeting_agent_receives_live_group_candidates_before_deciding(tmp_path):
     assert "上线" in searches
     assert "cid-first" in runner.prompts[0]
     assert "项目群" in runner.prompts[0]
+
+
+def test_recurring_group_candidate_requires_sent_history_and_live_roster(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for number in range(2):
+        job_id = store.upsert_meeting_alignment_job(
+            meeting_id=f"previous-{number}",
+            title="项目周会",
+            source_json="{}",
+            participants_json="[]",
+            ended_at=f"2026-07-{10 + number}T10:00:00+08:00",
+            eligible_at="",
+            status="sent",
+        )
+        store.update_meeting_alignment_job(
+            job_id, target_kind="group", target_id="cid-project", target_title="项目群",
+            final_message="已发送", send_result_json='{"success":true}',
+        )
+    source = MeetingSource.model_validate({
+        "meeting_id": "current", "title": "项目周会", "status": "ended",
+        "started_at": "2026-07-14T09:00:00+08:00",
+        "ended_at": "2026-07-14T10:00:00+08:00",
+        "participants": [
+            {"name": "A", "user_id": "a", "open_dingtalk_id": "open-a"},
+            {"name": "B", "user_id": "b", "open_dingtalk_id": "open-b"},
+            {"name": "C", "user_id": "c", "open_dingtalk_id": "open-c"},
+        ],
+        "attendee_evidence": "calendar", "attendee_roster_complete": True,
+        "current_user_id": "a", "summary": "项目进展", "transcript": [],
+    })
+    dws = ConsumerDws()
+    dws.search_conversations = lambda query: [DingTalkConversation(
+        open_conversation_id="cid-project", title="项目群",
+        single_chat=False, unread_point=0,
+    )] if query == "项目" else []
+    dws.list_group_member_open_dingtalk_ids = lambda group: {
+        "open-a", "open-b", "open-c", "open-other"
+    }
+
+    candidates = meeting_alignment._search_meeting_group_candidates(
+        dws, source, store
+    )
+
+    assert candidates[0]["conversation_id"] == "cid-project"
+    assert candidates[0]["verified_recurring_group"] is True
+    assert candidates[0]["prior_sent_count"] == 2
+    assert candidates[0]["participant_coverage"] == "3/3"
+
+
+def test_meeting_group_candidates_prioritize_topic_discussion_over_roster(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    source = MeetingSource.model_validate({
+        "meeting_id": "new", "title": "项目内容进展", "status": "ended",
+        "started_at": "2026-07-14T09:00:00+08:00",
+        "ended_at": "2026-07-14T10:00:00+08:00",
+        "participants": [
+            {"name": "A", "user_id": "a", "open_dingtalk_id": "open-a"},
+            {"name": "B", "user_id": "b", "open_dingtalk_id": "open-b"},
+            {"name": "C", "user_id": "c", "open_dingtalk_id": "open-c"},
+        ],
+        "attendee_evidence": "calendar", "attendee_roster_complete": True,
+        "current_user_id": "a", "summary": (
+            '> <time data-ts="123">会议时间</time>\n'
+            '![图片](https://example.test/cover.png?Signature=metadata)\n'
+            '## 会议背景\nMarketing 内容生产计划：基础内容、深度访谈和发布渠道'
+        ), "transcript": [],
+    })
+    dws = ConsumerDws()
+    dws.search_conversations = lambda query: [DingTalkConversation(
+        open_conversation_id="cid-product", title="项目群",
+        single_chat=False, unread_point=0,
+    )] if query == "项目" else [DingTalkConversation(
+        open_conversation_id="cid-marketing", title="Marketing",
+        single_chat=False, unread_point=0,
+    )] if query == "Marketing" else []
+    dws.list_group_member_open_dingtalk_ids = lambda group: (
+        {"open-a", "open-b", "open-c", "open-other"}
+        if group == "cid-product" else {"open-a", "open-b", "open-other"}
+    )
+    dws.read_recent_messages = lambda conversation, limit=50: [SimpleNamespace(
+        content="基础内容完成后安排深度访谈，Marketing 确认发布渠道和内容生产计划",
+        create_time="2026-07-13 10:00:00",
+    )] if conversation.open_conversation_id == "cid-marketing" else [
+        SimpleNamespace(
+            content="项目会议记录：内容、生产、计划、渠道等信息" + "其他项目记录" * 200,
+            create_time="2026-07-13 11:00:00",
+        )
+    ]
+
+    candidates = meeting_alignment._search_meeting_group_candidates(
+        dws, source, store
+    )
+
+    assert candidates[0]["conversation_id"] == "cid-marketing"
+    assert candidates[0]["summary_title_overlap"] >= 1
+    assert candidates[1]["summary_title_overlap"] == 0
+    assert candidates[0]["topic_discussion_evidence"]
+    assert candidates[0]["participant_coverage"] == "2/3"
+    assert candidates[1]["participant_coverage"] == "3/3"
+
+
+def test_live_group_member_failure_retries_before_meeting_decision(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.search_conversations = lambda query: [DingTalkConversation(
+        open_conversation_id="cid-first", title="项目群",
+        single_chat=False, unread_point=0,
+    )] if query == "上线" else []
+
+    def fail_members(_group: str) -> set[str]:
+        raise DwsError("group members unavailable")
+
+    dws.list_group_member_open_dingtalk_ids = fail_members
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1
+    ) == 1
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert json.loads(job.error)["kind"] == "meeting_group_discovery"
+    assert runner.calls == 0
+    assert dws.send_calls == []
 
 
 def test_meeting_group_discovery_failure_does_not_become_direct_fallback(tmp_path):
@@ -1932,7 +2057,7 @@ def test_consumer_notifies_once_after_confirmed_meeting_send(tmp_path, monkeypat
     sent_job = store.get_meeting_alignment_job(job_id)
     assert sent_job.status == "sent"
     expected_message = (
-        "时间：2026-07-14 09:00-10:00\n\n"
+        "上线评审\n时间：2026-07-14 09:00-10:00\n\n"
         f"{consumer_send_decision().final_message}（by明哥分身）"
     )
     assert sent_job.final_message == expected_message
@@ -1994,6 +2119,59 @@ def test_ready_delivery_source_failure_uses_counted_retry(tmp_path):
     assert json.loads(job.error)["kind"] == "meeting_source"
     assert dws.send_calls == []
     assert runner.calls == 0
+
+
+def test_ready_delivery_retries_provider_outage_after_attempt_limit(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    decision = consumer_send_decision()
+    store.update_meeting_alignment_job(
+        job_id,
+        status="ready_to_send",
+        decision_json=decision.model_dump_json(),
+        final_message=decision.final_message,
+    )
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        db.execute("update meeting_alignment_jobs set attempts=3 where id=?", (job_id,))
+
+    def unavailable_send(conversation_id, text, **kwargs):
+        raise DwsError("THREADPOOL_BUSY", retryable_external_dependency=True)
+
+    dws.send_message = unavailable_send
+    assert deliver_ready_meeting_alignment_jobs(
+        store, dws, now=NOW, limit=1
+    ) == {job_id}
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert "THREADPOOL_BUSY" in job.error
+    assert job.available_at == "2026-07-14T10:14:00+08:00"
+    assert job.send_result_json == "{}"
+
+
+def test_requeue_failed_meeting_delivery_preserves_review_and_key(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    decision = consumer_send_decision()
+    store.update_meeting_alignment_job(
+        job_id,
+        status="failed",
+        decision_json=decision.model_dump_json(),
+        target_kind="group",
+        target_id="cid-first",
+        final_message=decision.final_message,
+        error="provider unavailable",
+    )
+
+    reopened = store.requeue_failed_meeting_delivery(job_id)
+    assert reopened is not None
+    assert reopened.status == "ready_to_send"
+    assert reopened.decision_json == decision.model_dump_json()
+    assert reopened.target_id == "cid-first"
+    assert reopened.final_message == decision.final_message
+    assert store.requeue_failed_meeting_delivery(job_id) is None
 
 
 def test_ready_delivery_normalizes_legacy_scope_before_sending(tmp_path):
@@ -2105,19 +2283,19 @@ def test_calendar_organizer_identity_is_resolved_before_agent_decision(tmp_path)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     event = dws.calendar_pages[""]["events"][0]
-    event.organizer = "Mina Zou"
-    event.attendee_details[1] = DwsCalendarAttendee(display_name="Mina Zou")
+    event.organizer = "Avery Zou"
+    event.attendee_details[1] = DwsCalendarAttendee(display_name="Avery Zou")
     dws.search_user_profiles = lambda query: (
         [
             DwsUserProfile(
                 user_id="u-mina",
                 name="Zou Jingwei",
-                nick="Mina Zou",
+                nick="Avery Zou",
                 title="HRVP",
                 open_dingtalk_id="open-mina",
             )
         ]
-        if query == "Mina Zou"
+        if query == "Avery Zou"
         else []
     )
     dws.verification_states = ["sent", "sent"]
@@ -2135,7 +2313,7 @@ def test_calendar_organizer_identity_is_resolved_before_agent_decision(tmp_path)
                 "kind": "direct",
                 "conversation_id": "",
                 "direct_user_id": "u-mina",
-                "title": "Mina Zou",
+                "title": "Avery Zou",
                 "candidates": [],
             },
             "final_message": "Please follow up on the agreed meeting actions.",
@@ -2144,12 +2322,12 @@ def test_calendar_organizer_identity_is_resolved_before_agent_decision(tmp_path)
                     "kind": "direct",
                     "conversation_id": "",
                     "direct_user_id": "u-mina",
-                    "title": "Mina Zou",
+                    "title": "Avery Zou",
                     "candidates": [],
                 },
                 "message": "Please handle the private personnel follow-up.",
                 "reason": "The meeting included personnel-sensitive discussion.",
-                "recipient_evidence": ["Mina Zou is the meeting HR owner."],
+                "recipient_evidence": ["Avery Zou is the meeting HR owner."],
             },
             "audit_summary": "The meeting created business and personnel follow-up.",
             "confidence": 0.95,

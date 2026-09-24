@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel, Field
@@ -20,7 +21,7 @@ from app.agent_runtime_router import AgentRuntimeRouter
 from app.audit_agent import AuditAgentRunner
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.consumer_agent import ConsumerAgentRunner
-from app.dingtalk_models import DingTalkMessage
+from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsClient
 from app.native_cli_metadata import describe_native_command
 from app.store import AgentRole, AutoReplyStore
@@ -3658,6 +3659,90 @@ def test_manual_review_reaches_agent_without_unrelated_attempt_fields(tmp_path: 
     assert "unrelated-session" not in rendered
     assert "/private/unrelated" not in rendered
     assert "unrelated-secret" not in rendered
+
+
+def test_manual_rerun_carries_prior_audit_rejection_into_context(tmp_path: Path, monkeypatch):
+    trigger = _message("请处理原请求")
+    worker, _runner, _dws = _worker(tmp_path, [trigger], [])
+    task_id = _enqueue(worker.store, trigger)
+    source_attempt_id = worker.store.record_reply_attempt(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        trigger_message_id=trigger.open_message_id,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    task = worker.store.enqueue_manual_rerun_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        attempt_id=source_attempt_id,
+    )
+    source_attempt = worker.store.get_reply_attempt(source_attempt_id)
+    assert source_attempt is not None
+    original_get_attempt = worker.store.get_reply_attempt
+    monkeypatch.setattr(
+        worker.store,
+        "get_reply_attempt",
+        lambda attempt_id: source_attempt.model_copy(update={"agent_run_id": 41})
+        if attempt_id == source_attempt_id else original_get_attempt(attempt_id),
+    )
+    monkeypatch.setattr(
+        worker.store,
+        "get_agent_run",
+        lambda run_id: SimpleNamespace(execution_generation="initial")
+        if run_id == 41 else None,
+    )
+    rejected = AuditAgentResult.model_validate(
+        {
+            "outcome": "feedback_provided",
+            "summary": "候选包含未经授权的责任变更",
+            "proposal_revision": 0,
+            "feedback": {
+                "rule": "不得新增管理指令",
+                "observation": "候选免除了对方的工作责任",
+                "requested_revision": "删除该责任变更后再审",
+            },
+            "external_result": None,
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+        }
+    )
+    monkeypatch.setattr(
+        worker.store,
+        "list_agent_runs_for_task_generation",
+        lambda task_id, generation: [SimpleNamespace(
+            role=AgentRole.AUDIT,
+            status="completed",
+            final_result_json=rejected.model_dump_json(),
+        )],
+    )
+
+    context = worker._build_agent_task_context(
+        conversation=DingTalkConversation(
+            open_conversation_id=trigger.open_conversation_id,
+            title=trigger.conversation_title,
+            single_chat=trigger.single_chat,
+            unread_point=0,
+        ),
+        task=task,
+        trigger=trigger,
+        context_messages=[trigger],
+    )
+
+    assert context.manual_rerun is not None
+    assert "删除该责任变更后再审" in context.render()
 
 
 def test_completed_generation_is_not_executed_again(tmp_path: Path):

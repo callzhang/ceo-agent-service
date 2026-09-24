@@ -622,7 +622,7 @@ describe("AttemptDetailPage", () => {
               // if the fix ever regresses to re-parsing this field instead,
               // this marker (not the real one) is what would show up.
               content: [{ type: "text", text: JSON.stringify({ candidate_name: "STALE-DO-NOT-SHOW" }) }],
-              structured_content: { status: "ok", candidate_name: "孙英双" },
+              structured_content: { status: "ok", candidate_name: "周敏" },
             }, null, 2),
           },
         ],
@@ -632,7 +632,7 @@ describe("AttemptDetailPage", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "处理历史" });
-    expect(screen.getByText(/"candidate_name": "孙英双"/)).toBeInTheDocument();
+    expect(screen.getByText(/"candidate_name": "周敏"/)).toBeInTheDocument();
     expect(screen.queryByText(/STALE-DO-NOT-SHOW/)).not.toBeInTheDocument();
   });
 

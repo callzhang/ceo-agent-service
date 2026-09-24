@@ -105,7 +105,7 @@ def test_archive_matches_the_existing_local_layout(tmp_path: Path) -> None:
         paragraphs={
             "u1": [
                 {"startTime": 2000, "nickName": "张静", "paragraph": "开始了"},
-                {"startTime": 1273000, "speakerDisplay": "Mina", "paragraph": "收到"},
+                {"startTime": 1273000, "speakerDisplay": "Avery", "paragraph": "收到"},
                 {"startTime": 5000, "nickName": "空", "paragraph": "   "},
             ]
         },
@@ -121,7 +121,7 @@ def test_archive_matches_the_existing_local_layout(tmp_path: Path) -> None:
     assert "# AI Summary" in text and "# Transcript" in text
     assert "\n要点\n" in text
     assert "[00:02] 张静: 开始了" in text
-    assert "[21:13] Mina: 收到" in text
+    assert "[21:13] Avery: 收到" in text
     # An empty paragraph contributes no line.
     assert "空:" not in text
     assert _cursor(store)["archived_ids"] == ["u1"]

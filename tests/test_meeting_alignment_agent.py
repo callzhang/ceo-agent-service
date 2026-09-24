@@ -106,7 +106,7 @@ def source(*, participant_count: int = 3) -> MeetingSource:
     participants = [
         {"name": "Derek", "user_id": "derek"},
         {"name": "Alex", "user_id": "alex"},
-        {"name": "Mina", "user_id": "mina"},
+        {"name": "Avery", "user_id": "mina"},
     ][:participant_count]
     return MeetingSource.model_validate(
         {
@@ -120,14 +120,14 @@ def source(*, participant_count: int = 3) -> MeetingSource:
             "attendee_roster_complete": True,
             "creator": participants[1] if participant_count > 2 else None,
             "current_user_id": "derek",
-            "summary": "Alex 主张全量，Mina 主张灰度。",
+            "summary": "Alex 主张全量，Avery 主张灰度。",
             "transcript": [
                 {
                     "speaker_name": "Alex",
                     "text": "我建议全量上线以验证收入。",
                 },
                 {
-                    "speaker_name": "Mina",
+                    "speaker_name": "Avery",
                     "text": "我建议先灰度以控制故障面。",
                 },
                 {
@@ -222,7 +222,7 @@ def derek_view_payload(*, historical_sources: list[str]) -> dict:
             "historical_sources": historical_sources,
         },
         "key_questions": [],
-        "mention_names": ["Alex", "Mina"],
+        "mention_names": ["Alex", "Avery"],
         "target": {
             "kind": "group",
             "conversation_id": "cid-1",
@@ -349,7 +349,8 @@ def test_prompt_contains_scheduled_consumer_prompt_and_targeted_skills():
     assert "target.kind=group" in prompt
     assert "audience_scope=personal" in prompt
     assert "完整日历 1:1" in prompt
-    assert "业务群发现失败时，使用日历中已确认的会议组织者" in prompt
+    assert "仍没有可核验且可发送的业务群时" in prompt
+    assert "使用日历中已确认的会议组织者作为 direct fallback" in prompt
     assert "不得按姓名模糊搜索目标" in prompt
     assert "只保留 audit_summary 与 confidence" not in prompt
     assert "真实 @" in prompt
@@ -375,7 +376,27 @@ def test_prompt_makes_business_content_group_first_even_for_one_to_one():
     assert "audience_scope=business" in prompt
     assert "DWS 做群发现" in prompt
     assert "target.kind=group" in prompt
-    assert "业务群发现失败时，使用日历中已确认的会议组织者" in prompt
+    assert "仍没有可核验且可发送的业务群时" in prompt
+    assert "使用日历中已确认的会议组织者作为 direct fallback" in prompt
+
+
+def test_prompt_requires_content_based_group_discovery_before_direct_fallback():
+    prompt = build_meeting_alignment_prompt(
+        source(participant_count=2), work_profile="", work_profile_source="profile",
+        group_candidates=[],
+    )
+
+    assert "会议标题只是线索" in prompt
+    assert "优先核对会议材料中明确提及或分享的讨论群" in prompt
+    assert "从会议结论、行动项和负责人提炼业务主题" in prompt
+    assert "使用原文中的中文业务词与英文术语分别搜索" in prompt
+    assert "搜索会议标题和核心议题对应的群消息" in prompt
+    assert "核对群内近期消息是否讨论同一工作线" in prompt
+    assert "写清候选群的来源、业务承接关系和受众证据" in prompt
+    assert "排除仅名称相似、成员重合但业务不符的群" in prompt
+    assert "没有预置候选或首次搜索零命中，不等于业务群发现失败" in prompt
+    assert "不得为完成发送而选择宽泛群" in prompt
+    assert "候选群中含非授权受众" in prompt
 
 
 def test_prompt_requires_a_summary_even_for_candidate_interviews():
@@ -416,6 +437,81 @@ def test_agent_accepts_business_direct_fallback_to_calendar_organizer():
     assert decision.target is not None
     assert decision.target.kind == "direct"
     assert decision.target.direct_user_id == "alex"
+
+
+def test_agent_rejects_direct_fallback_with_verified_recurring_group():
+    direct = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "alex",
+        "title": "Alex",
+        "candidates": [],
+    }
+    group = {
+        "kind": "group",
+        "conversation_id": "cid-project",
+        "direct_user_id": "",
+        "title": "项目群",
+        "candidates": [
+            {"conversation_id": "cid-project", "title": "项目群", "evidence": ["历史投递和当前成员均已核验"]}
+        ],
+    }
+    codex = SequencedMeetingCodex(
+        [send_payload_with_target(direct), send_payload_with_target(group)]
+    )
+    decision = MeetingAlignmentAgent(codex).decide(
+        source(),
+        group_candidates=[
+            {
+                "conversation_id": "cid-project",
+                "title": "项目群",
+                "verified_recurring_group": True,
+                "prior_sent_count": 3,
+                "participant_coverage": "2/2",
+            }
+        ],
+    )
+    assert decision.target is not None
+    assert decision.target.conversation_id == "cid-project"
+    assert "verified recurring group" in codex.prompts[1]
+
+
+def test_agent_does_not_force_a_group_based_only_on_attendee_coverage():
+    direct = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "alex",
+        "title": "Alex", "candidates": [],
+    }
+    codex = FakeMeetingCodex(send_payload_with_target(direct))
+
+    decision = MeetingAlignmentAgent(codex).decide(
+        source(),
+        group_candidates=[{
+            "conversation_id": "cid-project", "title": "项目群",
+            "verified_attendee_coverage": True, "participant_coverage": "3/3",
+            "member_count": 4,
+        }],
+    )
+
+    assert decision.target is not None
+    assert decision.target.kind == "direct"
+
+
+def test_agent_allows_direct_fallback_when_group_roster_does_not_match():
+    direct = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "alex",
+        "title": "Alex", "candidates": [],
+    }
+    decision = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(direct))
+    ).decide(
+        source(),
+        group_candidates=[{
+            "conversation_id": "cid-unrelated", "title": "项目群",
+            "participant_coverage": "1/3", "member_count": 8,
+        }],
+    )
+    assert decision.target is not None
+    assert decision.target.kind == "direct"
 
 
 def test_business_direct_identity_error_is_typed_and_preserves_decision():
@@ -726,7 +822,7 @@ def test_runner_normalizes_mechanical_trigger_mismatch(tmp_path: Path):
             "state": "aligned",
             "views": [
                 {"speaker": "Alex", "view": "全量", "reason": "收入"},
-                {"speaker": "Mina", "view": "灰度", "reason": "风险"},
+                {"speaker": "Avery", "view": "灰度", "reason": "风险"},
             ],
             "conclusion": "先 10% 后扩量",
             "alignment_reason": "双方明确同意并承诺执行",
@@ -881,7 +977,7 @@ def _deterministic_payload(case: dict) -> dict:
         "state": state,
         "views": [
             {"speaker": "Alex", "view": "全量", "reason": "验证收入"},
-            {"speaker": "Mina", "view": "灰度", "reason": "控制风险"},
+            {"speaker": "Avery", "view": "灰度", "reason": "控制风险"},
         ],
         "conclusion": "先 10% 后扩量" if state == "aligned" else "",
         "alignment_reason": (
@@ -897,7 +993,7 @@ def _deterministic_payload(case: dict) -> dict:
                     f"取舍问题 {index + 1}："
                     "选择收益时最多接受什么代价？"
                 ),
-                "answer_owner_names": ["Alex", "Mina"],
+                "answer_owner_names": ["Alex", "Avery"],
             }
             for index in range(count)
         ]
@@ -908,7 +1004,7 @@ def _deterministic_payload(case: dict) -> dict:
         "topics": [topic],
         "derek_viewpoint": viewpoint,
         "key_questions": questions,
-        "mention_names": ["Alex", "Mina"],
+        "mention_names": ["Alex", "Avery"],
         "target": (
             None
             if case.get("expected_target") is None

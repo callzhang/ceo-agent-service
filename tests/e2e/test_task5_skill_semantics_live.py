@@ -197,7 +197,7 @@ def test_native_meeting_uses_summary_and_tasks_without_unneeded_transcript(tmp_p
             (MEETING_SUMMARY, {"summary": "Launch plan and risk notice agreed."}),
             (MEETING_TASKS, {"todos": [
                 {"owner": "Alex", "task": "Publish the launch plan Friday"},
-                {"owner": "Mina", "task": "Send the risk thresholds Thursday"},
+                {"owner": "Avery", "task": "Send the risk thresholds Thursday"},
             ]}),
             (MEETING_TRANSCRIPT, {"paragraphs": [{"speaker": "Alex", "text": "Duplicate detail"}]}),
         ],
@@ -211,10 +211,10 @@ def test_native_meeting_uses_summary_and_tasks_without_unneeded_transcript(tmp_p
         for text in _proposal_strings(action.payload)
     ]
     alex_mentions = [text for text in proposal_strings if "Alex" in text]
-    mina_mentions = [text for text in proposal_strings if "Mina" in text]
+    mina_mentions = [text for text in proposal_strings if "Avery" in text]
     assert alex_mentions and all("launch plan" in text.casefold() for text in alex_mentions)
     assert mina_mentions and all("risk thresholds" in text.casefold() for text in mina_mentions)
-    assert all(not text.lstrip().startswith("@Alex @Mina") for text in proposal_strings)
+    assert all(not text.lstrip().startswith("@Alex @Avery") for text in proposal_strings)
     loaded = {event["result"]["name"] for event in events if event["tool"] == "read_skill"}
     assert loaded == {
         "ceo-meeting-work",

@@ -805,7 +805,7 @@ def test_normalize_stored_tool_events_unwraps_the_mcp_result_envelope():
                 "status": "completed",
                 "result": {
                     "content": [{"type": "text", "text": json.dumps({"status": "old"})}],
-                    "structured_content": {"status": "ok", "candidate_name": "孙英双"},
+                    "structured_content": {"status": "ok", "candidate_name": "周敏"},
                 },
                 "error": None,
             },
@@ -815,7 +815,7 @@ def test_normalize_stored_tool_events_unwraps_the_mcp_result_envelope():
 
     [flattened] = normalize_stored_tool_events(events)
 
-    assert json.loads(flattened["output"]) == {"status": "ok", "candidate_name": "孙英双"}
+    assert json.loads(flattened["output"]) == {"status": "ok", "candidate_name": "周敏"}
 
 
 def test_normalize_stored_tool_events_shrinks_a_large_result_instead_of_slicing_the_text():

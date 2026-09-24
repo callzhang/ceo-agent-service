@@ -3265,7 +3265,7 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
         single_chat=True,
         trigger_message_id="msg-calendar-readback",
         trigger_create_time="2026-09-20 09:00:00",
-        trigger_sender="Claire",
+        trigger_sender="Casey",
         trigger_text="Calendar invite",
     )
     [task] = store.claim_reply_tasks(limit=1)
@@ -4330,7 +4330,7 @@ def test_reply_task_queue_dedupes_by_conversation_and_message(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 看一下",
     )
     second_inserted = store.enqueue_reply_task(
@@ -4339,7 +4339,7 @@ def test_reply_task_queue_dedupes_by_conversation_and_message(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 看一下",
     )
 
@@ -4543,7 +4543,7 @@ def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 看一下",
         trigger_message_json='{"open_message_id":"msg-1","content":"old"}',
     )
@@ -4557,7 +4557,7 @@ def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 看一下",
         action="send_reply",
         sensitivity_kind="general",
@@ -4570,7 +4570,7 @@ def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:01:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 重新看",
         trigger_message_json='{"open_message_id":"msg-1","content":"new"}',
         oa_url="https://oa.example/process",
@@ -5031,7 +5031,7 @@ def test_actionable_attempt_decision_resolves_source_and_requeues_same_task(
         single_chat=False,
         trigger_message_id="msg-actionable-decision",
         trigger_create_time="2026-08-11 05:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please decide.",
         trigger_message_json="{}",
     )
@@ -5093,7 +5093,7 @@ def test_actionable_attempt_decision_rolls_back_queue_when_source_update_fails(
         single_chat=False,
         trigger_message_id="msg-actionable-rollback",
         trigger_create_time="2026-08-11 05:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please decide.",
         trigger_message_json="{}",
     )
@@ -5933,7 +5933,7 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
                                 "text": (
                                     readback_text
                                     if receipt_message_id
-                                    else "@Lily  "
+                                    else "@Riley  "
                                     + readback_text.replace("\n\n", "  \n")
                                 ),
                             }
@@ -7301,7 +7301,7 @@ def test_claim_reply_tasks_marks_tasks_processing_atomically(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 看一下",
     )
 
@@ -7452,7 +7452,7 @@ def test_claim_reply_tasks_waits_until_available_at(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 看一下",
         available_at="2026-05-13 17:05:00",
         error="waiting_fast_path_unread_backoff",
@@ -7472,11 +7472,11 @@ def test_claim_reply_tasks_accepts_timezone_aware_available_at(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-iso-time",
-        conversation_title="Melody",
+        conversation_title="Morgan",
         single_chat=True,
         trigger_message_id="msg-iso-time",
         trigger_create_time="2026-09-08T01:00:00-07:00",
-        trigger_sender="Melody",
+        trigger_sender="Morgan",
         trigger_text="hello",
         available_at="2026-09-08T01:04:34-07:00",
         channel="wechat",
@@ -7500,7 +7500,7 @@ def test_requeue_reply_task_can_delay_next_claim(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 看一下",
     )
     claimed = store.claim_reply_tasks(limit=1, now="2026-05-13 17:00:00")
@@ -7581,7 +7581,7 @@ def test_complete_reply_task_marks_generation_bound_task_done(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 看一下",
     )
     claimed = store.claim_reply_tasks(limit=1)[0]
@@ -7609,7 +7609,7 @@ def test_list_reply_tasks_filters_statuses_newest_first(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 看一下",
     )
     store.enqueue_reply_task(
@@ -7640,7 +7640,7 @@ def test_requeue_reply_task_keeps_attempt_count_for_retry(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 看一下",
     )
     claimed = store.claim_reply_tasks(limit=1)
@@ -7665,7 +7665,7 @@ def test_defer_reply_task_for_authorization_preserves_claim_attempt(tmp_path: Pa
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 看一下",
     )
     claimed = store.claim_reply_tasks(limit=1)
@@ -7686,9 +7686,9 @@ def test_create_and_claim_okr_review_request(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -7707,9 +7707,9 @@ def test_recreating_okr_review_request_requeues_failed_request(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -7721,9 +7721,9 @@ def test_recreating_okr_review_request_requeues_failed_request(tmp_path):
 
     recreated_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -7744,9 +7744,9 @@ def test_okr_review_request_is_failed_for_feedback_instead_of_skipped(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -7767,9 +7767,9 @@ def test_recreating_okr_review_request_does_not_requeue_done_request(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -7781,9 +7781,9 @@ def test_recreating_okr_review_request_does_not_requeue_done_request(tmp_path):
 
     recreated_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -7803,9 +7803,9 @@ def test_recreating_okr_review_request_does_not_reset_processing_request(tmp_pat
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -7817,9 +7817,9 @@ def test_recreating_okr_review_request_does_not_reset_processing_request(tmp_pat
 
     recreated_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -7957,9 +7957,9 @@ def test_record_okr_review_run_and_items(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -7998,9 +7998,9 @@ def test_create_okr_review_request_requires_source_json(tmp_path):
     with pytest.raises(TypeError):
         store.create_okr_review_request(
             conversation_id="cid-1",
-            conversation_title="韩露",
+            conversation_title="吴婷",
             trigger_message_id="msg-1",
-            trigger_sender="韩露",
+            trigger_sender="吴婷",
             trigger_sender_user_id="user-1",
             trigger_text="帮我审核 OKR",
             period_label="2026 Q2",
@@ -8528,9 +8528,9 @@ def test_reply_attempt_records_calendar_response_metadata(tmp_path: Path):
 
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
-        conversation_title="Mina",
+        conversation_title="Avery",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="[日程]",
         action="no_reply",
         sensitivity_kind="general",
@@ -9063,9 +9063,9 @@ def test_lists_reviewed_reply_attempts_for_optimization(tmp_path: Path):
     )
     reviewed_id = store.record_reply_attempt(
         conversation_id="cid-2",
-        conversation_title="Claire",
+        conversation_title="Casey",
         trigger_message_id="msg-2",
-        trigger_sender="Claire",
+        trigger_sender="Casey",
         trigger_text="明哥上会啦",
         action="send_reply",
         sensitivity_kind="general",
@@ -9116,7 +9116,7 @@ def test_lists_run_delta_records_after_ids(tmp_path: Path):
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 这个怎么处理？",
         action="no_reply",
         sensitivity_kind="general",
@@ -9611,7 +9611,7 @@ def test_resolve_errors_recovered_by_later_terminal_reply_attempt(tmp_path: Path
         conversation_id="cid-1",
         conversation_title="Management",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please handle this.",
         action="agent_run",
         sensitivity_kind="general",
@@ -9632,7 +9632,7 @@ def test_resolve_errors_recovered_by_reply_attempts_keeps_unrelated_errors_open(
         conversation_id="cid-2",
         conversation_title="Management",
         trigger_message_id="msg-2",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please handle this.",
         action="agent_run",
         sensitivity_kind="general",
@@ -9652,7 +9652,7 @@ def test_completed_reply_task_resolves_trigger_error_and_closed_blocked_attempt(
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-08-12 12:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please handle this.",
     )
     task = store.claim_reply_task(1)
@@ -9662,7 +9662,7 @@ def test_completed_reply_task_resolves_trigger_error_and_closed_blocked_attempt(
         conversation_id="cid-1",
         conversation_title="Management",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please handle this.",
         action="agent_run",
         sensitivity_kind="general",
@@ -11154,7 +11154,7 @@ def test_terminalize_exhausted_pending_reply_tasks_closes_restart_retry_loop(
         single_chat=False,
         trigger_message_id="msg-retry-deadline",
         trigger_create_time="2026-08-11 05:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please handle.",
         trigger_message_json="{}",
     )
@@ -12402,6 +12402,12 @@ def test_a_task_holding_a_lock_with_no_live_run_is_requeued(tmp_path):
     )
     with store._connect() as db:
         db.execute("update agent_runs set status='failed' where id=?", (claim.run.id,))
+        db.execute(
+            "insert into dispatcher_claim_leases "
+            "(adapter_name, source_id, owner, owner_pid, generation, lease_expires_at) "
+            "values ('reply', ?, 'live-dispatcher', 1, 1, datetime('now','-1 minute'))",
+            (str(task.id),),
+        )
 
     recovered = store.recover_stale_processing_reply_tasks(stale_after_seconds=900)
 
@@ -12410,6 +12416,13 @@ def test_a_task_holding_a_lock_with_no_live_run_is_requeued(tmp_path):
     assert updated is not None
     assert updated.status == "pending"
     assert updated.error == "stale_lease_recovered"
+    with store._connect() as db:
+        lease = db.execute(
+            "select owner, lease_expires_at from dispatcher_claim_leases "
+            "where adapter_name='reply' and source_id=?",
+            (str(task.id),),
+        ).fetchone()
+    assert tuple(lease) == ("", "")
 
 
 def test_a_task_with_a_live_run_keeps_its_lock(tmp_path):
@@ -12923,6 +12936,40 @@ def test_old_generation_attempt_cannot_fail_or_surface_current_task(tmp_path: Pa
     assert store.get_reply_task(task.id).status == "pending"
     assert store.list_current_unresolved_problem_attempt_summaries() == []
     assert store.list_current_unresolved_problem_attempts() == []
+
+
+def test_current_generation_failed_attempt_remains_visible_while_task_retries(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "retry-attention.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+        channel=task.channel,
+    )
+    with store._connect() as db:
+        run = db.execute(
+            """insert into agent_runs (
+                reply_task_id, execution_generation, role, status, final_result_json
+            ) values (?, ?, 'consumer', 'failed', '{}')""",
+            (task.id, task.execution_generation),
+        )
+        db.execute(
+            "update reply_attempts set agent_run_id=?, send_error='codex_process_failed' where id=?",
+            (run.lastrowid, attempt_id),
+        )
+        db.execute("update reply_tasks set status='pending' where id=?", (task.id,))
+    assert store.get_reply_task(task.id).status == "pending"
+    assert [item.id for item in store.list_current_unresolved_problem_attempts()] == [attempt_id]
+    assert [item["id"] for item in store.list_current_unresolved_problem_attempt_summaries()] == [str(attempt_id)]
+    assert store.count_current_unresolved_problem_attempts() == 1
 
 
 def test_the_second_failure_path_keeps_receipt_failure_failed(tmp_path: Path):

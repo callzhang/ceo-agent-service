@@ -1466,7 +1466,7 @@ Run: `rg -n 'TBD|TODO|implement later|DirectAgent|direct_agent_runner|reconcilia
 
 Expected: no obsolete runtime/fallback references; unrelated historical design documents may name old systems only when explicitly marked superseded.
 
-Run: `rg -n 'Han Lu|韩露|15%|Melody|Hans' app`
+Run: `rg -n 'Han Lu|吴婷|15%|Morgan|Hans' app`
 
 Expected: no production person, percentage, or case-specific branch in runtime code.
 

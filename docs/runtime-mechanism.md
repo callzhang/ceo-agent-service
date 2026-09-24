@@ -46,6 +46,21 @@ pending -> running -> done
   旧 run 或不完整结果不能把 `done` 投影成当前人工待办。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
+当前代次的最新 Attempt 指向失败 run 时，即使关联任务进入 `pending` 等待重试，History 与 Attention
+仍显示该失败，直到后续有效 run/Attempt 给出新的当前状态。没有当前代次失败 run 的 pending
+任务本身不进入 Attention；旧代次失败也不污染新代次。
+从失败 Attempt 手动重跑时，Consumer 与 Audit 的上下文必须带入来源代次的结构化 Audit 反馈；
+旧候选被否决的点仍须解决，或用新证据明确说明其不再适用，不得把相同候选当作未审核的新建议。
+Codex CLI 报告同一 session 有其他 active writer 时，运行时将其视为本地 session 冲突，
+在原路由和原 session 上限次指数退避重试，不因此暂停整个 provider。
+服务启动时恢复被中断的会议作业，会在同一事务内将作业改为 `retry`、关闭运行记录并释放
+该作业的 dispatcher claim；不再等待旧进程的租约自然到期才允许重新领取。
+会议群消息发送的 DWS 可重试故障即使超过普通尝试次数，也保留同一任务和投递键进入
+`retry`，按共享指数退避且最长等待 15 分钟；错误记录须保留 provider 原因。只有非外部
+依赖故障才按普通尝试上限进入 `failed`，重试前必须核对本地回执及可用外部读回。
+旧版本已落为 `failed` 的会议发送，只有在原决策、原群目标完整且本地无发送回执，
+并独立确认群内未收到该摘要后，才可受限恢复至 `ready_to_send`；恢复保留原正文和投递键。
+
 ## 功能机制开关与任务生产
 
 邮件分类使用独立的 `email_agent_classification_tasks` 持久化队列。Responses API
@@ -94,6 +109,8 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 才进入 `needs_human`，并提供 2--4 个
 互斥、可执行的规则/Skill 选项；每项必须包含唯一稳定的 `key`、显示用 `label`、可执行的
 `instruction` 和 `consequence`/影响；其余由适用 Skill 自主完成。ask-back 不计入 needs_human。
+读到 Skill 不等于它覆盖本案：Skill 自己写明本案所依赖的分支（门槛、例外边界、谁有权决定）未定义时，
+`rule_coverage` 低于 1.0；以缺规则、缺门槛或缺授权为理由的 `needs_human` 配 `rule_coverage=1.0` 属于自相矛盾。
 反馈可同时选择 one-time 与 Skill update；二者复用同一业务对象和同一 attempt，在 provider 仍可访问的
 同一 session 中生成新 revision，不新建 session。技术、provider、读取、路由、schema、Audit 或 retry failure
 永远是 `failed`；领域 `authorization_required` 也不泛化为 `needs_human`。只有精确通用码、
@@ -135,6 +152,10 @@ pending recovery 排除，ask-back 不计 `needs_human`。
 反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和 provider 结果标识之间的关系。同一任务最多允许三个内容反馈周期；基础设施失败不消耗内容反馈周期。内容反馈耗尽是自动闭环失败，终态为 `failed`。只有 Consumer 或 Audit 自身返回的完整、可追溯结构化结果满足 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5`，并同时提供 2--4 个规则/Skill 选项时，任务才进入 `needs_human`。
 
 Consumer 与 Audit 之间自然流逝的时间不是候选事实冲突。当前执行时间只用于判断动作是否过期或上下文是否变旧；Audit 不得要求候选复述精确执行时间，也不得仅因自己的执行时间晚于 Consumer 而拒绝其他方面可执行的候选。
+
+钉钉引用回复由服务使用 DWS `chat +messages-reply` 投递；该入口核验原消息、发送者与会话一致性，且适用于已确认的单聊会话。投递仍沿原业务对象的幂等键和回执核验，不因引用回复失败自动改发普通消息。
+
+会议总结的业务群候选由会议正文中的业务词与标题共同检索，排除听记摘要里的时间标签、图片链接等元数据。服务读取候选群近期消息，将与会议议题相关的讨论片段、群成员覆盖、群规模及同名会议历史投递一起交给决策 Agent。排序优先考虑群名是否对应摘要主题，再参考讨论片段；词项交集只是检索线索，Agent 必须核对实际讨论、行动负责人和受众。参会人覆盖率只证明受众交集，不证明业务归属，不能单独强制选群。历史投递仍需本次实时成员覆盖达到门槛，且须与当前议题一致；此前已发送的总结不会因路由修复自动重发。
 
 对于源单聊的澄清动作，Consumer 必须在 action target 中提供已经通过实时读取确认的参与者 `open_dingtalk_id`。若该参与者字段以 `verified_participant_open_dingtalk_id` 表示，Audit 将其作为同一稳定接收人身份执行单聊发送；不会把 `conversation_id` 当作群聊目标。
 
@@ -219,6 +240,15 @@ OA 审批中，申请人的补充只可完善其可核验的事实或材料，�
 并独立保留 `needs_human` 处理政策缺口；申请人后续回复只能触发重新读取 OA，不能使
 `rule_coverage` 变成 100%。
 
+两件事放在同一个结果里：`outcome: proposal` 携带可执行的评论或退回，同时填
+`needs_human_reason`、`decision_basis` 和 2--4 个 `decision_options` 描述政策缺口
+（`ConsumerAgentResult.escalates`）。三者必须齐全；不能带 `authorization_plan` 或错误码。
+Audit 按常规审阅并执行 proposal，执行后返回 `executed`，不把候选的问题改写成自己的 `needs_human`
+（384699 的 21117 这样做后分值被判不符，重试把 rule_coverage 从 0.7 压到 0.4 才通过）；Audit
+`executed` 后编排结果为 `needs_human`，选项取自 Consumer 的升级，消息投影照常按 Audit
+的执行记录写入。与“外部动作已完成→needs_human”同一终态：动作已做，剩下的问题归 Derek。
+Derek 2026-09-23 定；此前结果只能二选一，384699 丢了评论，384514 没要材料。
+
 ## Business Object、Task、Agent Run 与 Reply Attempt
 
 运行时先用 `business_object_key` 识别同一外部业务事项，再使用三层运行对象：
@@ -264,6 +294,8 @@ Agent run 决定：最后一个 run 失败则当前投影为 `failed`；只有�
 队列是否仍待领取或已被收口，不能单独把失败 run 改写成成功。外部 provider receipt 仍用于
 防止重放，但它不能覆盖 Agent run 的失败；服务必须创建新的 generation 并完成新的 run 才能
 修正当前投影。真实处于 `pending` 或 `processing` 的 task 则分别显示为等待或执行中。
+History 的当前筛选也遵循此投影：同一 generation 的更新 run 已在执行时，旧 attempt
+字段中的失败仅保留在 run 详情，不继续计入当前 `failed` 筛选。
 当失败 Audit 已持有同一稳定动作身份的 receipt 时，服务自动先持久化失败 run，再通过正式
 重试入口开启新的 generation。新一轮 Audit 只读取 receipt，不重新执行外部动作；它成功后才
 把 current projection 收口为 `done` 或 `skipped`。
@@ -316,17 +348,21 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
   因此入队时清空该 conversation 的全部路线会话（`clear_conversation_runtime_sessions`）。
 - **唤醒条件**：已经评论过的审批不再按天唤醒，等指纹变动——指纹本就排除本人记录，所以只有他人
   评论或操作才会叫醒它；**没有评论过的**保留每日重看，因为那种是静默丢掉的，没有别的机制能捞回来。
-- 扫描提示语必须指向 `~/.agents/skills/dingtalk-oa-approval/SKILL.md`。曾指向 dws 官方的
-  `dingtalk-misc/references/oa.md`，导致我们自己的审批规则从未进入模型；官方技能还会被
-  `dws upgrade` 覆盖，规则写在那里留不住。
+- 扫描任务绑定通用 `dingtalk-oa-approval` 与适用的 Stardust 业务 Skills。曾把
+  `dingtalk-misc/references/oa.md` 当作审批规则来源，导致我们自己的审批规则从未进入模型；
+  官方技能还会被 `dws upgrade` 覆盖，规则写在那里留不住。
 
-决策规则在 Skill 里，不在代码里：通用的完整决策表、`information_completeness` /
-`rule_coverage` 评分口径、退回优先于评论搁置、拒绝前必须先查 `revert-activities`、`--remark`
-必填，都在 `dingtalk-oa-approval` 的版本化修订中。财务主导的 Stardust 模板再由
-`stardust-oa-finance-review` 按 live `processCode` 精确匹配规则卡；匹配的有效规则卡是该模板
-动作的唯一公司权威，没有完整规则卡不得自动决定。两份 Skill 都只存在于运行时目录，没有仓库
-副本，按 `RUNTIME_ONLY_VERSIONED_SKILL_NAMES` 版本化，**不得带 `metadata.managed_by` 标记**——
-操作 Skill 目录会拒绝带标记的文件，定时任务也就不能选择它们。
+决策规则在审批 Skill 里，不在代码里：通用的完整决策表、
+`information_completeness` / `rule_coverage` 评分口径、退回优先于评论搁置、拒绝前必须先查
+`revert-activities`、`--remark` 必填，都在 `dingtalk-oa-approval` 中。OA 定时任务冻结绑定
+`dingtalk-oa-approval` 以及 Stardust 财务、立项、合同、人员、考勤/出差、云资源六个业务 Skill，本机任务的
+Prompt 另写入负责人的个人规则（只存在该定时任务的数据库记录里，代码默认值不含）。背景参考文档不由审批 Agent 读取，代码与默认 Prompt 都不引用它们。Consumer 按 live `processCode` 与表单事实
+分类，交叉事项组合适用类别；财务规则卡仅约束登记的财务模板。适用业务 Skill 必须覆盖
+当前事项的规则条件、例外、权限和动作映射，适用 Skill 完整覆盖时才允许 `rule_coverage=1.0`；其他情况
+低于 1.0，规则缺口 `needs_human`，不得自动批准/拒绝。申请人可补材料但不能关闭并存的政策升级。
+六份 Stardust Skill 都只存在于运行时目录，没有仓库副本，按 `RUNTIME_ONLY_VERSIONED_SKILL_NAMES`
+版本化，**不得带 `metadata.managed_by` 标记**——操作 Skill 目录会拒绝带标记的文件，定时任务
+也就不能选择它们。Derek 的个人规则仅写在 OA 定时任务 Prompt，不得推广为公司规则。
 
 ### 没有 runtime schema 的 DWS 写操作
 
@@ -644,6 +680,10 @@ delivery UUID、结构化群 @ 及 `ServiceMessageSender` 准备的签名与反�
 Consumer 修订版可以原样复用上一 revision 中已持久化的服务反馈链接。敏感值校验只会对配置域名、
 固定回调路径、有效签名和成对反馈 token 完全匹配的服务链接做占位化处理；真实凭证、陌生域名、
 畸形回调或其他敏感值仍然必须使该 run 失败。
+新生成的反馈回调 URL 只携带不透明 feedback token、评分和 attempt ID，不得把触发消息或回复正文写入
+URL 查询参数。外部反馈页可以收集评分，但不能通过链接、浏览器历史或访问日志获得内部消息文本。
+未持久化的旧格式正文若已包含有效的服务反馈链接，外发准备阶段保留原 token 和消息正文，重新生成
+不含正文参数的链接；已持久化的历史投递回执不改写。
 
 这是一条机械传输边界，不是新的业务审核或授权规则。Email 仍是独立的非发送通道：SMTP、自动回复
 和 `mailto` 均保持禁用，不受此 DingTalk / WeChat 后缀机制影响。
@@ -699,6 +739,7 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 - 生产入口是 launchd 管理的 `com.ceo-agent-service.main`，由 supervisor 管理 worker 和 audit-web。
 - 同一 `conversation_id` 同时只能有一个执行 Agent 持有 Codex session lock。
 - 每个执行/审核 run 都有独立 lease、revision 和 transcript 范围。
+- Dispatcher 对“租约已过期但 owner 进程仍存活”的来源不重新领取，以免重复执行。处理函数已经返回、只是以错误结束（记下 lease error）时，dispatcher 会把该租约标成“owner 已不在”（`owner_pid=0`、清空到期时间，按 owner 与 generation 围栏），来源随即按常规规则可再领取。此前这种租约要等服务重启才释放：任务 384735 重排后空等了三十分钟。
 - History 解析本地 Codex session 路径时，按 `session_path_index.jsonl` 的文件签名缓存最新索引
   记录；多个 retry/run 复用同一 session 不会重复解析完整索引。索引被 Codex 或维护程序更新后，
   文件签名变化会使缓存自动失效，因此页面不会因缓存遗漏新 session。
@@ -712,8 +753,8 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 
 - 一场会议可能被分成几段录制，每段各有自己的 taskUuid。同名且相邻两段间隔不超过两小时算同一场会议（由间隔决定，不按自然日切分，跨零点的会议因此保持完整）。后到的录制并入已有任务：转写与摘要接到第一段之后，会议结束时间顺延到最后一段，任务重开并**对整场会议重新生成总结**，而不是补一段增量。此时标题标注「第二次总结」。只有发送前已保存了另一条旧消息的凭证，才会在新总结发送成功后撤回旧消息；首次发送以及同一条消息的日历备注重试都不撤回自身。provider 拒绝撤回不算会议失败。
 
-- 会议总结在 Agent 决策前，以日历组织者的完整名称通过当前 DingTalk 组织目录解析稳定身份；只有唯一精确姓名或昵称命中才回填组织者及同名唯一参会人，供业务 fallback 与敏感私信共同使用。模糊、多候选或冲突身份不回填。日历中缺少稳定 ID 的其他参会人也按同一规则做唯一姓名/昵称补全，避免 HR 只有显示名而无法被识别。服务还用当前 DWS 群搜索格式对会议标题分词检索完整群列表，把去重后的实时候选交给 Agent；候选仍需核对受众与业务承接，不能仅凭群名发送。群搜索失败或结果不完整时任务重试，不将依赖故障说成“找不到群”并私聊组织者。敏感内容按受众边界投递：如果 DWS 实时群发现证明目标是 HR 专属或已匹配的群，且讨论是会议中 HR 参会人的共同事项而非针对具体个人，Agent 可以把敏感详情与公开结论合并为一条 HR 群消息，并将敏感私信置空；针对具体个人、群受众不明确或含非授权成员时，仍发送去敏感的业务群消息与独立敏感私信，无法确认敏感收件人时发给当前负责人本人。进入投递后复用同一个持久化投递键：钉钉发送使用由该键确定的 UUID，provider 成功返回会立刻写入同一键的回执。服务重启后，恢复的 worker 先复用回执；若进程恰在 provider 接收后中断，使用相同 UUID 继续投递，provider 的重复 UUID 回应视为原投递已送达，不能产生第二条群消息。
-- 会议跟进的钉钉消息标题取会议标题，不取群名或私聊收件人名；正文首行以“时间：”呈现会议时间副标题，二次总结另起说明行。Agent 的 `final_message` 只承载结论、行动和待确认事项，不重复会议标题和时间。小节与每项行动以空行分隔，不生成 Markdown 标题或列表符号，以免钉钉把多条事项压成一段。发送目标仍由已核实的受众决定，标题不参与路由或投递幂等键。
+- 会议总结在 Agent 决策前，以日历组织者的完整名称通过当前 DingTalk 组织目录解析稳定身份；只有唯一精确姓名或昵称命中才回填组织者及同名唯一参会人，供业务 fallback 与敏感私信共同使用。模糊、多候选或冲突身份不回填。日历中缺少稳定 ID 的其他参会人也按同一规则做唯一姓名/昵称补全，避免 HR 只有显示名而无法被识别。服务用当前 DWS 群搜索格式检索会议标题和摘要正文里的业务词，再读取候选群近期讨论，把去重后的实时候选及讨论片段交给 Agent；候选仍需核对受众与业务承接，不能仅凭群名、词项重合或参会人覆盖发送。群搜索失败或结果不完整时任务重试，不将依赖故障说成“找不到群”并私聊组织者。敏感内容按受众边界投递：如果 DWS 实时群发现证明目标是 HR 专属或已匹配的群，且讨论是会议中 HR 参会人的共同事项而非针对具体个人，Agent 可以把敏感详情与公开结论合并为一条 HR 群消息，并将敏感私信置空；针对具体个人、群受众不明确或含非授权成员时，仍发送去敏感的业务群消息与独立敏感私信，无法确认敏感收件人时发给当前负责人本人。进入投递后复用同一个持久化投递键：钉钉发送使用由该键确定的 UUID，provider 成功返回会立刻写入同一键的回执。服务重启后，恢复的 worker 先复用回执；若进程恰在 provider 接收后中断，使用相同 UUID 继续投递，provider 的重复 UUID 回应视为原投递已送达，不能产生第二条群消息。
+- 会议跟进的钉钉消息标题取会议标题，不取群名或私聊收件人名；该标题只到达推送横幅和会话列表，聊天窗口里看不到，所以正文首行也写会议标题，第二行以“时间：”呈现会议时间副标题，二次总结另起说明行。时间按 Asia/Shanghai 呈现：Minutes 交过来的时间戳是 UTC，直接格式化会把上午八点的会写成零点。Agent 的 `final_message` 只承载结论、行动和待确认事项，不重复会议标题和时间。小节与每项行动以空行分隔，不生成 Markdown 标题或列表符号，以免钉钉把多条事项压成一段。发送目标仍由已核实的受众决定，标题不参与路由或投递幂等键。
 - 这一恢复规则适用于所有任务：普通服务重启只释放已经停止的 worker 租约，保留同一任务的执行代次、已准备消息和外部回执；恢复 worker 从这些事实继续。若运维明确完成了运行时/路由修复，则服务修复重试创建新的 execution generation 和新的 session 绑定，但仍复用同一业务对象及外部动作幂等事实；用户业务反馈重跑则按反馈闭环复用兼容 session。
 - 外部动作的 operation、target 和 provider result identifier（若 provider 返回）会保留用于去重；缺少标识属于 provider/Agent 失败，不转换为额外状态。
 - WeChat reader 由独立 launchd job 自动保持运行；worker 连续三次 IPC 超时后主动 kickstart 该 job，处理“进程仍在但 IPC 已卡住”的情况。worker 只恢复 reader 进程，不启动 WeChat 主应用，也不重放消息。
@@ -774,12 +815,14 @@ DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 cla
 `:30` 的“恢复近期 DingTalk 消息”、会议、微信 reader、OA、会议行动项、每周 OKR，以及每天
 `20:00`（`Asia/Shanghai`）的 AI 听记同步。十个任务全部是服务命令，旧的 producer timing loops
 已移除。以 Agent 形式创建的旧 `dingtalk-message-check-v1`、`wechat-message-check-v1`、会议、OA、工作来源和
-`ceo-minutes-sync-daily-v1` 在启动时原地转换为命令形式（保留名称、Cron、时区，未编辑过的旧 seed
-转换后启用，已编辑的保留用户的启用状态，已删除的不动）。AI 听记同步不再需要 Skill 判断：分页读取
+`ceo-minutes-sync-daily-v1` 在启动时原地转换为命令形式（保留名称、Cron、时区和启用状态，已删除的不动）。
+新安装创建的全部默认任务都是暂停状态，用户配好连接器后自行启用；seed 从不改变已有任务的启用状态
+（Derek 2026-09-23）。AI 听记同步不再需要 Skill 判断：分页读取
 摘要与逐字稿、写入本地归档、维护内容游标都由 `app/minutes_sync.py` 确定性完成，时长不足五分钟的
 会议直接跳过。成功运行的归档命令单行结果摘要会持久化到 scheduled run，并显示在定时任务运行记录中，包含
 `discovered`、`synced`、`skipped`、`permission_requested`、`permission_pending`、`failed` 计数及可操作的跳过明细。
 另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析、失败数量及会话剩余天数。OKR 周报同样是服务命令：它唯一的动作就是执行一条确定性命令，而那条命令的实时 OKR 读取会跑到五十分钟以上，任何 Agent 超时都装不下，被杀之后命令还会脱离运行记录继续跑。因此当前没有任何种子任务是 Agent 形式，Cron 在所有模型路由都不可用时仍然照常工作。Lark 没有
+访问申请页需等待申请按钮实际可用；按钮仍禁用时保留为申请人未解析，下一轮继续尝试。页面仅显示加载壳或其他非权限内容时不能当作已可读，只有听记读取 API 能确认可读。
 默认 seed。
 内部投递、发送状态确认、错误恢复及 Todo completion follow-up 仍是内部机制，不外化为 Cron。
 

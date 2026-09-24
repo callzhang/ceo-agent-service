@@ -93,7 +93,7 @@ def test_dingtalk_message_mentions_principal_false_for_name_without_at():
 
 
 def test_dingtalk_message_mentions_principal_false_for_unrelated_content():
-    message = make_message("这个请俊杰看一下")
+    message = make_message("这个请孙伟看一下")
 
     assert message.mentions_principal() is False
 
@@ -202,7 +202,7 @@ def test_list_messages_by_ids_returns_parsed_messages():
                     {
                         "openConversationId": "cid-1",
                         "openMessageId": "msg-1",
-                        "sender": "Mina",
+                        "sender": "Avery",
                         "senderOpenDingTalkId": "sender-1",
                         "createTime": "2026-05-13 20:25:00",
                         "content": "这个怎么处理？",
@@ -1357,8 +1357,10 @@ def test_json_from_mixed_stdout_rejects_text_after_json():
 def test_get_resource_download_url_keeps_url_when_dws_download_stage_fails(
     monkeypatch,
 ):
+    calls = []
+
     def fake_run(*args, **kwargs):
-        del args, kwargs
+        calls.append((args, kwargs))
         return subprocess.CompletedProcess(
             args=["dws"],
             returncode=5,
@@ -1368,7 +1370,9 @@ def test_get_resource_download_url_keeps_url_when_dws_download_stage_fails(
             stderr="",
         )
 
-    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        DwsClient, "_run_cli_process", staticmethod(fake_run)
+    )
     client = DwsClient(dws_bin="dws")
 
     payload = client.get_resource_download_url(
@@ -1381,6 +1385,7 @@ def test_get_resource_download_url_keeps_url_when_dws_download_stage_fails(
     assert payload == {
         "downloadUrl": "https://signed.example/message-image.png?token=abc"
     }
+    assert calls[0][1]["isolate_process_group"] is True
 
 
 def test_get_resource_download_url_uses_local_file_when_success_stdout_is_not_json(
@@ -1423,7 +1428,9 @@ def test_get_resource_download_url_uses_local_file_when_success_stdout_is_not_js
         "NamedTemporaryFile",
         fake_named_temporary_file,
     )
-    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        DwsClient, "_run_cli_process", staticmethod(fake_run)
+    )
     client = DwsClient(dws_bin="dws")
 
     payload = client.get_resource_download_url(
@@ -1460,7 +1467,9 @@ def test_get_resource_download_url_keeps_file_when_dws_reports_secondary_error(
     monkeypatch.setattr(
         dws_client.tempfile, "NamedTemporaryFile", lambda **_: TemporaryFile()
     )
-    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        DwsClient, "_run_cli_process", staticmethod(fake_run)
+    )
 
     payload = DwsClient(dws_bin="dws").get_resource_download_url(
         "cid-1", "msg-1", "@img-token-1", "mediaId"
@@ -1992,13 +2001,13 @@ def test_send_message_command_does_not_duplicate_mentions_already_in_body():
 
     command = client.build_send_message_command(
         conversation_id="cid-1",
-        text="@ET(张毅倜) 先出方案；@Roy Han(韩露) 补材料。",
+        text="@ET(张毅倜) 先出方案；@Roy Han(吴婷) 补材料。",
         at_open_dingtalk_ids=["open-et", "open-roy"],
         at_open_dingtalk_names=["ET", "Roy Han"],
     )
 
     assert command[command.index("--markdown") + 1] == (
-        "<@open-et>(张毅倜) 先出方案；<@open-roy>(韩露) 补材料。"
+        "<@open-et>(张毅倜) 先出方案；<@open-roy>(吴婷) 补材料。"
     )
 
 
@@ -2303,15 +2312,14 @@ def test_reply_message_command_shape():
     assert command == [
         "dws",
         "chat",
-        "message",
-        "reply",
-        "--conversation-id",
+        "+messages-reply",
+        "--group",
         "cid-1",
         "--ref-msg-id",
         "msg-1",
         "--ref-sender",
         "open-1",
-        "--text",
+        "--content",
         "收到（by明哥分身）",
         "--format",
         "json",
@@ -2332,7 +2340,7 @@ def test_send_reply_to_trigger_prefers_native_reply_over_group_at_send():
         open_message_id="msg-1",
         conversation_title="CEO-2 管理群",
         single_chat=False,
-        sender_name="Lily",
+        sender_name="Riley",
         sender_open_dingtalk_id="open-lily",
         create_time="2026-06-09 09:00:00",
         content="@Derek Zen(磊哥) 看一下",
@@ -2350,15 +2358,14 @@ def test_send_reply_to_trigger_prefers_native_reply_over_group_at_send():
         [
             "dws",
             "chat",
-            "message",
-            "reply",
-            "--conversation-id",
+            "+messages-reply",
+            "--group",
             "cid-1",
             "--ref-msg-id",
             "msg-1",
             "--ref-sender",
             "open-lily",
-            "--text",
+            "--content",
             " @ET(张毅倜) 先出方案。",
             "--format",
             "json",
@@ -2385,7 +2392,7 @@ def test_send_reply_to_trigger_chunks_splits_long_text_and_extracts_recall_key()
         open_message_id="msg-1",
         conversation_title="CEO-2 管理群",
         single_chat=False,
-        sender_name="Lily",
+        sender_name="Riley",
         sender_open_dingtalk_id="open-lily",
         create_time="2026-06-09 09:00:00",
         content="@Derek Zen(磊哥) 看一下",
@@ -2401,8 +2408,8 @@ def test_send_reply_to_trigger_chunks_splits_long_text_and_extracts_recall_key()
     assert len(result["chunks"]) == 2
     assert result["chunks"][0]["text"].startswith("【1/2】")
     assert DwsClient.extract_recall_key(result) == "recall-1"
-    first_text = client.commands[0][client.commands[0].index("--text") + 1]
-    second_text = client.commands[1][client.commands[1].index("--text") + 1]
+    first_text = client.commands[0][client.commands[0].index("--content") + 1]
+    second_text = client.commands[1][client.commands[1].index("--content") + 1]
     assert first_text.startswith("【1/2】")
     assert second_text.startswith("【2/2】")
     assert "--at-user-ids" not in client.commands[1]
@@ -2451,15 +2458,15 @@ def test_send_message_escapes_at_prefixed_title_for_dws_cli():
     command = client.build_send_message_command(
         conversation_id="cid-1",
         text=(
-            "> 周俊杰: 我在本地分支改了\n\n"
-            "<@user-1> @周俊杰 明白，先把 diff 发出来。"
+            "> 孙伟: 我在本地分支改了\n\n"
+            "<@user-1> @孙伟 明白，先把 diff 发出来。"
         ),
         at_users=["user-1"],
     )
 
-    assert command[command.index("--title") + 1] == "回复：@周俊杰 明白，先把 diff 发出来。"
-    assert command[command.index("--markdown") + 1].startswith("> 周俊杰")
-    assert "<@user-1> @周俊杰" in command[command.index("--markdown") + 1]
+    assert command[command.index("--title") + 1] == "回复：@孙伟 明白，先把 diff 发出来。"
+    assert command[command.index("--markdown") + 1].startswith("> 孙伟")
+    assert "<@user-1> @孙伟" in command[command.index("--markdown") + 1]
 
 
 def test_send_message_escapes_at_prefixed_text_for_dws_cli():
@@ -2467,7 +2474,7 @@ def test_send_message_escapes_at_prefixed_text_for_dws_cli():
 
     command = client.build_send_message_command(
         conversation_id="cid-1",
-        text="@周俊杰 明白，先把 diff 发出来。",
+        text="@孙伟 明白，先把 diff 发出来。",
     )
 
     assert command[command.index("--title") + 1].startswith("回复：@")
@@ -2903,7 +2910,7 @@ def test_parse_messages_response_keeps_quoted_message():
                     "senderUserId": "sender-user-1",
                     "msgType": "text",
                     "createTime": "2026-05-13 15:16:49",
-                    "content": "@Alex Chen(明哥) 我和俊杰聊下",
+                    "content": "@Alex Chen(明哥) 我和孙伟聊下",
                     "atUserIds": ["principal-user-1", "jun-jie-user-1"],
                     "quotedMessage": {
                         "openMessageId": "msg-0",
@@ -2930,7 +2937,7 @@ def test_parse_messages_response_keeps_quoted_message():
         sender_user_id="sender-user-1",
         message_type="text",
         create_time="2026-05-13 15:16:49",
-        content="@Alex Chen(明哥) 我和俊杰聊下",
+        content="@Alex Chen(明哥) 我和孙伟聊下",
         mentioned_user_ids=["principal-user-1", "jun-jie-user-1"],
         quoted_message_id="msg-0",
         quoted_content="这个ACL表看一下",
@@ -2945,7 +2952,7 @@ def test_calendar_invite_from_message_parses_structured_calendar_payload():
         open_message_id="msg-1",
         conversation_title="Friday",
         single_chat=True,
-        sender_name="Mina",
+        sender_name="Avery",
         create_time="2026-05-13 15:16:49",
         content="[日程]",
         message_type="calendar",
@@ -2956,7 +2963,7 @@ def test_calendar_invite_from_message_parses_structured_calendar_payload():
                 "start": {"dateTime": "2026-05-14T10:00:00+08:00"},
                 "end": {"dateTime": "2026-05-14T11:00:00+08:00"},
                 "description": "客户 CEO 会参加，需要 Alex 决策。",
-                "organizer": {"displayName": "Mina"},
+                "organizer": {"displayName": "Avery"},
             }
         },
     )
@@ -2969,7 +2976,7 @@ def test_calendar_invite_from_message_parses_structured_calendar_payload():
     assert event.start_time == "2026-05-14T10:00:00+08:00"
     assert event.end_time == "2026-05-14T11:00:00+08:00"
     assert event.description == "客户 CEO 会参加，需要 Alex 决策。"
-    assert event.organizer == "Mina"
+    assert event.organizer == "Avery"
 
 
 def test_calendar_invite_from_message_parses_calendar_comments():
@@ -2979,7 +2986,7 @@ def test_calendar_invite_from_message_parses_calendar_comments():
         open_message_id="msg-1",
         conversation_title="Friday",
         single_chat=True,
-        sender_name="Mina",
+        sender_name="Avery",
         create_time="2026-05-13 15:16:49",
         content="[日程]",
         message_type="calendar",
@@ -2990,10 +2997,10 @@ def test_calendar_invite_from_message_parses_calendar_comments():
                 "start": {"dateTime": "2026-05-14T10:00:00+08:00"},
                 "end": {"dateTime": "2026-05-14T11:00:00+08:00"},
                 "description": "客户 CEO 会参加，需要 Alex 决策。",
-                "organizer": {"displayName": "Mina"},
+                "organizer": {"displayName": "Avery"},
                 "commentList": [
                     {
-                        "creator": {"displayName": "Mina"},
+                        "creator": {"displayName": "Avery"},
                         "content": "请会前看完客户升级材料。",
                     },
                     "补充：客户希望当天定方案。",
@@ -3006,7 +3013,7 @@ def test_calendar_invite_from_message_parses_calendar_comments():
 
     assert event is not None
     assert event.comments == [
-        "Mina: 请会前看完客户升级材料。",
+        "Avery: 请会前看完客户升级材料。",
         "补充：客户希望当天定方案。",
     ]
 
@@ -3018,7 +3025,7 @@ def test_calendar_invite_from_message_accepts_nested_event_without_event_id():
         open_message_id="msg-1",
         conversation_title="Friday",
         single_chat=True,
-        sender_name="Mina",
+        sender_name="Avery",
         create_time="2026-05-13 15:16:49",
         content="[日程]",
         message_type="calendar",
@@ -3051,7 +3058,7 @@ def test_calendar_invite_from_message_fetches_detail_from_calendar_link():
                 "start": {"dateTime": "2026-05-30T14:00:00+08:00"},
                 "end": {"dateTime": "2026-05-30T15:00:00+08:00"},
                 "description": "需要 Alex 参与 Demo 判断。",
-                "organizer": {"displayName": "韩露"},
+                "organizer": {"displayName": "吴婷"},
                 "created": 1780045392000,
                 "updated": 1780046750260,
                 "attendees": [
@@ -3068,9 +3075,9 @@ def test_calendar_invite_from_message_fetches_detail_from_calendar_link():
     message = DingTalkMessage(
         open_conversation_id="cid-1",
         open_message_id="msg-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         single_chat=True,
-        sender_name="韩露",
+        sender_name="吴婷",
         create_time="2026-05-29 17:26:25",
         content=(
             "好的明哥\n"
@@ -3119,9 +3126,9 @@ def test_calendar_invite_from_message_uses_recurring_instance_id():
     message = DingTalkMessage(
         open_conversation_id="cid-1",
         open_message_id="msg-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         single_chat=True,
-        sender_name="韩露",
+        sender_name="吴婷",
         create_time="2026-09-08 17:00:00",
         content=(
             "明天站会讨论\n"
@@ -3210,9 +3217,9 @@ def test_calendar_invite_from_message_returns_none_for_unavailable_event_detail(
     message = DingTalkMessage(
         open_conversation_id="cid-1",
         open_message_id="msg-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         single_chat=True,
-        sender_name="韩露",
+        sender_name="吴婷",
         create_time="2026-05-29 17:26:25",
         content=(
             "好的明哥\n"
@@ -3467,7 +3474,7 @@ def test_minutes_permission_request_from_message_parses_structured_payload():
         open_message_id="msg-1",
         conversation_title="Friday",
         single_chat=True,
-        sender_name="Mina",
+        sender_name="Avery",
         create_time="2026-05-13 15:16:49",
         content="[dingtalk://dingtalkclient/page/flash_minutes_detail?x=1]",
         raw_payload={
@@ -3501,7 +3508,7 @@ def test_minutes_permission_request_does_not_treat_plain_detail_link_as_request(
         open_message_id="msg-1",
         conversation_title="Friday",
         single_chat=True,
-        sender_name="Mina",
+        sender_name="Avery",
         create_time="2026-05-13 15:16:49",
         content="[dingtalk://dingtalkclient/page/flash_minutes_detail?minutesId=minutes-1&from=8]",
         raw_payload={
@@ -3607,8 +3614,8 @@ def test_parse_user_profiles_keeps_search_result_title():
         "result": [
             {
                 "userId": "user-1",
-                "name": "邹婧玮",
-                "nick": "Mina 邹",
+                "name": "钱芳",
+                "nick": "Avery",
                 "openDingTalkId": "open-1",
                 "title": "首席人力资源专家兼HRVP",
             }
@@ -3628,7 +3635,7 @@ def test_get_user_profile_enriches_missing_title_from_contact_search():
                     {
                         "orgEmployeeModel": {
                             "orgUserId": "user-1",
-                            "orgUserName": "邹婧玮",
+                            "orgUserName": "钱芳",
                         }
                     }
                 ]
@@ -3637,7 +3644,7 @@ def test_get_user_profile_enriches_missing_title_from_contact_search():
                 "result": [
                     {
                         "userId": "user-1",
-                        "name": "邹婧玮",
+                        "name": "钱芳",
                         "title": "首席人力资源专家兼HRVP",
                     }
                 ]
@@ -3650,7 +3657,7 @@ def test_get_user_profile_enriches_missing_title_from_contact_search():
     assert profile.title == "首席人力资源专家兼HRVP"
     assert client.commands == [
         client.build_get_user_profiles_command(["user-1"]),
-        client.build_search_user_command("邹婧玮"),
+        client.build_search_user_command("钱芳"),
     ]
 
 
@@ -3730,7 +3737,7 @@ def test_get_user_profiles_enriches_missing_titles_from_contact_search():
                     {
                         "orgEmployeeModel": {
                             "orgUserId": "user-1",
-                            "orgUserName": "邹婧玮",
+                            "orgUserName": "钱芳",
                         }
                     },
                     {
@@ -3746,7 +3753,7 @@ def test_get_user_profiles_enriches_missing_titles_from_contact_search():
                 "result": [
                     {
                         "userId": "user-1",
-                        "name": "邹婧玮",
+                        "name": "钱芳",
                         "title": "首席人力资源专家兼HRVP",
                     }
                 ]
@@ -3762,7 +3769,7 @@ def test_get_user_profiles_enriches_missing_titles_from_contact_search():
     ]
     assert client.commands == [
         client.build_get_user_profiles_command(["user-1", "user-2"]),
-        client.build_search_user_command("邹婧玮"),
+        client.build_search_user_command("钱芳"),
     ]
 
 
@@ -4254,7 +4261,7 @@ def test_read_mentioned_messages_parses_conversation_messages_list(monkeypatch):
                         {
                             "openConversationId": "cid-1",
                             "openMessageId": "msg-1",
-                            "sender": "Mina 邹",
+                            "sender": "Avery",
                             "senderOpenDingTalkId": "open-1",
                             "createTime": "2026-05-25 13:30:26",
                             "content": "@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力",
@@ -4280,7 +4287,7 @@ def test_read_mentioned_messages_parses_conversation_messages_list(monkeypatch):
     assert "--start" in client.commands[0]
     assert "--end" in client.commands[0]
     assert client.commands[0][client.commands[0].index("--end") + 2] == "--group"
-    assert messages[0].sender_name == "Mina 邹"
+    assert messages[0].sender_name == "Avery"
     assert messages[0].open_message_id == "msg-1"
 
 
@@ -4303,7 +4310,7 @@ def test_parse_messages_skips_malformed_message_payloads():
                         {
                             "openConversationId": "cid-1",
                             "openMessageId": "msg-1",
-                            "sender": "Mina 邹",
+                            "sender": "Avery",
                             "senderOpenDingTalkId": "open-1",
                             "createTime": "2026-05-25 13:30:26",
                             "content": "@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力",
@@ -4427,7 +4434,7 @@ def test_build_read_recent_messages_command_uses_direct_list_for_single_chat(
     client = DwsClient(dws_bin="dws")
     conversation = DingTalkConversation(
         open_conversation_id="cid-1",
-        title="Mina 邹",
+        title="Avery",
         single_chat=True,
         unread_point=1,
         last_message_create_at=last_message_create_at,
@@ -4503,14 +4510,14 @@ def test_read_unread_messages_reads_latest_window_and_returns_chronological_orde
                 {
                     "openConversationId": "cid-1",
                     "openMessageId": "msg-newer",
-                    "sender": "Mina 邹",
+                    "sender": "Avery",
                     "createTime": "2026-05-13 20:26:00",
                     "content": "好的",
                 },
                 {
                     "openConversationId": "cid-1",
                     "openMessageId": "msg-older",
-                    "sender": "Mina 邹",
+                    "sender": "Avery",
                     "createTime": "2026-05-13 20:25:00",
                     "content": "收到",
                 },
@@ -4523,7 +4530,7 @@ def test_read_unread_messages_reads_latest_window_and_returns_chronological_orde
                 "result": [
                     {
                         "userId": "user-1",
-                        "name": "Mina 邹",
+                        "name": "Avery",
                         "openDingTalkId": "open-1",
                     }
                 ]
@@ -4533,7 +4540,7 @@ def test_read_unread_messages_reads_latest_window_and_returns_chronological_orde
     )
     conversation = DingTalkConversation(
         open_conversation_id="cid-1",
-        title="Mina 邹",
+        title="Avery",
         single_chat=True,
         unread_point=2,
         last_message_create_at=last_message_create_at,
@@ -4548,7 +4555,7 @@ def test_read_unread_messages_reads_latest_window_and_returns_chronological_orde
             "user",
             "search",
             "--query",
-            "Mina 邹",
+            "Avery",
             "--format",
             "json",
         ],
@@ -4582,14 +4589,14 @@ def test_read_unread_messages_accepts_direct_result_rows(monkeypatch):
             {
                 "openConversationId": "cid-1",
                 "openMessageId": "msg-newer",
-                "sender": "Mina Zou",
+                "sender": "Avery Zou",
                 "createTime": "2026-05-13 20:26:00",
                 "content": "好的",
             },
             {
                 "openConversationId": "cid-1",
                 "openMessageId": "msg-older",
-                "sender": "Mina Zou",
+                "sender": "Avery Zou",
                 "createTime": "2026-05-13 20:25:00",
                 "content": "收到",
             },
@@ -4621,7 +4628,7 @@ def test_read_unread_messages_accepts_nested_message_rows(monkeypatch):
                     {
                         "openConversationId": "cid-1",
                         "openMessageId": "msg-newer",
-                        "sender": "Mina Zou",
+                        "sender": "Avery Zou",
                         "createTime": "2026-05-13 20:26:00",
                         "content": "好的",
                     }
@@ -4652,7 +4659,7 @@ def test_read_unread_messages_accepts_deeply_nested_message_rows(monkeypatch):
                     {
                         "openConversationId": "cid-1",
                         "openMessageId": "msg-newer",
-                        "sender": "Mina Zou",
+                        "sender": "Avery Zou",
                         "createTime": "2026-05-13 20:26:00",
                         "content": "好的",
                     }
@@ -4683,14 +4690,14 @@ def test_read_unread_messages_falls_back_to_recent_conversation_window(monkeypat
                 {
                     "openConversationId": "cid-1",
                     "openMessageId": "msg-older",
-                    "sender": "Mina Zou",
+                    "sender": "Avery Zou",
                     "createTime": "2026-05-13 20:25:00",
                     "content": "收到",
                 },
                 {
                     "openConversationId": "cid-1",
                     "openMessageId": "msg-newer",
-                    "sender": "Mina Zou",
+                    "sender": "Avery Zou",
                     "createTime": "2026-05-13 20:26:00",
                     "content": "好的",
                 },
@@ -4719,7 +4726,7 @@ def test_read_unread_messages_discards_read_overlap_rows(monkeypatch):
                 {
                     "openConversationId": "cid-1",
                     "openMessageId": f"msg-{index}",
-                    "sender": "Mina Zou",
+                    "sender": "Avery Zou",
                     "createTime": "2026-05-13 20:26:00",
                     "content": f"message {index}",
                 }
@@ -4750,14 +4757,14 @@ def test_read_unread_messages_skips_invalid_unread_row_without_promoting_overlap
             "messages": [
                 {
                     "openConversationId": "cid-1",
-                    "sender": "Mina Zou",
+                    "sender": "Avery Zou",
                     "createTime": "2026-05-13 20:26:00",
                     "content": "missing message id",
                 },
                 {
                     "openConversationId": "cid-1",
                     "openMessageId": "msg-read-overlap",
-                    "sender": "Mina Zou",
+                    "sender": "Avery Zou",
                     "createTime": "2026-05-13 20:25:00",
                     "content": "already read",
                 },
@@ -4786,20 +4793,20 @@ def test_read_unread_messages_keeps_valid_rows_beside_invalid_unread_row(monkeyp
                 {
                     "openConversationId": "cid-1",
                     "openMessageId": "msg-newer",
-                    "sender": "Mina Zou",
+                    "sender": "Avery Zou",
                     "createTime": "2026-05-13 20:26:00",
                     "content": "valid unread message",
                 },
                 {
                     "openConversationId": "cid-1",
-                    "sender": "Mina Zou",
+                    "sender": "Avery Zou",
                     "createTime": "2026-05-13 20:25:30",
                     "content": "unsupported unread row",
                 },
                 {
                     "openConversationId": "cid-1",
                     "openMessageId": "msg-read-overlap",
-                    "sender": "Mina Zou",
+                    "sender": "Avery Zou",
                     "createTime": "2026-05-13 20:25:00",
                     "content": "already read",
                 },
@@ -4932,7 +4939,7 @@ def test_read_unread_messages_skips_dws_when_unread_point_is_zero():
     client = RecordingDwsClient({"result": {"messages": []}})
     conversation = DingTalkConversation(
         open_conversation_id="cid-1",
-        title="Mina 邹",
+        title="Avery",
         single_chat=True,
         unread_point=0,
     )
@@ -6066,7 +6073,7 @@ def test_run_json_retries_chat_message_list_token_verified_failed(monkeypatch):
             "user",
             "search",
             "--query",
-            "Lily",
+            "Riley",
             "--format",
             "json",
         ],

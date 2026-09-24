@@ -1465,13 +1465,13 @@ def test_a_group_reply_named_reply_to_message_is_executable() -> None:
     from app.consumer_agent import structured_dingtalk_outgoing_text_key
 
     action = ProposedAction(
-        action_identity="reply_to_msgv7E5f7wwrk+BJ7RIjou51A==_settlement-policy-boundary",
+        action_identity="reply_to_msgExampleTriggerAAAAAAA==_settlement-policy-boundary",
         capability="dingtalk-chat",
         operation="reply_to_message",
         description="在星尘-财务管理群中回复触发消息",
         target={
-            "conversation_id": "cidFaNFX+QuPxKF3hNNAjhbVw==",
-            "message_id": "msgv7E5f7wwrk+BJ7RIjou51A==",
+            "conversation_id": "cidFinanceGroupExampleAAA==",
+            "message_id": "msgExampleTriggerAAAAAAA==",
         },
         payload={"content": "先作为讨论稿，正式执行前再确认计算口径。"},
     )
@@ -1489,3 +1489,76 @@ def test_a_reply_by_any_name_still_needs_the_message_it_replies_to() -> None:
             target={"conversation_id": "cid"},
             payload={"content": "x"},
         )
+
+
+def test_a_proposal_can_also_ask_derek_an_independent_question():
+    """Derek, 2026-09-23: act on the material gap, escalate the rule gap.
+
+    384699 and 384514 each lost one half because a result could be a proposal
+    or needs_human but not both.
+    """
+    from app.agent_wire_contracts import ConsumerAgentWireResult
+
+    wire = _consumer_wire_payload(
+        outcome="proposal",
+        proposal=_proposal(),
+        decision_options=_decision_options(),
+        needs_human_reason="No written rule covers this signing authority.",
+        decision_basis=_decision_basis(),
+        rule_coverage=0.0,
+    )
+
+    result = ConsumerAgentWireResult.model_validate(wire).to_result()
+
+    assert result.escalates
+    assert result.proposal is not None
+
+
+@pytest.mark.parametrize(
+    "missing", ("decision_options", "needs_human_reason", "decision_basis")
+)
+def test_an_escalating_proposal_needs_the_whole_question(missing):
+    payload = {
+        "outcome": "proposal",
+        "summary": "Comment for material and ask Derek.",
+        "proposal": _proposal(),
+        "decision_options": _decision_options(),
+        "needs_human_reason": "No written rule covers this signing authority.",
+        "decision_basis": _decision_basis(),
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 0.0,
+        "information_completeness": 1.0,
+        "error": _error(),
+    }
+    payload[missing] = [] if missing == "decision_options" else None
+
+    with pytest.raises(ValidationError, match="escalates"):
+        ConsumerAgentResult.model_validate(payload)
+
+
+def test_an_escalating_proposal_is_a_stored_human_decision():
+    """The Attempt points at the Consumer run that asked the question."""
+    from app.decision_quality import parse_stored_needs_human_decision
+
+    escalating = {
+        "outcome": "proposal",
+        "summary": "Comment for material and ask Derek.",
+        "proposal": _proposal(),
+        "decision_options": _decision_options(),
+        "needs_human_reason": "No written rule covers this signing authority.",
+        "decision_basis": _decision_basis(),
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 0.0,
+        "information_completeness": 1.0,
+        "error": _error(),
+    }
+    plain = {
+        key: value
+        for key, value in escalating.items()
+        if key not in {"needs_human_reason", "decision_basis"}
+    } | {"decision_options": []}
+
+    assert parse_stored_needs_human_decision(json.dumps(escalating)) is not None
+    assert parse_stored_needs_human_decision(json.dumps(plain)) is None

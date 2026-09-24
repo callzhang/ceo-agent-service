@@ -231,12 +231,12 @@ def test_business_summary_can_split_personnel_evaluation_into_private_message():
             "kind": "direct",
             "conversation_id": "",
             "direct_user_id": "u-mina",
-            "title": "Mina",
+            "title": "Avery",
             "candidates": [],
         },
         "message": "人员评价仅私下同步给本次招聘事项的 HR 负责人。",
         "reason": "包含对候选人与人事工作的评价，不应进入招聘业务群。",
-        "recipient_evidence": ["Mina 是本次招聘事项的 HR 负责人"],
+        "recipient_evidence": ["Avery 是本次招聘事项的 HR 负责人"],
     }
 
     decision = MeetingAlignmentDecision.model_validate(payload)

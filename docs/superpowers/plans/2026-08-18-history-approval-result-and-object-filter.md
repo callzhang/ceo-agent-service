@@ -542,7 +542,7 @@ def test_history_non_approval_card_keeps_existing_status_pill(tmp_path: Path):
         conversation_id="cid-reply",
         conversation_title="普通回复",
         trigger_message_id="msg-reply",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="请回复",
         action="send_reply",
         sensitivity_kind="general",

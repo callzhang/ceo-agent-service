@@ -28,7 +28,7 @@ def test_reader_normalizes_exact_group_mentions(fake_account):
         tables=["Msg_g1"],
         rows=[{
             "message_id": "m1", "conversation_id": "g1", "sender_id": "u1",
-            "sender_name": "Mina", "direction": "inbound",
+            "sender_name": "Avery", "direction": "inbound",
             "sent_at": "2026-07-17T10:00:00+08:00", "kind": "text",
             "text": "@Derek hi", "mentioned_user_ids": ["self-1"],
             "conversation_type": "group",

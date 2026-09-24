@@ -4369,7 +4369,6 @@ _CONFIGURATION_DURATION_KEYS = frozenset(
 _PROMPT_VARIABLE_DESCRIPTIONS = {
     "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY": "用于判断当前事项是否需要 principal 处理。",
     "CEO_PROMPT_VAR_FORBIDDEN_REPLY_TEXT_TERMS": "回复文本中禁止暴露的内部词语。",
-    "CEO_PROMPT_VAR_OA_APPROVAL_RULES": "OA 审批审阅规则文件路径。",
 }
 
 # ``USER_ALIAS`` is the canonical display identity.  ``CEO_PRINCIPAL_NAME``

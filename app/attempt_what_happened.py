@@ -4,7 +4,7 @@ Derek, 2026-09-20, looking at /attempts/9698: he could not read it. The page
 said the item was waiting on his decision with no reply recorded, that the
 runtime had returned nothing verifiable four times, and that information
 completeness was 86%. All three were wrong. The leave had been approved in
-DingTalk and Claire had the notification; nothing was wrong with the runtime,
+DingTalk and Casey had the notification; nothing was wrong with the runtime,
 a gate had refused the result; and the 86% came from the last failing turn,
 while the turn that actually decided reported 100%.
 

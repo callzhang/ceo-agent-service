@@ -8,6 +8,7 @@ from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_turn_runner import (
     AgentTurnProcess,
     RuntimeRouteUnavailableError,
+    _fallback_requested_session_id,
     _decode_runtime_domain_result,
     _encode_runtime_domain_result,
     _process_failure_detail,
@@ -15,6 +16,30 @@ from app.agent_turn_runner import (
 )
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore, RuntimeRoutePausedError
+
+
+def test_same_route_capacity_retry_resumes_observed_audit_session():
+    assert _fallback_requested_session_id(
+        previous_route_name="codex_oauth",
+        next_route_name="codex_oauth",
+        fresh_session=False,
+        initial_session_id=None,
+        failed_session_id="audit-session-1",
+    ) == "audit-session-1"
+    assert _fallback_requested_session_id(
+        previous_route_name="codex_api",
+        next_route_name="codex_oauth",
+        fresh_session=False,
+        initial_session_id=None,
+        failed_session_id="api-session-1",
+    ) is None
+    assert _fallback_requested_session_id(
+        previous_route_name="codex_oauth",
+        next_route_name="codex_oauth",
+        fresh_session=True,
+        initial_session_id=None,
+        failed_session_id="audit-session-1",
+    ) is None
 
 
 def test_runner_has_no_application_effect_recovery_policy_helpers():
@@ -345,3 +370,35 @@ def test_raise_for_process_failure_attaches_diagnostics_to_runtime_error():
     assert raised.value.detail == (
         "fatal: MCP connection refused | worker crashed"
     )
+
+
+def test_a_result_correction_names_what_the_contract_says_is_wrong() -> None:
+    """Task 384711: two retries were told only `result: value_error`.
+
+    They resent the same result twice. The contract's own sentence says what to
+    change; the rejected model output must still stay out of the detail.
+    """
+    from pydantic import BaseModel, ValidationError, model_validator
+
+    from app.agent_result import ResultParseError
+    from app.agent_turn_runner import _result_parse_error_detail
+
+    class Result(BaseModel):
+        outcome: str
+
+        @model_validator(mode="after")
+        def check(self) -> "Result":
+            raise ValueError(
+                "authorization needs_human requires complete information and rule coverage"
+            )
+
+    try:
+        Result.model_validate({"outcome": "secret model text"})
+    except ValidationError as exc:
+        error = ResultParseError("invalid")
+        error.__cause__ = exc
+
+    detail = _result_parse_error_detail(error)
+
+    assert "requires complete information and rule coverage" in detail
+    assert "secret model text" not in detail

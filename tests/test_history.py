@@ -43,7 +43,7 @@ def _seed_meeting_run(store: AutoReplyStore, *, status: str = "sent") -> int:
         meeting_id="minutes-1",
         title="项目评审会",
         source_json='{"summary":"讨论上线范围"}',
-        participants_json='[{"name":"Derek"},{"name":"Mina"}]',
+        participants_json='[{"name":"Derek"},{"name":"Avery"}]',
         ended_at="2026-07-14T09:50:00+08:00",
         eligible_at="2026-07-14T10:00:00+08:00",
         status="pending",
@@ -52,7 +52,7 @@ def _seed_meeting_run(store: AutoReplyStore, *, status: str = "sent") -> int:
         job_id,
         status=status,
         target_title="项目群",
-        final_message="各方对上线范围仍有分歧。@Mina 请确认风险预算。",
+        final_message="各方对上线范围仍有分歧。@Avery 请确认风险预算。",
     )
     return store.record_meeting_alignment_run(
         job_id=job_id,
@@ -70,7 +70,7 @@ def test_history_merges_reply_and_meeting_runs_by_time(tmp_path):
         conversation_id="cid-1",
         conversation_title="研发群",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="是否全量上线？",
         action="send_reply",
         sensitivity_kind="general",
@@ -113,6 +113,61 @@ def test_history_applies_search_status_and_global_count(tmp_path):
     assert item.status == "skipped"
 
 
+def test_history_uses_current_run_while_failed_attempt_is_recovering(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="approval-1",
+        conversation_title="Approval",
+        single_chat=True,
+        trigger_message_id="task-1",
+        trigger_create_time="2026-09-24 00:00:00",
+        trigger_sender="Applicant",
+        trigger_text="Review contract",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="approval-1",
+        conversation_title="Approval",
+        trigger_message_id="task-1",
+        trigger_sender="Applicant",
+        trigger_text="Review contract",
+        action="oa_approval",
+        sensitivity_kind="approval",
+        send_status="failed",
+    )
+    with sqlite3.connect(store.path) as db:
+        task_id, generation = db.execute(
+            "select id, execution_generation from reply_tasks where trigger_message_id='task-1'"
+        ).fetchone()
+        db.execute(
+            "insert into agent_runs (reply_task_id, execution_generation, role, status) "
+            "values (?, ?, 'consumer', 'failed')",
+            (task_id, generation),
+        )
+        failed_run = db.execute("select last_insert_rowid()").fetchone()[0]
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (failed_run, attempt_id),
+        )
+        db.execute(
+            "insert into agent_runs (reply_task_id, execution_generation, role, status, turn_attempt) "
+            "values (?, ?, 'consumer', 'running', 1)",
+            (task_id, generation),
+        )
+        db.execute("update reply_tasks set status='processing' where id=?", (task_id,))
+
+    assert store.count_history_items(send_statuses=("failed",)) == 0
+    [item] = store.list_history_items(limit=20, send_statuses=("processing",))
+    assert item.source_id == attempt_id
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set status='completed' "
+            "where reply_task_id=? and turn_attempt=1",
+            (task_id,),
+        )
+    assert store.count_history_items(send_statuses=("failed",)) == 0
+    assert store.count_history_items(send_statuses=("processing",)) == 1
+
+
 def test_history_includes_task_updates_and_follow_ups(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = store.create_work_project(
@@ -120,22 +175,22 @@ def test_history_includes_task_updates_and_follow_ups(tmp_path):
         category="product",
         priority="P1",
         risk_level="medium",
-        owner_name="Mina",
-        current_state="等待 Mina 反馈",
+        owner_name="Avery",
+        current_state="等待 Avery 反馈",
         next_step="补充 TODO 描述",
     )
     todo_id = store.create_work_todo(
         project_id=project_id,
-        title="向 Mina 解释待办更新",
+        title="向 Avery 解释待办更新",
         description="说明重要事项判断口径，并同步更新后的 TODO。",
-        owner_name="Mina",
+        owner_name="Avery",
         priority="P1",
     )
     update_id = store.create_work_update(
         project_id=project_id,
         source_type="reply_attempt",
         source_ref="42",
-        summary="更新 TODO：补充 Mina 反馈事项描述",
+        summary="更新 TODO：补充 Avery 反馈事项描述",
         changes_json='{"action":"update_project"}',
         merge_reason="同一任务项目",
         confidence=0.9,
@@ -144,9 +199,9 @@ def test_history_includes_task_updates_and_follow_ups(tmp_path):
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="user-mina",
-        owner_name="Mina",
+        owner_name="Avery",
         target_kind="direct",
-        question_text="Mina，这个 TODO 描述是否清楚？",
+        question_text="Avery，这个 TODO 描述是否清楚？",
         scheduled_at="2026-07-15 10:00:00",
         status="sent",
     )
@@ -165,7 +220,7 @@ def test_history_includes_task_updates_and_follow_ups(tmp_path):
             (follow_up_id,),
         )
 
-    items = store.list_history_items(limit=20, query_text="Mina")
+    items = store.list_history_items(limit=20, query_text="Avery")
 
     assert [(item.kind, item.source_id) for item in items[:2]] == [
         ("task", follow_up_id),
@@ -177,7 +232,7 @@ def test_history_includes_task_updates_and_follow_ups(tmp_path):
     assert items[0].status == "sent"
     assert items[1].project_id == project_id
     assert items[1].status == "done"
-    assert store.count_history_items(send_statuses=("done",), query_text="Mina") == 1
+    assert store.count_history_items(send_statuses=("done",), query_text="Avery") == 1
 
 
 def test_history_preserves_immutable_retry_run_after_job_succeeds(tmp_path):
@@ -262,7 +317,7 @@ def test_history_retains_reply_legacy_search_fields(tmp_path):
         conversation_id="cid-search-legacy",
         conversation_title="研发群",
         trigger_message_id="msg-search-legacy",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="原问题",
         action="send_reply",
         sensitivity_kind="general",
@@ -293,7 +348,7 @@ def test_history_tie_order_is_stable_across_kinds(tmp_path):
         conversation_id="cid-tie",
         conversation_title="同秒群",
         trigger_message_id="msg-tie",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="同秒",
         action="no_reply",
         sensitivity_kind="general",

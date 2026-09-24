@@ -44,7 +44,7 @@ def _after(timestamp: str, seconds: int = 1) -> str:
 def group_message(mid, *, text, mentioned_user_ids):
     return WechatMessage(
         account_id="acct-1", conversation_id="g1", message_id=mid,
-        sender_id="u1", sender_display_name="Mina", conversation_type="group",
+        sender_id="u1", sender_display_name="Avery", conversation_type="group",
         direction="inbound", sent_at=f"2026-07-17T10:00:0{mid[-1]}", kind="text",
         text=text, mentioned_user_ids=mentioned_user_ids, source_version="4.1.10",
     )

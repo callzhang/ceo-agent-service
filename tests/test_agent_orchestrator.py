@@ -1212,6 +1212,50 @@ def test_proposal_is_executed_only_by_fresh_audit_session(store):
     )
 
 
+def test_a_proposal_that_escalates_is_executed_then_ends_needs_human(store):
+    """Derek, 2026-09-23: act on what the applicant can fix, ask him the rest.
+
+    384699 dropped its comment to raise the policy gap, and 384514 raised the
+    gap without asking for the material, because a result could be one or the
+    other. The action runs first; the question stays his.
+    """
+    task = _task(store)
+    escalating = _consumer_result("proposal", "comment-for-material").model_copy(
+        update={
+            "decision_options": _audit_result("needs_human", 0).decision_options,
+            "needs_human_reason": "No written rule covers signing authority.",
+            "decision_basis": _decision_basis_for_escalation(),
+        }
+    )
+    consumer = ScriptedConsumer(store, escalating)
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+
+    result = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
+    )
+
+    assert len(audit.calls) == 1
+    assert result.status == "needs_human"
+    assert result.audit_result.outcome is AuditOutcome.EXECUTED
+    assert result.consumer_result.decision_options
+    assert "signing authority" in result.summary
+
+
+def _decision_basis_for_escalation():
+    from app.agent_contracts import DecisionBasis
+
+    fact = lambda text: {"assertion": text, "references": ["oa:task:1"]}
+    return DecisionBasis.model_validate(
+        {
+            "verified_facts": [fact("The contract has no signing-authority rule.")],
+            "rule_evidence": [fact("dingtalk-oa-approval: dual handling")],
+            "quality_explanation": "The material gap is the applicant's; the rule gap is Derek's.",
+            "no_external_action_evidence": [fact("Nothing has run yet.")],
+            "conclusion": "Ask for the material now; Derek fills the rule.",
+        }
+    )
+
+
 @pytest.mark.parametrize(
     "parent_kind",
     (

@@ -7,7 +7,7 @@ business, management, project, risk, and decision items. Routine process steps
 should be ignored and should not create projects, TODOs, follow-ups, or DingTalk
 Todos.
 
-This design responds to Mina's feedback that some HR flow steps, such as
+This design responds to Avery's feedback that some HR flow steps, such as
 preparing offer or probation details that must happen before an offer can be
 sent, should not become separate reminders.
 
@@ -29,7 +29,7 @@ In scope:
 - Update task-agent behavior so routine process steps are ignored by default.
 - Allow feedback about noisy or mistaken TODOs to cancel existing TODOs and
   suppress pending follow-ups.
-- Backfill the existing noisy TODOs exposed by Mina's feedback.
+- Backfill the existing noisy TODOs exposed by Avery's feedback.
 - Add tests that protect the boundary between important tasks and process
   steps.
 
@@ -154,7 +154,7 @@ For important exceptions:
 
 Backfill should be conservative:
 
-- Start from Mina's feedback window and the related HR/recruiting TODOs.
+- Start from Avery's feedback window and the related HR/recruiting TODOs.
 - Cancel existing open TODOs that are only routine process steps.
 - Suppress draft follow-ups tied to those canceled TODOs.
 - Keep project facts and updates only when they describe useful context.
@@ -185,7 +185,7 @@ is not part of this change.
 Add or update tests for:
 
 - Routine HR process content is discarded and creates no TODO.
-- Mina-style noisy TODO feedback cancels the matched TODO and suppresses pending
+- Avery-style noisy TODO feedback cancels the matched TODO and suppresses pending
   follow-ups.
 - Follow-up creation is rejected when owner evidence is missing.
 - Automatic TODO close is rejected when completion evidence lacks source,
@@ -203,6 +203,6 @@ Add or update tests for:
 - Feedback that a TODO is too granular can cancel the existing TODO and suppress
   related follow-ups.
 - Important risks and decisions inside workflows are still tracked.
-- Mina's noisy HR flow TODOs are cleaned up through backfill without removing
+- Avery's noisy HR flow TODOs are cleaned up through backfill without removing
   important recruiting or organization items.
 - The change is covered by focused tests.

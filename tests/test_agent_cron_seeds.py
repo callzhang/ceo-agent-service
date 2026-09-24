@@ -109,6 +109,11 @@ def _options(
         "dingtalk-calendar",
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
+        "stardust-oa-project-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
         *operation_skills,
     }
     for name in required_operation_skills:
@@ -196,7 +201,7 @@ READABLE_BUILTIN_COPY = {
         "读取所有管理者的实时 OKR，由 Agent 结合工作证据分析进展、风险、领导力和文化表现，生成周报并发布到管理知识库和 CEO-2 管理群。",
     ),
     "ceo-minutes-sync-daily-v1": (
-        "归档新增的钉钉 AI 听记",
+        "下载新增的钉钉 AI 听记",
         "发现尚未归档且可访问的钉钉 AI 听记后，读取可用的摘要和逐字稿并归档到工作区；权限受限或内容不可读时保留同步状态，待后续检查。",
     ),
     "dingtalk-message-recovery-v1": (
@@ -238,7 +243,7 @@ def test_seed_uses_readable_copy_for_every_builtin_task(tmp_path: Path) -> None:
         (
             "每天同步 AI 听记",
             "同步 AI 听记的摘要、逐字稿和归档游标到工作区。",
-            "归档新增的钉钉 AI 听记",
+            "下载新增的钉钉 AI 听记",
             "发现尚未归档且可访问的钉钉 AI 听记后，读取可用的摘要和逐字稿并归档到工作区；权限受限或内容不可读时保留同步状态，待后续检查。",
         ),
         (
@@ -250,7 +255,7 @@ def test_seed_uses_readable_copy_for_every_builtin_task(tmp_path: Path) -> None:
         (
             "每天同步 AI 听记",
             "仅同步指定项目的听记。",
-            "归档新增的钉钉 AI 听记",
+            "下载新增的钉钉 AI 听记",
             "仅同步指定项目的听记。",
         ),
     ],
@@ -325,13 +330,13 @@ def test_fixed_discovery_seeds_do_not_require_an_agent_runtime(
     )
 
     assert len(producers) == 4
-    assert all(task.enabled for task in producers)
+    assert not any(task.enabled for task in producers)
     assert all(task.command for task in producers)
     assert all(task.runtime_id == "" for task in producers)
     assert all(task.required_runtime_capabilities == () for task in producers)
 
 
-def test_friday_only_still_enables_fixed_discovery_seeds(
+def test_friday_only_still_creates_fixed_discovery_seeds(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "friday-only.sqlite3")
@@ -358,7 +363,7 @@ def test_friday_only_still_enables_fixed_discovery_seeds(
     )
 
     assert len(producers) == 4
-    assert all(task.enabled for task in producers)
+    assert not any(task.enabled for task in producers)
     assert all(task.command for task in producers)
     assert all(task.runtime_id == "" for task in producers)
 
@@ -412,9 +417,22 @@ def test_reseeding_preserves_user_edits_when_adopting_a_legacy_fixed_check(
     assert repeated.name == original.name
     assert "$dingtalk-oa-approval" in repeated.prompt
     assert "$stardust-oa-finance-review" in repeated.prompt
+    assert "$stardust-oa-project-review" in repeated.prompt
+    assert "$stardust-oa-contract-review" in repeated.prompt
+    assert "$stardust-oa-people-review" in repeated.prompt
+    assert "$stardust-oa-attendance-travel-review" in repeated.prompt
+    assert "$stardust-oa-cloud-resource-review" in repeated.prompt
+    assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in repeated.prompt
+    assert "rule_coverage" in repeated.prompt
+    assert "needs_human" in repeated.prompt
     assert [ref.skill_name for ref in repeated.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
+        "stardust-oa-project-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
     ]
     assert repeated.runtime_id == ""
     assert repeated.command == "scan-oa-approvals"
@@ -446,9 +464,20 @@ def test_oa_seed_binds_generic_and_stardust_finance_review_skills(
 
     assert "$dingtalk-oa-approval" in task.prompt
     assert "$stardust-oa-finance-review" in task.prompt
+    assert "$stardust-oa-project-review" in task.prompt
+    assert "$stardust-oa-contract-review" in task.prompt
+    assert "$stardust-oa-people-review" in task.prompt
+    assert "$stardust-oa-attendance-travel-review" in task.prompt
+    assert "$stardust-oa-cloud-resource-review" in task.prompt
+    assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in task.prompt
     assert [ref.skill_name for ref in task.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
+        "stardust-oa-project-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
     ]
 
 
@@ -566,7 +595,7 @@ def test_seed_creates_dingtalk_message_check_every_minute(tmp_path: Path) -> Non
     assert task.cron_expression == "0 * * * * *"
     assert task.timezone_name == "Asia/Shanghai"
     assert task.command == "produce-once"
-    assert task.enabled is True
+    assert task.enabled is False
     assert all(
         skill_name in task.prompt
         for skill_name in (
@@ -602,7 +631,7 @@ def test_seed_creates_email_discovery_trigger_with_only_classifier_skill(
     assert task.command == "email-message-check-once"
     assert task.cron_expression == "0 * * * * *"
     assert task.timezone_name == "Asia/Shanghai"
-    assert task.enabled is True
+    assert task.enabled is False
     assert "$ceo-email-classifier" in task.prompt
     assert [ref.skill_name for ref in task.skill_refs] == ["ceo-email-classifier"]
     assert task.runtime_id == ""
@@ -771,9 +800,9 @@ def test_startup_seed_moves_legacy_agent_message_check_to_the_service_command(
     assert seeded.working_directory == ""
     assert seeded.name == legacy.name
     assert seeded.cron_expression == "0 */2 * * * *"
-    # Nobody edited the legacy seed, so its disabled state was the Agent form's
-    # own availability decision and the command form starts enabled.
-    assert seeded.enabled is True
+    # Seeding never switches a task on: the legacy task was paused, and the
+    # command form keeps it paused (Derek, 2026-09-23).
+    assert seeded.enabled is False
     assert store.list_scheduled_tasks(include_deleted=True).count(seeded) == 1
     again = _task_by_key(
         seed_scheduled_tasks(
@@ -842,7 +871,7 @@ def test_seed_creates_meeting_check_with_fixed_ten_minute_eligibility(
     assert (task.name, task.description) == READABLE_BUILTIN_COPY[
         "dingtalk-meeting-check-v1"
     ]
-    assert task.cron_expression == "0 * * * * *"
+    assert task.cron_expression == "0 */10 * * * *"
     assert task.command == "scan-meetings-once"
     assert "$ceo-meeting-work" in task.prompt
     assert "$dingtalk-minutes" in task.prompt
@@ -856,7 +885,7 @@ def test_seed_creates_meeting_check_with_fixed_ten_minute_eligibility(
         "dingtalk-minutes",
         "dingtalk-calendar",
     ]
-    assert task.enabled is True
+    assert task.enabled is False
 
 
 def test_every_fixed_discovery_check_is_a_service_command(
@@ -917,6 +946,11 @@ def test_every_fixed_discovery_check_is_a_service_command(
         "dingtalk-oa-check-v1": [
             "dingtalk-oa-approval",
             "stardust-oa-finance-review",
+            "stardust-oa-project-review",
+            "stardust-oa-contract-review",
+            "stardust-oa-people-review",
+            "stardust-oa-attendance-travel-review",
+            "stardust-oa-cloud-resource-review",
         ],
         "work-source-scan-daily-v1": [
             "ceo-meeting-work",
@@ -935,7 +969,7 @@ def test_every_fixed_discovery_check_is_a_service_command(
         assert [ref.skill_name for ref in task.skill_refs] == expected_skills[
             migration_key
         ]
-        assert task.enabled is True
+        assert task.enabled is False
 
     # Every discovery check is a service command. The weekly management report
     # is the one Agent task: which meetings matter and what the evidence
@@ -961,7 +995,7 @@ def test_every_fixed_discovery_check_is_a_service_command(
     assert okr.skill_refs == ()
 
 
-def test_seed_creates_wechat_existing_producer_every_fifteen_seconds(
+def test_seed_creates_wechat_existing_producer_every_five_minutes(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "wechat.sqlite3")
@@ -978,16 +1012,16 @@ def test_seed_creates_wechat_existing_producer_every_fifteen_seconds(
     assert (task.name, task.description) == READABLE_BUILTIN_COPY[
         "wechat-message-check-v1"
     ]
-    assert task.cron_expression == "*/15 * * * * *"
+    assert task.cron_expression == "0 */5 * * * *"
     assert task.timezone_name == "Asia/Shanghai"
     assert task.command == "wechat-produce-once"
-    assert task.enabled is True
+    assert task.enabled is False
     assert "$ceo-wechat" in task.prompt and task.runtime_id == ""
     assert [ref.skill_name for ref in task.skill_refs] == ["ceo-wechat"]
     assert task.runtime_options == {} and task.required_runtime_capabilities == ()
 
 
-def test_startup_seed_enables_untouched_legacy_wechat_agent_task_as_a_command(
+def test_startup_seed_keeps_untouched_legacy_wechat_agent_task_paused_as_a_command(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "legacy-wechat-agent.sqlite3")
@@ -1021,7 +1055,7 @@ def test_startup_seed_enables_untouched_legacy_wechat_agent_task_as_a_command(
     wechat = _task_by_key(seeded, "wechat-message-check-v1")
     assert wechat.id == untouched.id and untouched.version == 1
     assert wechat.command == "wechat-produce-once"
-    assert wechat.enabled is True
+    assert wechat.enabled is False
     assert wechat.cron_expression == untouched.cron_expression
     message = _task_by_key(seeded, "dingtalk-message-check-v1")
     assert message.id == edited.id and message.command == "produce-once"
@@ -1061,8 +1095,13 @@ def test_seed_creates_hourly_oa_check_with_real_operation_skill(
     assert [ref.skill_name for ref in task.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
+        "stardust-oa-project-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
     ]
-    assert task.enabled is True
+    assert task.enabled is False
 
 
 def test_reseed_renames_untouched_oa_default_so_the_approval_task_is_discoverable(
@@ -1106,6 +1145,11 @@ def test_reseed_renames_untouched_oa_default_so_the_approval_task_is_discoverabl
     assert [ref.skill_name for ref in reseeded.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
+        "stardust-oa-project-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-people-review",
+        "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
     ]
 
 
@@ -1142,7 +1186,7 @@ def test_seed_creates_daily_work_source_scan(tmp_path: Path) -> None:
         "ceo-work-tracking",
         "dingtalk-minutes",
     ]
-    assert task.enabled is True
+    assert task.enabled is False
 
 
 def test_reseed_migrates_workspace_scan_to_meeting_todos_in_place(
@@ -1216,7 +1260,7 @@ def test_seed_creates_hourly_recent_message_recovery_at_half_past(
     assert task.command == "recover-recent-messages"
     assert task.cron_expression == "0 30 * * * *"
     assert task.timezone_name == "Asia/Shanghai"
-    assert task.enabled is True
+    assert task.enabled is False
     assert all(
         skill_name in task.prompt
         for skill_name in (
@@ -1261,7 +1305,7 @@ def test_seed_creates_sunday_evening_weekly_okr_task(tmp_path: Path) -> None:
     assert task.prompt == ""
     assert task.skill_refs == ()
     assert task.runtime_id == ""
-    assert task.enabled is True
+    assert task.enabled is False
 
 
 def test_proactive_seeds_do_not_include_lark_default(tmp_path: Path) -> None:
@@ -1375,6 +1419,13 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
     )
     tasks = seed_scheduled_tasks(
         store=store, options=options, working_directory=tmp_path, now=NOW
+    )
+    # Seeds start paused (Derek, 2026-09-23); switch them on to exercise dispatch.
+    tasks = tuple(
+        store.set_scheduled_task_enabled(
+            task.id, enabled=True, expected_version=task.version, now=NOW
+        )
+        for task in tasks
     )
     assert all(task.enabled for task in tasks)
     scheduler = AgentCronScheduler(
@@ -1528,7 +1579,7 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
     assert len(tasks) == 13
     weekly_report = _task_by_key(tasks, "ceo-weekly-report-saturday-v1")
     for task in tasks:
-        assert task.enabled is True
+        assert task.enabled is False
         if task.migration_key == weekly_report.migration_key:
             continue
         assert task.command, task.migration_key
@@ -1543,3 +1594,16 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
             assert task.prompt and task.skill_refs
         assert task.runtime_id == ""
         assert store.list_scheduled_task_runs(task.id) == ()
+
+
+def test_the_default_oa_prompt_names_no_document_and_no_personal_rule() -> None:
+    """Derek, 2026-09-23: rules live only in Skills, and this repository is public.
+
+    The default named a background principles document the agent must not read,
+    and carried Derek's own approval rules. Those belong in his scheduled task,
+    not in every install's default.
+    """
+    from app.agent_cron.seeds import OA_CONSUMER_PROMPT
+
+    assert ".md" not in OA_CONSUMER_PROMPT
+    assert "Derek" not in OA_CONSUMER_PROMPT

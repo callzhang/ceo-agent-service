@@ -431,7 +431,7 @@ def test_build_turn_prompt_uses_user_prompt_template_override(tmp_path, monkeypa
                 open_message_id="msg-1",
                 conversation_title="产品群",
                 single_chat=False,
-                sender_name="Mina",
+                sender_name="Avery",
                 create_time="2026-05-15 13:00:00",
                 content="@Alex Chen(明哥) 看下图片",
             )
@@ -455,7 +455,7 @@ def test_context_messages_block_renders_json_array():
         open_message_id="ctx-1",
         conversation_title="产品群",
         single_chat=False,
-        sender_name="Mina",
+        sender_name="Avery",
         sender_user_id="sender-user-1",
         sender_open_dingtalk_id="open-sender-1",
         message_type="text",
@@ -479,7 +479,7 @@ def test_context_messages_block_renders_json_array():
                 open_message_id="msg-1",
                 conversation_title="产品群",
                 single_chat=False,
-                sender_name="Mina",
+                sender_name="Avery",
                 create_time="2026-05-15 13:00:00",
                 content="@Alex Chen(明哥) 看下",
             )
@@ -499,7 +499,7 @@ def test_context_messages_block_renders_json_array():
             "open_message_id": "ctx-1",
             "create_time": "2026-05-15 12:59:00",
             "sender": {
-                "name": "Mina",
+                "name": "Avery",
                 "user_id": "sender-user-1",
                 "open_dingtalk_id": "open-sender-1",
             },
@@ -520,7 +520,7 @@ def test_context_messages_block_includes_existing_reactions():
         open_message_id="ctx-1",
         conversation_title="产品群",
         single_chat=False,
-        sender_name="Mina",
+        sender_name="Avery",
         create_time="2026-05-15 12:59:00",
         content="上文背景",
         raw_payload={
@@ -544,7 +544,7 @@ def test_context_messages_block_includes_existing_reactions():
                 open_message_id="msg-1",
                 conversation_title="产品群",
                 single_chat=False,
-                sender_name="Mina",
+                sender_name="Avery",
                 create_time="2026-05-15 13:00:00",
                 content="@Alex Chen(明哥) 看下",
             )
@@ -572,7 +572,7 @@ def test_message_lines_remove_repeated_card_images_and_shorten_links():
             open_message_id="msg-1",
             conversation_title="26年董事会筹备组",
             single_chat=False,
-            sender_name="Lily",
+            sender_name="Riley",
             sender_user_id="lily-user-1",
             create_time="2026-05-14 15:04:04",
             content=CARD_CONTENT,
@@ -581,7 +581,7 @@ def test_message_lines_remove_repeated_card_images_and_shorten_links():
     rendered = "\n".join(lines)
 
     assert "董事会报告根据昨天的会议进行了修改" in rendered
-    assert "Lily sender_user_id=lily-user-1 2026-05-14" in rendered
+    assert "Riley sender_user_id=lily-user-1 2026-05-14" in rendered
     assert "26年董事会报告" in rendered
     assert "![image]" not in rendered
     assert "utm_medium" not in rendered
@@ -599,13 +599,13 @@ def test_message_lines_include_existing_reactions():
             open_message_id="msg-1",
             conversation_title="产品群",
             single_chat=False,
-            sender_name="Mina",
+            sender_name="Avery",
             create_time="2026-05-15 13:00:00",
             content="@Alex Chen(明哥) 看下",
             raw_payload={
                 "emotionReplyList": [
                     {"emoji": "OK", "replyUsers": ["明哥"]},
-                    {"emoji": "👍", "replyUsers": ["Mina", "Alex"]},
+                    {"emoji": "👍", "replyUsers": ["Avery", "Alex"]},
                 ]
             },
         )
@@ -613,7 +613,7 @@ def test_message_lines_include_existing_reactions():
 
     rendered = "\n".join(lines)
 
-    assert "已有 reaction: OK（明哥）；👍（Mina, Alex）" in rendered
+    assert "已有 reaction: OK（明哥）；👍（Avery, Alex）" in rendered
 
 
 def test_sanitize_dingtalk_prompt_text_keeps_malformed_url_text():
@@ -646,7 +646,7 @@ def test_build_turn_prompt_sanitizes_quoted_card_without_repeating_assets():
         open_message_id="msg-1",
         conversation_title="26年董事会筹备组",
         single_chat=False,
-        sender_name="Lily",
+        sender_name="Riley",
         create_time="2026-05-14 15:04:04",
         content=CARD_CONTENT,
         quoted_message_id="quoted-1",
@@ -697,7 +697,7 @@ def test_build_turn_prompt_keeps_user_message_separate_from_thread_prompt():
     prompt = build_turn_prompt(
         DingTalkConversation(
             open_conversation_id="cid-1",
-            title="周俊杰",
+            title="孙伟",
             single_chat=True,
             unread_point=1,
         ),
@@ -705,9 +705,9 @@ def test_build_turn_prompt_keeps_user_message_separate_from_thread_prompt():
             DingTalkMessage(
                 open_conversation_id="cid-1",
                 open_message_id="msg-1",
-                conversation_title="周俊杰",
+                conversation_title="孙伟",
                 single_chat=True,
-                sender_name="周俊杰",
+                sender_name="孙伟",
                 sender_user_id="junjie-user-1",
                 create_time="2026-05-15 13:00:00",
                 content="明哥，我今天想请一天调休。",
@@ -719,24 +719,24 @@ def test_build_turn_prompt_keeps_user_message_separate_from_thread_prompt():
     )
 
     assert "当前待处理消息:" in prompt
-    assert "会话: 周俊杰" in prompt
+    assert "会话: 孙伟" in prompt
     assert "CEO Agent Prompt" not in prompt
-    assert "周俊杰 sender_user_id=junjie-user-1" in prompt
+    assert "孙伟 sender_user_id=junjie-user-1" in prompt
 
 
 def test_build_turn_prompt_includes_known_people_lines():
     conversation = DingTalkConversation(
         open_conversation_id="cid-1",
-        title="Mina 邹",
+        title="Avery",
         single_chat=True,
         unread_point=1,
     )
     message = DingTalkMessage(
         open_conversation_id="cid-1",
         open_message_id="msg-1",
-        conversation_title="Mina 邹",
+        conversation_title="Avery",
         single_chat=True,
-        sender_name="Mina 邹",
+        sender_name="Avery",
         create_time="2026-05-15 13:00:00",
         content="明哥，晓民的转正时间快到了。",
     )
@@ -757,16 +757,16 @@ def test_build_turn_prompt_includes_known_people_lines():
 def test_build_turn_prompt_includes_sender_org_lines():
     conversation = DingTalkConversation(
         open_conversation_id="cid-1",
-        title="Mina 邹",
+        title="Avery",
         single_chat=True,
         unread_point=1,
     )
     message = DingTalkMessage(
         open_conversation_id="cid-1",
         open_message_id="msg-1",
-        conversation_title="Mina 邹",
+        conversation_title="Avery",
         single_chat=True,
-        sender_name="Mina 邹",
+        sender_name="Avery",
         create_time="2026-05-15 13:00:00",
         content="明哥，晓民的转正时间快到了。",
     )
@@ -778,12 +778,12 @@ def test_build_turn_prompt_includes_sender_org_lines():
         style_lines=[],
         include_thread_prompt=True,
         sender_org_lines=[
-            '{\n  "name": "Mina 邹",\n  "user_id": "sender-user-1",\n  "title": "首席人力资源专家兼HRVP",\n  "manager": {"name": "Alex Chen", "user_id": "principal-user-1"}\n}'
+            '{\n  "name": "Avery",\n  "user_id": "sender-user-1",\n  "title": "首席人力资源专家兼HRVP",\n  "manager": {"name": "Alex Chen", "user_id": "principal-user-1"}\n}'
         ],
     )
 
     assert "发信人组织信息(JSON):" in prompt
-    assert '"name": "Mina 邹"' in prompt
+    assert '"name": "Avery"' in prompt
     assert '"user_id": "sender-user-1"' in prompt
     assert '"title": "首席人力资源专家兼HRVP"' in prompt
 
@@ -853,7 +853,6 @@ def test_thread_prompt_does_not_always_load_work_profile(
 def test_thread_prompt_does_not_embed_approval_workflow():
     prompt = ceo_agent_thread_prompt()
 
-    assert "management/OA/钉钉审批审阅原则.md" not in prompt
     assert "材料完整且符合审批原则" not in prompt
     assert "independently selects and reads every applicable" in prompt
 
@@ -1001,7 +1000,7 @@ def test_build_turn_prompt_includes_material_references_for_agent_reading():
                 open_message_id="msg-1",
                 conversation_title="CEO-2 管理群",
                 single_chat=False,
-                sender_name="韩露",
+                sender_name="吴婷",
                 create_time="2026-06-08 18:46:32",
                 content="@Alex Chen(明哥) 看第二份材料",
             )
@@ -1014,14 +1013,14 @@ def test_build_turn_prompt_includes_material_references_for_agent_reading():
                 kind="dingtalk_doc",
                 reference="https://alidocs.dingtalk.com/i/nodes/doc123?utm_scene=team_space",
                 source_message_id="msg-1",
-                source_sender="韩露",
+                source_sender="吴婷",
                 source_time="2026-06-08 18:46:32",
             ),
             MaterialReferenceContext(
                 kind="dingtalk_minutes",
                 reference="7632756964333134343836383736303334325f3435313431363430365f35",
                 source_message_id="msg-1",
-                source_sender="韩露",
+                source_sender="吴婷",
                 source_time="2026-06-08 18:46:32",
             ),
         ],

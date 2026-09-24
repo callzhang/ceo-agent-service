@@ -93,4 +93,4 @@ def test_minutes_agent_task_is_adopted_as_service_command(tmp_path: Path) -> Non
     assert minutes.skill_refs == ()
     assert minutes.name == existing.name
     assert minutes.cron_expression == existing.cron_expression
-    assert minutes.enabled is True
+    assert minutes.enabled is False

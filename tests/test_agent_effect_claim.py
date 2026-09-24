@@ -20,7 +20,7 @@ def _shell_event(command: str = "dws oa approval detail --instance-id x") -> dic
 
 
 # The live result of Consumer run 20016 on reply task 341173: it reported the
-# 江淮 650k POC approved while making no tool call at all, and DingTalk still
+# 某车企 650k POC approved while making no tool call at all, and DingTalk still
 # showed the approval pending.
 RUN_20016_SUMMARY = (
     "该审批待办已在当前会话中完成处理：Wayne 提交的软件项目立项全流程（第二曲线）"
@@ -44,11 +44,11 @@ def test_the_same_claim_with_tool_calls_is_left_to_the_evidence_gate() -> None:
 
 
 def test_relaying_someone_elses_submission_is_not_a_claim() -> None:
-    # Run 19542 only said Lily had submitted a plan; it acted on nothing.
+    # Run 19542 only said Riley had submitted a plan; it acted on nothing.
     assert not claims_external_action_without_tools(
         result={
             "outcome": "no_action",
-            "summary": "Lily 的触发消息只是说明已提交 MS 团队的经营计划并请查收；前序文档提交已构成独立审阅对象。",
+            "summary": "Riley 的触发消息只是说明已提交 MS 团队的经营计划并请查收；前序文档提交已构成独立审阅对象。",
         },
         tool_events=[],
     )

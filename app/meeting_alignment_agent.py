@@ -98,7 +98,7 @@ class MeetingAlignmentAgent:
         source: MeetingSource,
         *,
         similar_sessions: list[CodexSessionSearchResult] | None = None,
-        group_candidates: list[dict[str, str]] | None = None,
+        group_candidates: list[dict[str, Any]] | None = None,
         run_id: int | None = None,
         consumer_prompt: str = "",
         skill_protocol: str = "",
@@ -119,7 +119,9 @@ class MeetingAlignmentAgent:
                 else self.codex.decide(prompt=prompt)
             )
             try:
-                _validate_source_aware_target(source, decision)
+                _validate_source_aware_target(
+                    source, decision, group_candidates=group_candidates or []
+                )
             except MeetingAlignmentTargetError as exc:
                 if repair_attempt >= MEETING_SOURCE_TARGET_REPAIR_LIMIT:
                     raise type(exc)(
@@ -338,7 +340,7 @@ def build_meeting_alignment_prompt(
     work_profile: str,
     work_profile_source: str,
     similar_sessions: list[CodexSessionSearchResult] | None = None,
-    group_candidates: list[dict[str, str]] | None = None,
+    group_candidates: list[dict[str, Any]] | None = None,
     consumer_prompt: str = "",
     skill_protocol: str = "",
 ) -> str:
@@ -347,7 +349,11 @@ def build_meeting_alignment_prompt(
     )
     target_contract = """每场会议都必须生成并发送一条会议总结，action 只能是 send；不得返回 no_action。
 - 内容优先于参会人数：客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动一律是业务内容，必须返回 audience_scope=business，并使用 DWS 做群发现、按业务承接证据给候选群排序，以最强候选作为 target.kind=group。
-- 先审阅下方实时群搜索候选，并用 DWS 核对业务承接、受众和可发送性；候选只是线索，不得仅凭群名发送。必要时继续以业务或受众线索搜索。确认业务群发现失败时，使用日历中已确认的会议组织者作为 direct fallback；不得因 1:1、初次搜索零命中或未搜索就私信，也不得按姓名模糊搜索目标。
+- 会议标题只是线索。优先核对会议材料中明确提及或分享的讨论群，再从会议结论、行动项和负责人提炼业务主题与预期受众。审阅下方预置候选，同时使用原文中的中文业务词与英文术语分别搜索 DWS，搜索会议标题和核心议题对应的群消息；必要时按工作线、项目、交付对象或行动负责人交叉搜索。没有预置候选或首次搜索零命中，不等于业务群发现失败。
+- 对每个可能的群，核对群内近期消息是否讨论同一工作线、谁在承接本次行动、群成员是否属于该议题的合理受众，以及群当前是否可发送。为每个有效候选写清候选群的来源、业务承接关系和受众证据；排除仅名称相似、成员重合但业务不符的群。多个合理群按本次议题和行动的实际归属排序，不按群规模或搜索顺序决定。不得为完成发送而选择宽泛群；候选群中含非授权受众时，不得把敏感内容带入群消息。
+- 只有在不同业务线索均已搜索、候选的消息与受众证据均已核对，仍没有可核验且可发送的业务群时，才算业务群发现失败；在 audit_summary 简述已核对的线索和排除原因，然后使用日历中已确认的会议组织者作为 direct fallback。不得因 1:1 或未搜索就私信，也不得按姓名模糊搜索目标。
+- 候选标记 verified_recurring_group 时，表示同名会议已多次成功投递到该群，且本次完整日历名册中多数可核验参会人仍在群内；仍须比较本次实际议题与群内近期讨论，不得仅凭历史投递或参会人覆盖率选群。
+- topic_discussion_evidence 是群内近期消息与本次会议摘要的词项交集线索，必须阅读其具体内容、时间和业务负责人，再判断是否承接本次议题。参会人覆盖率只用于核对受众，不证明业务归属；群成员多不代表更合适。优先选择讨论过同一工作线、负责本次行动且受众合适的群。
 - personal 只适用于整场会议均为个人事项，必须返回 audience_scope=personal；只有完整日历 1:1（attendee_evidence=calendar、attendee_roster_complete=true、恰好两名参会人）时，才可以使用 target.kind=direct，目标只能是另一位参会人。
 - 业务会议中出现人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，先按受众决定是否拆分：如果 DWS 实时群发现证明目标是 HR 专属或已匹配的群，且讨论是会议中 HR 参会人的共同事项、不是针对未参会的具体个人，可以把敏感详情放进 final_message，并将 sensitive_private_message=null；只要群受众不明确、含非授权成员，或讨论针对具体个人，就必须去掉群消息中的敏感详情，写入 sensitive_private_message。
 - sensitive_private_message.target 必须是 direct，并使用参会人中经 DWS 实时身份和职责确认的 HR/人员负责人稳定 user_id；没有可确认的 HR/人员负责人时发给当前用户本人。recipient_evidence 写清实时身份或职责依据。不得按姓名猜测接收人，也不得发给被评价人或无关参会人。
@@ -620,12 +626,26 @@ def _decision_text_candidates(payload: dict[str, object]) -> list[str]:
 def _validate_source_aware_target(
     source: MeetingSource,
     decision: MeetingAlignmentDecision,
+    *,
+    group_candidates: list[dict[str, Any]] | None = None,
 ) -> None:
     target = decision.target
     if target is None:
         raise MeetingAlignmentTargetError("send requires an explicit delivery target")
     if decision.audience_scope == "business":
         if target.kind == "direct":
+            verified_groups = [
+                candidate
+                for candidate in group_candidates or []
+                if candidate.get("verified_recurring_group") is True
+            ]
+            if verified_groups:
+                raise MeetingAlignmentTargetError(
+                    "business direct fallback is invalid with verified recurring group: "
+                    + ", ".join(
+                        str(candidate["title"]) for candidate in verified_groups
+                    )
+                )
             _validate_business_direct_fallback(source, target)
         elif target.kind != "group":
             raise MeetingAlignmentTargetError(

@@ -619,8 +619,13 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     assert "张三提交的录用申请" in task.trigger_text
     assert "申请人的最新明确陈述是其申请事实的权威来源" not in task.trigger_text
     assert "审批判断与动作一律以 dingtalk-oa-approval 为准" not in task.trigger_text
-    assert "通用 Skill 只定义审批机制与材料核验边界" in task.trigger_text
-    assert "live processCode 精确匹配的业务规则卡" in task.trigger_text
+    assert "判断标准由本次所选的星尘业务 Skill 提供" in task.trigger_text
+    # Derek, 2026-09-23: actions come from the generic decision table; only
+    # finance templates use rule cards. Requiring a processCode-matched card
+    # for every approval stopped every non-finance one at needs_human.
+    assert "动作一律按通用 Skill 的完整决策表" in task.trigger_text
+    assert "其他审批类型没有规则卡不是规则缺口" in task.trigger_text
+    assert "业务规则卡" not in task.trigger_text
     assert "procInstId=proc-1&taskId=102648910080" in task.oa_url
     assert '"source":"oa_pending_scan"' in task.trigger_message_json
     payload = json.loads(task.trigger_message_json)
@@ -1559,7 +1564,7 @@ def test_scan_pending_oa_approvals_points_the_turn_at_our_own_skill(tmp_path):
 def test_scan_pending_oa_approvals_names_the_principal_to_the_turn(tmp_path):
     """The turn was only handed the applicant's id and guessed Derek's from it.
 
-    On 张丽丽's contract approval it took her userId 144339455824043200 for
+    On 李明's contract approval it took her userId 100000000000000001 for
     Derek's, concluded that Derek's own task belonged to someone else, and
     skipped it twice. The scanner already knows the principal -- it used that id
     to decide the task was his -- so it must say so outright.

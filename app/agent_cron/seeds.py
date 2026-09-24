@@ -116,7 +116,7 @@ SCHEDULED_TASK_DEFAULT_COPY = {
         old_description="读取管理者实时 OKR，生成本周管理进度周报。",
     ),
     MINUTES_SYNC_MIGRATION_KEY: ScheduledTaskDefaultCopy(
-        name="归档新增的钉钉 AI 听记",
+        name="下载新增的钉钉 AI 听记",
         description="发现尚未归档且可访问的钉钉 AI 听记后，读取可用的摘要和逐字稿并归档到工作区；权限受限或内容不可读时保留同步状态，待后续检查。",
         old_name="每天同步 AI 听记",
         old_description="同步 AI 听记的摘要、逐字稿和归档游标到工作区。",
@@ -175,11 +175,21 @@ MEETING_CONSUMER_PROMPT = (
     "$dingtalk-minutes 与 $dingtalk-calendar 读取会议和日历证据。"
 )
 OA_CONSUMER_PROMPT = (
-    "使用 $dingtalk-oa-approval 与 $stardust-oa-finance-review 处理 Trigger 发现的真实 "
-    "DingTalk OA 待审批事项：按 live processCode 匹配 Stardust 财务规则卡；规则卡是财务"
-    "模板级动作的唯一来源。向申请人评论可补的材料缺口，对规则、例外、授权或动作映射"
-    "缺口转 needs_human，并在任何动作后重新读取 DingTalk。不要在本 Prompt 中重述金额、"
-    "审批人或动作规则。"
+    "使用 $dingtalk-oa-approval 与适用的 Stardust 业务 Skill 处理 Trigger 发现的真实 "
+    "DingTalk OA 待审批事项：$stardust-oa-finance-review、$stardust-oa-project-review、"
+    "$stardust-oa-contract-review、$stardust-oa-people-review、"
+    "$stardust-oa-attendance-travel-review、$stardust-oa-cloud-resource-review。"
+    "先按 live processCode 和表单事实分类；"
+    "跨类别事项必须组合适用的 Skill，不得仅因财务 Skill 无匹配规则卡就升级。"
+    "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill 审阅；不要从背景材料自行补充"
+    "审批规则。财务规则卡仅用于"
+    "财务 registry 中精确匹配的流程；其他类别没有财务规则卡不构成规则缺口。"
+    "个人具体规则仅按本 Prompt 执行，不得扩展为公司通用规则。只有当前事项的规则、"
+    "适用条件、例外、审批权限与动作映射均有完整且有效的来源时，rule_coverage 才能为 1.0；"
+    "否则低于 1.0，规则缺口进入 needs_human，不得自动批准或拒绝。申请人可补足的事实/"
+    "材料缺口按通用 Skill 评论或退回，并在规则缺口并存时独立 needs_human。"
+    "任何动作后重新读取 DingTalk。"
+    "不要在本 Prompt 重述制度阈值、金额或业务 Skill 中的通用审批规则。"
 )
 MEETING_TODO_CONSUMER_PROMPT = (
     "使用 $ceo-meeting-work 核验 Trigger 提供的真实会议行动项证据，再使用 "
@@ -354,7 +364,6 @@ def _seed_email_message_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=EMAIL_MESSAGE_MIGRATION_KEY,
         command=EMAIL_MESSAGE_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(EMAIL_MESSAGE_MIGRATION_KEY).description,
         consumer_prompt=EMAIL_MESSAGE_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -371,7 +380,7 @@ def _seed_email_message_task(
         cron_expression="0 * * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -398,7 +407,6 @@ def _seed_dingtalk_message_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
         command=DINGTALK_MESSAGE_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(DINGTALK_MESSAGE_MIGRATION_KEY).description,
         consumer_prompt=DINGTALK_MESSAGE_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -421,7 +429,7 @@ def _seed_dingtalk_message_task(
         cron_expression="0 * * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -443,7 +451,6 @@ def _seed_dingtalk_calendar_invite_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_CALENDAR_INVITE_MIGRATION_KEY,
         command=DINGTALK_CALENDAR_INVITE_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(
             DINGTALK_CALENDAR_INVITE_MIGRATION_KEY
         ).description,
@@ -464,7 +471,7 @@ def _seed_dingtalk_calendar_invite_task(
         cron_expression="10 * * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -490,7 +497,6 @@ def _seed_dingtalk_message_recovery_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
         command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(
             DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY
         ).description,
@@ -509,7 +515,7 @@ def _seed_dingtalk_message_recovery_task(
         cron_expression="0 30 * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -530,7 +536,6 @@ def _seed_dingtalk_meeting_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_MEETING_MIGRATION_KEY,
         command=DINGTALK_MEETING_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(DINGTALK_MEETING_MIGRATION_KEY).description,
         consumer_prompt=MEETING_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -544,10 +549,10 @@ def _seed_dingtalk_meeting_task(
         description=_default_copy(DINGTALK_MEETING_MIGRATION_KEY).description,
         prompt=MEETING_CONSUMER_PROMPT,
         command=DINGTALK_MEETING_SERVICE_COMMAND,
-        cron_expression="0 * * * * *",
+        cron_expression="0 */10 * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -570,7 +575,6 @@ def _seed_wechat_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=WECHAT_MESSAGE_MIGRATION_KEY,
         command=WECHAT_MESSAGE_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(WECHAT_MESSAGE_MIGRATION_KEY).description,
         consumer_prompt=WECHAT_MESSAGE_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -584,10 +588,10 @@ def _seed_wechat_task(
         description=_default_copy(WECHAT_MESSAGE_MIGRATION_KEY).description,
         prompt=WECHAT_MESSAGE_CONSUMER_PROMPT,
         command=WECHAT_MESSAGE_SERVICE_COMMAND,
-        cron_expression="*/15 * * * * *",
+        cron_expression="0 */5 * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -602,12 +606,19 @@ def _seed_oa_task(
     del working_directory
     skill_refs = _consumer_skill_refs(
         options,
-        operation=("dingtalk-oa-approval", "stardust-oa-finance-review"),
+        operation=(
+            "dingtalk-oa-approval",
+            "stardust-oa-finance-review",
+            "stardust-oa-project-review",
+            "stardust-oa-contract-review",
+            "stardust-oa-people-review",
+            "stardust-oa-attendance-travel-review",
+            "stardust-oa-cloud-resource-review",
+        ),
     )
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_OA_MIGRATION_KEY,
         command=DINGTALK_OA_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(DINGTALK_OA_MIGRATION_KEY).description,
         consumer_prompt=OA_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -624,7 +635,7 @@ def _seed_oa_task(
         cron_expression="0 0 * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -645,7 +656,6 @@ def _seed_meeting_todo_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=MEETING_TODO_MIGRATION_KEY,
         command=MEETING_TODO_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(MEETING_TODO_MIGRATION_KEY).description,
         consumer_prompt=MEETING_TODO_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -662,7 +672,7 @@ def _seed_meeting_todo_task(
         cron_expression="0 0 0 * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -685,7 +695,6 @@ def _seed_weekly_okr_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=WEEKLY_OKR_MIGRATION_KEY,
         command=WEEKLY_OKR_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(WEEKLY_OKR_MIGRATION_KEY).description,
         now=now,
     )
@@ -698,7 +707,7 @@ def _seed_weekly_okr_task(
         command=WEEKLY_OKR_SERVICE_COMMAND,
         cron_expression="0 0 18 * * 0",
         timezone_name="Asia/Shanghai",
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -720,7 +729,6 @@ def _seed_follow_up_delivery_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=FOLLOW_UP_DELIVERY_MIGRATION_KEY,
         command=FOLLOW_UP_DELIVERY_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(FOLLOW_UP_DELIVERY_MIGRATION_KEY).description,
         now=now,
     )
@@ -733,7 +741,7 @@ def _seed_follow_up_delivery_task(
         command=FOLLOW_UP_DELIVERY_SERVICE_COMMAND,
         cron_expression="0 */5 * * * *",
         timezone_name="Asia/Shanghai",
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -750,7 +758,6 @@ def _seed_minutes_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
         command="sync-minutes-once",
-        seed_enabled=True,
         seed_description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
         now=now,
     )
@@ -763,7 +770,7 @@ def _seed_minutes_task(
         command="sync-minutes-once",
         cron_expression="0 0 20 * * *",
         timezone_name="Asia/Shanghai",
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -815,7 +822,7 @@ def _seed_weekly_report_task(
         cron_expression="0 0 12 * * 6",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -840,7 +847,6 @@ def _seed_minutes_access_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=MINUTES_ACCESS_MIGRATION_KEY,
         command="request-minutes-access",
-        seed_enabled=True,
         seed_description=_default_copy(MINUTES_ACCESS_MIGRATION_KEY).description,
         now=now,
     )
@@ -855,7 +861,7 @@ def _seed_minutes_access_task(
         # is asked for and archived on the same evening.
         cron_expression="0 30 19 * * *",
         timezone_name="Asia/Shanghai",
-        enabled=True,
+        enabled=False,
         now=now,
     )
 

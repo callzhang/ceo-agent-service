@@ -147,7 +147,7 @@ def _install_interaction_routes(page) -> None:
         elif path.endswith("/api/console/attention"):
             payload = {"items": [{"category": "Service error", "root_cause": "database is locked", "context": "worker", "severity": "error", "count": 4, "summary": "database is locked", "error": "database is locked", "detail_label": "错误", "detail": "database is locked", "updated_at": SNAPSHOT, "records": [{"detail_url": "/attempts/12830"}]}], "meta": _meta(1)}
         elif path.endswith("/api/console/wechat/conversations"):
-            payload = {"items": [{"account_id": "wx-account", "target_type": "direct", "target_id": "melody", "conversation_id": "melody", "display_name": "Melody", "trigger_mode": "every_inbound_text", "enabled": True}], "meta": _meta(1)}
+            payload = {"items": [{"account_id": "wx-account", "target_type": "direct", "target_id": "melody", "conversation_id": "melody", "display_name": "Morgan", "trigger_mode": "every_inbound_text", "enabled": True}], "meta": _meta(1)}
         elif path.endswith("/api/console/wechat/targets"):
             payload = {"account_id": "wx-account", "items": [{"account_id": "wx-account", "target_type": "group", "target_id": "group-1", "conversation_id": "group-1", "display_name": "New group", "trigger_mode": "mention_current_account", "enabled": True}], "meta": _meta(1, 50)}
         elif path.endswith("/api/console/wechat/reply-scope") and route.request.method == "POST":

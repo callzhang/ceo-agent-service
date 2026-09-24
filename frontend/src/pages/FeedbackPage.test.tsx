@@ -72,7 +72,7 @@ function feedback(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
     processing_status: "resolved",
     rating: "不太有用",
     comment: "请修复这个反馈",
-    context: "产品群 · Mina",
+    context: "产品群 · Avery",
     created_at: "2026-08-29T00:00:00Z",
     summary: "修复任务状态",
     references: [

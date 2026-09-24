@@ -799,11 +799,11 @@ def test_verify_duplicate_direct_name_by_unique_target_id(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     scope = WechatReplyScope(
         account_id="a", target_type="direct", target_id="melody115",
-        conversation_id="melody115", display_name="Melody",
+        conversation_id="melody115", display_name="Morgan",
         trigger_mode="every_inbound_text",
     )
     store.replace_wechat_reply_scopes("a", [scope])
-    runner = _IdRunner("Melody")
+    runner = _IdRunner("Morgan")
 
     status = service.verify_wechat_binding(
         store, scope, runner=runner, is_unique=False,
@@ -811,7 +811,7 @@ def test_verify_duplicate_direct_name_by_unique_target_id(tmp_path):
     )
 
     assert status == "verified"
-    assert runner.calls == [("Melody", None, "latest inbound")]
+    assert runner.calls == [("Morgan", None, "latest inbound")]
     persisted = store.get_wechat_reply_scope("a", "direct", "melody115")
     assert persisted.binding_evidence["recent_text_sha256"]
     assert "latest inbound" not in str(persisted.binding_evidence)

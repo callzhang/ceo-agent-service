@@ -22,6 +22,17 @@ explicit reopen. `reply_tasks.recovery_code` records that the reopen was
 intentional. Scheduling must use that structured recovery fact rather than
 mistaking the displayed reason for evidence that the route has not yet waited.
 
+When a capacity retry stays on the same route, it resumes the session observed
+in the failed runtime attempt, including for Audit. A route switch or an
+explicit fresh-session decision must not reuse that route's session. This
+keeps a retry inside one Agent run from creating a second session that the
+run's immutable session binding would reject.
+
+When stale processing-task recovery returns a task to pending, it also releases
+that task's expired dispatcher claim in the same transaction. Otherwise a live
+dispatcher process can keep protecting an expired claim and prevent the pending
+task from being picked up again.
+
 ## Health-snapshot renewal
 
 The runtime probe loop must renew a healthy snapshot shortly before its expiry.

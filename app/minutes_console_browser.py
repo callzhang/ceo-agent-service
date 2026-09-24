@@ -184,8 +184,14 @@ class PlaywrightMinutesConsole:
                 "already_requested", panel["title"], panel["owner"]
             )
         if not panel["permission_panel"] and not panel["can_request"]:
-            return MinutesAccessRequest("readable", panel["title"])
-        if panel["owner_unresolved"]:
+            # Readability is established by the API before opening this page.
+            # A non-permission page can still be a loading or error shell.
+            return MinutesAccessRequest(
+                "failed", panel["title"], detail=panel["body_head"] or "minute page did not settle"
+            )
+        if panel["owner_unresolved"] or (
+            panel["can_request"] and panel["button_disabled"]
+        ):
             return MinutesAccessRequest(
                 "unresolved", panel["title"], detail=panel["body_head"]
             )
@@ -246,9 +252,11 @@ class PlaywrightMinutesConsole:
                 if not panel["can_request"]:
                     return panel
                 continue
-            if panel["can_request"] and not panel["owner_unresolved"]:
-                return panel
-            if not panel["permission_panel"] and panel["body_head"]:
+            if (
+                panel["can_request"]
+                and not panel["button_disabled"]
+                and not panel["owner_unresolved"]
+            ):
                 return panel
         return panel
 

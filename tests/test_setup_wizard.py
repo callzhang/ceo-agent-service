@@ -617,7 +617,7 @@ def test_check_dry_run_reports_due_follow_up_backlog(tmp_path: Path):
     )
     store.create_follow_up_draft(
         project_id=project_id,
-        owner_name="Claire Huang",
+        owner_name="Casey Huang",
         target_kind="direct",
         question_text="准备宝马专家邀请材料了吗？",
         scheduled_at="2000-01-01 01:00:00",

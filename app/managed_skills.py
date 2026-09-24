@@ -140,7 +140,12 @@ REPOSITORY_MANAGED_SKILL_NAMES = (
 # revision. Without this they were edited in place with no history at all.
 RUNTIME_ONLY_VERSIONED_SKILL_NAMES = (
     "dingtalk-oa-approval",
+    "stardust-oa-attendance-travel-review",
+    "stardust-oa-cloud-resource-review",
+    "stardust-oa-contract-review",
     "stardust-oa-finance-review",
+    "stardust-oa-people-review",
+    "stardust-oa-project-review",
 )
 
 VERSIONED_RUNTIME_SKILL_NAMES = (

@@ -264,8 +264,10 @@ def test_group_delivery_uses_first_candidate_and_real_mentions(tmp_path):
     assert dws.sent[0]["at_open_dingtalk_names"] == ["A", "B"]
     assert dws.sent[0]["title"] == "会议跟进｜上线评审"
     assert dws.sent[0].get("user_id") is None
+    # The DingTalk `title` above only reaches the push banner and the
+    # conversation list; the body has to name the meeting itself.
     assert dws.sent[0]["text"].startswith(
-        "时间：2026-07-14 09:00-10:00\n\n"
+        "上线评审\n时间：2026-07-14 09:00-10:00\n\n"
     )
     assert send_decision().final_message in dws.sent[0]["text"]
     assert dws.sent[0]["text"].endswith("（by明哥分身）")
@@ -1042,5 +1044,38 @@ def test_followup_header_says_when_a_meeting_is_summarised_again():
         meeting_source().model_copy(update={"resummary": True})
     )
 
-    assert first == "时间：2026-07-14 09:00-10:00"
+    assert first == "上线评审\n时间：2026-07-14 09:00-10:00"
     assert again == first + "\n说明：第二次总结，已合并后续录制内容"
+
+
+def test_followup_header_names_the_meeting_it_came_from():
+    """A follow-up lands in a group that holds many meetings' messages.
+
+    The model is instructed not to repeat the title because "发送层会加会议标题
+    和时间", but the sending layer only printed the time, so every follow-up
+    arrived without saying which meeting produced it.
+    """
+    header = meeting_alignment_delivery._meeting_followup_header(
+        meeting_source().model_copy(update={"title": "唐总Boehringer Ingelheim  friday试用"})
+    )
+
+    assert header.splitlines()[0] == "唐总Boehringer Ingelheim friday试用"
+
+
+def test_followup_header_prints_a_utc_meeting_in_beijing_time():
+    """Minutes hands these timestamps over in UTC.
+
+    The fixture above is written with a +08:00 offset, which is why formatting
+    them unconverted went unnoticed: an 08:00 meeting reached its group as a
+    00:00 meeting.
+    """
+    header = meeting_alignment_delivery._meeting_followup_header(
+        meeting_source().model_copy(
+            update={
+                "started_at": "2026-09-24T00:00:00+00:00",
+                "ended_at": "2026-09-24T00:59:36+00:00",
+            }
+        )
+    )
+
+    assert "时间：2026-09-24 08:00-08:59" in header

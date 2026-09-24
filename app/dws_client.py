@@ -666,15 +666,14 @@ class DwsClient:
         return [
             self.dws_bin,
             "chat",
-            "message",
-            "reply",
-            "--conversation-id",
+            "+messages-reply",
+            "--group",
             conversation_id,
             "--ref-msg-id",
             ref_message_id,
             "--ref-sender",
             ref_sender_open_dingtalk_id,
-            "--text",
+            "--content",
             self._literal_cli_value(text),
             "--format",
             "json",
@@ -2893,6 +2892,10 @@ class DwsClient:
             command,
             timeout=self.timeout_seconds + 15,
             env=self._cli_environment(),
+            # DWS can fork during media transfer.  Keep this command in its
+            # own session so its descendants cannot escape a caller timeout
+            # and remain as orphaned CPU-bound download processes.
+            isolate_process_group=True,
         )
         # Some dws versions can write the requested resource successfully but
         # still exit non-zero while formatting the response.  The downloaded

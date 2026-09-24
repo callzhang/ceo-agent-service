@@ -37,9 +37,10 @@ class Decision:
 
 
 class Attempt:
-    def __init__(self, route_name, failure_class):
+    def __init__(self, route_name, failure_class, failure_code=""):
         self.route_name = route_name
         self.failure_class = failure_class
+        self.failure_code = failure_code
 
 
 def _failure(failure_class, *, same_route=False, pause=True):
@@ -100,6 +101,40 @@ def test_a_provider_still_full_after_the_retries_switches_runtime():
     assert plan.retry_same_route is False
     assert plan.pause_route is True
     assert plan.wait_seconds == 0.0
+
+
+def test_session_writer_conflict_waits_on_same_route_without_pausing_provider():
+    failure = RuntimeFailure(
+        failure_class=RuntimeFailureClass.SESSION,
+        code="codex_session_writer_conflict",
+        detail="A Codex session has another writer.",
+        retryable_on_same_route=True,
+    )
+    plan = _plan(failure, [Attempt(ROUTE.name, RuntimeFailureClass.SESSION.value, failure.code)])
+
+    assert plan.route is ROUTE
+    assert plan.fresh_session is False
+    assert plan.retry_same_route is True
+    assert plan.pause_route is False
+    assert plan.wait_seconds > 0
+
+
+def test_session_writer_conflict_stops_same_route_retry_at_ceiling():
+    failure = RuntimeFailure(
+        failure_class=RuntimeFailureClass.SESSION,
+        code="codex_session_writer_conflict",
+        detail="A Codex session has another writer.",
+        retryable_on_same_route=True,
+    )
+    attempts = [
+        Attempt(ROUTE.name, RuntimeFailureClass.SESSION.value, failure.code)
+        for _ in range(CAPACITY_RETRIES_ON_SAME_ROUTE + 1)
+    ]
+
+    plan = _plan(failure, attempts)
+
+    assert plan.retry_same_route is False
+    assert plan.pause_route is False
 
 
 def test_an_older_run_of_capacity_failures_does_not_count():

@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from app.cli import build_parser, feedback_spike_command
+from app.codex_decision import append_signature
 from app.dws_client import DwsClient
 from app.feedback_policy import FEEDBACK_REQUIRED_LINK_PREFIX
 from app.store import AutoReplyStore
@@ -78,7 +79,7 @@ def test_build_callback_url_carries_attempt_id():
     assert query["attempt_id"] == ["42"]
 
 
-def test_build_callback_url_carries_short_feedback_context():
+def test_build_callback_url_never_embeds_message_context():
     url = build_callback_url(
         "https://feedback.example.com/",
         feedback_token="spike_1_abcd",
@@ -95,8 +96,31 @@ def test_build_callback_url_carries_short_feedback_context():
     assert parsed.path == "/api/dingtalk-feedback-spike"
     assert query["feedback_token"] == ["spike_1_abcd"]
     assert query["rating"] == ["down"]
-    assert query["original_text"] == ["原话"]
-    assert query["reply_text"] == ["回复样例"]
+    assert "original_text" not in query
+    assert "reply_text" not in query
+    assert "原话" not in url
+    assert "回复样例" not in url
+
+
+def test_prepared_reply_upgrades_legacy_context_links_before_send():
+    legacy = (
+        append_signature("收到。") + "\n\n反馈："
+        "[👍 有帮助](https://feedback.example.com/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_abcd1234&rating=up&original_text=hello&reply_text=world)"
+        "｜[👎 需改进](https://feedback.example.com/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_abcd1234&rating=down&original_text=hello&reply_text=world)"
+    )
+
+    prepared = prepare_outgoing_reply_text(
+        reply_text=legacy,
+        feedback_base_url="https://feedback.example.com",
+    )
+
+    assert prepared.feedback_token == "spike_1_abcd1234"
+    assert prepared.text.startswith(append_signature("收到。"))
+    assert prepared.text.count("/api/dingtalk-feedback-spike") == 2
+    assert "original_text=" not in prepared.text
+    assert "reply_text=" not in prepared.text
 
 
 def test_build_events_url_contains_secret_and_limit():
@@ -306,7 +330,7 @@ def test_prepare_outgoing_reply_text_rejects_credential_as_attempt_id():
         )
 
 
-def test_callback_url_truncates_long_feedback_context():
+def test_callback_url_omits_long_feedback_context():
     url = build_callback_url(
         "https://feedback.example.com/",
         feedback_token="spike_1_abcd",
@@ -318,12 +342,8 @@ def test_callback_url_truncates_long_feedback_context():
 
     assert query["feedback_token"] == ["spike_1_abcd"]
     assert query["rating"] == ["up"]
-    assert query["original_text"][0].startswith("原话原话")
-    assert query["original_text"][0].endswith("...")
-    assert len(query["original_text"][0]) <= 30
-    assert query["reply_text"][0].startswith("回复回复")
-    assert query["reply_text"][0].endswith("...")
-    assert len(query["reply_text"][0]) <= 30
+    assert "original_text" not in query
+    assert "reply_text" not in query
 
 
 def test_callback_url_omits_context_that_would_trip_leak_check():
@@ -358,8 +378,8 @@ def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification(
     assert "rating=down" in message.callback_url_down
     assert message.callback_url_up in message.text
     assert message.callback_url_down in message.text
-    assert "original_text=" in message.callback_url_up
-    assert "reply_text=" in message.callback_url_up
+    assert "original_text=" not in message.callback_url_up
+    assert "reply_text=" not in message.callback_url_up
     assert "attempt_id=42" in message.callback_url_up
 
 

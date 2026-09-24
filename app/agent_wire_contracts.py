@@ -55,9 +55,13 @@ class _WireBase(BaseModel):
 class _ConsumerProposalWire(_WireBase):
     outcome: Literal["proposal"]
     proposal: ConsumerProposal
+    # Empty, or an independent question for Derek that the proposed action
+    # does not settle: 2-4 options with needs_human_reason and decision_basis.
     decision_options: list[DecisionOption] = Field(
-        default_factory=list, max_length=0
+        default_factory=list, max_length=4
     )
+    needs_human_reason: str | None = None
+    decision_basis: DecisionBasis | None = None
 
 
 class _ConsumerNeedsHumanWire(_WireBase):

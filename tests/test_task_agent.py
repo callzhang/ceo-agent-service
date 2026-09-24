@@ -283,7 +283,7 @@ def _work_item(project_name="售前知识库"):
             "summary": "售前知识库需要补齐来源链接，owner 是 Alex。",
             "project_name": project_name,
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": ["Alex"],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "售前群",
@@ -309,7 +309,7 @@ def _low_confidence_minutes_work_item() -> WorkItem:
             },
             "summary": "\n".join(
                 [
-                    "> **参与人**: 磊哥, susu, 刘瑞安Alan, 胡明, 张静, Mina 邹",
+                    "> **参与人**: 磊哥, susu, 刘瑞安Alan, 胡明, 张静, Avery",
                     "# Transcript",
                     "[00:01] 刘瑞安Alan: 第一段",
                     "[00:02] 刘瑞安Alan: 第二段",
@@ -480,19 +480,19 @@ def test_work_item_accepts_task_routing_signals():
             "source": {
                 "type": "reply_attempt",
                 "ref": "1992",
-                "title": "Lily",
+                "title": "Riley",
                 "conversation_id": "cid-lily",
-                "conversation_title": "Lily",
+                "conversation_title": "Riley",
                 "created_at": "2026-06-28 09:44:05",
             },
-            "summary": "Lily反馈海外数据合规P0追错owner。",
+            "summary": "Riley反馈海外数据合规P0追错owner。",
             "project_name": "",
             "context": {
-                "sender": "Lily",
+                "sender": "Riley",
                 "sender_user_id": "lily-user-1",
-                "participants": ["Lily"],
+                "participants": ["Riley"],
                 "source_conversation_kind": "direct",
-                "source_conversation_title": "Lily",
+                "source_conversation_title": "Riley",
             },
             "task_signals": {
                 "possible_task_update": True,
@@ -528,7 +528,7 @@ def test_task_agent_prompt_does_not_embed_candidate_specific_workflow():
             "project_name": "刘芸婷国际销售工程师候选人评估与后续推进",
             "context": {
                 "sender": "张静",
-                "participants": ["张静", "Melody", "刘芸婷"],
+                "participants": ["张静", "Morgan", "刘芸婷"],
                 "source_conversation_kind": "minutes",
                 "source_conversation_title": "刘芸婷一面",
             },
@@ -652,7 +652,7 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():
 
 def test_task_agent_prompt_uses_skill_for_important_vs_routine_process_boundary():
     work_item = _work_item()
-    work_item.summary = "Mina: 这种事情没必要创建待办，我不办这人也没法发 offer。"
+    work_item.summary = "Avery: 这种事情没必要创建待办，我不办这人也没法发 offer。"
     prompt = build_task_agent_prompt(
         work_item,
         candidate_prompt="候选上下文为空。",
@@ -1078,7 +1078,7 @@ def _work_item(project_name="售前知识库", **context):
         },
         "summary": "补齐来源链接；owner 是 Alex。",
         "context": {
-            "sender": "Mina", "sender_user_id": "mina-id",
+            "sender": "Avery", "sender_user_id": "avery-id",
             "source_conversation_kind": "group", **context,
         },
     })
@@ -1247,8 +1247,8 @@ def _seed_identity_task(store, source_ref, *, external_task_id=""):
         title="提交周报",
         signal=SourceSignal(source_type="message", source_ref=source_ref,
             evidence_text="Alex 负责提交周报", dedupe_key=source_ref,
-            conversation_id="conversation:weekly", author_user_id="mina-id",
-            author_name="Mina", author_kind=BusinessActorKind.HUMAN,
+            conversation_id="conversation:weekly", author_user_id="avery-id",
+            author_name="Avery", author_kind=BusinessActorKind.HUMAN,
             context_json=json.dumps(context)),
         formality=FormalityEvidence(basis=FormalTaskBasis.EXPLICIT_ASSIGNMENT,
             assigner_is_authorized=True, deliverable_is_explicit=True, owner_is_explicit=True),
@@ -1555,7 +1555,7 @@ def test_owner_evidence_does_not_itself_authorize_assignment(tmp_path):
 
 
 @pytest.mark.parametrize("sender, sender_user_id, accepted", [
-    ("Mina", "mina-id", False),
+    ("Avery", "avery-id", False),
     ("Alex", "alex-id", True),
 ])
 def test_new_commitment_requires_the_named_owner_to_author_it(tmp_path, sender, sender_user_id, accepted):
@@ -1667,16 +1667,16 @@ def test_next_check_date_uses_identified_agent_actor(tmp_path):
 
 def test_noncommitment_date_types_keep_exact_source_and_human_actor(tmp_path):
     store = AutoReplyStore(tmp_path / "typed-date-provenance.sqlite3")
-    item = _work_item(sender="Mina", sender_user_id="mina-id", assignment_authorized=True,
+    item = _work_item(sender="Avery", sender_user_id="avery-id", assignment_authorized=True,
         owner_identity={"name": "Alex", "user_id": "alex-id"}).model_copy(update={
-            "summary": "Mina assigns Alex on 2026-09-20. Request due 2026-09-25; "
+            "summary": "Avery assigns Alex on 2026-09-20. Request due 2026-09-25; "
                        "external deadline 2026-09-26; estimate 2026-09-27."
         })
     decision = TaskAgentDecision.model_validate({"task_decisions": [{
         "action": "create_task", "transition": "none", "formal_basis": "explicit_assignment",
         "source_excerpt": item.summary, "source_ref": item.source.ref,
         "title": "客户报价跟进", "owner_name": "Alex",
-        "owner_evidence": {"source_ref": item.source.ref, "excerpt": "Mina assigns Alex",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": "Avery assigns Alex",
             "name": "Alex", "user_id": "alex-id"},
         "date_evidence": [
             {"kind": "requested_deadline_at", "value": "2026-09-25",
@@ -1712,10 +1712,10 @@ def test_noncommitment_date_types_keep_exact_source_and_human_actor(tmp_path):
     }
     assert {kind: (fact.actor_kind.value, fact.actor_user_id, fact.actor_name)
             for kind, fact in facts_by_type.items()} == {
-        "assigned_at": ("human", "mina-id", "Mina"),
-        "requested_deadline_at": ("human", "mina-id", "Mina"),
-        "external_deadline_at": ("human", "mina-id", "Mina"),
-        "estimated_deadline_at": ("human", "mina-id", "Mina"),
+        "assigned_at": ("human", "avery-id", "Avery"),
+        "requested_deadline_at": ("human", "avery-id", "Avery"),
+        "external_deadline_at": ("human", "avery-id", "Avery"),
+        "estimated_deadline_at": ("human", "avery-id", "Avery"),
     }
 
 
@@ -1775,7 +1775,7 @@ def test_candidate_cannot_record_committed_deadline_without_owner_acceptance(tmp
         "title": "报价候选", "missing_evidence": ["owner"],
         "date_evidence": [{"kind": "committed_deadline_at", "value": "2026-09-25",
             "source_ref": item.source.ref, "source_excerpt": "2026-09-25",
-            "actor_user_id": "mina-id", "actor_name": "Mina"}],
+            "actor_user_id": "avery-id", "actor_name": "Avery"}],
     }]})
 
     with pytest.raises(ValueError, match="committed deadline requires owner acceptance"):
@@ -1793,7 +1793,7 @@ def test_promoting_candidate_derives_assigned_at_from_explicit_assignment_source
     ))
     item = _work_item(assignment_authorized=True,
         owner_identity={"name": "Alex", "user_id": "alex-id"}).model_copy(update={
-            "summary": "Mina formally assigns Alex on 2026-09-22."
+            "summary": "Avery formally assigns Alex on 2026-09-22."
         })
     decision = TaskAgentDecision.model_validate({"task_decisions": [{
         "action": "update_task", "transition": "promote_candidate", "task_id": candidate.task_id,
@@ -1833,8 +1833,8 @@ def test_unparseable_relative_date_stays_only_in_linked_source_evidence(tmp_path
 
 def test_estimate_keeps_source_speaker_and_rejects_model_attribution_override(tmp_path):
     store = AutoReplyStore(tmp_path / "estimate-source-actor.sqlite3")
-    item = _work_item(sender="Mina", sender_user_id="mina-id").model_copy(update={
-        "summary": "Mina estimates completion on 2026-09-27."
+    item = _work_item(sender="Avery", sender_user_id="avery-id").model_copy(update={
+        "summary": "Avery estimates completion on 2026-09-27."
     })
     decision = TaskAgentDecision.model_validate({"task_decisions": [{
         "action": "record_candidate", "transition": "none", "source_excerpt": item.summary,
@@ -1857,8 +1857,8 @@ def _assigned_formal_task_for_acceptance(store):
         signal=SourceSignal(
             source_type="message", source_ref="message:assignment",
             evidence_text="Alex 负责报价方案", dedupe_key="assignment:exact",
-            conversation_id="conversation:1", author_user_id="mina-id",
-            author_name="Mina", author_kind=BusinessActorKind.HUMAN,
+            conversation_id="conversation:1", author_user_id="avery-id",
+            author_name="Avery", author_kind=BusinessActorKind.HUMAN,
             context_json=json.dumps({"owner_identity": {"name": "Alex", "user_id": "alex-id"},
                                      "assignment_authorized": True}),
         ),

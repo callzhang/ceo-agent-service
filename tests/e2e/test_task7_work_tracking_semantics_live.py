@@ -358,8 +358,8 @@ CASES = (
         {
             "todo": {"id": 42, "owner_user_id": "uid-alex", "status": "open"},
             "follow_up": {"id": 8, "todo_id": 42, "owner_user_id": "uid-alex"},
-            "reply": "Correction: Mina owns this deliverable, not Alex.",
-            "verified_identity": {"name": "Mina", "user_id": "uid-mina"},
+            "reply": "Correction: Avery owns this deliverable, not Alex.",
+            "verified_identity": {"name": "Avery", "user_id": "uid-mina"},
         },
         _verify_owner_correction,
     ),

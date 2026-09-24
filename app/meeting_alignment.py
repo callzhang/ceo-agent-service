@@ -19,9 +19,10 @@ from app.codex_capacity import (
 from app.codex_failure import CODEX_PROCESS_FAILED, classify_codex_process_failure
 from app.config import codex_capacity_retry_duration, principal_display_name
 from app.decision_quality import DecisionQuality, DecisionRisk, classify_decision_quality
+from app.dingtalk_models import DingTalkConversation
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.dispatcher.models import ClaimGuard
-from app.external_retry import is_external_dependency_error
+from app.external_retry import is_external_dependency_error, retry_delay_seconds
 from app.meeting_alignment_agent import (
     MeetingAlignmentAgent,
     MeetingAlignmentTargetError,
@@ -39,6 +40,7 @@ from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
     MeetingAlignmentRun,
     MeetingParticipant,
+    MeetingSource,
     load_persisted_meeting_alignment_decision,
 )
 from app.meeting_alignment_source import (
@@ -784,16 +786,28 @@ def _meeting_fts_text(text: str) -> str:
     return " ".join(token for token in tokens if token)
 
 
-def _search_meeting_group_candidates(dws: Any, title: str) -> list[dict[str, str]]:
-    from app.jieba_loader import jieba_lcut
-
-    terms = []
-    for token in jieba_lcut(title):
-        term = str(token).strip()
-        if len(term) >= 2 and term.isalnum() and not term.isdecimal():
-            terms.append(term)
-    queries = sorted(dict.fromkeys(terms), key=len, reverse=True)[:3]
-    candidates: dict[str, dict[str, str]] = {}
+def _search_meeting_group_candidates(
+    dws: Any, source: MeetingSource, store: AutoReplyStore
+) -> list[dict[str, Any]]:
+    title_terms = _meeting_topic_terms(source.title)
+    participant_names = {
+        participant.name.casefold()
+        for participant in source.participants
+        if participant.name
+    }
+    summary_text = "\n".join(
+        line for line in source.summary.splitlines()
+        if not line.lstrip().startswith((">", "![")) and "http" not in line
+    )[:2000]
+    summary_terms = [
+        term
+        for term in _meeting_topic_terms(summary_text)
+        if term.isascii() and term.isalpha()
+        and term.casefold() not in participant_names
+        and term.casefold() not in {value.casefold() for value in title_terms}
+    ]
+    queries = list(dict.fromkeys([*summary_terms[:2], *title_terms[:3]]))
+    candidates: dict[str, dict[str, Any]] = {}
     for query in queries:
         for conversation in dws.search_conversations(query):
             candidates.setdefault(
@@ -804,7 +818,100 @@ def _search_meeting_group_candidates(dws: Any, title: str) -> list[dict[str, str
                     "search_query": query,
                 },
             )
-    return list(candidates.values())
+    if source.attendee_evidence == "calendar" and source.attendee_roster_complete:
+        attendees = {
+            participant.open_dingtalk_id
+            for participant in source.participants
+            if participant.open_dingtalk_id
+        }
+        if len(attendees) >= 2:
+            member_sets: dict[str, set[str]] = {}
+            for group_id, group_title, sent_count in store.recurring_meeting_group_targets(
+                source.title
+            ):
+                if group_id not in candidates:
+                    for conversation in dws.search_conversations(group_title):
+                        if conversation.open_conversation_id == group_id:
+                            candidates[group_id] = {
+                                "conversation_id": group_id,
+                                "title": conversation.title,
+                                "search_query": group_title,
+                            }
+                if group_id not in candidates:
+                    continue
+                members = set(dws.list_group_member_open_dingtalk_ids(group_id))
+                member_sets[group_id] = members
+                overlap = len(attendees & members)
+                if overlap >= 2 and overlap * 5 >= len(attendees) * 3:
+                    candidates[group_id].update(
+                        verified_recurring_group=True,
+                        prior_sent_count=sent_count,
+                        participant_coverage=f"{overlap}/{len(attendees)}",
+                        attendee_overlap=overlap,
+                        member_count=len(members),
+                    )
+            for group_id, candidate in list(candidates.items())[:12]:
+                members = member_sets.get(group_id)
+                if members is None:
+                    members = set(dws.list_group_member_open_dingtalk_ids(group_id))
+                overlap = len(attendees & members)
+                candidate.update(
+                    attendee_overlap=overlap,
+                    member_count=len(members),
+                    participant_coverage=f"{overlap}/{len(attendees)}",
+                )
+    topic_terms = set(_meeting_topic_terms(summary_text))
+    for candidate in list(candidates.values())[:12]:
+        candidate["summary_title_overlap"] = len(
+            topic_terms & set(_meeting_topic_terms(candidate["title"]))
+        )
+        conversation = DingTalkConversation(
+            open_conversation_id=candidate["conversation_id"],
+            title=candidate["title"],
+            single_chat=False,
+            unread_point=0,
+        )
+        matches = []
+        for message in dws.read_recent_messages(conversation, limit=30):
+            message_terms = set(_meeting_topic_terms(message.content[:1200]))
+            overlap = len(topic_terms & message_terms)
+            if overlap >= 3:
+                matches.append((overlap * overlap / len(message_terms), overlap, message))
+        matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        if matches:
+            candidate["topic_discussion_evidence"] = [
+                {
+                    "create_time": message.create_time,
+                    "text": message.content[:500],
+                    "shared_topic_terms": overlap,
+                    "topic_match_score": round(score, 3),
+                }
+                for score, overlap, message in matches[:2]
+            ]
+    return sorted(
+        candidates.values(),
+        key=lambda item: (
+            -item.get("summary_title_overlap", 0),
+            -max(
+                (evidence["topic_match_score"] for evidence in item.get("topic_discussion_evidence", [])),
+                default=0,
+            ),
+            not item.get("verified_recurring_group", False),
+            -item.get("prior_sent_count", 0),
+            -item.get("attendee_overlap", 0),
+            item.get("member_count", 0),
+        ),
+    )
+
+
+def _meeting_topic_terms(text: str) -> list[str]:
+    from app.jieba_loader import jieba_lcut
+
+    return list(dict.fromkeys(
+        term for token in jieba_lcut(text[:5000])
+        if (term := str(token).strip()).isalnum()
+        and len(term) >= 2 and not term.isdecimal()
+    ))
 
 
 def _index_meeting_codex_session(
@@ -937,7 +1044,7 @@ def _analyze_meeting_job(
         return
 
     try:
-        group_candidates = _search_meeting_group_candidates(dws, source.title)
+        group_candidates = _search_meeting_group_candidates(dws, source, store)
     except DwsError as exc:
         _retry_or_fail(
             store,
@@ -1400,6 +1507,7 @@ def _deliver_meeting_job(
             retry_delay=retry_delay,
             max_attempts=max_attempts,
             extra_values=values,
+            external_dependency=is_external_dependency_error(exc),
         )
         return
     except MeetingDeliveryError as exc:
@@ -1686,10 +1794,18 @@ def _retry_or_fail(
             **(extra_values or {}),
         )
         return
+    delay = retry_delay
+    if external_dependency:
+        delay = timedelta(
+            seconds=retry_delay_seconds(
+                retry_delay.total_seconds(),
+                max(job.attempts - 1, 0),
+            )
+        )
     store.update_meeting_alignment_job(
         job.id,
         status="retry",
-        available_at=(now + retry_delay).isoformat(),
+        available_at=(now + delay).isoformat(),
         error=error,
         **(extra_values or {}),
     )

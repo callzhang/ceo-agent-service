@@ -29,7 +29,7 @@ def _source(case: dict) -> MeetingSource:
             "participants": [
                 {"name": "Derek", "user_id": "derek"},
                 {"name": "Alex", "user_id": "alex"},
-                {"name": "Mina", "user_id": "mina"},
+                {"name": "Avery", "user_id": "mina"},
             ],
             "attendee_evidence": "calendar",
             "attendee_roster_complete": True,

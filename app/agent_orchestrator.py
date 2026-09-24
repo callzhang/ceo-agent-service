@@ -634,6 +634,23 @@ class AgentOrchestrator:
                     return self._domain_continuation_unavailable(
                         latest, feedback_cycles
                     )
+                if consumer_state.escalates:
+                    # The action ran; the question it could not settle is
+                    # still Derek's. Same end state as any generation that
+                    # completed an external action and still needs him.
+                    return OrchestrationResult(
+                        status="needs_human",
+                        final_run_id=latest.id,
+                        final_role=AgentRole.AUDIT,
+                        summary=(
+                            f"{audit_state.summary}\n\n"
+                            f"{consumer_state.needs_human_reason}"
+                        ),
+                        error=audit_state.error,
+                        feedback_cycles=feedback_cycles,
+                        consumer_result=consumer_state,
+                        audit_result=audit_state,
+                    )
                 return _audit_terminal(
                     "executed",
                     latest,

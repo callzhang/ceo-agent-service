@@ -126,7 +126,7 @@ def test_parse_agent_envelope_rejects_legacy_okr_review_result():
         "request_id": 5,
         "status": "completed",
         "result": {
-            "person_name": "Claire",
+            "person_name": "Casey",
             "period_label": "2026 Q2",
             "summary": "已审核。",
             "items": [
@@ -211,7 +211,7 @@ def test_parse_agent_envelope_rejects_okr_review_audit_without_schema_fields():
         },
         "system_actions": [{"type": "persist_okr_review", "request_id": 5}],
         "domain_payload": {
-            "person_name": "Claire",
+            "person_name": "Casey",
             "period_label": "2026 Q2",
             "summary": "已审核。",
             "items": [
@@ -547,7 +547,7 @@ def test_structured_runner_reads_audit_events_from_session_transcript(
         / f"rollout-2026-06-10T03-10-15-{session_id}.jsonl"
     )
     session_path.parent.mkdir(parents=True)
-    command = 'dws doc search --query "Friday PMF Claire" --format json'
+    command = 'dws doc search --query "Friday PMF Casey" --format json'
     session_path.write_text(
         "\n".join(
             [

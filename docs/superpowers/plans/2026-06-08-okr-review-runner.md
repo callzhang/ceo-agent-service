@@ -999,7 +999,7 @@ def test_okr_review_item_rejects_discount_outside_range():
 def test_okr_review_payload_contains_items():
     payload = OkrReviewPayload.model_validate(
         {
-            "person_name": "韩露",
+            "person_name": "吴婷",
             "period_label": "2026 Q2",
             "summary": "共 1 个 KR。",
             "items": [
@@ -1113,9 +1113,9 @@ def test_create_and_claim_okr_review_request(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -1134,9 +1134,9 @@ def test_record_okr_review_run_and_items(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -1472,7 +1472,7 @@ def test_current_quarter_period_uses_current_date():
 def test_build_okr_review_prompt_includes_live_source_and_claim_scoring():
     prompt = build_okr_review_prompt(
         request_id=7,
-        person_name="韩露",
+        person_name="吴婷",
         period_label="2026 Q2",
         okr_source_json='{"objectives":[]}',
         trigger_text="帮我审核 OKR",
@@ -1487,7 +1487,7 @@ def test_build_okr_review_prompt_includes_live_source_and_claim_scoring():
 def test_render_okr_review_reply_includes_two_scores():
     payload = OkrReviewPayload.model_validate(
         {
-            "person_name": "韩露",
+            "person_name": "吴婷",
             "period_label": "2026 Q2",
             "summary": "1 个 KR 已审核。",
             "items": [
@@ -1799,9 +1799,9 @@ def test_process_okr_review_request_persists_items_and_marks_done(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -1820,7 +1820,7 @@ def test_process_okr_review_request_persists_items_and_marks_done(tmp_path):
             },
             "system_actions": [{"type": "persist_okr_review", "request_id": request_id}],
             "domain_payload": {
-                "person_name": "韩露",
+                "person_name": "吴婷",
                 "period_label": "2026 Q2",
                 "summary": "1 个 KR 已审核。",
                 "items": [

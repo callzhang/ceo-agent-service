@@ -148,7 +148,7 @@ def _consumer_result_task(store: AutoReplyStore):
         open_message_id="msg-consumer-result",
         conversation_title="Consumer result",
         single_chat=False,
-        sender_name="Mina",
+        sender_name="Avery",
         create_time="2026-09-14 09:00:00",
         content="Publish the reviewed update.",
     ).model_dump_json()
@@ -158,7 +158,7 @@ def _consumer_result_task(store: AutoReplyStore):
         single_chat=False,
         trigger_message_id="msg-consumer-result",
         trigger_create_time="2026-09-14 09:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Publish the reviewed update.",
         trigger_message_json=trigger_message_json,
         execution_generation="consumer-result-generation",
@@ -620,7 +620,7 @@ def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-08-07 09:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Publish the reviewed update.",
         trigger_message_json='{"openMessageId":"msg-1"}',
         execution_generation="generation-1",
@@ -811,7 +811,7 @@ def _seed_confirmed_approval_attempt(
         single_chat=False,
         trigger_message_id=f"msg-history-confirmed-approval-{suffix}",
         trigger_create_time="2026-08-18 09:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Approve the confirmed budget.",
     )
     task = store.claim_reply_tasks(limit=1)[0]
@@ -938,7 +938,7 @@ def seed_meeting_attempt(store: AutoReplyStore) -> int:
         meeting_id="minutes-history-1",
         title="项目评审会",
         source_json='{"summary":"讨论上线范围","source_url":"https://minutes.example/1"}',
-        participants_json='[{"name":"Derek"},{"name":"Mina"}]',
+        participants_json='[{"name":"Derek"},{"name":"Avery"}]',
         ended_at="2026-07-14T09:50:00+08:00",
         eligible_at="2026-07-14T10:00:00+08:00",
         status="pending",
@@ -949,8 +949,8 @@ def seed_meeting_attempt(store: AutoReplyStore) -> int:
         target_kind="group",
         target_id="cid-project",
         target_title="项目群",
-        mentions_json='[{"name":"Mina","user_id":"user-mina"}]',
-        final_message="会后对齐：@Mina 请确认风险预算。",
+        mentions_json='[{"name":"Avery","user_id":"user-mina"}]',
+        final_message="会后对齐：@Avery 请确认风险预算。",
         send_result_json='{"status":"sent"}',
     )
     return store.record_meeting_alignment_run(
@@ -1079,7 +1079,7 @@ def test_history_hides_runtime_internals_and_shows_agent_outcome(tmp_path: Path)
         conversation_id="cid-direct-agent",
         conversation_title="产品群",
         trigger_message_id="msg-direct-agent",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="请确认发布结果",
         action="send_reply",
         sensitivity_kind="general",
@@ -1248,7 +1248,7 @@ def test_history_approval_cards_show_direct_return_and_unknown_results(tmp_path:
         conversation_id="cid-history-direct-return",
         conversation_title="Direct return approval",
         trigger_message_id="msg-history-direct-return",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Return this approval.",
         action="oa_approval",
         sensitivity_kind="general",
@@ -1261,7 +1261,7 @@ def test_history_approval_cards_show_direct_return_and_unknown_results(tmp_path:
         conversation_id="cid-history-unknown-approval",
         conversation_title="Unknown approval",
         trigger_message_id="msg-history-unknown-approval",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Review this approval.",
         action="oa_approval",
         sensitivity_kind="general",
@@ -1301,7 +1301,7 @@ def test_history_approval_cards_merge_business_evidence_with_latest_system_state
         conversation_id="cid-history-production-a",
         conversation_title="Production-shaped approval A",
         trigger_message_id="msg-history-production-a-comment",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Review approval A.",
         action="oa_approval",
         sensitivity_kind="general",
@@ -1313,7 +1313,7 @@ def test_history_approval_cards_merge_business_evidence_with_latest_system_state
         conversation_id="cid-history-production-a",
         conversation_title="Production-shaped approval A",
         trigger_message_id="msg-history-production-a-approved",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Review approval A.",
         action="oa_approval",
         sensitivity_kind="general",
@@ -1328,7 +1328,7 @@ def test_history_approval_cards_merge_business_evidence_with_latest_system_state
         conversation_id="cid-history-production-b",
         conversation_title="Production-shaped approval B",
         trigger_message_id="msg-history-production-b-comment",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Review approval B.",
         action="oa_approval",
         sensitivity_kind="general",
@@ -1353,7 +1353,7 @@ def test_history_approval_cards_merge_business_evidence_with_latest_system_state
         conversation_id="cid-history-production-b",
         conversation_title="Production-shaped approval B",
         trigger_message_id="msg-history-production-b-failed",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Review approval B.",
         action="agent_run",
         sensitivity_kind="general",
@@ -1402,7 +1402,7 @@ def test_history_neutral_approval_results_use_steel_text_contrast(tmp_path: Path
         single_chat=False,
         trigger_message_id="msg-history-no-action-approval",
         trigger_create_time="2026-08-18 11:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Check this completed approval.",
     )
     [task] = store.claim_reply_tasks(limit=1)
@@ -1464,7 +1464,7 @@ def test_history_neutral_approval_results_use_steel_text_contrast(tmp_path: Path
         conversation_id="cid-history-unknown-contrast",
         conversation_title="Unknown approval",
         trigger_message_id="msg-history-unknown-contrast",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Review this approval.",
         action="oa_approval",
         sensitivity_kind="general",
@@ -1498,7 +1498,7 @@ def test_history_approval_workflow_results_keep_failure_attention_actions(
         conversation_id="cid-history-needs-human",
         conversation_title="Needs human approval",
         trigger_message_id="msg-history-needs-human",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Choose the approval outcome.",
         action="agent_run",
         sensitivity_kind="general",
@@ -1510,7 +1510,7 @@ def test_history_approval_workflow_results_keep_failure_attention_actions(
         conversation_id="cid-history-failed-approval",
         conversation_title="Failed approval",
         trigger_message_id="msg-history-failed-approval",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Process the failed approval.",
         action="agent_run",
         sensitivity_kind="general",
@@ -1541,7 +1541,7 @@ def test_history_does_not_pin_untraceable_needs_human_attempts(tmp_path: Path):
         conversation_id="cid-current-needs-human",
         conversation_title="Current decision",
         trigger_message_id="msg-current-needs-human",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Choose the current direction.",
         action="agent_run",
         sensitivity_kind="general",
@@ -1551,7 +1551,7 @@ def test_history_does_not_pin_untraceable_needs_human_attempts(tmp_path: Path):
         conversation_id="cid-recovered-needs-human",
         conversation_title="Recovered decision",
         trigger_message_id="msg-recovered-needs-human",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="This historical decision was recovered.",
         action="agent_run",
         sensitivity_kind="general",
@@ -1561,7 +1561,7 @@ def test_history_does_not_pin_untraceable_needs_human_attempts(tmp_path: Path):
         conversation_id="cid-recovered-needs-human",
         conversation_title="Recovered decision",
         trigger_message_id="msg-recovered-needs-human",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="This historical decision was recovered.",
         action="agent_run",
         sensitivity_kind="general",
@@ -1583,7 +1583,7 @@ def test_history_recovered_approval_keeps_business_and_recovery_pills(
         single_chat=False,
         trigger_message_id="msg-history-recovered-approval",
         trigger_create_time="2026-08-18 10:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Recover this approval.",
     )
     [task] = store.claim_reply_tasks(limit=1)
@@ -1626,7 +1626,7 @@ def test_history_approval_keeps_its_own_status_without_later_attempt_link(
         conversation_id="cid-history-superseded-approval",
         conversation_title="Superseded approval",
         trigger_message_id="msg-history-superseded-approval",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Process this approval.",
         action="agent_run",
         sensitivity_kind="general",
@@ -1638,7 +1638,7 @@ def test_history_approval_keeps_its_own_status_without_later_attempt_link(
         conversation_id="cid-history-superseded-approval",
         conversation_title="Superseded approval",
         trigger_message_id="msg-history-superseded-approval",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Process this approval.",
         action="agent_run",
         sensitivity_kind="general",
@@ -1917,21 +1917,21 @@ def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
         category="product",
         priority="P1",
         risk_level="medium",
-        owner_name="Mina",
+        owner_name="Avery",
     )
     todo_id = store.create_work_todo(
         project_id=project_id,
-        title="向 Mina 解释待办更新",
+        title="向 Avery 解释待办更新",
         description="说明重要事项判断口径，并同步更新后的 TODO。",
-        owner_name="Mina",
+        owner_name="Avery",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="user-mina",
-        owner_name="Mina",
+        owner_name="Avery",
         target_kind="direct",
-        question_text="Mina，这个 TODO 描述是否清楚？",
+        question_text="Avery，这个 TODO 描述是否清楚？",
         scheduled_at="2026-07-15 10:00:00",
         status="sent",
     )
@@ -1964,11 +1964,11 @@ def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
         category="sales",
         priority="P0",
         risk_level="high",
-        owner_name="Claire Huang",
+        owner_name="Casey Huang",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
-        owner_name="Claire Huang",
+        owner_name="Casey Huang",
         target_kind="direct",
         question_text="准备宝马专家邀请材料了吗？",
         scheduled_at="2099-07-23 01:00:00",
@@ -2121,7 +2121,7 @@ def test_history_object_dropdown_controls_results(tmp_path: Path):
         conversation_id="cid-history",
         conversation_title="History Search Group",
         trigger_message_id="msg-history",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="风险预算需要确认",
         action="send_reply",
         sensitivity_kind="general",
@@ -2144,7 +2144,7 @@ def test_history_object_dropdown_controls_results(tmp_path: Path):
         conversation_id="cid-approval-history",
         conversation_title="Approval Search Group",
         trigger_message_id="msg-approval-history",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="风险预算审批需要确认",
         action="oa_approval",
         sensitivity_kind="general",
@@ -2259,7 +2259,7 @@ def test_history_wechat_object_filter_separates_message_channels(tmp_path: Path)
         conversation_id="cid-dingtalk-history",
         conversation_title="DingTalk History Group",
         trigger_message_id="msg-dingtalk-history",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="channel filter",
         action="send_reply",
         sensitivity_kind="general",
@@ -2304,7 +2304,7 @@ def test_history_object_filter_empty_or_invalid_value_defaults_to_all(tmp_path: 
         conversation_id="cid-history-invalid-filter",
         conversation_title="Invalid Filter History Group",
         trigger_message_id="msg-history-invalid-filter",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="invalid object filter",
         action="send_reply",
         sensitivity_kind="general",
@@ -2348,7 +2348,7 @@ def test_history_pagination_preserves_single_object_filter_query_params(
             conversation_id=f"cid-approval-page-{index}",
             conversation_title=f"Approval Page Group {index}",
             trigger_message_id=f"msg-approval-page-{index}",
-            trigger_sender="Mina",
+            trigger_sender="Avery",
             trigger_text="风险预算 A/B",
             action="oa_approval",
             sensitivity_kind="general",
@@ -2384,7 +2384,7 @@ def test_history_default_pagination_url_omits_object_type(tmp_path: Path):
             conversation_id=f"cid-default-page-{index}",
             conversation_title=f"Default Page Group {index}",
             trigger_message_id=f"msg-default-page-{index}",
-            trigger_sender="Mina",
+            trigger_sender="Avery",
             trigger_text="default page query",
             action="send_reply",
             sensitivity_kind="general",
@@ -2918,7 +2918,7 @@ def test_history_route_reads_page_query(tmp_path: Path):
             conversation_id=f"cid-{index}",
             conversation_title=f"Group {index}",
             trigger_message_id=f"msg-{index}",
-            trigger_sender="Mina",
+            trigger_sender="Avery",
             trigger_text=f"question {index}",
             action="send_reply",
             sensitivity_kind="general",
@@ -2942,7 +2942,7 @@ def test_history_route_reads_multi_type_query(tmp_path: Path):
         conversation_id="cid-sent",
         conversation_title="Sent Group",
         trigger_message_id="msg-sent",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="sent question",
         action="send_reply",
         sensitivity_kind="general",
@@ -2952,7 +2952,7 @@ def test_history_route_reads_multi_type_query(tmp_path: Path):
         conversation_id="cid-reacted",
         conversation_title="Reacted Group",
         trigger_message_id="msg-reacted",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="reacted question",
         action="add_emoji",
         sensitivity_kind="general",
@@ -2962,7 +2962,7 @@ def test_history_route_reads_multi_type_query(tmp_path: Path):
         conversation_id="cid-skipped",
         conversation_title="Skipped Group",
         trigger_message_id="msg-skipped",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="skipped question",
         action="no_reply",
         sensitivity_kind="general",
@@ -2987,7 +2987,7 @@ def test_render_attempt_list_filters_by_type_and_preserves_query(tmp_path: Path)
         conversation_id="cid-sent",
         conversation_title="Sent Group",
         trigger_message_id="msg-sent",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="sent question",
         action="send_reply",
         sensitivity_kind="general",
@@ -2997,7 +2997,7 @@ def test_render_attempt_list_filters_by_type_and_preserves_query(tmp_path: Path)
         conversation_id="cid-reacted",
         conversation_title="Reacted Group",
         trigger_message_id="msg-reacted",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="reacted question",
         action="add_emoji",
         sensitivity_kind="general",
@@ -3007,7 +3007,7 @@ def test_render_attempt_list_filters_by_type_and_preserves_query(tmp_path: Path)
         conversation_id="cid-skipped",
         conversation_title="Skipped Group",
         trigger_message_id="msg-skipped",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="skipped question",
         action="no_reply",
         sensitivity_kind="general",
@@ -3085,7 +3085,7 @@ def test_render_user_feedback_list_marks_pending_and_resolved(tmp_path: Path):
         conversation_id="cid-2",
         conversation_title="产品群",
         trigger_message_id="msg-2",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="这个回复有帮助吗？",
         action="send_reply",
         sensitivity_kind="general",
@@ -4485,7 +4485,7 @@ def test_tasks_page_uses_todo_owner_as_fallback_when_project_owner_is_missing(tm
         project_id=project_id,
         title="Confirm owner fallback",
         owner_user_id="owner-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -4494,8 +4494,8 @@ def test_tasks_page_uses_todo_owner_as_fallback_when_project_owner_is_missing(tm
     rows = task_script_json(html, "tasks-data")
     row = next(row for row in rows if row["id"] == project_id)
 
-    assert row["owner"] == "Mina"
-    assert "Mina" in html
+    assert row["owner"] == "Avery"
+    assert "Avery" in html
 
 
 def test_tasks_page_computes_table_statuses(tmp_path: Path):
@@ -4888,7 +4888,7 @@ def test_task_management_search_api_returns_task_context(tmp_path: Path):
         priority="P1",
         risk_level="medium",
         owner_user_id="owner-1",
-        owner_name="Mina",
+        owner_name="Avery",
         current_state="候选人评估中",
         next_step="确认 Colin 复试结论",
         source_conversations_json=json.dumps(
@@ -4901,7 +4901,7 @@ def test_task_management_search_api_returns_task_context(tmp_path: Path):
         title="评估 Colin 售前解决方案候选人",
         description="确认候选人的技术面、售前方案能力和下一轮安排。",
         owner_user_id="owner-1",
-        owner_name="Mina",
+        owner_name="Avery",
         priority="P1",
         deadline_at="2026-07-25 18:00:00",
         next_follow_up_at="2026-07-24 15:00:00",
@@ -4910,7 +4910,7 @@ def test_task_management_search_api_returns_task_context(tmp_path: Path):
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="owner-1",
-        owner_name="Mina",
+        owner_name="Avery",
         target_conversation_id="cid-hiring",
         target_kind="group",
         question_text="Colin 的复试结论定了吗？",
@@ -6155,7 +6155,7 @@ def test_browser_notifications_page_hides_untraceable_needs_human_projection(
         conversation_id="cid-decision",
         conversation_title="HR",
         trigger_message_id="msg-decision",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="need a choice",
         action="agent_run",
         sensitivity_kind="general",
@@ -6166,7 +6166,7 @@ def test_browser_notifications_page_hides_untraceable_needs_human_projection(
         conversation_id="cid-failure",
         conversation_title="Operations",
         trigger_message_id="msg-failure",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="current failure",
         action="agent_run",
         sensitivity_kind="general",
@@ -6177,7 +6177,7 @@ def test_browser_notifications_page_hides_untraceable_needs_human_projection(
         conversation_id="cid-resolved",
         conversation_title="Operations",
         trigger_message_id="msg-resolved",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="old failure",
         action="agent_run",
         sensitivity_kind="general",
@@ -6188,7 +6188,7 @@ def test_browser_notifications_page_hides_untraceable_needs_human_projection(
         conversation_id="cid-resolved",
         conversation_title="Operations",
         trigger_message_id="msg-resolved",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="old failure",
         action="send_reply",
         sensitivity_kind="general",
@@ -6216,7 +6216,7 @@ def test_attention_api_excludes_needs_human_after_queue_task_closes(
         single_chat=False,
         trigger_message_id="msg-decision",
         trigger_create_time="2026-09-07 00:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Choose the strategy",
         execution_generation="generation",
     )
@@ -6835,8 +6835,8 @@ def test_handle_prompt_variables_post_saves_variables_without_changing_template(
         "active_tab=user"
         "&variable_key=CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY"
         "&variable_value=%E7%AE%97%E6%B3%95%E5%9B%A2%E9%98%9F%E8%81%8C%E8%B4%A3"
-        "&variable_key=CEO_PROMPT_VAR_OA_APPROVAL_RULES"
-        "&variable_value=management%2FOA%2F%E9%92%89%E9%92%89%E5%AE%A1%E6%89%B9%E5%AE%A1%E9%98%85%E5%8E%9F%E5%88%99.md"
+        "&variable_key=CEO_PROMPT_VAR_FORBIDDEN_REPLY_TEXT_TERMS"
+        "&variable_value=%E6%B5%8B%E8%AF%95"
         "&variable_key="
         "&variable_value="
     ).encode()
@@ -6909,7 +6909,7 @@ def test_render_attempt_list_counts_pending_reply_tasks(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-queued",
         trigger_create_time="2026-05-28 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen(明哥) 这个候选人怎么看？",
     )
 
@@ -6930,7 +6930,7 @@ def test_render_attempt_list_counts_pending_backoff_tasks(
         single_chat=False,
         trigger_message_id="msg-queued",
         trigger_create_time="2026-05-28 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen(明哥) 这个候选人怎么看？",
         available_at="2026-06-04 08:06:52",
         error="waiting_fast_path_unread_backoff",
@@ -6950,7 +6950,7 @@ def test_render_attempt_list_counts_processing_reply_tasks(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-queued",
         trigger_create_time="2026-05-28 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen(明哥) 这个候选人怎么看？",
     )
     store.claim_reply_tasks(limit=1)
@@ -6970,7 +6970,7 @@ def test_render_attempt_list_does_not_pin_failed_reply_tasks(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-failed",
         trigger_create_time="2026-05-28 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen(明哥) 这个候选人怎么看？",
     )
     task = store.claim_reply_task(1)
@@ -7013,7 +7013,7 @@ def test_runtime_attempt_history_renders_only_safe_allowlisted_evidence(tmp_path
         single_chat=False,
         trigger_message_id="msg-runtime",
         trigger_create_time="2026-08-07 09:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="检查 runtime fallback。",
     )
     task = store.claim_reply_task(1)
@@ -7023,7 +7023,7 @@ def test_runtime_attempt_history_renders_only_safe_allowlisted_evidence(tmp_path
         conversation_id="cid-runtime",
         conversation_title="Runtime",
         trigger_message_id="msg-runtime",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="检查 runtime fallback。",
         action="agent_run",
         sensitivity_kind="general",
@@ -7313,7 +7313,7 @@ def test_historical_needs_human_detail_shows_later_automatic_resolution(tmp_path
         conversation_id="cid-history-recovered",
         conversation_title="事实询问",
         trigger_message_id="msg-history-recovered",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_text="是否先做一轮事实询问？",
         action="agent_run",
         sensitivity_kind="general",
@@ -7324,7 +7324,7 @@ def test_historical_needs_human_detail_shows_later_automatic_resolution(tmp_path
         conversation_id="cid-history-recovered",
         conversation_title="事实询问",
         trigger_message_id="msg-history-recovered",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_text="是否先做一轮事实询问？",
         action="agent_run",
         sensitivity_kind="general",
@@ -7351,7 +7351,7 @@ def test_render_attempt_detail_marks_closed_blocked_work_as_historical(tmp_path:
         single_chat=False,
         trigger_message_id="msg-blocked",
         trigger_create_time="2026-08-12 10:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="请更新 OKR 进展",
     )
     task = store.claim_reply_task(1)
@@ -7361,7 +7361,7 @@ def test_render_attempt_detail_marks_closed_blocked_work_as_historical(tmp_path:
         conversation_id="cid-blocked",
         conversation_title="OKR 更新",
         trigger_message_id="msg-blocked",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="请更新 OKR 进展",
         action="agent_run",
         sensitivity_kind="internal",
@@ -7603,9 +7603,9 @@ def test_attempt_history_and_detail_render_calendar_response_metadata(
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
-        conversation_title="Mina",
+        conversation_title="Avery",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="[日程]",
         action="no_reply",
         sensitivity_kind="general",
@@ -7701,9 +7701,9 @@ def test_render_attempt_list_uses_failed_action_pill_color(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_reply_attempt(
         conversation_id="cid-1",
-        conversation_title="Mina",
+        conversation_title="Avery",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
@@ -7722,7 +7722,7 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
         conversation_id="cid-actionable",
         conversation_title="HR",
         trigger_message_id="msg-actionable",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please review this.",
         action="agent_run",
         sensitivity_kind="general",
@@ -7752,7 +7752,7 @@ def test_history_failed_attempts_do_not_hide_each_other(tmp_path: Path):
         conversation_id="cid-duplicate-failure",
         conversation_title="HR",
         trigger_message_id="msg-duplicate-failure",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please review this once.",
         action="agent_run",
         sensitivity_kind="general",
@@ -7763,7 +7763,7 @@ def test_history_failed_attempts_do_not_hide_each_other(tmp_path: Path):
         conversation_id="cid-duplicate-failure",
         conversation_title="HR",
         trigger_message_id="msg-duplicate-failure",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please review this once.",
         action="agent_run",
         sensitivity_kind="general",
@@ -7790,7 +7790,7 @@ def test_history_retrying_item_shows_persisted_plan_without_human_choices(
         single_chat=False,
         trigger_message_id="msg-retrying",
         trigger_create_time="2026-08-11 05:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please review this.",
     )
     task = store.claim_reply_tasks(limit=1)[0]
@@ -7833,7 +7833,7 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-choice-history",
         trigger_create_time="2026-08-11 05:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Choose a plan.",
     )
     task = store.claim_reply_tasks(limit=1)[0]
@@ -7950,7 +7950,7 @@ def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
         conversation_id="cid-detail-attention",
         conversation_title="Operations",
         trigger_message_id="msg-detail-attention",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please complete this task.",
         action="agent_run",
         sensitivity_kind="general",
@@ -8041,11 +8041,11 @@ def test_failed_meeting_and_follow_up_expose_reason_and_safe_choices(
         category="people",
         priority="P1",
         risk_level="medium",
-        owner_name="Mina",
+        owner_name="Avery",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
-        owner_name="Mina",
+        owner_name="Avery",
         target_kind="direct",
         question_text="Please provide the update.",
         scheduled_at="2026-08-11 05:00:00",
@@ -8828,7 +8828,7 @@ def test_worker_attention_collapses_reply_attempt_into_matching_reply_task(
         single_chat=False,
         trigger_message_id="msg-attention",
         trigger_create_time="2026-08-10 08:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please handle this.",
     )
     [task] = store.claim_reply_tasks(limit=1)
@@ -8841,7 +8841,7 @@ def test_worker_attention_collapses_reply_attempt_into_matching_reply_task(
         conversation_id="cid-attention",
         conversation_title="Attention",
         trigger_message_id="msg-attention",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please handle this.",
         action="agent_run",
         sensitivity_kind="general",
@@ -8870,7 +8870,7 @@ def test_worker_attention_uses_lightweight_unresolved_attempt_projection(
         conversation_id="cid-lightweight-attention",
         conversation_title="Operations",
         trigger_message_id="msg-lightweight-attention",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please review the incident.",
         action="agent_run",
         sensitivity_kind="general",
@@ -9009,7 +9009,7 @@ def test_worker_attention_excludes_pending_and_processing_reply_and_meeting_rows
         single_chat=False,
         trigger_message_id="msg-attention-pending",
         trigger_create_time="2026-09-04 01:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Queued reply.",
     )
     meeting_id = store.upsert_meeting_alignment_job(
@@ -9031,6 +9031,50 @@ def test_worker_attention_excludes_pending_and_processing_reply_and_meeting_rows
 
     assert all(row["id"] != str(reply_id) for row in rows)
     assert all(row["id"] != str(meeting_id) for row in rows)
+
+
+def test_attention_includes_current_failed_attempt_waiting_for_retry(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "retry-attention.sqlite3")
+    task_id = store.enqueue_reply_task(
+        conversation_id="cid-retry-attention",
+        conversation_title="Review",
+        single_chat=False,
+        trigger_message_id="msg-retry-attention",
+        trigger_create_time="2026-09-24 01:00:00",
+        trigger_sender="Avery",
+        trigger_text="Please review.",
+    )
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+        channel=task.channel,
+    )
+    with store._connect() as db:
+        run = db.execute(
+            """insert into agent_runs (
+                reply_task_id, execution_generation, role, status, final_result_json
+            ) values (?, ?, 'consumer', 'failed', '{}')""",
+            (task.id, task.execution_generation),
+        )
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (run.lastrowid, attempt_id),
+        )
+        db.execute("update reply_tasks set status='pending' where id=?", (task.id,))
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert [(row["category"], row["id"]) for row in rows] == [
+        ("Reply", str(attempt_id))
+    ]
 
 
 def test_worker_attention_includes_failed_meeting_memory_writes(tmp_path: Path):
@@ -9290,7 +9334,7 @@ def test_render_attempt_list_labels_explained_blocked_as_blocked(
         conversation_id="cid-1",
         conversation_title="OKR",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Alex Chen 这个 OKR 怎么评分？",
         action="okr_review",
         sensitivity_kind="general",
@@ -10491,7 +10535,7 @@ def test_history_human_decision_rejects_failed_attempt_without_typed_decision(
         single_chat=False,
         trigger_message_id="msg-history-decision",
         trigger_create_time="2026-08-11 05:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please decide.",
         trigger_message_json="{}",
     )
@@ -10537,7 +10581,7 @@ def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-unknown-decision",
         trigger_create_time="2026-08-11 05:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please decide.",
         trigger_message_json="{}",
     )
@@ -10584,7 +10628,7 @@ def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
 def test_exhausted_failed_run_remains_ordinary_retry_candidate(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(conversation_id="cid-suspended", conversation_title="Operations", single_chat=False,
-        trigger_message_id="msg-suspended", trigger_create_time="2026-08-17 09:00:00", trigger_sender="Mina",
+        trigger_message_id="msg-suspended", trigger_create_time="2026-08-17 09:00:00", trigger_sender="Avery",
         trigger_text="请处理并确认结果。", trigger_message_json="{}")
     task = store.claim_reply_tasks(limit=1)[0]
     run = _claim_audit_run(store, task).run
@@ -10695,7 +10739,7 @@ def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation
         conversation_id="melody115",
         message_id="wx-1",
         sender_id="melody115",
-        sender_display_name="Melody",
+        sender_display_name="Morgan",
         conversation_type="direct",
         direction="inbound",
         sent_at="2026-07-28T14:00:00+08:00",
@@ -10706,7 +10750,7 @@ def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation
     store.enqueue_reply_task(
         channel="wechat",
         conversation_id=trigger.conversation_id,
-        conversation_title="Melody",
+        conversation_title="Morgan",
         single_chat=True,
         trigger_message_id=trigger.message_id,
         trigger_create_time=trigger.sent_at,
@@ -10717,7 +10761,7 @@ def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation
     attempt_id = store.record_reply_attempt(
         channel="wechat",
         conversation_id=trigger.conversation_id,
-        conversation_title="Melody",
+        conversation_title="Morgan",
         trigger_message_id=trigger.message_id,
         trigger_sender=trigger.sender_display_name,
         trigger_text=trigger.text,
@@ -10904,14 +10948,14 @@ def test_handle_reviewed_message_reply_uses_immutable_attempt_binding(tmp_path: 
         single_chat=False,
         trigger_message_id="msg-stable",
         trigger_create_time="2026-07-30 09:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="重复正文",
     )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-stable",
         conversation_title="同名群",
         trigger_message_id="msg-stable",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="重复正文",
         action="send_reply",
         sensitivity_kind="normal",
@@ -10944,14 +10988,14 @@ def test_needs_human_decision_rejects_untraceable_projection(
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-08-04 09:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="这个应该怎么处理？",
         trigger_message_json=DingTalkMessage(
             open_conversation_id="cid-1",
             open_message_id="msg-1",
             conversation_title="技术部",
             single_chat=False,
-            sender_name="Mina",
+            sender_name="Avery",
             create_time="2026-08-04 09:00:00",
             content="这个应该怎么处理？",
         ).model_dump_json(),
@@ -10961,7 +11005,7 @@ def test_needs_human_decision_rejects_untraceable_projection(
         conversation_id="cid-1",
         conversation_title="技术部",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="这个应该怎么处理？",
         action="agent_run",
         sensitivity_kind="general",
@@ -10999,7 +11043,7 @@ def test_needs_human_decision_rejects_untraceable_projection(
         conversation_id="wechat-cid-1",
         conversation_title="WeChat test",
         trigger_message_id="wechat-msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="这个应该怎么处理？",
         action="agent_run",
         sensitivity_kind="general",
@@ -11019,7 +11063,7 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
         conversation_id="cid-choice",
         conversation_title="管理群",
         trigger_message_id="msg-choice",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="这个事项请确认。",
         action="agent_run",
         sensitivity_kind="general",
@@ -11164,7 +11208,7 @@ def test_needs_human_detail_hides_audit_technical_conflict(tmp_path: Path):
         conversation_id="cid-audit-choice",
         conversation_title="管理群",
         trigger_message_id="msg-audit-choice",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="这个执行冲突请确认。",
         action="agent_run",
         sensitivity_kind="general",
@@ -11235,7 +11279,7 @@ def test_needs_human_detail_hides_untraceable_persisted_options(
         conversation_id="cid-reopened-choice",
         conversation_title="管理群",
         trigger_message_id="msg-reopened-choice",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="完成后核验发现状态冲突。",
         action="agent_run",
         sensitivity_kind="general",
@@ -11276,7 +11320,7 @@ def test_reviewed_reply_api_rejects_mutable_text_lookup_payload(tmp_path: Path):
         "/messages/reviewed-reply",
         json={
             "group_name": "同名群",
-            "user_name": "Mina",
+            "user_name": "Avery",
             "message_str": "重复正文",
             "reply_text": "不应按文本反查",
         },
@@ -11294,7 +11338,7 @@ def test_render_log_list_shows_recent_operations(tmp_path: Path):
         conversation_id="cid-2",
         conversation_title="融资群",
         trigger_message_id="msg-2",
-        trigger_sender="Lily",
+        trigger_sender="Riley",
         trigger_text="@Alex 这个怎么看？",
         action="send_reply",
         sensitivity_kind="general",
@@ -11385,7 +11429,7 @@ def test_render_workers_page_shows_service_and_queue_status(
         conversation_id="cid-1",
         conversation_title="客户群",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="请看一下",
         action="send_reply",
         sensitivity_kind="general",
@@ -11583,7 +11627,7 @@ def test_render_log_list_marks_sent_trigger_errors_resolved(tmp_path: Path):
         conversation_id="cid-1",
         conversation_title="国内外融资群",
         trigger_message_id="msg-1",
-        trigger_sender="Lily",
+        trigger_sender="Riley",
         trigger_text="@Alex Chen 这个怎么看？",
         action="send_reply",
         sensitivity_kind="general",
@@ -11636,7 +11680,7 @@ def test_render_log_list_marks_old_failed_attempt_historical(tmp_path: Path):
         conversation_id="cid-1",
         conversation_title="历史群",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="历史读取失败",
         action="agent_run",
         sensitivity_kind="general",
@@ -11660,7 +11704,7 @@ def test_render_log_list_projects_recovery_without_overwriting_failed_attempt(tm
         conversation_id="cid-1",
         conversation_title="恢复群",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="先失败后恢复",
         action="agent_run",
         sensitivity_kind="general",
@@ -11670,7 +11714,7 @@ def test_render_log_list_projects_recovery_without_overwriting_failed_attempt(tm
         conversation_id="cid-1",
         conversation_title="恢复群",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="先失败后恢复",
         action="send_reply",
         sensitivity_kind="general",
@@ -11690,7 +11734,7 @@ def test_render_log_list_renders_non_error_terminal_states_without_red_status(tm
         conversation_id="cid-1",
         conversation_title="终态群",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="无需发送",
         action="send_reply",
         sensitivity_kind="general",

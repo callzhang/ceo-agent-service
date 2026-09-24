@@ -127,9 +127,9 @@ DingTalk Todo outbox。统一层只处理唤醒、公平领取、租约、全局
 会议、微信 reader、OA、每日工作来源、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）运行的
 AI 听记同步。八项全部以服务命令形式 seed；早先以 Agent 形式创建的同一
 migration key 任务在启动时原地转换为命令形式，
-保留名称、Cron 和时区，已删除的旧任务不动，其命令通过 Console API 不可修改。从未被编辑过的
-旧 seed（version 1）转换后按命令形式的默认值启用，因为它原来的停用只反映 Agent 形式缺少
-Runtime 或 Skill；被用户改过的任务保留用户选择的启用状态。Lark
+保留名称、Cron 和时区，已删除的旧任务不动，其命令通过 Console API 不可修改。新安装创建的全部
+默认任务都是**暂停**状态，由用户配好连接器后自行启用（Derek 2026-09-23）；seed 从不改变已有任务的
+启用状态，包括从未被编辑过的 version 1 任务。默认的名称与 Cron 与负责人本机的现行任务一致。Lark
 不创建默认 seed；其余已有任务的用户修改不会被 seed 覆盖。
 
 ### Runtime-managed Skill 生命周期
@@ -163,11 +163,18 @@ Consumer 在 invocation 开始时接收这个 immutable snapshot；同一次调�
 OA 每个审批节点只校验当前表单真实存在且明确必填的信息。后续业务阶段、其他表单或评审偏好
 中的字段不能反向成为当前节点的强制条件；Audit 发现这种候选必须退回 Consumer 重新生成。
 
-财务主导的 Stardust OA 由定时任务冻结传入通用 `dingtalk-oa-approval` 与公司
-`stardust-oa-finance-review` 两份 Skill。后一份只在 live `processCode` 精确匹配的规则卡上
-定义该模板的动作；没有完整、生效且覆盖当前事项的规则卡时，`rule_coverage` 不得记为 100%。
-申请人可以补足事实或材料，Consumer 应在原审批评论明确缺口；规则、例外、授权或动作映射缺口
-仍必须进入 `needs_human`，申请人回复不能把这一政策缺口关闭。
+OA 定时任务冻结传入通用 `dingtalk-oa-approval` 与 Stardust 财务、立项、合同、人员、
+考勤/出差、云资源六个业务大类 Skill，并在 Prompt 中记录 Derek 的个人规则。审批 Agent 只按通用
+审批 Skill 和适用的 Stardust 业务 Skill 判断；背景参考文档不是
+运行时规则来源，代码与默认 Prompt 都不引用它们。Consumer 按 live `processCode` 和表单事实选择适用类别；跨类别事项组合适用 Skill。
+财务 Skill 的规则卡只适用于登记的财务模板，不匹配其他类别不得单独触发升级。适用业务 Skill
+必须覆盖当前事项的规则条件、例外、权限和动作映射，且内容有效，
+`rule_coverage` 才能为 1.0；否则低于 1.0，规则缺口进入 `needs_human`，不得自动批准或拒绝。
+申请人可以补足事实或材料，Consumer 应在原审批评论明确缺口；若同时存在政策缺口，须另行
+进入 `needs_human`，申请人回复不能关闭政策升级。两者在同一结果中表达：proposal 携带评论或
+退回，并同时带 `needs_human_reason`、`decision_basis` 和 2--4 个选项；Audit 执行动作后任务以
+`needs_human` 收口（Derek 2026-09-23）。此前结果只能二选一，总会丢掉一半。个人审批偏好只存在于定时任务 Prompt，不是
+公司通用规则。
 
 ### Business Object、Task、Agent Run 与 Reply Attempt 的关系
 
@@ -442,6 +449,10 @@ launchd 后验证新 PID、HTTP 健康与 Store 可读性。
 所选群不可发送、且会议上下文已有稳定的日历组织者 `user_id` 或 `open_dingtalk_id` 时，
 服务把同一总结私聊给该组织者，不按姓名搜索或猜测身份。
 群标题相似、部分参会人重合或近期活跃本身不构成业务承接证据。
+找群先核对会议材料里明确提及的讨论群，再从结论、行动和负责人提炼主题，分别以原文中文
+业务词、英文术语、会议标题和核心议题查群及群内消息。预置候选或首次搜索零命中不等于穷尽；
+候选须核对近期同工作线讨论、行动承接人、受众和可发送性，并在决策中说明来源与业务承接关系。
+多个合理群按本次议题和行动归属排序，不能用宽泛群凑数，也不能把敏感内容送给无授权受众。
 
 只有个人、非业务内容，且完整日历名单明确证明 Derek 与另一位参会人两人参会时，才允许 direct
 到该另一位参会人。逐字稿中的发言人只能证明发言，不能证明完整名单或两人会议。所选业务群被
@@ -1054,8 +1065,9 @@ run 才能被持久队列恢复。
   有证据的 `executed` 其 `external_result.operation_id` 由服务从 Audit run 回填（不透明操作号是服务
   自己的，模型抄错不应让任务终态失败）；缺少 `external_result` 则同样进入修正轮。
 - **结果不合契约**：Agent 返回了 JSON 但不满足 wire schema 时，解析器报 `codex_result_invalid`
-  并保留失败字段位置（不保留模型原文）；同一角色、同一 revision 的下一次 turn 会收到
-  `## Result Correction`，把这些位置反馈给模型，要求只返回修正后的结果。只有完全没有 JSON
+  并保留失败字段位置和契约自己的校验说明（不保留模型原文）；同一角色、同一 revision 的下一次 turn 会收到
+  `## Result Correction`，把这些位置和说明反馈给模型，要求只返回修正后的结果。只给类型不给说明
+  （如 `result: value_error`）时模型无从下手：任务 384711 两轮重试原样重交了同一个结果。只有完全没有 JSON
   对象时才是 `codex_result_missing`，此时下一次 turn 同样收到修正块，说明上一轮只有说明文字。
   wire 契约中的 `error_code` 接受 `null` 作为“无错误”（等价于空字符串）；模型无需为无错误结果编造字符串哨兵。
 
@@ -1112,7 +1124,7 @@ History 再启动原生 CLI 去发现命令元数据。运行时发现失败属�
 | `executed` | B 已执行，并返回 provider 结果或稳定外部动作标识。 |
 | `no_action` | A 确认当前触发无需外部动作。 |
 | `feedback_provided` | B 给出结构化反馈，等待 A 在原兼容 session 中生成下一 revision。 |
-| `needs_human` | 仅在信息完整且 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 时使用；必须提供 2 至 4 个互斥、可执行的规则/Skill 选项，每项包含唯一稳定 `key`、显示 `label`、可执行 `instruction` 和 `consequence`/影响。普通材料不足走 ask-back，不计入此状态。 |
+| `needs_human` | proposal 也可附带一个独立升级（同样 2 至 4 个选项）：Audit 执行动作后任务以 `needs_human` 收口。除此之外，仅在信息完整且 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 时使用；必须提供 2 至 4 个互斥、可执行的规则/Skill 选项，每项包含唯一稳定 `key`、显示 `label`、可执行 `instruction` 和 `consequence`/影响。普通材料不足走 ask-back，不计入此状态。 |
 | `failed` | 当前 run 失败；错误说明是否可重试。 |
 | `quarantined` | 历史数据中的旧投影标签，仅用于历史展示；新执行不得写入。 |
 

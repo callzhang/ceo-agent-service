@@ -149,7 +149,7 @@ def _consumer_result_task(store: AutoReplyStore):
         single_chat=False,
         trigger_message_id="msg-consumer-api-result",
         trigger_create_time="2026-09-14 09:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Publish the reviewed update.",
         trigger_message_json=json.dumps(
             {
@@ -157,7 +157,7 @@ def _consumer_result_task(store: AutoReplyStore):
                 "open_message_id": "msg-consumer-api-result",
                 "conversation_title": "Consumer API result",
                 "single_chat": False,
-                "sender_name": "Mina",
+                "sender_name": "Avery",
                 "create_time": "2026-09-14 09:00:00",
                 "content": "Publish the reviewed update.",
             }

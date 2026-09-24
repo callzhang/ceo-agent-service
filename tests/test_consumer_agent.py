@@ -366,14 +366,17 @@ def test_consumer_and_audit_instructions_keep_oa_material_and_policy_gaps_separa
     audit = audit_developer_instructions("Verify supported facts.")
 
     for instructions in (consumer, audit):
-        assert "actual OA applicant is authoritative" in instructions
-        assert "cannot create, replace, or close a rule" in instructions
-        assert "stardust-oa-finance-review" in instructions
-        assert "live `processCode`" in instructions
-        assert "sole authority for the template action" in instructions
-        assert "cannot be reported as 100%" in instructions
-        assert "cannot close that policy gap" in instructions
         assert "Do not introduce a new factual requirement" in instructions
+
+    assert "actual OA applicant is authoritative" in consumer
+    assert "cannot create, replace, or close a rule" in consumer
+    assert "stardust-oa-finance-review" in consumer
+    assert "applicable Stardust business Skill" in consumer
+    assert "live `processCode`" in consumer
+    assert "generic Skill's complete" in consumer
+    assert "cannot be reported as 100%" in consumer
+    assert "cannot close that policy gap" in consumer
+    assert "background principle documents as rule sources" in consumer
 
 
 def test_consumer_contract_hash_changes_with_work_profile(tmp_path, monkeypatch):
@@ -708,7 +711,9 @@ def test_consumer_oa_finance_rule_card_keeps_material_and_policy_gaps_separate()
 
     assert "stardust-oa-finance-review" in instructions
     assert "live `processCode`" in instructions
-    assert "sole authority for the template action" in instructions
+    assert "finance rule card" in instructions
+    assert "finance registry" in instructions
+    assert "generic Skill's complete" in instructions
     assert "cannot be reported as 100%" in instructions
     assert "comment the applicant" in instructions
     assert "independently return `needs_human`" in instructions
@@ -875,14 +880,15 @@ def test_audit_instructions_do_not_create_reconciliation_prompt():
 def test_consumer_instructions_pin_the_installed_oa_workflow():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
-    # Our own Skill decides the approval; the vendor reference is only dws
-    # command usage, and `dws upgrade` overwrites it.
-    assert "dingtalk-oa-approval/SKILL.md" in instructions
-    assert "only for dws" in instructions
-    assert "dingtalk-misc" in instructions
-    assert "references/oa.md" in instructions
+    # Approval policy comes from the generic + matching business Skills, not
+    # a vendor reference or a raw principle document.
+    assert "dingtalk-oa-approval" in instructions
+    assert "generic Skill's complete" in instructions
+    assert "background principle documents as rule sources" in instructions
+    assert "dingtalk-misc/references/oa.md" not in instructions
     assert 'return `no_action`' in instructions
-    assert "comment on the original approval" in instructions
+    assert "comment on the original" in instructions
+    assert "approval with the exact missing material" in instructions
     assert "timestamp without a" in instructions
     assert "not a business conflict" in instructions
     assert "interpret it as Asia/Shanghai" in instructions
@@ -3138,3 +3144,56 @@ def test_the_protocol_names_the_send_commands_it_forbids():
     ):
         assert command in protocol
     assert "Reading is unrestricted" in protocol
+
+
+def test_consumer_checks_existing_audience_before_requesting_group_send_authorization():
+    protocol = " ".join(consumer_agent.CONSUMER_ROLE_BOUNDARY.split())
+
+    assert "same conversation ID" in protocol
+    assert "prior messages in that conversation" in protocol
+    assert "memory_recall" in protocol
+    assert "Memory alone does not prove recipient scope" in protocol
+    assert "Do not ask Derek to reconfirm already disclosed direction" in protocol
+    assert "same conversation ID" in consumer_developer_instructions("rules")
+
+
+def test_audit_checks_existing_audience_before_refusing_group_send():
+    protocol = " ".join(consumer_agent.AUDIT_ROLE_BOUNDARY.split())
+
+    assert "same conversation ID" in protocol
+    assert "already disclosed to those recipients" in protocol
+    assert "new recipient or undisclosed detail" in protocol
+    assert "already disclosed to" in consumer_agent.audit_developer_instructions("rules")
+
+
+def test_audit_checks_a_terminal_decision_before_running_it():
+    """A check on the result arrives after the provider recorded the decision.
+
+    On 2026-09-23 an FA contract was rejected in DingTalk with a remark asking
+    the applicant to supply facts and resubmit; `revert-activities` was never
+    called, and the rule that caught it ran only after the rejection was final.
+    Audit is the stage that executes, so the checks have to be its own, before
+    it runs the command.
+    """
+
+    boundary = consumer_agent.AUDIT_ROLE_BOUNDARY
+
+    assert "run the command only if every one" in boundary
+    assert "Checking afterwards is useless" in boundary
+    for command in ("oa approval approve", "oa approval reject", "calendar event respond"):
+        assert command in boundary
+    assert "revert-activities" in boundary
+    assert "the action is a revert, not a rejection" in boundary
+    assert "non-empty `--remark`" in boundary
+
+
+def test_audit_returns_executed_for_a_proposal_that_escalates():
+    """Contract task 384699, run 21117: Audit posted the comment, then raised the
+    candidate's question as its own needs_human. The validator refused its
+    honest scores, and the retries lowered rule coverage from 0.7 to 0.4 until
+    the result passed."""
+    from app.consumer_agent import AUDIT_ROLE_BOUNDARY
+
+    text = " ".join(AUDIT_ROLE_BOUNDARY.split())
+    assert "return `executed` with the receipt" in text
+    assert "never lower them to fit an outcome" in text

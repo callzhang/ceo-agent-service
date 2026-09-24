@@ -35,7 +35,7 @@ def _proposal(action: dict) -> str:
 
 
 CHAT_SEND = {
-    "description": "向 Melody 请求做出判断所需的关键材料",
+    "description": "向 Morgan 请求做出判断所需的关键材料",
     "action_identity": "request_candidate_info",
     "capability": "dingtalk-chat",
     "operation": "send",
@@ -255,7 +255,7 @@ def test_the_correction_says_what_to_do_when_no_calendar_write_is_needed() -> No
 REACTION = {
     "description": "表情回复", "action_identity": "react", "capability": "dingtalk-chat",
     "operation": "add-emoji",
-    "target": {"conversation_id": "cidecoVMQj5AbsnpzlPqHbyQw==", "message_id": "msgyXmTAdXUx3cezX0pO1ppLA=="},
+    "target": {"conversation_id": "cidExampleGroupAAAAAAAAAA==", "message_id": "msgyXmTAdXUx3cezX0pO1ppLA=="},
     "payload": {"emoji": "收到"},
 }
 
@@ -275,7 +275,7 @@ def test_a_reaction_the_provider_accepted_counts_even_with_its_output_redirected
     """
     driver, task = _driver(
         action=REACTION,
-        tool_events=[_shell('dws chat message add-emoji --conversation-id cidecoVMQj5AbsnpzlPqHbyQw== --message-id msgyXmTAdXUx3cezX0pO1ppLA== --emoji "收到" 2>&1')],
+        tool_events=[_shell('dws chat message add-emoji --conversation-id cidExampleGroupAAAAAAAAAA== --message-id msgyXmTAdXUx3cezX0pO1ppLA== --emoji "收到" 2>&1')],
         classifier=_SchemaClassifier(),
     )
     assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
@@ -487,7 +487,7 @@ class _NoSchemaClassifier:
 
 
 def test_a_revert_counts_although_dws_publishes_no_schema_for_it() -> None:
-    """Run 20070 sent the 江淮 POC back to Wayne and the task still failed.
+    """Run 20070 sent the 某车企 POC back to Wayne and the task still failed.
 
     DingTalk recorded REDIRECT_PROCESS and the approval left the pending list,
     but `oa approval revert-task` has no runtime schema, so the classifier

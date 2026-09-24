@@ -7760,7 +7760,6 @@ class AutoReplyStore:
         *,
         migration_key: str,
         command: str,
-        seed_enabled: bool,
         seed_description: str = "",
         consumer_prompt: str = "",
         consumer_skill_refs: Sequence[ScheduledTaskSkillRef] = (),
@@ -7772,9 +7771,9 @@ class AutoReplyStore:
 
         Name, Cron, and timezone remain user-owned. Runtime and working directory
         fields are cleared; commands with an Agent consumer receive their default
-        prompt and exact Skill refs only when no consumer config exists yet. A
-        seed nobody edited (version 1) takes ``seed_enabled``; an edited task
-        keeps the state the user chose.
+        prompt and exact Skill refs only when no consumer config exists yet.
+        Whether the task runs is never touched: a fresh install starts every
+        seeded task paused, and an existing task keeps the state it has.
         """
         migration_key = self._require_scheduled_task_text(
             migration_key, field="scheduled task migration key"
@@ -7800,8 +7799,6 @@ class AutoReplyStore:
             working_directory="",
             skill_refs=consumer_skill_refs,
         )
-        if not isinstance(seed_enabled, bool):
-            raise ValueError("scheduled task seed enabled must be a boolean")
         now_text = self._scheduled_task_time_text(
             now or datetime.now(timezone.utc), field="scheduled task now"
         )
@@ -7880,7 +7877,7 @@ class AutoReplyStore:
                 working_directory="",
                 skill_refs=validated_refs,
             )
-            enabled = seed_enabled if current.version == 1 else current.enabled
+            enabled = current.enabled
             db.execute(
                 """
                 update scheduled_tasks
@@ -13415,6 +13412,15 @@ class AutoReplyStore:
                     (int(row["id"]), str(row["execution_generation"])),
                 )
                 if cursor.rowcount == 1:
+                    db.execute(
+                        """
+                        update dispatcher_claim_leases
+                        set owner='', lease_expires_at='', updated_at=current_timestamp
+                        where adapter_name='reply' and source_id=?
+                          and owner<>'' and lease_expires_at<=current_timestamp
+                        """,
+                        (str(row["id"]),),
+                    )
                     recovered.append(self._reply_task_from_row(row))
             return recovered
 
@@ -16599,6 +16605,27 @@ class AutoReplyStore:
             ).fetchall()
         return [self._meeting_alignment_job_from_row(row) for row in rows]
 
+    def recurring_meeting_group_targets(self, title: str) -> list[tuple[str, str, int]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select target_id, max(target_title) as target_title,
+                       count(*) as sent_count
+                from meeting_alignment_jobs
+                where title=? and status='sent' and target_kind='group'
+                  and trim(target_id)<>'' and trim(final_message)<>''
+                group by target_id
+                having count(*) >= 2
+                order by sent_count desc, max(id) desc
+                limit 5
+                """,
+                (title,),
+            ).fetchall()
+        return [
+            (str(row["target_id"]), str(row["target_title"]), int(row["sent_count"]))
+            for row in rows
+        ]
+
     @staticmethod
     def _meeting_memory_write_event_from_row(
         row: sqlite3.Row,
@@ -17346,6 +17373,14 @@ class AutoReplyStore:
             if jobs:
                 job_ids = [job.id for job in jobs]
                 placeholders = ",".join("?" for _ in job_ids)
+                db.execute(
+                    "update dispatcher_claim_leases "
+                    "set owner='', owner_pid=0, lease_expires_at='', updated_at=? "
+                    "where adapter_name='meeting' and source_id in ("
+                    + placeholders
+                    + ")",
+                    [now_text, *[str(job_id) for job_id in job_ids]],
+                )
                 run_rows = db.execute(
                     f"select id from meeting_alignment_runs "
                     f"where status='running' and job_id in ({placeholders})",
@@ -17496,6 +17531,28 @@ class AutoReplyStore:
             if row is None:
                 return None
             return self._meeting_alignment_job_from_row(row)
+
+    def requeue_failed_meeting_delivery(self, job_id: int) -> MeetingAlignmentJob | None:
+        """Resume a reviewed unsent delivery after independent provider readback."""
+        with self._connect() as db:
+            row = db.execute(
+                """update meeting_alignment_jobs
+                   set status='ready_to_send', locked_at=null,
+                       available_at='', error='', updated_at=current_timestamp
+                   where id=? and status='failed' and locked_at is null
+                     and decision_json!='{}' and target_id!=''
+                     and send_result_json='{}'
+                     and not exists (
+                       select 1 from outbound_postfix_receipts
+                       where channel='dingtalk'
+                         and delivery_key=('meeting-alignment:' ||
+                           meeting_alignment_jobs.id || ':' ||
+                           meeting_alignment_jobs.meeting_id)
+                     )
+                   returning *""",
+                (job_id,),
+            ).fetchone()
+            return self._meeting_alignment_job_from_row(row) if row else None
 
     def begin_meeting_alignment_run(self, job_id: int) -> int:
         if job_id <= 0:
@@ -23625,7 +23682,9 @@ class AutoReplyStore:
                 decision = parse_stored_needs_human_decision(
                     row["final_result_json"]
                 )
-                if decision is None or not self._authorization_plan_matches_attempt(
+                # A proposal that escalates is a question only once Audit has
+                # executed its action; as the latest run it has not been.
+                if decision is None or getattr(decision, "escalates", False) or not self._authorization_plan_matches_attempt(
                     decision,
                     oa_process_instance_id=str(row["oa_process_instance_id"] or ""),
                     oa_task_id=str(row["oa_task_id"] or ""),
@@ -24737,7 +24796,7 @@ class AutoReplyStore:
                           attempts.trigger_message_id
                       )
                         and current_task.status in (
-                            'done', 'skipped', 'needs_human', 'pending', 'processing'
+                            'done', 'skipped', 'needs_human', 'processing'
                         )
                   )
                   and (
@@ -24756,6 +24815,20 @@ class AutoReplyStore:
                       or (
                           attempts.send_status != 'needs_human'
                           and not exists (
+                              select 1 from reply_tasks as pending_task
+                              where pending_task.channel=attempts.channel
+                                and pending_task.conversation_id=attempts.conversation_id
+                                and pending_task.trigger_message_id=attempts.trigger_message_id
+                                and pending_task.status='pending'
+                                and not exists (
+                                    select 1 from agent_runs as failed_run
+                                    where failed_run.id=attempts.agent_run_id
+                                      and failed_run.reply_task_id=pending_task.id
+                                      and failed_run.execution_generation=pending_task.execution_generation
+                                      and failed_run.status='failed'
+                                )
+                          )
+                          and not exists (
                               select 1
                               from reply_tasks as tasks
                               where tasks.channel=attempts.channel
@@ -24763,7 +24836,7 @@ class AutoReplyStore:
                                 and tasks.trigger_message_id=attempts.trigger_message_id
                                 and (
                                     tasks.status in (
-                                        'done', 'skipped', 'needs_human', 'pending', 'processing'
+                                        'done', 'skipped', 'needs_human', 'processing'
                                     )
                                 )
                           )
@@ -24834,7 +24907,7 @@ class AutoReplyStore:
                           attempts.trigger_message_id
                       )
                         and current_task.status in (
-                            'done', 'skipped', 'needs_human', 'pending', 'processing'
+                            'done', 'skipped', 'needs_human', 'processing'
                         )
                   )
                   and (
@@ -24853,13 +24926,27 @@ class AutoReplyStore:
                       or (
                           attempts.send_status != 'needs_human'
                           and not exists (
+                              select 1 from reply_tasks as pending_task
+                              where pending_task.channel=attempts.channel
+                                and pending_task.conversation_id=attempts.conversation_id
+                                and pending_task.trigger_message_id=attempts.trigger_message_id
+                                and pending_task.status='pending'
+                                and not exists (
+                                    select 1 from agent_runs as failed_run
+                                    where failed_run.id=attempts.agent_run_id
+                                      and failed_run.reply_task_id=pending_task.id
+                                      and failed_run.execution_generation=pending_task.execution_generation
+                                      and failed_run.status='failed'
+                                )
+                          )
+                          and not exists (
                               select 1
                               from reply_tasks as tasks
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
                                 and tasks.status in (
-                                    'done', 'skipped', 'needs_human', 'pending', 'processing'
+                                    'done', 'skipped', 'needs_human', 'processing'
                                 )
                           )
                       )
@@ -24927,7 +25014,7 @@ class AutoReplyStore:
                           attempts.trigger_message_id
                       )
                         and current_task.status in (
-                            'done', 'skipped', 'needs_human', 'pending', 'processing'
+                            'done', 'skipped', 'needs_human', 'processing'
                         )
                   )
                   and (
@@ -24946,6 +25033,20 @@ class AutoReplyStore:
                       or (
                           attempts.send_status != 'needs_human'
                           and not exists (
+                              select 1 from reply_tasks as pending_task
+                              where pending_task.channel=attempts.channel
+                                and pending_task.conversation_id=attempts.conversation_id
+                                and pending_task.trigger_message_id=attempts.trigger_message_id
+                                and pending_task.status='pending'
+                                and not exists (
+                                    select 1 from agent_runs as failed_run
+                                    where failed_run.id=attempts.agent_run_id
+                                      and failed_run.reply_task_id=pending_task.id
+                                      and failed_run.execution_generation=pending_task.execution_generation
+                                      and failed_run.status='failed'
+                                )
+                          )
+                          and not exists (
                               select 1
                               from reply_tasks as tasks
                               where tasks.channel=attempts.channel
@@ -24953,7 +25054,7 @@ class AutoReplyStore:
                                 and tasks.trigger_message_id=attempts.trigger_message_id
                                 and (
                                     tasks.status in (
-                                        'done', 'skipped', 'needs_human', 'pending', 'processing'
+                                        'done', 'skipped', 'needs_human', 'processing'
                                     )
                                 )
                           )
@@ -25103,6 +25204,27 @@ class AutoReplyStore:
                               and tasks.trigger_message_id=reply_attempts.trigger_message_id
                             limit 1
                         ), send_status)
+                        when send_status in ('failed', 'blocked', 'pending', 'dry_run', 'needs_human')
+                             and exists (
+                                select 1
+                                from agent_runs as attempt_run
+                                join reply_tasks as current_task
+                                  on current_task.id=attempt_run.reply_task_id
+                                join agent_runs as latest_run
+                                  on latest_run.reply_task_id=current_task.id
+                                 and latest_run.execution_generation=current_task.execution_generation
+                                where attempt_run.id=reply_attempts.agent_run_id
+                                  and current_task.status='processing'
+                                  and latest_run.id>attempt_run.id
+                                  and latest_run.status in ('pending', 'running', 'completed')
+                                  and latest_run.id=(
+                                      select max(candidate.id)
+                                      from agent_runs as candidate
+                                      where candidate.reply_task_id=current_task.id
+                                        and candidate.execution_generation=current_task.execution_generation
+                                  )
+                             )
+                        then 'processing'
                         when action in ('memory_write', 'oa_approval')
                              and send_status in ('failed', 'blocked', 'pending', 'dry_run', 'needs_human')
                              and exists (

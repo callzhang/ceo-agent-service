@@ -2285,3 +2285,39 @@ def test_event_set_after_empty_scan_is_not_lost_before_wait():
 
     assert len(executor.submissions) == 1
     assert not thread.is_alive()
+
+
+def test_a_finished_claim_that_lets_go_is_claimable_while_its_owner_lives(
+    tmp_path: Path,
+) -> None:
+    """Task 384735 sat pending for thirty minutes behind its own old lease.
+
+    Its handler had ended in an error, so the lease stayed owned by the
+    running service; once it expired, the live-owner guard kept skipping the
+    task until a restart ended that process.
+    """
+    store = _store(tmp_path)
+    _reply(store)
+    adapter = ReplyQueueAdapter(store, owner_alive=lambda pid: pid == 42)
+    envelope = adapter.claim(
+        NOW, owner="dispatcher", owner_pid=42, lease=timedelta(minutes=5)
+    )
+    assert envelope is not None
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update reply_tasks set status='pending', locked_at=null where id=?",
+            (int(envelope.source_id),),
+        )
+    later = NOW + timedelta(minutes=30)
+
+    assert adapter.claim(
+        later, owner="dispatcher", owner_pid=42, lease=timedelta(minutes=5)
+    ) is None
+
+    adapter.let_go(envelope, owner="dispatcher")
+
+    reclaimed = adapter.claim(
+        later, owner="dispatcher", owner_pid=42, lease=timedelta(minutes=5)
+    )
+    assert reclaimed is not None
+    assert reclaimed.source_id == envelope.source_id

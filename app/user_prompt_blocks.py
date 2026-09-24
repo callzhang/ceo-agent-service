@@ -40,7 +40,7 @@ USER_PROMPT_BLOCKS = [
             "会话: 示例群\n"
             "会话类型: 群聊\n"
             "新消息:\n"
-            "- Mina sender_user_id=sender-user-1 2026-05-29 09:00:00: "
+            "- Avery sender_user_id=sender-user-1 2026-05-29 09:00:00: "
             "@CEO 看下这个问题"
         ),
     ),
@@ -48,7 +48,7 @@ USER_PROMPT_BLOCKS = [
         name="sender_org_block",
         expression="app.user_prompt_blocks:sender_org_block()",
         description="发信人组织信息 JSON；没有可用组织信息时为空。",
-        default='发信人组织信息(JSON):\n{"name": "Mina", "user_id": "sender-user-1"}',
+        default='发信人组织信息(JSON):\n{"name": "Avery", "user_id": "sender-user-1"}',
     ),
     UserPromptBlock(
         name="known_people_block",
@@ -72,7 +72,7 @@ USER_PROMPT_BLOCKS = [
                         "open_message_id": "ctx-1",
                         "create_time": "2026-05-29 08:59:00",
                         "sender": {
-                            "name": "Mina",
+                            "name": "Avery",
                             "user_id": "sender-user-1",
                             "open_dingtalk_id": "open-sender-1",
                         },
@@ -110,7 +110,7 @@ USER_PROMPT_BLOCKS = [
             "  类型: dingtalk_doc\n"
             "  引用: https://alidocs.dingtalk.com/i/nodes/example\n"
             "  来源消息: msg-1\n"
-            "  发送人: Mina\n"
+            "  发送人: Avery\n"
             "  时间: 2026-06-08 18:46:32"
         ),
     ),
