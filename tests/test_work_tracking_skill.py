@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.task_agent import build_task_agent_prompt
-from app.task_models import TaskDecision, owner_identity_is_supported
+from app.task_models import TaskAgentDecision, TaskDecision, owner_identity_is_supported
 
 from app.business_skills import bundled_business_skills_root
 
@@ -57,6 +57,21 @@ def test_task_agent_prompt_builder_contains_transport_not_business_policy():
 
 def test_task_agent_contract_has_no_checked_duplicate_schema():
     assert not (ROOT / "app" / "schemas" / "task_agent_decision.schema.json").exists()
+
+
+def test_completion_operations_are_top_level_unified_decision_fields_and_skill_agrees():
+    decision_fields = TaskAgentDecision.model_fields
+    task_decision_fields = TaskDecision.model_fields
+    assert "todo_changes" in decision_fields
+    assert "follow_up_changes" in decision_fields
+    assert "todo_changes" not in task_decision_fields
+    assert "follow_up_changes" not in task_decision_fields
+
+    text = " ".join(_skill_text().split())
+    assert "top-level `todo_changes` and `follow_up_changes` fields" in text
+    assert "Do not emit legacy `todo_changes`" not in text
+    assert "outside the approved Task 6 scope, not a release blocker" in text
+    assert "`max_raw_reads` cap remains unmet and is a release blocker" not in text
 
 
 def _formal_task(**overrides) -> dict[str, object]:

@@ -175,7 +175,8 @@ Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返�
 Task Agent 使用统一的 `TaskAgentDecision` 结果协议，既可返回 0..N 个新建/更新 Task 决定，
 也可在同一个决定里返回对已绑定 TODO 或 follow-up 的适用状态转换。CLI 仍按 Work Item 的精确
 source type 选择上下文与服务端应用路径，但调用的是同一个 Task Agent、相同结果 schema；没有
-独立 Completion Agent 或第二套 decision schema。`todo_completion_evidence_candidate`、
+独立 Completion Agent 或第二套 decision schema。completion 操作在 envelope 顶层分别使用类型化的
+`todo_changes` 和 `follow_up_changes` 列表，不嵌套在单个 `task_decisions` 中。`todo_completion_evidence_candidate`、
 `todo_completion_check` 来源可关闭 Work Item 中唯一绑定的既有本地 TODO，并记录 completion evidence
 与顶层 `search_trace`；证据候选同步更新 candidate 状态。TODO 完成会完成其关联 follow-up；需要检查
 或修复单个 follow-up 的来源只可转换 Work Item 中明确链接的既有 follow-up。关闭外部 DingTalk TODO
@@ -193,7 +194,7 @@ source type 选择上下文与服务端应用路径，但调用的是同一个 T
 不得通过 CLI/API/MCP 工具创建、更新、删除、发送或完成外部记录；这是 prompt-only 的 best-effort 指引，
 不是运行时权限边界，Codex route 仍没有 per-turn MCP 写工具 allowlist。Task Agent 的结构化输出由服务端
 校验并应用支持的操作；外部 TODO 完成只走现有 outbox 同步，避免双写。当前 audit event 也没有可信的
-search-vs-raw-read 分类，无法实现 `max_raw_reads` 的独立计数，该预算尚未满足并同样是发布阻断。
+search-vs-raw-read 分类，无法独立计数 `max_raw_reads`。该限制属于当前 prompt/runtime 能力边界，超出已批准范围，不是 Task 6 发布阻断；prompt 中的只读要求仍是 best-effort 指引而非硬性运行时边界。
 
 这描述当前功能分支的代码契约，不证明变更已部署。Task 6 仍不得在 Task 7 及整体发布验收完成前
 单独部署。Task-first 输出不承载 Project 写操作或新 TODO 创建；将 Task 镜像为 DingTalk TODO 是

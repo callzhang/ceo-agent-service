@@ -657,6 +657,19 @@ conflicting field or behavior below:
 - Do not deploy Task 6 alone. Task 7 must preserve the separate date gate for
   DingTalk TODO creation, and the Task Agent cutover ships only with downstream
   workflow changes complete.
+- TODO completion and follow-up repair are lifecycle operations on the same
+  `TaskAgentDecision` envelope, not Project-first writes or a second Agent
+  result contract. Their typed `todo_changes` and `follow_up_changes` fields
+  are top-level siblings of `task_decisions`; source-specific Work Items may
+  add zero or more applicable operations only for records linked in that
+  Work Item. A successful operation requires current evidence tied to the
+  bounded `search_trace` and observed tool receipts; insufficient completion
+  evidence records the check without closing the TODO. Task changes, local
+  TODO completion, follow-up updates, candidate bookkeeping, input status and
+  run status commit atomically; configured external TODO completion continues
+  through the existing outbox. The shared consumer may select context and
+  service-side application by source type, but it must not start a separate
+  Completion Agent or use a second decision schema.
 
 - [ ] **Step 1: Replace old decision fixtures with failing Task-first fixtures**
 
