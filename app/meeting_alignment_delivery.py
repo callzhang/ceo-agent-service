@@ -1,6 +1,7 @@
 import subprocess
 from datetime import datetime
 from typing import Any, Literal, Protocol
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict
 
@@ -764,20 +765,41 @@ def _transcript_assigns_non_participant_task(
     return False
 
 
+# The people reading a follow-up are in Beijing, and the Minutes provider hands
+# these timestamps over in UTC. Printing them unconverted put an 08:00 meeting
+# in the message as 00:00.
+_MEETING_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
+
+
+def _meeting_local(value: str) -> datetime:
+    moment = datetime.fromisoformat(value)
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=_MEETING_DISPLAY_TIME_ZONE)
+    return moment.astimezone(_MEETING_DISPLAY_TIME_ZONE)
+
+
 def _meeting_followup_header(source: MeetingSource) -> str:
-    started = datetime.fromisoformat(source.started_at)
-    ended = datetime.fromisoformat(source.ended_at)
+    started = _meeting_local(source.started_at)
+    ended = _meeting_local(source.ended_at)
     if started.date() == ended.date():
         time_range = f"{started:%Y-%m-%d %H:%M}-{ended:%H:%M}"
     else:
         time_range = f"{started:%Y-%m-%d %H:%M}-{ended:%Y-%m-%d %H:%M}"
-    header = f"时间：{time_range}"
+    # The model is told the sending layer names the meeting, so it never repeats
+    # the title in the body. The sending layer was only printing the time, which
+    # left every follow-up arriving in a group without saying which meeting it
+    # came from.
+    lines = []
+    title = " ".join(source.title.split())
+    if title:
+        lines.append(title)
+    lines.append(f"时间：{time_range}")
     if source.resummary:
         # The people in this meeting already received a follow-up covering part of
         # it. Say plainly that this one replaces it, rather than looking like a
         # duplicate of the message they have.
-        header += "\n说明：第二次总结，已合并后续录制内容"
-    return header
+        lines.append("说明：第二次总结，已合并后续录制内容")
+    return "\n".join(lines)
 
 
 def _find_nested_string(payload: Any, key: str) -> str:
