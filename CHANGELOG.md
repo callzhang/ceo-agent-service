@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- 2026-09-24: Tasks now use a semantic Task-first model instead of treating
+  every work item as a Project. The Tasks console opens on business “需关注”
+  and separates attention, all Tasks, official Projects, provisional Project
+  candidates, and explicitly labeled legacy Project history. New Task Agent
+  decisions no longer write `work_projects` or `work_todos`; Task-keyed TODO
+  mirroring requires an accepted commitment and a source-backed parseable
+  committed deadline. Legacy import is manifest-driven: only proven formal
+  Tasks and exact registered Projects become semantic records; ambiguous and
+  candidate-only rows remain in legacy history instead of becoming candidate
+  Tasks or Attention. Imported Tasks retain unknown business relevance unless
+  there is explicit evidence, so they do not enter default Attention merely
+  because they existed in the old store. The old records remain traceable
+  rather than being mechanically copied one-for-one. Import remains gated:
+  production data has not been applied. Runtime deployment and live readback
+  are still pending.
+
 - 2026-09-22: Attention now counts only error rows. Valid `needs_human` rule
   decisions remain visible in the separate human-decision list and no longer
   inflate the Attention API or status summary.

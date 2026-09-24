@@ -463,9 +463,10 @@ http://127.0.0.1:8765/
 - `/history`：React SPA 回复与执行历史；“检索对象”可分别筛选普通钉钉回复、微信、审批、task 和 meeting，状态筛选支持 sent、reacted、skipped、blocked、failed 和 done。详情页统一显示业务结果，Runtime details 默认折叠。
 - Attention 中的运行错误使用 `/history/errors/{error_id}` 只读详情页；错误记录 ID 属于 `errors` 表，不会再被误当成 `reply_attempts` 的 Attempt ID。
 - History 的状态筛选按当前可处理性展示：同一触发消息或同一会后任务已经有后续结果时，旧 `failed` / `blocked` / `ready_to_send` 行保留为审计证据，但不再进入 active failed/blocked/pending 筛选；尚无后续结果的 blocked 统一显示为可恢复的 `Blocked`。
-- `/tasks`：work projects、状态、category filter、Priority/Risk 排序、TODO checklist、实时全文检索和分页
-- `/tasks` 页面中的 `Sent TODOs` 通过 `/api/console/tasks/sent-todos` 加载结构化的 DingTalk Todo 与 follow-up 发送记录；该 API 必须放在 `/api/console/tasks/{project_id}` 动态路由之前，避免 `sent-todos` 被当成项目 ID 解析。
-- `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录；Facts 在桌面端为宽 Description/Source 与固定操作列的可比较表格，在移动端为单列事实卡片，完整描述和来源可逐条展开
+- `/tasks`：Task-first 控制台，默认打开“需关注”，并提供“全部任务”和“正式项目”两个独立视图；正式项目候选始终明确标为候选，不计入正式项目。
+- `/tasks?view=all` 和 `/tasks?view=projects`：分别浏览业务 Task、已登记正式 Project 及待确认 Project 候选。例行小任务可留在全部任务中，不会只因存在而进入“需关注”。
+- `/tasks/attention/{attention_id}`、`/tasks/item/{task_id}`、`/tasks/project/{project_id}`：分别查看关注项、语义 Task 与正式 Project 的证据和关联；历史旧项目通过 `/tasks/legacy-project/{legacy_project_id}` 明确标识为历史记录，不作为正式 Project。
+- `/tasks` 的“已发送待办”数据由 `/api/console/tasks/sent-todos` 提供；业务数据接口分为 `/api/console/tasks/attention`、`/all`、`/projects` 及各自详情接口。既有服务运行故障页 `/attention` 与 Tasks 内的业务“需关注”是不同视图。
 - `/attempts/{id}`：单次处理详情；同一触发消息后续重跑成功时，旧记录顶部会链接到后续 attempt 并展示其最新动作，原始状态仍保留在详情字段中供审计。Consumer 与 Audit 执行记录只能从该 Attempt 打开，不显示内部会话标识或本地文件路径。
 - `/developer-prompt`：Developer/User Prompt 模板管理
 - `/settings`：Settings 使用 React SPA 统一导航（Status、Info、Configuration、Agent Runtime、Prompts、Connectors、Audit Rules、Attention）。Configuration 汇总 `.env` 中的运行参数和 Prompt variables；Prompts 页面用 Developer/User tab 与 Template/Rendered preview 切换；Connectors 内含 DingTalk、Lark、纷享销客 CLI、WeChat 和 Email；Workers 通过 `/status` 映射到 Runtime Monitor，Attention 单独展示未解决运行项。`/config`、`/workers`、`/logs` 保留为兼容入口并在 SPA 内映射；Logs 不再作为 Settings 一级导航。
@@ -473,32 +474,18 @@ http://127.0.0.1:8765/
 - `/email`：Email 控制台展示保存邮件的可读正文。HTML 邮件只投影可见文字；样式、脚本和远程资源不会在 Console 中执行或加载，保存的邮件文本仍保留在本地存储中。
   邮件分类采用列表与阅读双栏（窄屏全宽阅读），支持原文/处理记录切换、已处理邮件重新分类和退订 Attempt 跳转。模型训练提供总览、新建训练、样本预览、晋升设置与版本详情；参见 [Email 阅读与训练界面](docs/email-reading-training-ui.md)。
 
-除 DingTalk bridge/popup、通知 Service Worker 和 `/api/workbench/*` 外，业务页面统一由同一个 React SPA 渲染。FastAPI 的 `/api/console/*` 按 History、Tasks、Settings、Feedback、Tutorial、Notifications、Codex 和 WeChat 领域返回 JSON DTO；因此 `/tasks/836` 等业务深链可以直接打开或刷新，而未知 `/api/*` 仍返回 JSON 404。
+除 DingTalk bridge/popup、通知 Service Worker 和 `/api/workbench/*` 外，业务页面统一由同一个 React SPA 渲染。FastAPI 的 `/api/console/*` 按 History、Tasks、Settings、Feedback、Tutorial、Notifications、Codex 和 WeChat 领域返回 JSON DTO；Tasks 使用显式的语义深链，因此 `/tasks/item/836` 等地址可以直接打开或刷新，而未知 `/api/*` 仍返回 JSON 404。
 - `/errors`：错误列表
 
-### 8. 启用 task 总结
+### 8. Task-first 工作跟踪
 
-Task 总结以项目为主线记录管理事项、产研事项、业务项目和其他重要事项。每条新处理对话会生成一个结构化 Work Item，task agent 再结合 BM25 候选、DWS 上下文和 Memory Connector 判断是更新现有项目还是新增项目。
+Tasks 不再把 Project 当作所有事项的容器。来源先形成候选 Task 或有明确证据的正式 Task；负责人、指派状态、负责人接受承诺、不同日期类型和完成状态分别记录。多个 Task 可以建立关系或聚类，但不会因此共享负责人、截止日期或完成状态。只有匹配已登记业务锚点的 Task 才会归入正式 Project；相似标题或旧 Project 名称不会自动注册 Project。
 
-核心字段：
+核心语义表以 `business_*` 命名：来源信号、Task、证据、日期、Task 事件、关系/聚类、业务锚点、正式 Project/候选 Project、CEO Attention 投影、Task 键控跟进与钉钉 TODO 链接。旧 `work_projects`、`work_todos`、`work_updates` 仍作为历史证据读取；`task-semantic-import-plan` 生成带来源指纹的只读导入计划，`task-semantic-import-apply` 只接受与清单完全匹配的有界批次。**生产库导入须在审阅清单后另行明确批准；目前没有执行生产导入。**
 
-- `work_projects`：项目标题、分类、背景、owner、优先级、状态、下一步、事实列表。
-- `work_todos`：归属项目、owner、优先级、due time、状态和来源。
-- `work_updates`：每次 task agent 对项目/TODO 的更新说明、来源和后续动作。
-- `follow_up_drafts`：到期后需要在群里或私信询问 owner 的消息草稿和发送状态。
-- `work_todo_dingtalk_links`：内部 TODO 和钉钉 Todo 的同步状态、外部 task id、最近 pull/push 时间和错误信息。
+Task Agent 为每个来源判断 0 到多个 Task 决定。正式任务必须有来源明确的负责人以及四种正式依据之一；明确指派不等于负责人已接受。外部钉钉 TODO 只是 Task 的镜像，只有正式、开放、已接受且有可解析承诺期限的 Task 才能排入创建队列。Agent 不直接创建、修改或完成外部 TODO；本地完成、提供者回执和有界重试按 Task ID 关联保存。跟进日期必须是来源明确的 `next_check_at`，不从通用截止日推算，也不猜收件人：群聊发回精确来源会话并提及有证据的负责人；单聊只发给来源明确指定的负责人。
 
-Task 分类包括：
-
-```text
-management, strategy, projects, marketing, research, dev, product,
-recruiting, sales, finance, admin, HR, other
-```
-
-主服务会自动运行 task maintenance：
-
-- 每 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 秒消费一次 reply worker 写入的 Work Item，默认 60 秒。
-- 每 `CEO_TASK_DAILY_INTERVAL_SECONDS` 秒扫描 AI 听记、本地新增文件、拉取钉钉 Todo 完成状态并处理到期 follow-up，默认 86400 秒。
+Task Agent 与完成检查共用 `task-agent:work-tracking:v1` 会话范围，每个 Work Item 仍有独立处理记录；后续输入续接同一路由会话，context compact 由 CLI 原生管理。主服务每 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 秒消费 reply worker 写入的 Work Item（默认 60 秒）；每日维护由 `CEO_TASK_DAILY_INTERVAL_SECONDS` 控制（默认 86400 秒），包含开放正式 Task 的完成检查且无需先有 Project。旧历史读取/排空路径仍暂时保留；历史队列和待跟进的最终排空边界须在切换时核实。
 - `refresh-okr-archive --period-label '2026 Q3'` 会只读拉取 CEO-2 管理群成员的实时叮当 OKR，
   写入 `CEO_WORKSPACE/OKR档案/<period>/company_okr_<period>_raw.json` 和
   `CEO_WORKSPACE/OKR档案/latest_company_okr_index.md`。task agent 会把 latest index 作为公司目标参照，

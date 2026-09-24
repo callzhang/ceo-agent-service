@@ -82,6 +82,70 @@ def test_task_project_repair_commands_parse_required_paths():
     assert apply.archive_limit == 10
 
 
+def test_task_semantic_import_commands_parse_manifest_and_limits():
+    plan = build_parser().parse_args([
+        "task-semantic-import-plan", "--db", "/tmp/copy.sqlite3",
+        "--output", "/tmp/manifest.json", "--limit", "100",
+    ])
+    apply = build_parser().parse_args([
+        "task-semantic-import-apply", "--db", "/tmp/copy.sqlite3",
+        "--manifest", "/tmp/manifest.json", "--limit", "1",
+    ])
+    assert plan.output == "/tmp/manifest.json"
+    assert plan.limit == 100
+    assert apply.manifest == "/tmp/manifest.json"
+    assert apply.limit == 1
+
+
+def test_task_semantic_import_plan_cli_writes_manifest_without_database_changes(
+    tmp_path, monkeypatch, capsys
+):
+    db_path = tmp_path / "copy.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.create_work_project(title="待核实事项")
+    output = tmp_path / "manifest.json"
+    before_bytes = db_path.read_bytes()
+    monkeypatch.setattr(sys, "argv", [
+        "app.cli", "task-semantic-import-plan", "--db", str(db_path),
+        "--output", str(output), "--limit", "100",
+    ])
+    cli.main()
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["history_only"] == 1
+    assert printed["formal_task"] == 0
+    assert output.exists()
+    assert db_path.read_bytes() == before_bytes
+
+
+def test_task_semantic_import_apply_cli_uses_reviewed_fixture_manifest(
+    tmp_path, monkeypatch, capsys
+):
+    from app.task_semantic_import import (
+        build_task_semantic_import_manifest,
+        write_task_semantic_import_manifest,
+    )
+
+    db_path = tmp_path / "fixture.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.create_work_project(title="待核实事项")
+    manifest_path = tmp_path / "manifest.json"
+    write_task_semantic_import_manifest(
+        build_task_semantic_import_manifest(db_path), manifest_path
+    )
+    monkeypatch.setattr(sys, "argv", [
+        "app.cli", "task-semantic-import-apply", "--db", str(db_path),
+        "--manifest", str(manifest_path), "--limit", "1",
+    ])
+    cli.main()
+    assert json.loads(capsys.readouterr().out)["history_only"] == 1
+    cli.main()
+    assert json.loads(capsys.readouterr().out)["history_only"] == 1
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            "select work_project_id from business_legacy_links"
+        ).fetchone() is None
+
+
 def enqueue_trigger_task(
     store,
     *,
@@ -1467,18 +1531,20 @@ def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, 
         lambda settings: calls.append(("work", settings.db_path)) or 4,
     )
     monkeypatch.setattr("app.follow_up.process_due_follow_ups", fake_process)
+    monkeypatch.setattr("app.follow_up.process_due_business_task_follow_ups", fake_process)
 
     sent = cli.process_follow_ups_command(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
     )
 
-    assert sent == 2
+    assert sent == 4
     assert calls == [
         ("scan", tmp_path / "worker.sqlite3", None),
         ("work", tmp_path / "worker.sqlite3"),
         (tmp_path / "worker.sqlite3", "DwsClient", True, True, "", 50),
+        (tmp_path / "worker.sqlite3", "DwsClient", True, True, "", 50),
     ]
-    assert capsys.readouterr().out == "process-follow-ups sent=2\n"
+    assert capsys.readouterr().out == "process-follow-ups sent=4\n"
 
 
 def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys):
@@ -8136,6 +8202,7 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "work_summary",
         "okr_review",
         "task_todo_sync_outbox",
+        "business_task_todo_sync_outbox",
     ]
     assert set(captured["consumers"]) == {
         "scheduled",
@@ -8145,9 +8212,10 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "work_summary",
         "okr_review",
         "task_todo_sync_outbox",
+        "business_task_todo_sync_outbox",
     }
     assert set(captured["executors"]) == set(captured["consumers"])
-    assert len({id(executor) for executor in captured["executors"].values()}) == 7
+    assert len({id(executor) for executor in captured["executors"].values()}) == 8
     assert captured["max_in_flight"] == {
         name: 1 if name == "meeting" else 2
         for name in captured["consumers"]

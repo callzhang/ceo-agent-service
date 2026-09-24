@@ -196,9 +196,9 @@ source type 选择上下文与服务端应用路径，但调用的是同一个 T
 校验并应用支持的操作；外部 TODO 完成只走现有 outbox 同步，避免双写。当前 audit event 也没有可信的
 search-vs-raw-read 分类，无法独立计数 `max_raw_reads`。该限制属于当前 prompt/runtime 能力边界，超出已批准范围，不是 Task 6 发布阻断；prompt 中的只读要求仍是 best-effort 指引而非硬性运行时边界。
 
-这描述当前功能分支的代码契约，不证明变更已部署。Task 6 仍不得在 Task 7 及整体发布验收完成前
-单独部署。Task-first 输出不承载 Project 写操作或新 TODO 创建；将 Task 镜像为 DingTalk TODO 是
-独立的 Task 7 功能，当前不在本路由范围。缺少可信 producer 提供的 `external_task_id` 时不得猜测外部对象。
+这描述当前功能分支的代码契约，不证明变更已部署。Task 6 仍不得单独部署，整体切换仍需发布验收。
+Task-first 输出不承载 Project 写操作或直接创建新外部 TODO；合格 Task 的钉钉镜像由 Task 7
+服务端 outbox 完成。缺少可信 producer 提供的 `external_task_id` 时不得猜测外部对象。
 
 Task Agent 的共享会话不会改变 Task、TODO 或 follow-up 的服务端应用边界；适用操作仍由当前
 Work Item 明确绑定，并在对应服务事务中校验和应用。
@@ -225,10 +225,11 @@ Work Item、当前存储/检索状态和新来源证据。Codex CLI 自己管理
 接受承诺能建立 `committed_deadline_at`。标准化日期必须与原文中精确、可解析的日期短语一致；不能从只写日期的来源扩展出具体时分。周级或其他不可解析表达只保留在已链接的原始来源信号中，不产生 typed date fact，也不猜时间戳。`assigned_at` 只从明确正式指派来源的可信创建时间元数据派生，不是模型提供的日期。估算的行为人沿用作出估算的可信来源发言人；Agent 仅是抽取者。只有 `next_check_at` 由 Task Agent 署名，且必须是来源中明确给出的检查日期；它不自动创建 cadence。其他日期要求可识别的来源行为人，不能伪装或猜测身份。当前 AI Minutes producer 尚无可信的发言人到身份映射，因此不能把纪要中被转述的多方日期归给主持人或模型指定的人；该类日期暂不入 Task，需由 producer 提供映射后另行接通。
 
 一个 work-summary 输入中的全部 Task 变更、来源信号、日期、关系/聚类/锚点/Project 候选提案及
-输入/run 结果在单个数据库事务中提交或回滚。CEO Attention 是派生投影，只在提交后先应用有效提案，再对所有受影响 Task（合并时包括来源和目标两侧）重算成员资格；完成、取消或变为不相关的 Task 会退出当前成员。投影失败
+输入/run 结果在单个数据库事务中提交或回滚。CEO Attention 是派生投影，只在提交后先应用有效提案，再对所有受影响 Task（合并时包括来源和目标两侧）重算成员资格；完成、取消或变为不相关的 Task 会退出当前成员。Task Agent 的类型化完成和外部 TODO 完成也在各自领域事务提交后重算对应 Attention 成员，完成 Task 退出而未完成的兄弟 Task 保留；这不自动把 Attention 标为已解决。投影失败
 不回滚已完成的 Task 事实，也不把已完成 run/input 改成失败。Task 6 不再把 `work_projects`、
-`work_todos` 或 `work_updates` 当作 Task 事实写入；钉钉 TODO 镜像尚未接入，必须完成 Task 7 并验证
-镜像合同后才允许整体发布，当前 Task 6 不部署或重启服务。
+`work_todos` 或 `work_updates` 当作 Task 事实写入；Task 7 的钉钉 TODO 镜像使用独立的
+`business_task_dingtalk_links` 和 `business_task_todo_sync_outbox`，并不把旧 Project/TODO 当作 Task 主键。
+此处描述的是代码分支，不代表已经部署；Task 6 不单独部署或重启服务。
 
 目前通用 work-item 生产者尚未提供所有授权和 owner identity 映射元数据；在来源元数据缺失时，
 不能据此把显式提到负责人的讨论升级成正式授权指派。对应的生产者接线必须作为单独集成范围处理，
@@ -863,9 +864,22 @@ Agent 写入时一律按 `agent_reported_failure` 处理。
 
 任务 Agent 的 `memory_recall_used` 是 Agent 给出的上下文记录，不是服务的工具调用验收条件。
 
-Task 6 不直接创建或同步 DingTalk TODO，也不通过 `task_todo_sync_outbox` 镜像 Task；Task 7 将另行定义并
-实现正式 Task 到外部 TODO 的镜像。届时，镜像日期必须从有类型的 Task 日期事实派生，不能把 estimate、
-requester deadline、external deadline 或 next check 混作负责人承诺期限。整体切换必须等待 Task 7 完成。
+Task Agent 不直接调用外部 TODO 写入；Task 7 的创建/完成 intent 在 Task 语义事务中排入
+`business_task_todo_sync_outbox`，由 dispatcher 按 `business_task_id` 执行。创建仅限正式、开放、
+有来源支持的明确负责人、已接受承诺且有来源支持的可解析 `committed_deadline_at` 的 Task；
+estimate、requester/external deadline 和 next check 均不能充当镜像期限。外部创建保存 provider ID
+再读回；若首次读回失败但 ID 已保存，后续 TODO 状态拉取按该 ID 重试读回并收口链接/outbox；若创建
+结果未知且没有 ID，不自动重复调用或排入另一创建键。同一 Task 存在未收口创建 intent 时不会再排新的
+创建。`failed` outbox 在有界 `next_attempt_at` 退避后才可再次领取。外部 TODO 状态轮询只按其 Task
+链接关闭 Task，写入完成来源证据、事件，并关闭该 Task 的 follow-up；关联 Project 或同聚类 Task 不随之完成。
+
+Task 7 的新 follow-up 只从链接来源信号的精确群/单聊目标与明确、可解析 `next_check_at` 创建，
+不从 deadline 推导时间或猜收件人。群聊回到精确来源会话并提及来源证据支持的负责人；单聊发给来源
+明确指定的负责人账号，原会话 ID 保留用于核对。发送前会读回已关联的 provider TODO；若已完成，则关闭
+精确绑定的 Task/follow-up，记录 provider 状态并释放尚未发送的 claim。发送有独立的 claim、lease、
+revision、幂等 UUID 和回执记录；发送中的租约过期或网络中断标为未知，排入 Task Agent 核查，不自动重发。
+核查后仅可修订输入所绑定的 Task follow-up；旧 `follow_up_drafts` 的读取和发送暂保留给尚未导入的历史记录，
+不能作为新 Task 创建目标。Task 8 的旧记录导入与生产切换仍是独立边界。
 
 ## 任务类型
 

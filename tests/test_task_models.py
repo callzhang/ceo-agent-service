@@ -68,6 +68,17 @@ def test_one_task_agent_contract_supports_task_and_completion_transitions():
     assert decision.search_trace[0].audit_call_ids == ["call-17"]
 
 
+def test_completion_operation_targets_one_business_task_without_legacy_todo_id():
+    decision = TaskAgentDecision.model_validate({
+        "todo_changes": [{
+            "action": "close", "business_task_id": 42,
+            "completion_evidence": {"source": "message:42", "reason": "done"},
+        }],
+    })
+    assert decision.todo_changes[0].business_task_id == 42
+    assert decision.todo_changes[0].todo_id is None
+
+
 def test_one_source_can_emit_several_source_grounded_tasks():
     result = TaskAgentDecision.model_validate({"task_decisions": [
         _decision(source_excerpt="请王明提交报价", title="提交报价",

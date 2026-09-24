@@ -5,7 +5,7 @@ import pytest
 
 from app.dws_client import DwsUserProfile
 import app.follow_up as follow_up
-from app.follow_up import process_due_follow_ups, resolve_failed_follow_up
+from app.follow_up import process_due_business_task_follow_ups, process_due_follow_ups, resolve_failed_follow_up
 from app.skill_features import FeatureRegistry
 from app.store import AutoReplyStore
 from app.task_completion_agent import (
@@ -70,6 +70,185 @@ class FakeDws:
 
     def read_direct_messages_since(self, user_id, *, start):
         return {"complete": True, "messages": []}
+
+
+def _business_follow_up(store: AutoReplyStore, *, title: str, source_ref: str) -> tuple[int, int]:
+    task_id = store.create_business_task(
+        title=title, stage="formal", formal_basis="explicit_assignment",
+        owner_user_id="owner-1", owner_name="Alex",
+    )
+    with store.business_task_transaction() as db:
+        signal_id = store.create_business_task_signal_in_transaction(
+            source_type="reply_attempt", source_ref=source_ref,
+            evidence_text=f"Alex owns {title}", dedupe_key=source_ref,
+            conversation_id="cid-1", _db=db,
+        )
+        store.link_business_task_evidence_in_transaction(
+            task_id=task_id, signal_id=signal_id, evidence_role="assignment", _db=db,
+        )
+        draft_id = store.create_business_task_follow_up(
+            business_task_id=task_id, source_signal_id=signal_id,
+            target_conversation_id="cid-1", target_kind="group",
+            question_text=f"请确认{title}进展", scheduled_at="2026-06-27 09:00:00",
+            owner_user_id="owner-1", owner_name="Alex",
+            dedupe_key=f"follow-up:{task_id}:{signal_id}", _db=db,
+        )
+    return task_id, draft_id
+
+
+def test_business_task_follow_up_sends_to_exact_source_conversation_with_receipt(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    task_id, draft_id = _business_follow_up(store, title="客户验收", source_ref="message:1")
+    dws = FakeDws()
+
+    sent = process_due_business_task_follow_ups(
+        store, dws, now="2026-06-29 01:00:00", auto_send=True
+    )
+
+    assert sent == 1
+    assert dws.sent[0]["conversation_id"] == "cid-1"
+    assert dws.sent[0]["at_users"] == ["owner-1"]
+    [draft] = store.list_business_task_follow_ups(business_task_id=task_id)
+    assert draft["id"] == draft_id and draft["status"] == "sent"
+    assert json.loads(draft["send_result_json"])["send_result"] == {"ok": True}
+    assert store.list_business_task_follow_up_send_attempts(draft_id=draft_id)[0]["state"] == "sent"
+    assert process_due_business_task_follow_ups(
+        store, dws, now="2026-06-29 01:01:00", auto_send=True
+    ) == 0
+    assert len(dws.sent) == 1
+
+
+def test_business_task_follow_up_rejects_unparseable_check_time(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    task_id, _ = _business_follow_up(store, title="客户验收", source_ref="message:1")
+    [signal] = store.list_business_task_evidence(task_id)
+    with pytest.raises(ValueError, match="parseable"):
+        store.create_business_task_follow_up(
+            business_task_id=task_id, source_signal_id=signal.signal_id,
+            target_conversation_id="cid-1", target_kind="group",
+            question_text="请确认进展", scheduled_at="next week",
+            owner_user_id="owner-1", owner_name="Alex", dedupe_key="bad-schedule",
+        )
+
+
+@pytest.mark.parametrize("link_status", ["active", "creating"])
+def test_business_task_follow_up_reads_external_completion_before_sending(tmp_path, link_status):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    task_id, draft_id = _business_follow_up(store, title="客户验收", source_ref="message:done-check")
+    store.create_business_task_dingtalk_link(
+        business_task_id=task_id, dingtalk_task_id="dt-completed", status=link_status,
+    )
+    dws = FakeDws()
+    dws.todo_payloads["dt-completed"] = {"id": "dt-completed", "done": True}
+
+    sent = process_due_business_task_follow_ups(
+        store, dws, now="2026-06-29 01:00:00", auto_send=True,
+    )
+
+    assert sent == 0
+    assert dws.sent == []
+    assert store.get_business_task(task_id).status.value == "done"
+    [draft] = store.list_business_task_follow_ups(business_task_id=task_id)
+    assert draft["id"] == draft_id and draft["status"] == "completed"
+    [link] = store.list_business_task_dingtalk_links(business_task_id=task_id)
+    assert link["status"] == "done"
+    assert json.loads(link["last_dingtalk_payload_json"])["done"] is True
+    assert all(
+        attempt["state"] not in {"claimed", "sending", "sent"}
+        for attempt in store.list_business_task_follow_up_send_attempts(draft_id=draft_id)
+    )
+
+
+def test_completed_sibling_does_not_close_business_task_follow_up(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    first, first_draft = _business_follow_up(store, title="客户验收", source_ref="message:1")
+    second, second_draft = _business_follow_up(store, title="客户合同", source_ref="message:2")
+    store.create_business_task_dingtalk_link(
+        business_task_id=first, dingtalk_task_id="dt-1", status="active"
+    )
+    from app.todo_completion import complete_business_task_from_external_todo
+    assert complete_business_task_from_external_todo(
+        store, business_task_id=first,
+        evidence={"source": "dingtalk_todo:dt-1", "reason": "done"},
+    )
+    assert store.list_business_task_follow_ups(business_task_id=first)[0]["status"] == "completed"
+    assert store.list_business_task_follow_ups(business_task_id=second)[0]["status"] == "draft"
+    assert first_draft != second_draft
+
+
+def test_business_task_follow_up_uncertain_send_does_not_replay(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    task_id, draft_id = _business_follow_up(store, title="客户验收", source_ref="message:1")
+
+    class UncertainDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            super().send_message(*args, **kwargs)
+            raise RuntimeError("connection lost after send")
+
+    dws = UncertainDws()
+    assert process_due_business_task_follow_ups(
+        store, dws, now="2026-06-29 01:00:00", auto_send=True
+    ) == 0
+    assert store.list_business_task_follow_up_send_attempts(draft_id=draft_id)[0]["state"] == "unknown"
+    assert process_due_business_task_follow_ups(
+        store, dws, now="2026-06-29 01:01:00", auto_send=True
+    ) == 0
+    assert len(dws.sent) == 1
+    assert store.list_business_task_follow_ups(business_task_id=task_id)[0]["status"] == "failed"
+    with store._connect() as db:
+        repair = db.execute(
+            "select payload_json from work_summary_inputs where source_type=? and source_ref=?",
+            ("follow_up_completion_check", f"business-task-follow-up-repair:{draft_id}:1"),
+        ).fetchone()
+    assert repair is not None
+
+
+def test_expired_presend_business_follow_up_claim_can_be_reclaimed(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    _, draft_id = _business_follow_up(store, title="客户验收", source_ref="message:1")
+    first = store.claim_due_business_task_follow_up(
+        now="2026-06-29 01:00:00", claim_token="claim-a", lease_owner="worker-a",
+        lease_until="2026-06-29 01:01:00", idempotency_uuid="send-a",
+    )
+    second = store.claim_due_business_task_follow_up(
+        now="2026-06-29 01:02:00", claim_token="claim-b", lease_owner="worker-b",
+        lease_until="2026-06-29 01:03:00", idempotency_uuid="send-b",
+    )
+
+    assert first["id"] == second["id"] == draft_id
+    assert not store.transition_business_task_follow_up_to_sending(
+        draft_id=draft_id, revision=1, claim_token="claim-a"
+    )
+    assert store.transition_business_task_follow_up_to_sending(
+        draft_id=draft_id, revision=1, claim_token="claim-b"
+    )
+
+
+def test_expired_sending_business_follow_up_queues_repair_without_replay(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    task_id, draft_id = _business_follow_up(store, title="客户验收", source_ref="message:1")
+    store.claim_due_business_task_follow_up(
+        now="2026-06-29 01:00:00", claim_token="claim-a", lease_owner="worker-a",
+        lease_until="2026-06-29 01:01:00", idempotency_uuid="send-a",
+    )
+    assert store.transition_business_task_follow_up_to_sending(
+        draft_id=draft_id, revision=1, claim_token="claim-a"
+    )
+    dws = FakeDws()
+
+    assert process_due_business_task_follow_ups(
+        store, dws, now="2026-06-29 01:02:00", auto_send=True
+    ) == 0
+    assert dws.sent == []
+    [attempt] = store.list_business_task_follow_up_send_attempts(draft_id=draft_id)
+    assert attempt["state"] == "unknown"
+    assert store.list_business_task_follow_ups(business_task_id=task_id)[0]["status"] == "failed"
+    with store._connect() as db:
+        repair = db.execute(
+            "select id from work_summary_inputs where source_type=? and source_ref=?",
+            ("follow_up_completion_check", f"business-task-follow-up-repair:{draft_id}:1"),
+        ).fetchone()
+    assert repair is not None
 
 
 def _create_bound_todo(

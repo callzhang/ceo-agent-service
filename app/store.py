@@ -221,7 +221,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-23.1"
+STORE_SCHEMA_VERSION = "2026-09-24.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -266,6 +266,10 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "outbound_postfix_receipts",
     "business_task_signals",
     "business_tasks",
+    "business_task_dingtalk_links",
+    "business_task_follow_ups",
+    "business_task_follow_up_send_attempts",
+    "business_task_todo_sync_outbox",
     "business_task_evidence",
     "business_task_date_evidence",
     "business_task_events",
@@ -334,6 +338,11 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_tasks_updated_id",
     "idx_business_tasks_list",
     "idx_business_tasks_relevance",
+    "idx_business_task_dingtalk_links_task",
+    "idx_business_task_dingtalk_links_one_active",
+    "idx_business_task_follow_ups_due",
+    "idx_business_task_follow_up_send_attempts_state",
+    "idx_business_task_todo_sync_outbox_status",
     "idx_business_task_evidence_task",
     "idx_business_task_date_evidence_task",
     "idx_business_task_events_task",
@@ -366,6 +375,31 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "commitment_status", "owner_user_id", "owner_name", "owner_evidence_json",
         "deadline_at", "business_relevance", "missing_evidence_json",
         "merged_into_task_id", "created_at", "updated_at", "last_activity_at",
+    ),
+    "business_task_dingtalk_links": (
+        "id", "business_task_id", "dingtalk_task_id", "executor_user_id",
+        "executor_name", "title_snapshot", "deadline_at_snapshot",
+        "priority_snapshot", "status", "last_dingtalk_done",
+        "last_dingtalk_payload_json", "last_pull_at", "last_push_at",
+        "last_error", "retry_count", "created_at", "updated_at",
+    ),
+    "business_task_follow_ups": (
+        "id", "business_task_id", "source_signal_id", "owner_user_id",
+        "owner_name", "target_conversation_id", "target_kind",
+        "question_text", "scheduled_at", "sent_at", "status",
+        "revision", "send_result_json", "evidence_check_json",
+        "suppressed_reason", "dedupe_key", "created_at", "updated_at",
+    ),
+    "business_task_follow_up_send_attempts": (
+        "id", "draft_id", "draft_revision", "claim_token",
+        "idempotency_uuid", "state", "lease_owner", "claimed_at",
+        "lease_until", "result_json", "created_at", "updated_at",
+    ),
+    "business_task_todo_sync_outbox": (
+        "id", "operation_key", "business_task_id", "operation", "status",
+        "evidence_json", "receipt_json", "error", "attempt_count",
+        "lease_owner", "lease_expires_at", "next_attempt_at", "completed_at",
+        "created_at", "updated_at",
     ),
     "business_task_evidence": (
         "task_id", "signal_id", "evidence_role", "created_at",
@@ -3548,6 +3582,82 @@ class AutoReplyStore:
                     on business_tasks(stage, status, updated_at, id);
                 create index if not exists idx_business_tasks_relevance
                     on business_tasks(business_relevance, updated_at, id);
+                create table if not exists business_task_dingtalk_links (
+                    id integer primary key autoincrement,
+                    business_task_id integer not null,
+                    dingtalk_task_id text not null default '',
+                    executor_user_id text not null default '',
+                    executor_name text not null default '',
+                    title_snapshot text not null default '',
+                    deadline_at_snapshot text not null default '',
+                    priority_snapshot text not null default '',
+                    status text not null check(status in ('creating','active','done','cancelled','failed')),
+                    last_dingtalk_done integer,
+                    last_dingtalk_payload_json text not null default '{{}}',
+                    last_pull_at text not null default '', last_push_at text not null default '',
+                    last_error text not null default '', retry_count integer not null default 0,
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(business_task_id) references business_tasks(id)
+                );
+                create index if not exists idx_business_task_dingtalk_links_task
+                    on business_task_dingtalk_links(business_task_id, status, id);
+                create unique index if not exists idx_business_task_dingtalk_links_one_active
+                    on business_task_dingtalk_links(business_task_id)
+                    where status in ('creating','active');
+                create table if not exists business_task_follow_ups (
+                    id integer primary key autoincrement,
+                    business_task_id integer not null,
+                    source_signal_id integer not null,
+                    owner_user_id text not null default '',
+                    owner_name text not null default '',
+                    target_conversation_id text not null,
+                    target_kind text not null check(target_kind in ('group','direct')),
+                    question_text text not null,
+                    scheduled_at text not null,
+                    sent_at text not null default '',
+                    status text not null default 'draft' check(status in ('draft','approved','sent','completed','skipped','cancelled','failed')),
+                    revision integer not null default 1,
+                    send_result_json text not null default '{{}}',
+                    evidence_check_json text not null default '{{}}',
+                    suppressed_reason text not null default '',
+                    dedupe_key text not null unique,
+                    created_at text not null default current_timestamp, updated_at text not null default current_timestamp,
+                    foreign key(business_task_id) references business_tasks(id),
+                    foreign key(source_signal_id) references business_task_signals(id)
+                );
+                create index if not exists idx_business_task_follow_ups_due
+                    on business_task_follow_ups(status, scheduled_at, id);
+                create table if not exists business_task_follow_up_send_attempts (
+                    id integer primary key autoincrement,
+                    draft_id integer not null,
+                    draft_revision integer not null,
+                    claim_token text not null unique,
+                    idempotency_uuid text not null,
+                    state text not null check(state in ('claimed','expired_before_send','sending','sent','failed','unknown')),
+                    lease_owner text not null default '',
+                    claimed_at text not null default '',
+                    lease_until text not null default '',
+                    result_json text not null default '{{}}',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(draft_id) references business_task_follow_ups(id)
+                );
+                create index if not exists idx_business_task_follow_up_send_attempts_state
+                    on business_task_follow_up_send_attempts(state, lease_until, id);
+                create table if not exists business_task_todo_sync_outbox (
+                    id integer primary key autoincrement,
+                    operation_key text not null unique, business_task_id integer not null,
+                    operation text not null check(operation in ('create','complete')),
+                    status text not null default 'queued' check(status in ('queued','running','completed','skipped','failed','unknown')),
+                    evidence_json text not null default '{{}}', receipt_json text not null default '{{}}', error text not null default '',
+                    attempt_count integer not null default 0, lease_owner text not null default '', lease_expires_at text not null default '',
+                    next_attempt_at text not null default '', completed_at text not null default '',
+                    created_at text not null default current_timestamp, updated_at text not null default current_timestamp,
+                    foreign key(business_task_id) references business_tasks(id)
+                );
+                create index if not exists idx_business_task_todo_sync_outbox_status
+                    on business_task_todo_sync_outbox(status, next_attempt_at, id);
                 create table if not exists business_task_evidence (
                     task_id integer not null,
                     signal_id integer not null,
@@ -26927,6 +27037,426 @@ class AutoReplyStore:
             link = self._normalize_dingtalk_todo_link_row(row)
             result.setdefault(link.work_todo_id, []).append(link)
         return result
+
+    def create_business_task_dingtalk_link(self, *, business_task_id: int, **values) -> int:
+        link_id, _ = self.claim_business_task_dingtalk_link(
+            business_task_id=business_task_id, **values
+        )
+        return link_id
+
+    def claim_business_task_dingtalk_link(self, *, business_task_id: int, **values) -> tuple[int, bool]:
+        allowed = {"dingtalk_task_id", "executor_user_id", "executor_name", "title_snapshot", "deadline_at_snapshot", "priority_snapshot", "status", "last_dingtalk_done", "last_dingtalk_payload_json", "last_pull_at", "last_push_at", "last_error", "retry_count"}
+        filtered = self._filter_allowed_values(values, allowed)
+        filtered["business_task_id"] = business_task_id
+        columns = ", ".join(filtered)
+        with self._immediate_write_transaction() as db:
+            active = db.execute(
+                "select id from business_task_dingtalk_links where business_task_id=? "
+                "and status in ('creating','active') order by id desc limit 1",
+                (business_task_id,),
+            ).fetchone()
+            if active is not None:
+                return int(active["id"]), False
+            cursor = db.execute(
+                f"insert into business_task_dingtalk_links ({columns}) values ({', '.join('?' for _ in filtered)})",
+                list(filtered.values()),
+            )
+            return int(cursor.lastrowid), True
+
+    def create_business_task_follow_up(
+        self, *, business_task_id: int, source_signal_id: int,
+        target_conversation_id: str, target_kind: str, question_text: str,
+        scheduled_at: str, owner_user_id: str, owner_name: str,
+        dedupe_key: str, _db: sqlite3.Connection | None = None,
+    ) -> int:
+        if target_kind not in {"group", "direct"} or not target_conversation_id.strip():
+            raise ValueError("Task follow-up requires exact source conversation target")
+        if not scheduled_at.strip() or not owner_user_id.strip() or not question_text.strip():
+            raise ValueError("Task follow-up requires schedule, owner and question")
+        try:
+            datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Task follow-up requires parseable next_check_at") from exc
+        with self._optional_connection(_db) as db:
+            signal = db.execute(
+                "select s.conversation_id from business_task_signals s "
+                "join business_task_evidence e on e.signal_id=s.id "
+                "where e.task_id=? and s.id=? limit 1",
+                (business_task_id, source_signal_id),
+            ).fetchone()
+            if signal is None or signal["conversation_id"] != target_conversation_id:
+                raise ValueError("Task follow-up target must match linked source signal")
+            db.execute(
+                "insert or ignore into business_task_follow_ups "
+                "(business_task_id, source_signal_id, owner_user_id, owner_name, "
+                "target_conversation_id, target_kind, question_text, scheduled_at, dedupe_key) "
+                "values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (business_task_id, source_signal_id, owner_user_id, owner_name,
+                 target_conversation_id, target_kind, question_text, scheduled_at, dedupe_key),
+            )
+            row = db.execute(
+                "select id from business_task_follow_ups where dedupe_key=?", (dedupe_key,)
+            ).fetchone()
+            return int(row["id"])
+
+    def list_business_task_follow_ups(
+        self, *, business_task_id: int | None = None,
+        statuses: tuple[str, ...] | None = None,
+        due_before: str | None = None,
+        limit: int = 200, offset: int = 0,
+    ) -> list[sqlite3.Row]:
+        if limit < 1 or offset < 0:
+            raise ValueError("Task follow-up pagination must be non-negative and nonempty")
+        clauses: list[str] = []
+        args: list[str | int] = []
+        if business_task_id is not None:
+            clauses.append("business_task_id=?")
+            args.append(business_task_id)
+        if statuses:
+            clauses.append(f"status in ({','.join('?' for _ in statuses)})")
+            args.extend(statuses)
+        if due_before is not None:
+            clauses.append("datetime(scheduled_at)<=datetime(?)")
+            args.append(due_before)
+        query = "select * from business_task_follow_ups"
+        if clauses:
+            query += " where " + " and ".join(clauses)
+        query += " order by scheduled_at, id limit ? offset ?"
+        args.extend((limit, offset))
+        with self._connect() as db:
+            return list(db.execute(query, args))
+
+    def list_business_task_follow_up_send_attempts(
+        self, *, draft_id: int,
+    ) -> list[sqlite3.Row]:
+        with self._connect() as db:
+            return list(db.execute(
+                "select * from business_task_follow_up_send_attempts "
+                "where draft_id=? order by id", (draft_id,)
+            ))
+
+    def claim_due_business_task_follow_up(
+        self, *, now: str, claim_token: str, lease_owner: str,
+        lease_until: str, idempotency_uuid: str,
+    ) -> sqlite3.Row | None:
+        with self._immediate_write_transaction() as db:
+            db.execute(
+                "update business_task_follow_up_send_attempts set state='expired_before_send', "
+                "lease_owner='', updated_at=? where state='claimed' and lease_until<=?",
+                (now, now),
+            )
+            row = db.execute(
+                "select f.* from business_task_follow_ups f "
+                "join business_tasks t on t.id=f.business_task_id "
+                "where f.status in ('draft','approved') and datetime(f.scheduled_at)<=datetime(?) "
+                "and t.status in ('open','waiting') and not exists ("
+                "select 1 from business_task_follow_up_send_attempts a "
+                "where a.draft_id=f.id and a.draft_revision=f.revision "
+                "and a.state<>'expired_before_send') "
+                "order by f.scheduled_at, f.id limit 1",
+                (now,),
+            ).fetchone()
+            if row is None:
+                return None
+            db.execute(
+                "insert into business_task_follow_up_send_attempts "
+                "(draft_id, draft_revision, claim_token, idempotency_uuid, state, "
+                "lease_owner, claimed_at, lease_until) values (?, ?, ?, ?, 'claimed', ?, ?, ?)",
+                (row["id"], row["revision"], claim_token, idempotency_uuid,
+                 lease_owner, now, lease_until),
+            )
+            return row
+
+    def recover_expired_business_task_follow_up_sends(
+        self, *, now: str,
+    ) -> list[sqlite3.Row]:
+        """Quarantine an expired in-flight send; its provider outcome is unknown."""
+        with self._immediate_write_transaction() as db:
+            rows = list(db.execute(
+                "select f.*, a.idempotency_uuid from business_task_follow_ups f "
+                "join business_task_follow_up_send_attempts a on a.draft_id=f.id "
+                "and a.draft_revision=f.revision "
+                "where a.state='sending' and a.lease_until<=?",
+                (now,),
+            ))
+            for row in rows:
+                result_json = json.dumps(
+                    {"error": "send lease expired; provider outcome unknown",
+                     "idempotency_uuid": row["idempotency_uuid"]}, ensure_ascii=False,
+                )
+                db.execute(
+                    "update business_task_follow_up_send_attempts set state='unknown', "
+                    "result_json=?, lease_owner='', lease_until='', updated_at=? "
+                    "where draft_id=? and draft_revision=? and state='sending'",
+                    (result_json, now, row["id"], row["revision"]),
+                )
+                db.execute(
+                    "update business_task_follow_ups set status='failed', "
+                    "send_result_json=?, updated_at=? where id=? and revision=? "
+                    "and status in ('draft','approved')",
+                    (result_json, now, row["id"], row["revision"]),
+                )
+            return rows
+
+    def transition_business_task_follow_up_to_sending(
+        self, *, draft_id: int, revision: int, claim_token: str,
+    ) -> bool:
+        with self._immediate_write_transaction() as db:
+            return db.execute(
+                "update business_task_follow_up_send_attempts set state='sending', "
+                "updated_at=current_timestamp where draft_id=? and draft_revision=? "
+                "and claim_token=? and state='claimed'",
+                (draft_id, revision, claim_token),
+            ).rowcount == 1
+
+    def finish_business_task_follow_up_send(
+        self, *, draft_id: int, revision: int, claim_token: str,
+        status: str, result_json: str, now: str,
+    ) -> bool:
+        if status not in {"sent", "failed", "unknown"}:
+            raise ValueError("business Task follow-up send terminal status is invalid")
+        with self._immediate_write_transaction() as db:
+            changed = db.execute(
+                "update business_task_follow_up_send_attempts set state=?, result_json=?, "
+                "lease_owner='', lease_until='', updated_at=? where draft_id=? "
+                "and draft_revision=? and claim_token=? and state='sending'",
+                (status, result_json, now, draft_id, revision, claim_token),
+            ).rowcount
+            if changed != 1:
+                return False
+            db.execute(
+                "update business_task_follow_ups set status=?, send_result_json=?, "
+                "sent_at=case when ?='sent' then ? else sent_at end, "
+                "updated_at=? where id=? and revision=? and status in ('draft','approved')",
+                (status if status != "unknown" else "failed", result_json,
+                 status, now, now, draft_id, revision),
+            )
+            return True
+
+    def get_business_task_dingtalk_link(self, link_id: int):
+        with self._connect() as db:
+            return db.execute("select * from business_task_dingtalk_links where id=?", (link_id,)).fetchone()
+
+    def list_business_task_dingtalk_links(
+        self, *, business_task_id: int | None = None,
+        statuses: tuple[str, ...] | None = None,
+        limit: int = 200, offset: int = 0,
+    ) -> list[sqlite3.Row]:
+        if limit < 1 or offset < 0:
+            raise ValueError("Task TODO link pagination must be non-negative and nonempty")
+        clauses: list[str] = []
+        args: list[str | int] = []
+        if business_task_id is not None:
+            clauses.append("business_task_id=?")
+            args.append(business_task_id)
+        if statuses:
+            clauses.append(f"status in ({','.join('?' for _ in statuses)})")
+            args.extend(statuses)
+        query = "select * from business_task_dingtalk_links"
+        if clauses:
+            query += " where " + " and ".join(clauses)
+        query += " order by id limit ? offset ?"
+        args.extend((limit, offset))
+        with self._connect() as db:
+            return list(db.execute(query, args))
+
+    def get_active_business_task_dingtalk_link(self, business_task_id: int):
+        with self._connect() as db:
+            return db.execute("select * from business_task_dingtalk_links where business_task_id=? and status in ('creating','active') order by id desc limit 1", (business_task_id,)).fetchone()
+
+    def update_business_task_dingtalk_link(self, link_id: int, **values) -> None:
+        allowed = {"dingtalk_task_id", "executor_user_id", "executor_name", "title_snapshot", "deadline_at_snapshot", "priority_snapshot", "status", "last_dingtalk_done", "last_dingtalk_payload_json", "last_pull_at", "last_push_at", "last_error", "retry_count"}
+        filtered = self._filter_allowed_values(values, allowed)
+        if not filtered:
+            return
+        with self._connect() as db:
+            db.execute(f"update business_task_dingtalk_links set {', '.join(f'{key}=?' for key in filtered)}, updated_at=current_timestamp where id=?", [*filtered.values(), link_id])
+
+    def enqueue_business_task_todo_sync_outbox(
+        self,
+        *,
+        operation_key: str,
+        business_task_id: int,
+        operation: str,
+        evidence_json: str = "{}",
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        if operation not in {"create", "complete"}:
+            raise ValueError("business task todo sync operation is invalid")
+        transaction = self._immediate_write_transaction() if _db is None else self._optional_connection(_db)
+        with transaction as db:
+            if operation == "create" and db.execute(
+                "select 1 from business_task_todo_sync_outbox where business_task_id=? "
+                "and operation='create' and status in ('queued','running','unknown','failed') limit 1",
+                (business_task_id,),
+            ).fetchone() is not None:
+                return
+            db.execute(
+                "insert or ignore into business_task_todo_sync_outbox "
+                "(operation_key, business_task_id, operation, evidence_json) values (?, ?, ?, ?)",
+                (operation_key, business_task_id, operation, evidence_json),
+            )
+
+    def list_unknown_business_task_todo_creates_with_receipts(
+        self, *, limit: int = 100,
+    ) -> list[sqlite3.Row]:
+        with self._connect() as db:
+            return list(db.execute(
+                "select o.id as outbox_id, l.id as link_id, l.dingtalk_task_id "
+                "from business_task_todo_sync_outbox o "
+                "join business_task_dingtalk_links l on l.business_task_id=o.business_task_id "
+                "where o.operation='create' and o.status='unknown' "
+                "and l.status in ('creating','active') and trim(l.dingtalk_task_id)<>'' "
+                "order by o.id limit ?",
+                (limit,),
+            ))
+
+    def complete_unknown_business_task_todo_sync_outbox_from_receipt(
+        self, *, outbox_id: int, provider_readback_json: str,
+    ) -> bool:
+        try:
+            readback = json.loads(provider_readback_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("provider read-back must be JSON") from exc
+        if not isinstance(readback, dict) or not readback:
+            raise ValueError("provider read-back is required")
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select business_task_id from business_task_todo_sync_outbox "
+                "where id=? and operation='create' and status='unknown'",
+                (outbox_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            link = db.execute(
+                "select id, dingtalk_task_id from business_task_dingtalk_links "
+                "where business_task_id=? and status in ('creating','active') "
+                "and trim(dingtalk_task_id)<>'' order by id desc limit 1",
+                (row["business_task_id"],),
+            ).fetchone()
+            if link is None:
+                return False
+            db.execute(
+                "update business_task_dingtalk_links set status='active', last_error='', "
+                "last_dingtalk_done=?, last_dingtalk_payload_json=?, "
+                "last_pull_at=current_timestamp, updated_at=current_timestamp where id=?",
+                (readback.get("done") is True, provider_readback_json, link["id"]),
+            )
+            return db.execute(
+                "update business_task_todo_sync_outbox set status='completed', error='', "
+                "receipt_json=?, lease_owner='', lease_expires_at='', "
+                "completed_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and status='unknown'",
+                (json.dumps({"link_id": link["id"], "dingtalk_task_id": link["dingtalk_task_id"]}, ensure_ascii=False), outbox_id),
+            ).rowcount == 1
+
+    def list_business_task_todo_sync_outbox(
+        self, *, statuses: tuple[str, ...] | None = None
+    ) -> list[sqlite3.Row]:
+        query = "select * from business_task_todo_sync_outbox"
+        args: list[str] = []
+        if statuses:
+            query += f" where status in ({','.join('?' for _ in statuses)})"
+            args.extend(statuses)
+        with self._connect() as db:
+            return list(db.execute(f"{query} order by id", args).fetchall())
+
+    def get_business_task_todo_sync_outbox(self, outbox_id: int) -> sqlite3.Row | None:
+        with self._connect() as db:
+            return db.execute(
+                "select * from business_task_todo_sync_outbox where id=?", (outbox_id,)
+            ).fetchone()
+
+    def claim_business_task_todo_sync_outbox(
+        self, *, owner: str, now: str, lease_seconds: int = 300
+    ) -> sqlite3.Row | None:
+        lease_until = (
+            datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=lease_seconds)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        with self._agent_run_write_transaction(now) as (db, _):
+            db.execute(
+                "update business_task_todo_sync_outbox set status='unknown', lease_owner='', "
+                "lease_expires_at='', error='receipt_reconciliation_required', updated_at=? "
+                "where status='running' and lease_expires_at<=?", (now, now)
+            )
+            row = db.execute(
+                "select * from business_task_todo_sync_outbox where "
+                "(status='queued' or (status='failed' and attempt_count<3 and next_attempt_at<=?)) "
+                "order by id limit 1", (now,)
+            ).fetchone()
+            if row is None:
+                return None
+            changed = db.execute(
+                "update business_task_todo_sync_outbox set status='running', lease_owner=?, "
+                "lease_expires_at=?, attempt_count=attempt_count+1, updated_at=? "
+                "where id=? and status in ('queued', 'failed')",
+                (owner, lease_until, now, row["id"]),
+            )
+            return row if changed.rowcount == 1 else None
+
+    def finish_business_task_todo_sync_outbox(
+        self, *, outbox_id: int, owner: str, status: str, receipt_json: str = "{}",
+        error: str = "", _db: sqlite3.Connection | None = None,
+    ) -> None:
+        if status not in {"completed", "skipped", "failed", "unknown"}:
+            raise ValueError("business task todo sync terminal status is invalid")
+        with self._optional_connection(_db) as db:
+            changed = db.execute(
+                "update business_task_todo_sync_outbox set status=?, receipt_json=?, error=?, "
+                "lease_owner='', lease_expires_at='', completed_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and status='running' and lease_owner=?",
+                (status, receipt_json, error, outbox_id, owner),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("business task todo sync receipt ownership lost")
+
+    def retry_business_task_todo_sync_outbox(
+        self, *, outbox_id: int, owner: str, error: str, now: str,
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        with self._optional_connection(_db) as db:
+            row = db.execute(
+                "select attempt_count from business_task_todo_sync_outbox where id=?", (outbox_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("business task todo sync outbox does not exist")
+            attempts = int(row["attempt_count"])
+            exhausted = attempts >= 3
+            next_attempt_at = "" if exhausted else (
+                datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=60 * attempts)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            changed = db.execute(
+                "update business_task_todo_sync_outbox set status=?, error=?, next_attempt_at=?, "
+                "lease_owner='', lease_expires_at='', updated_at=? where id=? and status='running' and lease_owner=?",
+                ("failed", f"business_task_todo_sync_retry_exhausted:{error}" if exhausted else error,
+                 next_attempt_at, now, outbox_id, owner),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("business task todo sync receipt ownership lost")
+
+    def reconcile_unknown_business_task_todo_sync_outbox(
+        self, *, outbox_id: int, provider_absent_evidence: str,
+    ) -> bool:
+        evidence = provider_absent_evidence.strip()
+        if not evidence:
+            raise ValueError("provider evidence that the task is absent is required")
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                "select business_task_id, operation, status, evidence_json from business_task_todo_sync_outbox where id=?",
+                (outbox_id,),
+            ).fetchone()
+            if row is None or row["status"] != "unknown" or row["operation"] != "create":
+                return False
+            db.execute(
+                "update business_task_dingtalk_links set status='cancelled', last_error=?, updated_at=current_timestamp "
+                "where business_task_id=? and status='creating' and trim(dingtalk_task_id)=''",
+                (f"reconciled_absent_after_unknown_create: {evidence}"[:500], row["business_task_id"]),
+            )
+            return db.execute(
+                "update business_task_todo_sync_outbox set status='queued', error='', lease_owner='', "
+                "lease_expires_at='', next_attempt_at='', updated_at=current_timestamp where id=? and status='unknown'",
+                (outbox_id,),
+            ).rowcount == 1
 
     def enqueue_task_todo_sync_outbox(
         self,

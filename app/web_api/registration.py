@@ -21,14 +21,25 @@ from app.web_api.attention import AttentionListEnvelope, group_attention_rows
 from app.web_api.attempts import build_attempt_detail
 from app.web_api.common import ApiListMeta, ApiMeta, json_safe, normalize_display_value, snapshot_at
 from app.web_api.tasks import (
+    ConsoleBusinessAttentionDetailEnvelope,
+    ConsoleBusinessAttentionListEnvelope,
+    ConsoleBusinessProjectDetailEnvelope,
+    ConsoleBusinessProjectListEnvelope,
+    ConsoleBusinessTaskDetailEnvelope,
+    ConsoleBusinessTaskListEnvelope,
     ConsoleTaskDetail,
     ConsoleTaskDetailEnvelope,
-    ConsoleTaskListEnvelope,
     ConsoleSentTodo,
     ConsoleSentTodoListEnvelope,
+    business_attention_detail,
+    business_attention_list_response,
+    business_project_detail,
+    business_project_list_response,
+    business_task_detail,
+    business_task_list_response,
+    business_task_sent_todo_payload,
     sent_todo_payload,
     task_detail,
-    task_list_response,
 )
 from app.web_api.settings import info_payload
 from app.web_api.status import StatusEnvelope, StatusMeta, WorkerStatus
@@ -141,16 +152,16 @@ def register_console_routes(
         if source_table == "meeting_alignment_runs":
             return f"/meeting-attempts/{source_id}"
         if source_table == "follow_up_drafts":
-            return f"/tasks/{project_id}#follow-up-{follow_up_id or source_id}"
+            return f"/tasks/legacy-project/{project_id}#follow-up-{follow_up_id or source_id}"
         if source_table in {
             "work_updates",
             "todo_evidence_candidates",
             "work_todo_dingtalk_links",
         }:
             if project_id and todo_id:
-                return f"/tasks/{project_id}#todo-{todo_id}"
+                return f"/tasks/legacy-project/{project_id}#todo-{todo_id}"
             if project_id:
-                return f"/tasks/{project_id}"
+                return f"/tasks/legacy-project/{project_id}"
         if source_table == "reply_attempts":
             return f"/attempts/{source_id}"
         return ""
@@ -293,24 +304,51 @@ def register_console_routes(
             raise HTTPException(status_code=400, detail="JSON object required")
         return payload
 
-    @app.get("/api/console/tasks", response_model=ConsoleTaskListEnvelope)
+    @app.get("/api/console/tasks", response_model=ConsoleBusinessTaskListEnvelope)
     def console_tasks(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),
         q: str = "",
-        category: str = "",
-        task_state: str = "",
-        sort: str = "",
+        stage: str = "",
+        status: str = "",
+        business_relevance: str = "",
     ):
-        return task_list_response(
+        return business_task_list_response(
             store_factory(),
             page=page,
             page_size=page_size,
             query=q,
-            category=category,
-            task_state=task_state,
-            sort=sort,
-            row_builder=task_row_builder,
+            stage=stage,
+            status=status,
+            business_relevance=business_relevance,
+        )
+
+    @app.get("/api/console/tasks/attention", response_model=ConsoleBusinessAttentionListEnvelope)
+    def console_business_attention(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100),
+        q: str = "", category: str = "", status: str = "active",
+    ):
+        return business_attention_list_response(store_factory(), page=page, page_size=page_size, query=q, category=category, status=status)
+
+    @app.get("/api/console/tasks/all", response_model=ConsoleBusinessTaskListEnvelope)
+    def console_all_business_tasks(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100),
+        q: str = "", stage: str = "", status: str = "", business_relevance: str = "",
+    ):
+        return business_task_list_response(store_factory(), page=page, page_size=page_size, query=q, stage=stage, status=status, business_relevance=business_relevance)
+
+    @app.get("/api/console/tasks/projects", response_model=ConsoleBusinessProjectListEnvelope)
+    def console_business_projects(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100), q: str = "",
+        candidate_page: int = Query(default=1, ge=1),
+        candidate_page_size: int = Query(default=20, ge=1, le=100),
+    ):
+        return business_project_list_response(
+            store_factory(), page=page, page_size=page_size, query=q,
+            candidate_page=candidate_page, candidate_page_size=candidate_page_size,
         )
 
     @app.get("/api/console/tasks/sent-todos", response_model=ConsoleSentTodoListEnvelope)
@@ -318,10 +356,15 @@ def register_console_routes(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=5000, ge=1, le=5000),
     ):
-        rows = [
-            sent_todo_payload(record)
-            for record in store_factory().list_sent_todo_records(limit=5000)
-        ]
+        store = store_factory()
+        rows = [sent_todo_payload(record) for record in store.list_sent_todo_records(limit=5000)]
+        offset = 0
+        while links := store.list_business_task_dingtalk_links(limit=200, offset=offset):
+            rows.extend(
+                payload for link in links
+                if (payload := business_task_sent_todo_payload(store, link)) is not None
+            )
+            offset += len(links)
         total = len(rows)
         start = (page - 1) * page_size
         return ConsoleSentTodoListEnvelope(
@@ -329,12 +372,35 @@ def register_console_routes(
             meta=list_meta(page=page, page_size=page_size, total=total, snapshot=snapshot_at()),
         )
 
-    @app.get("/api/console/tasks/{project_id}/details", response_model=ConsoleTaskDetailEnvelope)
-    def console_task_details_alias(project_id: int):
-        return console_task_detail(project_id)
+    @app.get("/api/console/tasks/attention/{attention_id}", response_model=ConsoleBusinessAttentionDetailEnvelope)
+    def console_business_attention_detail(attention_id: int):
+        store = store_factory()
+        with store.read_snapshot():
+            item = business_attention_detail(store, attention_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Attention item not found")
+        return ConsoleBusinessAttentionDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
 
-    @app.get("/api/console/tasks/{project_id}", response_model=ConsoleTaskDetailEnvelope)
-    def console_task_detail(project_id: int):
+    @app.get("/api/console/tasks/items/{task_id}", response_model=ConsoleBusinessTaskDetailEnvelope)
+    def console_business_task_detail(task_id: int):
+        store = store_factory()
+        with store.read_snapshot():
+            item = business_task_detail(store, task_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Business task not found")
+        return ConsoleBusinessTaskDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
+
+    @app.get("/api/console/tasks/projects/{project_id}", response_model=ConsoleBusinessProjectDetailEnvelope)
+    def console_business_project_detail(project_id: int):
+        store = store_factory()
+        with store.read_snapshot():
+            item = business_project_detail(store, project_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Business project not found")
+        return ConsoleBusinessProjectDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
+
+    @app.get("/api/console/tasks/legacy-projects/{project_id}", response_model=ConsoleTaskDetailEnvelope)
+    def console_legacy_project_detail(project_id: int):
         store = store_factory()
         with store.read_snapshot():
             item = task_detail(store, project_id)

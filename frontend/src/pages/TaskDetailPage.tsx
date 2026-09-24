@@ -1,161 +1,61 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { displayValue, getTaskDetail, type TaskDetail } from "../api/console";
-import { ResponsiveDataList } from "../components/data/ResponsiveDataList";
-import { SummaryText } from "../components/data/SummaryText";
+import { getBusinessTaskDetail, getLegacyProjectDetail, type BusinessTaskDetail, type TaskDetail } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
-import { StatusBadge } from "../components/status/StatusBadge";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 
-function sourceLabel(source: unknown) {
-  const value = displayValue(source);
-  const path = value.split("#", 1)[0];
-  return path.split(/[\\/]/).filter(Boolean).at(-1) || path || value;
+const commitmentLabels: Record<string, string> = { none: "承诺待明确", assigned_unaccepted: "已指派，未接受", accepted: "已接受", disputed: "存在争议", completed: "已完成", cancelled: "已取消" };
+
+export function SourceRecordList({ title, rows }: { title: string; rows: Array<Record<string, unknown>> }) {
+  if (!rows.length) return null;
+  return <section className="console-card business-detail-section"><h2>{title}</h2><ol className="business-source-list">{rows.map((row, index) => {
+    const signal = row.signal && typeof row.signal === "object" ? row.signal as Record<string, unknown> : null;
+    const primary = [signal?.evidence_text, row.evidence_text, row.raw_phrase, row.title, row.summary, row.reason, row.event_type, row.source_type].find((value) => typeof value === "string" && value);
+    const secondary = [row.role, row.date_type, row.value_at, signal?.source_type, row.source_type, row.created_at].filter((value) => typeof value === "string" && value && value !== primary);
+    return <li key={String(row.id ?? index)}><span>{typeof primary === "string" ? primary : "记录"}</span>{secondary.length > 0 && <small>{secondary.join(" · ")}</small>}</li>;
+  })}</ol></section>;
 }
 
-type EvidenceCandidateRow = {
-  id: string;
-  status: unknown;
-  source_type: unknown;
-  source_ref: unknown;
-  reason: unknown;
-  evidence_text: unknown;
-  decision: unknown;
-};
-
-type DetailRow = Record<string, unknown> & { id: string };
-
-function detailRows(values: Array<Record<string, unknown>>, prefix: string): DetailRow[] {
-  return values.map((value, index) => ({
-    ...value,
-    id: String(value.id || `${prefix}-${index + 1}`),
-  }));
-}
-
-function localTime(value: unknown) {
-  const text = typeof value === "string" ? value : "";
-  if (!text) return "未提供";
-  const date = new Date(text);
-  return Number.isNaN(date.getTime()) ? text : date.toLocaleString();
-}
-
-export function TaskDetailPage({ projectId }: { projectId: string }) {
-  const [task, setTask] = useState<TaskDetail | null>(null);
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  const [message, setMessage] = useState("");
+export function TaskDetailPage({ taskId }: { taskId: string }) {
+  const [detail, setDetail] = useState<BusinessTaskDetail | null>(null);
   const [snapshot, setSnapshot] = useState("");
-
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState("");
   useEffect(() => {
     const controller = new AbortController();
     setState("loading");
-    getTaskDetail(projectId, controller.signal).then((response) => {
-      setTask(response.item);
-      setSnapshot(response.meta.snapshot_at);
-      setState("ready");
-    }).catch((error: unknown) => {
-      if (controller.signal.aborted) return;
-      setMessage(error instanceof Error ? error.message : "加载失败");
-      setState("error");
-    });
+    getBusinessTaskDetail(taskId, controller.signal).then((result) => { if (!controller.signal.aborted) { setDetail(result.item); setSnapshot(result.meta.snapshot_at); setState("ready"); } }).catch((reason: unknown) => { if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); } });
     return () => controller.abort();
-  }, [projectId]);
+  }, [taskId]);
+  if (state === "loading") return <ConsolePageLayout title="任务详情"><div className="page-state" role="status">正在加载…</div></ConsolePageLayout>;
+  if (state === "error" || !detail) return <ConsolePageLayout title="任务详情"><div className="page-state page-state-error" role="alert">{error || "任务不存在"}</div></ConsolePageLayout>;
+  const task = detail.summary;
+  return <ConsolePageLayout title={task.title} actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to="/tasks?view=all">返回全部任务</Link></>}>
+    <div className="task-domain-page business-detail-page">
+      <section className="console-card business-detail-section"><div className="business-detail-badges"><span className={`business-stage ${task.stage}`}>{task.stage === "candidate" ? "候选任务" : "正式任务"}</span><span>{task.status}</span><span>{commitmentLabels[task.commitment_status] || task.commitment_status}</span></div>
+        {detail.description && <p>{detail.description}</p>}
+        <dl className="business-detail-facts"><div><dt>负责人</dt><dd>{task.owner || "尚无明确负责人"}</dd></div><div><dt>截止日期</dt><dd>{task.deadline_at || "未明确"}</dd></div><div><dt>业务主线</dt><dd>{task.anchor_labels.join(" · ") || "尚未确认"}</dd></div></dl>
+      </section>
+      <SourceRecordList title="来源证据" rows={detail.evidence || []} />
+      <SourceRecordList title="日期依据" rows={detail.date_evidence || []} />
+      <SourceRecordList title="任务变化" rows={detail.events || []} />
+      <SourceRecordList title="关联关系" rows={detail.relations || []} />
+      <SourceRecordList title="工作聚类" rows={detail.clusters || []} />
+      <SourceRecordList title="跟进记录" rows={detail.follow_ups || []} />
+      <SourceRecordList title="钉钉待办" rows={detail.dingtalk_todos || []} />
+      {!!detail.official_projects?.length && <section className="console-card business-detail-section"><h2>正式项目</h2><ul className="business-linked-list">{detail.official_projects.map((project) => <li key={project.id}><Link to={project.detail_url}>{project.title}</Link></li>)}</ul></section>}
+    </div>
+  </ConsolePageLayout>;
+}
 
-  if (state === "loading") return <ConsolePageLayout title={`Task ${projectId}`}><div className="console-card page-state" role="status">正在加载…</div></ConsolePageLayout>;
-  if (state === "error" || !task) return <ConsolePageLayout title={`Task ${projectId}`}><div className="console-card page-state page-state-error" role="alert">{message || "任务不存在"}</div></ConsolePageLayout>;
-
-  const facts = task.facts.map((fact) => ({ ...fact, id: String(fact.id) }));
-  const evidenceCandidates: EvidenceCandidateRow[] = (task.evidence_candidates ?? []).map((candidate) => ({
-    id: String(candidate.id || candidate.source_ref || ""),
-    status: candidate.status,
-    source_type: candidate.source_type,
-    source_ref: candidate.source_ref,
-    reason: candidate.reason,
-    evidence_text: candidate.evidence_text,
-    decision: candidate.decision,
-  }));
-  const todos = detailRows(task.todos, "todo");
-  const updates = detailRows(task.updates, "update");
-  const memory = detailRows(task.memory, "memory");
-  const unlinkedFollowUps = detailRows(task.unlinked_follow_ups ?? [], "follow-up");
-  return (
-    <ConsolePageLayout title={task.title} actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to="/tasks">返回 Tasks</Link></>}>
-      <section className="console-card task-overview">
-        <div className="task-overview-meta"><StatusBadge value={task.status} /><span>{task.category}</span><span>Priority: {task.priority}</span><span>Owner: {task.owner || "未提供"}</span></div>
-        <h2>Project details</h2>
-        <dl className="detail-definition-list">
-          <div><dt>说明</dt><dd><SummaryText value={task.description} /></dd></div>
-          <div><dt>背景</dt><dd><SummaryText value={task.background} /></dd></div>
-          <div><dt>Blocker</dt><dd><SummaryText value={task.blocker} /></dd></div>
-          <div><dt>Next step</dt><dd><SummaryText value={task.next_summary} /></dd></div>
-        </dl>
-      </section>
-      <section className="console-card task-facts-section">
-        <h2>Facts</h2>
-        <ResponsiveDataList
-          ariaLabel="项目事实"
-          columns={[{ key: "description", label: "Description" }, { key: "source", label: "Source" }, { key: "created", label: "Created" }, { key: "updated", label: "Updated" }]}
-          rows={facts}
-          renderCell={(fact, key) => key === "source" ? <span title={displayValue(fact.source)}>{sourceLabel(fact.source)}</span> : key === "description" ? <SummaryText value={displayValue(fact.description)} /> : fact[key] || "未提供"}
-          expandable
-          renderExpanded={(fact) => <div><strong>完整描述</strong><p>{displayValue(fact.description)}</p><strong>完整来源</strong><p>{displayValue(fact.source)}</p></div>}
-        />
-      </section>
-      <section className="console-card task-todos-section">
-        <h2>TODOs</h2>
-        {todos.length ? <ResponsiveDataList<DetailRow>
-          ariaLabel="项目 TODO"
-          columns={[{ key: "title", label: "TODO" }, { key: "status", label: "Status" }, { key: "owner_name", label: "Owner" }, { key: "priority", label: "Priority" }, { key: "deadline_at", label: "Deadline" }]}
-          rows={todos}
-          renderCell={(todo, key) => key === "title" ? <SummaryText value={displayValue(todo.title)} /> : key === "status" ? <StatusBadge value={displayValue(todo.status)} /> : key === "owner_name" ? displayValue(todo.owner || todo.owner_name || todo.owner_user_id) : key === "deadline_at" ? localTime(todo.deadline_at) : displayValue(todo[key])}
-          expandable
-          renderExpanded={(todo) => <div className="task-record-details"><strong>说明</strong><p>{displayValue(todo.description)}</p><strong>Blocker</strong><p>{displayValue(todo.blocker)}</p><strong>跟进问题</strong><p>{displayValue(todo.follow_up_question)}</p><details><summary>技术详情</summary><pre className="technical-details">{JSON.stringify(todo, null, 2)}</pre></details></div>}
-        /> : <p className="muted">No TODOs recorded.</p>}
-      </section>
-      <section className="console-card">
-        <h2>Evidence candidates</h2>
-        {evidenceCandidates.length ? <ResponsiveDataList<EvidenceCandidateRow>
-          ariaLabel="TODO 完成证据候选"
-          columns={[{ key: "status", label: "Status" }, { key: "source_type", label: "Source" }, { key: "reason", label: "Reason" }, { key: "evidence_text", label: "Evidence" }]}
-          rows={evidenceCandidates}
-          renderCell={(candidate, key) => key === "status" ? <StatusBadge value={displayValue(candidate.status)} /> : key === "source_type" ? <span title={displayValue(candidate.source_ref)}>{displayValue(candidate.source_type)}</span> : <SummaryText value={displayValue(candidate[key])} />}
-          expandable
-          renderExpanded={(candidate) => <div><strong>Source</strong><p>{displayValue(candidate.source_ref)}</p><strong>Decision</strong><pre className="technical-details">{JSON.stringify(candidate.decision || {}, null, 2)}</pre></div>}
-        /> : <p className="muted">No evidence candidates recorded.</p>}
-      </section>
-      <section className="console-card task-updates-section">
-        <h2>Updates</h2>
-        {updates.length ? <ResponsiveDataList<DetailRow>
-          ariaLabel="项目更新"
-          columns={[{ key: "summary", label: "Summary" }, { key: "source_type", label: "Source" }, { key: "confidence", label: "Confidence" }, { key: "created_at", label: "Created" }]}
-          rows={updates}
-          renderCell={(update, key) => key === "summary" ? <SummaryText value={displayValue(update.summary)} /> : key === "source_type" ? <span title={displayValue(update.source_ref)}>{displayValue(update.source_type)} · {sourceLabel(update.source_ref)}</span> : key === "confidence" ? `${Math.round(Number(update.confidence || 0) * 100)}%` : key === "created_at" ? localTime(update.created_at) : displayValue(update[key])}
-          expandable
-          renderExpanded={(update) => <div className="task-record-details"><strong>合并原因</strong><p>{displayValue(update.merge_reason)}</p><strong>完整来源</strong><p>{displayValue(update.source_ref)}</p><details><summary>Changes</summary><pre className="technical-details">{JSON.stringify(update.changes || {}, null, 2)}</pre></details></div>}
-        /> : <p className="muted">No updates recorded.</p>}
-      </section>
-      <section className="console-card task-memory-section">
-        <h2>Memory context</h2>
-        {memory.length ? <ResponsiveDataList<DetailRow>
-          ariaLabel="项目记忆上下文"
-          columns={[{ key: "summary", label: "Summary" }, { key: "source", label: "Source" }]}
-          rows={memory}
-          renderCell={(item, key) => key === "summary" ? <SummaryText value={displayValue(item.summary || item.content || item.text || item)} /> : <span title={displayValue(item.source)}>{sourceLabel(item.source)}</span>}
-          expandable
-          renderExpanded={(item) => <details open><summary>完整上下文</summary><pre className="technical-details">{JSON.stringify(item, null, 2)}</pre></details>}
-        /> : <p className="muted">No memory context recorded.</p>}
-      </section>
-      <section className="console-card task-follow-ups-section">
-        <h2>Unlinked follow-ups</h2>
-        {unlinkedFollowUps.length ? <ResponsiveDataList<DetailRow>
-          ariaLabel="未关联跟进"
-          columns={[{ key: "summary", label: "Summary" }, { key: "status", label: "Status" }]}
-          rows={unlinkedFollowUps}
-          renderCell={(item, key) => key === "status" ? <StatusBadge value={displayValue(item.status)} /> : <SummaryText value={displayValue(item.summary || item.title || item.description)} />}
-          expandable
-          renderExpanded={(item) => <details open><summary>完整跟进</summary><pre className="technical-details">{JSON.stringify(item, null, 2)}</pre></details>}
-        /> : <p className="muted">No unlinked follow-ups recorded.</p>}
-      </section>
-    </ConsolePageLayout>
-  );
+export function LegacyProjectDetailPage({ legacyProjectId }: { legacyProjectId: string }) {
+  const [detail, setDetail] = useState<TaskDetail | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    getLegacyProjectDetail(legacyProjectId, controller.signal).then((result) => { if (!controller.signal.aborted) setDetail(result.item); }).catch((reason: unknown) => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "加载失败"); });
+    return () => controller.abort();
+  }, [legacyProjectId]);
+  return <ConsolePageLayout title={detail?.title || "历史项目记录"} actions={<Link className="secondary-button" to="/tasks">返回 Tasks</Link>}><section className="console-card business-detail-section"><span className="business-stage candidate">历史记录 · 非正式项目</span>{error ? <p role="alert">{error}</p> : !detail ? <p role="status">正在加载…</p> : <><p>{detail.description}</p><dl className="business-detail-facts"><div><dt>负责人</dt><dd>{detail.owner || "未提供"}</dd></div><div><dt>状态</dt><dd>{detail.status}</dd></div></dl><SourceRecordList title="历史事实" rows={detail.facts.map((fact) => ({ ...fact, evidence_text: String(fact.description) }))} /></>}</section></ConsolePageLayout>;
 }

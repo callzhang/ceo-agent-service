@@ -4,6 +4,7 @@ import pytest
 
 from app.task_completion_agent import (
     TaskCompletionDecision,
+    apply_task_completion_decision,
     build_task_completion_prompt,
     process_task_completion_work_item,
     validate_task_completion_decision,
@@ -111,6 +112,173 @@ def test_completion_candidate_must_only_close_its_linked_todo():
         validate_task_completion_decision(
             work_item, decision, audit_tool_events=_receipts(decision)
         )
+
+
+def test_business_task_completion_check_accepts_only_its_linked_task():
+    work_item = _work_item(
+        "todo_completion_check", {"business_task": {"id": 42}},
+        source_ref="business-task-completion-check:42:2026-09-23",
+    )
+    decision = TaskCompletionDecision.model_validate({
+        "todo_changes": [{"business_task_id": 42, "action": "close",
+            "completion_evidence": {"source": "dws_message:msg-1",
+                "reason": "Owner confirmed delivery", "description": "The task is done.",
+                "completed_at": "2026-09-23T09:30:00Z", "checked_at": "2026-09-23T10:00:00Z"}}],
+        "search_trace": [_trace()], "update_summary": "Task is done.",
+    })
+
+    validate_task_completion_decision(
+        work_item, decision, audit_tool_events=_receipts(decision)
+    )
+    decision.todo_changes[0].business_task_id = 43
+    with pytest.raises(ValueError, match="linked Task"):
+        validate_task_completion_decision(
+            work_item, decision, audit_tool_events=_receipts(decision)
+        )
+
+
+def test_business_task_completion_operation_closes_task_and_queues_external_sync(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    task_id = store.create_business_task(
+        title="交付报价", stage="formal", formal_basis="explicit_assignment",
+        owner_user_id="alex", owner_name="Alex", commitment_status="accepted",
+    )
+    store.create_business_task_dingtalk_link(
+        business_task_id=task_id, dingtalk_task_id="dt-task-1", status="active"
+    )
+    item = _work_item(
+        "todo_completion_check", {"business_task": {"id": task_id, "title": "交付报价"}},
+        source_ref=f"business-task-completion-check:{task_id}:2026-09-23",
+    )
+    input_id = store.enqueue_work_summary_input(
+        source_type=item.source.type.value, source_ref=item.source.ref,
+        payload_json=item.model_dump_json(),
+    )
+    decision = TaskCompletionDecision.model_validate({
+        "todo_changes": [{"business_task_id": task_id, "action": "close",
+            "completion_evidence": {"source": "dws_message:msg-1",
+                "reason": "Owner confirmed delivery", "description": "The quote was delivered.",
+                "completed_at": "2026-09-23T09:30:00Z", "checked_at": "2026-09-23T10:00:00Z"}}],
+        "search_trace": [_trace()], "update_summary": "Task is done.",
+    })
+
+    changed = apply_task_completion_decision(
+        store, summary_input_id=input_id, work_item=item, decision=decision,
+        now="2026-09-23T10:00:00Z", sync_external_todo=True,
+        audit_tool_events=_receipts(decision),
+    )
+
+    assert changed
+    assert store.get_business_task(task_id).status.value == "done"
+    [intent] = store.list_business_task_todo_sync_outbox()
+    assert intent["business_task_id"] == task_id
+    assert intent["operation"] == "complete"
+
+
+def test_business_task_follow_up_repair_reschedules_only_linked_draft(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    task_id = store.create_business_task(
+        title="交付报价", stage="formal", formal_basis="explicit_assignment",
+        owner_user_id="alex", owner_name="Alex",
+    )
+    with store.business_task_transaction() as db:
+        signal_id = store.create_business_task_signal_in_transaction(
+            source_type="reply_attempt", source_ref="message:1", dedupe_key="message:1",
+            evidence_text="Alex owns quote", conversation_id="cid-1", _db=db,
+        )
+        store.link_business_task_evidence_in_transaction(
+            task_id=task_id, signal_id=signal_id, evidence_role="assignment", _db=db,
+        )
+        draft_id = store.create_business_task_follow_up(
+            business_task_id=task_id, source_signal_id=signal_id,
+            target_conversation_id="cid-1", target_kind="group",
+            question_text="请确认报价进度", scheduled_at="2026-09-23T09:00:00Z",
+            owner_user_id="alex", owner_name="Alex", dedupe_key="draft:1", _db=db,
+        )
+        sibling_id = store.create_business_task_follow_up(
+            business_task_id=task_id, source_signal_id=signal_id,
+            target_conversation_id="cid-1", target_kind="group",
+            question_text="请确认合同进度", scheduled_at="2026-09-23T09:00:00Z",
+            owner_user_id="alex", owner_name="Alex", dedupe_key="draft:2", _db=db,
+        )
+    item = _work_item(
+        "follow_up_completion_check",
+        {"business_task": {"id": task_id}, "follow_up": {"id": draft_id}},
+        source_ref=f"business-task-follow-up-repair:{draft_id}:1",
+    )
+    input_id = store.enqueue_work_summary_input(
+        source_type=item.source.type.value, source_ref=item.source.ref,
+        payload_json=item.model_dump_json(),
+    )
+    decision = TaskCompletionDecision.model_validate({
+        "follow_up_changes": [{"follow_up_id": draft_id, "action": "reschedule",
+            "next_due_at": "2026-09-24T01:00:00Z", "reason": "Need a fresh check"}],
+        "search_trace": [_trace()], "update_summary": "Reschedule current follow-up.",
+    })
+
+    assert apply_task_completion_decision(
+        store, summary_input_id=input_id, work_item=item, decision=decision,
+        now="2026-09-23T10:00:00Z", audit_tool_events=_receipts(decision),
+    )
+    drafts = {row["id"]: row for row in store.list_business_task_follow_ups(business_task_id=task_id)}
+    assert drafts[draft_id]["scheduled_at"] == "2026-09-24T01:00:00Z"
+    assert drafts[draft_id]["revision"] == 2
+    assert drafts[sibling_id]["revision"] == 1
+    assert store.list_business_task_follow_ups(
+        business_task_id=task_id, limit=1, offset=1
+    )[0]["id"] == draft_id
+
+
+def test_stale_business_task_follow_up_repair_cannot_change_newer_revision(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    task_id = store.create_business_task(
+        title="交付报价", stage="formal", formal_basis="explicit_assignment",
+        owner_user_id="alex", owner_name="Alex",
+    )
+    with store.business_task_transaction() as db:
+        signal_id = store.create_business_task_signal_in_transaction(
+            source_type="reply_attempt", source_ref="message:1", dedupe_key="message:1",
+            evidence_text="Alex owns quote", conversation_id="cid-1", _db=db,
+        )
+        store.link_business_task_evidence_in_transaction(
+            task_id=task_id, signal_id=signal_id, evidence_role="assignment", _db=db,
+        )
+        draft_id = store.create_business_task_follow_up(
+            business_task_id=task_id, source_signal_id=signal_id,
+            target_conversation_id="cid-1", target_kind="group",
+            question_text="请确认报价进度", scheduled_at="2026-09-23T09:00:00Z",
+            owner_user_id="alex", owner_name="Alex", dedupe_key="draft:stale", _db=db,
+        )
+        db.execute(
+            "update business_task_follow_ups set revision=2, scheduled_at=? where id=?",
+            ("2026-09-25T09:00:00Z", draft_id),
+        )
+    item = _work_item(
+        "follow_up_completion_check",
+        {"business_task": {"id": task_id}, "follow_up": {"id": draft_id}},
+        source_ref=f"business-task-follow-up-repair:{draft_id}:1",
+    )
+    input_id = store.enqueue_work_summary_input(
+        source_type=item.source.type.value, source_ref=item.source.ref,
+        payload_json=item.model_dump_json(),
+    )
+    decision = TaskCompletionDecision.model_validate({
+        "follow_up_changes": [{"follow_up_id": draft_id, "action": "close",
+            "reason": "The original failed send is resolved.",
+            "evidence_check": {"source": "dws_message:msg-1", "reason": "Owner confirmed", "description": "The follow-up is no longer needed.", "checked_at": "2026-09-23T10:00:00Z"}}],
+        "search_trace": [_trace()], "update_summary": "The old repair must not close the newer revision.",
+    })
+
+    with pytest.raises(ValueError, match="revision"):
+        apply_task_completion_decision(
+            store, summary_input_id=input_id, work_item=item, decision=decision,
+            now="2026-09-23T10:00:00Z", audit_tool_events=_receipts(decision),
+        )
+
+    [draft] = store.list_business_task_follow_ups(business_task_id=task_id)
+    assert draft["status"] == "draft"
+    assert draft["revision"] == 2
+    assert draft["scheduled_at"] == "2026-09-25T09:00:00Z"
 
 
 def test_completion_check_rejects_follow_up_operation_for_unlinked_draft():

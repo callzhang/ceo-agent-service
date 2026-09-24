@@ -1,101 +1,29 @@
-from pathlib import Path
+from datetime import datetime, timezone
 
 from app.store import AutoReplyStore
-from app.web_api.tasks import task_list_response
+from app.web_api.tasks import business_task_list_response
 
 
-def _create_project(
-    store: AutoReplyStore,
-    title: str,
-    *,
-    priority: str = "P1",
-    category: str = "dev",
-) -> int:
-    return store.create_work_project(
-        title=title,
-        category=category,
-        status="active",
-        priority=priority,
-        risk_level="low",
-    )
-
-
-def test_task_list_sorts_before_pagination(tmp_path: Path):
+def test_semantic_task_filter_and_pagination_precede_serialization(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    _create_project(store, "Zulu project")
-    alpha_id = _create_project(store, "Alpha project")
-    untitled_id = _create_project(store, "")
-    _create_project(store, "Finance project", category="finance")
-    store.create_work_todo(
-        project_id=alpha_id,
-        title="Open item",
-        status="open",
-        priority="P1",
-    )
+    store.create_work_project(title="Legacy project", category="dev", status="active", priority="P1", risk_level="low")
+    older = store.create_business_task(title="Alpha", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant", now=datetime(2026, 9, 1, tzinfo=timezone.utc))
+    store.create_business_task(title="Excluded candidate", stage="candidate", business_relevance="relevant")
+    newer = store.create_business_task(title="Beta", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant", now=datetime(2026, 9, 2, tzinfo=timezone.utc))
 
-    ascending = task_list_response(
-        store,
-        page=1,
-        page_size=1,
-        sort="project_asc",
-    )
-    descending = task_list_response(
-        store,
-        page=1,
-        page_size=1,
-        sort="project_desc",
-    )
+    first = business_task_list_response(store, page=1, page_size=1, stage="formal")
+    second = business_task_list_response(store, page=2, page_size=1, stage="formal")
 
-    assert ascending.items[0].title == "Alpha project"
-    assert ascending.meta.total == 4
-    assert descending.items[0].title == "Zulu project"
-    assert ascending.filters.categories == ["dev", "finance"]
-    assert ascending.filters.task_states == ["in progress", "not started"]
-    untitled = task_list_response(
-        store,
-        page=1,
-        page_size=10,
-    )
-    untitled_item = next(item for item in untitled.items if item.id == untitled_id)
-    assert untitled_item.title == f"[数据异常：标题缺失，Project {untitled_id}]"
-    assert untitled_item.integrity_issues == ["missing_title"]
+    assert first.meta.total == second.meta.total == 2
+    assert [first.items[0].id, second.items[0].id] == [newer, older]
+    assert first.items[0].detail_url == f"/tasks/item/{newer}"
+    assert "project_status" not in first.items[0].model_dump()
 
 
-def test_task_list_excludes_archived_by_default_but_keeps_archive_filter(tmp_path: Path):
+def test_semantic_task_query_filters_before_page(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    active_id = _create_project(store, "Active project")
-    archived_id = store.create_work_project(
-        title="Archived project",
-        category="dev",
-        status="archived",
-        priority="P2",
-        risk_level="low",
-    )
-
-    default_response = task_list_response(store, page=1, page_size=10)
-    archived_response = task_list_response(
-        store,
-        page=1,
-        page_size=10,
-        task_state="archived",
-    )
-
-    assert [item.id for item in default_response.items] == [active_id]
-    assert "archived" in default_response.filters.task_states
-    assert [item.id for item in archived_response.items] == [archived_id]
-    assert archived_response.items[0].status == "archived"
-
-
-def test_task_list_uses_business_priority_order(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    _create_project(store, "Low project", priority="P2")
-    _create_project(store, "High project", priority="P0")
-
-    response = task_list_response(
-        store,
-        page=1,
-        page_size=1,
-        sort="priority_desc",
-    )
-
-    assert response.items[0].title == "High project"
+    store.create_business_task(title="Customer renewal", stage="candidate")
+    wanted = store.create_business_task(title="Revenue forecast", stage="candidate")
+    response = business_task_list_response(store, page=1, page_size=1, query="revenue")
+    assert response.meta.total == 1
+    assert response.items[0].id == wanted

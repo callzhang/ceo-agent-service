@@ -267,13 +267,6 @@ class WorkItem(BaseModel):
     scheduled_consumer: dict[str, object] = Field(default_factory=dict)
 
 
-class ProjectFact(StrictTaskModel):
-    description: str
-    source: str
-    created: str = ""
-    updated: str = ""
-
-
 class ProjectMemoryContextItem(StrictTaskModel):
     source: str = "memory_recall"
     uuid: str = ""
@@ -286,81 +279,6 @@ class ProjectMemoryContext(StrictTaskModel):
     query: str = ""
     summary: str = ""
     memories: list[ProjectMemoryContextItem] = Field(default_factory=list)
-
-
-class TaskProjectPatch(StrictTaskModel):
-    id: int | None = None
-    title: str = ""
-    category: ProjectCategory = ProjectCategory.OTHER
-    tags: list[str] = Field(default_factory=list)
-    status: ProjectStatus = ProjectStatus.ACTIVE
-    priority: ProjectPriority = ProjectPriority.NONE
-    risk_level: RiskLevel = RiskLevel.NONE
-    needs_derek_attention: bool = False
-    owner_user_id: str = ""
-    owner_name: str = ""
-    owner_evidence: dict[str, Any] = Field(default_factory=dict)
-    related_people: list[dict[str, str]] = Field(default_factory=list)
-    goal: str = ""
-    background: str = ""
-    memory_context: ProjectMemoryContext = Field(default_factory=ProjectMemoryContext)
-    facts: list[ProjectFact] = Field(default_factory=list)
-    current_state: str = ""
-    blocker: str = ""
-    next_step: str = ""
-    next_follow_up_at: str = ""
-    follow_up_mode: FollowUpMode = FollowUpMode.NONE
-    source_conversations: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class TodoChange(StrictTaskModel):
-    action: Literal["create", "update", "close", "cancel"]
-    todo_id: int | None = None
-    todo_ref: str = ""
-    title: str = ""
-    description: str = ""
-    owner_user_id: str = ""
-    owner_name: str = ""
-    status: TodoStatus = TodoStatus.OPEN
-    priority: ProjectPriority = ProjectPriority.NONE
-    deadline_at: str = ""
-    next_follow_up_at: str = ""
-    follow_up_question: str = ""
-    owner_evidence: dict[str, Any] = Field(default_factory=dict)
-    completion_evidence: dict[str, Any] | None = None
-    blocker: str = ""
-
-
-class FollowUpDraftDecision(StrictTaskModel):
-    todo_id: int | None = None
-    todo_ref: str = ""
-    title: str
-    description: str
-    owner_user_id: str = ""
-    owner_name: str = ""
-    owners: list[dict[str, str]] = Field(default_factory=list)
-    target_conversation_id: str = ""
-    target_kind: Literal["group", "direct"]
-    question_text: str
-    scheduled_at: str = ""
-    priority: ProjectPriority = ProjectPriority.NONE
-    tags: list[str] = Field(default_factory=list)
-    participants: list[dict[str, str]] = Field(default_factory=list)
-    files: list[dict[str, str]] = Field(default_factory=list)
-    risk_check: dict[str, Any] = Field(default_factory=dict)
-    status: FollowUpDraftStatus = FollowUpDraftStatus.DRAFT
-
-
-class FollowUpDraftChange(StrictTaskModel):
-    follow_up_id: int
-    todo_id: int | None = None
-    action: Literal["suppress", "close", "reschedule", "reassign", "keep_open"]
-    reason: str = ""
-    evidence_check: dict[str, Any] = Field(default_factory=dict)
-    next_due_at: str | None = None
-    owner_user_id: str | None = None
-    owner_name: str | None = None
-    owner_evidence: dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskDateEvidence(StrictTaskModel):
@@ -560,8 +478,15 @@ class CompletionSearchTrace(StrictTaskModel):
 
 class CompletionTodoChange(StrictTaskModel):
     action: Literal["close"]
-    todo_id: int = Field(gt=0)
+    todo_id: int | None = Field(default=None, gt=0)
+    business_task_id: int | None = Field(default=None, gt=0)
     completion_evidence: dict[str, Any]
+
+    @model_validator(mode="after")
+    def one_target(self) -> "CompletionTodoChange":
+        if (self.todo_id is None) == (self.business_task_id is None):
+            raise ValueError("completion requires exactly one Task or legacy TODO ID")
+        return self
 
 
 class CompletionFollowUpChange(StrictTaskModel):

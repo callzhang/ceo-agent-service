@@ -941,6 +941,10 @@ def apply_task_agent_decision(
                 deliverable_is_explicit=bool(item.title.strip()),
                 owner_is_explicit=bool(item.owner_user_id.strip() or item.owner_name.strip()),
             )
+            task_before = (
+                store.get_business_task_in_transaction(task_id=item.task_id, _db=db)
+                if item.task_id is not None else None
+            )
             if item.action == "record_candidate":
                 result = service.record_candidate(RecordCandidate(
                     title=item.title,
@@ -1040,6 +1044,78 @@ def apply_task_agent_decision(
             task_id = result.task_id
             task_ids.append(task_id)
             affected_task_ids.append(task_id)
+            task_after = store.get_business_task_in_transaction(task_id=task_id, _db=db)
+            if (
+                task_before is not None
+                and task_before.status.value != "done"
+                and task_after is not None
+                and task_after.status.value == "done"
+            ):
+                completion_evidence = {
+                    "source": item.source_ref,
+                    "source_signal_id": result.signal_id,
+                    "source_excerpt": item.source_excerpt,
+                    "reason": item.update_summary or "Source confirms Task completion.",
+                }
+                db.execute(
+                    "update business_task_follow_ups set status='completed', "
+                    "evidence_check_json=?, suppressed_reason=?, updated_at=current_timestamp "
+                    "where business_task_id=? and status in ('draft','approved','sent')",
+                    (json.dumps(completion_evidence, ensure_ascii=False),
+                     completion_evidence["reason"], task_id),
+                )
+                linked_todo = db.execute(
+                    "select 1 from business_task_dingtalk_links where business_task_id=? "
+                    "and status in ('creating','active') limit 1", (task_id,),
+                ).fetchone()
+                if linked_todo is not None:
+                    store.enqueue_business_task_todo_sync_outbox(
+                        operation_key=f"task-agent:{summary_input_id}:business-task:{task_id}:complete",
+                        business_task_id=task_id, operation="complete",
+                        evidence_json=json.dumps(completion_evidence, ensure_ascii=False),
+                        _db=db,
+                    )
+            next_checks = (
+                fact for fact in date_facts
+                if fact.date_type is BusinessTaskDateType.NEXT_CHECK_AT
+            )
+            if (
+                task_after is not None
+                and task_after.stage.value == "formal"
+                and task_after.status.value in {"open", "waiting"}
+                and task_after.owner_user_id.strip()
+                and work_item.source.conversation_id.strip()
+                and work_item.context.source_conversation_kind.value in {"group", "direct"}
+            ):
+                for check in next_checks:
+                    store.create_business_task_follow_up(
+                        business_task_id=task_id,
+                        source_signal_id=result.signal_id,
+                        target_conversation_id=work_item.source.conversation_id,
+                        target_kind=work_item.context.source_conversation_kind.value,
+                        question_text=f"请确认「{task_after.title}」的当前进展与下一步。",
+                        scheduled_at=check.value_at,
+                        owner_user_id=task_after.owner_user_id,
+                        owner_name=task_after.owner_name,
+                        dedupe_key=f"business-task:{task_id}:signal:{result.signal_id}:next-check:{check.value_at}",
+                        _db=db,
+                    )
+            if (
+                task_after is not None
+                and task_after.stage.value == "formal"
+                and task_after.status.value in {"open", "waiting"}
+                and task_after.commitment_status.value == "accepted"
+                and task_after.owner_user_id.strip()
+                and db.execute(
+                    "select 1 from business_task_date_evidence where task_id=? "
+                    "and date_type='committed_deadline_at' and trim(value_at)<>'' limit 1",
+                    (task_id,),
+                ).fetchone() is not None
+            ):
+                store.enqueue_business_task_todo_sync_outbox(
+                    operation_key=f"task-agent:{summary_input_id}:business-task:{task_id}:create",
+                    business_task_id=task_id, operation="create", _db=db,
+                )
             if item.transition == "merge_identity" and item.identity_proposal is not None:
                 affected_task_ids.extend((
                     item.identity_proposal.source_task_id,

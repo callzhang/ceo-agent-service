@@ -600,6 +600,18 @@ git commit -m "feat(tasks): derive traceable CEO attention items"
 - Modify: `tests/test_task_retrieval.py`
 - Modify: `docs/architecture.md`
 - Modify: `docs/runtime-mechanism.md`
+
+**Approved Task 7 semantic limits (2026-09-24):**
+
+- Mirror only a formal Task with an explicit source-backed owner, `accepted`
+  commitment, and a parseable `committed_deadline_at` fact. Do not derive a
+  DingTalk TODO due date from requested, external, estimated, or next-check
+  dates.
+- Create a Task follow-up only when its linked source signal carries the exact
+  conversation/recipient context and the Task has a parseable `next_check_at`.
+  Preserve that source target exactly; do not infer a target or schedule from a
+  deadline. The follow-up question may summarize the current Task state but
+  must not create a new Task.
 - Modify: `app/task_semantic_models.py`, `app/store.py`, `app/task_semantic_service.py`, and `app/task_semantic_rules.py` for typed date evidence and evidence-derived transitions
 - Modify: relevant semantic storage/service/rules tests
 - Modify: `/Users/derek/.agents/skills/ceo-work-tracking/SKILL.md`, the Skill loaded by the Task Agent
@@ -836,11 +848,15 @@ git commit -m "refactor(tasks): make task agent task-first"
 - Modify: `app/task_progress.py`
 - Modify: `app/task_lifecycle.py`
 - Modify: `app/cli.py`
+- Modify: `app/dispatcher/adapters.py`
+- Modify: `app/task_completion_agent.py`
 - Modify: `tests/test_follow_up.py`
 - Modify: `tests/test_todo_sync.py`
 - Modify: `tests/test_todo_completion.py`
 - Modify: `tests/test_task_lifecycle.py`
 - Modify: `tests/test_task_store.py`
+- Modify: `tests/test_consumer_dispatcher.py`
+- Modify: `tests/test_task_completion_agent.py`
 - Modify: `docs/architecture.md`
 - Modify: `docs/runtime-mechanism.md`
 
@@ -952,7 +968,7 @@ Expected: FAIL because import planner is absent.
 class LegacyImportItem:
     legacy_project_id: int
     legacy_todo_ids: tuple[int, ...]
-    disposition: Literal["formal_task", "candidate", "official_project_match", "unresolved"]
+    disposition: Literal["formal_task", "official_project_match", "history_only"]
     evidence_refs: tuple[str, ...]
     semantic_task: dict[str, object] | None
     official_project_registry_key: str
@@ -967,7 +983,7 @@ class TaskSemanticImportManifest:
     items: tuple[LegacyImportItem, ...]
 ```
 
-The planner may import a legacy TODO as a formal Task only when its stored source evidence proves one of the four formal bases. A legacy Project becomes official only when it matches a pre-registered official Project key. Everything else gets `unresolved` and remains reachable through legacy history.
+The planner may import a legacy TODO as a formal Task only when its stored source evidence proves one of the four formal bases. A legacy Project becomes official only when it matches a pre-registered official Project key. Evidence-insufficient and candidate-only records are `history_only`: they stay reachable through the existing history route and are not copied into candidates, semantic signals, or default Attention. Rows are not merged on title similarity; only exact same-deliverable evidence (such as the same external Task ID) may authorize consolidation, preserving each source-row link. Before proposing a merge, count duplicate nonblank external Task IDs; title-only matches are explicitly not merge evidence.
 
 - [ ] **Step 4: Implement plan/apply CLI commands**
 
@@ -991,7 +1007,7 @@ cp data/service.sqlite3 "$tmp_dir/service.sqlite3"
 CEO_DB_PATH="$tmp_dir/service.sqlite3" .venv/bin/python -m app.cli task-semantic-import-plan --output "$tmp_dir/manifest.json" --limit 100
 ```
 
-Expected: tests PASS; the plan reports formal/candidate/project-match/unresolved counts and makes no database writes. Do not run `task-semantic-import-apply` on the live database in this task.
+Expected: tests PASS; the plan reports formal-task, exact project-match, and history-only counts and makes no database writes. Do not run `task-semantic-import-apply` on the live database in this task.
 
 - [ ] **Step 6: Commit**
 
@@ -1363,8 +1379,8 @@ Create and verify a SQLite online backup using the repository’s established ba
 - formal Tasks proposed;
 - candidates proposed;
 - official Project matches proposed;
-- unresolved legacy rows;
-- duplicate/dedupe counts;
+- history-only legacy rows;
+- duplicate nonblank external Task IDs eligible for a merge (never title-only guesses), plus rows missing an external ID;
 - manifest ID and database fingerprint.
 
 Do not run the live `apply` command without Derek’s explicit approval after he sees this report.

@@ -226,7 +226,7 @@ def test_console_api_reuses_the_initialized_audit_store(
     with _client(tmp_path, spa_enabled=True) as client:
         constructed_for_app = len(constructions)
         assert client.get("/api/console/tasks").status_code == 200
-        assert client.get("/api/console/tasks/836").status_code in {200, 404}
+        assert client.get("/api/console/tasks/legacy-projects/836").status_code in {200, 404}
 
     assert constructed_for_app == 1
     assert len(constructions) == constructed_for_app
@@ -622,28 +622,9 @@ def test_console_tasks_endpoint_returns_paginated_json_envelope_and_serializable
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    first_id = _project(store, "First project")
-    second_id = _project(store, "Second project")
-    store.create_work_todo(
-        project_id=first_id,
-        title="Prepare release",
-        status="open",
-        priority="P1",
-    )
-    store.create_work_todo(
-        project_id=second_id,
-        title="Review release",
-        status="done",
-        priority="P2",
-    )
-    owner_fallback_id = _project(store, "Owner fallback project")
-    store.create_work_todo(
-        project_id=owner_fallback_id,
-        title="Confirm owner fallback",
-        owner_name="Avery",
-        status="open",
-        priority="P1",
-    )
+    _project(store, "Historical project")
+    first_id = store.create_business_task(title="Prepare release", stage="formal", formal_basis="explicit_assignment")
+    second_id = store.create_business_task(title="Review release", stage="formal", formal_basis="explicit_assignment")
 
     with _client(tmp_path) as client:
         response = client.get("/api/console/tasks?page=1&page_size=10")
@@ -652,103 +633,43 @@ def test_console_tasks_endpoint_returns_paginated_json_envelope_and_serializable
     payload = response.json()
     assert payload["meta"]["page"] == 1
     assert payload["meta"]["page_size"] == 10
-    assert payload["meta"]["total"] == 3
+    assert payload["meta"]["total"] == 2
     assert payload["meta"]["next_cursor"] == ""
     assert payload["meta"]["has_more"] is False
-    assert {item["id"] for item in payload["items"]} == {first_id, second_id, owner_fallback_id}
-    assert any(item["owner"] == "Avery" for item in payload["items"])
+    assert {item["id"] for item in payload["items"]} == {first_id, second_id}
+    assert all(item["detail_url"].startswith("/tasks/item/") for item in payload["items"])
     assert "[object Object]" not in json.dumps(payload, ensure_ascii=False)
 
 
-def test_console_tasks_endpoint_keeps_owner_name_distinct_from_display_owner(
+def test_console_tasks_endpoint_displays_task_owner_without_legacy_fields(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = _project(store, "Multi owner project")
-    store.create_work_todo(
-        project_id=project_id,
-        title="TODO A",
-        owner_name="孙伟",
-        owner_user_id="owner-1",
-        status="open",
-        priority="P1",
-    )
-    store.create_work_todo(
-        project_id=project_id,
-        title="TODO B",
-        owner_name="张晓民",
-        owner_user_id="owner-2",
-        status="open",
-        priority="P1",
-    )
+    task_id = store.create_business_task(title="Assigned task", stage="formal", formal_basis="explicit_assignment", owner_name="孙伟", owner_user_id="owner-1")
 
     with _client(tmp_path) as client:
         response = client.get("/api/console/tasks?page=1&page_size=10")
 
     item = response.json()["items"][0]
     assert response.status_code == 200
-    assert item["owner"] == "多人：孙伟、张晓民"
-    assert item["owner_name"] == ""
-    assert item["owner_user_id"] == ""
+    assert item["id"] == task_id
+    assert item["owner"] == "孙伟"
+    assert "owner_name" not in item
+    assert "owner_user_id" not in item
 
 
-def test_console_tasks_endpoint_counts_completed_followups_and_dingtalk_links_as_progress(
+def test_console_tasks_endpoint_does_not_project_legacy_progress_as_semantic_tasks(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = _project(store, "Progress project")
-    store.create_work_todo(
-        project_id=project_id,
-        title="Still open",
-        status="open",
-        priority="P1",
-    )
-    follow_up_done_todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="Confirmed by follow-up",
-        status="open",
-        priority="P1",
-    )
-    dingtalk_done_todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="Checked in DingTalk Todo",
-        status="open",
-        priority="P1",
-    )
-    store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=follow_up_done_todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="这项完成了吗？",
-        scheduled_at="2026-08-29 09:00:00",
-        status="completed",
-    )
-    store.create_work_todo_dingtalk_link(
-        work_todo_id=dingtalk_done_todo_id,
-        dingtalk_task_id="dt-task-1",
-        executor_user_id="owner-2",
-        executor_name="Avery",
-        title_snapshot="Checked in DingTalk Todo",
-        deadline_at_snapshot="2026-08-29 18:00:00",
-        priority_snapshot="P1",
-        status="done",
-        last_dingtalk_done=True,
-    )
+    _project(store, "Historical progress project")
 
     with _client(tmp_path) as client:
         response = client.get("/api/console/tasks?page=1&page_size=10")
 
     assert response.status_code == 200
-    item = response.json()["items"][0]
-    assert item["id"] == project_id
-    assert item["progress_count"] == 2
-    assert item["progress_total"] == 3
-    assert item["progress_ratio"] == 67
-    assert item["open_count"] == 1
-    assert item["open_ratio"] == 33
+    assert response.json()["items"] == []
+    assert response.json()["meta"]["total"] == 0
 
 
 def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
@@ -782,7 +703,7 @@ def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
     )
 
     with _client(tmp_path) as client:
-        response = client.get(f"/api/console/tasks/{project_id}")
+        response = client.get(f"/api/console/tasks/legacy-projects/{project_id}")
 
     assert response.status_code == 200
     item = response.json()["item"]
@@ -812,7 +733,7 @@ def test_console_task_detail_builds_payload_inside_one_read_snapshot(
     monkeypatch.setattr(registration_module, "task_detail", fake_task_detail)
 
     with _client(tmp_path) as client:
-        response = client.get("/api/console/tasks/836")
+        response = client.get("/api/console/tasks/legacy-projects/836")
 
     assert response.status_code == 404
     assert seen_snapshot_connections == [True]
@@ -1039,7 +960,7 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
     assert task_response.status_code == 200
     task_payload = task_response.json()
     task_item = next(item for item in task_payload["items"] if item["id"] == str(update_id))
-    assert task_item["detail_url"] == f"/tasks/{project_id}"
+    assert task_item["detail_url"] == f"/tasks/legacy-project/{project_id}"
     assert task_item["kind"] == "task"
     assert task_item["type"] == "task"
     assert task_item["title"] == "History project"
@@ -2838,7 +2759,7 @@ def test_console_sent_todos_endpoint_returns_structured_rows_before_project_rout
             "priority": "high",
             "target": "task-7",
             "external_id": "task-7",
-            "detail_url": "/tasks/836#todo-12",
+            "detail_url": "/tasks/legacy-project/836#todo-12",
         }
     ]
 
@@ -2851,7 +2772,9 @@ def test_spa_mode_serves_same_react_index_for_business_deep_links_and_keeps_api_
         "/",
         "/history",
         "/tasks",
-        "/tasks/836",
+        "/tasks/legacy-project/836",
+        "/tasks/item/1",
+        "/tasks/project/1",
         "/settings",
         "/user-feedback",
         "/tutorial",

@@ -3,72 +3,78 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const listTasks = vi.hoisted(() => vi.fn());
-const listSentTodos = vi.hoisted(() => vi.fn());
-vi.mock("../api/console", () => ({ listTasks, listSentTodos }));
-
+const api = vi.hoisted(() => ({ attention: vi.fn(), tasks: vi.fn(), projects: vi.fn() }));
+vi.mock("../api/console", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/console")>()),
+  listBusinessAttention: api.attention,
+  listBusinessTasks: api.tasks,
+  listBusinessProjects: api.projects,
+}));
 import { TasksPage } from "./TasksPage";
+
+const meta = { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-09-24T08:00:00Z" };
+const attention = { id: "7", category: "watch", business_area: "海外业务", title: "美国客户报价", why_attention: "客户等待首版报价", current_state: "负责人已接单", ceo_action: "当前无需处理", anchor_label: "美国市场", linked_task_count: 2, updated_at: "2026-09-24T08:00:00Z", detail_url: "/tasks/attention/7" };
+const routine = { id: "9", title: "整理办公室绿植", stage: "formal", status: "open", commitment_status: "accepted", owner: "Avery", deadline_at: "", business_relevance: "not_relevant", anchor_labels: [], updated_at: "2026-09-24T08:00:00Z", detail_url: "/tasks/item/9" };
 
 describe("TasksPage", () => {
   beforeEach(() => {
-    listTasks.mockResolvedValue({
-      items: [{ id: "836", title: "客户项目", status: "active", category: "projects", priority: "high", risk: "low", owner: "Shawn", progress: "3/5", todo_count: 5, state_summary: "等待客户确认", next_summary: "准备下一次同步" }],
-      meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" },
-    });
-    listSentTodos.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    vi.clearAllMocks();
+    api.attention.mockResolvedValue({ items: [attention], meta });
+    api.tasks.mockResolvedValue({ items: [routine], meta });
+    api.projects.mockResolvedValue({ items: [], candidates: [], candidate_meta: { ...meta, total: 0 }, meta: { ...meta, total: 0 } });
   });
 
-  it("renders task summaries and exposes a detail route", async () => {
-    render(<MemoryRouter><TasksPage /></MemoryRouter>);
-
-    expect(await screen.findByRole("link", { name: "查看详情 客户项目" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "查看详情 客户项目" })).toHaveAttribute("href", "/tasks/836");
-    expect(screen.getByText("5 个 TODO")).toBeInTheDocument();
+  it("defaults to 需关注 and shows the approved attention card without unrelated routine work", async () => {
+    render(<MemoryRouter initialEntries={["/tasks"]}><TasksPage /></MemoryRouter>);
+    const card = await screen.findByRole("article", { name: "美国客户报价" });
+    expect(screen.getByRole("link", { name: "需关注" })).toHaveAttribute("href", "/tasks");
+    expect(screen.getByRole("link", { name: "全部任务" })).toHaveAttribute("href", "/tasks?view=all");
+    expect(screen.getByRole("link", { name: "正式项目" })).toHaveAttribute("href", "/tasks?view=projects");
+    for (const text of ["持续观察", "海外业务", "客户等待首版报价", "负责人已接单", "当前无需处理", "美国市场", "2 个关联任务"]) expect(within(card).getByText(text)).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "美国客户报价" })).toHaveAttribute("href", "/tasks/attention/7");
+    expect(screen.queryByText("整理办公室绿植")).not.toBeInTheDocument();
+    expect(api.tasks).not.toHaveBeenCalled();
   });
 
-  it("shows a one-line explanation instead of a visible page title", async () => {
-    render(<MemoryRouter><TasksPage /></MemoryRouter>);
-
-    expect(await screen.findByText("跟踪项目任务的状态、负责人与进度，以及任务维护已发出的 TODO 和跟进消息。")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Tasks" })).toHaveClass("sr-only");
-    expect(screen.queryByText("CEO AGENT CONSOLE")).not.toBeInTheDocument();
-  });
-
-  it("keeps the legacy task workspace controls and sent TODO section", async () => {
-    render(<MemoryRouter><TasksPage /></MemoryRouter>);
-
-    expect(await screen.findByRole("region", { name: "Tasks workspace" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "类型" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "状态" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "排序" })).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Tasks" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Sent TODOs" })).toBeInTheDocument();
-  });
-
-  it("requests real server pages for tasks and sent TODOs", async () => {
+  it("filters the four attention categories", async () => {
     const user = userEvent.setup();
-    listTasks.mockResolvedValue({
-      items: [{ id: "836", title: "客户项目", status: "active", category: "projects", priority: "high", risk: "low", owner: "Shawn", progress: "3/5", todo_count: 5, state_summary: "等待客户确认", next_summary: "准备下一次同步" }],
-      meta: { page: 1, page_size: 20, total: 45, next_cursor: "2", has_more: true, snapshot_at: "2026-08-29T00:00:00Z" },
-      filters: { categories: ["finance", "projects"], task_states: ["active", "completed"] },
+    render(<MemoryRouter initialEntries={["/tasks"]}><TasksPage /></MemoryRouter>);
+    expect(await screen.findByRole("article", { name: "美国客户报价" })).toBeInTheDocument();
+    for (const label of ["仅需知晓", "持续观察", "需要决策", "需要推动"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "需要决策" }));
+    expect(api.attention).toHaveBeenLastCalledWith(expect.objectContaining({ category: "decision" }), expect.anything());
+  });
+
+  it("keeps unrelated tasks in 全部任务 and marks candidates as provisional", async () => {
+    api.tasks.mockResolvedValue({ items: [routine, { ...routine, id: "10", title: "讨论拓展方案", stage: "candidate", detail_url: "/tasks/item/10" }], meta: { ...meta, total: 2 } });
+    render(<MemoryRouter initialEntries={["/tasks?view=all"]}><TasksPage /></MemoryRouter>);
+    expect(await screen.findByRole("link", { name: "整理办公室绿植" })).toHaveAttribute("href", "/tasks/item/9");
+    expect(screen.getByText("候选任务")).toBeInTheDocument();
+    expect(api.attention).not.toHaveBeenCalled();
+  });
+
+  it("shows provisional project candidates separately from the official count", async () => {
+    api.projects.mockResolvedValue({ items: [], candidates: [{ id: "4", title: "海外渠道拓展", reason: "两项关联任务", status: "proposed", cluster_id: 2, provisional: true, confirmed_project_id: null }, { id: "5", title: "已确认候选记录", reason: "已转正式项目", status: "confirmed", cluster_id: 3, provisional: false, confirmed_project_id: 9 }], candidate_meta: { ...meta, total: 1 }, meta: { ...meta, total: 0 } });
+    render(<MemoryRouter initialEntries={["/tasks?view=projects"]}><TasksPage /></MemoryRouter>);
+    expect(await screen.findByText("海外渠道拓展")).toBeInTheDocument();
+    expect(screen.getByText("候选项目 · 尚未确认")).toBeInTheDocument();
+    expect(screen.getByText("正式项目 0 个")).toBeInTheDocument();
+    expect(screen.queryByText("已确认候选记录")).not.toBeInTheDocument();
+  });
+
+  it("pages project candidates independently from official projects", async () => {
+    const user = userEvent.setup();
+    const candidateMeta = { ...meta, page: 1, page_size: 20, total: 21, has_more: true, next_cursor: "candidate-page-2" };
+    api.projects.mockResolvedValue({
+      items: [],
+      candidates: [{ id: "4", title: "海外渠道拓展", reason: "待确认", status: "proposed", cluster_id: 2, provisional: true, confirmed_project_id: null }],
+      candidate_meta: candidateMeta,
+      meta: { ...meta, total: 0 },
     });
-    listSentTodos.mockResolvedValue({
-      items: [{ id: "sent-1", kind: "follow_up", kind_label: "Follow-up", sent_at: "2026-08-29", status: "sent", owner: "Alex", project_title: "客户项目", todo_title: "确认结果", description: "确认结果", original_text: "确认结果", deadline: "", priority: "", target: "cid", external_id: "", detail_url: "/tasks/836" }],
-      meta: { page: 1, page_size: 20, total: 45, next_cursor: "2", has_more: true, snapshot_at: "2026-08-29T00:00:00Z" },
-    });
-
-    render(<MemoryRouter initialEntries={["/tasks?sort=project_asc"]}><TasksPage /></MemoryRouter>);
-
-    expect(await screen.findByRole("link", { name: "查看详情 客户项目" })).toBeInTheDocument();
-    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ page: 1, page_size: 20, sort: "project_asc" }), expect.anything());
-    expect(listSentTodos).toHaveBeenCalledWith(expect.objectContaining({ page: 1, page_size: 20 }), expect.anything());
-    expect(screen.getByRole("option", { name: "finance" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "completed" })).toBeInTheDocument();
-
-    await user.click(within(screen.getByRole("navigation", { name: "Task pages" })).getByRole("button", { name: "下一页" }));
-    await waitFor(() => expect(listTasks).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, page_size: 20 }), expect.anything()));
-
-    await user.click(within(screen.getByRole("navigation", { name: "Sent TODO pages" })).getByRole("button", { name: "下一页" }));
-    await waitFor(() => expect(listSentTodos).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, page_size: 20 }), expect.anything()));
+    render(<MemoryRouter initialEntries={["/tasks?view=projects&page=1&candidate_page=1"]}><TasksPage /></MemoryRouter>);
+    expect(await screen.findByText("海外渠道拓展")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "项目线索分页" })).toHaveTextContent("1 / 2");
+    await user.click(screen.getByRole("button", { name: "项目线索下一页" }));
+    await waitFor(() => expect(api.projects).toHaveBeenLastCalledWith(expect.objectContaining({ candidate_page: 2 }), expect.anything()));
   });
 });

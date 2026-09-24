@@ -21,7 +21,10 @@ from app.task_models import (
     owner_identity_is_supported,
 )
 from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID
-from app.todo_completion import close_todo_with_completion_evidence
+from app.todo_completion import (
+    close_business_task_with_completion_evidence,
+    close_todo_with_completion_evidence,
+)
 
 TaskCompletionDecision = TaskAgentDecision
 
@@ -58,6 +61,10 @@ def validate_task_completion_decision(
     policy = _completion_search_policy(summary)
     todo = summary.get("todo")
     expected_todo_id = _positive_id(todo.get("id")) if isinstance(todo, dict) else 0
+    business_task = summary.get("business_task")
+    expected_business_task_id = (
+        _positive_id(business_task.get("id")) if isinstance(business_task, dict) else 0
+    )
     follow_up_ids = _linked_follow_up_ids(summary)
 
     if source_type == WorkItemSourceType.FOLLOW_UP_COMPLETION_CHECK:
@@ -75,6 +82,14 @@ def validate_task_completion_decision(
             for change in decision.follow_up_changes
         ):
             raise ValueError("follow-up operation targets an unlinked TODO")
+    elif expected_business_task_id:
+        if any(
+            change.business_task_id != expected_business_task_id
+            for change in decision.todo_changes
+        ):
+            raise ValueError("decision targets an unlinked Task")
+        if decision.follow_up_changes:
+            raise ValueError("Task completion check cannot change an unlinked follow-up")
     else:
         if not expected_todo_id:
             raise ValueError("TODO completion check lacks linked TODO")
@@ -190,6 +205,7 @@ def _apply_task_completion_decision_in_transaction(
     sync_external_todo: bool, db: sqlite3.Connection,
 ) -> bool:
     closed_todo = 0
+    closed_business_task = 0
     closed_evidence: dict[str, Any] = {}
     search_trace = [entry.model_dump(mode="json") for entry in decision.search_trace]
     for change in decision.todo_changes:
@@ -198,6 +214,14 @@ def _apply_task_completion_decision_in_transaction(
             "checked_at": effective_now,
             "search_trace": search_trace,
         }
+        if change.business_task_id is not None:
+            if close_business_task_with_completion_evidence(
+                store, business_task_id=change.business_task_id, evidence=evidence,
+                source_type=work_item.source.type.value, _db=db,
+            ):
+                closed_business_task = change.business_task_id
+                closed_evidence = evidence
+            continue
         if close_todo_with_completion_evidence(
             store,
             todo_id=change.todo_id,
@@ -212,7 +236,15 @@ def _apply_task_completion_decision_in_transaction(
             closed_evidence = evidence
 
     for change in decision.follow_up_changes:
-        _apply_follow_up_change(store, change, now=effective_now, _db=db)
+        summary = _json_dict(work_item.summary)
+        task_blob = summary.get("business_task")
+        task_id = _positive_id(task_blob.get("id")) if isinstance(task_blob, dict) else 0
+        if task_id:
+            _apply_business_task_follow_up_change(
+                store, change, business_task_id=task_id, now=effective_now, db=db,
+            )
+        else:
+            _apply_follow_up_change(store, change, now=effective_now, _db=db)
 
     if closed_todo and sync_external_todo:
         store.enqueue_task_todo_sync_outbox(
@@ -222,6 +254,19 @@ def _apply_task_completion_decision_in_transaction(
             evidence_json=json.dumps(closed_evidence, ensure_ascii=False, separators=(",", ":")),
             _db=db,
         )
+    if closed_business_task and sync_external_todo:
+        link = db.execute(
+            "select 1 from business_task_dingtalk_links where business_task_id=? "
+            "and status in ('creating','active') limit 1", (closed_business_task,),
+        ).fetchone()
+        if link is not None:
+            store.enqueue_business_task_todo_sync_outbox(
+                operation_key=f"task-agent:{summary_input_id}:business-task:{closed_business_task}:complete",
+                business_task_id=closed_business_task,
+                operation="complete",
+                evidence_json=json.dumps(closed_evidence, ensure_ascii=False, separators=(",", ":")),
+                _db=db,
+            )
 
     if work_item.source.type == WorkItemSourceType.TODO_COMPLETION_EVIDENCE_CANDIDATE:
         candidate = store.get_todo_evidence_candidate_by_work_summary_input(
@@ -234,7 +279,7 @@ def _apply_task_completion_decision_in_transaction(
                 decision_json=json.dumps(decision.model_dump(mode="json"), ensure_ascii=False),
                 _db=db,
             )
-    return bool(closed_todo or decision.follow_up_changes)
+    return bool(closed_todo or closed_business_task or decision.follow_up_changes)
 
 
 def process_task_completion_work_item(
@@ -329,7 +374,10 @@ def process_task_completion_work_item(
         _project_task_attention(
             store,
             task_result.attention_proposals,
-            task_result.affected_task_ids,
+            tuple(dict.fromkeys((
+                *task_result.affected_task_ids,
+                *(change.business_task_id for change in decision.todo_changes if change.business_task_id is not None),
+            ))),
         )
     except Exception as exc:
         _mark_candidate_error(store, work_input.id, str(exc))
@@ -462,6 +510,61 @@ def _apply_follow_up_change(
     store.update_follow_up_draft(change.follow_up_id, _db=_db, **values)
 
 
+def _apply_business_task_follow_up_change(
+    store: AutoReplyStore,
+    change: CompletionFollowUpChange,
+    *,
+    business_task_id: int,
+    now: str,
+    db: sqlite3.Connection,
+) -> None:
+    current = db.execute(
+        "select * from business_task_follow_ups where id=? and business_task_id=?",
+        (change.follow_up_id, business_task_id),
+    ).fetchone()
+    if current is None:
+        raise ValueError("business Task follow-up is not linked to this Task")
+    if db.execute(
+        "select 1 from business_task_follow_up_send_attempts where draft_id=? "
+        "and draft_revision=? and state in ('claimed','sending') limit 1",
+        (change.follow_up_id, current["revision"]),
+    ).fetchone() is not None:
+        raise ValueError("business Task follow-up send is still in progress")
+    values: dict[str, object] = {
+        "evidence_check_json": json.dumps({
+            "source": "task_agent", "action": change.action,
+            "reason": change.reason, "evidence": change.evidence_check,
+            "checked_at": now,
+        }, ensure_ascii=False),
+    }
+    if change.action == "suppress":
+        values.update(status="skipped", suppressed_reason=change.reason)
+    elif change.action == "close":
+        values.update(status="completed", suppressed_reason=change.reason)
+    elif change.action in {"reschedule", "keep_open"}:
+        values.update(
+            status="draft", scheduled_at=change.next_due_at.strip(),
+            suppressed_reason="", send_result_json="{}",
+        )
+    elif change.action == "reassign":
+        final_owner = {
+            "owner_user_id": change.owner_user_id or current["owner_user_id"],
+            "owner_name": change.owner_name or current["owner_name"],
+        }
+        _require_supported_owner(final_owner, change.owner_evidence)
+        values.update(
+            owner_user_id=final_owner["owner_user_id"],
+            owner_name=final_owner["owner_name"],
+            status="draft", suppressed_reason="",
+        )
+    db.execute(
+        "update business_task_follow_ups set "
+        + ", ".join(f"{column}=?" for column in values)
+        + ", revision=revision+1, updated_at=current_timestamp where id=? and business_task_id=?",
+        [*values.values(), change.follow_up_id, business_task_id],
+    )
+
+
 def _mark_candidate_error(store: AutoReplyStore, work_input_id: int, error: str) -> None:
     candidate = store.get_todo_evidence_candidate_by_work_summary_input(work_input_id)
     if candidate is not None:
@@ -496,6 +599,28 @@ def _validate_queued_source_and_persisted_links(
         raise ValueError("processed Work Item differs from the persisted queue payload")
 
     summary = _json_dict(work_item.summary)
+    task_blob = summary.get("business_task")
+    task_id = _positive_id(task_blob.get("id")) if isinstance(task_blob, dict) else 0
+    if task_id:
+        task = store.get_business_task_in_transaction(task_id=task_id, _db=db)
+        if task is None or task.status.value == "merged":
+            raise ValueError("linked Business Task does not exist in persisted state")
+        if work_item.source.type == WorkItemSourceType.FOLLOW_UP_COMPLETION_CHECK:
+            follow_up = summary.get("follow_up")
+            draft_id = _positive_id(follow_up.get("id")) if isinstance(follow_up, dict) else 0
+            draft = db.execute(
+                "select business_task_id, revision from business_task_follow_ups where id=?",
+                (draft_id,),
+            ).fetchone()
+            if (
+                draft is None or draft["business_task_id"] != task_id
+                or work_item.source.ref
+                != f"business-task-follow-up-repair:{draft_id}:{draft['revision']}"
+            ):
+                raise ValueError("follow-up source is not bound to the current Task and revision")
+        elif not work_item.source.ref.startswith(f"business-task-completion-check:{task_id}:"):
+            raise ValueError("completion source is not bound to linked Business Task")
+        return
     todo_blob = summary.get("todo")
     todo_id = _positive_id(todo_blob.get("id")) if isinstance(todo_blob, dict) else 0
     todo = store.get_work_todo(todo_id, _db=db) if todo_id else None

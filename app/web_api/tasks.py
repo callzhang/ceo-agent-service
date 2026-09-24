@@ -14,6 +14,15 @@ from app.task_progress import (
     todo_is_open,
 )
 from app.task_retrieval import load_project_task_detail, resolve_task_owner_display
+from app.task_semantic_models import (
+    BusinessAttentionEvent,
+    BusinessProjectCandidate,
+    BusinessTaskAnchorLink,
+    BusinessTaskDateEvidence,
+    BusinessTaskEvent,
+    BusinessTaskRelation,
+    BusinessTaskSignal,
+)
 from app.web_api.common import (
     ApiItemEnvelope,
     ApiListEnvelope,
@@ -317,7 +326,7 @@ def task_summary(
         "progress_total": progress["total"],
         "progress_ratio": progress["done_ratio"],
         "todo_count": progress["total"],
-        "detail_url": f"/tasks/{project.id}",
+        "detail_url": f"/tasks/legacy-project/{project.id}",
     }
 
 
@@ -353,11 +362,11 @@ def _todo_payload(todo: Any, detail: Any) -> dict[str, Any]:
         "created_at": normalize_display_value(todo.created_at),
         "updated_at": normalize_display_value(todo.updated_at),
         "completed_at": normalize_display_value(todo.completed_at),
-        "detail_url": f"/tasks/{todo.project_id}#todo-{todo.id}",
+        "detail_url": f"/tasks/legacy-project/{todo.project_id}#todo-{todo.id}",
         "follow_ups": [
             {
                 **json_safe(follow_up),
-                "detail_url": f"/tasks/{todo.project_id}#follow-up-{follow_up.id}",
+                "detail_url": f"/tasks/legacy-project/{todo.project_id}#follow-up-{follow_up.id}",
             }
             for follow_up in follow_ups
         ],
@@ -382,7 +391,7 @@ def _evidence_candidate_payload(candidate: Any) -> dict[str, Any]:
         "decision": json_safe(_object_json(candidate.decision_json)),
         "created_at": normalize_display_value(candidate.created_at),
         "updated_at": normalize_display_value(candidate.updated_at),
-        "detail_url": f"/tasks/{candidate.project_id}#evidence-{candidate.id}",
+        "detail_url": f"/tasks/legacy-project/{candidate.project_id}#evidence-{candidate.id}",
     }
 
 
@@ -635,8 +644,8 @@ def sent_todo_payload(record: Any) -> dict[str, str]:
     project_id = int(getattr(record, "project_id", 0) or 0)
     todo_id = int(getattr(record, "todo_id", 0) or 0)
     detail_url = (
-        f"/tasks/{project_id}#todo-{todo_id}" if project_id and todo_id
-        else f"/tasks/{project_id}" if project_id else ""
+        f"/tasks/legacy-project/{project_id}#todo-{todo_id}" if project_id and todo_id
+        else f"/tasks/legacy-project/{project_id}" if project_id else ""
     )
     kind = normalize_display_value(getattr(record, "kind", ""))
     return {
@@ -656,3 +665,363 @@ def sent_todo_payload(record: Any) -> dict[str, str]:
         "external_id": external_id,
         "detail_url": detail_url,
     }
+
+
+def business_task_sent_todo_payload(store: Any, link: Any) -> dict[str, str] | None:
+    external_id = normalize_display_value(link["dingtalk_task_id"])
+    if not external_id:
+        return None
+    task_id = int(link["business_task_id"])
+    task = store.get_business_task(task_id)
+    if task is None:
+        return None
+    return {
+        "id": f"business_task_dingtalk:{link['id']}",
+        "kind": "dingtalk_todo",
+        "kind_label": "DingTalk Todo",
+        "sent_at": normalize_display_value(link["last_push_at"] or link["created_at"]),
+        "status": normalize_display_value(link["status"]),
+        "owner": normalize_display_value(link["executor_name"] or link["executor_user_id"]),
+        "project_title": "",
+        "todo_title": normalize_display_value(link["title_snapshot"] or task.title),
+        "description": normalize_display_value(task.description),
+        "original_text": normalize_display_value(task.title),
+        "deadline": normalize_display_value(link["deadline_at_snapshot"]),
+        "priority": normalize_display_value(link["priority_snapshot"]),
+        "target": external_id,
+        "external_id": external_id,
+        "detail_url": f"/tasks/item/{task_id}",
+    }
+
+
+class ConsoleBusinessAttentionSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int
+    category: str
+    business_area: str
+    title: str
+    why_attention: str
+    current_state: str
+    ceo_action: str
+    anchor_label: str
+    linked_task_count: int
+    updated_at: str
+    detail_url: str
+
+
+class ConsoleBusinessTaskSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int
+    title: str
+    stage: str
+    status: str
+    commitment_status: str
+    owner: str
+    deadline_at: str
+    business_relevance: str
+    anchor_labels: list[str]
+    updated_at: str
+    detail_url: str
+
+
+class ConsoleBusinessProjectSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int
+    title: str
+    registry_source: str
+    canonical_anchor_id: int
+    confirmed_task_count: int
+    detail_url: str
+
+
+class ConsoleBusinessProjectCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int
+    title: str
+    reason: str
+    status: str
+    cluster_id: int
+    provisional: bool
+    confirmed_project_id: int | None
+
+
+class ConsoleBusinessAttentionListEnvelope(ApiListEnvelope):
+    items: list[ConsoleBusinessAttentionSummary] = Field(default_factory=list)
+
+
+class ConsoleBusinessTaskListEnvelope(ApiListEnvelope):
+    items: list[ConsoleBusinessTaskSummary] = Field(default_factory=list)
+
+
+class ConsoleBusinessProjectListEnvelope(ApiListEnvelope):
+    items: list[ConsoleBusinessProjectSummary] = Field(default_factory=list)
+    candidates: list[ConsoleBusinessProjectCandidate] = Field(default_factory=list)
+    candidate_meta: ApiListMeta
+
+
+class ConsoleBusinessAttentionDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    summary: ConsoleBusinessAttentionSummary
+    anchor: dict[str, Any]
+    evidence_signals: list[BusinessTaskSignal]
+    linked_tasks: list[ConsoleBusinessTaskSummary]
+    events: list[BusinessAttentionEvent]
+
+
+class ConsoleBusinessTaskDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    summary: ConsoleBusinessTaskSummary
+    description: str
+    formal_basis: str
+    owner_user_id: str
+    missing_evidence: list[Any]
+    evidence: list[dict[str, Any]]
+    date_evidence: list[BusinessTaskDateEvidence]
+    events: list[BusinessTaskEvent]
+    relations: list[BusinessTaskRelation]
+    clusters: list[dict[str, Any]]
+    anchors: list[dict[str, Any]]
+    official_projects: list[ConsoleBusinessProjectSummary]
+    follow_ups: list[dict[str, Any]]
+    dingtalk_todos: list[dict[str, Any]]
+
+
+class ConsoleBusinessProjectDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    summary: ConsoleBusinessProjectSummary
+    anchor: dict[str, Any]
+    confirmed_tasks: list[ConsoleBusinessTaskSummary]
+
+
+class ConsoleBusinessAttentionDetailEnvelope(ApiItemEnvelope):
+    item: ConsoleBusinessAttentionDetail
+
+
+class ConsoleBusinessTaskDetailEnvelope(ApiItemEnvelope):
+    item: ConsoleBusinessTaskDetail
+
+
+class ConsoleBusinessProjectDetailEnvelope(ApiItemEnvelope):
+    item: ConsoleBusinessProjectDetail
+
+
+def _page(items: list[Any], *, page: int, page_size: int) -> tuple[list[Any], ApiListMeta]:
+    total = len(items)
+    start = (page - 1) * page_size
+    return items[start : start + page_size], ApiListMeta(
+        snapshot_at=snapshot_at(), page=page, page_size=page_size, total=total,
+        next_cursor=str(page + 1) if start + page_size < total else "",
+        has_more=start + page_size < total,
+    )
+
+
+def _all_business_tasks(store: Any) -> list[Any]:
+    rows = []
+    offset = 0
+    while batch := store.list_business_tasks(limit=100, offset=offset):
+        rows.extend(batch)
+        offset += len(batch)
+    return rows
+
+
+def _all_pages(list_method: Any, **kwargs: Any) -> list[Any]:
+    rows = []
+    offset = 0
+    while batch := list_method(limit=100, offset=offset, **kwargs):
+        rows.extend(batch)
+        offset += len(batch)
+    return rows
+
+
+def _anchors_by_id(store: Any) -> dict[int, Any]:
+    rows = []
+    offset = 0
+    while batch := store.list_business_anchors(limit=100, offset=offset):
+        rows.extend(batch)
+        offset += len(batch)
+    return {row.id: row for row in rows}
+
+
+def _clusters_by_id(store: Any) -> dict[int, Any]:
+    rows = []
+    offset = 0
+    while batch := store.list_business_work_clusters(limit=100, offset=offset):
+        rows.extend(batch)
+        offset += len(batch)
+    return {row.id: row for row in rows}
+
+
+def _task_summary_payload(store: Any, task: Any, anchors: dict[int, Any]) -> dict[str, Any]:
+    links = _all_pages(store.list_business_task_anchor_links, task_id=task.id)
+    labels = [anchors[link.anchor_id].title for link in links
+              if link.status.value == "confirmed" and link.active and link.anchor_id in anchors and anchors[link.anchor_id].active]
+    return {
+        "id": task.id, "title": task.title, "stage": task.stage.value,
+        "status": task.status.value, "commitment_status": task.commitment_status.value,
+        "owner": task.owner_name or task.owner_user_id, "deadline_at": task.deadline_at,
+        "business_relevance": task.business_relevance.value,
+        "anchor_labels": labels, "updated_at": task.updated_at,
+        "detail_url": f"/tasks/item/{task.id}",
+    }
+
+
+def business_task_list_response(store: Any, *, page: int, page_size: int,
+                                query: str = "", stage: str = "", status: str = "",
+                                business_relevance: str = "") -> ConsoleBusinessTaskListEnvelope:
+    needle = query.strip().casefold()
+    tasks = [task for task in _all_business_tasks(store)
+             if (not stage or task.stage.value == stage)
+             and (not status or task.status.value == status)
+             and (not business_relevance or task.business_relevance.value == business_relevance)
+             and (not needle or needle in f"{task.title} {task.description} {task.owner_name}".casefold())]
+    tasks.sort(key=lambda task: (task.updated_at, task.id), reverse=True)
+    selected, meta = _page(tasks, page=page, page_size=page_size)
+    anchors = _anchors_by_id(store)
+    return ConsoleBusinessTaskListEnvelope(
+        items=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in selected],
+        meta=meta,
+    )
+
+
+def _attention_summary_payload(store: Any, item: Any, anchors: dict[int, Any]) -> dict[str, Any]:
+    anchor = anchors.get(item.anchor_id)
+    return {
+        "id": item.id, "category": item.category.value, "business_area": item.business_area,
+        "title": item.title, "why_attention": item.why_attention,
+        "current_state": item.current_state, "ceo_action": item.ceo_action,
+        "anchor_label": anchor.title if anchor else "",
+        "linked_task_count": len(store.list_business_attention_tasks(item.id)),
+        "updated_at": item.updated_at, "detail_url": f"/tasks/attention/{item.id}",
+    }
+
+
+def business_attention_list_response(store: Any, *, page: int, page_size: int,
+                                     query: str = "", category: str = "", status: str = "active") -> ConsoleBusinessAttentionListEnvelope:
+    needle = query.strip().casefold()
+    items = [item for item in store.list_business_attention_items()
+             if (not category or item.category.value == category)
+             and (not status or item.status.value == status)
+             and (not needle or needle in f"{item.title} {item.business_area} {item.why_attention} {item.current_state}".casefold())]
+    ranks = {"decision": 0, "push": 1, "watch": 2, "fyi": 3}
+    items.sort(key=lambda item: (-ranks[item.category.value], item.updated_at, item.id), reverse=True)
+    selected, meta = _page(items, page=page, page_size=page_size)
+    anchors = _anchors_by_id(store)
+    return ConsoleBusinessAttentionListEnvelope(
+        items=[ConsoleBusinessAttentionSummary.model_validate(_attention_summary_payload(store, item, anchors)) for item in selected],
+        meta=meta,
+    )
+
+
+def _project_summary_payload(store: Any, project: Any, tasks: list[Any]) -> dict[str, Any]:
+    count = sum(project.id in {linked.id for linked in store.list_business_task_project_links(task_id=task.id)} for task in tasks)
+    return {"id": project.id, "title": project.title, "registry_source": project.registry_source,
+            "canonical_anchor_id": project.canonical_anchor_id, "confirmed_task_count": count,
+            "detail_url": f"/tasks/project/{project.id}"}
+
+
+def business_project_list_response(store: Any, *, page: int, page_size: int, query: str = "",
+                                   candidate_page: int = 1, candidate_page_size: int = 20) -> ConsoleBusinessProjectListEnvelope:
+    needle = query.strip().casefold()
+    projects = [row for row in store.list_business_projects(limit=None) if not needle or needle in row.title.casefold()]
+    selected, meta = _page(projects, page=page, page_size=page_size)
+    tasks = _all_business_tasks(store)
+    candidate_start = (candidate_page - 1) * candidate_page_size
+    with store._connect() as db:
+        if needle:
+            candidate_total = int(db.execute(
+                "select count(*) from business_project_candidates where status='proposed' and instr(lower(title), lower(?)) > 0",
+                (query.strip(),),
+            ).fetchone()[0])
+            candidate_rows = db.execute(
+                "select * from business_project_candidates where status='proposed' and instr(lower(title), lower(?)) > 0 order by id limit ? offset ?",
+                (query.strip(), candidate_page_size, candidate_start),
+            ).fetchall()
+        else:
+            candidate_total = int(db.execute(
+                "select count(*) from business_project_candidates where status='proposed'"
+            ).fetchone()[0])
+            candidate_rows = db.execute(
+                "select * from business_project_candidates where status='proposed' order by id limit ? offset ?",
+                (candidate_page_size, candidate_start),
+            ).fetchall()
+    candidates = [BusinessProjectCandidate.model_validate(dict(row)) for row in candidate_rows]
+    return ConsoleBusinessProjectListEnvelope(
+        items=[ConsoleBusinessProjectSummary.model_validate(_project_summary_payload(store, project, tasks)) for project in selected],
+        candidates=[ConsoleBusinessProjectCandidate(id=row.id, title=row.title, reason=row.reason,
+                    status=row.status.value, cluster_id=row.cluster_id, provisional=row.status.value == "proposed",
+                    confirmed_project_id=row.confirmed_project_id) for row in candidates],
+        meta=meta,
+        candidate_meta=ApiListMeta(
+            snapshot_at=snapshot_at(), page=candidate_page, page_size=candidate_page_size,
+            total=candidate_total,
+            next_cursor=str(candidate_page + 1) if candidate_start + candidate_page_size < candidate_total else "",
+            has_more=candidate_start + candidate_page_size < candidate_total,
+        ),
+    )
+
+
+def business_attention_detail(store: Any, attention_id: int) -> ConsoleBusinessAttentionDetail | None:
+    item = store.get_business_attention_item(attention_id)
+    if item is None:
+        return None
+    anchors = _anchors_by_id(store)
+    linked = [store.get_business_task(link.task_id) for link in store.list_business_attention_tasks(attention_id)]
+    evidence_ids = {item.evidence_signal_id}
+    if item.resolution_signal_id:
+        evidence_ids.add(item.resolution_signal_id)
+    events = list(store.list_business_attention_events(attention_id))
+    evidence_ids.update(event.signal_id for event in events)
+    return ConsoleBusinessAttentionDetail(
+        summary=ConsoleBusinessAttentionSummary.model_validate(_attention_summary_payload(store, item, anchors)),
+        anchor=json_safe(anchors[item.anchor_id]) if item.anchor_id in anchors else {},
+        evidence_signals=[signal for signal_id in sorted(evidence_ids) if (signal := store.get_business_task_signal(signal_id)) is not None],
+        linked_tasks=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in linked if task is not None],
+        events=events,
+    )
+
+
+def business_task_detail(store: Any, task_id: int) -> ConsoleBusinessTaskDetail | None:
+    task = store.get_business_task(task_id)
+    if task is None:
+        return None
+    anchors = _anchors_by_id(store)
+    evidence = []
+    for link in store.list_business_task_evidence(task_id):
+        signal = store.get_business_task_signal(link.signal_id)
+        evidence.append({"role": link.evidence_role.value, "signal": json_safe(signal) if signal else None})
+    cluster_links = []
+    offset = 0
+    while batch := store.list_business_work_cluster_tasks(task_id=task_id, limit=100, offset=offset):
+        cluster_links.extend(batch)
+        offset += len(batch)
+    clusters = _clusters_by_id(store)
+    projects = store.list_business_task_project_links(task_id=task_id)
+    project_members = _all_business_tasks(store) if projects else []
+    anchor_links: list[BusinessTaskAnchorLink] = _all_pages(store.list_business_task_anchor_links, task_id=task_id)
+    follow_ups = [dict(row) for row in _all_pages(store.list_business_task_follow_ups, business_task_id=task_id)]
+    dingtalk_todos = [dict(row) for row in _all_pages(store.list_business_task_dingtalk_links, business_task_id=task_id)]
+    return ConsoleBusinessTaskDetail(
+        summary=ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)),
+        description=task.description, formal_basis=task.formal_basis.value if task.formal_basis else "",
+        owner_user_id=task.owner_user_id, missing_evidence=_list_json(task.missing_evidence_json),
+        evidence=evidence, date_evidence=list(store.list_business_task_date_evidence(task_id)),
+        events=list(store.list_business_task_events(task_id)),
+        relations=_all_pages(store.list_business_task_relations, task_id=task_id),
+        clusters=[{"membership": json_safe(link), "cluster": json_safe(clusters.get(link.cluster_id))} for link in cluster_links],
+        anchors=[{"link": json_safe(link), "anchor": json_safe(anchors.get(link.anchor_id))} for link in anchor_links],
+        official_projects=[ConsoleBusinessProjectSummary.model_validate(_project_summary_payload(store, project, project_members)) for project in projects],
+        follow_ups=follow_ups, dingtalk_todos=dingtalk_todos,
+    )
+
+
+def business_project_detail(store: Any, project_id: int) -> ConsoleBusinessProjectDetail | None:
+    project = store.get_business_project(project_id)
+    if project is None:
+        return None
+    tasks = [task for task in _all_business_tasks(store) if project.id in {linked.id for linked in store.list_business_task_project_links(task_id=task.id)}]
+    anchors = _anchors_by_id(store)
+    return ConsoleBusinessProjectDetail(
+        summary=ConsoleBusinessProjectSummary.model_validate(_project_summary_payload(store, project, tasks)),
+        anchor=json_safe(anchors[project.canonical_anchor_id]) if project.canonical_anchor_id in anchors else {},
+        confirmed_tasks=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks],
+    )

@@ -1665,6 +1665,36 @@ def test_next_check_date_uses_identified_agent_actor(tmp_path):
     assert (date_fact.actor_kind.value, date_fact.actor_user_id, date_fact.actor_name) == ("agent", "task-agent", "CEO Agent")
 
 
+def test_source_target_and_next_check_create_task_keyed_follow_up(tmp_path):
+    store = AutoReplyStore(tmp_path / "task-follow-up.sqlite3")
+    item = _work_item(
+        assignment_authorized=True,
+        owner_identity={"name": "Alex", "user_id": "alex-id"},
+    ).model_copy(update={
+        "summary": "Avery assigns Alex to confirm quote. Check 2026-10-01T09:00:00+08:00."
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none", "formal_basis": "explicit_assignment",
+        "source_excerpt": item.summary, "source_ref": item.source.ref,
+        "title": "Confirm quote", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref,
+            "excerpt": "Avery assigns Alex", "name": "Alex", "user_id": "alex-id"},
+        "date_evidence": [{"kind": "next_check_at", "value": "2026-10-01T09:00:00+08:00",
+            "source_ref": item.source.ref, "source_excerpt": "2026-10-01T09:00:00+08:00"}],
+    }]})
+
+    (task_id,) = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False
+    )
+
+    [draft] = store.list_business_task_follow_ups(business_task_id=task_id)
+    assert draft["business_task_id"] == task_id
+    assert draft["target_conversation_id"] == item.source.conversation_id
+    assert draft["target_kind"] == "group"
+    assert draft["owner_user_id"] == "alex-id"
+    assert draft["scheduled_at"] == "2026-10-01T09:00:00+08:00"
+
+
 def test_noncommitment_date_types_keep_exact_source_and_human_actor(tmp_path):
     store = AutoReplyStore(tmp_path / "typed-date-provenance.sqlite3")
     item = _work_item(sender="Avery", sender_user_id="avery-id", assignment_authorized=True,
@@ -1903,11 +1933,18 @@ def test_exact_owner_reply_accepts_only_cited_assignment_and_records_committed_d
         result.task_ids[0] and store.list_business_task_evidence(assigned.task_id)[-1].signal_id,
         "human", "alex-id", "Alex",
     )
+    [mirror_intent] = store.list_business_task_todo_sync_outbox()
+    assert mirror_intent["business_task_id"] == assigned.task_id
+    assert mirror_intent["operation"] == "create"
 
 
 def test_source_grounded_completion_updates_task_status_without_todo_write(tmp_path):
     store = AutoReplyStore(tmp_path / "source-task-completion.sqlite3")
     assigned = _assigned_formal_task_for_acceptance(store)
+    store.create_business_task_dingtalk_link(
+        business_task_id=assigned.task_id,
+        dingtalk_task_id="dt-task-1", status="active",
+    )
     item = _work_item().model_copy(update={
         "summary": "客户验收已完成，报价方案交付物通过验收。"
     })
@@ -1926,6 +1963,9 @@ def test_source_grounded_completion_updates_task_status_without_todo_write(tmp_p
     assert store.get_business_task(assigned.task_id).status.value == "done"
     with store._connect() as db:
         assert db.execute("select count(*) from work_todos").fetchone()[0] == 0
+    [intent] = store.list_business_task_todo_sync_outbox()
+    assert intent["business_task_id"] == assigned.task_id
+    assert intent["operation"] == "complete"
 
 
 @pytest.mark.parametrize("reply_context", [
