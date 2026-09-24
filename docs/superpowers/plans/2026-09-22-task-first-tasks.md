@@ -24,10 +24,10 @@
 
 ## Execution preflight
 
-- [ ] Create an isolated worktree with `superpowers:using-git-worktrees`; do not implement this multi-file cutover in the shared checkout.
-- [ ] Read `/Users/derek/.agents/AGENTS.md`, the repository `AGENTS.md`, `docs/agent-claims.md`, the approved spec, `docs/architecture.md`, and `docs/runtime-mechanism.md` before editing.
-- [ ] Re-read `docs/agent-claims.md` before every task. Claim the exact files for that task, wait or hand off when another owner has a conflicting claim, stage only owned hunks, and remove the claim after the task commit.
-- [ ] Establish a baseline in the isolated worktree:
+- [x] Create an isolated worktree with `superpowers:using-git-worktrees`; do not implement this multi-file cutover in the shared checkout.
+- [x] Read `/Users/derek/.agents/AGENTS.md`, the repository `AGENTS.md`, `docs/agent-claims.md`, the approved spec, `docs/architecture.md`, and `docs/runtime-mechanism.md` before editing.
+- [x] Re-read `docs/agent-claims.md` before every task. Claim the exact files for that task, wait or hand off when another owner has a conflicting claim, stage only owned hunks, and remove the claim after the task commit.
+- [x] Establish a baseline in the isolated worktree:
 
 ```bash
 .venv/bin/pytest -q tests/test_task_models.py tests/test_task_store.py tests/test_task_agent.py tests/test_console_web_api.py tests/test_web_api_task_sort.py
@@ -103,7 +103,7 @@ class AttentionCategory(StrEnum):
 - Create: `tests/test_task_semantic_store.py`
 - Modify: `tests/test_store.py`
 
-- [ ] **Step 1: Write failing schema and model tests**
+- [x] **Step 1: Write failing schema and model tests**
 
 Add tests proving a fresh store contains every target table and index, a Task can exist without a Project, a formal assignment can be `assigned_unaccepted`, and invalid enum combinations are rejected.
 
@@ -139,13 +139,13 @@ def test_business_task_can_exist_without_project(tmp_path):
     assert store.list_business_task_project_links(task_id=task_id) == []
 ```
 
-- [ ] **Step 2: Run the new test and confirm the expected failure**
+- [x] **Step 2: Run the new test and confirm the expected failure**
 
 Run: `.venv/bin/pytest -q tests/test_task_semantic_store.py -x`
 
 Expected: FAIL because `task_semantic_models` and the store methods/tables do not exist.
 
-- [ ] **Step 3: Implement strict Pydantic records and validators**
+- [x] **Step 3: Implement strict Pydantic records and validators**
 
 Create `app/task_semantic_models.py` with the enums above and frozen record models for signals, tasks, evidence, events, relations, clusters, anchors, projects, project candidates, attention items, attention events, and legacy links. Add validators with these exact rules:
 
@@ -184,7 +184,7 @@ class BusinessTask(BaseModel):
         return self
 ```
 
-- [ ] **Step 4: Add the schema in `AutoReplyStore._initialize`**
+- [x] **Step 4: Add the schema in `AutoReplyStore._initialize`**
 
 Use SQLite `CHECK` constraints matching the enums, foreign keys for every semantic reference, unique keys for signal dedupe and membership tables, and indexes for the actual list paths:
 
@@ -250,7 +250,7 @@ create table if not exists business_task_evidence (
 
 Add the remaining tables from **Target data contract** with equally strict checks. Add their names and list indexes to `STORE_SCHEMA_REQUIRED_TABLES` and `STORE_SCHEMA_REQUIRED_INDEXES`; add critical columns to `STORE_SCHEMA_REQUIRED_COLUMNS`; bump `STORE_SCHEMA_VERSION` once for the complete semantic schema.
 
-- [ ] **Step 5: Add row parsers and minimum CRUD methods**
+- [x] **Step 5: Add row parsers and minimum CRUD methods**
 
 Implement only create/get/list primitives in this task. All multi-row transitions wait for Task 2.
 
@@ -258,13 +258,13 @@ Add these exact public methods: `create_business_task_signal`, `get_business_tas
 
 All create/update methods must use explicit allowed-column sets; no arbitrary SQL field passthrough.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run: `.venv/bin/pytest -q tests/test_task_semantic_store.py tests/test_store.py -x`
 
 Expected: PASS, including schema-manifest initialization on both a fresh database and an existing pre-version database fixture.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add app/task_semantic_models.py app/store.py tests/test_task_semantic_store.py tests/test_store.py
@@ -279,7 +279,7 @@ git commit -m "feat(tasks): add task-first semantic storage"
 - Modify: `tests/test_task_semantic_store.py`
 - Create: `tests/test_task_semantic_service.py`
 
-- [ ] **Step 1: Write failing transaction and history tests**
+- [x] **Step 1: Write failing transaction and history tests**
 
 Cover these cases:
 
@@ -304,13 +304,13 @@ def test_acceptance_changes_same_assigned_task(tmp_path):
     ]
 ```
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `.venv/bin/pytest -q tests/test_task_semantic_service.py -x`
 
 Expected: FAIL because atomic service transitions do not exist.
 
-- [ ] **Step 3: Add explicit store transactions**
+- [x] **Step 3: Add explicit store transactions**
 
 Implement transaction-scoped methods; do not call multiple public connection-opening methods from one transition.
 
@@ -337,7 +337,7 @@ def append_business_task_event(
 
 The event types are domain state names, not free-form UI labels: `created`, `promoted`, `commitment_changed`, `owner_changed`, `deadline_changed`, `status_changed`, `relevance_changed`, and `merged`.
 
-- [ ] **Step 4: Implement `TaskSemanticService`**
+- [x] **Step 4: Implement `TaskSemanticService`**
 
 Expose one method per state transition and keep field validation in service code:
 
@@ -345,7 +345,7 @@ Expose one method per state transition and keep field validation in service code
 
 `record_formal_task` must reject a missing `formal_basis`. `merge_same_deliverable` must reject self-merge, merge chains, and a target already marked merged. It may move evidence links but never delete the source Task, signal, or events.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run: `.venv/bin/pytest -q tests/test_task_semantic_store.py tests/test_task_semantic_service.py`
 
@@ -364,7 +364,7 @@ git commit -m "feat(tasks): persist atomic task evidence transitions"
 - Create: `tests/test_task_semantic_rules.py`
 - Modify: `tests/test_task_semantic_service.py`
 
-- [ ] **Step 1: Write the decision-table tests**
+- [x] **Step 1: Write the decision-table tests**
 
 Use structured evidence fields in fixtures—never keyword matching against Chinese text.
 
@@ -394,13 +394,13 @@ def test_promotion_table(basis, expected_stage, expected_commitment):
 
 Add separate tests asserting: a shared goal returns `link` rather than `merge`; the same external TODO ID returns `merge`; uncertain identity returns `link`; and completing one cluster member leaves every sibling status unchanged.
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `.venv/bin/pytest -q tests/test_task_semantic_rules.py -x`
 
 Expected: FAIL because the rules module is absent.
 
-- [ ] **Step 3: Implement pure rule inputs and outputs**
+- [x] **Step 3: Implement pure rule inputs and outputs**
 
 ```python
 @dataclass(frozen=True)
@@ -444,13 +444,13 @@ Rules:
 - merge requires the same external task ID, an explicit source reference, or the full conjunction of same deliverable + owner + context + compatible time window.
 - every weaker match returns `link` or `separate`; it never merges on confidence score alone.
 
-- [ ] **Step 4: Wire rules into semantic service and run tests**
+- [x] **Step 4: Wire rules into semantic service and run tests**
 
 Run: `.venv/bin/pytest -q tests/test_task_semantic_rules.py tests/test_task_semantic_service.py`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/task_semantic_rules.py app/task_semantic_service.py tests/test_task_semantic_rules.py tests/test_task_semantic_service.py
@@ -466,7 +466,7 @@ git commit -m "feat(tasks): enforce task promotion and identity rules"
 - Create: `tests/test_task_business_resolution.py`
 - Modify: `tests/test_task_semantic_store.py`
 
-- [ ] **Step 1: Write failing boundary tests**
+- [x] **Step 1: Write failing boundary tests**
 
 Prove all of the following:
 
@@ -487,19 +487,19 @@ def test_cluster_cannot_create_official_project(tmp_path):
     assert resolver.store.list_business_projects() == []
 ```
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `.venv/bin/pytest -q tests/test_task_business_resolution.py -x`
 
 Expected: FAIL because the resolver is absent.
 
-- [ ] **Step 3: Implement `BusinessResolutionService`**
+- [x] **Step 3: Implement `BusinessResolutionService`**
 
 `BusinessResolutionService` exposes exact methods for `create_cluster`, `add_relation`, `register_anchor`, `register_official_project`, `propose_anchor_match`, `confirm_anchor_match`, `propose_project`, and `confirm_project_candidate`. Each creation method returns the persisted row ID. Confirmation methods require a persisted evidence signal or canonical registry source; none accepts model confidence as authority.
 
 `confirm_anchor_match` recalculates relevance from confirmed active links inside the same transaction and appends a `relevance_changed` event when the derived value changes. No text keyword, regex, or confidence threshold is permitted as a hard anchor.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `.venv/bin/pytest -q tests/test_task_business_resolution.py tests/test_task_semantic_service.py tests/test_task_semantic_store.py`
 
@@ -517,7 +517,7 @@ git commit -m "feat(tasks): separate clusters projects and business anchors"
 - Modify: `app/store.py`
 - Create: `tests/test_task_attention_projection.py`
 
-- [ ] **Step 1: Write failing projection tests**
+- [x] **Step 1: Write failing projection tests**
 
 Cover creation, aggregation, category transition, resolution, and idempotent recomputation.
 
@@ -538,13 +538,13 @@ def test_reading_does_not_resolve_business_attention(tmp_path):
 
 Add separate tests that assert: category transition preserves the attention ID; one item can link multiple independently open Tasks; a non-relevant Task raises an eligibility error; resolution without a signal raises `ValueError`; and two recomputations produce identical item, link, and event counts.
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `.venv/bin/pytest -q tests/test_task_attention_projection.py -x`
 
 Expected: FAIL because the projection does not exist.
 
-- [ ] **Step 3: Implement typed projection commands**
+- [x] **Step 3: Implement typed projection commands**
 
 ```python
 @dataclass(frozen=True)
@@ -578,7 +578,7 @@ Eligibility checks inside `upsert`:
 
 `record_viewed` may update a separate non-authoritative view timestamp if needed by the UI, but it must not append a resolution event or change `status`.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `.venv/bin/pytest -q tests/test_task_attention_projection.py tests/test_task_business_resolution.py`
 
@@ -683,7 +683,7 @@ conflicting field or behavior below:
   service-side application by source type, but it must not start a separate
   Completion Agent or use a second decision schema.
 
-- [ ] **Step 1: Replace old decision fixtures with failing Task-first fixtures**
+- [x] **Step 1: Replace old decision fixtures with failing Task-first fixtures**
 
 The new result contract is an envelope containing `task_decisions`, one entry
 per source-backed action. Each entry's `action` and `transition` are separate:
@@ -743,13 +743,13 @@ Delete test expectations for `create_project`, `update_project`, `TaskProjectPat
 - relevance, acceptance, and date proximity alone cannot emit attention without
   a concrete material trigger.
 
-- [ ] **Step 2: Run the focused tests and confirm failure**
+- [x] **Step 2: Run the focused tests and confirm failure**
 
 Run: `.venv/bin/pytest -q tests/test_task_models.py tests/test_task_agent.py tests/test_task_retrieval.py -x`
 
 Expected: FAIL on the old Project-first schema and prompt.
 
-- [ ] **Step 3: Change retrieval from Projects to semantic context**
+- [x] **Step 3: Change retrieval from Projects to semantic context**
 
 Replace `ProjectCandidate` retrieval with bounded candidate and formal Task,
 evidence, relation, anchor-link, cluster, anchor, and official Project retrieval.
@@ -782,7 +782,7 @@ def retrieve_task_semantic_context(
 
 Do not use a fixed recent-500 window. Retrieval may rank candidates, but the prompt must state that rank is context, not merge/project confirmation.
 
-- [ ] **Step 4: Rewrite the Task Agent prompt and validator**
+- [x] **Step 4: Rewrite the Task Agent prompt and validator**
 
 The prompt must explicitly state:
 
@@ -801,7 +801,7 @@ The prompt must explicitly state:
 
 Update `_validate_task_agent_decision` to enforce required fields by action and to invoke the pure rules from Task 3. Remove `_apply_project`, protected Project-patch validation, and Project creation/update branches.
 
-- [ ] **Step 5: Apply the decision through semantic services in one transaction**
+- [x] **Step 5: Apply the decision through semantic services in one transaction**
 
 `apply_task_agent_decision` returns the resulting Task IDs, records the Task
 Agent run as before, and persists signals, evidence, typed dates, Task/event
@@ -811,7 +811,7 @@ failure is reportable/rebuildable and must not roll back valid Task/evidence
 state or appear as fabricated empty-success attention. It must not write
 `work_projects`, `work_todos`, or `work_updates`.
 
-- [ ] **Step 6: Update runtime truth documents in the same behavior commit**
+- [x] **Step 6: Update runtime truth documents in the same behavior commit**
 
 In `docs/architecture.md` and `docs/runtime-mechanism.md`, replace every current
 statement that the Task Agent creates/updates Projects and TODOs as its primary
@@ -820,7 +820,7 @@ transitions, evidence-derived commitment state, typed dates, attention triggers,
 proposal/confirmation boundary, and absence of dual-write. Update the loaded
 `ceo-work-tracking` Skill in the same change.
 
-- [ ] **Step 7: Run tests and commit**
+- [x] **Step 7: Run tests and commit**
 
 Run:
 
@@ -860,7 +860,7 @@ git commit -m "refactor(tasks): make task agent task-first"
 - Modify: `docs/architecture.md`
 - Modify: `docs/runtime-mechanism.md`
 
-- [ ] **Step 1: Write failing downstream tests against `business_task_id`**
+- [x] **Step 1: Write failing downstream tests against `business_task_id`**
 
 Cover:
 
@@ -870,7 +870,7 @@ Cover:
 - follow-up targets a business Task and completion of a sibling cluster Task does not close it;
 - outbox idempotency keys use the business Task ID and preserve existing external receipt behavior.
 
-- [ ] **Step 2: Add replacement execution tables and migrate code references**
+- [x] **Step 2: Add replacement execution tables and migrate code references**
 
 Create new tables rather than making new code depend on misleading legacy names:
 
@@ -899,7 +899,7 @@ create table if not exists business_task_dingtalk_links (
 
 Add `business_task_follow_ups` and `business_task_todo_sync_outbox` with the current follow-up/outbox receipt fields but a required `business_task_id`. Preserve `queued`, `running`, `completed`, `skipped`, `failed`, and `unknown` semantics; do not weaken receipt reconciliation.
 
-- [ ] **Step 3: Replace operational code paths**
+- [x] **Step 3: Replace operational code paths**
 
 Rename public functions around business Tasks:
 
@@ -907,11 +907,11 @@ Replace the public execution signatures with `maybe_create_dingtalk_todo(store, 
 
 Reuse the existing external-effect receipt/readback rules. Change the internal record identity only; do not introduce new authorization, confirmation, retry, or safety gates.
 
-- [ ] **Step 4: Remove new-write access to legacy execution tables**
+- [x] **Step 4: Remove new-write access to legacy execution tables**
 
 After callers move, delete the Task Agent and maintenance paths that create `work_todos`, `follow_up_drafts`, `work_todo_dingtalk_links`, or `task_todo_sync_outbox`. Keep their read methods only under the legacy-import/history boundary until Task 8 finishes.
 
-- [ ] **Step 5: Update docs, run tests, and commit**
+- [x] **Step 5: Update docs, run tests, and commit**
 
 Run:
 
@@ -937,7 +937,7 @@ git commit -m "refactor(tasks): run follow-ups from business tasks"
 - Create: `tests/test_task_semantic_import.py`
 - Modify: `tests/test_cli.py`
 
-- [ ] **Step 1: Write failing import tests**
+- [x] **Step 1: Write failing import tests**
 
 Cover exact provenance, ambiguity, idempotency, database fingerprint mismatch, and bounded apply.
 
@@ -955,13 +955,13 @@ def test_ambiguous_legacy_project_stays_legacy_evidence(tmp_path):
 
 Add separate tests asserting: the second apply changes zero rows while every imported object keeps a `business_legacy_links` row; a changed fingerprint raises before the first write; and `--limit 1` applies only the first stable manifest item.
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `.venv/bin/pytest -q tests/test_task_semantic_import.py -x`
 
 Expected: FAIL because import planner is absent.
 
-- [ ] **Step 3: Implement a versioned manifest**
+- [x] **Step 3: Implement a versioned manifest**
 
 ```python
 @dataclass(frozen=True)
@@ -985,7 +985,7 @@ class TaskSemanticImportManifest:
 
 The planner may import a legacy TODO as a formal Task only when its stored source evidence proves one of the four formal bases. A legacy Project becomes official only when it matches a pre-registered official Project key. Evidence-insufficient and candidate-only records are `history_only`: they stay reachable through the existing history route and are not copied into candidates, semantic signals, or default Attention. Rows are not merged on title similarity; only exact same-deliverable evidence (such as the same external Task ID) may authorize consolidation, preserving each source-row link. Before proposing a merge, count duplicate nonblank external Task IDs; title-only matches are explicitly not merge evidence.
 
-- [ ] **Step 4: Implement plan/apply CLI commands**
+- [x] **Step 4: Implement plan/apply CLI commands**
 
 Add:
 
@@ -996,7 +996,7 @@ task-semantic-import-apply --manifest MANIFEST [--limit N]
 
 `plan` is read-only. `apply` requires an exact database fingerprint and expected legacy row digests, writes semantic object plus `business_legacy_links` in one transaction per item, and treats an already-linked row as an idempotent skip.
 
-- [ ] **Step 5: Run tests and dry-run against a copied database**
+- [x] **Step 5: Run tests and dry-run against a copied database**
 
 Run:
 
@@ -1009,7 +1009,7 @@ CEO_DB_PATH="$tmp_dir/service.sqlite3" .venv/bin/python -m app.cli task-semantic
 
 Expected: tests PASS; the plan reports formal-task, exact project-match, and history-only counts and makes no database writes. Do not run `task-semantic-import-apply` on the live database in this task.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/task_semantic_import.py app/cli.py app/store.py tests/test_task_semantic_import.py tests/test_cli.py
@@ -1025,7 +1025,7 @@ git commit -m "feat(tasks): plan evidence-backed legacy import"
 - Rewrite: `tests/test_web_api_task_sort.py`
 - Create: `tests/test_web_api_task_attention.py`
 
-- [ ] **Step 1: Write failing contract tests for the new endpoints**
+- [x] **Step 1: Write failing contract tests for the new endpoints**
 
 The exact API surface is:
 
@@ -1044,13 +1044,13 @@ Keep static routes registered before dynamic ID routes. Remove Project rows from
 
 Test the default attention ordering: `decision`, `push`, `watch`, `fyi`, then latest meaningful update descending. Test server-side filtering and pagination before serialization.
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `.venv/bin/pytest -q tests/test_console_web_api.py tests/test_web_api_task_sort.py tests/test_web_api_task_attention.py -x`
 
 Expected: FAIL on missing semantic endpoints and old DTO fields.
 
-- [ ] **Step 3: Implement strict DTOs**
+- [x] **Step 3: Implement strict DTOs**
 
 ```python
 class ConsoleBusinessAttentionSummary(BaseModel):
@@ -1084,11 +1084,11 @@ class ConsoleBusinessTaskSummary(BaseModel):
 
 Attention detail includes linked Tasks, evidence signals, anchor, and attention events. Task detail includes evidence, events, relations, clusters, anchors, official Project link, follow-ups, and DingTalk TODO link. Official Project detail includes only confirmed membership; project candidates have an explicit provisional DTO and label.
 
-- [ ] **Step 4: Preserve legacy evidence through an explicit endpoint**
+- [x] **Step 4: Preserve legacy evidence through an explicit endpoint**
 
 Move the old Project detail builder behind `/legacy-projects/{id}`. It is historical evidence, not part of the new Tasks or official Projects lists. Update generated History and Sent TODO links to the correct semantic Task or explicit legacy route.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run:
 
@@ -1122,7 +1122,7 @@ git commit -m "feat(tasks): expose task-first console APIs"
 - Modify: `frontend/src/styles.css`
 - Modify: `frontend/src/styles.tasks-responsive.test.ts`
 
-- [ ] **Step 1: Write failing client mapping tests**
+- [x] **Step 1: Write failing client mapping tests**
 
 Add exact TypeScript interfaces and endpoint functions:
 
@@ -1157,7 +1157,7 @@ export function listBusinessProjects(params = {}, signal?: AbortSignal) {
 
 Test that missing required semantic fields fail visibly instead of silently mapping a Project payload into a Task.
 
-- [ ] **Step 2: Write failing Tasks page tests for approved IA**
+- [x] **Step 2: Write failing Tasks page tests for approved IA**
 
 Tests must prove:
 
@@ -1169,7 +1169,7 @@ Tests must prove:
 - routine unrelated Tasks appear only under 全部任务;
 - provisional Project Candidates are visibly distinct and are not counted as 正式项目.
 
-- [ ] **Step 3: Implement route structure and details**
+- [x] **Step 3: Implement route structure and details**
 
 Use these paths:
 
@@ -1185,7 +1185,7 @@ Use these paths:
 
 Replace the old `projectId` detail route and update every UI link. The attention detail page renders the lifecycle and linked Tasks; Task detail renders commitment state and evidence; Project detail renders canonical registry evidence and confirmed linked Tasks.
 
-- [ ] **Step 4: Implement the approved balanced card layout**
+- [x] **Step 4: Implement the approved balanced card layout**
 
 Use semantic markup with this information order:
 
@@ -1211,7 +1211,7 @@ Use semantic markup with this information order:
 
 Do not put raw evidence text or technical IDs on the default card.
 
-- [ ] **Step 5: Add Tasks-scoped dark tokens and contrast tests**
+- [x] **Step 5: Add Tasks-scoped dark tokens and contrast tests**
 
 `AppShell` applies `task-domain-route` to every `/tasks` path. Add a dark token block scoped to that class, parallel to the existing scheduled-task theme, and use only variables in Task cards—no fixed light-only foreground/background pairs.
 
@@ -1235,7 +1235,7 @@ Do not put raw evidence text or technical IDs on the default card.
 
 Add CSS contract tests proving `.task-domain-route` owns dark tokens and attention cards use variables. Add component tests at a narrow viewport contract so CEO action text is not hidden or reordered after metadata.
 
-- [ ] **Step 6: Run frontend tests and build**
+- [x] **Step 6: Run frontend tests and build**
 
 Run:
 
@@ -1246,7 +1246,7 @@ npm --prefix frontend run build
 
 Expected: all tests PASS; TypeScript and Vite build succeed.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add frontend/src/api/console.ts frontend/src/api/console.test.ts frontend/src/pages/TasksPage.tsx frontend/src/pages/TasksPage.test.tsx frontend/src/pages/TaskDetailPage.tsx frontend/src/pages/TaskDetailPage.test.tsx frontend/src/pages/TaskAttentionDetailPage.tsx frontend/src/pages/TaskAttentionDetailPage.test.tsx frontend/src/pages/TaskProjectDetailPage.tsx frontend/src/pages/TaskProjectDetailPage.test.tsx frontend/src/app/router.tsx frontend/src/app/AppShell.tsx frontend/src/app/AppShell.test.tsx frontend/src/styles.css frontend/src/styles.tasks-responsive.test.ts
@@ -1266,7 +1266,7 @@ git commit -m "feat(tasks): make CEO attention the default view"
 - Modify: `docs/runtime-mechanism.md`
 - Modify: relevant tests from Tasks 1–10
 
-- [ ] **Step 1: Add a source-level regression test for retired behavior**
+- [x] **Step 1: Add a source-level regression test for retired behavior**
 
 The test should inspect active Task Agent and API modules, not the historical import module:
 
@@ -1286,11 +1286,11 @@ def test_active_task_path_has_no_project_first_actions():
 
 Also assert active code does not call `create_work_project` or `create_work_todo`. Historical importer and explicit legacy endpoint are allowed to read legacy tables; they must not create new legacy rows.
 
-- [ ] **Step 2: Delete retired active code and tests**
+- [x] **Step 2: Delete retired active code and tests**
 
 Remove old Project-patch validators, project ranking prompt rendering, Project-as-Task DTOs, old `/tasks/{project_id}` route, and active tests that encode those semantics. Do not delete legacy tables or evidence readers in this release.
 
-- [ ] **Step 3: Make all documents true**
+- [x] **Step 3: Make all documents true**
 
 Update:
 
@@ -1301,7 +1301,7 @@ Update:
 
 Search and remove current-tense statements that say Tasks are `work_projects`, every TODO belongs to a Project, or the Task Agent creates Projects by default.
 
-- [ ] **Step 4: Run the full focused backend and frontend suites**
+- [x] **Step 4: Run the full focused backend and frontend suites**
 
 Run:
 
@@ -1339,13 +1339,13 @@ npm --prefix frontend run build
 
 Expected: all listed tests and the build PASS.
 
-- [ ] **Step 5: Run the broader non-live regression suite**
+- [x] **Step 5: Run the broader non-live regression suite**
 
 Run: `.venv/bin/pytest -q -m 'not live and not browser'`
 
 Expected: PASS, or document exact pre-existing unrelated failures with baseline evidence. Do not claim release readiness from focused tests alone.
 
-- [ ] **Step 6: Inspect the diff for false compatibility and stale claims**
+- [x] **Step 6: Inspect the diff for false compatibility and stale claims**
 
 Run:
 
@@ -1357,7 +1357,7 @@ git status --short
 
 Expected: matches remain only in historical migration fixtures/documented legacy evidence where intentional; `git diff --check` is clean; unrelated shared-tree files are not staged.
 
-- [ ] **Step 7: Commit the cutover cleanup**
+- [x] **Step 7: Commit the cutover cleanup**
 
 ```bash
 git add app/task_models.py app/task_agent.py app/task_retrieval.py app/web_api/tasks.py README.md CHANGELOG.md docs/architecture.md docs/runtime-mechanism.md tests frontend/src
@@ -1371,7 +1371,7 @@ Before using this broad `git add` form, confirm the isolated worktree contains o
 **Files:**
 - No new source files unless verification finds a defect.
 
-- [ ] **Step 1: Prepare migration evidence without applying live data**
+- [x] **Step 1: Prepare migration evidence without applying live data**
 
 Create and verify a SQLite online backup using the repository’s established backup procedure, then run `task-semantic-import-plan` against the backup/copy. Report:
 
@@ -1384,6 +1384,18 @@ Create and verify a SQLite online backup using the repository’s established ba
 - manifest ID and database fingerprint.
 
 Do not run the live `apply` command without Derek’s explicit approval after he sees this report.
+
+Read-only copy result (2026-09-24): `work_projects` 972, `work_todos` 3,327,
+`work_updates` 5,345; 0 formal Tasks, 0 candidates, 0 exact official Project
+matches, 9,644 history-only rows. Per Derek's decision, evidence-insufficient
+legacy records remain history-only and are not surfaced as candidates. Of 875
+old TODO links, 871 have a nonblank unique external Task ID, 4 lack an ID, and
+no duplicate ID group qualifies for merge. The repository backup helper created
+`/tmp/task8-import.pazkNk/service-2026-09-24.sqlite3`; `quick_check` returned
+`ok`, SHA-256 `58759cbcf19b85edb389338ec5d2f226690be4534367fa0ae046110694d6fc00`.
+Manifest `5ca9dd76c7ce46b7d311100e6d90e8e575882d3f9492a3d79c421b16048ebc8c`,
+database fingerprint `68ca285f382fce9b341a7e42704eed7be12119d71773e32d658f9dc84c03df42`.
+No apply was run against the copy or production.
 
 - [ ] **Step 2: Review the product acceptance sample**
 
@@ -1399,7 +1411,7 @@ Use the latest 100 eligible source inputs, or all when fewer than 100 exist. For
 
 Record counts and every disagreement; do not summarize a partial sample as complete.
 
-- [ ] **Step 3: Send the runtime-restart handoff**
+- [x] **Step 3: Send the runtime-restart handoff**
 
 Do not restart `com.ceo-agent-service.main` from this implementation task. Send the heartbeat task `CEO 服务错误检查与修复` the final commit SHA and exact runtime/frontend files changed. Ask it to wait for an idle queue, verify imports, restart, and read back the new PID, health endpoint, queues, operational Attention, History, and Tasks APIs.
 
