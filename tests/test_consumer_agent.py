@@ -3185,3 +3185,15 @@ def test_audit_checks_a_terminal_decision_before_running_it():
     assert "revert-activities" in boundary
     assert "the action is a revert, not a rejection" in boundary
     assert "non-empty `--remark`" in boundary
+
+
+def test_audit_returns_executed_for_a_proposal_that_escalates():
+    """Contract task 384699, run 21117: Audit posted the comment, then raised the
+    candidate's question as its own needs_human. The validator refused its
+    honest scores, and the retries lowered rule coverage from 0.7 to 0.4 until
+    the result passed."""
+    from app.consumer_agent import AUDIT_ROLE_BOUNDARY
+
+    text = " ".join(AUDIT_ROLE_BOUNDARY.split())
+    assert "return `executed` with the receipt" in text
+    assert "never lower them to fit an outcome" in text
