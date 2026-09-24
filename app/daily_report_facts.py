@@ -12,6 +12,7 @@ import json
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.email_store import EmailStore
 from app.store import AutoReplyStore
 from app.task_semantic_models import AttentionStatus
 
@@ -27,7 +28,7 @@ def report_window(report_date: date) -> tuple[datetime, datetime]:
 
 
 def collect_daily_report_facts(
-    store: AutoReplyStore, report_date: date
+    store: AutoReplyStore, email_store: EmailStore, report_date: date
 ) -> dict[str, Any]:
     start, end = report_window(report_date)
 
@@ -88,6 +89,17 @@ def collect_daily_report_facts(
         if item.status == AttentionStatus.ACTIVE
     ]
 
+    important_emails = [
+        {
+            "sender": mail["sender"],
+            "subject": mail["subject"],
+            "category": mail["category"],
+            "preview": _clip(mail["preview"] or ""),
+            "received_at": mail["received_at"],
+        }
+        for mail in email_store.list_flagged_important_between(start, end)
+    ]
+
     attempts = [
         attempt
         for attempt in store.list_reply_attempts_since(_sqlite_utc(start))
@@ -126,6 +138,7 @@ def collect_daily_report_facts(
         "meetings": meetings,
         "tasks_active_today": task_facts,
         "business_attention": attention,
+        "important_emails": important_emails,
         "handled_today": handled,
         "waiting_on_derek": [
             {
@@ -145,6 +158,7 @@ def collect_daily_report_facts(
             "meetings": len(meetings),
             "tasks_active_today": len(task_facts),
             "business_attention": len(attention),
+            "important_emails": len(important_emails),
             "handled_today": len(handled),
             "skipped_today": len(attempts) - len(handled),
             "waiting_on_derek": len(waiting_on_derek),

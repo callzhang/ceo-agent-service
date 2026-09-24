@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 
 from app.daily_report_facts import collect_daily_report_facts, report_window
+from app.email_store import EmailStore
 from app.store import AutoReplyStore
 
 
@@ -101,15 +102,18 @@ def test_report_window_is_one_beijing_day_in_utc() -> None:
 
 
 def test_empty_store_still_yields_a_complete_fact_document(tmp_path: Path) -> None:
-    facts = collect_daily_report_facts(AutoReplyStore(tmp_path / "empty.sqlite3"), REPORT_DATE)
+    store = AutoReplyStore(tmp_path / "empty.sqlite3")
+    facts = collect_daily_report_facts(store, EmailStore(store.path), REPORT_DATE)
 
     assert facts["report_date"] == "2026-09-24"
     assert facts["meetings"] == []
     assert facts["tasks_active_today"] == []
     assert facts["business_attention"] == []
+    assert facts["important_emails"] == []
     assert facts["handled_today"] == []
     assert facts["waiting_on_derek"] == []
     assert facts["coverage"] == {
+        "important_emails": 0,
         "meetings": 0,
         "tasks_active_today": 0,
         "business_attention": 0,
@@ -127,7 +131,7 @@ def test_only_tasks_active_inside_the_beijing_day_are_reported(tmp_path: Path) -
     _event(store, today, "负责人确认周五交付", created_at=INSIDE_LATE)
     _event(store, today, "上周的旧变化", created_at=BEFORE)
 
-    facts = collect_daily_report_facts(store, REPORT_DATE)
+    facts = collect_daily_report_facts(store, EmailStore(store.path), REPORT_DATE)
 
     assert [task["title"] for task in facts["tasks_active_today"]] == ["美国客户报价"]
     task = facts["tasks_active_today"][0]
@@ -142,7 +146,7 @@ def test_every_active_business_attention_item_is_reported_and_new_ones_are_marke
     _attention(store, "older", category="watch", created_at="2026-09-20T02:00:00+00:00")
     _attention(store, "fresh", category="decision", created_at="2026-09-24T02:00:00+00:00")
 
-    facts = collect_daily_report_facts(store, REPORT_DATE)
+    facts = collect_daily_report_facts(store, EmailStore(store.path), REPORT_DATE)
 
     assert [
         (item["title"], item["category"], item["new_today"])
@@ -168,7 +172,7 @@ def test_meetings_are_the_sent_follow_ups_of_meetings_that_ended_today(tmp_path:
         )
         _set(store, "meeting_alignment_jobs", job_id, final_message=f"{meeting_id} 的会后跟进")
 
-    facts = collect_daily_report_facts(store, REPORT_DATE)
+    facts = collect_daily_report_facts(store, EmailStore(store.path), REPORT_DATE)
 
     assert [meeting["meeting_id"] for meeting in facts["meetings"]] == ["today"]
     assert facts["meetings"][0]["follow_up_message"] == "today 的会后跟进"
@@ -190,7 +194,7 @@ def test_handled_items_leave_out_no_action_runs_and_list_what_waits_on_derek(
     )
     _attempt(store, "m-yesterday", send_status="completed", created_at=BEFORE)
 
-    facts = collect_daily_report_facts(store, REPORT_DATE)
+    facts = collect_daily_report_facts(store, EmailStore(store.path), REPORT_DATE)
 
     assert sorted(item["outcome"] for item in facts["handled_today"]) == [
         "completed",
@@ -198,3 +202,33 @@ def test_handled_items_leave_out_no_action_runs_and_list_what_waits_on_derek(
     ]
     assert facts["coverage"]["skipped_today"] == 1
     assert [item["attempt_id"] for item in facts["waiting_on_derek"]] == [waiting]
+
+
+def test_important_emails_are_the_mail_flagged_important_inside_the_day(
+    tmp_path: Path,
+) -> None:
+    class FlaggedMail:
+        def __init__(self) -> None:
+            self.window: tuple[datetime, datetime] | None = None
+
+        def list_flagged_important_between(self, start, end):
+            self.window = (start, end)
+            return [{
+                "sender": "cong.wang@stardust.ai",
+                "subject": "【特批申请】ALE 项目试产专家返修成本申请",
+                "category": "finance",
+                "preview": "请磊哥审批",
+                "received_at": "Thu, 24 Sep 2026 15:30:00 +0800",
+                "finished_at": "2026-09-24T07:31:00+00:00",
+            }]
+
+    mail = FlaggedMail()
+    facts = collect_daily_report_facts(
+        AutoReplyStore(tmp_path / "mail.sqlite3"), mail, REPORT_DATE
+    )
+
+    assert mail.window == report_window(REPORT_DATE)
+    assert [item["subject"] for item in facts["important_emails"]] == [
+        "【特批申请】ALE 项目试产专家返修成本申请"
+    ]
+    assert facts["coverage"]["important_emails"] == 1

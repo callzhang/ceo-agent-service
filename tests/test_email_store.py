@@ -10635,3 +10635,46 @@ def test_work_mail_keeps_its_important_flag_as_training_evidence(tmp_path: Path)
 
     assert [row["category_key"] for row in records] == ["work"]
     assert records[0]["important"] is True
+
+
+def test_flagged_important_between_lists_only_done_flags_in_the_window(
+    tmp_path: Path,
+):
+    database = tmp_path / "flagged-important.sqlite3"
+    store = EmailStore(database)
+    for message_id in ("inside", "outside", "not-done"):
+        _persist_scan(
+            store,
+            _classification(
+                status=EmailClassificationStatus.PROCESSED,
+                message_id=message_id,
+                actions=(EmailAction.FLAG_IMPORTANT,),
+                action_parameters={EmailAction.FLAG_IMPORTANT: {}},
+            ),
+        )
+    with sqlite3.connect(database) as db:
+        for message_id, status, created_at in (
+            ("inside", "done", "2026-09-24T02:00:00+00:00"),
+            ("outside", "done", "2026-09-23T15:59:59+00:00"),
+            ("not-done", "failed", "2026-09-24T03:00:00+00:00"),
+        ):
+            db.execute(
+                """update email_actions set status=?, created_at=?
+                   where classification_id=(
+                       select id from email_classifications
+                       where stable_message_identity=?
+                   )""",
+                (
+                    status,
+                    created_at,
+                    f"dingtalk-account:message-id:<{message_id}@example.com>",
+                ),
+            )
+
+    flagged = store.list_flagged_important_between(
+        datetime(2026, 9, 23, 16, tzinfo=timezone.utc),
+        datetime(2026, 9, 24, 16, tzinfo=timezone.utc),
+    )
+
+    assert len(flagged) == 1
+    assert flagged[0]["category"] == "work"

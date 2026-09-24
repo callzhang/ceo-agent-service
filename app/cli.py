@@ -2578,8 +2578,11 @@ def daily_report_facts_command(
 ) -> dict[str, object]:
     """Print one Beijing day of service-recorded facts for the daily report."""
     from app.daily_report_facts import collect_daily_report_facts
+    from app.email_store import EmailStore
 
-    payload = collect_daily_report_facts(AutoReplyStore(settings.db_path), report_date)
+    payload = collect_daily_report_facts(
+        AutoReplyStore(settings.db_path), EmailStore(settings.db_path), report_date
+    )
     payload["delivery"] = {
         "robot_code": settings.ding_robot_code,
         "robot_name": settings.ding_robot_name,

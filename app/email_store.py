@@ -15962,6 +15962,31 @@ class EmailStore:
                     )
             return len(rows)
 
+    def list_flagged_important_between(
+        self, start: datetime, end: datetime
+    ) -> list[dict[str, Any]]:
+        """Mail the service flagged important in the mailbox within [start, end)."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select classifications.sender, classifications.subject,
+                       classifications.preview, classifications.category,
+                       classifications.received_at, actions.finished_at
+                from email_actions as actions
+                join email_classifications as classifications
+                  on classifications.id=actions.classification_id
+                where actions.action_type='flag_important'
+                  and actions.status='done'
+                  and actions.created_at>=? and actions.created_at<?
+                order by actions.created_at, actions.action_id
+                """,
+                (
+                    start.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                    end.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                ),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_action_attempts(self, action_id: str) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute(
