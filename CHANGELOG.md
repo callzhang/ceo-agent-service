@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-09-24: The daily report now covers everything since the last report
+  that went out, not one calendar day: `daily-report-facts --scheduled-run
+  <id>` ends the window at this trigger and starts it where the latest earlier
+  successful report ended, so missed days fold into the next report and a
+  same-day rerun keeps the original start. A task that never succeeded looks
+  back 24 hours.
+
 - 2026-09-24: New paused Agent task “发送 CEO 每日总结” (21:00 Asia/Shanghai,
   Skill `ceo-daily-report`). Its required input comes from the new read-only
   command `app.cli daily-report-facts --date <Beijing date>`: the day's sent

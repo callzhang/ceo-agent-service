@@ -842,11 +842,12 @@ def _seed_weekly_report_task(
 
 def daily_report_prompt() -> str:
     facts_command = (
-        f"{shlex.quote(str(central_python()))} -m app.cli daily-report-facts --date <报告日期>"
+        f"{shlex.quote(str(central_python()))} -m app.cli daily-report-facts "
+        "--scheduled-run <本次触发的 scheduled_task_run_id>"
     )
     return (
-        "按 $ceo-daily-report 生成今天的 CEO 每日总结。报告日期是本次触发时间换算成北京时间的日期。"
-        f"先运行 `{facts_command}` 取得服务记录的当天事实，再用 $dingtalk-chat 扫描当天全部群消息，"
+        "按 $ceo-daily-report 生成 CEO 每日总结。"
+        f"先运行 `{facts_command}` 取得报告窗口和服务记录的事实，再用 $dingtalk-chat 扫描窗口内全部群消息，"
         "按需用 $dingtalk-minutes 补读会议摘要；写成报告后用 $dingtalk-wiki 与 $dingtalk-doc "
         "发布到钉钉文档并读回核对，最后由机器人单聊把要点和文档链接发给 Derek。"
         "某个来源读不到时写进覆盖说明，照常发布，不要向 Derek 追问材料。"

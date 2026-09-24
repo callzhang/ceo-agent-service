@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pydantic import BaseModel, NonNegativeInt, PositiveInt, field_validator
@@ -519,10 +519,10 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--period-label", required=True)
         if command == "daily-report-facts":
             subparser.add_argument(
-                "--date",
+                "--scheduled-run",
                 required=True,
-                type=date.fromisoformat,
-                help="Beijing calendar date to report, YYYY-MM-DD",
+                type=_positive_int,
+                help="scheduled task run id of this report's trigger",
             )
         if command == "repository-updater":
             subparser.add_argument("--operation-id", required=True)
@@ -2574,14 +2574,17 @@ def read_oa_approval_detail_command(
 
 
 def daily_report_facts_command(
-    settings: WorkerSettings, *, report_date: date
+    settings: WorkerSettings, *, scheduled_run_id: int
 ) -> dict[str, object]:
-    """Print one Beijing day of service-recorded facts for the daily report."""
-    from app.daily_report_facts import collect_daily_report_facts
+    """Print the service-recorded facts since the last delivered daily report."""
+    from app.daily_report_facts import collect_daily_report_facts, report_window_for_run
     from app.email_store import EmailStore
 
+    store = AutoReplyStore(settings.db_path)
     payload = collect_daily_report_facts(
-        AutoReplyStore(settings.db_path), EmailStore(settings.db_path), report_date
+        store,
+        EmailStore(settings.db_path),
+        report_window_for_run(store, scheduled_run_id),
     )
     payload["delivery"] = {
         "robot_code": settings.ding_robot_code,
@@ -5044,7 +5047,7 @@ def main() -> None:
             period_label=args.period_label,
         )
     elif args.command == "daily-report-facts":
-        daily_report_facts_command(settings, report_date=args.date)
+        daily_report_facts_command(settings, scheduled_run_id=args.scheduled_run)
     elif args.command == "process-follow-ups":
         ensure_live_send_allowed(settings)
         process_follow_ups_command(settings)

@@ -7,7 +7,8 @@ inputs. It only reads: nothing here changes a record.
 """
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 import json
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -21,16 +22,44 @@ REPORT_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 _TEXT_LIMIT = 600
 
 
-def report_window(report_date: date) -> tuple[datetime, datetime]:
-    """Return the UTC bounds of one Beijing calendar day."""
-    start = datetime.combine(report_date, time.min, tzinfo=REPORT_TIME_ZONE)
-    return start.astimezone(UTC), (start + timedelta(days=1)).astimezone(UTC)
+FIRST_REPORT_SPAN = timedelta(hours=24)
+
+
+@dataclass(frozen=True)
+class ReportWindow:
+    report_date: date
+    start: datetime
+    end: datetime
+
+
+def report_window_for_run(store: AutoReplyStore, scheduled_run_id: int) -> ReportWindow:
+    """Cover everything since the last report that was delivered.
+
+    The window ends at this trigger. It starts where the latest successful run
+    of the same task with an earlier report date ended, so days the report did
+    not go out are folded into the next one, and a same-day rerun keeps the
+    original start. A task that never succeeded looks back one day.
+    """
+    run = store.get_scheduled_task_run(scheduled_run_id)
+    if run is None:
+        raise ValueError(f"scheduled task run {scheduled_run_id} does not exist")
+    end = run.scheduled_for.astimezone(UTC)
+    report_date = _report_date(end)
+    delivered = [
+        earlier.scheduled_for.astimezone(UTC)
+        for earlier in store.list_scheduled_task_runs(run.scheduled_task_id)
+        if earlier.id != run.id
+        and _report_date(earlier.scheduled_for) < report_date
+        and _delivered(store, earlier)
+    ]
+    start = max(delivered) if delivered else end - FIRST_REPORT_SPAN
+    return ReportWindow(report_date=report_date, start=start, end=end)
 
 
 def collect_daily_report_facts(
-    store: AutoReplyStore, email_store: EmailStore, report_date: date
+    store: AutoReplyStore, email_store: EmailStore, window: ReportWindow
 ) -> dict[str, Any]:
-    start, end = report_window(report_date)
+    start, end = window.start, window.end
 
     def in_window(value: str) -> bool:
         moment = _utc(value)
@@ -131,7 +160,7 @@ def collect_daily_report_facts(
     }
 
     return {
-        "report_date": report_date.isoformat(),
+        "report_date": window.report_date.isoformat(),
         "time_zone": str(REPORT_TIME_ZONE),
         "window_utc": {"start": start.isoformat(), "end": end.isoformat()},
         "principal_user_id": store.get_current_user_id() or "",
@@ -164,6 +193,17 @@ def collect_daily_report_facts(
             "waiting_on_derek": len(waiting_on_derek),
         },
     }
+
+
+def _report_date(moment: datetime) -> date:
+    return moment.astimezone(REPORT_TIME_ZONE).date()
+
+
+def _delivered(store: AutoReplyStore, run) -> bool:
+    if run.execution_kind != "reply_task" or not run.execution_id:
+        return False
+    task = store.get_reply_task(int(run.execution_id))
+    return task is not None and task.status == "done"
 
 
 def _utc(value: str) -> datetime | None:

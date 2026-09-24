@@ -422,7 +422,7 @@ def _service_read_target_identifiers(argv: tuple[str, ...]) -> dict[str, str]:
     for flag, key in (
         ("--user-id", "user-id"),
         ("--period-label", "period-label"),
-        ("--date", "date"),
+        ("--scheduled-run", "scheduled-run"),
     ):
         try:
             value = argv[argv.index(flag) + 1]
@@ -558,8 +558,8 @@ def _is_service_read_only_python_command(argv: tuple[str, ...]) -> bool:
             or (
                 command == "daily-report-facts"
                 and len(argv) == 6
-                and argv[4] == "--date"
-                and _has_required_flag_value(argv, "--date")
+                and argv[4] == "--scheduled-run"
+                and argv[5].isdigit()
             )
         )
     )

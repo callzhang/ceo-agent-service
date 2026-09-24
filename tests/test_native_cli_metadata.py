@@ -173,8 +173,8 @@ def test_describe_native_command_allows_service_owned_daily_report_facts_read():
                 "-m",
                 "app.cli",
                 "daily-report-facts",
-                "--date",
-                "2026-09-24",
+                "--scheduled-run",
+                "58148",
             ],
         }
     )
@@ -182,7 +182,7 @@ def test_describe_native_command_allows_service_owned_daily_report_facts_read():
     assert descriptor is not None
     assert descriptor.effect is EffectKind.READ_ONLY
     assert descriptor.command_path == "app.cli daily-report-facts"
-    assert descriptor.target_identifiers == {"date": "2026-09-24"}
+    assert descriptor.target_identifiers == {"scheduled-run": "58148"}
 
 
 def test_describe_native_command_rejects_local_pipeline_with_identifiers():
