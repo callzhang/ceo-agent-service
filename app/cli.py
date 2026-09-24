@@ -91,6 +91,7 @@ from app.org_cache import (
 )
 from app.scheduled_task_recovery import close_superseded_scheduled_reply_tasks
 from app.store import AgentRunLeaseLostError, AutoReplyStore
+from app.task_agent_session import TaskAgentSessionLease, TaskAgentSessionLeaseLost
 from app.task_agent import (
     TaskAgentCodexRunner,
     TaskAgentRunner,
@@ -1523,6 +1524,36 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     if limit <= 0:
         print("process-work-items processed=0", flush=True)
         return 0
+    lease = TaskAgentSessionLease.try_acquire(store)
+    if lease is None:
+        print("process-work-items processed=0", flush=True)
+        return 0
+    with lease:
+        try:
+            lease.assert_owned()
+        except TaskAgentSessionLeaseLost:
+            print("process-work-items processed=0", flush=True)
+            return 0
+        return _process_work_items_with_session_lease(
+            settings,
+            store,
+            limit,
+            lease,
+            build_production_routed_codex_execution,
+            TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
+            TASK_AGENT_MAX_TIMEOUT_SECONDS,
+        )
+
+
+def _process_work_items_with_session_lease(
+    settings,
+    store,
+    limit,
+    lease,
+    build_production_routed_codex_execution,
+    task_agent_max_idle_timeout_seconds,
+    task_agent_max_timeout_seconds,
+) -> int:
     store.recover_orphaned_task_agent_runs()
     store.recover_orphaned_agent_runs_for_terminal_reply_tasks()
     store.recover_expired_terminal_task_runtime_attempts()
@@ -1534,11 +1565,11 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         workspace=settings.workspace,
         total_timeout_seconds=min(
             settings.task_codex_timeout_seconds,
-            TASK_AGENT_MAX_TIMEOUT_SECONDS,
+            task_agent_max_timeout_seconds,
         ),
         idle_timeout_seconds=min(
             settings.task_codex_idle_timeout_seconds,
-            TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
+            task_agent_max_idle_timeout_seconds,
         ),
     )
     runner = TaskAgentRunner(
@@ -1555,26 +1586,75 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         )
     processed = 0
     for _ in range(limit):
+        try:
+            lease.assert_owned()
+        except TaskAgentSessionLeaseLost:
+            break
         if store.active_codex_capacity_pause(now=datetime.now(timezone.utc)):
             break
         claimed = store.claim_work_summary_inputs(limit=1)
         if not claimed:
             break
         work_input = claimed[0]
-        if _process_claimed_work_summary_input(store, runner, work_input, dws=dws):
+        if _process_claimed_work_summary_input(
+            store,
+            runner,
+            work_input,
+            dws=dws,
+            session_lease=lease,
+        ):
             processed += 1
     print(f"process-work-items processed={processed}", flush=True)
     return processed
 
 
-def _process_claimed_work_summary_input(store, runner, work_input, *, dws=None) -> bool:
+def _process_claimed_work_summary_input(
+    store,
+    runner,
+    work_input,
+    *,
+    dws=None,
+    session_lease: TaskAgentSessionLease | None = None,
+) -> bool:
     capacity_recovery_active = store.codex_capacity_failure_count() > 0
     try:
-        process_work_item(store, runner, work_input, dws=dws)
+        if session_lease is not None:
+            session_lease.assert_owned()
+        from app.task_completion_agent import (
+            COMPLETION_SOURCE_TYPES,
+            process_task_completion_work_item,
+        )
+
+        if work_input.source_type in COMPLETION_SOURCE_TYPES:
+            process_task_completion_work_item(
+                store,
+                runner.codex,
+                work_input,
+                dws=dws,
+                session_lease=session_lease,
+            )
+        else:
+            process_work_item(
+                store,
+                runner,
+                work_input,
+                dws=dws,
+                session_lease=session_lease,
+            )
         store.clear_codex_capacity_pause()
         return True
     except Exception as exc:
         error = _normalize_codex_stop_error_reason(str(exc))
+        if isinstance(exc, TaskAgentSessionLeaseLost):
+            if _should_retry_work_summary_input(exc, work_input.attempts):
+                store.schedule_work_summary_input_retry(
+                    work_input.id,
+                    error,
+                    available_at=_work_summary_retry_available_at(work_input.attempts),
+                )
+            else:
+                store.mark_work_summary_input_failed(work_input.id, error)
+            return False
         if _is_runtime_outage_error(exc):
             # No route was entered, or the only entered route failed on
             # capacity/transport and every other route is paused: either way
@@ -1727,6 +1807,8 @@ def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> b
         # treats the identical code as retryable for the same reason; here it
         # fell through every predicate and terminalized the item on its first
         # attempt, taking a Service error with it.
+        return True
+    if isinstance(error, TaskAgentSessionLeaseLost):
         return True
     if isinstance(error, Exception) and is_external_dependency_error(error):
         return True
@@ -2284,7 +2366,6 @@ def authorize_memory_connector_command(settings: WorkerSettings) -> int:
 
     from app.memory_connector_client import (
         authorization_url,
-        credential_path,
         exchange_code,
         pkce_pair,
         register_client,

@@ -442,3 +442,23 @@ def test_proposal_cannot_downgrade_a_confirmed_anchor_decision(resolver):
         )
 
     assert resolver.store.get_business_task(task_id).business_relevance is BusinessRelevance.RELEVANT
+
+
+def test_relation_proposal_reuses_existing_task_agent_transaction(resolver, monkeypatch):
+    first = create_task(resolver.store, "one")
+    second = create_task(resolver.store, "two")
+    signal_id = evidence_signal(resolver.store, "relation-proof")
+
+    def nested_transaction_is_a_bug(*args, **kwargs):
+        raise AssertionError("business resolution opened a nested transaction")
+
+    monkeypatch.setattr(resolver.store, "business_task_transaction", nested_transaction_is_a_bug)
+    with resolver.store.task_agent_domain_apply_transaction() as db:
+        resolver.add_relation(
+            from_task_id=first, to_task_id=second,
+            relation_type=BusinessRelationType.RELATED_TO,
+            evidence_signal_id=signal_id, status=BusinessRelationStatus.PROPOSED,
+            reason="Connected work", _db=db,
+        )
+
+    assert resolver.store.list_business_task_relations(task_id=first)[0].supporting_signal_id == signal_id

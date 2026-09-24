@@ -136,6 +136,28 @@ def test_formal_task_requires_source_backed_identified_owner(service):
     assert semantic_state(service)[0:2] == ((), ())
 
 
+def test_candidate_command_joins_existing_task_domain_transaction(service, monkeypatch):
+    command = RecordCandidate(
+        title="补齐报价来源链接",
+        signal=SourceSignal(
+            source_type="dingtalk_message",
+            source_ref="message:batch-1",
+            evidence_text="补齐报价来源链接。",
+            dedupe_key="message:batch-1:item:1",
+        ),
+        missing_evidence_json='["owner"]',
+    )
+
+    def nested_transaction_is_a_bug(*args, **kwargs):
+        raise AssertionError("semantic command opened a nested transaction")
+
+    monkeypatch.setattr(service.store, "business_task_transaction", nested_transaction_is_a_bug)
+    with service.store.task_agent_domain_apply_transaction() as db:
+        result = service.record_candidate(command, _db=db)
+
+    assert service.store.get_business_task(result.task_id) is not None
+
+
 def test_explicit_commitment_requires_owner_authored_source(service):
     command = RecordFormalTask(
         title="提交报价",

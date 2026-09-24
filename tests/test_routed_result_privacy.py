@@ -74,18 +74,16 @@ def test_structured_result_codec_persists_only_audit_references():
 def test_task_result_codec_persists_only_audit_references():
     encoded = _encode_task_agent_result(
         _raw_with_sensitive_audit_event(
-                {
-                    "action": "skip",
-                    "skip_reason": "no durable task",
-                    "project": None,
-                    "todo_changes": [],
-                    "follow_up_drafts": [],
-                    "follow_up_changes": [],
-                    "update_summary": "skipped",
-                    "merge_reason": "",
-                    "memory_recall_used": False,
-                    "confidence": 0.8,
-                }
+            {
+                "task_decisions": [
+                    {
+                        "action": "skip",
+                        "transition": "none",
+                        "skip_reason": "no durable task",
+                        "confidence": 0.8,
+                    }
+                ]
+            }
         )
     )
 
@@ -96,30 +94,20 @@ def test_task_result_parser_rejects_runtime_paths_before_persistence(monkeypatch
     monkeypatch.setenv("CEO_FORBIDDEN_PATH_PREFIXES", "/Users/derek/")
     raw = json.dumps(
         {
-            "action": "update_project",
-            "project": {
-                "id": 769,
-                "title": "Memory",
-                "facts": [
-                    {
-                        "description": (
-                            "读取失败：/Users/derek/.dws/.data.lock，"
-                            "无法确认当前状态。"
-                        ),
-                        "source": "live_read",
-                    }
-                ],
-            },
-            "todo_changes": [],
-            "follow_up_drafts": [],
-            "follow_up_changes": [],
-            "update_summary": "保留当前项目，不创建新任务。",
-            "merge_reason": "",
-            "memory_recall_used": False,
-            "confidence": 0.8,
-            "risk": "low",
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
+            "task_decisions": [
+                {
+                    "action": "record_candidate",
+                    "transition": "none",
+                    "source_excerpt": "审批上下文已核实",
+                    "source_ref": "message:42",
+                    "title": "确认审批进展",
+                    "description": (
+                        "读取失败：/Users/derek/.dws/.data.lock，"
+                        "无法确认当前状态。"
+                    ),
+                    "missing_evidence": ["owner"],
+                }
+            ]
         },
         ensure_ascii=False,
     )

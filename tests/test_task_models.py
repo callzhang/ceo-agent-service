@@ -31,6 +31,43 @@ def test_vague_source_is_candidate_with_missing_evidence():
     assert decision.task_decisions[0].formal_basis is None
 
 
+def test_one_task_agent_contract_supports_task_and_completion_transitions():
+    decision = TaskAgentDecision.model_validate(
+        {
+            "task_decisions": [_decision()],
+            "todo_changes": [
+                {
+                    "action": "close",
+                    "todo_id": 17,
+                    "completion_evidence": {
+                        "source": "message:42",
+                        "reason": "Owner confirmed delivery",
+                        "description": "The requested quote was submitted.",
+                        "completed_at": "2026-09-23T10:00:00+08:00",
+                        "checked_at": "2026-09-23T10:05:00+08:00",
+                    },
+                }
+            ],
+            "search_trace": [
+                {
+                    "source_kind": "dingtalk_message",
+                    "result": "Owner confirmed delivery",
+                    "source_ref": "message:42",
+                    "reason": "Direct completion confirmation",
+                    "source_created_at": "2026-09-23T10:00:00+08:00",
+                    "retrieved_at": "2026-09-23T10:05:00+08:00",
+                    "audit_call_ids": ["call-17"],
+                }
+            ],
+            "update_summary": "Recorded a candidate and confirmed an existing TODO.",
+        }
+    )
+
+    assert decision.task_decisions[0].action == "record_candidate"
+    assert decision.todo_changes[0].todo_id == 17
+    assert decision.search_trace[0].audit_call_ids == ["call-17"]
+
+
 def test_one_source_can_emit_several_source_grounded_tasks():
     result = TaskAgentDecision.model_validate({"task_decisions": [
         _decision(source_excerpt="请王明提交报价", title="提交报价",
@@ -51,10 +88,21 @@ def test_one_source_can_emit_several_source_grounded_tasks():
 def test_acceptance_has_dedicated_transition_and_existing_task_id():
     accepted = TaskAgentDecision.model_validate({"task_decisions": [
         _decision(action="update_task", transition="apply_acceptance", task_id=12,
-                  source_excerpt="我接受报价任务，周五交第一版", missing_evidence=[])
+                  source_excerpt="我接受报价任务，周五交第一版", missing_evidence=[],
+                  acceptance_polarity="accepted", acceptance_target_signal_id=55)
     ]}).task_decisions[0]
     assert accepted.task_id == 12
     assert accepted.transition == "apply_acceptance"
+
+
+@pytest.mark.parametrize("polarity", ["declined", "ambiguous", None])
+def test_nonaccepted_polarity_cannot_transition_commitment(polarity):
+    with pytest.raises(ValidationError, match="apply_acceptance requires explicit accepted polarity"):
+        TaskAgentDecision.model_validate({"task_decisions": [
+            _decision(action="update_task", transition="apply_acceptance", task_id=12,
+                      source_excerpt="我不确定", missing_evidence=[],
+                      acceptance_polarity=polarity)
+        ]})
 
 
 @pytest.mark.parametrize("payload", [

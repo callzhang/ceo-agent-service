@@ -25,8 +25,9 @@ def close_todo_with_completion_evidence(
     source_ref: str,
     merge_reason: str,
     confidence: float = 1.0,
+    _db: sqlite3.Connection | None = None,
 ) -> bool:
-    todo = store.get_work_todo(todo_id)
+    todo = store.get_work_todo(todo_id, _db=_db)
     if todo is None or str(todo.status) == TodoStatus.DONE.value:
         return False
     normalized_evidence = _completion_evidence(evidence, now=now)
@@ -35,12 +36,14 @@ def close_todo_with_completion_evidence(
         status=TodoStatus.DONE.value,
         completion_evidence_json=json.dumps(normalized_evidence, ensure_ascii=False),
         completed_at=now,
+        _db=_db,
     )
     complete_follow_ups_for_todo(
         store,
         todo_id=todo.id,
         evidence=normalized_evidence,
         now=now,
+        _db=_db,
     )
     store.create_work_update(
         project_id=todo.project_id,
@@ -57,6 +60,7 @@ def close_todo_with_completion_evidence(
         ),
         merge_reason=merge_reason,
         confidence=confidence,
+        _db=_db,
     )
     return True
 
@@ -545,6 +549,7 @@ def _todo_completion_search_policy(
             "max_sources_to_return": 3,
         },
         "allowed_sources": [
+            "dingtalk_todo",
             "dws_message",
             "dws_minutes",
             "lark_message",
@@ -574,15 +579,29 @@ def _todo_completion_evidence_work_item(
     now: str,
 ) -> WorkItem:
     updates = store.list_work_updates(todo.project_id, limit=10)
+    search_policy = _todo_completion_search_policy(
+        todo=todo,
+        drafts=drafts,
+        workspace=None,
+        workspace_changed_since=candidate.source_created_at or now,
+        now=now,
+    )
+    if candidate.source_type not in search_policy["allowed_sources"]:
+        search_policy["allowed_sources"].append(candidate.source_type)
+    if candidate.source_created_at:
+        search_policy["time_window"]["prefer_since"] = candidate.source_created_at
     summary = {
         "instruction": (
-            "这是 TODO 完成状态的环境证据候选。请结合候选证据、项目/TODO 上下文、"
+            "这是 Task Agent 的 TODO 生命周期核查。返回统一 TaskAgentDecision，提供 task_decisions（没有新/更新 Task 时为空）和顶层 search_trace；"
+            "请结合候选证据、项目/TODO 上下文、"
             "相关 follow-up、钉钉 TODO 和最近 updates 判断 TODO 是否已经明确完成。"
             "只有证据明确完成时才 close TODO；自动关闭必须写完整 "
             "completion_evidence.source/reason/description/completed_at/checked_at。"
-            "弱证据、进展信息或上下文不足时不要关闭，输出更新后的 task JSON 或 skip。"
+            "弱证据、进展信息或上下文不足时不要关闭。遵循 search_policy，仅报告来源证据；"
+            "memory_recall 只能作为背景，不能成为完成依据。"
             "需要历史背景时按现有权限使用 memory_recall。"
         ),
+        "search_policy": search_policy,
         "project": {
             "id": project.id,
             "title": project.title,

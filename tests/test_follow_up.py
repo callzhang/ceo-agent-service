@@ -8,8 +8,10 @@ import app.follow_up as follow_up
 from app.follow_up import process_due_follow_ups, resolve_failed_follow_up
 from app.skill_features import FeatureRegistry
 from app.store import AutoReplyStore
-from app.task_agent import apply_task_agent_decision
-from app.task_models import TaskAgentDecision, WorkItem
+from app.task_completion_agent import (
+    TaskCompletionDecision,
+    process_task_completion_work_item,
+)
 
 
 class FakeDws:
@@ -1507,6 +1509,10 @@ def test_old_due_follow_up_refreshes_live_todo_then_queues_agent_reevaluation(tm
         risk_level="medium",
     )
     todo_id = _create_bound_todo(store, project_id)
+    store.update_work_todo(
+        todo_id,
+        follow_up_question="请说明刚刷新的交付进展。",
+    )
     store.create_work_todo_dingtalk_link(
         work_todo_id=todo_id,
         dingtalk_task_id="dt-task-stale",
@@ -1567,42 +1573,60 @@ def test_old_due_follow_up_refreshes_live_todo_then_queues_agent_reevaluation(tm
     assert summary["todo"]["dingtalk"]["done"] is False
     assert summary["todo"]["dingtalk"]["last_pull_at"] == "2026-06-10 01:00:01"
 
-    decision = TaskAgentDecision.model_validate(
+    decision = TaskCompletionDecision.model_validate(
         {
-            "action": "update_project",
-            "project": {
-                "id": project_id,
-                "title": "客户交付",
-                "memory_context": {
-                    "query": "客户交付",
-                    "summary": "Current repair context supplied by the work item.",
-                },
-            },
-            "follow_up_changes": [
+                    "follow_up_changes": [
                 {
                     "follow_up_id": draft_id,
                     "todo_id": todo_id,
                     "action": "keep_open",
                     "reason": "Current TODO is still open; ask again next workday.",
+                    "evidence_check": {
+                        "source": "dingtalk_todo:dt-task-stale",
+                        "reason": "The refreshed linked TODO remains open.",
+                    },
                     "next_due_at": "2026-06-11T10:00:00+08:00",
+                        }
+                    ],
+                    "search_trace": [
+                        {
+                            "source_kind": "dingtalk_todo",
+                            "source_ref": "dingtalk_todo:dt-task-stale",
+                            "result": "The refreshed linked TODO remains open.",
+                            "reason": "Current DingTalk TODO state was read after refresh.",
+                            "source_created_at": "2026-06-09T08:58:00+08:00",
+                            "retrieved_at": "2026-06-10T01:05:00+08:00",
+                        }
+                    ],
                 }
-            ],
-            "memory_recall_used": True,
-        }
-    )
-    apply_task_agent_decision(
+            )
+    class CompletionRunner:
+        last_session_id = "follow-up-repair-session"
+
+        def decide(self, **kwargs):
+            return decision
+
+        last_audit_tool_events = [
+            {
+                "tool": "dingtalk_todo_get",
+                "call_id": "todo-read-1",
+                "input": "dingtalk_todo:dt-task-stale",
+                "output": "dingtalk_todo:dt-task-stale remains open",
+            }
+        ]
+
+    process_task_completion_work_item(
         store,
-        summary_input_id=queued[0].id,
-        work_item=WorkItem.model_validate_json(queued[0].payload_json),
-        decision=decision,
+        CompletionRunner(),
+        queued[0],
         now="2026-06-10 01:05:00",
     )
-    store.mark_work_summary_input_done(queued[0].id)
 
     repaired = store.get_follow_up_draft(draft_id)
     assert repaired is not None
     assert repaired.suppressed_reason == ""
     assert repaired.scheduled_at == "2026-06-11T10:00:00+08:00"
+    assert repaired.question_text == "请说明刚刷新的交付进展。"
     assert process_due_follow_ups(
         store,
         dws,

@@ -509,6 +509,21 @@ def _work_tracking_review_item(
             "summary": json.dumps(
                 {
                     "reason": reason,
+                    "search_policy": {
+                        "time_window": {
+                            "prefer_since": (
+                                (_parse_follow_up_datetime(now) - timedelta(days=30)).isoformat(sep=" ")
+                                if _parse_follow_up_datetime(now) is not None
+                                else now
+                            ),
+                            "end": now,
+                        },
+                        "limits": {"max_tool_calls": 8, "max_sources_to_return": 3},
+                        "allowed_sources": [
+                            "dingtalk_todo", "dws_message", "dws_minutes", "lark_message", "lark_doc",
+                            "lark_task", "email",
+                        ],
+                    },
                     "project": (
                         {"id": project.id, "title": project.title}
                         if project is not None

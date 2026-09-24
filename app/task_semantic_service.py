@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 import json
 import sqlite3
+from contextlib import nullcontext
 
 from app.store import AutoReplyStore
 from app.task_semantic_models import (
@@ -318,14 +319,25 @@ class TaskSemanticService:
         may_commit: bool, owner_user_id: str = ""
     ) -> None:
         for fact in date_facts:
-            if not fact.raw_phrase.strip() or fact.raw_phrase not in signal.evidence_text:
+            source_timestamp = (
+                fact.date_type is BusinessTaskDateType.ASSIGNED_AT
+                and bool(signal.source_time)
+                and fact.raw_phrase == signal.source_time
+                and fact.value_at == signal.source_time
+            )
+            if not fact.raw_phrase.strip() or (
+                fact.raw_phrase not in signal.evidence_text and not source_timestamp
+            ):
                 raise ValueError("date phrase must occur in its source")
-            agent_next_check = (
-                fact.date_type is BusinessTaskDateType.NEXT_CHECK_AT
+            agent_authored_date = (
+                fact.date_type in {
+                    BusinessTaskDateType.NEXT_CHECK_AT,
+                    BusinessTaskDateType.ESTIMATED_DEADLINE_AT,
+                }
                 and fact.actor_kind is BusinessActorKind.AGENT
                 and bool(fact.actor_user_id.strip())
             )
-            if not agent_next_check and (
+            if not (source_timestamp or agent_authored_date) and (
                 fact.actor_kind is not signal.author_kind
                 or fact.actor_user_id != signal.author_user_id
                 or fact.actor_name != signal.author_name
@@ -378,9 +390,15 @@ class TaskSemanticService:
         evidence_role: BusinessEvidenceRole,
         reason: str,
         date_facts: tuple[TaskDateInput, ...] = (),
+        _db: sqlite3.Connection | None = None,
     ) -> TaskMutationResult:
         now = self._now()
-        with self.store.business_task_transaction() as db:
+        transaction = (
+            nullcontext(_db)
+            if _db is not None
+            else self.store.business_task_transaction()
+        )
+        with transaction as db:
             replay = self._replay_result(signal=signal, db=db)
             if replay is not None:
                 return replay
@@ -408,7 +426,9 @@ class TaskSemanticService:
             )
             return TaskMutationResult(task_id=task_id, signal_id=signal_id, created=True)
 
-    def record_candidate(self, command: RecordCandidate) -> TaskMutationResult:
+    def record_candidate(
+        self, command: RecordCandidate, *, _db: sqlite3.Connection | None = None
+    ) -> TaskMutationResult:
         if command.deadline_at:
             raise ValueError("untyped deadline is legacy; use date_facts")
         self._validate_date_facts(command.date_facts, signal=command.signal, may_commit=False)
@@ -425,9 +445,12 @@ class TaskSemanticService:
             evidence_role=BusinessEvidenceRole.DISCOVERY,
             reason="Candidate task recorded from source evidence.",
             date_facts=command.date_facts,
+            _db=_db,
         )
 
-    def record_formal_task(self, command: RecordFormalTask) -> TaskMutationResult:
+    def record_formal_task(
+        self, command: RecordFormalTask, *, _db: sqlite3.Connection | None = None
+    ) -> TaskMutationResult:
         if command.deadline_at:
             raise ValueError("untyped deadline is legacy; use date_facts")
         if command.formality is None:
@@ -474,9 +497,12 @@ class TaskSemanticService:
             evidence_role=self._formal_evidence_role(command.formality.basis),
             reason="Formal task recorded from source evidence.",
             date_facts=command.date_facts,
+            _db=_db,
         )
 
-    def record_task_from_evidence(self, command: RecordTaskFromEvidence) -> TaskMutationResult:
+    def record_task_from_evidence(
+        self, command: RecordTaskFromEvidence, *, _db: sqlite3.Connection | None = None
+    ) -> TaskMutationResult:
         if command.deadline_at:
             raise ValueError("untyped deadline is legacy; use date_facts")
         resolution = resolve_formality(command.formality)
@@ -491,7 +517,7 @@ class TaskSemanticService:
                     owner_name=command.owner_name,
                     missing_evidence_json=missing_evidence_json,
                     date_facts=command.date_facts,
-                )
+                ), _db=_db
             )
         if command.formality.basis is None:
             raise AssertionError("formal resolution requires a formal basis")
@@ -505,17 +531,24 @@ class TaskSemanticService:
                 owner_name=command.owner_name,
                 owner_evidence_json=command.owner_evidence_json,
                 date_facts=command.date_facts,
-            )
+            ), _db=_db
         )
 
-    def promote_candidate(self, command: PromoteCandidate) -> TaskMutationResult:
+    def promote_candidate(
+        self, command: PromoteCandidate, *, _db: sqlite3.Connection | None = None
+    ) -> TaskMutationResult:
         if command.formality is None:
             raise ValueError("candidate promotion requires structured formality evidence")
         resolution = resolve_formality(command.formality)
         if resolution.stage is not BusinessTaskStage.FORMAL or command.formality.basis is None:
             raise ValueError("candidate promotion requires formal evidence")
         now = self._now()
-        with self.store.business_task_transaction() as db:
+        transaction = (
+            nullcontext(_db)
+            if _db is not None
+            else self.store.business_task_transaction()
+        )
+        with transaction as db:
             replay = self._replay_result(signal=command.signal, db=db)
             if replay is not None:
                 return replay
@@ -618,9 +651,16 @@ class TaskSemanticService:
             )
             return TaskMutationResult(task_id=task.id, signal_id=signal_id, created=False)
 
-    def apply_acceptance(self, command: ApplyAcceptance) -> TaskMutationResult:
+    def apply_acceptance(
+        self, command: ApplyAcceptance, *, _db: sqlite3.Connection | None = None
+    ) -> TaskMutationResult:
         now = self._now()
-        with self.store.business_task_transaction() as db:
+        transaction = (
+            nullcontext(_db)
+            if _db is not None
+            else self.store.business_task_transaction()
+        )
+        with transaction as db:
             replay = self._replay_result(signal=command.signal, db=db)
             if replay is not None:
                 return replay
@@ -714,7 +754,9 @@ class TaskSemanticService:
             )
             return TaskMutationResult(task_id=task.id, signal_id=signal_id, created=False)
 
-    def update_task(self, command: UpdateBusinessTask) -> TaskMutationResult:
+    def update_task(
+        self, command: UpdateBusinessTask, *, _db: sqlite3.Connection | None = None
+    ) -> TaskMutationResult:
         if command.commitment_status is not None:
             raise ValueError("commitment transitions require dedicated acceptance commands")
         if command.deadline_at is not None:
@@ -736,7 +778,12 @@ class TaskSemanticService:
             self._update_event_type(changed)
             if changed else BusinessTaskEventType.DATE_EVIDENCE_RECORDED
         )
-        with self.store.business_task_transaction() as db:
+        transaction = (
+            nullcontext(_db)
+            if _db is not None
+            else self.store.business_task_transaction()
+        )
+        with transaction as db:
             replay = self._replay_result(signal=command.signal, db=db)
             if replay is not None:
                 return replay
@@ -813,7 +860,9 @@ class TaskSemanticService:
             return BusinessTaskEventType.RELEVANCE_CHANGED
         raise ValueError("each task update must describe one state transition")
 
-    def merge_same_deliverable(self, command: MergeBusinessTasks) -> TaskMutationResult:
+    def merge_same_deliverable(
+        self, command: MergeBusinessTasks, *, _db: sqlite3.Connection | None = None
+    ) -> TaskMutationResult:
         if command.source_task_id == command.target_task_id:
             raise ValueError("a task cannot merge into itself")
         if (
@@ -822,7 +871,12 @@ class TaskSemanticService:
         ):
             raise ValueError("identity evidence does not authorize a merge")
         now = self._now()
-        with self.store.business_task_transaction() as db:
+        transaction = (
+            nullcontext(_db)
+            if _db is not None
+            else self.store.business_task_transaction()
+        )
+        with transaction as db:
             replay = self._replay_result(signal=command.signal, db=db)
             if replay is not None:
                 return replay

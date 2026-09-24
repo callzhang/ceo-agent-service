@@ -1,5 +1,7 @@
 import json
+import logging
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -17,41 +19,55 @@ from app.agent_runtime_router import (
     RoutedResultValidationRetry,
 )
 from app.codex_runner import memory_connector_config_issue
-from app.config import repo_root
 from app.external_retry import ExternalDependencyError
 from app.agent_result import agent_message_json_objects
 from app.routed_result_privacy import audit_references_from_full_events
-from app.store import AutoReplyStore, RecentFollowUpCandidate
+from app.store import AutoReplyStore
 from app.business_skills import bundled_business_skills_root
 from app.structured_agent import load_skill_text
 from app.task_models import (
-    FollowUpDraftChange,
-    FollowUpDraftDecision,
-    ProjectMemoryContext,
-    TaskProjectPatch,
+    TaskDecision,
     TaskAgentDecision,
-    TodoChange,
-    TodoStatus,
     WorkItem,
+    WorkItemSourceKind,
     WorkItemSourceType,
     WorkSummaryInput,
-    owner_identity_is_supported,
 )
+from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID
 from app.task_retrieval import (
-    render_candidate_prompt,
-    retrieve_project_candidates,
+    render_task_semantic_context,
+    retrieve_task_semantic_context,
 )
-from app.todo_completion import complete_follow_ups_for_todo
-from app.todo_sync import (
-    _deadline_to_iso,
-    maybe_create_dingtalk_todo,
-    sync_completed_todo_to_dingtalk,
+from app.task_semantic_models import (
+    BusinessActorKind,
+    BusinessEvidenceRole,
+    BusinessRelationType,
+    BusinessTaskDateType,
+    BusinessTaskStatus,
+    BusinessRelevance,
+    FormalTaskBasis,
 )
+from app.task_semantic_service import (
+    AcceptancePolarity,
+    ApplyAcceptance,
+    MergeBusinessTasks,
+    PromoteCandidate,
+    RecordCandidate,
+    RecordFormalTask,
+    SourceSignal,
+    TaskDateInput,
+    TaskSemanticService,
+    UpdateBusinessTask,
+)
+from app.task_semantic_rules import FormalityEvidence, IdentityEvidence
+from app.task_business_resolution import BusinessResolutionService
+from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
 
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 # Field errors quoted back to the model in one correction turn.
 TASK_DECISION_PROBLEM_LIMIT = 12
 TASK_AGENT_MAX_TIMEOUT_SECONDS = 900
+LOGGER = logging.getLogger(__name__)
 # A required live DWS read can legitimately take several minutes without
 # producing Codex JSONL output. Keep a finite bound while matching launchd's
 # task-agent timeout policy.
@@ -73,6 +89,23 @@ TASK_RESULT_CODEC = RoutedResultCodec.text(
     schema_id="task_agent.decision.v1",
     allow_evidence_source_refs=True,
 )
+
+
+@dataclass(frozen=True)
+class TaskAgentApplyResult:
+    task_ids: tuple[int, ...]
+    attention_proposals: tuple[tuple[TaskDecision, int, int], ...]
+    affected_task_ids: tuple[int, ...] = ()
+    skipped_reasons: tuple[str, ...] = ()
+
+    def __iter__(self):
+        return iter(self.task_ids)
+
+    def __len__(self) -> int:
+        return len(self.task_ids)
+
+    def __getitem__(self, index):
+        return self.task_ids[index]
 
 
 # Repair turns a work item may spend per pass on repairable rules.
@@ -158,52 +191,6 @@ class TaskAgentRunner:
             session_scope_id=session_scope_id,
         )
 
-    def repair_owner_assignment(
-        self,
-        work_item: WorkItem,
-        candidate_prompt: str,
-        decision: TaskAgentDecision,
-        *,
-        validation_error: str,
-        memory_issue: str = "",
-        run_id: int,
-        session_scope_id: str,
-    ) -> TaskAgentDecision:
-        return self.codex.decide(
-            prompt=build_owner_resolution_prompt(
-                work_item,
-                candidate_prompt,
-                decision,
-                validation_error=validation_error,
-                memory_issue=memory_issue,
-            ),
-            workload_key=str(run_id),
-            session_scope_id=session_scope_id,
-        )
-
-    def repair_validation(
-        self,
-        work_item: WorkItem,
-        candidate_prompt: str,
-        decision: TaskAgentDecision,
-        *,
-        validation_error: str,
-        memory_issue: str = "",
-        run_id: int,
-        session_scope_id: str,
-    ) -> TaskAgentDecision:
-        return self.codex.decide(
-            prompt=build_task_agent_validation_repair_prompt(
-                work_item,
-                candidate_prompt,
-                decision,
-                validation_error=validation_error,
-                memory_issue=memory_issue,
-            ),
-            workload_key=str(run_id),
-            session_scope_id=session_scope_id,
-        )
-
 
 class TaskAgentCodexRunner:
     def __init__(
@@ -278,7 +265,6 @@ class TaskAgentCodexRunner:
         self.last_audit_tool_events = session_events or payload["audit_tool_events"]
         return decision
 
-
 def _encode_task_agent_result(raw: str) -> str:
     from app.codex_decision import extract_codex_audit_events
 
@@ -327,25 +313,18 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "JSON object.\n\n"
         f"Problems in the previous output:\n{detail}\n\n"
         "Rules that must hold:\n"
-        "- null on an optional field means the field is not provided (the "
-        "same as omitting it). Fields the schema marks required (action, "
-        "follow_up_change.follow_up_id, follow_up_draft title, description, "
-        "target_kind and question_text, fact description and source) must "
-        "carry a value, never null.\n"
-        "- Evidence objects required by the action are complete objects: "
-        "owner_evidence with source, reason, description plus the assigned "
-        "user_id and name whenever an owner is assigned or changed; "
-        "completion_evidence with source, reason, description and "
-        "completed_at for close. null there means no evidence and the "
-        "decision is rejected.\n"
-        "- Every project field (facts, blocker, tags, source_conversations, "
-        "current_state, next_step, memory_context) belongs inside the project "
-        "object.\n"
-        "- When there is nothing to change, return action=\"skip\" with a "
-        "skip_reason.\n"
-        "- update_project requires project with the stable integer id from the "
-        "current context and project.memory_context (query plus summary or "
-        "memories); create_project requires project.memory_context too.\n\n"
+        "- Return the TaskAgentDecision envelope with task_decisions (0..N); "
+        "every non-skip item needs exact source_excerpt and source_ref.\n"
+        "- A formal assignment requires an explicit owner and authorized "
+        "assignment source. Owner evidence alone does not prove authority.\n"
+        "- apply_acceptance requires accepted polarity, an explicitly cited "
+        "assignment signal, and a verified reply-to source reference; never "
+        "infer or manufacture that link.\n"
+        "- Memory is background only. When memory_recall is available, query "
+        "focused prior context; for owner identity, use a live directory read "
+        "and keep only an ID that maps to the source-named owner.\n"
+        "- When there is nothing to retain, return an empty task_decisions "
+        "list or an explicit skip item with a reason.\n\n"
         "Do not include local filesystem paths, session paths, lock paths, "
         "credentials, or runtime diagnostics in any business field. A source "
         "path may appear only in an evidence field whose key is exactly source "
@@ -364,10 +343,14 @@ def build_task_agent_prompt(
     scheduled_consumer = ServiceCommandConsumerContext.from_payload(
         work_item.scheduled_consumer or None
     )
-    skill_text = (
-        scheduled_consumer.skill_protocol
-        if scheduled_consumer is not None
-        else load_skill_text([WORK_TRACKING_SKILL_PATH])
+    current_skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
+    scheduled_skill_snapshot = (
+        "## Scheduled Consumer Skill Snapshot (Supplemental Context)\n"
+        "This snapshot may be older than the current Skill. The current Task-first "
+        "decision envelope and rules below control this output if they conflict.\n\n"
+        f"{scheduled_consumer.skill_protocol}\n"
+        if scheduled_consumer is not None and scheduled_consumer.skill_protocol
+        else ""
     )
     scheduled_consumer_prompt = (
         "## Scheduled Consumer Prompt\n"
@@ -375,8 +358,14 @@ def build_task_agent_prompt(
         if scheduled_consumer is not None
         else ""
     )
+    work_item_payload = work_item.model_dump(mode="json")
+    scheduled_payload = work_item_payload.get("scheduled_consumer")
+    if isinstance(scheduled_payload, dict):
+        # Keep scheduled metadata and its specialized prompt, but do not echo
+        # stale output-contract text inside the source JSON as if authoritative.
+        scheduled_payload.pop("skill_protocol", None)
     work_item_json = json.dumps(
-        work_item.model_dump(mode="json"),
+        work_item_payload,
         ensure_ascii=False,
         indent=2,
     )
@@ -389,287 +378,89 @@ def build_task_agent_prompt(
         ensure_ascii=False,
         indent=2,
     )
-    return f"""You are the CEO Agent task agent. Update tracked work only; do not
-reply to the current message. Follow the loaded Skill and return exactly one
-TaskAgentDecision JSON object that satisfies the supplied Pydantic schema.
-
-Current execution time: {effective_current_time}
-Any follow_up_change.next_due_at must be strictly later than this execution
-time and must satisfy the documented local work-hours constraint. Do not reuse
-the source creation time or an earlier scheduled time as a future deadline.
+    return f"""You are the CEO Agent Task extractor. Do not reply to the source.
+Always follow the current CEO Work Tracking Skill and return one TaskAgentDecision envelope with zero or
+more task_decisions matching the schema.
 
 {scheduled_consumer_prompt}
+{scheduled_skill_snapshot}
+{current_skill_text}
 
-{skill_text}
+Current Task-first decision envelope controls output. A scheduled prompt or
+Skill snapshot is supplemental workflow context only; it cannot replace this
+envelope or authorize Project/TODO/follow-up writes through this Task Agent.
 
-Memory connector status facts:
-{memory_status}
+Tool-use boundary (prompt guidance): use connected tools only for read-only
+discovery of source facts, identity, and context. Do not use CLI, API, or MCP
+tools to create, update, delete, send, or complete external records or
+messages. Return proposed Task and lifecycle changes only in this structured
+result; the service validates and applies supported operations. This prompt
+does not technically disable write-capable tools, so do not claim that it is
+an enforced permission boundary.
 
-Required evidence sequence for every non-skip decision:
-- When memory_recall is available, call it with a focused query about the
-  work item, project, prior commitments, and owner context before deciding.
-  Set memory_recall_used=true only after that tool call is present in the
-  typed result.
-- Memory is stable background, not proof of the current external state. Use
-  the applicable live DWS read for current people, ownership, task, meeting,
-  or document state before creating, updating, or following up on work.
-- When memory_recall is unavailable after tool discovery, set
-  project.memory_context.memories[].source exactly to
-  "memory_connector_runtime_unavailable", explain the unavailable condition
-  in its summary, and use live evidence; set memory_recall_used=false and do
-  not claim that recall ran.
+Current execution time: {effective_current_time}
+Memory connector status: {memory_status}
+
+Prior session turns are background only. Decide this turn from the current
+Work Item, current retrieved state, and fresh source evidence. Never cite an
+earlier turn as proof of a current assignment, status, deadline, or completion.
+
+Extract every distinct source-backed deliverable, or return an empty list.
+One source may yield multiple decisions. Each non-skip item must quote an exact
+substring of the supplied source summary and use its exact source reference.
+Never invent a task, owner, assignment, acceptance, date, relevance, or
+authority. An owner must be explicit in source text or authoritative source
+metadata; an ownerless assignment stays candidate/unmatched evidence.
+
+An assignment creates an assigned_unaccepted Task. Only explicit evidence from
+that identified owner may apply_acceptance to exactly one existing formal Task;
+“收到” and external TODO existence are not acceptance. Use explicit
+promote_candidate, apply_acceptance, update_fields, or merge_identity
+transitions with existing IDs. Similarity rank is context only. Generic updates
+cannot set commitment status.
+
+Only identical deliverables may be proposed for identity merge; related tasks
+remain linked or clustered. Project candidates must cite an existing cluster,
+and official Projects come only from the supplied registry. Anchor and Project
+matches remain proposals.
+
+Dates use typed date_evidence with exact source excerpt/reference and actor.
+Normalized dates must equal the full exact parseable date phrase; do not add
+time precision absent from the source. assigned_at comes only from trusted
+source timestamp metadata. An estimate keeps the identified source actor who
+made it; the extracting Agent is not its actor. Only next_check_at is
+Agent-authored, not an owner commitment. Other date facts need an identified source actor. AI Minutes
+has no trusted speaker-to-identity mapping yet, so do not attribute a quoted
+speaker's date to the meeting host or to a model-selected identity. Only owner
+acceptance can establish committed_deadline_at. No date is required to retain a Task.
+Attention requires a registered anchor plus a material trigger: threatened
+accepted commitment, material change/dispute, CEO decision/push, required Gate,
+or meaningful risk escalation. Relevance, acceptance, ordinary progress, or
+date proximity alone is not attention. Retain real low-impact work when needed,
+but keep it outside attention. “skip” means no plausible retained source task,
+not no Project.
+
+Memory is background only, never source proof. Do not copy runtime paths,
+credentials, or diagnostics into business fields.
 
 Current Work Item JSON:
 {work_item_json}
 
-Source-specific mutation authority:
-- A local_file source may update a clearly matched existing project, but it may
-  not create a new project. Return action="skip" when no existing project is a
-  defensible match.
-- A todo_completion_check or follow_up_completion_check that finds no TODO,
-  follow-up, or project-status lifecycle transition must return action="skip".
-  Do not rewrite current_state, blocker, next_step, or durable metadata merely
-  to say that completion evidence is still absent.
-
-Current candidate context:
+Current semantic Task context (rank is context, never authority):
 {candidate_prompt}
 
-Existing follow-up repair rule:
-- When the Work Item summary contains follow_up.id, it identifies an existing
-  follow-up draft under review. Do not recreate that draft as a new
-  follow_up_draft just to change its schedule, target, or state. Use a
-  follow_up_change for that id after reading the linked TODO and, when present,
-  original_work_update.source_type/source_ref source material.
-- A persisted owner id or name is not owner evidence. Create or reassign a
-  follow-up only when the original source independently supports the owner and
-  you can provide owner evidence with source, reason, and description. For
-  every non-empty owner assignment, the matching evidence object must also
-  repeat that same stable user_id and name: project.owner_evidence,
-  todo_changes[*].owner_evidence, and
-  follow_up_drafts[*].risk_check.owner_evidence. Do not invent owner evidence
-  from matching stored records.
-- If the original source cannot support an owner, keep the existing follow-up
-  suppressed with a clear evidence_check rather than emitting an invalid new
-  follow_up_draft. Do not send a message as part of this repair decision.
-
-Follow-up draft participant contract:
-- Emit a follow_up_draft only when its participants list is non-empty and every
-  participant has a stable user_id from a focused live directory/contact read.
-  Include every identified recipient and responsible person relevant to that
-  follow-up; names alone are not enough.
-- If you cannot reliably identify at least one participant, do not emit a
-  follow_up_draft. You may retain a supported project update, but must omit the
-  owner-dependent TODO or follow-up rather than guessing an identity.
-
-Runtime-data boundary:
-- Do not copy local filesystem paths, session paths, lock paths, credentials, or
-  other runtime diagnostics into business descriptions, summaries, titles,
-  reasons, or risks. A source path may appear only in an evidence field whose
-  key is exactly source or source_ref; describe failed reads without repeating
-  the runtime path.
-
-Material-to-task boundary:
-- Decide first whether the source records a durable work update. A reference
-  document, script, presentation, or other informational artifact is not a
-  task merely because it has an author, speaker, or topic.
-- When the source does not establish a concrete commitment, owner, deadline,
-  progress change, or next step, return action="skip" with a clear reason.
-  Do not create a project, TODO, or follow-up for material that lacks such a
-  work signal.
-- Every TODO you create must have deadline_at as a concrete ISO datetime.
-  Use the deadline the source states. When the source commits to work but
-  names no date, infer a reasonable deadline from the work's scope and any
-  stated urgency, and never leave deadline_at empty. A TODO without a
-  deadline cannot be tracked or mirrored to DingTalk Todo.
-- Never infer an owner from the author, speaker, participants, or a matching
-  stored project. A non-skip decision may leave ownership empty only when
-  the source establishes a real work update but does not assign an owner.
+Evidence protocol:
+- Use memory_recall as stable background when available; it is not proof of
+  current source facts or assignment authority.
+- For source-named owners, perform a focused live directory/contact lookup
+  when available. Keep an owner_user_id only when that lookup maps the exact
+  source-named person; otherwise preserve the name and leave the ID empty.
+- A reply is accepted only when the source/provider context contains a
+  verified reply_to_source_ref. Do not infer it from a Task ID or similar text.
 
 TaskAgentDecision Pydantic JSON schema:
 {decision_schema}
 """
-
-
-def build_candidate_context_prompt(
-    *,
-    project_candidates: str,
-    follow_up_candidates: str,
-) -> str:
-    return (
-        "候选项目:\n"
-        f"{project_candidates}\n\n"
-        "近期 follow-up 候选:\n"
-        f"{follow_up_candidates}"
-    )
-
-
-def build_owner_resolution_prompt(
-    work_item: WorkItem,
-    candidate_prompt: str,
-    decision: TaskAgentDecision,
-    *,
-    validation_error: str,
-    memory_issue: str = "",
-) -> str:
-    skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
-    decision_schema = json.dumps(
-        TaskAgentDecision.model_json_schema(),
-        ensure_ascii=False,
-        indent=2,
-    )
-    return f"""Repair the previous CEO Agent task decision. Return exactly one complete
-TaskAgentDecision JSON object that satisfies the supplied Pydantic schema.
-
-The previous decision was rejected before any project, TODO, follow-up, or
-external message was created because: {validation_error}
-
-{skill_text}
-
-Use the existing memory context only as stable background. For any owner you
-keep, perform a focused live directory/contact read and include the stable
-owner_user_id plus source, reason, and description in owner_evidence. The
-owner_evidence object itself must repeat that same identity as user_id and
-name, so the persisted evidence can be verified independently. Do not infer an
-owner from an author, speaker, participant, or name-only match.
-
-If the source establishes a real work update but a responsible person cannot be
-uniquely resolved, keep the project owner fields and owner_evidence empty. Do
-not create a TODO or follow-up that depends on that unverified owner. Do not
-send a message while repairing this decision.
-
-For every follow_up_draft you keep, participants must be a non-empty list of
-stable user identities returned by a focused live directory/contact read; each
-entry must include user_id. If no participant can be reliably identified, omit
-the follow-up draft rather than guessing from a display name or source text.
-
-Memory connector status facts:
-{_memory_connector_prompt_status(memory_issue)}
-
-Current Work Item JSON:
-{work_item.model_dump_json(indent=2)}
-
-Current candidate context:
-{candidate_prompt}
-
-Previous rejected decision JSON:
-{decision.model_dump_json(indent=2)}
-
-TaskAgentDecision Pydantic JSON schema:
-{decision_schema}
-    """
-
-
-def build_task_agent_validation_repair_prompt(
-    work_item: WorkItem,
-    candidate_prompt: str,
-    decision: TaskAgentDecision,
-    *,
-    validation_error: str,
-    memory_issue: str = "",
-) -> str:
-    return (
-        build_task_agent_prompt(
-            work_item,
-            candidate_prompt,
-            memory_issue=memory_issue,
-        )
-        + f"""
-
-Validation repair:
-The previous decision was rejected before any project, TODO, follow-up, or
-external message was created because: {validation_error}
-
-This repair is read-only: do not send messages or perform writes.
-Call memory_recall now with a focused query about this work item, its
-project, prior commitments, and owner context, then return one complete
-replacement decision. Set memory_recall_used=true only because that call
-happened in this session, never by copying the previous decision's flag.
-
-project.memory_context contract for every non-skip decision:
-- query: the focused memory_recall query you ran (non-empty).
-- summary and memories: what that recall returned. When recall returns
-  nothing relevant, keep memories empty and write a one-sentence summary
-  saying no relevant memory was found for the query; an empty summary with
-  empty memories is rejected.
-- When memory_recall is unavailable after tool discovery, set
-  memories[].source exactly to "memory_connector_runtime_unavailable",
-  explain that in summary, and set memory_recall_used=false.
-- When there is nothing to change (for example a completion check that
-  found no completion evidence), return action="skip" with a clear
-  skip_reason instead of a non-skip decision.
-
-If the rejected decision used update_project but did not establish a stable
-integer project ID, the replacement may use update_project only with an ID
-from the current candidate context or a successful current task-management
-read. If no such ID can be established, return skip; 不得改成 create_project
-to bypass the missing-ID error or create a possible duplicate project.
-
-For update_project, omit every unchanged project field from project. Do not
-repeat protected metadata with empty or schema-default values; absent fields
-preserve the current project value. Include only fields that this work item
-actually changes, plus id and the required memory_context.
-
-Previous rejected decision JSON:
-{decision.model_dump_json(indent=2)}
-"""
-    )
-
-
-def render_follow_up_candidate_prompt(
-    candidates: list[RecentFollowUpCandidate],
-) -> str:
-    payload = []
-    for candidate in candidates:
-        payload.append(
-            {
-                "id": candidate.follow_up_id,
-                "follow_up_id": candidate.follow_up_id,
-                "project_id": candidate.project_id,
-                "project_title": candidate.project_title,
-                "project_status": candidate.project_status,
-                "project_priority": candidate.project_priority,
-                "project_risk_level": candidate.project_risk_level,
-                "todo_id": candidate.todo_id,
-                "todo_title": candidate.todo_title,
-                "todo_status": candidate.todo_status,
-                "todo_priority": candidate.todo_priority,
-                "todo_deadline_at": candidate.todo_deadline_at,
-                "todo_next_follow_up_at": candidate.todo_next_follow_up_at,
-                "owner_user_id": candidate.owner_user_id,
-                "owner_name": candidate.owner_name,
-                "target_conversation_id": candidate.target_conversation_id,
-                "target_kind": candidate.target_kind,
-                "question_text": candidate.question_text,
-                "scheduled_at": candidate.scheduled_at,
-                "sent_at": candidate.sent_at,
-                "status": candidate.status,
-                "reaction_status": candidate.reaction_status,
-                "reaction_summary": candidate.reaction_summary,
-                "suppressed_reason": candidate.suppressed_reason,
-                "evidence_check_json": candidate.evidence_check_json,
-                "risk_check_json": candidate.risk_check_json,
-                "send_result_json": candidate.send_result_json,
-            }
-        )
-    return json.dumps(payload, ensure_ascii=False, indent=2)
-
-
-def _recent_follow_up_context_since(created_at: str) -> str:
-    created_at = created_at.strip()
-    if not created_at:
-        return ""
-    for parser in (
-        lambda text: datetime.fromisoformat(text.replace("Z", "+00:00")),
-        lambda text: datetime.strptime(text, "%Y-%m-%d %H:%M:%S"),
-    ):
-        try:
-            parsed = parser(created_at)
-            return (parsed - RECENT_FOLLOW_UP_CONTEXT_WINDOW).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
-        except ValueError:
-            continue
-    return ""
 
 
 def _memory_connector_prompt_status(memory_issue: str) -> str:
@@ -679,1303 +470,7 @@ def _memory_connector_prompt_status(memory_issue: str) -> str:
     return "可用：memory_recall tool is configured."
 
 
-def process_work_item(
-    store: AutoReplyStore,
-    runner: TaskAgentRunner,
-    work_input: WorkSummaryInput,
-    *,
-    dws=None,
-    now: str = "",
-) -> None:
-    active_run_id: int | None = None
-    try:
-        memory_issue = memory_connector_config_issue()
-        work_item = WorkItem.model_validate_json(work_input.payload_json)
-        candidates = retrieve_project_candidates(
-            store,
-            summary=work_item.summary,
-            project_name=work_item.project_name,
-        )
-        follow_up_candidates = store.list_recent_follow_up_candidates(
-            conversation_id=work_item.source.conversation_id,
-            owner_user_id=work_item.context.sender_user_id,
-            since=_recent_follow_up_context_since(work_item.source.created_at),
-            limit=10,
-        )
-        candidate_prompt = build_candidate_context_prompt(
-            project_candidates=render_candidate_prompt(candidates),
-            follow_up_candidates=render_follow_up_candidate_prompt(
-                follow_up_candidates
-            ),
-        )
-        active_run_id = store.begin_task_agent_run(work_input.id)
-        session_scope_id = f"task:{active_run_id}"
-        decision = runner.decide(
-            work_item,
-            candidate_prompt,
-            memory_issue=memory_issue,
-            run_id=active_run_id,
-            session_scope_id=session_scope_id,
-        )
-        decision = _normalize_follow_up_change_times(decision)
-        codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
-        # Every repairable rule gets its own repair turn, bounded by
-        # TASK_DECISION_REPAIR_ROUNDS: a repaired decision that trips a
-        # different repairable rule (the live pattern: "update_project
-        # requires project" first, memory_context second) is repaired again
-        # instead of leaking out as a terminal work-item failure.
-        for repair_round in range(TASK_DECISION_REPAIR_ROUNDS + 1):
-            try:
-                _validate_task_agent_decision(
-                    decision,
-                    now=now,
-                )
-                _validate_project_patch_against_store(store, decision)
-                break
-            except RepairableTaskDecisionValidationError as exc:
-                if repair_round == TASK_DECISION_REPAIR_ROUNDS:
-                    raise TaskDecisionRepairExhausted(
-                        f"task decision repair exhausted after "
-                        f"{TASK_DECISION_REPAIR_ROUNDS} rounds: {exc}"
-                    ) from exc
-                rejected_decision = decision
-                store.finish_task_agent_run(
-                    active_run_id,
-                    status="failed",
-                    codex_session_id=codex_session_id,
-                    decision_json=_json_dumps(decision.model_dump(mode="json")),
-                    audit_summary=decision.update_summary,
-                    memory_recall_used=decision.memory_recall_used,
-                    error=str(exc),
-                )
-                active_run_id = store.begin_task_agent_run(work_input.id)
-                session_scope_id = f"task:{active_run_id}"
-                decision = runner.repair_validation(
-                    work_item,
-                    candidate_prompt,
-                    decision,
-                    validation_error=str(exc),
-                    memory_issue=memory_issue,
-                    run_id=active_run_id,
-                    session_scope_id=session_scope_id,
-                )
-                decision = _normalize_follow_up_change_times(decision)
-                decision = _restore_structured_update_project(
-                    decision,
-                    work_item.summary,
-                    candidates,
-                )
-                _validate_task_agent_validation_repair(
-                    rejected_decision,
-                    decision,
-                )
-                codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
-        try:
-            _validate_owner_changes(store, decision)
-        except OwnerResolutionRequired as exc:
-            store.finish_task_agent_run(
-                active_run_id,
-                status="failed",
-                codex_session_id=codex_session_id,
-                decision_json=_json_dumps(decision.model_dump(mode="json")),
-                audit_summary=decision.update_summary,
-                memory_recall_used=decision.memory_recall_used,
-                error=str(exc),
-            )
-            active_run_id = store.begin_task_agent_run(work_input.id)
-            decision = runner.repair_owner_assignment(
-                work_item,
-                candidate_prompt,
-                decision,
-                validation_error=str(exc),
-                memory_issue=memory_issue,
-                run_id=active_run_id,
-                session_scope_id=session_scope_id,
-            )
-            decision = _normalize_follow_up_change_times(decision)
-            codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
-            _validate_task_agent_decision(
-                decision,
-                now=now,
-            )
-            _validate_project_patch_against_store(store, decision)
-            _validate_owner_changes(store, decision)
-        with store.task_agent_domain_apply_transaction() as db:
-            apply_task_agent_decision(
-                store,
-                summary_input_id=work_input.id,
-                work_item=work_item,
-                decision=decision,
-                codex_session_id=codex_session_id,
-                record_run=False,
-                dws=dws,
-                now=now,
-                _db=db,
-            )
-            if decision.action == "skip":
-                store.mark_work_summary_input_skipped(
-                    work_input.id,
-                    decision.skip_reason or decision.update_summary,
-                    _db=db,
-                )
-            else:
-                store.mark_work_summary_input_done(work_input.id, _db=db)
-            _mark_todo_evidence_candidate_from_decision(
-                store,
-                work_input_id=work_input.id,
-                decision=decision,
-                _db=db,
-            )
-            store.finish_task_agent_run(
-                active_run_id,
-                status="completed",
-                codex_session_id=codex_session_id,
-                decision_json=_json_dumps(decision.model_dump(mode="json")),
-                audit_summary=decision.update_summary,
-                memory_recall_used=decision.memory_recall_used,
-                _db=db,
-            )
-        active_run_id = None
-    except Exception as exc:
-        _mark_todo_evidence_candidate_error(
-            store,
-            work_input_id=work_input.id,
-            error=str(exc),
-        )
-        if active_run_id is not None:
-            store.finish_task_agent_run(
-                active_run_id,
-                status="failed",
-                error=str(exc),
-            )
-        store.mark_work_summary_input_failed(work_input.id, str(exc))
-        raise
 
-
-def _mark_todo_evidence_candidate_from_decision(
-    store: AutoReplyStore,
-    *,
-    work_input_id: int,
-    decision: TaskAgentDecision,
-    _db: sqlite3.Connection | None = None,
-) -> None:
-    candidate = store.get_todo_evidence_candidate_by_work_summary_input(
-        work_input_id,
-        _db=_db,
-    )
-    if candidate is None:
-        return
-    accepted = any(
-        change.action == "close"
-        and change.todo_id == candidate.todo_id
-        and bool(change.completion_evidence)
-        for change in decision.todo_changes
-    )
-    store.mark_todo_evidence_candidate(
-        candidate.id,
-        status="accepted" if accepted else "rejected",
-        decision_json=_json_dumps(decision.model_dump(mode="json")),
-        _db=_db,
-    )
-
-
-def _mark_todo_evidence_candidate_error(
-    store: AutoReplyStore,
-    *,
-    work_input_id: int,
-    error: str,
-) -> None:
-    candidate = store.get_todo_evidence_candidate_by_work_summary_input(work_input_id)
-    if candidate is None:
-        return
-    store.mark_todo_evidence_candidate(
-        candidate.id,
-        status="error",
-        decision_json=_json_dumps({"error": error}),
-    )
-
-
-def apply_task_agent_decision(
-    store: AutoReplyStore,
-    *,
-    summary_input_id: int,
-    work_item: WorkItem,
-    decision: TaskAgentDecision,
-    codex_session_id: str = "",
-    record_run: bool = True,
-    dws=None,
-    now: str = "",
-    _db: sqlite3.Connection | None = None,
-) -> int | None:
-    decision = _normalize_follow_up_change_times(decision)
-    _validate_task_agent_decision(
-        decision,
-        now=now,
-    )
-    _validate_work_item_mutation_authority(store, work_item, decision)
-    _validate_project_patch_against_store(store, decision, _db=_db)
-    _validate_owner_changes(store, decision)
-
-    if record_run:
-        store.record_task_agent_run(
-            summary_input_id=summary_input_id,
-            codex_session_id=codex_session_id,
-            decision_json=_json_dumps(decision.model_dump(mode="json")),
-            audit_summary=decision.update_summary,
-            memory_recall_used=decision.memory_recall_used,
-        )
-
-    if decision.action == "skip":
-        return None
-
-    _validate_follow_up_change_targets(store, decision.follow_up_changes)
-
-    if decision.project is None:
-        raise ValueError(f"{decision.action} requires project")
-
-    project_id = _apply_project(store, decision, _db=_db)
-    update_id = store.create_work_update(
-        project_id=project_id,
-        source_type=work_item.source.type.value,
-        source_ref=work_item.source.ref,
-        summary=decision.update_summary,
-        changes_json=_json_dumps(
-            {
-                "action": decision.action,
-                "todo_changes": [
-                    _todo_change_audit_payload(change)
-                    for change in decision.todo_changes
-                ],
-                "follow_up_drafts": [
-                    draft.model_dump(mode="json")
-                    for draft in decision.follow_up_drafts
-                ],
-                "follow_up_changes": [
-                    change.model_dump(mode="json")
-                    for change in decision.follow_up_changes
-                ],
-            }
-        ),
-        merge_reason=decision.merge_reason,
-        confidence=decision.confidence,
-        _db=_db,
-    )
-    todo_refs: dict[str, int] = {}
-    create_sync_todo_ids: list[int] = []
-    sync_now = ""
-    for todo_change in decision.todo_changes:
-        todo_id = _apply_todo_change(
-            store,
-            project_id=project_id,
-            update_id=update_id,
-            change=todo_change,
-            _db=_db,
-        )
-        if (
-            dws is not None
-            and todo_change.action == "close"
-            and bool(todo_change.completion_evidence)
-        ):
-            sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            if _db is not None:
-                store.enqueue_task_todo_sync_outbox(
-                    operation_key=(
-                        f"task-agent:{summary_input_id}:todo:{todo_id}:complete"
-                    ),
-                    work_todo_id=todo_id,
-                    operation="complete",
-                    evidence_json=_json_dumps(todo_change.completion_evidence),
-                    _db=_db,
-                )
-            else:
-                sync_completed_todo_to_dingtalk(
-                    store, dws, work_todo_id=todo_id,
-                    evidence=todo_change.completion_evidence, now=sync_now,
-                )
-        if todo_change.action in {"create", "update"}:
-            create_sync_todo_ids.append(todo_id)
-        if todo_change.action == "create" and todo_change.todo_ref.strip():
-            todo_refs[todo_change.todo_ref.strip()] = todo_id
-    for draft in decision.follow_up_drafts:
-        _create_follow_up_draft(
-            store,
-            project_id=project_id,
-            draft=draft,
-            todo_refs=todo_refs,
-            _db=_db,
-        )
-    for change in decision.follow_up_changes:
-        _apply_follow_up_change(store, change, _db=_db)
-    if dws is not None:
-        sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        for todo_id in create_sync_todo_ids:
-            if _db is not None:
-                store.enqueue_task_todo_sync_outbox(
-                    operation_key=f"task-agent:{summary_input_id}:todo:{todo_id}:create",
-                    work_todo_id=todo_id,
-                    operation="create",
-                    _db=_db,
-                )
-            else:
-                maybe_create_dingtalk_todo(
-                    store, dws, work_todo_id=todo_id, now=sync_now
-                )
-    return project_id
-
-
-def _validate_work_item_mutation_authority(
-    store: AutoReplyStore,
-    work_item: WorkItem,
-    decision: TaskAgentDecision,
-) -> None:
-    source_type = work_item.source.type
-    if (
-        source_type == WorkItemSourceType.LOCAL_FILE
-        and decision.action == "create_project"
-    ):
-        raise RepairableTaskDecisionValidationError(
-            "local_file sources cannot create projects; update a defensible "
-            "existing match or skip"
-        )
-
-    completion_sources = {
-        WorkItemSourceType.TODO_COMPLETION_CHECK,
-        WorkItemSourceType.FOLLOW_UP_COMPLETION_CHECK,
-    }
-    if source_type not in completion_sources or decision.action == "skip":
-        return
-
-    supplied_project_fields = (
-        set() if decision.project is None else decision.project.model_fields_set
-    )
-    protected_fields = sorted(
-        supplied_project_fields & (PROTECTED_PROJECT_FIELDS - {"status"})
-    )
-    current_project = (
-        None
-        if decision.project is None or decision.project.id is None
-        else store.get_work_project(decision.project.id)
-    )
-    changed_protected_fields = [
-        field
-        for field in protected_fields
-        if current_project is None
-        or _comparable_project_value(getattr(decision.project, field))
-        != _stored_project_value(current_project, field)
-    ]
-    if changed_protected_fields:
-        raise RepairableTaskDecisionValidationError(
-            "completion checks cannot change protected project fields: "
-            + ", ".join(changed_protected_fields)
-        )
-
-    project_status_transition = bool(
-        decision.project is not None
-        and "status" in decision.project.model_fields_set
-        and decision.project.status.value != "active"
-    )
-    if not (
-        decision.todo_changes
-        or decision.follow_up_changes
-        or decision.follow_up_drafts
-        or project_status_transition
-    ):
-        raise RepairableTaskDecisionValidationError(
-            "completion check without a lifecycle transition must skip"
-        )
-
-
-def _validate_task_agent_decision(
-    decision: TaskAgentDecision,
-    *,
-    now: str = "",
-) -> None:
-    for todo_change in decision.todo_changes:
-        if todo_change.action != "create" and todo_change.todo_id is None:
-            raise ValueError(f"{todo_change.action} requires todo_id")
-        # Every TODO carries a deadline; without one it can never be mirrored
-        # to DingTalk Todo. Repairable, so the agent supplies one instead of
-        # the work item failing.
-        if todo_change.action == "create" and not _deadline_to_iso(
-            todo_change.deadline_at
-        ):
-            raise RepairableTaskDecisionValidationError(
-                "todo_change.deadline_at is required to create a TODO; "
-                "use the deadline the source states, or infer a reasonable one"
-            )
-        if todo_change.action == "close":
-            evidence = todo_change.completion_evidence
-            _require_evidence_fields(
-                evidence,
-                label="completion_evidence",
-                fields=("source", "reason", "description", "completed_at"),
-            )
-    for draft in decision.follow_up_drafts:
-        if not draft.title.strip():
-            raise ValueError("follow_up_draft.title is required")
-        if not draft.description.strip():
-            raise ValueError("follow_up_draft.description is required")
-        if not draft.owner_user_id.strip():
-            raise ValueError(
-                "follow_up_draft.owner_user_id is required as stable owner ID"
-            )
-        owner_ids = [
-            str(owner.get("user_id") or "").strip()
-            for owner in draft.owners
-            if isinstance(owner, dict)
-        ]
-        if not owner_ids:
-            raise ValueError("follow_up_draft.owners with user_id is required")
-        if draft.owner_user_id.strip() not in owner_ids:
-            raise ValueError("follow_up_draft.owner_user_id must be in owners")
-        _require_evidence_fields(
-            draft.risk_check.get("owner_evidence"),
-            label="follow_up_draft.risk_check.owner_evidence",
-            fields=("source", "reason", "description"),
-        )
-        if draft.todo_id is None and not draft.todo_ref.strip():
-            raise ValueError("follow_up_draft requires todo_id or todo_ref")
-        if not draft.scheduled_at.strip():
-            raise ValueError("follow_up_draft.scheduled_at is required")
-        if not str(draft.priority).strip():
-            raise ValueError("follow_up_draft.priority is required")
-        if not draft.tags:
-            raise ValueError("follow_up_draft.tags is required")
-        participant_ids = [
-            str(participant.get("user_id") or "").strip()
-            for participant in draft.participants
-            if isinstance(participant, dict)
-        ]
-        if not participant_ids:
-            raise ValueError("follow_up_draft.participants is required")
-    for change in decision.follow_up_changes:
-        if change.follow_up_id <= 0:
-            raise ValueError("follow_up_change.follow_up_id is required")
-        if change.action == "reschedule" and not (
-            change.next_due_at and change.next_due_at.strip()
-        ):
-            raise ValueError(
-                "follow_up_change.next_due_at is required for reschedule"
-            )
-        if change.action == "keep_open" and not (
-            change.next_due_at and change.next_due_at.strip()
-        ):
-            raise ValueError(
-                "follow_up_change.next_due_at is required for keep_open"
-            )
-        if change.action in {"reschedule", "keep_open"}:
-            _validate_future_follow_up_time(change.next_due_at or "", now=now)
-        if change.action == "reassign" and not (
-            (change.owner_user_id and change.owner_user_id.strip())
-            or (change.owner_name and change.owner_name.strip())
-        ):
-            raise ValueError(
-                "follow_up_change.owner_user_id or owner_name is required for reassign"
-            )
-    if decision.action == "skip":
-        return
-    if decision.project is None:
-        if decision.action == "update_project":
-            raise RepairableTaskDecisionValidationError(
-                "update_project requires project"
-            )
-        raise ValueError(f"{decision.action} requires project")
-    memory_context = decision.project.memory_context
-    if not memory_context.query.strip() or (
-        not memory_context.summary.strip() and not memory_context.memories
-    ):
-        raise RepairableTaskDecisionValidationError(
-            "non-skip task decision requires project.memory_context"
-        )
-    if decision.action == "update_project" and decision.project.id is None:
-        raise RepairableTaskDecisionValidationError(
-            "update_project requires project.id"
-        )
-    if decision.action == "create_project" and not decision.project.title.strip():
-        raise RepairableTaskDecisionValidationError(
-            "create_project requires a non-empty project.title"
-        )
-
-
-def _validate_task_agent_validation_repair(
-    rejected: TaskAgentDecision,
-    replacement: TaskAgentDecision,
-) -> None:
-    rejected_unresolved_update = rejected.action == "update_project" and (
-        rejected.project is None or rejected.project.id is None
-    )
-    if rejected_unresolved_update and replacement.action == "create_project":
-        raise ValueError(
-            "validation repair cannot convert unresolved update_project "
-            "to create_project"
-        )
-
-
-def _require_evidence_fields(
-    evidence: object,
-    *,
-    label: str,
-    fields: tuple[str, ...],
-) -> None:
-    if not isinstance(evidence, dict):
-        raise ValueError(f"{label} is required")
-    for field in fields:
-        if not str(evidence.get(field) or "").strip():
-            raise ValueError(f"{label}.{field} is required")
-
-
-def _validate_future_follow_up_time(value: str, *, now: str) -> None:
-    try:
-        scheduled = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError("follow_up_change.next_due_at must be an ISO datetime") from exc
-    local_scheduled = (
-        scheduled.replace(tzinfo=FOLLOW_UP_WORK_TZ)
-        if scheduled.tzinfo is None
-        else scheduled.astimezone(FOLLOW_UP_WORK_TZ)
-    )
-    if local_scheduled.weekday() >= 5 or not (
-        FOLLOW_UP_WORK_START_HOUR
-        <= local_scheduled.hour
-        < FOLLOW_UP_WORK_END_HOUR
-    ):
-        raise ValueError("follow_up_change.next_due_at must be within local work hours")
-    if now.strip():
-        try:
-            current = datetime.fromisoformat(now.strip().replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValueError("now must be an ISO datetime") from exc
-    else:
-        current = datetime.now(timezone.utc)
-    current_aware = (
-        current.replace(tzinfo=timezone.utc)
-        if current.tzinfo is None
-        else current.astimezone(timezone.utc)
-    )
-    if local_scheduled.astimezone(timezone.utc) <= current_aware:
-        raise ValueError("follow_up_change.next_due_at must be in the future")
-
-
-def _normalize_follow_up_change_times(decision: TaskAgentDecision) -> TaskAgentDecision:
-    """Move reversible follow-up scheduling requests into the next work window."""
-    changes = []
-    changed = False
-    for change in decision.follow_up_changes:
-        if change.action in {"reschedule", "keep_open"} and change.next_due_at:
-            normalized = _normalize_follow_up_time(change.next_due_at)
-            if normalized != change.next_due_at:
-                change = change.model_copy(update={"next_due_at": normalized})
-                changed = True
-        changes.append(change)
-    if not changed:
-        return decision
-    return decision.model_copy(update={"follow_up_changes": changes})
-
-
-def _json_object(value: str) -> dict[str, object]:
-    try:
-        parsed = json.loads(value or "{}")
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-class OwnerResolutionRequired(ValueError):
-    pass
-
-
-def _restore_structured_update_project(
-    decision: TaskAgentDecision,
-    summary: str,
-    candidates: list[object],
-) -> TaskAgentDecision:
-    """Fill a missing update project from the source's stable project relation."""
-    if decision.action != "update_project" or decision.project is not None:
-        return decision
-    try:
-        payload = json.loads(summary)
-    except (TypeError, json.JSONDecodeError):
-        return decision
-    if not isinstance(payload, dict):
-        return decision
-    project_payload = payload.get("project")
-    if not isinstance(project_payload, dict):
-        return decision
-    project_id = project_payload.get("id")
-    if (
-        isinstance(project_id, bool)
-        or not isinstance(project_id, int)
-        or project_id <= 0
-    ):
-        return decision
-    candidate = next(
-        (
-            item
-            for item in candidates
-            if getattr(getattr(item, "project", None), "id", None) == project_id
-        ),
-        None,
-    )
-    if candidate is None:
-        return decision
-    project = candidate.project
-    try:
-        memory_context = ProjectMemoryContext.model_validate(
-            _json_object(project.memory_context_json)
-        )
-    except ValidationError:
-        return decision
-    return decision.model_copy(
-        update={
-            "project": TaskProjectPatch(
-                id=project.id,
-                memory_context=memory_context,
-            )
-        }
-    )
-
-
-def _require_supported_owner(
-    *,
-    assigned: dict[str, object],
-    evidence: object,
-    label: str,
-) -> None:
-    if not any(str(value or "").strip() for value in assigned.values()):
-        return
-    stable_id = next(
-        (
-            str(assigned.get(field) or "").strip()
-            for field in ("owner_user_id", "user_id", "open_dingtalk_id")
-            if str(assigned.get(field) or "").strip()
-        ),
-        "",
-    )
-    if not stable_id:
-        raise OwnerResolutionRequired(f"{label} requires a stable owner ID")
-    try:
-        _require_evidence_fields(
-            evidence,
-            label=label,
-            fields=("source", "reason", "description"),
-        )
-    except ValueError as exc:
-        raise OwnerResolutionRequired(str(exc)) from exc
-    if not owner_identity_is_supported(assigned, evidence):
-        raise OwnerResolutionRequired(
-            f"{label} does not support assigned owner identity"
-        )
-
-
-def _validate_owner_changes(store: AutoReplyStore, decision: TaskAgentDecision) -> None:
-    project = decision.project
-    if project is not None:
-        current_project = (
-            store.get_work_project(project.id)
-            if decision.action == "update_project" and project.id is not None
-            else None
-        )
-        final_project_owner = {
-            "owner_user_id": (
-                project.owner_user_id
-                if "owner_user_id" in project.model_fields_set
-                else current_project.owner_user_id if current_project is not None else ""
-            ),
-            "owner_name": (
-                project.owner_name
-                if "owner_name" in project.model_fields_set
-                else current_project.owner_name if current_project is not None else ""
-            ),
-        }
-        project_owner_changed = current_project is None or final_project_owner != {
-            "owner_user_id": current_project.owner_user_id,
-            "owner_name": current_project.owner_name,
-        }
-        if project_owner_changed:
-            _require_supported_owner(
-                assigned=final_project_owner,
-                evidence=project.owner_evidence,
-                label="project.owner_evidence",
-            )
-
-    for change in decision.todo_changes:
-        current_todo = (
-            store.get_work_todo(change.todo_id)
-            if change.todo_id is not None and change.action != "create"
-            else None
-        )
-        fields = change.model_fields_set - {"action", "todo_id"}
-        final_status = (
-            change.status
-            if change.action == "create" or "status" in fields
-            else current_todo.status if current_todo is not None else change.status
-        )
-        final_owner_user_id = (
-            change.owner_user_id
-            if change.action == "create" or "owner_user_id" in fields
-            else current_todo.owner_user_id if current_todo is not None else ""
-        )
-        if (
-            (
-                change.action == "create"
-                or "status" in fields
-                or "owner_user_id" in fields
-            )
-            and final_status in {TodoStatus.OPEN, TodoStatus.WAITING_OWNER}
-            and not final_owner_user_id.strip()
-        ):
-            raise OwnerResolutionRequired(
-                "todo_change.owner_user_id requires a stable owner ID "
-                "for open or waiting_owner TODO"
-            )
-        if change.action == "create" or {
-            "owner_user_id",
-            "owner_name",
-            "owner_evidence",
-        } & change.model_fields_set:
-            final_todo_owner = {
-                "owner_user_id": (
-                    change.owner_user_id
-                    if "owner_user_id" in change.model_fields_set
-                    else current_todo.owner_user_id if current_todo is not None else ""
-                ),
-                "owner_name": (
-                    change.owner_name
-                    if "owner_name" in change.model_fields_set
-                    else current_todo.owner_name if current_todo is not None else ""
-                ),
-            }
-            todo_owner_changed = current_todo is None or final_todo_owner != {
-                "owner_user_id": current_todo.owner_user_id,
-                "owner_name": current_todo.owner_name,
-            }
-            if todo_owner_changed:
-                _require_supported_owner(
-                    assigned=final_todo_owner,
-                    evidence=change.owner_evidence,
-                    label="todo_change.owner_evidence",
-                )
-
-    for draft in decision.follow_up_drafts:
-        evidence = draft.risk_check.get("owner_evidence")
-        _require_supported_owner(
-            assigned={
-                "owner_user_id": draft.owner_user_id,
-                "owner_name": draft.owner_name,
-            },
-            evidence=evidence,
-            label="follow_up_draft.risk_check.owner_evidence",
-        )
-        for index, owner in enumerate(draft.owners):
-            _require_supported_owner(
-                assigned=owner,
-                evidence=evidence,
-                label=f"follow_up_draft.owners[{index}].owner_evidence",
-            )
-
-    for change in decision.follow_up_changes:
-        if change.action != "reassign":
-            continue
-        current = store.get_follow_up_draft(change.follow_up_id)
-        if current is None:
-            continue
-        final_owner = {
-            "owner_user_id": (
-                change.owner_user_id
-                if change.owner_user_id is not None
-                else current.owner_user_id
-            ),
-            "owner_name": (
-                change.owner_name if change.owner_name is not None else current.owner_name
-            ),
-        }
-        changed = final_owner != {
-            "owner_user_id": current.owner_user_id,
-            "owner_name": current.owner_name,
-        }
-        evidence = change.owner_evidence
-        if not evidence and not changed:
-            evidence = _json_object(current.risk_check_json).get("owner_evidence")
-        _require_supported_owner(
-            assigned=final_owner,
-            evidence=evidence,
-            label="follow_up_change.owner_evidence",
-        )
-
-
-def _apply_project(
-    store: AutoReplyStore,
-    decision: TaskAgentDecision,
-    *,
-    _db: sqlite3.Connection | None = None,
-) -> int:
-    project = decision.project
-    if project is None:
-        raise ValueError(f"{decision.action} requires project")
-    if decision.action == "create_project":
-        return store.create_work_project(_db=_db, **_project_values(project))
-    if project.id is None:
-        raise ValueError("update_project requires project.id")
-    current_project = store.get_work_project(project.id, _db=_db)
-    fields = project.model_fields_set - {"id"}
-    if current_project is not None:
-        _reject_default_project_field_erasure(project, current_project, fields)
-        final_owner = {
-            "owner_user_id": (
-                project.owner_user_id
-                if "owner_user_id" in fields
-                else current_project.owner_user_id
-            ),
-            "owner_name": (
-                project.owner_name
-                if "owner_name" in fields
-                else current_project.owner_name
-            ),
-        }
-        if final_owner == {
-            "owner_user_id": current_project.owner_user_id,
-            "owner_name": current_project.owner_name,
-        }:
-            fields -= {"owner_user_id", "owner_name", "owner_evidence"}
-    values = _project_values(project, only_fields=fields)
-    store.update_work_project(project.id, _db=_db, **values)
-    return project.id
-
-
-def _validate_project_patch_against_store(
-    store: AutoReplyStore,
-    decision: TaskAgentDecision,
-    *,
-    _db: sqlite3.Connection | None = None,
-) -> None:
-    project = decision.project
-    if (
-        decision.action != "update_project"
-        or project is None
-        or project.id is None
-    ):
-        return
-    current_project = store.get_work_project(project.id, _db=_db)
-    if current_project is None:
-        return
-    _reject_default_project_field_erasure(
-        project,
-        current_project,
-        project.model_fields_set - {"id"},
-    )
-
-
-def _reject_default_project_field_erasure(
-    project: TaskProjectPatch,
-    current_project: object,
-    fields: set[str],
-) -> None:
-    """Reject schema defaults that would overwrite meaningful durable metadata."""
-
-    defaults = TaskProjectPatch()
-    destructive_fields: list[str] = []
-    for field in sorted(fields & PROTECTED_PROJECT_FIELDS):
-        proposed = _comparable_project_value(getattr(project, field))
-        default = _comparable_project_value(getattr(defaults, field))
-        current = _stored_project_value(current_project, field)
-        if proposed == default and current != default and _project_value_has_content(current):
-            destructive_fields.append(field)
-    if destructive_fields:
-        raise RepairableTaskDecisionValidationError(
-            "update_project would erase protected project fields with schema defaults: "
-            + ", ".join(destructive_fields)
-        )
-
-
-def _stored_project_value(project: object, field: str) -> object:
-    value = getattr(project, PROJECT_STORAGE_FIELDS.get(field, field))
-    if field in PROJECT_STORAGE_FIELDS:
-        try:
-            value = json.loads(value or "null")
-        except (TypeError, json.JSONDecodeError):
-            return value
-    return _comparable_project_value(value)
-
-
-def _comparable_project_value(value: object) -> object:
-    if hasattr(value, "value"):
-        return getattr(value, "value")
-    if isinstance(value, list):
-        return [_comparable_project_value(item) for item in value]
-    if isinstance(value, dict):
-        return {
-            str(key): _comparable_project_value(item)
-            for key, item in value.items()
-        }
-    if hasattr(value, "model_dump"):
-        return _comparable_project_value(value.model_dump(mode="json"))
-    return value
-
-
-def _project_value_has_content(value: object) -> bool:
-    return value not in (None, "", [], {})
-
-
-def _project_values(project, only_fields: set[str] | None = None) -> dict[str, object]:
-    fields = {
-        "title": "title",
-        "category": "category",
-        "tags": "tags_json",
-        "status": "status",
-        "priority": "priority",
-        "risk_level": "risk_level",
-        "needs_derek_attention": "needs_derek_attention",
-        "owner_user_id": "owner_user_id",
-        "owner_name": "owner_name",
-        "owner_evidence": "owner_evidence_json",
-        "related_people": "related_people_json",
-        "goal": "goal",
-        "background": "background",
-        "memory_context": "memory_context_json",
-        "facts": "facts_json",
-        "current_state": "current_state",
-        "blocker": "blocker",
-        "next_step": "next_step",
-        "next_follow_up_at": "next_follow_up_at",
-        "follow_up_mode": "follow_up_mode",
-        "source_conversations": "source_conversations_json",
-    }
-    values: dict[str, object] = {}
-    for model_field, store_field in fields.items():
-        if only_fields is not None and model_field not in only_fields:
-            continue
-        value = getattr(project, model_field)
-        if model_field in {
-            "tags",
-            "related_people",
-            "memory_context",
-            "owner_evidence",
-            "facts",
-            "source_conversations",
-        }:
-            values[store_field] = _json_dumps(_jsonable(value))
-        elif model_field == "needs_derek_attention":
-            values[store_field] = int(bool(value))
-        else:
-            values[store_field] = _enum_value(value)
-    return values
-
-
-def _apply_todo_change(
-    store: AutoReplyStore,
-    *,
-    project_id: int,
-    update_id: int,
-    change: TodoChange,
-    _db: sqlite3.Connection | None = None,
-) -> int:
-    if change.action == "create":
-        values = _todo_values(change)
-        return store.create_work_todo(
-            _db=_db,
-            project_id=project_id,
-            created_from_update_id=update_id,
-            **values,
-        )
-    if change.todo_id is None:
-        raise ValueError(f"{change.action} requires todo_id")
-    current_todo = store.get_work_todo(change.todo_id, _db=_db)
-    fields = change.model_fields_set - {"action", "todo_id"}
-    if current_todo is not None:
-        final_owner = {
-            "owner_user_id": (
-                change.owner_user_id
-                if "owner_user_id" in fields
-                else current_todo.owner_user_id
-            ),
-            "owner_name": (
-                change.owner_name
-                if "owner_name" in fields
-                else current_todo.owner_name
-            ),
-        }
-        if final_owner == {
-            "owner_user_id": current_todo.owner_user_id,
-            "owner_name": current_todo.owner_name,
-        }:
-            fields -= {"owner_user_id", "owner_name", "owner_evidence"}
-    values = _todo_values(
-        change,
-        only_fields=fields,
-    )
-    if change.action == "close":
-        values["status"] = "done"
-    elif change.action == "cancel":
-        values["status"] = "cancelled"
-    store.update_work_todo(change.todo_id, _db=_db, **values)
-    if change.action == "close" and change.completion_evidence:
-        complete_follow_ups_for_todo(
-            store,
-            todo_id=change.todo_id,
-            evidence=change.completion_evidence,
-            now=str(change.completion_evidence.get("completed_at") or ""),
-            _db=_db,
-        )
-    return change.todo_id
-
-
-def _todo_values(
-    change: TodoChange,
-    only_fields: set[str] | None = None,
-) -> dict[str, object]:
-    values: dict[str, object] = {}
-    fields = [
-        "title",
-        "description",
-        "owner_user_id",
-        "owner_name",
-        "owner_evidence",
-        "status",
-        "priority",
-        "deadline_at",
-        "next_follow_up_at",
-        "follow_up_question",
-        "blocker",
-    ]
-    for field in fields:
-        if only_fields is not None and field not in only_fields:
-            continue
-        value = getattr(change, field)
-        if value not in ("", None):
-            if field == "next_follow_up_at":
-                value = _normalize_follow_up_time(str(value))
-            if field == "owner_evidence":
-                values["owner_evidence_json"] = _json_dumps(value)
-            else:
-                values[field] = _enum_value(value)
-    if (
-        only_fields is None or "completion_evidence" in only_fields
-    ) and change.completion_evidence is not None:
-        values["completion_evidence_json"] = _json_dumps(change.completion_evidence)
-    return values
-
-
-def _todo_change_audit_payload(change: TodoChange) -> dict[str, object]:
-    payload: dict[str, object] = {"action": change.action}
-    if change.todo_id is not None:
-        payload["todo_id"] = change.todo_id
-    if change.todo_ref:
-        payload["todo_ref"] = change.todo_ref
-    if change.owner_evidence:
-        payload["owner_evidence"] = _jsonable(change.owner_evidence)
-    if change.action == "create":
-        payload.update(_todo_values(change))
-        return payload
-
-    for field, value in _todo_values(
-        change,
-        only_fields=change.model_fields_set - {"action", "todo_id"},
-    ).items():
-        payload[field] = value
-    if change.action == "close":
-        payload["status"] = "done"
-    elif change.action == "cancel":
-        payload["status"] = "cancelled"
-    return payload
-
-
-def _create_follow_up_draft(
-    store: AutoReplyStore,
-    *,
-    project_id: int,
-    draft: FollowUpDraftDecision,
-    todo_refs: dict[str, int],
-    _db: sqlite3.Connection | None = None,
-) -> int:
-    todo_id = _resolve_follow_up_todo_id(
-        store,
-        project_id=project_id,
-        draft=draft,
-        todo_refs=todo_refs,
-        _db=_db,
-    )
-    todo = store.get_work_todo(todo_id, _db=_db)
-    if todo is not None and (
-        todo.status in {TodoStatus.DONE, TodoStatus.CANCELLED}
-        or _has_json_content(todo.completion_evidence_json)
-    ):
-        return 0
-    return store.create_follow_up_draft(
-        _db=_db,
-        project_id=project_id,
-        todo_id=todo_id,
-        title=draft.title,
-        description=draft.description,
-        owner_user_id=draft.owner_user_id,
-        owner_name=draft.owner_name,
-        owners_json=_json_dumps(draft.owners),
-        target_conversation_id=draft.target_conversation_id,
-        target_kind=draft.target_kind,
-        question_text=draft.question_text,
-        priority=_enum_value(draft.priority),
-        tags_json=_json_dumps(draft.tags),
-        participants_json=_json_dumps(draft.participants),
-        files_json=_json_dumps(draft.files),
-        risk_check_json=_json_dumps(draft.risk_check),
-        status=_enum_value(draft.status),
-        scheduled_at=_normalize_follow_up_time(draft.scheduled_at),
-    )
-
-
-def _apply_follow_up_change(
-    store: AutoReplyStore,
-    change: FollowUpDraftChange,
-    *,
-    _db: sqlite3.Connection | None = None,
-) -> None:
-    current = store.get_follow_up_draft(change.follow_up_id, _db=_db)
-    if current is None:
-        raise ValueError(
-            f"follow_up_change.follow_up_id not found: {change.follow_up_id}"
-        )
-    evidence = {
-        "source": "task_agent",
-        "action": change.action,
-        "reason": change.reason,
-        "evidence": change.evidence_check,
-    }
-    values: dict[str, object] = {
-        "evidence_check_json": _json_dumps(evidence),
-    }
-    if change.todo_id is not None:
-        values["todo_id"] = change.todo_id
-
-    if change.action == "suppress":
-        values["status"] = "skipped"
-        values["suppressed_reason"] = change.reason or "task_agent_suppressed"
-    elif change.action == "close":
-        if _enum_value(current.status) in {"draft", "approved"}:
-            values["status"] = "skipped"
-            values["suppressed_reason"] = change.reason or "task_agent_closed"
-        values["reaction_status"] = "completed"
-        values["reaction_summary"] = change.reason
-    elif change.action == "reschedule":
-        values["status"] = "draft"
-        values["suppressed_reason"] = ""
-        if change.next_due_at and change.next_due_at.strip():
-            values["scheduled_at"] = change.next_due_at.strip()
-    elif change.action == "reassign":
-        values["suppressed_reason"] = ""
-        if change.owner_user_id is not None:
-            values["owner_user_id"] = change.owner_user_id.strip()
-        if change.owner_name is not None:
-            values["owner_name"] = change.owner_name.strip()
-        if change.owner_evidence:
-            risk_check = _json_object(current.risk_check_json)
-            risk_check["owner_evidence"] = change.owner_evidence
-            values["risk_check_json"] = _json_dumps(risk_check)
-        values["reaction_status"] = "redirect_owner"
-        values["reaction_summary"] = change.reason
-    elif change.action == "keep_open":
-        values["status"] = "draft"
-        values["suppressed_reason"] = ""
-        values["scheduled_at"] = change.next_due_at or ""
-        values["reaction_summary"] = change.reason
-        if change.todo_id is not None:
-            todo = store.get_work_todo(change.todo_id, _db=_db)
-            if todo is not None and todo.follow_up_question.strip():
-                values["question_text"] = todo.follow_up_question.strip()
-
-    store.update_follow_up_draft(change.follow_up_id, _db=_db, **values)
-
-
-def _validate_follow_up_change_targets(
-    store: AutoReplyStore,
-    changes: list[FollowUpDraftChange],
-) -> None:
-    for change in changes:
-        if store.get_follow_up_draft(change.follow_up_id) is None:
-            raise ValueError(
-                f"follow_up_change.follow_up_id not found: {change.follow_up_id}"
-            )
-
-
-def _resolve_follow_up_todo_id(
-    store: AutoReplyStore,
-    *,
-    project_id: int,
-    draft: FollowUpDraftDecision,
-    todo_refs: dict[str, int],
-    _db: sqlite3.Connection | None = None,
-) -> int:
-    todo_id = draft.todo_id
-    if todo_id is None and draft.todo_ref.strip():
-        todo_id = todo_refs.get(draft.todo_ref.strip())
-        if todo_id is None:
-            raise ValueError(f"unknown follow_up_draft.todo_ref: {draft.todo_ref}")
-    if todo_id is None or todo_id <= 0:
-        raise ValueError("follow_up_draft requires todo_id or todo_ref")
-    todo = store.get_work_todo(todo_id, _db=_db)
-    if todo is None:
-        raise ValueError(f"follow_up_draft.todo_id not found: {todo_id}")
-    if todo.project_id != project_id:
-        raise ValueError(
-            f"follow_up_draft.todo_id {todo_id} does not belong to project {project_id}"
-        )
-    return todo_id
-
-
-def _has_json_content(value: str) -> bool:
-    text = (value or "").strip()
-    if not text:
-        return False
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return True
-    return bool(parsed)
-
-
-def _normalize_follow_up_time(value: str) -> str:
-    text = (value or "").strip()
-    if not text:
-        return ""
-    try:
-        scheduled = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return value
-
-    local_scheduled = (
-        scheduled.replace(tzinfo=FOLLOW_UP_WORK_TZ)
-        if scheduled.tzinfo is None
-        else scheduled.astimezone(FOLLOW_UP_WORK_TZ)
-    )
-    adjusted = local_scheduled
-    if adjusted.weekday() >= 5:
-        days_until_monday = 7 - adjusted.weekday()
-        adjusted = adjusted + timedelta(days=days_until_monday)
-        adjusted = adjusted.replace(
-            hour=FOLLOW_UP_WORK_START_HOUR,
-            minute=0,
-            second=0,
-            microsecond=0,
-        )
-    elif adjusted.hour < FOLLOW_UP_WORK_START_HOUR:
-        adjusted = adjusted.replace(
-            hour=FOLLOW_UP_WORK_START_HOUR,
-            minute=0,
-            second=0,
-            microsecond=0,
-        )
-    elif adjusted.hour >= FOLLOW_UP_WORK_END_HOUR:
-        adjusted = adjusted + timedelta(days=1)
-        while adjusted.weekday() >= 5:
-            adjusted = adjusted + timedelta(days=1)
-        adjusted = adjusted.replace(
-            hour=FOLLOW_UP_WORK_START_HOUR,
-            minute=0,
-            second=0,
-            microsecond=0,
-        )
-
-    if adjusted == local_scheduled:
-        return value
-    return adjusted.isoformat(timespec="seconds")
 
 
 def _json_dumps(value: object) -> str:
@@ -2045,7 +540,7 @@ def _task_decision_candidates(raw: str) -> list[object]:
     return [
         candidate
         for candidate in candidates
-        if isinstance(candidate, dict) and "action" in candidate
+        if isinstance(candidate, dict) and "task_decisions" in candidate
     ]
 
 
@@ -2056,7 +551,6 @@ def _validate_task_decision_candidates(
     problems: list[str] = []
     # The last complete decision wins over an earlier draft.
     for candidate in reversed(_task_decision_candidates(raw)):
-        candidate = _normalize_legacy_task_decision(candidate)
         try:
             return TaskAgentDecision.model_validate(candidate), []
         except ValidationError as exc:
@@ -2070,45 +564,6 @@ def _validate_task_decision_candidates(
                 ]
     return None, problems
 
-
-def _normalize_legacy_task_decision(candidate: object) -> object:
-    """Move the two known pre-schema field placements into the current shape.
-
-    Some provider/runtime combinations continue to emit an older decision
-    shape after the prompt schema has changed.  Only these explicit aliases
-    are migrated; all other unknown fields remain rejected by the strict
-    Pydantic models below.
-    """
-    if not isinstance(candidate, dict):
-        return candidate
-    normalized = dict(candidate)
-    project_value = normalized.get("project")
-    if not isinstance(project_value, dict):
-        return normalized
-
-    project = dict(project_value)
-    top_level_follow_up_mode = normalized.pop("follow_up_mode", None)
-    if top_level_follow_up_mode is not None and "follow_up_mode" not in project:
-        project["follow_up_mode"] = top_level_follow_up_mode
-    top_level_sources = normalized.pop("source_conversations", None)
-    if top_level_sources is not None and "source_conversations" not in project:
-        project["source_conversations"] = top_level_sources
-
-    legacy_owner = project.pop("owner", None)
-    if isinstance(legacy_owner, dict):
-        if "owner_user_id" not in project and "user_id" in legacy_owner:
-            project["owner_user_id"] = legacy_owner["user_id"]
-        if "owner_name" not in project:
-            owner_name = legacy_owner.get("name", legacy_owner.get("display_name"))
-            if owner_name is not None:
-                project["owner_name"] = owner_name
-        if "owner_evidence" not in project:
-            evidence = legacy_owner.get("evidence")
-            if isinstance(evidence, dict):
-                project["owner_evidence"] = evidence
-
-    normalized["project"] = project
-    return normalized
 
 
 def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
@@ -2125,3 +580,713 @@ def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
         + "; ".join(problems),
         raw_output=raw,
     )
+
+
+def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal:
+    import hashlib
+
+    if item.source_ref != work_item.source.ref:
+        raise ValueError("task decision source_ref must match the Work Item source")
+    if not item.source_excerpt or item.source_excerpt not in work_item.summary:
+        raise ValueError("task decision source_excerpt must be an exact source substring")
+    def normalized(value: str) -> str:
+        return " ".join(value.split()).casefold()
+    date_effects = sorted(
+        (
+            evidence.kind,
+            evidence.value.strip(),
+            evidence.source_ref,
+            evidence.source_excerpt,
+        )
+        for evidence in item.date_evidence
+    )
+    if item.action in {"create_task", "record_candidate"} or item.transition == "promote_candidate":
+        # A source-backed creation is the same semantic item despite wording-only
+        # changes to description/reason/attention presentation. Owner and basis
+        # remain identity-bearing so same-quote assignments to different people
+        # are distinct records.
+        semantic_identity = {
+            "kind": item.action,
+            "transition": item.transition,
+            "task_id": item.task_id,
+            "source_ref": item.source_ref,
+            "source_excerpt": item.source_excerpt,
+            "title": normalized(item.title),
+            "owner_user_id": item.owner_user_id.strip(),
+            "owner_name": normalized(item.owner_name),
+            "formal_basis": item.formal_basis.value if item.formal_basis else "",
+        }
+    else:
+        # Updates are idempotent per target and actual business effects. Audit
+        # prose, model quality scores, and CEO-attention copy are presentation,
+        # not a new Task identity or state transition.
+        relation_effects = sorted(
+            (r.from_task_id, r.to_task_id, r.relation_type) for r in item.relation_proposals
+        )
+        anchor_effects = sorted((proposal.anchor_id,) for proposal in item.anchor_match_proposals)
+        semantic_identity = {
+            "kind": item.action,
+            "transition": item.transition,
+            "task_id": item.task_id,
+            "target_task_id": item.target_task_id or 0,
+            "source_ref": item.source_ref,
+            "source_excerpt": item.source_excerpt,
+            "status": item.status or "",
+            "business_relevance": item.business_relevance or "",
+            "owner_user_id": item.owner_user_id.strip(),
+            "owner_name": normalized(item.owner_name),
+            "acceptance_polarity": item.acceptance_polarity or "",
+            "acceptance_target_signal_id": item.acceptance_target_signal_id or 0,
+            "identity": (
+                {
+                    "source_task_id": item.identity_proposal.source_task_id,
+                    "target_task_id": item.identity_proposal.target_task_id,
+                    "basis": item.identity_proposal.identity_evidence.basis,
+                    "source_signal_id": item.identity_proposal.identity_evidence.source_signal_id,
+                    "target_signal_id": item.identity_proposal.identity_evidence.target_signal_id,
+                }
+                if item.identity_proposal else None
+            ),
+            "relations": relation_effects,
+            "cluster": (
+                {
+                    "cluster_id": item.cluster_proposal.cluster_id,
+                    "title": normalized(item.cluster_proposal.title),
+                    "task_ids": sorted(item.cluster_proposal.task_ids),
+                }
+                if item.cluster_proposal else None
+            ),
+            "anchors": anchor_effects,
+            "project_candidate": (
+                {
+                    "cluster_id": item.project_candidate_proposal.cluster_id,
+                    "title": normalized(item.project_candidate_proposal.title),
+                }
+                if item.project_candidate_proposal else None
+            ),
+            "date_effects": date_effects,
+        }
+    stable_item = hashlib.sha256(json.dumps(
+        semantic_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+    return SourceSignal(
+        source_type=work_item.source.type.value,
+        source_ref=work_item.source.ref,
+        evidence_text=work_item.summary,
+        dedupe_key=f"{work_item.source.type.value}:{work_item.source.ref}:task-item:{stable_item}",
+        source_time=work_item.source.created_at,
+        conversation_id=work_item.source.conversation_id,
+        conversation_title=work_item.source.conversation_title,
+        author_user_id=work_item.context.sender_user_id,
+        author_name=work_item.context.sender,
+        author_kind=(BusinessActorKind.HUMAN if work_item.context.sender_user_id else BusinessActorKind.UNKNOWN),
+        context_json=json.dumps(
+            {
+                "work_item_title": work_item.source.title,
+                "assignment_authorized": work_item.context.assignment_authorized,
+                **({"reply_to_source_ref": work_item.context.reply_to_source_ref}
+                   if work_item.context.reply_to_source_ref else {}),
+                **({"external_task_id": work_item.context.external_task_id}
+                   if work_item.context.external_task_id else {}),
+                **({"owner_identity": work_item.context.owner_identity}
+                   if work_item.context.owner_identity else {}),
+            }, ensure_ascii=False, sort_keys=True
+        ),
+    )
+
+
+def _task_date_inputs(
+    item: TaskDecision, work_item: WorkItem, *, is_acceptance: bool
+) -> tuple[TaskDateInput, ...]:
+    values: list[TaskDateInput] = []
+    for evidence in item.date_evidence:
+        if evidence.source_ref != item.source_ref:
+            raise ValueError("date evidence source_ref must match its task decision")
+        if evidence.source_excerpt not in work_item.summary:
+            raise ValueError("date evidence source_excerpt must be an exact source substring")
+        if evidence.kind == "assigned_at":
+            raise ValueError("assigned_at is derived only from trusted source timestamp metadata")
+        if work_item.source.type is WorkItemSourceType.AI_MINUTES and evidence.kind != "next_check_at":
+            raise ValueError(
+                "AI Minutes date actor cannot be attributed without trusted speaker identity metadata"
+            )
+        actor_kind = BusinessActorKind.HUMAN if work_item.context.sender_user_id else BusinessActorKind.UNKNOWN
+        actor_user_id = work_item.context.sender_user_id
+        actor_name = work_item.context.sender
+        agent_date = evidence.kind == "next_check_at"
+        expected_actor = ("task-agent", "CEO Agent") if agent_date else (
+            work_item.context.sender_user_id, work_item.context.sender
+        )
+        if evidence.actor_user_id and evidence.actor_user_id != expected_actor[0]:
+            raise ValueError("date actor_user_id must match the trusted date actor")
+        if evidence.actor_name and evidence.actor_name != expected_actor[1]:
+            raise ValueError("date actor_name must match the trusted date actor")
+        parsed_value = _parse_exact_date_value(evidence.value)
+        parsed_phrase = _parse_exact_date_value(evidence.source_excerpt)
+        if parsed_phrase is None:
+            # Keep relative/unparseable wording in the linked source signal;
+            # do not normalize it into a guessed typed date.
+            continue
+        if parsed_value is None or parsed_value != parsed_phrase:
+            raise ValueError(
+                "date value must match an exact, parseable date phrase in its source excerpt"
+            )
+        if evidence.kind == "next_check_at":
+            actor_kind = BusinessActorKind.AGENT
+            actor_user_id = "task-agent"
+            actor_name = "CEO Agent"
+        else:
+            if not work_item.context.sender_user_id:
+                raise ValueError("source date actor is not attributable to an identified source actor")
+        values.append(TaskDateInput(
+            date_type=BusinessTaskDateType(evidence.kind),
+            value_at=evidence.value,
+            raw_phrase=evidence.source_excerpt,
+            actor_kind=actor_kind,
+            actor_user_id=actor_user_id,
+            actor_name=actor_name,
+        ))
+    if (
+        (item.action == "create_task" or item.transition == "promote_candidate")
+        and item.formal_basis is not None
+        and item.formal_basis is FormalTaskBasis.EXPLICIT_ASSIGNMENT
+        and work_item.source.created_at
+        and work_item.context.sender_user_id
+    ):
+        values.append(TaskDateInput(
+            date_type=BusinessTaskDateType.ASSIGNED_AT,
+            value_at=work_item.source.created_at,
+            raw_phrase=work_item.source.created_at,
+            actor_kind=BusinessActorKind.HUMAN,
+            actor_user_id=work_item.context.sender_user_id,
+            actor_name=work_item.context.sender,
+        ))
+    return tuple(values)
+
+
+def _parse_exact_date_value(value: str) -> str | None:
+    """Return a precision-tagged date/time only when the whole phrase parses."""
+    from datetime import date
+
+    text = value.strip()
+    try:
+        return f"date:{date.fromisoformat(text).isoformat()}"
+    except ValueError:
+        try:
+            return f"datetime:{datetime.fromisoformat(text.replace('Z', '+00:00')).isoformat()}"
+        except ValueError:
+            return None
+
+
+def _validate_formal_basis_source(item: TaskDecision, work_item: WorkItem) -> None:
+    basis = item.formal_basis
+    if basis is FormalTaskBasis.EXPLICIT_ASSIGNMENT:
+        if not work_item.context.assignment_authorized:
+            raise ValueError("explicit assignment requires authorized source metadata")
+        return
+    if basis is FormalTaskBasis.EXPLICIT_COMMITMENT:
+        owner_id = (
+            work_item.context.owner_identity.get("user_id", "")
+            if work_item.context.owner_identity.get("name", "") == item.owner_name
+            else work_item.context.sender_user_id
+            if work_item.context.sender == item.owner_name
+            else ""
+        )
+        if (
+            not owner_id
+            or work_item.context.sender_user_id != owner_id
+            or (item.owner_name and work_item.context.sender != item.owner_name)
+        ):
+            raise ValueError("explicit commitment must be authored by its identified owner")
+        return
+    if basis is FormalTaskBasis.MEETING_ACTION_ITEM:
+        if not (
+            work_item.source.type is WorkItemSourceType.AI_MINUTES
+            and work_item.context.source_conversation_kind is WorkItemSourceKind.MINUTES
+            and "#todos-sha256=" in work_item.source.ref
+        ):
+            raise ValueError("meeting action item requires a sourced meeting action-item record")
+        return
+    if basis is FormalTaskBasis.EXTERNAL_TODO:
+        if not (
+            work_item.source.type in {
+                WorkItemSourceType.TODO_COMPLETION_CHECK,
+                WorkItemSourceType.TODO_COMPLETION_EVIDENCE_CANDIDATE,
+            }
+            and work_item.context.external_task_id.strip()
+        ):
+            raise ValueError("external TODO basis requires trusted external TODO source metadata")
+
+
+def _validate_task_agent_decision(
+    decision: TaskAgentDecision, *, work_item: WorkItem, now: str = ""
+) -> None:
+    for item in decision.task_decisions:
+        if item.action == "skip":
+            continue
+        if not item.title.strip():
+            raise RepairableTaskDecisionValidationError("non-skip task decision requires title")
+        if item.action == "create_task" and not (
+            item.owner_user_id.strip() or item.owner_name.strip()
+        ):
+            raise RepairableTaskDecisionValidationError(
+                "formal task creation requires explicit source-backed owner; retain as candidate"
+            )
+        if item.action == "create_task" or item.transition == "promote_candidate":
+            _validate_formal_basis_source(item, work_item)
+        if item.transition == "apply_acceptance" and item.acceptance_polarity != "accepted":
+            raise RepairableTaskDecisionValidationError(
+                "only explicit accepted owner evidence may use apply_acceptance"
+            )
+        if item.transition == "apply_acceptance" and item.action != "update_task":
+            raise RepairableTaskDecisionValidationError("apply_acceptance requires update_task")
+        if item.transition == "merge_identity" and item.identity_proposal is not None and (
+            item.identity_proposal.identity_evidence.basis
+            == "same_deliverable_owner_context_time"
+        ):
+            raise ValueError(
+                "same deliverable, owner, context, and time can link or cluster Tasks but cannot merge identity"
+            )
+
+
+def apply_task_agent_decision(
+    store: AutoReplyStore,
+    *,
+    summary_input_id: int,
+    work_item: WorkItem,
+    decision: TaskAgentDecision,
+    codex_session_id: str = "",
+    record_run: bool = True,
+    dws=None,
+    now: str = "",
+    _db: sqlite3.Connection | None = None,
+) -> TaskAgentApplyResult:
+    """Persist all source-grounded task decisions, atomically when _db is supplied."""
+    _validate_task_agent_decision(decision, work_item=work_item, now=now)
+    service = TaskSemanticService(store)
+    resolution = BusinessResolutionService(store)
+    task_ids: list[int] = []
+    affected_task_ids: list[int] = []
+    attention: list[tuple[TaskDecision, int, int]] = []
+    skipped_reasons: list[str] = []
+
+    def apply(db: sqlite3.Connection | None) -> None:
+        for item in decision.task_decisions:
+            if item.action == "skip":
+                continue
+            if item.transition == "apply_acceptance":
+                if not work_item.context.reply_to_source_ref:
+                    skipped_reasons.append(
+                        f"Acceptance for task {item.task_id} was not applied: source has no verified reply-to reference."
+                    )
+                    continue
+                task = store.get_business_task(item.task_id) if db is None else store.get_business_task_in_transaction(task_id=item.task_id, _db=db)
+                evidence = store.list_business_task_evidence(item.task_id) if db is None else store.list_business_task_evidence_in_transaction(task_id=item.task_id, _db=db)
+                cited = next((row for row in evidence if row.signal_id == item.acceptance_target_signal_id), None)
+                target_signal = (
+                    store.get_business_task_signal(item.acceptance_target_signal_id)
+                    if db is None
+                    else store.get_business_task_signal_in_transaction(signal_id=item.acceptance_target_signal_id, _db=db)
+                )
+                linked_assignment = cited is not None and cited.evidence_role in {
+                    BusinessEvidenceRole.ASSIGNMENT.value,
+                    BusinessEvidenceRole.COMMITMENT.value,
+                }
+                same_reply_thread = (
+                    target_signal is not None
+                    and bool(work_item.source.conversation_id)
+                    and target_signal.conversation_id == work_item.source.conversation_id
+                )
+                explicit_reply_link = (
+                    target_signal is not None
+                    and target_signal.source_ref == work_item.context.reply_to_source_ref
+                )
+                owner_is_reply_author = (
+                    task is not None
+                    and bool(work_item.context.sender_user_id)
+                    and task.owner_user_id == work_item.context.sender_user_id
+                    and (not task.owner_name or task.owner_name == work_item.context.sender)
+                )
+                if not (task is not None and linked_assignment and same_reply_thread
+                        and explicit_reply_link and owner_is_reply_author):
+                    skipped_reasons.append(
+                        f"Acceptance for task {item.task_id} was not applied: cited assignment, exact reply link, conversation, or owner identity did not match."
+                    )
+                    continue
+            signal = _task_source_signal(work_item, item)
+            date_facts = _task_date_inputs(item, work_item, is_acceptance=item.transition == "apply_acceptance")
+            owner_evidence = dict(item.owner_evidence)
+            owner_identity = work_item.context.owner_identity
+            source_owner_id = (
+                owner_identity.get("user_id", "")
+                if owner_identity.get("name", "") == item.owner_name
+                else work_item.context.sender_user_id
+                if work_item.context.sender == item.owner_name
+                else ""
+            )
+            if item.owner_user_id and item.owner_user_id != source_owner_id:
+                raise ValueError("owner_user_id is not established by source identity metadata")
+            owner_user_id = source_owner_id
+            if owner_evidence:
+                owner_evidence.setdefault("source_ref", item.source_ref)
+                owner_evidence.setdefault("excerpt", item.source_excerpt)
+                owner_evidence.setdefault("user_id", owner_user_id)
+                owner_evidence.setdefault("name", item.owner_name)
+            formality = FormalityEvidence(
+                basis=item.formal_basis,
+                assigner_is_authorized=(
+                    item.formal_basis is not FormalTaskBasis.EXPLICIT_ASSIGNMENT
+                    or work_item.context.assignment_authorized
+                ),
+                deliverable_is_explicit=bool(item.title.strip()),
+                owner_is_explicit=bool(item.owner_user_id.strip() or item.owner_name.strip()),
+            )
+            if item.action == "record_candidate":
+                result = service.record_candidate(RecordCandidate(
+                    title=item.title,
+                    signal=signal,
+                    description=item.description,
+                    owner_user_id=owner_user_id,
+                    owner_name=item.owner_name,
+                    missing_evidence_json=json.dumps(item.missing_evidence, ensure_ascii=False),
+                    date_facts=date_facts,
+                ), _db=db)
+            elif item.action == "create_task":
+                result = service.record_formal_task(RecordFormalTask(
+                    title=item.title,
+                    signal=signal,
+                    formality=formality,
+                    description=item.description,
+                    owner_user_id=owner_user_id,
+                    owner_name=item.owner_name,
+                    owner_evidence_json=json.dumps(owner_evidence, ensure_ascii=False),
+                    date_facts=date_facts,
+                ), _db=db)
+            else:
+                assert item.task_id is not None
+                if item.transition == "promote_candidate":
+                    result = service.promote_candidate(PromoteCandidate(
+                        task_id=item.task_id, signal=signal, formality=formality,
+                        owner_user_id=owner_user_id or None,
+                        owner_name=item.owner_name or None,
+                        owner_evidence_json=json.dumps(owner_evidence, ensure_ascii=False) if owner_evidence else None,
+                        date_facts=date_facts,
+                    ), _db=db)
+                elif item.transition == "apply_acceptance":
+                    result = service.apply_acceptance(ApplyAcceptance(
+                        task_id=item.task_id, signal=signal, acceptance_is_explicit=True,
+                        acceptance_polarity=AcceptancePolarity(item.acceptance_polarity),
+                        acceptance_excerpt=item.source_excerpt,
+                        referenced_signal_id=item.acceptance_target_signal_id,
+                        date_facts=date_facts,
+                    ), _db=db)
+                elif item.transition == "merge_identity":
+                    proposal = item.identity_proposal
+                    assert proposal is not None
+                    _validate_identity_proposal(store, proposal, db=db)
+                    identity = IdentityEvidence(
+                        same_external_task_id=proposal.identity_evidence.basis == "same_external_task_id",
+                        explicit_source_reference=proposal.identity_evidence.basis == "explicit_source_reference",
+                        same_deliverable=proposal.identity_evidence.basis == "same_deliverable_owner_context_time",
+                        same_owner=proposal.identity_evidence.basis == "same_deliverable_owner_context_time",
+                        same_context=proposal.identity_evidence.basis == "same_deliverable_owner_context_time",
+                        compatible_time_window=proposal.identity_evidence.basis == "same_deliverable_owner_context_time",
+                    )
+                    result = service.merge_same_deliverable(MergeBusinessTasks(
+                        source_task_id=proposal.source_task_id,
+                        target_task_id=proposal.target_task_id,
+                        signal=signal, identity_evidence=identity, reason=proposal.reason,
+                    ), _db=db)
+                else:
+                    fields = {}
+                    if owner_user_id or item.owner_name:
+                        fields.update(owner_user_id=owner_user_id, owner_name=item.owner_name,
+                                      owner_evidence_json=json.dumps(owner_evidence, ensure_ascii=False))
+                    if item.status:
+                        fields["status"] = BusinessTaskStatus(item.status)
+                    if item.business_relevance:
+                        fields["business_relevance"] = BusinessRelevance(item.business_relevance)
+                    result = service.update_task(UpdateBusinessTask(
+                        task_id=item.task_id, signal=signal, date_facts=date_facts,
+                        reason=item.update_summary or "Task fields updated from source evidence.",
+                        **fields,
+                    ), _db=db)
+            if (
+                not result.created
+                and date_facts
+                and (item.action in {"record_candidate", "create_task"}
+                     or item.transition == "promote_candidate")
+            ):
+                existing_dates = db.execute(
+                    """select date_type, value_at, raw_phrase, source_signal_id,
+                              actor_kind, actor_user_id, actor_name
+                       from business_task_date_evidence where task_id=?""",
+                    (result.task_id,),
+                ).fetchall()
+                existing_date_effects = {
+                    (row["date_type"], row["value_at"], row["raw_phrase"],
+                     row["source_signal_id"], row["actor_kind"], row["actor_user_id"], row["actor_name"])
+                    for row in existing_dates
+                }
+                proposed_date_effects = {
+                    (fact.date_type.value, fact.value_at, fact.raw_phrase, result.signal_id,
+                     fact.actor_kind.value, fact.actor_user_id, fact.actor_name)
+                    for fact in date_facts
+                }
+                if not proposed_date_effects.issubset(existing_date_effects):
+                    raise ValueError(
+                        "replayed create/promotion has new date evidence; update the existing Task explicitly"
+                    )
+            task_id = result.task_id
+            task_ids.append(task_id)
+            affected_task_ids.append(task_id)
+            if item.transition == "merge_identity" and item.identity_proposal is not None:
+                affected_task_ids.extend((
+                    item.identity_proposal.source_task_id,
+                    item.identity_proposal.target_task_id,
+                ))
+            for relation in item.relation_proposals:
+                if task_id not in {relation.from_task_id, relation.to_task_id}:
+                    raise ValueError("relation proposal must include the Task evidenced by this decision")
+                resolution.add_relation(
+                    from_task_id=relation.from_task_id,
+                    to_task_id=relation.to_task_id,
+                    relation_type=BusinessRelationType(relation.relation_type),
+                    evidence_signal_id=result.signal_id,
+                    status="proposed", reason=relation.reason, _db=db,
+                )
+            if item.cluster_proposal is not None:
+                cluster = item.cluster_proposal
+                if cluster.cluster_id is None:
+                    cluster_id = resolution.create_cluster(
+                        title=cluster.title or item.title,
+                        task_ids=list(dict.fromkeys([*cluster.task_ids, task_id])), _db=db,
+                    )
+                else:
+                    cluster_id = cluster.cluster_id
+                    if db.execute(
+                        "select 1 from business_work_cluster_tasks where cluster_id=? and task_id=?",
+                        (cluster_id, task_id),
+                    ).fetchone() is None:
+                        store.add_business_work_cluster_task_in_transaction(
+                            cluster_id=cluster_id, task_id=task_id, _db=db
+                        )
+            else:
+                cluster_id = None
+            for anchor_match in item.anchor_match_proposals:
+                resolution.propose_anchor_match(
+                    task_id=task_id, anchor_id=anchor_match.anchor_id,
+                    evidence_signal_id=result.signal_id, reason=anchor_match.reason, _db=db,
+                )
+            if item.project_candidate_proposal is not None:
+                proposal = item.project_candidate_proposal
+                resolution.propose_project(
+                    cluster_id=proposal.cluster_id, title=proposal.title,
+                    reason=proposal.reason, _db=db,
+                )
+            if item.attention_proposal is not None:
+                attention.append((item, task_id, result.signal_id))
+
+    if _db is not None:
+        apply(_db)
+    else:
+        with store.task_agent_domain_apply_transaction() as db:
+            apply(db)
+        if record_run:
+            store.record_task_agent_run(
+                summary_input_id=summary_input_id,
+                codex_session_id=codex_session_id,
+                decision_json=_json_dumps(decision.model_dump(mode="json")),
+                audit_summary="; ".join(filter(None, (item.update_summary for item in decision.task_decisions))),
+                memory_recall_used=any(item.memory_recall_used for item in decision.task_decisions),
+            )
+    result = TaskAgentApplyResult(
+        task_ids=tuple(task_ids),
+        attention_proposals=tuple(attention),
+        affected_task_ids=tuple(dict.fromkeys(affected_task_ids)),
+        skipped_reasons=tuple(skipped_reasons),
+    )
+    if _db is None:
+        _project_task_attention(store, result.attention_proposals, result.affected_task_ids)
+    return result
+
+
+def _project_task_attention(
+    store: AutoReplyStore,
+    proposals: tuple[tuple[TaskDecision, int, int], ...],
+    affected_task_ids: tuple[int, ...],
+) -> None:
+    for item, task_id, signal_id in proposals:
+        proposal = item.attention_proposal
+        assert proposal is not None
+        try:
+            exact_trigger_quote = (
+                bool(proposal.trigger_evidence.strip())
+                and proposal.trigger_evidence in item.source_excerpt
+            )
+            if not exact_trigger_quote:
+                LOGGER.info("Suppressing Task attention without an exact source trigger quote task_id=%s", task_id)
+                continue
+            BusinessAttentionProjection(store).upsert(AttentionProposal(
+                stable_key=f"task:{task_id}:{proposal.material_trigger}",
+                category=proposal.category,
+                title=proposal.title,
+                business_area="",
+                why_attention=(
+                    f"{proposal.why_attention} Source trigger ({proposal.material_trigger}): "
+                    f"{proposal.trigger_evidence}"
+                ),
+                current_state=proposal.current_state,
+                ceo_action=proposal.ceo_action,
+                anchor_id=proposal.anchor_id,
+                task_ids=(task_id,),
+                evidence_signal_id=signal_id,
+            ))
+        except Exception:
+            LOGGER.exception(
+                "Task committed but CEO attention projection failed for task_id=%s",
+                task_id,
+            )
+    try:
+        BusinessAttentionProjection(store).recompute_for_tasks(affected_task_ids)
+    except Exception:
+        LOGGER.exception(
+            "Task committed but CEO attention membership recomputation failed for task_ids=%s",
+            affected_task_ids,
+        )
+
+
+def _validate_identity_proposal(store, proposal, *, db: sqlite3.Connection | None) -> None:
+    def get_task(task_id: int):
+        if db is None:
+            return store.get_business_task(task_id)
+        return store.get_business_task_in_transaction(task_id=task_id, _db=db)
+
+    def get_evidence(task_id: int):
+        if db is None:
+            return store.list_business_task_evidence(task_id)
+        return store.list_business_task_evidence_in_transaction(task_id=task_id, _db=db)
+
+    def get_signal(signal_id: int):
+        if db is None:
+            return store.get_business_task_signal(signal_id)
+        return store.get_business_task_signal_in_transaction(signal_id=signal_id, _db=db)
+
+    proof = proposal.identity_evidence
+    source_task = get_task(proposal.source_task_id)
+    target_task = get_task(proposal.target_task_id)
+    if source_task is None or target_task is None:
+        raise ValueError("identity proposal Tasks must exist")
+    if proof.source_signal_id not in {row.signal_id for row in get_evidence(source_task.id)}:
+        raise ValueError("identity source signal is not linked to the source Task")
+    if proof.target_signal_id not in {row.signal_id for row in get_evidence(target_task.id)}:
+        raise ValueError("identity target signal is not linked to the target Task")
+    source_signal = get_signal(proof.source_signal_id)
+    target_signal = get_signal(proof.target_signal_id)
+    if source_signal is None or target_signal is None:
+        raise ValueError("identity proposal cites a missing source signal")
+    source_context = json.loads(source_signal.context_json)
+    target_context = json.loads(target_signal.context_json)
+    if proof.basis == "same_external_task_id":
+        source_external = source_context.get("external_task_id")
+        target_external = target_context.get("external_task_id")
+        if not source_external or source_external != target_external:
+            raise ValueError("same_external_task_id identity evidence does not match source records")
+        return
+    if proof.basis == "explicit_source_reference":
+        if not (
+            source_signal.source_ref == target_context.get("reply_to_source_ref")
+            or target_signal.source_ref == source_context.get("reply_to_source_ref")
+        ):
+            raise ValueError("explicit_source_reference identity evidence does not match source records")
+        return
+    same_owner = (
+        bool(source_task.owner_name.strip())
+        and source_task.owner_name.casefold() == target_task.owner_name.casefold()
+    )
+    same_context = (
+        bool(source_signal.conversation_id)
+        and source_signal.conversation_id == target_signal.conversation_id
+    )
+    same_deliverable = source_task.title.strip().casefold() == target_task.title.strip().casefold()
+    if not (same_deliverable and same_owner and same_context):
+        raise ValueError("same-deliverable identity evidence does not match canonical Task and source fields")
+    try:
+        source_time = datetime.fromisoformat(source_signal.source_time.replace("Z", "+00:00"))
+        target_time = datetime.fromisoformat(target_signal.source_time.replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("same-deliverable identity evidence requires parseable source times") from exc
+    source_time = source_time.replace(tzinfo=timezone.utc) if source_time.tzinfo is None else source_time
+    target_time = target_time.replace(tzinfo=timezone.utc) if target_time.tzinfo is None else target_time
+    if abs((source_time - target_time).total_seconds()) > 30 * 24 * 60 * 60:
+        raise ValueError("same-deliverable identity source times exceed the matching window")
+
+
+def process_work_item(
+    store: AutoReplyStore,
+    runner: TaskAgentRunner,
+    work_input: WorkSummaryInput,
+    *,
+    dws=None,
+    now: str = "",
+    session_lease=None,
+) -> None:
+    active_run_id: int | None = None
+    try:
+        if session_lease is not None:
+            session_lease.assert_owned()
+        work_item = WorkItem.model_validate_json(work_input.payload_json)
+        semantic_context = retrieve_task_semantic_context(store, work_item)
+        context_prompt = render_task_semantic_context(semantic_context)
+        active_run_id = store.begin_task_agent_run(work_input.id)
+        decision = runner.decide(
+            work_item, context_prompt,
+            memory_issue=memory_connector_config_issue(),
+            run_id=active_run_id,
+            session_scope_id=TASK_AGENT_SESSION_SCOPE_ID,
+        )
+        _validate_task_agent_decision(decision, work_item=work_item, now=now)
+        session_id = getattr(runner.codex, "last_session_id", None) or ""
+        if session_lease is not None:
+            session_lease.assert_owned()
+        with store.task_agent_domain_apply_transaction() as db:
+            apply_result = apply_task_agent_decision(
+                store,
+                summary_input_id=work_input.id,
+                work_item=work_item,
+                decision=decision,
+                codex_session_id=session_id,
+                record_run=False,
+                now=now,
+                _db=db,
+            )
+            if apply_result.task_ids:
+                store.mark_work_summary_input_done(work_input.id, _db=db)
+            else:
+                store.mark_work_summary_input_skipped(
+                    work_input.id,
+                    "; ".join(apply_result.skipped_reasons)
+                    or "No source-grounded Task decision.",
+                    _db=db,
+                )
+            store.finish_task_agent_run(
+                active_run_id,
+                status="completed",
+                codex_session_id=session_id,
+                decision_json=_json_dumps(decision.model_dump(mode="json")),
+                audit_summary="; ".join(filter(None, (
+                    *(item.update_summary for item in decision.task_decisions),
+                    *apply_result.skipped_reasons,
+                ))),
+                memory_recall_used=any(item.memory_recall_used for item in decision.task_decisions),
+                _db=db,
+            )
+        active_run_id = None
+        _project_task_attention(
+            store, apply_result.attention_proposals, apply_result.affected_task_ids
+        )
+    except Exception as exc:
+        if active_run_id is not None:
+            store.finish_task_agent_run(active_run_id, status="failed", error=str(exc))
+        store.mark_work_summary_input_failed(work_input.id, str(exc))
+        raise

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import nullcontext
 import json
+import sqlite3
 
 from app.store import AutoReplyStore
 from app.task_semantic_models import (
@@ -24,6 +26,9 @@ class BusinessResolutionService:
 
     def __init__(self, store: AutoReplyStore) -> None:
         self.store = store
+
+    def _transaction(self, _db: sqlite3.Connection | None):
+        return nullcontext(_db) if _db is not None else self.store.business_task_transaction()
 
     @staticmethod
     def _timestamp() -> str:
@@ -63,12 +68,14 @@ class BusinessResolutionService:
         if row is None:
             raise ValueError(f"evidence signal {signal_id} does not exist")
 
-    def create_cluster(self, *, title: str, task_ids: list[int]) -> int:
+    def create_cluster(
+        self, *, title: str, task_ids: list[int], _db: sqlite3.Connection | None = None
+    ) -> int:
         if not task_ids:
             raise ValueError("cluster requires at least one task")
         if len(task_ids) != len(set(task_ids)):
             raise ValueError("cluster task IDs must be unique")
-        with self.store.business_task_transaction() as db:
+        with self._transaction(_db) as db:
             for task_id in task_ids:
                 self._require_task(
                     self.store.get_business_task_in_transaction(task_id=task_id, _db=db),
@@ -92,8 +99,9 @@ class BusinessResolutionService:
         evidence_signal_id: int,
         status: BusinessRelationStatus | str = BusinessRelationStatus.PROPOSED,
         reason: str = "",
+        _db: sqlite3.Connection | None = None,
     ) -> int:
-        with self.store.business_task_transaction() as db:
+        with self._transaction(_db) as db:
             self._require_task(
                 self.store.get_business_task_in_transaction(task_id=from_task_id, _db=db),
                 from_task_id,
@@ -120,8 +128,9 @@ class BusinessResolutionService:
         anchor_ref: str,
         title: str,
         active: bool = True,
+        _db: sqlite3.Connection | None = None,
     ) -> int:
-        with self.store.business_task_transaction() as db:
+        with self._transaction(_db) as db:
             existing = self.store.get_business_anchor_by_identity_in_transaction(
                 anchor_type=anchor_type, anchor_ref=anchor_ref, _db=db
             )
@@ -138,10 +147,10 @@ class BusinessResolutionService:
             )
 
     def register_official_project(
-        self, *, anchor_id: int, registry_source: str
+        self, *, anchor_id: int, registry_source: str, _db: sqlite3.Connection | None = None
     ) -> int:
         self._require_nonblank(registry_source, field="canonical registry source")
-        with self.store.business_task_transaction() as db:
+        with self._transaction(_db) as db:
             anchor = self._require_anchor(
                 self.store.get_business_anchor_in_transaction(anchor_id=anchor_id, _db=db),
                 anchor_id,
@@ -172,8 +181,9 @@ class BusinessResolutionService:
         anchor_id: int,
         evidence_signal_id: int,
         reason: str = "",
+        _db: sqlite3.Connection | None = None,
     ) -> int:
-        with self.store.business_task_transaction() as db:
+        with self._transaction(_db) as db:
             self._require_task(
                 self.store.get_business_task_in_transaction(task_id=task_id, _db=db),
                 task_id,
@@ -210,11 +220,12 @@ class BusinessResolutionService:
         evidence_signal_id: int,
         reason: str = "Business relevance confirmed from registered anchor evidence.",
         relevance: BusinessRelevance | str = BusinessRelevance.RELEVANT,
+        _db: sqlite3.Connection | None = None,
     ) -> int:
         selected_relevance = BusinessRelevance(relevance)
         if selected_relevance is BusinessRelevance.UNKNOWN:
             raise ValueError("anchor confirmation must decide relevant or not_relevant")
-        with self.store.business_task_transaction() as db:
+        with self._transaction(_db) as db:
             task = self._require_task(
                 self.store.get_business_task_in_transaction(task_id=task_id, _db=db),
                 task_id,
@@ -265,9 +276,10 @@ class BusinessResolutionService:
             return task_id
 
     def propose_project(
-        self, *, cluster_id: int, reason: str, title: str | None = None
+        self, *, cluster_id: int, reason: str, title: str | None = None,
+        _db: sqlite3.Connection | None = None,
     ) -> int:
-        with self.store.business_task_transaction() as db:
+        with self._transaction(_db) as db:
             cluster_row = db.execute(
                 "select title from business_work_clusters where id=?", (cluster_id,)
             ).fetchone()
@@ -287,12 +299,13 @@ class BusinessResolutionService:
         project_id: int | None = None,
         anchor_id: int | None = None,
         evidence_signal_id: int | None = None,
+        _db: sqlite3.Connection | None = None,
     ) -> int:
         if evidence_signal_id is None:
             raise ValueError("project candidate confirmation requires an evidence signal")
         if (project_id is None) == (anchor_id is None):
             raise ValueError("confirmation requires exactly one Project or project anchor")
-        with self.store.business_task_transaction() as db:
+        with self._transaction(_db) as db:
             candidate = self.store.get_business_project_candidate_in_transaction(
                 candidate_id=candidate_id, _db=db
             )

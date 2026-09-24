@@ -49,6 +49,7 @@ from app.dws_client import DwsError
 from app.dispatcher.adapters import OkrReviewQueueAdapter
 from app.external_retry import ExternalDependencyError
 from app.store import AgentRunLeaseLostError, AutoReplyStore
+from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID, TaskAgentSessionLeaseLost
 from app.task_models import TaskAgentDecision, WorkItem
 
 
@@ -2327,31 +2328,18 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
-                    "action": "create_project",
-                    "project": {
-                        "title": "售前知识库建设",
-                        "category": "sales",
-                        "status": "active",
-                        "memory_context": {
-                            "query": "售前知识库",
-                            "summary": "售前知识库历史背景来自 memory_recall。",
-                            "memories": [
-                                {
-                                    "source": "memory_recall",
-                                    "uuid": "mem-1",
-                                    "text": "售前知识库材料沉淀在 business/售前知识库。",
-                                    "summary": "材料沉淀在 business/售前知识库。",
-                                    "created_at": "2026-06-05",
-                                }
-                            ],
-                        },
-                    },
-                    "todo_changes": [],
-                    "follow_up_drafts": [],
-                    "update_summary": "创建项目。",
-                    "merge_reason": "事项名称稳定。",
-                    "memory_recall_used": True,
-                    "confidence": 0.8,
+                    "task_decisions": [
+                        {
+                            "action": "record_candidate",
+                            "transition": "none",
+                            "source_excerpt": "售前知识库需要补齐来源链接。",
+                            "source_ref": "1",
+                            "title": "补齐售前知识库来源链接",
+                            "description": "售前知识库需要补齐来源链接。",
+                            "missing_evidence": ["explicit assignment", "owner"],
+                            "update_summary": "记录售前知识库来源链接补齐候选，待确认明确指派和负责人。",
+                        }
+                    ],
                 }
             )
 
@@ -2391,10 +2379,8 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
     loaded = AutoReplyStore(db_path)
     assert processed == 1
     assert capsys.readouterr().out == "process-work-items processed=1\n"
-    assert loaded.list_work_projects()[0].title == "售前知识库建设"
-    assert json.loads(loaded.list_work_projects()[0].memory_context_json)[
-        "memories"
-    ][0]["uuid"] == "mem-1"
+    assert len(loaded.list_business_tasks()) == 1
+    assert loaded.list_business_tasks()[0].title == "补齐售前知识库来源链接"
     assert loaded.claim_work_summary_inputs(limit=1) == []
     with loaded._connect() as db:
         status = db.execute(
@@ -2402,6 +2388,193 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
             (input_id,),
         ).fetchone()["status"]
     assert status == "done"
+
+
+def test_process_work_items_command_leaves_input_pending_when_shared_session_is_busy(
+    tmp_path, monkeypatch, capsys
+):
+    db_path = tmp_path / "busy-task-agent-session.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "busy-1",
+                "title": "售前推进",
+                "created_at": "2026-09-23T09:00:00Z",
+            },
+            "summary": "售前客户要求补交一份验收说明。",
+            "context": {"source_conversation_kind": "direct"},
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    assert store.acquire_codex_session_lock(TASK_AGENT_SESSION_SCOPE_ID, "other-worker")
+    process_calls = []
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_process_claimed_work_summary_input",
+        lambda *args, **kwargs: process_calls.append(args[2].id) or True,
+    )
+
+    processed = process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+    )
+
+    assert processed == 0
+    assert capsys.readouterr().out == "process-work-items processed=0\n"
+    assert process_calls == []
+    loaded = AutoReplyStore(db_path)
+    assert loaded.get_work_summary_input(input_id).status.value == "pending"
+    with loaded._connect() as db:
+        row = db.execute(
+            "select attempts from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert row["attempts"] == 0
+    store.release_codex_session_lock(TASK_AGENT_SESSION_SCOPE_ID, "other-worker")
+
+
+def test_process_work_items_command_does_not_claim_when_lease_is_lost_before_claim(
+    tmp_path, monkeypatch, capsys
+):
+    db_path = tmp_path / "lost-before-claim.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "lost-before-claim",
+                "created_at": "2026-09-23T09:00:00Z",
+            },
+            "summary": "客户需要补交验收说明。",
+            "context": {"source_conversation_kind": "direct"},
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+
+    class LostLease:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def assert_owned(self):
+            raise TaskAgentSessionLeaseLost("session lease expired")
+
+    monkeypatch.setattr(
+        cli.TaskAgentSessionLease,
+        "try_acquire",
+        classmethod(lambda cls, _store: LostLease()),
+    )
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **kwargs: pytest.fail("must not build the runtime after losing the lease"),
+    )
+
+    assert process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+    ) == 0
+    assert capsys.readouterr().out == "process-work-items processed=0\n"
+    assert store.get_work_summary_input(input_id).status.value == "pending"
+    with store._connect() as db:
+        row = db.execute(
+            "select attempts from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert row["attempts"] == 0
+
+
+@pytest.mark.parametrize(
+    ("source_type", "expected_route"),
+    [
+        ("todo_completion_evidence_candidate", "completion"),
+        ("todo_completion_check", "completion"),
+        ("follow_up_completion_check", "completion"),
+        ("reply_attempt", "task"),
+    ],
+)
+def test_claimed_work_summary_input_uses_explicit_source_dispatch(
+    monkeypatch, source_type, expected_route
+):
+    completion_module = import_module("app.task_completion_agent")
+    routed = []
+    monkeypatch.setattr(
+        completion_module,
+        "process_task_completion_work_item",
+        lambda *args, **kwargs: routed.append("completion"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_work_item",
+        lambda *args, **kwargs: routed.append("task"),
+    )
+
+    class Store:
+        def codex_capacity_failure_count(self):
+            return 0
+
+        def clear_codex_capacity_pause(self):
+            pass
+
+    work_input = SimpleNamespace(source_type=source_type, id=1)
+    runner = SimpleNamespace(codex=object())
+
+    assert cli._process_claimed_work_summary_input(Store(), runner, work_input)
+    assert routed == [expected_route]
+
+
+def test_claimed_work_summary_input_retries_after_session_lease_loss(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "session-lease-retry.sqlite3")
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "lease-lost-1",
+                "created_at": "2026-09-23T09:00:00Z",
+            },
+            "summary": "客户需要补交验收说明。",
+            "context": {"source_conversation_kind": "direct"},
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+
+    def lose_session_lease(_store, _runner, claimed, **kwargs):
+        store.mark_work_summary_input_failed(claimed.id, "session lease expired")
+        raise TaskAgentSessionLeaseLost("session lease expired")
+
+    monkeypatch.setattr(cli, "process_work_item", lose_session_lease)
+    processed = cli._process_claimed_work_summary_input(
+        store,
+        SimpleNamespace(codex=object()),
+        work_input,
+        session_lease=SimpleNamespace(assert_owned=lambda: None),
+    )
+
+    assert processed is False
+    retried = store.get_work_summary_input(input_id)
+    assert retried.status.value == "pending"
+    assert retried.attempts == 1
+    assert retried.error == "session lease expired"
 
 
 def test_process_work_items_command_processes_existing_input_without_feature_gate(
@@ -2442,14 +2615,14 @@ def test_process_work_items_command_processes_existing_input_without_feature_gat
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
-                    "action": "skip",
-                    "project": None,
-                    "todo_changes": [],
-                    "follow_up_drafts": [],
-                    "update_summary": "已有事项已处理。",
-                    "merge_reason": "existing item",
-                    "memory_recall_used": True,
-                    "confidence": 0.8,
+                    "task_decisions": [
+                        {
+                            "action": "skip",
+                            "transition": "none",
+                            "skip_reason": "已有事项无需新 Task 变更。",
+                            "update_summary": "已有事项已处理。",
+                        }
+                    ],
                 }
             )
 
@@ -2480,31 +2653,18 @@ def test_process_work_items_command_reclaims_stale_processing_input(
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
-                    "action": "create_project",
-                    "project": {
-                        "title": "售前知识库建设",
-                        "category": "sales",
-                        "status": "active",
-                        "memory_context": {
-                            "query": "售前知识库",
-                            "summary": "售前知识库历史背景来自 memory_recall。",
-                            "memories": [
-                                {
-                                    "source": "memory_recall",
-                                    "uuid": "mem-1",
-                                    "text": "售前知识库材料沉淀在 business/售前知识库。",
-                                    "summary": "材料沉淀在 business/售前知识库。",
-                                    "created_at": "2026-06-05",
-                                }
-                            ],
-                        },
-                    },
-                    "todo_changes": [],
-                    "follow_up_drafts": [],
-                    "update_summary": "创建项目。",
-                    "merge_reason": "事项名称稳定。",
-                    "memory_recall_used": True,
-                    "confidence": 0.8,
+                    "task_decisions": [
+                        {
+                            "action": "record_candidate",
+                            "transition": "none",
+                            "source_excerpt": "售前知识库需要补齐来源链接。",
+                            "source_ref": "1",
+                            "title": "补齐售前知识库来源链接",
+                            "description": "售前知识库需要补齐来源链接。",
+                            "missing_evidence": ["explicit assignment", "owner"],
+                            "update_summary": "记录来源链接补齐候选，待确认明确指派和负责人。",
+                        }
+                    ],
                 }
             )
 
@@ -3254,16 +3414,15 @@ def test_process_work_items_command_uses_task_agent_timeouts(
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
-                    "action": "skip",
-                    "todo_changes": [],
-                    "follow_up_drafts": [],
-                    "update_summary": "不是持续跟进事项。",
-                    "skip_reason": "一次性信息。",
-                    "risk": "low",
-                    "rule_coverage": 1.0,
-                    "information_completeness": 1.0,
-                    "memory_recall_used": False,
-                    "confidence": 0.9,
+                    "task_decisions": [
+                        {
+                            "action": "skip",
+                            "transition": "none",
+                            "skip_reason": "一次性信息，不构成需保留的工作事项。",
+                            "update_summary": "来源不包含需要持续跟踪的 Task。",
+                            "risk": "low",
+                        }
+                    ],
                 }
             )
 
@@ -3319,7 +3478,9 @@ def test_process_work_items_command_passes_dws_client_to_task_agent(
 
     captured = {}
 
-    def fake_process_work_item(store, runner, work_input, *, dws, now=""):
+    def fake_process_work_item(
+        store, runner, work_input, *, dws, now="", session_lease=None
+    ):
         captured["dws"] = dws
         captured["work_input_id"] = work_input.id
         store.mark_work_summary_input_done(work_input.id)

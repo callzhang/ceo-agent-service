@@ -11,6 +11,7 @@ from app.todo_completion import (
     enqueue_follow_up_completion_checks,
     enqueue_todo_completion_evidence_checks,
 )
+from app.task_completion_agent import TaskCompletionDecision, process_task_completion_work_item
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
@@ -432,6 +433,7 @@ def test_todo_completion_scanner_delegates_unstructured_search_to_agent(tmp_path
     assert summary["search_policy"]["limits"]["max_raw_reads"] == 3
     assert summary["search_policy"]["limits"]["max_sources_to_return"] == 3
     assert summary["search_policy"]["allowed_sources"] == [
+        "dingtalk_todo",
         "dws_message",
         "dws_minutes",
         "lark_message",
@@ -493,6 +495,47 @@ def test_todo_completion_scanner_keeps_structured_dingtalk_done_candidate(tmp_pa
     inputs = store.claim_work_summary_inputs(limit=10)
     assert len(inputs) == 1
     assert inputs[0].source_type == "todo_completion_evidence_candidate"
+    payload = json.loads(inputs[0].payload_json)
+    summary = json.loads(payload["summary"])
+    assert summary["search_policy"]["allowed_sources"]
+    assert "dingtalk_todo" in summary["search_policy"]["allowed_sources"]
+
+    from app.task_models import WorkItem
+
+    work_item = WorkItem.model_validate_json(inputs[0].payload_json)
+    candidate = candidates[0]
+    assert work_item.source.ref == f"todo-evidence:{candidate.id}"
+    assert summary["evidence_candidate"]["id"] == candidate.id
+    decision = TaskCompletionDecision.model_validate(
+        {
+            "search_trace": [
+                {
+                    "source_kind": candidate.source_type,
+                    "source_ref": candidate.source_ref,
+                    "source_created_at": candidate.source_created_at,
+                    "result": "The linked DingTalk TODO has a completion status candidate.",
+                    "reason": "Read the current structured TODO status.",
+                }
+            ],
+            "update_summary": "The status alone does not establish the TODO's completion condition.",
+        }
+    )
+
+    class CompletionRunner:
+        def decide(self, **kwargs):
+            return decision
+
+        last_audit_tool_events = [
+            {
+                "tool": "dingtalk_todo_get",
+                "call_id": "current-read",
+                "output": candidate.source_ref,
+            }
+        ]
+
+    process_task_completion_work_item(store, CompletionRunner(), inputs[0], now="2026-06-28 12:00:00")
+    assert store.get_work_todo(todo_id).status == "open"
+    assert store.get_todo_evidence_candidate(candidate.id).status.value == "rejected"
 
 
 def test_todo_completion_scanner_ignores_done_todo(tmp_path):

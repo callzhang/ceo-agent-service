@@ -241,6 +241,10 @@ class WorkItemSource(BaseModel):
 class WorkItemContext(BaseModel):
     sender: str = ""
     sender_user_id: str = ""
+    owner_identity: dict[str, str] = Field(default_factory=dict)
+    assignment_authorized: bool = False
+    external_task_id: str = ""
+    reply_to_source_ref: str = ""
     participants: list[str] = Field(default_factory=list)
     source_conversation_kind: WorkItemSourceKind
     source_conversation_title: str = ""
@@ -364,7 +368,7 @@ class TaskDateEvidence(StrictTaskModel):
         "assigned_at", "requested_deadline_at", "external_deadline_at",
         "committed_deadline_at", "estimated_deadline_at", "next_check_at",
     ]
-    value: str
+    value: str = ""
     source_ref: str
     source_excerpt: str
     actor_user_id: str = ""
@@ -372,12 +376,14 @@ class TaskDateEvidence(StrictTaskModel):
 
     @model_validator(mode="after")
     def source_is_explicit(self) -> "TaskDateEvidence":
-        if not self.value.strip() or not self.source_ref.strip() or not self.source_excerpt.strip():
-            raise ValueError("date evidence requires a value and exact source provenance")
+        if not self.source_ref.strip() or not self.source_excerpt.strip():
+            raise ValueError("date evidence requires exact source provenance")
         if self.kind == "committed_deadline_at" and not (
             self.actor_user_id.strip() or self.actor_name.strip()
         ):
             raise ValueError("committed deadline requires a named source actor")
+        if self.kind == "committed_deadline_at" and not self.value.strip():
+            raise ValueError("committed deadline requires a concrete ISO date or datetime")
         return self
 
 
@@ -457,6 +463,10 @@ class TaskDecision(StrictTaskModel):
     title: str = ""
     description: str = ""
     formal_basis: FormalTaskBasis | None = None
+    acceptance_polarity: Literal["accepted", "declined", "ambiguous"] | None = None
+    acceptance_target_signal_id: int | None = Field(default=None, gt=0)
+    status: Literal["open", "waiting", "done", "cancelled"] | None = None
+    business_relevance: Literal["unknown", "not_relevant", "relevant"] | None = None
     owner_user_id: str = ""
     owner_name: str = ""
     owner_evidence: dict[str, Any] = Field(default_factory=dict)
@@ -507,6 +517,8 @@ class TaskDecision(StrictTaskModel):
             raise ValueError("new/skip decisions cannot transition an existing Task")
         if self.action == "update_task" and (self.task_id is None or self.transition == "none"):
             raise ValueError("update_task requires task_id and a dedicated transition")
+        if self.transition != "update_fields" and (self.status is not None or self.business_relevance is not None):
+            raise ValueError("status and business relevance require update_fields transition")
         if self.transition == "merge_identity":
             if (
                 self.identity_proposal is None
@@ -516,6 +528,14 @@ class TaskDecision(StrictTaskModel):
                 raise ValueError("merge_identity requires matching structured identity proposal")
         if self.transition != "merge_identity" and self.identity_proposal is not None:
             raise ValueError("identity proposal requires merge_identity transition")
+        if self.transition == "apply_acceptance" and self.acceptance_polarity != "accepted":
+            raise ValueError("apply_acceptance requires explicit accepted polarity")
+        if self.transition == "apply_acceptance" and self.acceptance_target_signal_id is None:
+            raise ValueError("apply_acceptance requires an explicitly cited assignment signal")
+        if self.acceptance_polarity is not None and self.transition != "apply_acceptance":
+            raise ValueError("acceptance polarity requires apply_acceptance transition")
+        if self.acceptance_target_signal_id is not None and self.transition != "apply_acceptance":
+            raise ValueError("acceptance target signal requires apply_acceptance transition")
         return self
 
     def decision_quality(self) -> DecisionQualityResult:
@@ -528,8 +548,47 @@ class TaskDecision(StrictTaskModel):
         )
 
 
+class CompletionSearchTrace(StrictTaskModel):
+    source_kind: str
+    result: str
+    source_ref: str
+    reason: str
+    source_created_at: str | None = None
+    retrieved_at: str = ""
+    audit_call_ids: list[str] = Field(default_factory=list, max_length=8)
+
+
+class CompletionTodoChange(StrictTaskModel):
+    action: Literal["close"]
+    todo_id: int = Field(gt=0)
+    completion_evidence: dict[str, Any]
+
+
+class CompletionFollowUpChange(StrictTaskModel):
+    follow_up_id: int = Field(gt=0)
+    todo_id: int | None = Field(default=None, gt=0)
+    action: Literal["suppress", "close", "reschedule", "reassign", "keep_open"]
+    reason: str = ""
+    evidence_check: dict[str, Any] = Field(default_factory=dict)
+    next_due_at: str | None = None
+    owner_user_id: str | None = None
+    owner_name: str | None = None
+    owner_evidence: dict[str, Any] = Field(default_factory=dict)
+
+
 class TaskAgentDecision(StrictTaskModel):
-    task_decisions: list[TaskDecision]
+    task_decisions: list[TaskDecision] = Field(default_factory=list)
+    todo_changes: list[CompletionTodoChange] = Field(default_factory=list)
+    follow_up_changes: list[CompletionFollowUpChange] = Field(default_factory=list)
+    search_trace: list[CompletionSearchTrace] = Field(default_factory=list, max_length=3)
+    update_summary: str = ""
+    memory_recall_used: bool = False
+
+    @model_validator(mode="after")
+    def at_most_one_todo_close(self) -> "TaskAgentDecision":
+        if len(self.todo_changes) > 1:
+            raise ValueError("a Task Agent decision may close at most one TODO")
+        return self
 
 
 class WorkProject(BaseModel):
