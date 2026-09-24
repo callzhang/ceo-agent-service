@@ -1040,6 +1040,7 @@ def test_audit_prompt_uses_quality_gate_priority(setup):
     assert "Technical/provider/read/route/schema/Audit/retry" in prompt
     assert "needs_human is valid only when risk is high" not in prompt
     assert "only risk and confidence" not in prompt
+    assert "exact current-instance authorization" in prompt
 
 
 def test_audit_prompt_treats_service_postfix_as_trusted_delivery_content(setup):

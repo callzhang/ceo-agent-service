@@ -46,6 +46,11 @@ pending -> running -> done
   旧 run 或不完整结果不能把 `done` 投影成当前人工待办。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
+高风险 OA 同意还须核验当前用户对当前实例、当前任务的明确授权。材料完整、会议结论或
+定时任务的概括性授权均不能代替该授权；缺少时不执行外部动作，保留对象身份和
+`authorization_required` 错误供人工确认后重试。此门禁与证据质量评分分开，不能通过
+调低 `confidence` 或 `rule_coverage` 伪造 `needs_human` 分类。
+
 当前代次的最新 Attempt 指向失败 run 时，即使关联任务进入 `pending` 等待重试，History 与 Attention
 仍显示该失败，直到后续有效 run/Attempt 给出新的当前状态。没有当前代次失败 run 的 pending
 任务本身不进入 Attention；旧代次失败也不污染新代次。

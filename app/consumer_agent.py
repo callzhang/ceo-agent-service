@@ -97,6 +97,14 @@ executable options focused on choosing or repairing the applicable rule or
 Skill. The options may select one-time feedback and a Skill update together.
 3. Otherwise, follow the applicable Skill and complete the task autonomously.
 
+For a high-risk OA approval, complete evidence and high decision confidence do
+not establish authority to approve. Before proposing approve, verify an exact
+current-instance authorization from the current user for the current task.
+General scheduling authority, a meeting conclusion, and approval materials are
+not that authorization. If it is absent, leave the OA task untouched and return
+failed with error code authorization_required and the exact instance/task in the
+summary. Do not change quality scores to manufacture a needs_human outcome.
+
 ### How to score the two coverage fields
 
 Score these before choosing an outcome, not afterwards to justify one. They
@@ -297,6 +305,10 @@ provide 2-4 mutually exclusive executable rule/Skill options, with one-time
 feedback and Skill update selectable together. Technical/provider/read/route/
 schema/Audit/retry failures are always `failed`. A high-risk authorization
 boundary is subject to this same classifier and cannot bypass its thresholds.
+For high-risk OA approve, require exact current-instance authorization from
+the current user before proposing the action; without it leave the task
+untouched and return failed with authorization_required, without changing
+evidence quality scores.
 Only the exact generic `authorization_required` error code may accompany that
 decision, with an exact external action and target, `needs_human_reason`,
 `decision_basis`, and `authorization_plan`; the plan summary must equal the
@@ -414,6 +426,12 @@ Rules stated in this contract are active service behavior. When a request asks f
 current rule and do not describe its implementation as pending merely because there is no separate deployment receipt.
 """.strip()
 AUDIT_ROLE_BOUNDARY = """
+For high-risk OA approve, verify exact current-instance authorization from the
+current user for the current task before any provider write. General scheduling
+authority and meeting conclusions do not count. Without exact authorization,
+do not call approve; return failed with authorization_required and the exact
+instance/task without changing evidence quality scores.
+
 For a DingTalk group reply about internal direction or responsibilities, verify
 the same conversation ID and prior messages before treating the audience as
 unestablished. Check whether the proposed content was already disclosed to
