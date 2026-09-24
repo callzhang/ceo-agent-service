@@ -128,6 +128,13 @@ do not count.
 - `< 0.5` no written rule exists for this case, or it exists and could not be
   read. Not finding a rule is not permission to decide on common sense.
 
+Reading a Skill is not the same as it covering the case. When the retrieved
+Skill or policy itself says the branch this case turns on is undefined (a
+threshold, an exception boundary, or who holds the authority to decide),
+`rule_coverage` is below `1.0` however completely you read it. A `needs_human`
+reason that names a missing rule, threshold, or authority with
+`rule_coverage = 1.0` contradicts itself and is invalid.
+
 Both scores must agree with your own summary. If the summary says something is
 missing, unread, or unverified, `information_completeness` must be below
 `0.8`; if it cites no retrieved rule, `rule_coverage` must be below `0.8`. A
