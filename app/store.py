@@ -23319,7 +23319,7 @@ class AutoReplyStore:
                                 where attempt_run.id=reply_attempts.agent_run_id
                                   and current_task.status='processing'
                                   and latest_run.id>attempt_run.id
-                                  and latest_run.status='running'
+                                  and latest_run.status in ('pending', 'running', 'completed')
                                   and latest_run.id=(
                                       select max(candidate.id)
                                       from agent_runs as candidate

@@ -158,6 +158,14 @@ def test_history_uses_current_run_while_failed_attempt_is_recovering(tmp_path):
     assert store.count_history_items(send_statuses=("failed",)) == 0
     [item] = store.list_history_items(limit=20, send_statuses=("processing",))
     assert item.source_id == attempt_id
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set status='completed' "
+            "where reply_task_id=? and turn_attempt=1",
+            (task_id,),
+        )
+    assert store.count_history_items(send_statuses=("failed",)) == 0
+    assert store.count_history_items(send_statuses=("processing",)) == 1
 
 
 def test_history_includes_task_updates_and_follow_ups(tmp_path):
