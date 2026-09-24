@@ -113,6 +113,53 @@ def test_history_applies_search_status_and_global_count(tmp_path):
     assert item.status == "skipped"
 
 
+def test_history_uses_current_run_while_failed_attempt_is_recovering(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="approval-1",
+        conversation_title="Approval",
+        single_chat=True,
+        trigger_message_id="task-1",
+        trigger_create_time="2026-09-24 00:00:00",
+        trigger_sender="Applicant",
+        trigger_text="Review contract",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="approval-1",
+        conversation_title="Approval",
+        trigger_message_id="task-1",
+        trigger_sender="Applicant",
+        trigger_text="Review contract",
+        action="oa_approval",
+        sensitivity_kind="approval",
+        send_status="failed",
+    )
+    with sqlite3.connect(store.path) as db:
+        task_id, generation = db.execute(
+            "select id, execution_generation from reply_tasks where trigger_message_id='task-1'"
+        ).fetchone()
+        db.execute(
+            "insert into agent_runs (reply_task_id, execution_generation, role, status) "
+            "values (?, ?, 'consumer', 'failed')",
+            (task_id, generation),
+        )
+        failed_run = db.execute("select last_insert_rowid()").fetchone()[0]
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (failed_run, attempt_id),
+        )
+        db.execute(
+            "insert into agent_runs (reply_task_id, execution_generation, role, status, turn_attempt) "
+            "values (?, ?, 'consumer', 'running', 1)",
+            (task_id, generation),
+        )
+        db.execute("update reply_tasks set status='processing' where id=?", (task_id,))
+
+    assert store.count_history_items(send_statuses=("failed",)) == 0
+    [item] = store.list_history_items(limit=20, send_statuses=("processing",))
+    assert item.source_id == attempt_id
+
+
 def test_history_includes_task_updates_and_follow_ups(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = store.create_work_project(

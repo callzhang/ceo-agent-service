@@ -23298,6 +23298,27 @@ class AutoReplyStore:
                               and tasks.trigger_message_id=reply_attempts.trigger_message_id
                             limit 1
                         ), send_status)
+                        when send_status in ('failed', 'blocked', 'pending', 'dry_run', 'needs_human')
+                             and exists (
+                                select 1
+                                from agent_runs as attempt_run
+                                join reply_tasks as current_task
+                                  on current_task.id=attempt_run.reply_task_id
+                                join agent_runs as latest_run
+                                  on latest_run.reply_task_id=current_task.id
+                                 and latest_run.execution_generation=current_task.execution_generation
+                                where attempt_run.id=reply_attempts.agent_run_id
+                                  and current_task.status='processing'
+                                  and latest_run.id>attempt_run.id
+                                  and latest_run.status='running'
+                                  and latest_run.id=(
+                                      select max(candidate.id)
+                                      from agent_runs as candidate
+                                      where candidate.reply_task_id=current_task.id
+                                        and candidate.execution_generation=current_task.execution_generation
+                                  )
+                             )
+                        then 'processing'
                         when action in ('memory_write', 'oa_approval')
                              and send_status in ('failed', 'blocked', 'pending', 'dry_run', 'needs_human')
                              and exists (
