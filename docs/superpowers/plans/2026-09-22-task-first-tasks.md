@@ -1411,6 +1411,17 @@ Use the latest 100 eligible source inputs, or all when fewer than 100 exist. For
 
 Record counts and every disagreement; do not summarize a partial sample as complete.
 
+Baseline check (2026-09-24, live read-only DB): the latest 100 completed
+`work_summary_inputs` were 56 `local_file`, 12 `ai_minutes`, 3
+`follow_up_completion_check`, and 29 `todo_completion_check` inputs. Their
+latest stored legacy Task Agent decisions were 96 `update_project` and 4
+`create_project`; 98 had no TODO changes and 2 closed an existing TODO. This
+confirms the Project-first baseline but does not validate new Task-first
+decisions: the production service is still running the old implementation, so
+there are no new semantic results to review. Step 2 remains open until the new
+Task Agent produces decisions from a representative current-source sample and
+each surfaced business-attention item is checked against the criteria above.
+
 - [x] **Step 3: Send the runtime-restart handoff**
 
 Do not restart `com.ceo-agent-service.main` from this implementation task. Send the heartbeat task `CEO 服务错误检查与修复` the final commit SHA and exact runtime/frontend files changed. Ask it to wait for an idle queue, verify imports, restart, and read back the new PID, health endpoint, queues, operational Attention, History, and Tasks APIs.
