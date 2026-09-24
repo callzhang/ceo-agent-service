@@ -200,10 +200,19 @@ def _report_date(moment: datetime) -> date:
 
 
 def _delivered(store: AutoReplyStore, run) -> bool:
+    """True when this run's report actually went out.
+
+    A scheduled task ends ``done`` also when the Agent decided no action or the
+    run was skipped for an unavailable route, so the task status alone does not
+    mean the report was published; its latest attempt completing does.
+    """
     if run.execution_kind != "reply_task" or not run.execution_id:
         return False
     task = store.get_reply_task(int(run.execution_id))
-    return task is not None and task.status == "done"
+    if task is None or task.status != "done":
+        return False
+    latest = store.list_reply_attempts_for_conversation(task.conversation_id, limit=1)
+    return bool(latest) and latest[0].send_status == "completed"
 
 
 def _utc(value: str) -> datetime | None:

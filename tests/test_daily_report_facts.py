@@ -108,9 +108,10 @@ def _attempt(
 class _Runs:
     """The three store reads the window needs, over a list of report runs."""
 
-    def __init__(self, runs, statuses) -> None:
+    def __init__(self, runs, outcomes) -> None:
         self._runs = {run.id: run for run in runs}
-        self._statuses = statuses
+        # reply task id -> (task status, latest attempt send_status)
+        self._outcomes = outcomes
 
     def get_scheduled_task_run(self, run_id):
         return self._runs.get(run_id)
@@ -119,8 +120,15 @@ class _Runs:
         return tuple(run for run in self._runs.values() if run.scheduled_task_id == task_id)
 
     def get_reply_task(self, task_id):
-        status = self._statuses.get(task_id)
-        return None if status is None else SimpleNamespace(status=status)
+        if task_id not in self._outcomes:
+            return None
+        return SimpleNamespace(
+            status=self._outcomes[task_id][0], conversation_id=f"reply-task:{task_id}"
+        )
+
+    def list_reply_attempts_for_conversation(self, conversation_id, limit=None):
+        task_id = int(conversation_id.split(":")[1])
+        return [SimpleNamespace(send_status=self._outcomes[task_id][1])]
 
 
 def _run(run_id: int, scheduled_for: datetime, *, reply_task_id: int | None = None):
@@ -154,10 +162,24 @@ def test_window_starts_where_the_last_delivered_report_ended() -> None:
             _run(2, EVENING_23, reply_task_id=102),
             _run(3, EVENING_24),
         ],
-        {101: "done", 102: "failed"},
+        {101: ("done", "completed"), 102: ("failed", "failed")},
     )
 
     # The 23rd never went out, so the 24th covers both days.
+    assert report_window_for_run(runs, 3).start == EVENING_22
+
+
+def test_a_done_run_that_published_nothing_is_not_a_delivered_report() -> None:
+    runs = _Runs(
+        [
+            _run(1, EVENING_22, reply_task_id=101),
+            _run(2, EVENING_23, reply_task_id=102),
+            _run(3, EVENING_24),
+        ],
+        # The 23rd ended done, but only because its route was unavailable.
+        {101: ("done", "completed"), 102: ("done", "skipped")},
+    )
+
     assert report_window_for_run(runs, 3).start == EVENING_22
 
 
@@ -169,7 +191,7 @@ def test_same_day_rerun_keeps_the_original_start() -> None:
             _run(2, EVENING_24, reply_task_id=102),
             _run(3, rerun_at),
         ],
-        {101: "done", 102: "done"},
+        {101: ("done", "completed"), 102: ("done", "completed")},
     )
 
     window = report_window_for_run(runs, 3)
