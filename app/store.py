@@ -15727,6 +15727,28 @@ class AutoReplyStore:
                 return None
             return self._meeting_alignment_job_from_row(row)
 
+    def requeue_failed_meeting_delivery(self, job_id: int) -> MeetingAlignmentJob | None:
+        """Resume a reviewed unsent delivery after independent provider readback."""
+        with self._connect() as db:
+            row = db.execute(
+                """update meeting_alignment_jobs
+                   set status='ready_to_send', locked_at=null,
+                       available_at='', error='', updated_at=current_timestamp
+                   where id=? and status='failed' and locked_at is null
+                     and decision_json!='{}' and target_id!=''
+                     and send_result_json='{}'
+                     and not exists (
+                       select 1 from outbound_postfix_receipts
+                       where channel='dingtalk'
+                         and delivery_key=('meeting-alignment:' ||
+                           meeting_alignment_jobs.id || ':' ||
+                           meeting_alignment_jobs.meeting_id)
+                     )
+                   returning *""",
+                (job_id,),
+            ).fetchone()
+            return self._meeting_alignment_job_from_row(row) if row else None
+
     def begin_meeting_alignment_run(self, job_id: int) -> int:
         if job_id <= 0:
             raise ValueError("meeting alignment job id must be positive")

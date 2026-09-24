@@ -2150,6 +2150,30 @@ def test_ready_delivery_retries_provider_outage_after_attempt_limit(tmp_path):
     assert job.send_result_json == "{}"
 
 
+def test_requeue_failed_meeting_delivery_preserves_review_and_key(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    decision = consumer_send_decision()
+    store.update_meeting_alignment_job(
+        job_id,
+        status="failed",
+        decision_json=decision.model_dump_json(),
+        target_kind="group",
+        target_id="cid-first",
+        final_message=decision.final_message,
+        error="provider unavailable",
+    )
+
+    reopened = store.requeue_failed_meeting_delivery(job_id)
+    assert reopened is not None
+    assert reopened.status == "ready_to_send"
+    assert reopened.decision_json == decision.model_dump_json()
+    assert reopened.target_id == "cid-first"
+    assert reopened.final_message == decision.final_message
+    assert store.requeue_failed_meeting_delivery(job_id) is None
+
+
 def test_ready_delivery_normalizes_legacy_scope_before_sending(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
