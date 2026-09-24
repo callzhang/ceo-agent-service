@@ -1340,10 +1340,9 @@ def run_agent_cron_dispatcher_loop(
         }
     )
     agent_capacity = max(1, settings.consumer_workers)
-    worker_counts = {
-        adapter.name: 1 if adapter.name == "meeting" else agent_capacity
-        for adapter in adapters
-    }
+    worker_counts = _adapter_worker_counts(
+        (adapter.name for adapter in adapters), agent_capacity
+    )
     worker_pools = AdapterWorkerPools(
         worker_counts,
     )
@@ -1545,6 +1544,21 @@ def consume_once(settings: WorkerSettings) -> int:
         raise
     print(f"consume-once processed={processed}", flush=True)
     return processed
+
+
+#: Queues whose turns all share one Codex session, so they run one at a time.
+#: Task Agent (work_summary) resumes the shared Task session on every turn;
+#: with two workers the second hit "already has an active writer" while the
+#: first held it, retried for about 70 s, and failed its work item for good --
+#: 25 items between 21:47 and 23:27 on 2026-09-24.
+SINGLE_SESSION_ADAPTERS = frozenset({"meeting", "work_summary"})
+
+
+def _adapter_worker_counts(adapter_names, agent_capacity: int) -> dict[str, int]:
+    return {
+        name: 1 if name in SINGLE_SESSION_ADAPTERS else agent_capacity
+        for name in adapter_names
+    }
 
 
 def process_work_items_command(settings: WorkerSettings) -> int:

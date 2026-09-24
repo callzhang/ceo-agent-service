@@ -9270,3 +9270,16 @@ def test_agent_cron_treats_terminal_reply_task_status_as_finished(
 
     resolver = captured["terminal_resolver"]
     assert resolver.is_terminal("reply_task", "383933") is True
+
+
+def test_task_agent_queue_runs_one_turn_at_a_time():
+    """Every Task Agent turn resumes one shared Codex session.
+
+    With two workers the second hit "already has an active writer" and failed
+    its work item: 25 items on 2026-09-24 after Task-first went live.
+    """
+    from app.cli import _adapter_worker_counts
+
+    counts = _adapter_worker_counts(("reply", "work_summary", "meeting"), 2)
+
+    assert counts == {"reply": 2, "work_summary": 1, "meeting": 1}
