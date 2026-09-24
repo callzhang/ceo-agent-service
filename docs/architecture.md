@@ -127,9 +127,9 @@ DingTalk Todo outbox。统一层只处理唤醒、公平领取、租约、全局
 会议、微信 reader、OA、每日工作来源、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）运行的
 AI 听记同步。八项全部以服务命令形式 seed；早先以 Agent 形式创建的同一
 migration key 任务在启动时原地转换为命令形式，
-保留名称、Cron 和时区，已删除的旧任务不动，其命令通过 Console API 不可修改。从未被编辑过的
-旧 seed（version 1）转换后按命令形式的默认值启用，因为它原来的停用只反映 Agent 形式缺少
-Runtime 或 Skill；被用户改过的任务保留用户选择的启用状态。Lark
+保留名称、Cron 和时区，已删除的旧任务不动，其命令通过 Console API 不可修改。新安装创建的全部
+默认任务都是**暂停**状态，由用户配好连接器后自行启用（Derek 2026-09-23）；seed 从不改变已有任务的
+启用状态，包括从未被编辑过的 version 1 任务。默认的名称与 Cron 与负责人本机的现行任务一致。Lark
 不创建默认 seed；其余已有任务的用户修改不会被 seed 覆盖。
 
 ### Runtime-managed Skill 生命周期

@@ -1326,7 +1326,7 @@ def test_adopting_a_service_command_moves_the_seed_in_place_once(
     )
 
     adopted = store.adopt_scheduled_task_service_command(
-        migration_key="producer-v1", command="produce-once", seed_enabled=True,
+        migration_key="producer-v1", command="produce-once",
         now=NOW + timedelta(minutes=1),
     )
 
@@ -1349,12 +1349,12 @@ def test_adopting_a_service_command_moves_the_seed_in_place_once(
     assert refs == 0
 
     again = store.adopt_scheduled_task_service_command(
-        migration_key="producer-v1", command="produce-once", seed_enabled=True,
+        migration_key="producer-v1", command="produce-once",
         now=NOW + timedelta(minutes=2),
     )
     assert again == adopted
     assert store.adopt_scheduled_task_service_command(
-        migration_key="unknown-v1", command="produce-once", seed_enabled=True, now=NOW
+        migration_key="unknown-v1", command="produce-once", now=NOW
     ) is None
 
     untouched = store.create_scheduled_task(
@@ -1364,9 +1364,10 @@ def test_adopting_a_service_command_moves_the_seed_in_place_once(
         enabled=False, now=NOW,
     )
     converted = store.adopt_scheduled_task_service_command(
-        migration_key="untouched-v1", command="produce-once", seed_enabled=True, now=NOW
+        migration_key="untouched-v1", command="produce-once", now=NOW
     )
-    assert untouched.version == 1 and converted.enabled is True
+    # Seeding never switches a task on: an untouched paused seed stays paused.
+    assert untouched.version == 1 and converted.enabled is False
     assert converted.version == 2 and converted.command == "produce-once"
 
     deleted_legacy = _create_task(
@@ -1378,7 +1379,7 @@ def test_adopting_a_service_command_moves_the_seed_in_place_once(
         deleted_legacy.id, expected_version=deleted_legacy.version, now=NOW
     )
     assert store.adopt_scheduled_task_service_command(
-        migration_key="deleted-v1", command="produce-once", seed_enabled=True, now=NOW
+        migration_key="deleted-v1", command="produce-once", now=NOW
     ) == deleted
 
 
@@ -1407,14 +1408,14 @@ def test_adopting_service_command_backfills_only_placeholder_description(
     backfilled = store.adopt_scheduled_task_service_command(
         migration_key="placeholder-v1",
         command="sync-minutes-once",
-        seed_enabled=True,
+       
         seed_description="增量同步听记到本地归档。",
         now=NOW + timedelta(minutes=1),
     )
     preserved = store.adopt_scheduled_task_service_command(
         migration_key="custom-v1",
         command="sync-minutes-once",
-        seed_enabled=True,
+       
         seed_description="仓库默认说明。",
         now=NOW + timedelta(minutes=1),
     )

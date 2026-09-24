@@ -5955,7 +5955,6 @@ class AutoReplyStore:
         *,
         migration_key: str,
         command: str,
-        seed_enabled: bool,
         seed_description: str = "",
         consumer_prompt: str = "",
         consumer_skill_refs: Sequence[ScheduledTaskSkillRef] = (),
@@ -5967,9 +5966,9 @@ class AutoReplyStore:
 
         Name, Cron, and timezone remain user-owned. Runtime and working directory
         fields are cleared; commands with an Agent consumer receive their default
-        prompt and exact Skill refs only when no consumer config exists yet. A
-        seed nobody edited (version 1) takes ``seed_enabled``; an edited task
-        keeps the state the user chose.
+        prompt and exact Skill refs only when no consumer config exists yet.
+        Whether the task runs is never touched: a fresh install starts every
+        seeded task paused, and an existing task keeps the state it has.
         """
         migration_key = self._require_scheduled_task_text(
             migration_key, field="scheduled task migration key"
@@ -5995,8 +5994,6 @@ class AutoReplyStore:
             working_directory="",
             skill_refs=consumer_skill_refs,
         )
-        if not isinstance(seed_enabled, bool):
-            raise ValueError("scheduled task seed enabled must be a boolean")
         now_text = self._scheduled_task_time_text(
             now or datetime.now(timezone.utc), field="scheduled task now"
         )
@@ -6075,7 +6072,7 @@ class AutoReplyStore:
                 working_directory="",
                 skill_refs=validated_refs,
             )
-            enabled = seed_enabled if current.version == 1 else current.enabled
+            enabled = current.enabled
             db.execute(
                 """
                 update scheduled_tasks

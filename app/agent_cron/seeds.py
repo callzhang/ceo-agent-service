@@ -116,7 +116,7 @@ SCHEDULED_TASK_DEFAULT_COPY = {
         old_description="读取管理者实时 OKR，生成本周管理进度周报。",
     ),
     MINUTES_SYNC_MIGRATION_KEY: ScheduledTaskDefaultCopy(
-        name="归档新增的钉钉 AI 听记",
+        name="下载新增的钉钉 AI 听记",
         description="发现尚未归档且可访问的钉钉 AI 听记后，读取可用的摘要和逐字稿并归档到工作区；权限受限或内容不可读时保留同步状态，待后续检查。",
         old_name="每天同步 AI 听记",
         old_description="同步 AI 听记的摘要、逐字稿和归档游标到工作区。",
@@ -364,7 +364,6 @@ def _seed_email_message_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=EMAIL_MESSAGE_MIGRATION_KEY,
         command=EMAIL_MESSAGE_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(EMAIL_MESSAGE_MIGRATION_KEY).description,
         consumer_prompt=EMAIL_MESSAGE_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -381,7 +380,7 @@ def _seed_email_message_task(
         cron_expression="0 * * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -408,7 +407,6 @@ def _seed_dingtalk_message_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
         command=DINGTALK_MESSAGE_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(DINGTALK_MESSAGE_MIGRATION_KEY).description,
         consumer_prompt=DINGTALK_MESSAGE_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -431,7 +429,7 @@ def _seed_dingtalk_message_task(
         cron_expression="0 * * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -453,7 +451,6 @@ def _seed_dingtalk_calendar_invite_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_CALENDAR_INVITE_MIGRATION_KEY,
         command=DINGTALK_CALENDAR_INVITE_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(
             DINGTALK_CALENDAR_INVITE_MIGRATION_KEY
         ).description,
@@ -474,7 +471,7 @@ def _seed_dingtalk_calendar_invite_task(
         cron_expression="10 * * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -500,7 +497,6 @@ def _seed_dingtalk_message_recovery_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
         command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(
             DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY
         ).description,
@@ -519,7 +515,7 @@ def _seed_dingtalk_message_recovery_task(
         cron_expression="0 30 * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -540,7 +536,6 @@ def _seed_dingtalk_meeting_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_MEETING_MIGRATION_KEY,
         command=DINGTALK_MEETING_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(DINGTALK_MEETING_MIGRATION_KEY).description,
         consumer_prompt=MEETING_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -554,10 +549,10 @@ def _seed_dingtalk_meeting_task(
         description=_default_copy(DINGTALK_MEETING_MIGRATION_KEY).description,
         prompt=MEETING_CONSUMER_PROMPT,
         command=DINGTALK_MEETING_SERVICE_COMMAND,
-        cron_expression="0 * * * * *",
+        cron_expression="0 */10 * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -580,7 +575,6 @@ def _seed_wechat_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=WECHAT_MESSAGE_MIGRATION_KEY,
         command=WECHAT_MESSAGE_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(WECHAT_MESSAGE_MIGRATION_KEY).description,
         consumer_prompt=WECHAT_MESSAGE_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -594,10 +588,10 @@ def _seed_wechat_task(
         description=_default_copy(WECHAT_MESSAGE_MIGRATION_KEY).description,
         prompt=WECHAT_MESSAGE_CONSUMER_PROMPT,
         command=WECHAT_MESSAGE_SERVICE_COMMAND,
-        cron_expression="*/15 * * * * *",
+        cron_expression="0 */5 * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -625,7 +619,6 @@ def _seed_oa_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_OA_MIGRATION_KEY,
         command=DINGTALK_OA_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(DINGTALK_OA_MIGRATION_KEY).description,
         consumer_prompt=OA_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -642,7 +635,7 @@ def _seed_oa_task(
         cron_expression="0 0 * * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -663,7 +656,6 @@ def _seed_meeting_todo_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=MEETING_TODO_MIGRATION_KEY,
         command=MEETING_TODO_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(MEETING_TODO_MIGRATION_KEY).description,
         consumer_prompt=MEETING_TODO_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
@@ -680,7 +672,7 @@ def _seed_meeting_todo_task(
         cron_expression="0 0 0 * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -703,7 +695,6 @@ def _seed_weekly_okr_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=WEEKLY_OKR_MIGRATION_KEY,
         command=WEEKLY_OKR_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(WEEKLY_OKR_MIGRATION_KEY).description,
         now=now,
     )
@@ -716,7 +707,7 @@ def _seed_weekly_okr_task(
         command=WEEKLY_OKR_SERVICE_COMMAND,
         cron_expression="0 0 18 * * 0",
         timezone_name="Asia/Shanghai",
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -738,7 +729,6 @@ def _seed_follow_up_delivery_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=FOLLOW_UP_DELIVERY_MIGRATION_KEY,
         command=FOLLOW_UP_DELIVERY_SERVICE_COMMAND,
-        seed_enabled=True,
         seed_description=_default_copy(FOLLOW_UP_DELIVERY_MIGRATION_KEY).description,
         now=now,
     )
@@ -751,7 +741,7 @@ def _seed_follow_up_delivery_task(
         command=FOLLOW_UP_DELIVERY_SERVICE_COMMAND,
         cron_expression="0 */5 * * * *",
         timezone_name="Asia/Shanghai",
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -768,7 +758,6 @@ def _seed_minutes_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=MINUTES_SYNC_MIGRATION_KEY,
         command="sync-minutes-once",
-        seed_enabled=True,
         seed_description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
         now=now,
     )
@@ -781,7 +770,7 @@ def _seed_minutes_task(
         command="sync-minutes-once",
         cron_expression="0 0 20 * * *",
         timezone_name="Asia/Shanghai",
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -833,7 +822,7 @@ def _seed_weekly_report_task(
         cron_expression="0 0 12 * * 6",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
@@ -858,7 +847,6 @@ def _seed_minutes_access_task(
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=MINUTES_ACCESS_MIGRATION_KEY,
         command="request-minutes-access",
-        seed_enabled=True,
         seed_description=_default_copy(MINUTES_ACCESS_MIGRATION_KEY).description,
         now=now,
     )
@@ -873,7 +861,7 @@ def _seed_minutes_access_task(
         # is asked for and archived on the same evening.
         cron_expression="0 30 19 * * *",
         timezone_name="Asia/Shanghai",
-        enabled=True,
+        enabled=False,
         now=now,
     )
 
