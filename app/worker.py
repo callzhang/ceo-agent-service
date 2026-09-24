@@ -22,7 +22,7 @@ from app.agent_context import (
     MaterialReference,
     PriorReceipt,
 )
-from app.agent_contracts import ConsumerAgentResult, DecisionOption
+from app.agent_contracts import AuditOutcome, ConsumerAgentResult, DecisionOption
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.audit_agent import AuditAgentRunner
@@ -2543,10 +2543,21 @@ class DingTalkAutoReplyWorker:
             task_status = "failed"
             send_status = "failed"
             send_error = "invalid_needs_human_result"
+        # A proposal that also escalated: the Attempt is the question, so it
+        # points at the Consumer run that asked it. The executing Audit run
+        # stays the source of the tool events and the delivery record.
+        decision_run_id = run.id
+        if (
+            result.status == "needs_human"
+            and result.consumer_result is not None
+            and result.consumer_result.escalates
+            and run.parent_agent_run_id is not None
+        ):
+            decision_run_id = run.parent_agent_run_id
         attempt_id = self.store.finalize_orchestrated_reply_task(
             task_id=task.id,
             expected_execution_generation=task.execution_generation,
-            run_id=run.id,
+            run_id=decision_run_id,
             task_status=task_status,
             task_error=send_error,
             available_at=available_at,
@@ -2600,10 +2611,16 @@ class DingTalkAutoReplyWorker:
         audit_run: AgentRun,
         store: AutoReplyStore | None = None,
     ) -> AgentMessageDeliveryProjection | None:
-        if task.channel != "dingtalk" or result.status != "executed":
+        if task.channel != "dingtalk":
             return None
+        # Keyed on what Audit did, not the task's end state: a proposal that
+        # also escalates ends needs_human after its message was delivered.
         audit_result = result.audit_result
-        if audit_result is None or audit_result.external_result is None:
+        if (
+            audit_result is None
+            or audit_result.outcome is not AuditOutcome.EXECUTED
+            or audit_result.external_result is None
+        ):
             return None
         # The ledger records what a provider did.  The reference below is
         # written by the turn making the claim, and the delivery key in it was

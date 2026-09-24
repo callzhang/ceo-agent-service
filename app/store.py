@@ -21829,7 +21829,9 @@ class AutoReplyStore:
                 decision = parse_stored_needs_human_decision(
                     row["final_result_json"]
                 )
-                if decision is None or not self._authorization_plan_matches_attempt(
+                # A proposal that escalates is a question only once Audit has
+                # executed its action; as the latest run it has not been.
+                if decision is None or getattr(decision, "escalates", False) or not self._authorization_plan_matches_attempt(
                     decision,
                     oa_process_instance_id=str(row["oa_process_instance_id"] or ""),
                     oa_task_id=str(row["oa_task_id"] or ""),

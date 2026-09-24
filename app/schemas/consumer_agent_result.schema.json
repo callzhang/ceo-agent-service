@@ -336,7 +336,7 @@
           "type": "object"
         },
         "decision_options": {
-          "maxItems": 0,
+          "maxItems": 4,
           "type": "array"
         }
       },

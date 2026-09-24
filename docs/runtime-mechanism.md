@@ -159,6 +159,14 @@ OA 审批中，申请人的补充只可完善其可核验的事实或材料，�
 并独立保留 `needs_human` 处理政策缺口；申请人后续回复只能触发重新读取 OA，不能使
 `rule_coverage` 变成 100%。
 
+两件事放在同一个结果里：`outcome: proposal` 携带可执行的评论或退回，同时填
+`needs_human_reason`、`decision_basis` 和 2--4 个 `decision_options` 描述政策缺口
+（`ConsumerAgentResult.escalates`）。三者必须齐全；不能带 `authorization_plan` 或错误码。
+Audit 按常规审阅并执行 proposal，不因候选附带升级而拒绝执行或改判 `needs_human`；Audit
+`executed` 后编排结果为 `needs_human`，选项取自 Consumer 的升级，消息投影照常按 Audit
+的执行记录写入。与“外部动作已完成→needs_human”同一终态：动作已做，剩下的问题归 Derek。
+Derek 2026-09-23 定；此前结果只能二选一，384699 丢了评论，384514 没要材料。
+
 ## Business Object、Task、Agent Run 与 Reply Attempt
 
 运行时先用 `business_object_key` 识别同一外部业务事项，再使用三层运行对象：

@@ -171,7 +171,9 @@ OA 定时任务冻结传入通用 `dingtalk-oa-approval` 与 Stardust 财务、�
 必须覆盖当前事项的规则条件、例外、权限和动作映射，且内容有效，
 `rule_coverage` 才能为 1.0；否则低于 1.0，规则缺口进入 `needs_human`，不得自动批准或拒绝。
 申请人可以补足事实或材料，Consumer 应在原审批评论明确缺口；若同时存在政策缺口，须另行
-进入 `needs_human`，申请人回复不能关闭政策升级。个人审批偏好只存在于定时任务 Prompt，不是
+进入 `needs_human`，申请人回复不能关闭政策升级。两者在同一结果中表达：proposal 携带评论或
+退回，并同时带 `needs_human_reason`、`decision_basis` 和 2--4 个选项；Audit 执行动作后任务以
+`needs_human` 收口（Derek 2026-09-23）。此前结果只能二选一，总会丢掉一半。个人审批偏好只存在于定时任务 Prompt，不是
 公司通用规则。
 
 ### Business Object、Task、Agent Run 与 Reply Attempt 的关系
@@ -1102,7 +1104,7 @@ History 再启动原生 CLI 去发现命令元数据。运行时发现失败属�
 | `executed` | B 已执行，并返回 provider 结果或稳定外部动作标识。 |
 | `no_action` | A 确认当前触发无需外部动作。 |
 | `feedback_provided` | B 给出结构化反馈，等待 A 在原兼容 session 中生成下一 revision。 |
-| `needs_human` | 仅在信息完整且 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 时使用；必须提供 2 至 4 个互斥、可执行的规则/Skill 选项，每项包含唯一稳定 `key`、显示 `label`、可执行 `instruction` 和 `consequence`/影响。普通材料不足走 ask-back，不计入此状态。 |
+| `needs_human` | proposal 也可附带一个独立升级（同样 2 至 4 个选项）：Audit 执行动作后任务以 `needs_human` 收口。除此之外，仅在信息完整且 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 时使用；必须提供 2 至 4 个互斥、可执行的规则/Skill 选项，每项包含唯一稳定 `key`、显示 `label`、可执行 `instruction` 和 `consequence`/影响。普通材料不足走 ask-back，不计入此状态。 |
 | `failed` | 当前 run 失败；错误说明是否可重试。 |
 | `quarantined` | 历史数据中的旧投影标签，仅用于历史展示；新执行不得写入。 |
 

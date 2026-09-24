@@ -33,7 +33,9 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
             "properties": {
                 "outcome": {"const": "proposal"},
                 "proposal": {"type": "object"},
-                "decision_options": {"type": "array", "maxItems": 0},
+                # Empty, or 2-4 options for an independent question the action
+                # does not settle (see ConsumerAgentResult.escalates).
+                "decision_options": {"type": "array", "maxItems": 4},
             },
         },
         {
@@ -413,6 +415,34 @@ class ConsumerAgentResult(BaseModel):
                 raise ValueError(
                     "needs_human outcome must match decision quality classification"
                 )
+        elif self.outcome is ConsumerOutcome.PROPOSAL and (
+            self.decision_options
+            or self.needs_human_reason is not None
+            or self.decision_basis is not None
+        ):
+            # An executable action and an independent question for Derek.
+            # Derek, 2026-09-23: an OA approval with both a material gap the
+            # applicant can fill and a rule gap only he can fill must do both;
+            # 384699 dropped its comment and 384514 never asked for material,
+            # because a result could be a proposal or needs_human, not both.
+            # Audit executes the proposal; the task then ends needs_human.
+            if not 2 <= len(self.decision_options) <= 4:
+                raise ValueError(
+                    "a proposal that escalates needs two to four decision options"
+                )
+            keys = [option.key for option in self.decision_options]
+            if len(keys) != len(set(keys)):
+                raise ValueError("decision option keys must be unique")
+            if not self.needs_human_reason:
+                raise ValueError("a proposal that escalates needs needs_human_reason")
+            if self.decision_basis is None:
+                raise ValueError("a proposal that escalates needs decision_basis")
+            if self.authorization_plan is not None:
+                raise ValueError(
+                    "authorization_plan requires authorization needs_human"
+                )
+            if self.error.code:
+                raise ValueError("a proposal that escalates cannot carry an error")
         elif self.decision_options:
             raise ValueError("decision options are only valid for needs_human")
         elif any(
@@ -425,6 +455,11 @@ class ConsumerAgentResult(BaseModel):
         ):
             raise ValueError("needs_human fields are only valid for needs_human")
         return self
+
+    @property
+    def escalates(self) -> bool:
+        """A proposal that also asks Derek an independent question."""
+        return self.outcome is ConsumerOutcome.PROPOSAL and bool(self.decision_options)
 
 
 class AuditOutcome(StrEnum):
