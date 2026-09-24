@@ -233,12 +233,19 @@ member's owner, deadline, lifecycle status, or commitment status. Proposing a
 Project for a cluster creates only a `business_project_candidates` row. An
 official `business_projects` row can be registered from an active canonical
 anchor whose type is `project`, with a nonblank canonical registry source. For
-Task-first extraction, the canonical registry basis is the set of Projects
-explicitly named in confirmed meeting evidence (minutes, transcript, or
-confirmed meeting action items). Chat or message evidence is supplementary: it
-may add owner, status, or context evidence, but it cannot create an official
-Project on its own. If meeting and chat evidence disagree, the meeting source
-wins and its exact source reference is retained. The other authority path is
+Task-first extraction, the canonical registry and current Task state use the
+most recent confirmed official weekly report first, especially a project-
+management or management weekly report with explicit project, owner, target,
+DDL, status, and next-task fields. The report's exact document reference and
+reporting period are retained even when it aggregates meeting minutes and
+project communications. Confirmed meeting evidence (minutes, transcript, or
+confirmed meeting action items) is the next authority for newly decided work
+or changes not yet reflected in a weekly report. Chat or message evidence is
+supplementary: it may add owner, status, or context evidence, but it cannot
+create an official Project or override an explicit weekly-report field on its
+own. When sources disagree, prefer the latest explicit weekly-report field,
+then the latest confirmed meeting decision, and retain the exact source
+reference. The other authority path is
 an explicit candidate confirmation backed by a persisted signal: it may create
 the official Project from an already registered active project anchor and
 records `explicit_confirmation:<signal_id>` as the Project's registration

@@ -420,14 +420,21 @@ transitions with existing IDs. Similarity rank is context only. Generic updates
 cannot set commitment status.
 
 Only identical deliverables may be proposed for identity merge; related tasks
-remain linked or clustered. For Project authority, treat explicit Projects
-named in meeting evidence (meeting minutes, transcript, or confirmed action
-items) as the canonical registry basis. Chat or message evidence may
-supplement the meeting record with context, owners, status, or links, but it
-cannot create an official Project by itself. When meeting and chat evidence
-conflict, the meeting record wins; preserve the exact meeting source
+remain linked or clustered. For Project and current Task authority, use the
+most recent confirmed official weekly report first, especially a project-
+management or management weekly report with explicit project, owner, target,
+DDL, status, and next-task fields. A weekly report may aggregate meeting
+minutes and project communications, but its exact document reference and
+reporting period must be preserved. Confirmed meeting evidence (minutes,
+transcript, or action items) is the next authority for newly decided work or
+changes not yet reflected in a weekly report. Chat or message evidence only
+supplements these sources with context, owners, status, or links; it cannot
+create an official Project or override an explicit weekly-report field by
+itself. When sources conflict, prefer the latest explicit weekly-report field,
+then the latest confirmed meeting decision, and preserve the exact source
 reference/excerpt. Project candidates must cite an existing cluster and the
-meeting-backed registry evidence; anchor and Project matches remain proposals.
+authoritative weekly-report or meeting evidence; anchor and Project matches
+remain proposals.
 
 Dates use typed date_evidence with exact source excerpt/reference and actor.
 Normalized dates must equal the full exact parseable date phrase; do not add

@@ -622,14 +622,15 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
     assert "Prior session turns are background only" in prompt
 
 
-def test_task_agent_prompt_makes_meeting_project_authority_explicit():
+def test_task_agent_prompt_prioritizes_weekly_report_then_meeting_evidence():
     prompt = " ".join(build_task_agent_prompt(_work_item(), "候选上下文为空。").split())
 
-    assert "Projects named in meeting evidence" in prompt
-    assert "Chat or message evidence may supplement" in prompt
-    assert "cannot create an official Project by itself" in prompt
-    assert "meeting record wins" in prompt
-    assert "exact meeting source reference/excerpt" in prompt
+    assert "most recent confirmed official weekly report first" in prompt
+    assert "project, owner, target, DDL, status, and next-task fields" in prompt
+    assert "Confirmed meeting evidence" in prompt
+    assert "Chat or message evidence only supplements" in prompt
+    assert "cannot create an official Project or override an explicit weekly-report field" in prompt
+    assert "preserve the exact source reference/excerpt" in prompt
 
 
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():
