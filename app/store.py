@@ -22962,6 +22962,20 @@ class AutoReplyStore:
                       or (
                           attempts.send_status != 'needs_human'
                           and not exists (
+                              select 1 from reply_tasks as pending_task
+                              where pending_task.channel=attempts.channel
+                                and pending_task.conversation_id=attempts.conversation_id
+                                and pending_task.trigger_message_id=attempts.trigger_message_id
+                                and pending_task.status='pending'
+                                and not exists (
+                                    select 1 from agent_runs as failed_run
+                                    where failed_run.id=attempts.agent_run_id
+                                      and failed_run.reply_task_id=pending_task.id
+                                      and failed_run.execution_generation=pending_task.execution_generation
+                                      and failed_run.status='failed'
+                                )
+                          )
+                          and not exists (
                               select 1
                               from reply_tasks as tasks
                               where tasks.channel=attempts.channel
@@ -23059,6 +23073,20 @@ class AutoReplyStore:
                       or (
                           attempts.send_status != 'needs_human'
                           and not exists (
+                              select 1 from reply_tasks as pending_task
+                              where pending_task.channel=attempts.channel
+                                and pending_task.conversation_id=attempts.conversation_id
+                                and pending_task.trigger_message_id=attempts.trigger_message_id
+                                and pending_task.status='pending'
+                                and not exists (
+                                    select 1 from agent_runs as failed_run
+                                    where failed_run.id=attempts.agent_run_id
+                                      and failed_run.reply_task_id=pending_task.id
+                                      and failed_run.execution_generation=pending_task.execution_generation
+                                      and failed_run.status='failed'
+                                )
+                          )
+                          and not exists (
                               select 1
                               from reply_tasks as tasks
                               where tasks.channel=attempts.channel
@@ -23151,6 +23179,20 @@ class AutoReplyStore:
                       )
                       or (
                           attempts.send_status != 'needs_human'
+                          and not exists (
+                              select 1 from reply_tasks as pending_task
+                              where pending_task.channel=attempts.channel
+                                and pending_task.conversation_id=attempts.conversation_id
+                                and pending_task.trigger_message_id=attempts.trigger_message_id
+                                and pending_task.status='pending'
+                                and not exists (
+                                    select 1 from agent_runs as failed_run
+                                    where failed_run.id=attempts.agent_run_id
+                                      and failed_run.reply_task_id=pending_task.id
+                                      and failed_run.execution_generation=pending_task.execution_generation
+                                      and failed_run.status='failed'
+                                )
+                          )
                           and not exists (
                               select 1
                               from reply_tasks as tasks

@@ -46,8 +46,9 @@ pending -> running -> done
   旧 run 或不完整结果不能把 `done` 投影成当前人工待办。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
-当前代次的最新 Attempt 已失败时，即使关联任务进入 `pending` 等待重试，History 与 Attention
-仍显示该失败，直到后续有效 run/Attempt 给出新的当前状态。旧代次失败不污染新代次。
+当前代次的最新 Attempt 指向失败 run 时，即使关联任务进入 `pending` 等待重试，History 与 Attention
+仍显示该失败，直到后续有效 run/Attempt 给出新的当前状态。没有当前代次失败 run 的 pending
+任务本身不进入 Attention；旧代次失败也不污染新代次。
 Codex CLI 报告同一 session 有其他 active writer 时，运行时将其视为本地 session 冲突，
 在原路由和原 session 上限次指数退避重试，不因此暂停整个 provider。
 
