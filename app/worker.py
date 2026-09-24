@@ -22,7 +22,7 @@ from app.agent_context import (
     MaterialReference,
     PriorReceipt,
 )
-from app.agent_contracts import AuditOutcome, ConsumerAgentResult, DecisionOption
+from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult, DecisionOption
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.audit_agent import AuditAgentRunner
@@ -2805,6 +2805,30 @@ class DingTalkAutoReplyWorker:
         if task.manual_rerun_attempt_id:
             source_attempt = self.store.get_reply_attempt(task.manual_rerun_attempt_id)
             if source_attempt is not None:
+                prior_audit_feedback = []
+                source_run = (
+                    self.store.get_agent_run(source_attempt.agent_run_id)
+                    if source_attempt.agent_run_id
+                    else None
+                )
+                if source_run is not None:
+                    for run in self.store.list_agent_runs_for_task_generation(
+                        task.id, source_run.execution_generation
+                    ):
+                        if (
+                            run.role is not AgentRole.AUDIT
+                            or run.status != "completed"
+                            or not run.final_result_json
+                        ):
+                            continue
+                        audit_result = AuditAgentResult.model_validate_json(
+                            run.final_result_json
+                        )
+                        if (
+                            audit_result.outcome is AuditOutcome.FEEDBACK_PROVIDED
+                            and audit_result.feedback is not None
+                        ):
+                            prior_audit_feedback.append(audit_result.feedback)
                 manual_rerun = ManualRerunInstruction(
                     source_attempt_id=source_attempt.id,
                     reviewer_feedback=source_attempt.reviewer_feedback.strip(),
@@ -2816,6 +2840,7 @@ class DingTalkAutoReplyWorker:
                     feedback_scope=source_attempt.feedback_scope or "one_time",
                     skill_update_requested=source_attempt.skill_update_requested,
                     skill_update_receipts_json=source_attempt.skill_update_receipts_json,
+                    prior_audit_feedback=tuple(prior_audit_feedback),
                 )
         trigger_raw_payload = _inject_oa_applicant_identity(
             store=self.store,

@@ -49,6 +49,8 @@ pending -> running -> done
 当前代次的最新 Attempt 指向失败 run 时，即使关联任务进入 `pending` 等待重试，History 与 Attention
 仍显示该失败，直到后续有效 run/Attempt 给出新的当前状态。没有当前代次失败 run 的 pending
 任务本身不进入 Attention；旧代次失败也不污染新代次。
+从失败 Attempt 手动重跑时，Consumer 与 Audit 的上下文必须带入来源代次的结构化 Audit 反馈；
+旧候选被否决的点仍须解决，或用新证据明确说明其不再适用，不得把相同候选当作未审核的新建议。
 Codex CLI 报告同一 session 有其他 active writer 时，运行时将其视为本地 session 冲突，
 在原路由和原 session 上限次指数退避重试，不因此暂停整个 provider。
 服务启动时恢复被中断的会议作业，会在同一事务内将作业改为 `retry`、关闭运行记录并释放

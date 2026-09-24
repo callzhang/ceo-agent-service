@@ -72,6 +72,7 @@ class ManualRerunInstruction:
     feedback_scope: str = "one_time"
     skill_update_requested: bool = False
     skill_update_receipts_json: str = "[]"
+    prior_audit_feedback: tuple[AuditFeedback, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -291,9 +292,19 @@ class AgentTaskContext:
                         "feedback_scope": self.manual_rerun.feedback_scope,
                         "skill_update_requested": self.manual_rerun.skill_update_requested,
                         "skill_update_receipts_json": self.manual_rerun.skill_update_receipts_json,
+                        "prior_audit_feedback": [
+                            feedback.model_dump(mode="json")
+                            for feedback in self.manual_rerun.prior_audit_feedback
+                        ],
                     }
                 )
             )
+            if self.manual_rerun.prior_audit_feedback:
+                sections.append(
+                    "Prior Audit rejections remain relevant on rerun. Resolve each "
+                    "rejected point or cite new evidence that supersedes it; do not "
+                    "resubmit an unchanged rejected action."
+                )
         body = "\n\n".join(sections)
         return f"## Context Facts\n{body}" if include_heading else body
 
