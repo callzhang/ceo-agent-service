@@ -67,6 +67,14 @@ def is_session_writer_conflict(failure: RuntimeFailure) -> bool:
     )
 
 
+def is_context_window_exceeded(failure: RuntimeFailure) -> bool:
+    return (
+        failure.failure_class is RuntimeFailureClass.SESSION
+        and failure.code == "codex_context_window_exceeded"
+        and failure.retryable_on_same_route
+    )
+
+
 def consecutive_capacity_failures(
     attempts: Sequence[AgentRuntimeAttempt], route_name: str
 ) -> int:
@@ -139,6 +147,19 @@ def plan_runtime_fallback(
                 wait_seconds=retry_delay_seconds(
                     CAPACITY_RETRY_BASE_DELAY_SECONDS, conflicts - 1
                 ),
+            )
+    if same_route_retry_permitted and is_context_window_exceeded(failure):
+        overflows = sum(
+            1 for attempt in attempts
+            if attempt.failure_code == failure.code
+        )
+        if overflows == 1:
+            return FallbackPlan(
+                route=route,
+                fresh_session=True,
+                reason="context_window_retry",
+                pause_route=False,
+                retry_same_route=True,
             )
     decision = select_next_route()
     return FallbackPlan(

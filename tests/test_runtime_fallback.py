@@ -134,6 +134,44 @@ def test_session_writer_conflict_stops_same_route_retry_at_ceiling():
     plan = _plan(failure, attempts)
 
     assert plan.retry_same_route is False
+
+
+def test_context_overflow_retries_once_on_same_route_with_fresh_session():
+    failure = RuntimeFailure(
+        failure_class=RuntimeFailureClass.SESSION,
+        code="codex_context_window_exceeded",
+        detail="Codex compaction exceeded the model context window.",
+        retryable_on_same_route=True,
+        failover_permitted=True,
+    )
+
+    plan = _plan(
+        failure,
+        [Attempt(ROUTE.name, RuntimeFailureClass.SESSION.value, failure.code)],
+    )
+
+    assert plan.route is ROUTE
+    assert plan.fresh_session is True
+    assert plan.retry_same_route is True
+    assert plan.pause_route is False
+
+
+def test_repeated_context_overflow_uses_normal_route_fallback():
+    failure = RuntimeFailure(
+        failure_class=RuntimeFailureClass.SESSION,
+        code="codex_context_window_exceeded",
+        detail="Codex compaction exceeded the model context window.",
+        retryable_on_same_route=True,
+        failover_permitted=True,
+    )
+    attempts = [
+        Attempt(ROUTE.name, RuntimeFailureClass.SESSION.value, failure.code),
+        Attempt(ROUTE.name, RuntimeFailureClass.SESSION.value, failure.code),
+    ]
+
+    plan = _plan(failure, attempts)
+
+    assert plan.route is NEXT_ROUTE
     assert plan.pause_route is False
 
 

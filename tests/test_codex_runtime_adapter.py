@@ -594,6 +594,58 @@ def test_session_active_writer_conflict_is_retryable_without_pausing_route(adapt
     assert failure.route_pause_required is False
 
 
+def test_context_compaction_overflow_is_classified_for_one_fresh_session_retry(adapter):
+    failure = adapter.classify_failure(
+        stderr="",
+        stdout=(
+            '{"type":"event_msg","payload":{"type":"task_complete",'
+            '"error":{"message":"Error running remote compact task: Codex ran '
+            'out of room in the model context window.",'
+            '"codex_error_info":"context_window_exceeded"}}}'
+        ),
+        returncode=1,
+    )
+
+    assert failure.failure_class is RuntimeFailureClass.SESSION
+    assert failure.code == "codex_context_window_exceeded"
+    assert failure.retryable_on_same_route is True
+    assert failure.failover_permitted is True
+    assert failure.route_pause_required is False
+
+
+def test_terminal_completion_with_context_compaction_error_is_retryable(adapter):
+    failure = adapter.classify_failure(
+        stderr="",
+        stdout=(
+            '{"type":"event_msg","payload":{"type":"task_complete",'
+            '"error":{"message":"Error running remote compact task: Codex ran '
+            'out of room in the model context window.",'
+            '"codex_error_info":"context_window_exceeded"}}}'
+        ),
+        returncode=0,
+        terminal_succeeded=True,
+    )
+
+    assert failure.failure_class is RuntimeFailureClass.SESSION
+    assert failure.code == "codex_context_window_exceeded"
+    assert failure.retryable_on_same_route is True
+    assert failure.failover_permitted is True
+
+
+def test_context_compaction_error_with_possessive_model_word_is_classified(adapter):
+    failure = adapter.classify_failure(
+        stderr=(
+            "Error running remote compact task: Codex ran out of room in the "
+            "model's context window. Start a new thread or clear earlier history."
+        ),
+        stdout="",
+        returncode=1,
+    )
+
+    assert failure.failure_class is RuntimeFailureClass.SESSION
+    assert failure.code == "codex_context_window_exceeded"
+
+
 def test_unknown_failure_is_fail_closed(adapter):
     failure = adapter.classify_failure(
         stderr="unexpected command result",

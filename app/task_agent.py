@@ -631,6 +631,8 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
             "target_task_id": item.target_task_id or 0,
             "source_ref": item.source_ref,
             "source_excerpt": item.source_excerpt,
+            "title": normalized(item.title),
+            "description": normalized(item.description),
             "status": item.status or "",
             "business_relevance": item.business_relevance or "",
             "owner_user_id": item.owner_user_id.strip(),
@@ -1003,6 +1005,10 @@ def apply_task_agent_decision(
                     ), _db=db)
                 else:
                     fields = {}
+                    if item.title:
+                        fields["title"] = item.title
+                    if item.description:
+                        fields["description"] = item.description
                     if owner_user_id or item.owner_name:
                         fields.update(owner_user_id=owner_user_id, owner_name=item.owner_name,
                                       owner_evidence_json=json.dumps(owner_evidence, ensure_ascii=False))

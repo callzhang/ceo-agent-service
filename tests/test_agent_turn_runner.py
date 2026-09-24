@@ -42,6 +42,41 @@ def test_same_route_capacity_retry_resumes_observed_audit_session():
     ) is None
 
 
+def test_context_overflow_fresh_retry_clears_only_the_failed_route_session():
+    cleared: list[tuple[str, str, str]] = []
+    failed_attempt = SimpleNamespace(
+        id=73,
+        agent_run_id=19,
+        route_name="codex_oauth",
+        status="failed",
+        session_mode="resume",
+        failure_class="session",
+        failure_code="codex_context_window_exceeded",
+        source_session_id="shared-session",
+    )
+
+    class Store:
+        def get_agent_runtime_attempt(self, attempt_id):
+            assert attempt_id == failed_attempt.id
+            return failed_attempt
+
+        def clear_conversation_runtime_session_if_matches(self, *args):
+            cleared.append(args)
+
+    runner = object.__new__(AgentTurnProcess)
+    runner.store = Store()
+    runner.task = SimpleNamespace(conversation_id="task-agent:work-tracking:v1")
+    runner._clear_incompatible_route_session_for_fresh_retry(
+        run=SimpleNamespace(id=19, role=AgentRole.CONSUMER),
+        route=SimpleNamespace(name="codex_oauth"),
+        failed_attempt=failed_attempt,
+    )
+
+    assert cleared == [(
+        "task-agent:work-tracking:v1", "codex_oauth", "shared-session",
+    )]
+
+
 def test_runner_has_no_application_effect_recovery_policy_helpers():
     """Provider traces stay opaque; the runner has no effect recovery state machine."""
 

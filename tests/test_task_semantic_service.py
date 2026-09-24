@@ -409,6 +409,68 @@ def test_semantic_commands_reject_untyped_deadline_writes(service):
     assert service.store.get_business_task(task.task_id).deadline_at == ""
 
 
+def test_update_task_details_preserves_evidence_and_records_details_event(service):
+    created = service.record_candidate(RecordCandidate(
+        title="核对客户材料",
+        signal=SourceSignal(
+            source_type="message", source_ref="message:task-details-seed",
+            evidence_text="核对客户材料", dedupe_key="message:task-details-seed",
+        ),
+    ))
+    update_signal = SourceSignal(
+        source_type="message", source_ref="message:task-details-update",
+        evidence_text="客户材料已到齐，接下来核对并补齐缺项。",
+        dedupe_key="message:task-details-update",
+    )
+
+    result = service.update_task(UpdateBusinessTask(
+        task_id=created.task_id,
+        signal=update_signal,
+        title="核对并补齐客户材料",
+        description="客户材料已到齐，核对后补齐缺项。",
+        reason="The latest source clarifies the remaining deliverable.",
+    ))
+
+    updated = service.store.get_business_task(created.task_id)
+    assert result.task_id == created.task_id
+    assert updated.title == "核对并补齐客户材料"
+    assert updated.description == "客户材料已到齐，核对后补齐缺项。"
+    event = service.events(created.task_id)[-1]
+    assert event.event_type.value == "details_changed"
+    assert json.loads(event.before_json)["title"] == "核对客户材料"
+    assert json.loads(event.after_json)["description"] == "客户材料已到齐，核对后补齐缺项。"
+    assert any(
+        evidence.signal_id == result.signal_id
+        for evidence in service.store.list_business_task_evidence(created.task_id)
+    )
+
+
+def test_update_task_details_combined_with_other_fields_records_fields_event(service):
+    created = service.record_candidate(RecordCandidate(
+        title="核对客户材料",
+        signal=SourceSignal(
+            source_type="message", source_ref="message:task-fields-seed",
+            evidence_text="核对客户材料", dedupe_key="message:task-fields-seed",
+        ),
+    ))
+
+    service.update_task(UpdateBusinessTask(
+        task_id=created.task_id,
+        signal=SourceSignal(
+            source_type="message", source_ref="message:task-fields-update",
+            evidence_text="客户材料已到齐，状态改为等待复核。",
+            dedupe_key="message:task-fields-update",
+        ),
+        description="客户材料已到齐，等待复核。",
+        status=BusinessTaskStatus.WAITING,
+    ))
+
+    updated = service.store.get_business_task(created.task_id)
+    assert updated.status is BusinessTaskStatus.WAITING
+    assert updated.description == "客户材料已到齐，等待复核。"
+    assert service.events(created.task_id)[-1].event_type.value == "fields_changed"
+
+
 def test_record_formal_task_commits_signal_task_evidence_and_initial_event_together(service):
     result = record_assignment(service)
 
