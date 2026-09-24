@@ -177,6 +177,9 @@ Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返�
 每个保留决策都必须引用 WorkItem 的准确 `source_ref`，并提供确实出现在来源摘要中的原文
 `source_excerpt`；检索到的 Task、Project 候选及 memory 只能提供背景，不能替代来源证据或授权。
 `skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。
+正式 Project 的权威注册表基础来自会议纪要、逐字稿或已确认会议行动项中
+明确提到的项目；聊天或消息只能补充上下文、负责人、状态或链接，不能单独
+创建正式 Project。会议与聊天冲突时以会议证据为准，并保留会议来源的精确引用。
 更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
 
 Task Agent 使用统一的 `TaskAgentDecision` 结果协议，既可返回 0..N 个新建/更新 Task 决定，

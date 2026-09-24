@@ -232,12 +232,18 @@ A cluster groups existing Tasks through membership rows. It never rewrites a
 member's owner, deadline, lifecycle status, or commitment status. Proposing a
 Project for a cluster creates only a `business_project_candidates` row. An
 official `business_projects` row can be registered from an active canonical
-anchor whose type is `project`, with a nonblank canonical registry source. The
-other authority path is an explicit candidate confirmation backed by a persisted
-signal: it may create the official Project from an already registered active
-project anchor and records `explicit_confirmation:<signal_id>` as the Project's
-registration source while the candidate retains the signal foreign key. It
-confirms the candidate in the same transaction. A cluster or
+anchor whose type is `project`, with a nonblank canonical registry source. For
+Task-first extraction, the canonical registry basis is the set of Projects
+explicitly named in confirmed meeting evidence (minutes, transcript, or
+confirmed meeting action items). Chat or message evidence is supplementary: it
+may add owner, status, or context evidence, but it cannot create an official
+Project on its own. If meeting and chat evidence disagree, the meeting source
+wins and its exact source reference is retained. The other authority path is
+an explicit candidate confirmation backed by a persisted signal: it may create
+the official Project from an already registered active project anchor and
+records `explicit_confirmation:<signal_id>` as the Project's registration
+source while the candidate retains the signal foreign key. It confirms the
+candidate in the same transaction. A cluster or
 candidate proposal alone never creates an official Project. Confirmation may
 also target an already persisted Project. Replaying the same candidate, Project,
 and confirmation signal returns the existing result; a different Project or
