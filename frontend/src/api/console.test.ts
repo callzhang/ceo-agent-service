@@ -203,7 +203,7 @@ describe("console API helpers", () => {
         category: "projects",
         priority: "high",
         risk_level: "low",
-        owner: "Mina",
+        owner: "Avery",
         owner_name: "",
         owner_user_id: "",
         progress_count: 3,
@@ -218,7 +218,7 @@ describe("console API helpers", () => {
     try {
       const { listTasks } = await import("./console");
       const page = await listTasks();
-      expect(page.items[0].owner).toBe("Mina");
+      expect(page.items[0].owner).toBe("Avery");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -244,9 +244,9 @@ describe("console API helpers", () => {
           tags: [],
         },
         todos: [
-          { id: 1, owner_name: "周俊杰", owner_user_id: "owner-1" },
+          { id: 1, owner_name: "孙伟", owner_user_id: "owner-1" },
           { id: 2, owner_name: "张晓民", owner_user_id: "owner-2" },
-          { id: 3, owner_name: "Mina", owner_user_id: "owner-3" },
+          { id: 3, owner_name: "Avery", owner_user_id: "owner-3" },
           { id: 4, owner_name: "ET", owner_user_id: "owner-4" },
         ],
         updates: [],
@@ -256,7 +256,7 @@ describe("console API helpers", () => {
     try {
       const { getTaskDetail } = await import("./console");
       const response = await getTaskDetail("836");
-      expect(response.item.owner).toBe("多人：周俊杰、张晓民、Mina 等 4 人");
+      expect(response.item.owner).toBe("多人：孙伟、张晓民、Avery 等 4 人");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -273,7 +273,7 @@ describe("console API helpers", () => {
           category: "projects",
           priority: "P1",
           risk_level: "medium",
-          owner_name: "Mina",
+          owner_name: "Avery",
           current_state: "执行中",
           next_step: "继续推进",
           facts: [],

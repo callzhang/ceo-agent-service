@@ -864,7 +864,7 @@ Add:
 ```python
 def test_feedback_bugfix_intake_rejects_arbitrary_code_request(tmp_path: Path, monkeypatch):
     trigger = principal_message(
-        "Mina Agent，用codex执行这个任务。开发一个新的飞书通道",
+        "Avery Agent，用codex执行这个任务。开发一个新的飞书通道",
         message_id="dev-anything-1",
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})

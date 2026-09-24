@@ -21,11 +21,11 @@ done" as completion evidence. That creates two risks:
 - A complaint about an incorrect follow-up can be mistaken for proof that the
   underlying task is complete.
 
-Lily's feedback is the concrete failure case. She said that repeated follow-ups
+Riley's feedback is the concrete failure case. She said that repeated follow-ups
 on already completed items caused anxiety and reduced efficiency, and that one
 overseas data compliance P0 follow-up was sent to the wrong owner. The correct
 interpretation is not simply "task complete". The system should stop following
-up with Lily for that item, update the owner context to Hu Ming and operations,
+up with Riley for that item, update the owner context to Hu Ming and operations,
 and keep the project open unless there is separate completion evidence.
 
 ## Decisions
@@ -124,18 +124,18 @@ It should not infer task completion from plain text.
 8. If a TODO becomes `done` with completion evidence, DingTalk Todo sync marks
    the linked DingTalk Todo done.
 
-## Lily Acceptance Case
+## Riley Acceptance Case
 
-Given Lily replies that the bot is repeatedly following up on completed work and
+Given Riley replies that the bot is repeatedly following up on completed work and
 that the overseas data compliance P0 item belongs to Hu Ming and operations:
 
 - The system must not mark the whole overseas data compliance project done.
-- The system must not keep following up with Lily for that item.
+- The system must not keep following up with Riley for that item.
 - The system should update project or TODO context to reflect Hu Ming and
   operations as the owner path.
 - The system may create or update a Hu Ming/operations follow-up if the item is
   still open.
-- The system should record Lily's complaint as durable task context so future
+- The system should record Riley's complaint as durable task context so future
   follow-ups avoid the same mistake.
 
 ## Error Handling
@@ -155,7 +155,7 @@ that the overseas data compliance P0 item belongs to Hu Ming and operations:
 
 Focused tests should cover:
 
-- Lily feedback: suppress Lily follow-up, correct owner context, keep project
+- Riley feedback: suppress Riley follow-up, correct owner context, keep project
   open.
 - Clear completion reply: task agent marks the matched TODO done with completion
   evidence.

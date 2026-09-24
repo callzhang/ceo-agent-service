@@ -607,7 +607,7 @@ def test_producer_queues_ad_hoc_one_to_one_from_two_speaker_transcript(
             return {
                 "paragraphs": [
                     {"nickName": "Derek", "paragraph": "先确认投入产出。"},
-                    {"nickName": "Claire", "paragraph": "我补齐调研。"},
+                    {"nickName": "Casey", "paragraph": "我补齐调研。"},
                 ]
             }
 
@@ -618,9 +618,9 @@ def test_producer_queues_ad_hoc_one_to_one_from_two_speaker_transcript(
                     name="Derek",
                     open_dingtalk_id="open-derek",
                 ),
-                "Claire": DwsUserProfile(
+                "Casey": DwsUserProfile(
                     user_id="u-claire",
-                    name="Claire",
+                    name="Casey",
                     open_dingtalk_id="open-claire",
                 ),
             }
@@ -647,7 +647,7 @@ def test_producer_queues_ad_hoc_one_to_one_from_two_speaker_transcript(
                 "open_dingtalk_id": "open-derek",
         },
         {
-            "name": "Claire",
+            "name": "Casey",
             "user_id": "u-claire",
             "open_dingtalk_id": "open-claire",
         },
@@ -665,7 +665,7 @@ def test_producer_queues_transcript_roster_for_multi_speaker_recording(
             return {
                 "paragraphs": [
                     {"nickName": "Derek", "paragraph": "先确认范围。"},
-                    {"nickName": "Claire", "paragraph": "我补齐调研。"},
+                    {"nickName": "Casey", "paragraph": "我补齐调研。"},
                     {"nickName": "外部专家", "paragraph": "我补充案例。"},
                 ]
             }
@@ -673,7 +673,7 @@ def test_producer_queues_transcript_roster_for_multi_speaker_recording(
         def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
             profiles = {
                 "Derek": DwsUserProfile(user_id="u-derek", name="Derek"),
-                "Claire": DwsUserProfile(user_id="u-claire", name="Claire"),
+                "Casey": DwsUserProfile(user_id="u-claire", name="Casey"),
             }
             return [profiles[query]] if query in profiles else []
 
@@ -690,7 +690,7 @@ def test_producer_queues_transcript_roster_for_multi_speaker_recording(
     assert job.status == "pending"
     assert json.loads(job.source_json)["calendar_evidence"]["participants"] == [
         {"name": "Derek", "user_id": "u-derek", "open_dingtalk_id": ""},
-        {"name": "Claire", "user_id": "u-claire", "open_dingtalk_id": ""},
+        {"name": "Casey", "user_id": "u-claire", "open_dingtalk_id": ""},
         {"name": "外部专家", "user_id": "", "open_dingtalk_id": ""},
     ]
 
@@ -2105,19 +2105,19 @@ def test_calendar_organizer_identity_is_resolved_before_agent_decision(tmp_path)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     event = dws.calendar_pages[""]["events"][0]
-    event.organizer = "Mina Zou"
-    event.attendee_details[1] = DwsCalendarAttendee(display_name="Mina Zou")
+    event.organizer = "Avery Zou"
+    event.attendee_details[1] = DwsCalendarAttendee(display_name="Avery Zou")
     dws.search_user_profiles = lambda query: (
         [
             DwsUserProfile(
                 user_id="u-mina",
                 name="Zou Jingwei",
-                nick="Mina Zou",
+                nick="Avery Zou",
                 title="HRVP",
                 open_dingtalk_id="open-mina",
             )
         ]
-        if query == "Mina Zou"
+        if query == "Avery Zou"
         else []
     )
     dws.verification_states = ["sent", "sent"]
@@ -2135,7 +2135,7 @@ def test_calendar_organizer_identity_is_resolved_before_agent_decision(tmp_path)
                 "kind": "direct",
                 "conversation_id": "",
                 "direct_user_id": "u-mina",
-                "title": "Mina Zou",
+                "title": "Avery Zou",
                 "candidates": [],
             },
             "final_message": "Please follow up on the agreed meeting actions.",
@@ -2144,12 +2144,12 @@ def test_calendar_organizer_identity_is_resolved_before_agent_decision(tmp_path)
                     "kind": "direct",
                     "conversation_id": "",
                     "direct_user_id": "u-mina",
-                    "title": "Mina Zou",
+                    "title": "Avery Zou",
                     "candidates": [],
                 },
                 "message": "Please handle the private personnel follow-up.",
                 "reason": "The meeting included personnel-sensitive discussion.",
-                "recipient_evidence": ["Mina Zou is the meeting HR owner."],
+                "recipient_evidence": ["Avery Zou is the meeting HR owner."],
             },
             "audit_summary": "The meeting created business and personnel follow-up.",
             "confidence": 0.95,

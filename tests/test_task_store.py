@@ -313,8 +313,8 @@ def _work_item() -> WorkItem:
             "summary": "P1 项目需要三天内确认进展。",
             "project_name": "售前知识库建设",
             "context": {
-                "sender": "Mina",
-                "participants": ["Mina", "Derek", "Alex"],
+                "sender": "Avery",
+                "participants": ["Avery", "Derek", "Alex"],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "售前项目群",
             },
@@ -664,7 +664,7 @@ def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
     )
     due_id = store.create_follow_up_draft(
         project_id=project_id,
-        owner_name="Claire Huang",
+        owner_name="Casey Huang",
         target_kind="direct",
         question_text="准备宝马专家邀请材料了吗？",
         scheduled_at="2026-07-22T10:00:00+08:00",
@@ -672,7 +672,7 @@ def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
     )
     future_id = store.create_follow_up_draft(
         project_id=project_id,
-        owner_name="Claire Huang",
+        owner_name="Casey Huang",
         target_kind="direct",
         question_text="宝马报价材料准备好了吗？",
         scheduled_at="2026-07-23T10:00:00+08:00",
@@ -798,7 +798,7 @@ def test_list_recent_follow_up_candidates_returns_linked_context(tmp_path: Path)
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="owner-2",
-        owner_name="Lily",
+        owner_name="Riley",
         target_conversation_id="cid-other",
         target_kind="direct",
         question_text="无关会话不应该作为候选",
@@ -871,7 +871,7 @@ def test_list_recent_follow_up_candidates_prefers_conversation_then_owner(
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="owner-2",
-        owner_name="Mina",
+        owner_name="Avery",
         target_conversation_id="cid-target",
         target_kind="group",
         question_text="同群较早跟进",
@@ -927,7 +927,7 @@ def test_list_recent_follow_up_candidates_includes_scheduled_actionable_statuses
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="owner-2",
-        owner_name="Mina",
+        owner_name="Avery",
         target_conversation_id="cid-target",
         target_kind="group",
         question_text="approved 候选也应该按 scheduled_at 命中",
@@ -1320,17 +1320,17 @@ def test_recent_single_chat_recovery_preserves_latest_trigger_identity(tmp_path:
     store = _store(tmp_path)
     store.upsert_conversation(
         conversation_id="cid-mina",
-        title="Mina 邹",
+        title="Avery",
         single_chat=True,
         codex_session_id=None,
     )
     task_id = store.enqueue_reply_task(
         conversation_id="cid-mina",
-        conversation_title="Mina 邹",
+        conversation_title="Avery",
         single_chat=True,
         trigger_message_id="msg-mina",
         trigger_create_time="2026-09-07 17:02:04",
-        trigger_sender="Mina 邹",
+        trigger_sender="Avery",
         trigger_text="上一条消息",
         trigger_message_json=json.dumps(
             {
@@ -1359,7 +1359,7 @@ def test_recent_single_chat_recovery_uses_task_activity_when_seen_row_is_old(
     store = _store(tmp_path)
     store.upsert_conversation(
         conversation_id="cid-mina",
-        title="Mina 邹",
+        title="Avery",
         single_chat=True,
         codex_session_id=None,
     )
@@ -1371,11 +1371,11 @@ def test_recent_single_chat_recovery_uses_task_activity_when_seen_row_is_old(
         )
     task_id = store.enqueue_reply_task(
         conversation_id="cid-mina",
-        conversation_title="Mina 邹",
+        conversation_title="Avery",
         single_chat=True,
         trigger_message_id="msg-recent",
         trigger_create_time="2026-09-07 17:02:04",
-        trigger_sender="Mina 邹",
+        trigger_sender="Avery",
         trigger_text="最近消息",
         trigger_message_json=json.dumps(
             {"sender_open_dingtalk_id": "mina-open-id"},
@@ -1556,7 +1556,7 @@ def test_list_follow_up_drafts_for_todos_groups_by_todo(
     second_draft_id = store.create_follow_up_draft(
         project_id=project_id,
         todo_id=second_todo_id,
-        owner_name="Mina",
+        owner_name="Avery",
         target_kind="direct",
         question_text="第二项进展？",
         scheduled_at="2026-08-29 10:00:00",
@@ -1652,14 +1652,14 @@ def test_list_work_project_ids_for_todo_owner_filters_active_projects(
         project_id=active_project_id,
         title="评估 Colin",
         owner_user_id="owner-1",
-        owner_name="Mina",
+        owner_name="Avery",
         priority="P1",
     )
     store.create_work_todo(
         project_id=archived_project_id,
         title="归档候选人",
         owner_user_id="owner-1",
-        owner_name="Mina",
+        owner_name="Avery",
         priority="P2",
     )
 
@@ -1691,7 +1691,7 @@ def test_operation_logs_sort_follow_up_by_operation_time_not_schedule(tmp_path: 
         conversation_id="cid-2",
         conversation_title="融资群",
         trigger_message_id="msg-2",
-        trigger_sender="Lily",
+        trigger_sender="Riley",
         trigger_text="@Alex 这个怎么看？",
         action="send_reply",
         sensitivity_kind="general",

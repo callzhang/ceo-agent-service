@@ -87,7 +87,7 @@ def test_okr_review_item_rejects_discount_outside_range():
 def test_okr_review_payload_contains_items():
     payload = OkrReviewPayload.model_validate(
         {
-            "person_name": "韩露",
+            "person_name": "吴婷",
             "period_label": "2026 Q2",
             "summary": "共 1 个 KR。",
             "items": [
@@ -172,7 +172,7 @@ def test_requested_okr_period_prefers_explicit_quarter():
 def test_build_okr_review_prompt_includes_live_source_and_claim_scoring():
     prompt = build_okr_review_prompt(
         request_id=7,
-        person_name="韩露",
+        person_name="吴婷",
         period_label="2026 Q2",
         okr_source_json='{"processed":{"objectives":[],"okrRows":[]}}',
         trigger_text="帮我审核 OKR",
@@ -190,7 +190,7 @@ def test_build_okr_review_prompt_includes_live_source_and_claim_scoring():
 def test_build_okr_review_prompt_compacts_raw_live_source():
     prompt = build_okr_review_prompt(
         request_id=7,
-        person_name="韩露",
+        person_name="吴婷",
         period_label="2026 Q2",
         okr_source_json=json.dumps(
             {
@@ -217,7 +217,7 @@ def test_build_okr_review_prompt_compacts_raw_live_source():
 def test_build_okr_review_prompt_preserves_kr_progress_comments():
     prompt = build_okr_review_prompt(
         request_id=7,
-        person_name="Claire",
+        person_name="Casey",
         period_label="2026 Q2",
         okr_source_json=json.dumps(
             {
@@ -275,7 +275,7 @@ def test_compact_okr_source_requires_processed_rows():
 def test_render_okr_review_reply_includes_two_scores():
     payload = OkrReviewPayload.model_validate(
         {
-            "person_name": "韩露",
+            "person_name": "吴婷",
             "period_label": "2026 Q2",
             "summary": "1 个 KR 已审核。",
             "items": [
@@ -318,7 +318,7 @@ def test_render_okr_review_reply_includes_two_scores():
 def test_normalize_okr_review_domain_payload_accepts_agent_aliases():
     normalized = normalize_okr_review_domain_payload(
         {
-            "person_name": "Claire",
+            "person_name": "Casey",
             "period_label": "2026 Q2",
             "summary": {"overall_comment": "整体有进展，但缺硬结果。"},
             "items": [
@@ -357,7 +357,7 @@ def test_normalize_okr_review_domain_payload_accepts_agent_aliases():
 def test_normalize_okr_review_domain_payload_fills_missing_weights_on_titled_items():
     normalized = normalize_okr_review_domain_payload(
         {
-            "person_name": "Claire",
+            "person_name": "Casey",
             "period_label": "2026 Q2",
             "summary": "已审核。",
             "items": [
@@ -389,7 +389,7 @@ def test_normalize_okr_review_domain_payload_fills_missing_weights_on_titled_ite
 def test_normalize_okr_review_domain_payload_accepts_final_score_aliases():
     normalized = normalize_okr_review_domain_payload(
         {
-            "person_name": "韩露",
+            "person_name": "吴婷",
             "period_label": "2026 Q2",
             "summary": "已审核。",
             "items": [
@@ -423,7 +423,7 @@ def test_normalize_okr_review_domain_payload_accepts_final_score_aliases():
 def test_normalize_okr_review_domain_payload_normalizes_complete_snake_case_items():
     normalized = normalize_okr_review_domain_payload(
         {
-            "person_name": "韩露",
+            "person_name": "吴婷",
             "period_label": "2026 Q2",
             "summary": "已审核。",
             "items": [
@@ -464,7 +464,7 @@ def test_normalize_okr_review_domain_payload_accepts_claim_score_alias():
     # The agent emits `claim_score` (not `employee_claim_score`); both must work.
     normalized = normalize_okr_review_domain_payload(
         {
-            "person_name": "韩露",
+            "person_name": "吴婷",
             "period_label": "2026 Q2",
             "summary": "已审核。",
             "items": [
@@ -495,7 +495,7 @@ def test_normalize_okr_review_item_defaults_verified_base_to_final():
     # render "基础 0"; the base falls back to the final (no discount).
     normalized = normalize_okr_review_domain_payload(
         {
-            "person_name": "Claire",
+            "person_name": "Casey",
             "period_label": "2026 Q2",
             "summary": "已审核。",
             "items": [
@@ -601,7 +601,7 @@ def test_normalize_okr_review_domain_payload_renders_assessment_and_gaps():
     # text, not a raw JSON blob.
     normalized = normalize_okr_review_domain_payload(
         {
-            "person_name": "韩露",
+            "person_name": "吴婷",
             "period_label": "2026 Q2",
             "summary": {
                 "overall_assessment": "有真实推进，但缺硬结果。",
@@ -653,9 +653,9 @@ def test_process_okr_review_request_persists_items_and_marks_done(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -674,7 +674,7 @@ def test_process_okr_review_request_persists_items_and_marks_done(tmp_path):
             },
             "system_actions": [{"type": "persist_okr_review", "request_id": request_id}],
             "domain_payload": {
-                "person_name": "韩露",
+                "person_name": "吴婷",
                 "period_label": "2026 Q2",
                 "summary": "1 个 KR 已审核。",
                 "items": [
@@ -730,7 +730,7 @@ def test_process_okr_review_request_uses_live_source_owner_as_person_name(tmp_pa
         conversation_id="cid-group",
         conversation_title="OKR 群",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="requester-user",
         trigger_text="帮我审核 Roy 的 OKR",
         period_label="2026 Q2",
@@ -758,7 +758,7 @@ def test_process_okr_review_request_uses_live_source_owner_as_person_name(tmp_pa
             },
             "system_actions": [{"type": "persist_okr_review", "request_id": request_id}],
             "domain_payload": {
-                "person_name": "韩露",
+                "person_name": "吴婷",
                 "period_label": "2026 Q2",
                 "summary": "已审核。",
                 "items": [
@@ -802,8 +802,8 @@ def test_process_okr_review_request_uses_live_source_owner_as_person_name(tmp_pa
 
     prompt = runner.calls[0][3]
     assert "person_name: Roy Han" in prompt
-    assert "trigger_sender: 韩露" in prompt
-    assert "person_name: 韩露" not in prompt
+    assert "trigger_sender: 吴婷" in prompt
+    assert "person_name: 吴婷" not in prompt
     assert reply.startswith("Roy Han 2026 Q2 OKR 审核")
 
 
@@ -813,7 +813,7 @@ def test_process_okr_review_request_preserves_group_conversation_kind(tmp_path):
         conversation_id="cid-group",
         conversation_title="OKR 群",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -832,7 +832,7 @@ def test_process_okr_review_request_preserves_group_conversation_kind(tmp_path):
             },
             "system_actions": [{"type": "persist_okr_review", "request_id": request_id}],
             "domain_payload": {
-                "person_name": "韩露",
+                "person_name": "吴婷",
                 "period_label": "2026 Q2",
                 "summary": "1 个 KR 已审核。",
                 "items": [

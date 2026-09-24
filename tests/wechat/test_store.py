@@ -399,7 +399,7 @@ def test_normalize_user_rejected_wechat_deliveries_is_terminal_and_idempotent(tm
         single_chat=True,
         trigger_message_id="msg-1",
         trigger_create_time="2026-08-12 00:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please do not send this.",
     )
     delivery_id = store.create_wechat_delivery(

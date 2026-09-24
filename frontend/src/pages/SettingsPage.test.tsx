@@ -436,12 +436,12 @@ describe("SettingsPage", () => {
   it("shows the WeChat reply scope editor inline instead of linking away", async () => {
     getSkillFeatures.mockResolvedValueOnce({ features: [{ feature_id: "wechat_auto_reply", name: "WeChat Auto Reply", description: "", skills: ["ceo-wechat"], enabled: true, status: "ready" }], skills: [] });
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
-    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Morgan", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
 
     renderSettings("/settings?tab=connectors&connector=wechat");
 
     expect(await screen.findByRole("heading", { name: "微信自动回复对象" })).toBeInTheDocument();
-    expect(await screen.findAllByText("Melody")).toHaveLength(1);
+    expect(await screen.findAllByText("Morgan")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "保存回复范围" })).toBeDisabled();
     expect(screen.queryByRole("link", { name: "打开回复范围" })).not.toBeInTheDocument();
     expect(screen.queryByText("unknown")).not.toBeInTheDocument();
@@ -654,7 +654,7 @@ describe("SettingsPage", () => {
 
   it("shows idle guidance before any WeChat target search", async () => {
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
-    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Morgan", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
 
     renderSettings("/settings?tab=connectors&connector=wechat");
 
@@ -665,9 +665,9 @@ describe("SettingsPage", () => {
   it("submits a WeChat target search with Enter and reports visible results", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
-    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Morgan", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechatTargets.mockResolvedValueOnce({ items: [
-      { account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true },
+      { account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Morgan", trigger_mode: "every_inbound_text", enabled: true },
       { account_id: "wx-account", target_type: "direct", target_id: "alex", conversation_id: "alex", display_name: "Alex", trigger_mode: "every_inbound_text", enabled: false },
     ], account_id: "wx-account", meta: { page: 1, page_size: 50, total: 2, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
 
@@ -684,9 +684,9 @@ describe("SettingsPage", () => {
   it("does not repeat selected WeChat targets in search results", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
-    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Morgan", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechatTargets.mockResolvedValueOnce({ items: [
-      { account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true },
+      { account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Morgan", trigger_mode: "every_inbound_text", enabled: true },
       { account_id: "wx-account", target_type: "direct", target_id: "alex", conversation_id: "alex", display_name: "Alex", trigger_mode: "every_inbound_text", enabled: false },
     ], account_id: "wx-account", meta: { page: 1, page_size: 50, total: 2, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
 
@@ -695,7 +695,7 @@ describe("SettingsPage", () => {
     await user.click(await screen.findByRole("button", { name: "搜索" }));
 
     expect(await screen.findByText("Alex")).toBeInTheDocument();
-    expect(screen.getAllByText("Melody")).toHaveLength(1);
+    expect(screen.getAllByText("Morgan")).toHaveLength(1);
   });
 
   it("recovers from an inline WeChat reply scope load failure", async () => {
@@ -703,7 +703,7 @@ describe("SettingsPage", () => {
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechat
       .mockRejectedValueOnce(new Error("回复范围暂时不可用"))
-      .mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+      .mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Morgan", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
 
     renderSettings("/settings?tab=connectors&connector=wechat");
 
@@ -711,7 +711,7 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("status", { name: "回复范围同步状态" })).toHaveTextContent("加载失败");
     await user.click(screen.getByRole("button", { name: "重试加载回复范围" }));
 
-    expect(await screen.findByText("Melody")).toBeInTheDocument();
+    expect(await screen.findByText("Morgan")).toBeInTheDocument();
     expect(screen.getByRole("status", { name: "回复范围同步状态" })).toHaveTextContent("已同步");
     expect(listWechat).toHaveBeenCalledTimes(2);
   });
@@ -719,9 +719,9 @@ describe("SettingsPage", () => {
   it("keeps selected WeChat targets while searching and reports a successful save", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
-    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Morgan", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechatTargets.mockResolvedValueOnce({ items: [
-      { account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true },
+      { account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Morgan", trigger_mode: "every_inbound_text", enabled: true },
       { account_id: "wx-account", target_type: "direct", target_id: "alex", conversation_id: "alex", display_name: "Alex", trigger_mode: "every_inbound_text", enabled: false },
     ], account_id: "wx-account", meta: { page: 1, page_size: 50, total: 2, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     saveWechatReplyScope.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });

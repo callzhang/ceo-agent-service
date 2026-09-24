@@ -323,7 +323,7 @@ from app.universal_context import UniversalTaskContext, build_universal_context
 
 def _message(message_id: str, text: str) -> DingTalkMessage:
     return DingTalkMessage(
-        sender_name="Mina",
+        sender_name="Avery",
         sender_staff_id="staff-1",
         open_message_id=message_id,
         content=text,
@@ -520,7 +520,7 @@ def _context() -> UniversalTaskContext:
         conversation_title="HR",
         single_chat=False,
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="帮我找几个挑战的话题和分身讨论",
         context_messages=[],
         required_dependencies=["dws"],
@@ -533,7 +533,7 @@ def test_parse_universal_plan_json_from_codex_jsonl_item_text():
     payload = {
         "planner_version": "2026-07-20",
         "task_kind": "reply",
-        "reason": "Mina 要求具体话题建议。",
+        "reason": "Avery 要求具体话题建议。",
         "dependencies": ["dws"],
         "actions": [
             {
@@ -1201,7 +1201,7 @@ def _context():
         conversation_title="HR",
         single_chat=False,
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="回应一下",
         context_messages=[],
         required_dependencies=["dws"],
@@ -1745,7 +1745,7 @@ def test_universal_send_reply_executor_persists_sent_attempt(tmp_path):
             "conversation_id": "cid-1",
             "conversation_title": "HR",
             "trigger_message_id": "msg-1",
-            "trigger_sender": "Mina",
+            "trigger_sender": "Avery",
             "trigger_text": "回应一下",
         },
         payload={"text": "收到，我来处理。"},
@@ -2262,7 +2262,7 @@ def test_attempt_detail_shows_universal_planner_status(tmp_path):
         conversation_id="cid-1",
         conversation_title="HR",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="回应一下",
         action="send_reply",
         sensitivity_kind="general",

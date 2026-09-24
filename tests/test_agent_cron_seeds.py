@@ -23,7 +23,6 @@ from app.agent_cron.scheduler import (
 )
 from app.agent_cron.seeds import (
     DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT,
-    LEGACY_OA_CONSUMER_PROMPT,
     seed_scheduled_tasks,
 )
 from app.agent_runtime_contracts import (
@@ -423,12 +422,9 @@ def test_reseeding_preserves_user_edits_when_adopting_a_legacy_fixed_check(
     assert "$stardust-oa-people-review" in repeated.prompt
     assert "$stardust-oa-attendance-travel-review" in repeated.prompt
     assert "$stardust-oa-cloud-resource-review" in repeated.prompt
-    assert "钉钉审批审阅原则.md" not in repeated.prompt
     assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in repeated.prompt
     assert "rule_coverage" in repeated.prompt
     assert "needs_human" in repeated.prompt
-    assert "审批人必须是申请人的下属" in repeated.prompt
-    assert "算法部门绩效或薪酬" in repeated.prompt
     assert [ref.skill_name for ref in repeated.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
@@ -473,77 +469,8 @@ def test_oa_seed_binds_generic_and_stardust_finance_review_skills(
     assert "$stardust-oa-people-review" in task.prompt
     assert "$stardust-oa-attendance-travel-review" in task.prompt
     assert "$stardust-oa-cloud-resource-review" in task.prompt
-    assert "钉钉审批审阅原则.md" not in task.prompt
     assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in task.prompt
     assert [ref.skill_name for ref in task.skill_refs] == [
-        "dingtalk-oa-approval",
-        "stardust-oa-finance-review",
-        "stardust-oa-project-review",
-        "stardust-oa-contract-review",
-        "stardust-oa-people-review",
-        "stardust-oa-attendance-travel-review",
-        "stardust-oa-cloud-resource-review",
-    ]
-
-
-def test_oa_seed_migrates_previous_repository_default_prompt_and_skill_refs(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "oa-default-prompt-migration.sqlite3")
-    options = _options(
-        tmp_path,
-        store,
-        healthy_routes={"codex_oauth"},
-        operation_skills=("stardust-oa-finance-review",),
-    )
-    old_refs = tuple(
-        ScheduledTaskSkillRef(
-            skill_source="operation",
-            skill_name=name,
-            position=index,
-        )
-        for index, name in enumerate(
-            (
-                "dingtalk-oa-approval",
-                "stardust-oa-finance-review",
-                "stardust-oa-project-review",
-                "stardust-oa-contract-review",
-                "stardust-oa-people-review",
-                "stardust-oa-attendance-travel-review",
-            )
-        )
-    )
-    original = store.create_scheduled_task(
-        migration_key="dingtalk-oa-check-v1",
-        name="用户自定义名称",
-        description="用户自定义描述",
-        prompt=LEGACY_OA_CONSUMER_PROMPT,
-        command="scan-oa-approvals",
-        cron_expression="0 0 * * * *",
-        timezone_name="Asia/Shanghai",
-        skill_refs=old_refs,
-        enabled=True,
-        now=NOW,
-    )
-
-    updated = _task_by_key(
-        seed_scheduled_tasks(
-            store=store,
-            options=options,
-            working_directory=tmp_path,
-            now=NOW + timedelta(minutes=1),
-        ),
-        "dingtalk-oa-check-v1",
-    )
-
-    assert updated.id == original.id
-    assert updated.version == original.version + 1
-    assert updated.name == original.name
-    assert updated.description == original.description
-    assert updated.prompt != LEGACY_OA_CONSUMER_PROMPT
-    assert "钉钉审批审阅原则.md" not in updated.prompt
-    assert "只依据通用审批 Skill 与匹配的 Stardust 业务 Skill" in updated.prompt
-    assert [ref.skill_name for ref in updated.skill_refs] == [
         "dingtalk-oa-approval",
         "stardust-oa-finance-review",
         "stardust-oa-project-review",
@@ -1660,3 +1587,16 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
             assert task.prompt and task.skill_refs
         assert task.runtime_id == ""
         assert store.list_scheduled_task_runs(task.id) == ()
+
+
+def test_the_default_oa_prompt_names_no_document_and_no_personal_rule() -> None:
+    """Derek, 2026-09-23: rules live only in Skills, and this repository is public.
+
+    The default named a background principles document the agent must not read,
+    and carried Derek's own approval rules. Those belong in his scheduled task,
+    not in every install's default.
+    """
+    from app.agent_cron.seeds import OA_CONSUMER_PROMPT
+
+    assert ".md" not in OA_CONSUMER_PROMPT
+    assert "Derek" not in OA_CONSUMER_PROMPT

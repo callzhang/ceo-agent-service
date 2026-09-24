@@ -69,8 +69,8 @@ def test_work_item_keeps_input_small():
             "summary": "客户交付项目今天确认 P0 风险，需要 owner 给 ETA。",
             "project_name": "客户交付项目",
             "context": {
-                "sender": "Mina",
-                "participants": ["Mina", "Derek"],
+                "sender": "Avery",
+                "participants": ["Avery", "Derek"],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "项目群",
             },
@@ -1379,7 +1379,7 @@ def _work_item(project_name="售前知识库"):
             "summary": "售前知识库需要补齐来源链接，owner 是 Alex。",
             "project_name": project_name,
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": ["Alex"],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "售前群",
@@ -2053,7 +2053,7 @@ def test_sent_reply_enqueues_conversation_work_item(tmp_path):
         open_message_id="mid-1",
         conversation_title="项目群",
         single_chat=False,
-        sender_name="Mina",
+        sender_name="Avery",
         sender_user_id="user-1",
         create_time="2026-06-07 09:00:00",
         content="@Derek 这个项目需要 Alex 三天内给进展",

@@ -93,11 +93,11 @@ def test_sender_rpc_exposes_only_bounded_accessibility_operations():
     assert service.dispatch("check_readiness", {}) == "ready"
     assert service.dispatch("request_accessibility", {}) == "ready"
     assert service.dispatch("open_and_identify", {
-        "target_label": "Melody",
+        "target_label": "Morgan",
         "expected_recent_text": "那他为啥问我要材料呢",
-    }) == "Melody"
+    }) == "Morgan"
     assert service.dispatch("send", {
-        "target_label": "Melody",
+        "target_label": "Morgan",
         "expected_recent_text": "那他为啥问我要材料呢",
         "reply_text": "收到",
     }) == {
@@ -107,7 +107,7 @@ def test_sender_rpc_exposes_only_bounded_accessibility_operations():
         "failure_reason": "",
     }
     assert service.dispatch("send", {
-        "target_label": "Melody", "reply_text": "现在发", "skip_idle_wait": True,
+        "target_label": "Morgan", "reply_text": "现在发", "skip_idle_wait": True,
     })["action_performed"] is True
     assert runner.calls[-1][-1] is True
     assert service.dispatch("recall_last_outbound", {"text": "收到"}) is True
@@ -115,7 +115,7 @@ def test_sender_rpc_exposes_only_bounded_accessibility_operations():
         service.dispatch("run_applescript", {"script": "arbitrary"})
     with pytest.raises(module.SenderIpcError, match="reply_text"):
         service.dispatch("send", {
-            "target_label": "Melody", "reply_text": "x" * 10_001,
+            "target_label": "Morgan", "reply_text": "x" * 10_001,
         })
     with pytest.raises(module.SenderIpcError, match="unsupported method"):
         service.dispatch("preflight", {"activate": True})
@@ -138,10 +138,10 @@ def test_sender_client_round_trip_over_owner_only_socket():
         assert client.check_readiness() == "ready"
         assert client.request_accessibility() == "ready"
         assert client.open_and_identify(
-            "Melody", expected_recent_text="那他为啥问我要材料呢",
-        ) == "Melody"
+            "Morgan", expected_recent_text="那他为啥问我要材料呢",
+        ) == "Morgan"
         result = client.send(
-            "Melody", "收到",
+            "Morgan", "收到",
             expected_recent_text="那他为啥问我要材料呢",
         )
         assert result == AccessibilityResult(True, True, "fp-1")

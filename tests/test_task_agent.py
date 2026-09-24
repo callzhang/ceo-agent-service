@@ -407,7 +407,7 @@ def _work_item(project_name="售前知识库"):
             "summary": "售前知识库需要补齐来源链接，owner 是 Alex。",
             "project_name": project_name,
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": ["Alex"],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "售前群",
@@ -613,7 +613,7 @@ def _low_confidence_minutes_work_item() -> WorkItem:
             },
             "summary": "\n".join(
                 [
-                    "> **参与人**: 磊哥, susu, 刘瑞安Alan, 胡明, 张静, Mina 邹",
+                    "> **参与人**: 磊哥, susu, 刘瑞安Alan, 胡明, 张静, Avery",
                     "# Transcript",
                     "[00:01] 刘瑞安Alan: 第一段",
                     "[00:02] 刘瑞安Alan: 第二段",
@@ -1072,19 +1072,19 @@ def test_work_item_accepts_task_routing_signals():
             "source": {
                 "type": "reply_attempt",
                 "ref": "1992",
-                "title": "Lily",
+                "title": "Riley",
                 "conversation_id": "cid-lily",
-                "conversation_title": "Lily",
+                "conversation_title": "Riley",
                 "created_at": "2026-06-28 09:44:05",
             },
-            "summary": "Lily反馈海外数据合规P0追错owner。",
+            "summary": "Riley反馈海外数据合规P0追错owner。",
             "project_name": "",
             "context": {
-                "sender": "Lily",
+                "sender": "Riley",
                 "sender_user_id": "lily-user-1",
-                "participants": ["Lily"],
+                "participants": ["Riley"],
                 "source_conversation_kind": "direct",
-                "source_conversation_title": "Lily",
+                "source_conversation_title": "Riley",
             },
             "task_signals": {
                 "possible_task_update": True,
@@ -1115,17 +1115,17 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
     )
     todo_id = store.create_work_todo(
         project_id=project_id,
-        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        title="李明恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         status="open",
         priority="P0",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         target_conversation_id="cid-lily",
         target_kind="direct",
         question_text="海外数据合规 P0 当前状态是什么？",
@@ -1137,19 +1137,19 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
             "source": {
                 "type": "reply_attempt",
                 "ref": "1992",
-                "title": "Lily",
+                "title": "Riley",
                 "conversation_id": "cid-lily",
-                "conversation_title": "Lily",
+                "conversation_title": "Riley",
                 "created_at": "2026-06-28 09:44:05",
             },
-            "summary": "Lily反馈海外数据合规P0追错owner，这个是胡明和运维负责。",
+            "summary": "Riley反馈海外数据合规P0追错owner，这个是胡明和运维负责。",
             "project_name": "",
             "context": {
-                "sender": "Lily",
-                "sender_user_id": "144339455824043200",
-                "participants": ["Lily"],
+                "sender": "Riley",
+                "sender_user_id": "100000000000000001",
+                "participants": ["Riley"],
                 "source_conversation_kind": "direct",
-                "source_conversation_title": "Lily",
+                "source_conversation_title": "Riley",
             },
             "task_signals": {
                 "possible_task_update": True,
@@ -1189,7 +1189,7 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
     assert f'"id": {follow_up_id}' in prompt
     assert f'"follow_up_id": {follow_up_id}' in prompt
     assert "海外数据合规 P0 当前状态是什么？" in prompt
-    assert "张丽丽恢复海外数据合规项目当前状态与未完成清单" in prompt
+    assert "李明恢复海外数据合规项目当前状态与未完成清单" in prompt
 
 
 def test_task_agent_prompt_does_not_embed_candidate_specific_workflow():
@@ -1207,7 +1207,7 @@ def test_task_agent_prompt_does_not_embed_candidate_specific_workflow():
             "project_name": "刘芸婷国际销售工程师候选人评估与后续推进",
             "context": {
                 "sender": "张静",
-                "participants": ["张静", "Melody", "刘芸婷"],
+                "participants": ["张静", "Morgan", "刘芸婷"],
                 "source_conversation_kind": "minutes",
                 "source_conversation_title": "刘芸婷一面",
             },
@@ -1234,22 +1234,22 @@ def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
         status="active",
         priority="P0",
         risk_level="high",
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
     )
     todo_id = store.create_work_todo(
         project_id=project_id,
-        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        title="李明恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         status="open",
         priority="P0",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         target_conversation_id="cid-lily",
         target_kind="direct",
         question_text="海外数据合规 P0 当前状态是什么？",
@@ -1258,11 +1258,11 @@ def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
     )
     item = _follow_up_reply_work_item(
         source_ref="1992",
-        summary="Lily反馈海外数据合规P0追错owner，应由胡明和运维负责。",
+        summary="Riley反馈海外数据合规P0追错owner，应由胡明和运维负责。",
         conversation_id="cid-lily",
-        conversation_title="Lily",
-        sender="Lily",
-        sender_user_id="144339455824043200",
+        conversation_title="Riley",
+        sender="Riley",
+        sender_user_id="100000000000000001",
         created_at="2026-06-28 09:44:05",
     )
     codex = FakeCodex(
@@ -1287,23 +1287,23 @@ def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
                 ),
                 "related_people": [],
                 "goal": "完成海外数据合规和中美开发隔离闭环。",
-                "background": "Lily反馈该P0事项应由胡明和运维负责，不能继续追Lily。",
+                "background": "Riley反馈该P0事项应由胡明和运维负责，不能继续追Riley。",
                 "memory_context": _memory_context(),
                 "facts": [
                     {
-                        "description": "Lily反馈海外数据合规P0 owner应为胡明和运维。",
+                        "description": "Riley反馈海外数据合规P0 owner应为胡明和运维。",
                         "source": "reply_attempt:1992",
                         "created": "2026-06-28 09:44:05",
                         "updated": "2026-06-28 09:44:05",
                     }
                 ],
-                "current_state": "已纠正owner归属，原Lily follow-up应停止。",
+                "current_state": "已纠正owner归属，原Riley follow-up应停止。",
                 "blocker": "",
                 "next_step": "后续如需确认进展，应问胡明或运维。",
                 "next_follow_up_at": "",
                 "follow_up_mode": "none",
                 "source_conversations": [
-                    {"conversation_id": "cid-lily", "title": "Lily"}
+                    {"conversation_id": "cid-lily", "title": "Riley"}
                 ],
             },
             "todo_changes": [
@@ -1332,14 +1332,14 @@ def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
                     "reason": "owner_corrected_by_reply",
                     "evidence_check": {
                         "source": "reply_attempt:1992",
-                        "summary": "Lily说明该事项由胡明和运维负责。",
+                        "summary": "Riley说明该事项由胡明和运维负责。",
                     },
                     "next_due_at": None,
                     "owner_user_id": None,
                     "owner_name": None,
                 }
             ],
-            "update_summary": "停止追Lily并修正海外数据合规owner。",
+            "update_summary": "停止追Riley并修正海外数据合规owner。",
             "merge_reason": "follow-up reply corrected owner",
             "memory_recall_used": True,
             "confidence": 0.86,
@@ -1487,7 +1487,7 @@ def test_process_work_item_discards_ambiguous_follow_up_reply_without_changes(
         project_id=project_id,
         title="补齐售前方案材料",
         owner_user_id="owner-2",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P2",
     )
@@ -1495,7 +1495,7 @@ def test_process_work_item_discards_ambiguous_follow_up_reply_without_changes(
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="owner-2",
-        owner_name="Mina",
+        owner_name="Avery",
         target_conversation_id="cid-presales",
         target_kind="direct",
         question_text="售前方案材料补齐了吗？",
@@ -1504,10 +1504,10 @@ def test_process_work_item_discards_ambiguous_follow_up_reply_without_changes(
     )
     item = _follow_up_reply_work_item(
         source_ref="2002",
-        summary="Mina只回复已处理，但没有说明处理了什么，也没有完成证据。",
+        summary="Avery只回复已处理，但没有说明处理了什么，也没有完成证据。",
         conversation_id="cid-presales",
-        conversation_title="Mina",
-        sender="Mina",
+        conversation_title="Avery",
+        sender="Avery",
         sender_user_id="owner-2",
         created_at="2026-06-28 12:00:00",
         project_name="售前方案推进",
@@ -1743,21 +1743,21 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
         status="active",
         priority="P0",
         risk_level="high",
-        owner_name="张丽丽(Lily)",
+        owner_name="李明(Riley)",
     )
     todo_id = store.create_work_todo(
         project_id=project_id,
-        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        title="李明恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         status="open",
         priority="P0",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         target_conversation_id="cid-lily",
         target_kind="direct",
         question_text="海外数据合规 P0 当前状态是什么？",
@@ -1786,11 +1786,11 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
                 ),
                 "related_people": [],
                 "goal": "",
-                "background": "Lily反馈该P0事项由胡明和运维负责，不能继续追Lily。",
+                "background": "Riley反馈该P0事项由胡明和运维负责，不能继续追Riley。",
                 "memory_context": _memory_context(),
                 "facts": [
                     {
-                        "description": "Lily反馈海外数据合规P0 owner应为胡明和运维。",
+                        "description": "Riley反馈海外数据合规P0 owner应为胡明和运维。",
                         "source": "reply_attempt:1992",
                         "created": "2026-06-28 09:44:05",
                         "updated": "2026-06-28 09:44:05",
@@ -1834,14 +1834,14 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
                     "reason": "owner_corrected_by_reply",
                     "evidence_check": {
                         "source": "reply_attempt:1992",
-                        "summary": "Lily说明该事项由胡明和运维负责。",
+                        "summary": "Riley说明该事项由胡明和运维负责。",
                     },
                     "next_due_at": None,
                     "owner_user_id": None,
                     "owner_name": None,
                 }
             ],
-            "update_summary": "停止追Lily并修正海外数据合规owner。",
+            "update_summary": "停止追Riley并修正海外数据合规owner。",
             "merge_reason": "follow-up reply corrected owner",
             "memory_recall_used": True,
             "confidence": 0.86,
@@ -1886,9 +1886,9 @@ def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_pat
         project_id=project_id,
         title="将唐华 L5/对外总监 title 的 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
-        owner_name="邹婧玮(Mina 邹)",
+        owner_name="钱芳(Avery)",
         owner_evidence_json=json.dumps(
-            _owner_evidence("mina-user-1", "邹婧玮(Mina 邹)")
+            _owner_evidence("mina-user-1", "钱芳(Avery)")
         ),
         status="open",
         priority="P1",
@@ -1900,7 +1900,7 @@ def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_pat
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="邹婧玮(Mina 邹)",
+        owner_name="钱芳(Avery)",
         target_conversation_id="cid-mina",
         target_kind="direct",
         question_text="基于唐华 offer 推进事项，这个一页纸完成了吗？",
@@ -1918,7 +1918,7 @@ def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_pat
                 "memory_context": _memory_context(),
                 "facts": [
                     {
-                        "description": "Mina clarified that routine HR offer-flow steps should not become separate reminders.",
+                        "description": "Avery clarified that routine HR offer-flow steps should not become separate reminders.",
                         "source": "reply_attempt:2163",
                         "created": "2026-07-01 10:50:17",
                         "updated": "2026-07-01 10:50:17",
@@ -1947,7 +1947,7 @@ def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_pat
                     },
                 }
             ],
-            "update_summary": "Canceled noisy routine-process TODO after Mina feedback.",
+            "update_summary": "Canceled noisy routine-process TODO after Avery feedback.",
             "merge_reason": "matched existing Marketing recruiting project and TODO",
             "memory_recall_used": True,
             "confidence": 0.86,
@@ -2056,9 +2056,9 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
         project_id=project_id,
         title="整理本周最需要改的3场会议",
         owner_user_id="mina-user-1",
-        owner_name="邹婧玮(Mina 邹)",
+        owner_name="钱芳(Avery)",
         owner_evidence_json=json.dumps(
-            _owner_evidence("mina-user-1", "邹婧玮(Mina 邹)")
+            _owner_evidence("mina-user-1", "钱芳(Avery)")
         ),
         status="open",
         priority="P1",
@@ -2070,7 +2070,7 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="邹婧玮(Mina 邹)",
+        owner_name="钱芳(Avery)",
         target_conversation_id="cid-mina",
         target_kind="direct",
         question_text="旧问题：本周会议分析完成了吗？",
@@ -2079,7 +2079,7 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
         scheduled_at="2026-07-16T10:00:00+08:00",
     )
     updated_question = (
-        "Mina，基于你反馈待办必须有真实事项和 context，"
+        "Avery，基于你反馈待办必须有真实事项和 context，"
         "本周最需要改的3场具体会议是否已写清问题、改法和用途？"
     )
     decision = TaskAgentDecision.model_validate(
@@ -2098,7 +2098,7 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
                     "todo_id": todo_id,
                     "title": "整理本周最需要改的3场具体会议，并写清问题、改法和用途",
                     "owner_user_id": "mina-user-1",
-                    "owner_name": "邹婧玮(Mina 邹)",
+                    "owner_name": "钱芳(Avery)",
                     "status": "open",
                     "priority": "P1",
                     "deadline_at": "2026-07-17T18:00:00+08:00",
@@ -2113,12 +2113,12 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
                     "follow_up_id": follow_up_id,
                     "todo_id": todo_id,
                     "action": "keep_open",
-                    "reason": "保留跟进，但按 Mina 的反馈更新问题上下文。",
+                    "reason": "保留跟进，但按 Avery 的反馈更新问题上下文。",
                     "evidence_check": {"source": "reply_attempt:2704"},
                     "next_due_at": "2026-07-17T10:00:00+08:00",
                 }
             ],
-            "update_summary": "按 Mina 反馈更新待办上下文。",
+            "update_summary": "按 Avery 反馈更新待办上下文。",
             "merge_reason": "matched existing meeting-governance TODO",
             "memory_recall_used": True,
             "confidence": 0.88,
@@ -2138,7 +2138,7 @@ def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
     assert follow_up.status == "draft"
     assert follow_up.suppressed_reason == ""
     assert follow_up.question_text == updated_question
-    assert follow_up.reaction_summary == "保留跟进，但按 Mina 的反馈更新问题上下文。"
+    assert follow_up.reaction_summary == "保留跟进，但按 Avery 的反馈更新问题上下文。"
 
 
 def test_follow_up_change_rejects_missing_positive_follow_up_id(tmp_path):
@@ -2423,9 +2423,9 @@ def test_apply_decision_creates_dingtalk_todo_for_updated_todo(
                     "todo_id": todo_id,
                     "title": "给客户同步最新验收 ETA",
                     "owner_user_id": "owner-2",
-                    "owner_name": "Mina",
+                    "owner_name": "Avery",
                     "owner_evidence": _owner_evidence(
-                        "owner-2", "Mina", "reply_attempt:owner-change"
+                        "owner-2", "Avery", "reply_attempt:owner-change"
                     ),
                     "deadline_at": "2026-07-02 18:00:00",
                 }
@@ -4458,7 +4458,7 @@ def test_task_agent_prompt_requires_existing_follow_up_repair_without_inventing_
 
 def test_task_agent_prompt_uses_skill_for_important_vs_routine_process_boundary():
     work_item = _work_item()
-    work_item.summary = "Mina: 这种事情没必要创建待办，我不办这人也没法发 offer。"
+    work_item.summary = "Avery: 这种事情没必要创建待办，我不办这人也没法发 offer。"
     prompt = build_task_agent_prompt(
         work_item,
         candidate_prompt="候选上下文为空。",
@@ -4715,7 +4715,7 @@ def test_process_work_item_restores_structured_project_for_update_repair(
             ),
             "project_name": "客户交付",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "客户群",
@@ -5589,7 +5589,7 @@ def test_task_agent_decision_supports_follow_up_changes():
                 "owner_name": "Ming Hu(胡明)/运维",
                 "related_people": [],
                 "goal": "",
-                "background": "Lily反馈该P0事项应由胡明和运维负责。",
+                "background": "Riley反馈该P0事项应由胡明和运维负责。",
                 "memory_context": _memory_context(),
                 "facts": [],
                 "current_state": "",
@@ -5606,17 +5606,17 @@ def test_task_agent_decision_supports_follow_up_changes():
                     "follow_up_id": 1566,
                     "todo_id": 3720,
                     "action": "reassign",
-                    "reason": "Lily clarified the P0 follow-up belongs to Ming Hu and ops.",
+                    "reason": "Riley clarified the P0 follow-up belongs to Ming Hu and ops.",
                     "evidence_check": {
                         "source": "reply_attempt:1992",
-                        "summary": "Lily说明该事项由胡明和运维负责。",
+                        "summary": "Riley说明该事项由胡明和运维负责。",
                     },
                     "next_due_at": None,
                     "owner_user_id": "02412744671048909",
                     "owner_name": "Ming Hu(胡明)/运维",
                 }
             ],
-            "update_summary": "停止追Lily并修正owner口径。",
+            "update_summary": "停止追Riley并修正owner口径。",
             "merge_reason": "follow-up reply corrected owner",
             "memory_recall_used": True,
             "confidence": 0.86,
@@ -5629,7 +5629,7 @@ def test_task_agent_decision_supports_follow_up_changes():
     assert decision.follow_up_changes[0].follow_up_id == 1566
     assert decision.follow_up_changes[0].todo_id == 3720
     assert decision.follow_up_changes[0].action == "reassign"
-    assert decision.follow_up_changes[0].reason.startswith("Lily clarified")
+    assert decision.follow_up_changes[0].reason.startswith("Riley clarified")
     assert decision.follow_up_changes[0].next_due_at is None
     assert decision.follow_up_changes[0].owner_user_id == "02412744671048909"
 
@@ -5935,7 +5935,7 @@ def test_process_work_item_repairs_project_patch_that_would_erase_metadata(
         tags_json='["customer"]',
         owner_user_id="owner-1",
         owner_name="Alex",
-        related_people_json='[{"user_id":"reviewer-1","name":"Mina"}]',
+        related_people_json='[{"user_id":"reviewer-1","name":"Avery"}]',
         goal="完成可复用知识库",
         background="客户交付材料持续沉淀",
     )
@@ -5985,7 +5985,7 @@ def test_process_work_item_repairs_project_patch_that_would_erase_metadata(
     assert project.tags_json == '["customer"]'
     assert project.owner_user_id == "owner-1"
     assert project.owner_name == "Alex"
-    assert project.related_people_json == '[{"user_id":"reviewer-1","name":"Mina"}]'
+    assert project.related_people_json == '[{"user_id":"reviewer-1","name":"Avery"}]'
     assert project.goal == "完成可复用知识库"
     assert project.background == "客户交付材料持续沉淀"
     assert project.current_state == "周报已生成。"

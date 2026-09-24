@@ -38,7 +38,6 @@ CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS = {
         "the principal should reply."
     ),
     "forbidden_reply_text_terms": "",
-    "oa_approval_rules": "management/OA/钉钉审批审阅原则.md",
 }
 LEGACY_UNCUSTOMIZED_DEVELOPER_PROMPT_SHA256S = {
     "832b1ac0a1fb01c8a86366e3b9f191b69e496b53e424c69cdaeb9b3203b06241",

@@ -1738,7 +1738,7 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
             )
         )
         store.mark_okr_review_request_done(request.id, codex_session_id="session-okr")
-        return "韩露 2026 Q2 OKR 审核结果"
+        return "吴婷 2026 Q2 OKR 审核结果"
 
     monkeypatch.setattr("app.structured_agent.StructuredCodexRunner", FakeStructuredRunner)
     monkeypatch.setattr("app.okr_review.process_okr_review_request", fake_process)
@@ -1749,18 +1749,18 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
     enqueue_trigger_task(
         store,
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         single_chat=True,
         trigger_message_id="msg-okr-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_text="帮我审核 OKR",
         sender_open_dingtalk_id="open-hanlu-1",
     )
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-okr-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-hanlu-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -1783,7 +1783,7 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
     assert processed == 1
     assert request.status == "done"
     assert sent_reply is not None
-    assert sent_reply.reply_text == "韩露 2026 Q2 OKR 审核结果（by明哥分身）"
+    assert sent_reply.reply_text == "吴婷 2026 Q2 OKR 审核结果（by明哥分身）"
     assert sent_reply.recall_key == "okr-recall-1"
     prepared = loaded.get_outbound_postfix("dingtalk", f"okr-review:{request_id}:chunk:1")
     assert prepared is not None
@@ -1798,7 +1798,7 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
             True,
             "msg-okr-1",
             "open-hanlu-1",
-            "韩露 2026 Q2 OKR 审核结果（by明哥分身）",
+            "吴婷 2026 Q2 OKR 审核结果（by明哥分身）",
         ),
     ]
     assert capsys.readouterr().out == "process-okr-reviews processed=1\n"
@@ -1887,7 +1887,7 @@ def test_process_okr_reviews_command_dry_run_does_not_send_reply(
     def fake_process(*, store, runner, request, single_chat):
         calls.append(("process", request.id, single_chat))
         store.mark_okr_review_request_done(request.id, codex_session_id="session-okr")
-        return "韩露 2026 Q2 OKR 审核结果"
+        return "吴婷 2026 Q2 OKR 审核结果"
 
     monkeypatch.setattr("app.structured_agent.StructuredCodexRunner", FakeStructuredRunner)
     monkeypatch.setattr("app.okr_review.process_okr_review_request", fake_process)
@@ -1898,18 +1898,18 @@ def test_process_okr_reviews_command_dry_run_does_not_send_reply(
     enqueue_trigger_task(
         store,
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         single_chat=True,
         trigger_message_id="msg-okr-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_text="帮我审核 OKR",
         sender_open_dingtalk_id="open-hanlu-1",
     )
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-okr-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-hanlu-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -1966,18 +1966,18 @@ def test_process_okr_reviews_command_does_not_record_unverified_native_reply(
     enqueue_trigger_task(
         store,
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         single_chat=True,
         trigger_message_id="msg-okr-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_text="帮我审核 OKR",
         sender_open_dingtalk_id="open-hanlu-1",
     )
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-okr-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-hanlu-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -2020,18 +2020,18 @@ def test_process_okr_reviews_command_marks_process_failure_and_reraises(
     enqueue_trigger_task(
         store,
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         single_chat=True,
         trigger_message_id="msg-okr-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_text="帮我审核 OKR",
         sender_open_dingtalk_id="open-hanlu-1",
     )
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
-        conversation_title="韩露",
+        conversation_title="吴婷",
         trigger_message_id="msg-okr-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_sender_user_id="user-hanlu-1",
         trigger_text="帮我审核 OKR",
         period_label="2026 Q2",
@@ -2371,7 +2371,7 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
             "summary": "售前知识库需要补齐来源链接。",
             "project_name": "售前知识库",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": ["Alex"],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "售前群",
@@ -2420,7 +2420,7 @@ def test_process_work_items_command_processes_existing_input_without_feature_gat
             "summary": "已有事项等待处理。",
             "project_name": "已有项目",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "已有事项群",
@@ -2524,7 +2524,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
             "summary": "售前知识库需要补齐来源链接。",
             "project_name": "售前知识库",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": ["Alex"],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "售前群",
@@ -2584,7 +2584,7 @@ def test_process_work_items_command_does_not_batch_claim_after_failure(
             "summary": "第一条会失败。",
             "project_name": "失败项目",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "测试群",
@@ -2597,7 +2597,7 @@ def test_process_work_items_command_does_not_batch_claim_after_failure(
             "summary": "第二条不能被同批提前领取。",
             "project_name": "后续项目",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "测试群",
@@ -2670,7 +2670,7 @@ def test_process_work_items_command_backoffs_transient_codex_failure(
             "summary": "第一条临时失败。",
             "project_name": "临时失败项目",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "测试群",
@@ -2734,7 +2734,7 @@ def test_process_work_items_command_fails_native_codex_missing_auth_header(
             "summary": "第一条认证临时失败。",
             "project_name": "认证临时失败项目",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "测试群",
@@ -2806,7 +2806,7 @@ def test_process_work_items_command_keeps_native_missing_header_terminal_after_l
             "summary": "认证还没有恢复。",
             "project_name": "认证等待项目",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "测试群",
@@ -2874,7 +2874,7 @@ def test_process_work_items_command_fails_codex_transport_failure_after_limit(
             "summary": "provider 暂时不可用。",
             "project_name": "provider 等待项目",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "测试群",
@@ -2943,7 +2943,7 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
             "summary": "同步关键项目状态。",
             "project_name": "容量暂停项目",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "测试群",
@@ -3011,7 +3011,7 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
                 "summary": "Capacity recovery across days.",
                 "project_name": "Capacity recovery project",
                 "context": {
-                    "sender": "Mina",
+                    "sender": "Avery",
                     "participants": [],
                     "source_conversation_kind": "group",
                     "source_conversation_title": "Test group",
@@ -3079,7 +3079,7 @@ def test_process_work_items_command_fails_typed_external_failure_after_limit(
             "summary": "外部依赖暂时不可用。",
             "project_name": "外部依赖恢复项目",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "测试群",
@@ -3141,7 +3141,7 @@ def test_process_work_items_command_fails_missing_memory_recall_tool_event(
             "summary": "第一条需要重试记忆校验。",
             "project_name": "记忆校验项目",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "测试群",
@@ -3203,7 +3203,7 @@ def test_process_work_items_command_discards_cross_project_follow_up_draft(
             "summary": "第一条跨项目 follow-up 失败。",
             "project_name": "跨项目 follow-up 项目",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": [],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "测试群",
@@ -3335,7 +3335,7 @@ def test_process_work_items_command_passes_dws_client_to_task_agent(
             "summary": "给客户同步验收 ETA。",
             "project_name": "客户交付",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": ["Alex"],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "客户群",
@@ -3399,7 +3399,7 @@ def test_process_work_items_command_respects_zero_max_batches(
             "summary": "售前知识库需要补齐来源链接。",
             "project_name": "售前知识库",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": ["Alex"],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "售前群",
@@ -3562,7 +3562,7 @@ def test_backfill_routine_process_todos_dry_run_reports_without_writing(
         project_id=project_id,
         title="将唐华 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -3570,7 +3570,7 @@ def test_backfill_routine_process_todos_dry_run_reports_without_writing(
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         target_conversation_id="cid-mina",
         target_kind="direct",
         question_text="这个一页纸完成了吗？",
@@ -3615,7 +3615,7 @@ def test_backfill_routine_process_todos_apply_cancels_todo_and_suppresses_follow
         project_id=project_id,
         title="将唐华 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -3623,7 +3623,7 @@ def test_backfill_routine_process_todos_apply_cancels_todo_and_suppresses_follow
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         target_conversation_id="cid-mina",
         target_kind="direct",
         question_text="这个一页纸完成了吗？",
@@ -3632,7 +3632,7 @@ def test_backfill_routine_process_todos_apply_cancels_todo_and_suppresses_follow
     link_id = store.create_work_todo_dingtalk_link(
         work_todo_id=todo_id,
         executor_user_id="mina-user-1",
-        executor_name="Mina",
+        executor_name="Avery",
         title_snapshot="将唐华 offer 和试用目标压实成一页纸",
         deadline_at_snapshot="2026-07-03 18:00:00",
         priority_snapshot="P1",
@@ -3699,7 +3699,7 @@ def test_backfill_routine_process_todos_rerun_repairs_partial_cancellation(
         project_id=project_id,
         title="将唐华 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="cancelled",
         priority="P1",
         blocker="routine HR offer-flow step",
@@ -3708,7 +3708,7 @@ def test_backfill_routine_process_todos_rerun_repairs_partial_cancellation(
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         target_conversation_id="cid-mina",
         target_kind="direct",
         question_text="这个一页纸完成了吗？",
@@ -3749,7 +3749,7 @@ def test_backfill_routine_process_todos_rerun_repairs_missing_audit(tmp_path):
         project_id=project_id,
         title="将唐华 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="cancelled",
         priority="P1",
         blocker="routine HR offer-flow step",
@@ -3788,7 +3788,7 @@ def test_backfill_routine_process_todos_rerun_complete_is_noop(tmp_path):
         project_id=project_id,
         title="将唐华 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="cancelled",
         priority="P1",
         blocker="routine HR offer-flow step",
@@ -3864,7 +3864,7 @@ def test_backfill_routine_process_todos_targets_followups_beyond_global_page(
         project_id=project_id,
         title="将唐华 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -3872,7 +3872,7 @@ def test_backfill_routine_process_todos_targets_followups_beyond_global_page(
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         target_conversation_id="cid-mina",
         target_kind="direct",
         question_text="这个一页纸完成了吗？",
@@ -3911,7 +3911,7 @@ def test_backfill_routine_process_todos_suppresses_all_followups_for_todo(
         project_id=project_id,
         title="将唐华 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -3920,7 +3920,7 @@ def test_backfill_routine_process_todos_suppresses_all_followups_for_todo(
             project_id=project_id,
             todo_id=todo_id,
             owner_user_id="mina-user-1",
-            owner_name="Mina",
+            owner_name="Avery",
             target_conversation_id="cid-mina",
             target_kind="direct",
             question_text=f"这个一页纸完成了吗？#{index}",
@@ -4687,7 +4687,7 @@ def test_send_attempt_command_queues_existing_calendar_attempt(
         conversation_id="cid-1",
         conversation_title="Calendar",
         trigger_message_id="msg-1",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="[日程]",
         action="no_reply",
         sensitivity_kind="general",
@@ -5667,7 +5667,7 @@ def test_rerun_message_command_does_not_overwrite_worker_task_state(
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-20 09:56:09",
-        trigger_sender="Claire",
+        trigger_sender="Casey",
         trigger_text="@Alex 这个怎么处理？",
     )
     task = store.claim_reply_tasks(1)[0]
@@ -5974,9 +5974,9 @@ def test_export_feedback_command_writes_reviewed_attempts_jsonl(tmp_path, capsys
     store = cli.AutoReplyStore(settings.db_path)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
-        conversation_title="Claire",
+        conversation_title="Casey",
         trigger_message_id="msg-1",
-        trigger_sender="Claire",
+        trigger_sender="Casey",
         trigger_text="明哥上会啦",
         action="send_reply",
         sensitivity_kind="general",
@@ -8080,7 +8080,7 @@ def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path, monkey
         single_chat=True,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-28 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="第一条",
     )
     claimed = store.claim_reply_tasks(limit=1)[0]
@@ -8128,7 +8128,7 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(
             "summary": "StarBench 演示需要补齐专家审核流程。",
             "project_name": "StarBench 演示",
             "context": {
-                "sender": "Mina",
+                "sender": "Avery",
                 "participants": ["Alex"],
                 "source_conversation_kind": "file",
                 "source_conversation_title": "AI听记/demo.md",
@@ -8186,7 +8186,7 @@ def test_run_service_keeps_terminal_user_rejected_wechat_delivery(tmp_path, monk
         single_chat=True,
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-28 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="第一条",
     )
     delivery_id = store.create_wechat_delivery(
@@ -8748,7 +8748,7 @@ def test_process_work_items_waits_for_paused_routes_without_spending_attempts(
                 "summary": "Every runtime route is paused.",
                 "project_name": "Route outage project",
                 "context": {
-                    "sender": "Mina",
+                    "sender": "Avery",
                     "participants": [],
                     "source_conversation_kind": "group",
                     "source_conversation_title": "Test group",
@@ -8788,7 +8788,7 @@ def _route_outage_work_input(store) -> int:
                 "summary": "The last live route failed on the provider.",
                 "project_name": "Route outage project",
                 "context": {
-                    "sender": "Mina",
+                    "sender": "Avery",
                     "participants": [],
                     "source_conversation_kind": "group",
                     "source_conversation_title": "Test group",

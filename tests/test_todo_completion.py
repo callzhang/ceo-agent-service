@@ -192,7 +192,7 @@ def test_todo_completion_scanner_enqueues_open_todo_without_follow_up(tmp_path):
         title="完成候选人 Colin 终面反馈",
         description="需要确认候选人评估是否已经同步。",
         owner_user_id="owner-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )

@@ -1465,13 +1465,13 @@ def test_a_group_reply_named_reply_to_message_is_executable() -> None:
     from app.consumer_agent import structured_dingtalk_outgoing_text_key
 
     action = ProposedAction(
-        action_identity="reply_to_msgv7E5f7wwrk+BJ7RIjou51A==_settlement-policy-boundary",
+        action_identity="reply_to_msgExampleTriggerAAAAAAA==_settlement-policy-boundary",
         capability="dingtalk-chat",
         operation="reply_to_message",
         description="在星尘-财务管理群中回复触发消息",
         target={
-            "conversation_id": "cidFaNFX+QuPxKF3hNNAjhbVw==",
-            "message_id": "msgv7E5f7wwrk+BJ7RIjou51A==",
+            "conversation_id": "cidFinanceGroupExampleAAA==",
+            "message_id": "msgExampleTriggerAAAAAAA==",
         },
         payload={"content": "先作为讨论稿，正式执行前再确认计算口径。"},
     )

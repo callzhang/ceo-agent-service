@@ -56,18 +56,18 @@ def test_work_item_accepts_task_routing_signals():
             "source": {
                 "type": "reply_attempt",
                 "ref": "1992",
-                "title": "Lily",
+                "title": "Riley",
                 "conversation_id": "cid-lily",
-                "conversation_title": "Lily",
+                "conversation_title": "Riley",
                 "created_at": "2026-06-28 09:44:05",
             },
-            "summary": "Lily反馈海外数据合规P0追错owner。",
+            "summary": "Riley反馈海外数据合规P0追错owner。",
             "project_name": "",
             "context": {
-                "sender": "Lily",
-                "participants": ["Lily"],
+                "sender": "Riley",
+                "participants": ["Riley"],
                 "source_conversation_kind": "direct",
-                "source_conversation_title": "Lily",
+                "source_conversation_title": "Riley",
             },
             "task_signals": {
                 "possible_task_update": True,
@@ -107,7 +107,7 @@ def test_task_agent_decision_supports_follow_up_changes():
                 "owner_name": "Ming Hu(胡明)/运维",
                 "related_people": [],
                 "goal": "",
-                "background": "Lily反馈该P0事项应由胡明和运维负责。",
+                "background": "Riley反馈该P0事项应由胡明和运维负责。",
                 "memory_context": _memory_context(),
                 "facts": [],
                 "current_state": "",
@@ -128,12 +128,12 @@ def test_task_agent_decision_supports_follow_up_changes():
                     "reaction_summary": "",
                     "evidence_check": {
                         "source": "reply_attempt:1992",
-                        "summary": "Lily说明该事项由胡明和运维负责。",
+                        "summary": "Riley说明该事项由胡明和运维负责。",
                     },
                     "scheduled_at": "",
                 }
             ],
-            "update_summary": "停止追Lily并修正owner口径。",
+            "update_summary": "停止追Riley并修正owner口径。",
             "merge_reason": "follow-up reply corrected owner",
             "memory_recall_used": True,
             "confidence": 0.86,
@@ -340,17 +340,17 @@ def test_list_recent_follow_ups_for_task_context_matches_conversation_or_owner(t
     )
     todo_id = store.create_work_todo(
         project_id=project_id,
-        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        title="李明恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         status="open",
         priority="P0",
     )
     matched_by_conversation = store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         target_conversation_id="cid-lily",
         target_kind="direct",
         question_text="两份投资人开放文档是否已经按会议口径改完？",
@@ -361,8 +361,8 @@ def test_list_recent_follow_ups_for_task_context_matches_conversation_or_owner(t
     matched_by_owner = store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         target_conversation_id="cid-other",
         target_kind="direct",
         question_text="DataPack开放包是否收口？",
@@ -383,7 +383,7 @@ def test_list_recent_follow_ups_for_task_context_matches_conversation_or_owner(t
 
     candidates = store.list_recent_follow_ups_for_task_context(
         conversation_id="cid-lily",
-        owner_user_id="144339455824043200",
+        owner_user_id="100000000000000001",
         since="2026-06-26 00:00:00",
         limit=10,
     )
@@ -501,17 +501,17 @@ def test_process_batch_enqueues_task_work_item_for_no_reply_near_sent_follow_up(
     )
     todo_id = store.create_work_todo(
         project_id=project_id,
-        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        title="李明恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         status="open",
         priority="P0",
     )
     store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         target_conversation_id="cid-1",
         target_kind="direct",
         question_text="海外数据合规 P0 当前状态是什么？",
@@ -519,22 +519,22 @@ def test_process_batch_enqueues_task_work_item_for_no_reply_near_sent_follow_up(
         sent_at="2026-06-28 09:00:00",
     )
     trigger = message("这个是胡明和运维在负责。")
-    trigger.sender_name = "Lily"
-    trigger.sender_user_id = "144339455824043200"
+    trigger.sender_name = "Riley"
+    trigger.sender_user_id = "100000000000000001"
     trigger.create_time = "2026-06-28 09:44:05"
-    dws = FakeDws([conversation(single_chat=True, title="Lily")], {"cid-1": [trigger]})
+    dws = FakeDws([conversation(single_chat=True, title="Riley")], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.NO_REPLY,
             reason="只是说明owner口径，不需要对话回复。",
-            audit_summary="Lily说明海外数据合规P0由胡明和运维负责。",
+            audit_summary="Riley说明海外数据合规P0由胡明和运维负责。",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     worker.store = store
 
     worker._process_batch(
-        conversation(single_chat=True, title="Lily"),
+        conversation(single_chat=True, title="Riley"),
         [trigger],
         [],
         ignore_existing_attempt=True,
@@ -545,7 +545,7 @@ def test_process_batch_enqueues_task_work_item_for_no_reply_near_sent_follow_up(
     payload = json.loads(claimed[0].payload_json)
     assert payload["task_signals"]["possible_task_update"] is True
     assert payload["task_signals"]["mentions_follow_up"] is True
-    assert payload["context"]["sender"] == "Lily"
+    assert payload["context"]["sender"] == "Riley"
     assert "胡明和运维" in payload["summary"]
 ```
 
@@ -557,8 +557,8 @@ def test_process_batch_does_not_enqueue_no_reply_without_task_context(
     monkeypatch,
 ):
     trigger = message("收到")
-    trigger.sender_name = "Lily"
-    dws = FakeDws([conversation(single_chat=True, title="Lily")], {"cid-1": [trigger]})
+    trigger.sender_name = "Riley"
+    dws = FakeDws([conversation(single_chat=True, title="Riley")], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.NO_REPLY,
@@ -569,7 +569,7 @@ def test_process_batch_does_not_enqueue_no_reply_without_task_context(
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker._process_batch(
-        conversation(single_chat=True, title="Lily"),
+        conversation(single_chat=True, title="Riley"),
         [trigger],
         [],
         ignore_existing_attempt=True,
@@ -717,17 +717,17 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
     )
     todo_id = store.create_work_todo(
         project_id=project_id,
-        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        title="李明恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         status="open",
         priority="P0",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         target_conversation_id="cid-lily",
         target_kind="direct",
         question_text="海外数据合规 P0 当前状态是什么？",
@@ -739,19 +739,19 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
             "source": {
                 "type": "reply_attempt",
                 "ref": "1992",
-                "title": "Lily",
+                "title": "Riley",
                 "conversation_id": "cid-lily",
-                "conversation_title": "Lily",
+                "conversation_title": "Riley",
                 "created_at": "2026-06-28 09:44:05",
             },
-            "summary": "Lily反馈海外数据合规P0追错owner，这个是胡明和运维负责。",
+            "summary": "Riley反馈海外数据合规P0追错owner，这个是胡明和运维负责。",
             "project_name": "",
             "context": {
-                "sender": "Lily",
-                "sender_user_id": "144339455824043200",
-                "participants": ["Lily"],
+                "sender": "Riley",
+                "sender_user_id": "100000000000000001",
+                "participants": ["Riley"],
                 "source_conversation_kind": "direct",
-                "source_conversation_title": "Lily",
+                "source_conversation_title": "Riley",
             },
             "task_signals": {
                 "possible_task_update": True,
@@ -919,21 +919,21 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
         status="active",
         priority="P0",
         risk_level="high",
-        owner_name="张丽丽(Lily)",
+        owner_name="李明(Riley)",
     )
     todo_id = store.create_work_todo(
         project_id=project_id,
-        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        title="李明恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         status="open",
         priority="P0",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
-        owner_user_id="144339455824043200",
-        owner_name="张丽丽(Lily)",
+        owner_user_id="100000000000000001",
+        owner_name="李明(Riley)",
         target_conversation_id="cid-lily",
         target_kind="direct",
         question_text="海外数据合规 P0 当前状态是什么？",
@@ -958,11 +958,11 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
                 "owner_name": "Ming Hu(胡明)/运维",
                 "related_people": [],
                 "goal": "",
-                "background": "Lily反馈该P0事项由胡明和运维负责，不能继续追Lily。",
+                "background": "Riley反馈该P0事项由胡明和运维负责，不能继续追Riley。",
                 "memory_context": _memory_context(),
                 "facts": [
                     {
-                        "description": "Lily反馈海外数据合规P0 owner应为胡明和运维。",
+                        "description": "Riley反馈海外数据合规P0 owner应为胡明和运维。",
                         "source": "reply_attempt:1992",
                         "created": "2026-06-28 09:44:05",
                         "updated": "2026-06-28 09:44:05",
@@ -1002,12 +1002,12 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
                     "reaction_summary": "",
                     "evidence_check": {
                         "source": "reply_attempt:1992",
-                        "summary": "Lily说明该事项由胡明和运维负责。",
+                        "summary": "Riley说明该事项由胡明和运维负责。",
                     },
                     "scheduled_at": "",
                 }
             ],
-            "update_summary": "停止追Lily并修正海外数据合规owner。",
+            "update_summary": "停止追Riley并修正海外数据合规owner。",
             "merge_reason": "follow-up reply corrected owner",
             "memory_recall_used": True,
             "confidence": 0.86,
@@ -1271,13 +1271,13 @@ git commit -m "refactor: remove keyword follow-up completion handling"
 - Modify: `tests/test_task_agent.py`
 - Modify: `tests/test_worker.py`
 
-- [ ] **Step 1: Add Lily acceptance test**
+- [ ] **Step 1: Add Riley acceptance test**
 
 Add a task-agent integration test that creates:
 
 - project `海外数据合规与中美开发隔离闭环`
-- open Lily-owned TODO
-- sent Lily follow-up
+- open Riley-owned TODO
+- sent Riley follow-up
 - Work Item from `reply_attempt:1992`
 - FakeCodex decision that updates owner to Hu Ming, suppresses the old follow-up, and does not close the TODO
 
@@ -1460,7 +1460,7 @@ Spec coverage:
 - Reply agent only creates Work Items: Task 3.
 - Task agent owns association and task writes: Tasks 4, 5, and 7.
 - No keyword completion logic in `follow_up.py`: Task 6.
-- Lily acceptance case: Tasks 5 and 7.
+- Riley acceptance case: Tasks 5 and 7.
 - DingTalk Todo only syncs after task decision closes TODO with evidence: Task 5 preserves existing close path; Task 6 removes keyword close path; Task 7 verifies close evidence path.
 - Documentation and runtime verification: Task 8.
 

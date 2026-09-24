@@ -80,7 +80,7 @@ def test_build_turn_prompt_includes_material_references_for_agent_reading():
                 open_message_id="msg-1",
                 conversation_title="CEO-2 管理群",
                 single_chat=False,
-                sender_name="韩露",
+                sender_name="吴婷",
                 create_time="2026-06-08 18:46:32",
                 content="@Alex Chen(明哥) 看第二份材料",
             )
@@ -93,14 +93,14 @@ def test_build_turn_prompt_includes_material_references_for_agent_reading():
                 kind="dingtalk_doc",
                 reference="https://alidocs.dingtalk.com/i/nodes/doc123?utm_scene=team_space",
                 source_message_id="msg-1",
-                source_sender="韩露",
+                source_sender="吴婷",
                 source_time="2026-06-08 18:46:32",
             ),
             MaterialReferenceContext(
                 kind="dingtalk_minutes",
                 reference="7632756964333134343836383736303334325f3435313431363430365f35",
                 source_message_id="msg-1",
-                source_sender="韩露",
+                source_sender="吴婷",
                 source_time="2026-06-08 18:46:32",
             ),
         ],
@@ -243,7 +243,7 @@ In `app/user_prompt_blocks.py`, add a new block after `linked_documents_block` f
             "  类型: dingtalk_doc\n"
             "  引用: https://alidocs.dingtalk.com/i/nodes/example\n"
             "  来源消息: msg-1\n"
-            "  发送人: Mina\n"
+            "  发送人: Avery\n"
             "  时间: 2026-06-08 10:00:00"
         ),
     ),
@@ -536,7 +536,7 @@ def test_calendar_invite_still_injects_calendar_context_before_codex(
             title="OpenAI 合作讨论",
             start_time="2026-06-08 20:00:00",
             end_time="2026-06-08 21:00:00",
-            organizer_name="韩露",
+            organizer_name="吴婷",
             response_status="needsAction",
             raw={"description": "讨论 OpenAI 合作主叙事"},
         )
@@ -809,7 +809,7 @@ def test_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
         conversation_id="cid-1",
         conversation_title="CEO-2 管理群",
         trigger_message_id="msg-1",
-        trigger_sender="韩露",
+        trigger_sender="吴婷",
         trigger_text="@Alex 看材料",
         action="send_reply",
         sensitivity_kind="general",
@@ -1143,7 +1143,7 @@ Run:
 
 ```bash
 .venv/bin/ceo-agent rerun-message \
-  --conversation-id 'cidrPwEErLfR2dQm4mAnntBLw==' \
+  --conversation-id 'cidExampleGroupBBBBBBBBBB==' \
   --message-id 'msgrALNoH4g/TBTgZwRm7YMAA==' \
   --force-new-decision
 ```
@@ -1151,7 +1151,7 @@ Run:
 Expected:
 
 ```text
-rerun-message processed conversation_id=cidrPwEErLfR2dQm4mAnntBLw== message_id=msgrALNoH4g/TBTgZwRm7YMAA== force_new_decision=True
+rerun-message processed conversation_id=cidExampleGroupBBBBBBBBBB== message_id=msgrALNoH4g/TBTgZwRm7YMAA== force_new_decision=True
 ```
 
 Then inspect latest attempts:

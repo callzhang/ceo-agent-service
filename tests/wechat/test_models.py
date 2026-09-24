@@ -10,7 +10,7 @@ def test_group_message_mentions_exact_current_account():
         conversation_id="group-1",
         message_id="msg-1",
         sender_id="member-1",
-        sender_display_name="Mina",
+        sender_display_name="Avery",
         conversation_type="group",
         direction="inbound",
         sent_at="2026-07-17T10:00:00+08:00",

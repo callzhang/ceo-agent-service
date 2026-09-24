@@ -1902,7 +1902,7 @@ def message(
         open_message_id=message_id,
         conversation_title="Friday",
         single_chat=single_chat,
-        sender_name="周俊杰",
+        sender_name="孙伟",
         sender_open_dingtalk_id="sender-1",
         sender_user_id=sender_user_id,
         message_type=message_type,
@@ -2377,11 +2377,11 @@ def test_required_channels_ignore_channel_urls_in_injected_skill_text(
     worker = make_worker(tmp_path, FakeDws([], {}), FakeCodex([]), monkeypatch)
     worker.store.enqueue_reply_task(
         conversation_id="cid-1",
-        conversation_title="Mina",
+        conversation_title="Avery",
         single_chat=True,
         trigger_message_id="msg-1",
         trigger_create_time="2026-09-20 19:08:08",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="先发个实习offer吧",
         trigger_message_json=json.dumps(
             {
@@ -2634,7 +2634,7 @@ def test_call_dws_suppresses_message_read_system_errors(tmp_path: Path, monkeypa
     notifications = []
     system_error = DwsError(
         "dws command failed with exit code 1; "
-        "command=dws contact user search --query 于海龙 --format json; "
+        "command=dws contact user search --query 于郑涛 --format json; "
         'stderr={"error":{"actions":["Check network, proxy, and DNS settings"],'
         '"cause":"net/http: TLS handshake timeout"}}',
         code="1",
@@ -3707,7 +3707,7 @@ def test_single_chat_calendar_reply_is_not_suppressed_by_approximate_topic_match
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-calendar-first",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text="[日程] 【线下】CTO面试 - 张振庭",
         action="send_reply",
         sensitivity_kind="calendar",
@@ -3747,8 +3747,8 @@ def test_group_calendar_card_without_explicit_mention_is_ignored(
         single_chat=False,
         message_type="calendar",
     )
-    intro.sender_name = "Claire"
-    trigger.sender_name = "Claire"
+    intro.sender_name = "Casey"
+    trigger.sender_name = "Casey"
     dws = FakeDws([conversation(single_chat=False)], {"cid-1": [intro, trigger]})
     worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
     invite = DwsCalendarEvent(
@@ -3757,7 +3757,7 @@ def test_group_calendar_card_without_explicit_mention_is_ignored(
         start_time="2026-05-16T09:00:00+08:00",
         end_time="2026-05-16T10:00:00+08:00",
         description="请阅读官网反馈材料并给出修改建议。",
-        organizer="Claire",
+        organizer="Casey",
         self_response_status="needsAction",
         status="confirmed",
     )
@@ -3811,7 +3811,7 @@ def test_group_calendar_card_without_explicit_mention_does_not_use_context(
         start_time="2026-05-14T12:00:00+08:00",
         end_time="2026-05-14T12:30:00+08:00",
         description="客户表达、产品定位、agent 体验和上线风险。",
-        organizer="Claire",
+        organizer="Casey",
         self_response_status="accepted",
         status="confirmed",
     )
@@ -4098,17 +4098,17 @@ def test_recent_single_chat_recovery_uses_persisted_sender_identity(
     )
     worker.store.upsert_conversation(
         conversation_id="cid-mina",
-        title="Mina 邹",
+        title="Avery",
         single_chat=True,
         codex_session_id=None,
     )
     worker.store.enqueue_reply_task(
         conversation_id="cid-mina",
-        conversation_title="Mina 邹",
+        conversation_title="Avery",
         single_chat=True,
         trigger_message_id="msg-previous",
         trigger_create_time="2026-09-07 17:02:04",
-        trigger_sender="Mina 邹",
+        trigger_sender="Avery",
         trigger_text="上一条消息",
         trigger_message_json=json.dumps(
             {
@@ -4122,7 +4122,7 @@ def test_recent_single_chat_recovery_uses_persisted_sender_identity(
     recovered = worker._conversations_with_recent_single_chat_recovery([])
 
     assert len(recovered) == 1
-    assert recovered[0].title == "Mina 邹"
+    assert recovered[0].title == "Avery"
     assert recovered[0].direct_open_dingtalk_id == "mina-open-id"
 
 
@@ -4297,7 +4297,7 @@ def test_another_persons_agent_message_still_triggers_reply(
         message_id="msg-colleague-agent",
     ).model_copy(
         update={
-            "sender_name": "Mina 邹",
+            "sender_name": "Avery",
             "sender_user_id": "colleague-user-1",
             "sender_open_dingtalk_id": "colleague-open-id",
             "raw_payload": {"messageAiSendFlag": "DWS"},
@@ -4354,7 +4354,7 @@ def test_principal_group_message_without_the_agent_name_is_not_a_trigger(
     """Everything else the principal says in a room stays history."""
     monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
     spoken = message(
-        "@Claire Huang(Claire) 参考一下",
+        "@Casey Huang(Casey) 参考一下",
         message_id="msg-principal-spoken",
     ).model_copy(
         update={
@@ -7495,7 +7495,7 @@ def test_calendar_link_message_is_handled_as_calendar_invite(
         start_time="2026-05-30T14:00:00+08:00",
         end_time="2026-05-30T15:00:00+08:00",
         description="",
-        organizer="韩露",
+        organizer="吴婷",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -7558,7 +7558,7 @@ def test_calendar_invite_still_injects_calendar_context_before_codex(
         start_time="2026-05-30T14:00:00+08:00",
         end_time="2026-05-30T15:00:00+08:00",
         description="复盘 Hyperion 客户反馈，并确认下周跟进材料。",
-        organizer="韩露",
+        organizer="吴婷",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -7592,7 +7592,7 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
     )
     invite = DwsCalendarEvent(
         event_id="invite-1",
-        title="Preseen x Walmart",
+        title="Preseen x RetailCo",
         start_time="2026-05-16T09:00:00+08:00",
         end_time="2026-05-16T10:00:00+08:00",
         description="",
@@ -7626,7 +7626,7 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
     assert len(agent_runner(worker).calls) == 1
     prompt = assert_calendar_agent_contract(worker, dws)
     assert "dws calendar event list --start" in prompt
-    assert "Preseen x Walmart" not in prompt
+    assert "Preseen x RetailCo" not in prompt
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
@@ -8118,7 +8118,7 @@ def test_bare_calendar_card_prefers_pending_attendee_invite_over_resolved_sender
         title="融资对齐交流",
         start_time="2026-05-16T18:30:00+08:00",
         end_time="2026-05-16T19:00:00+08:00",
-        organizer="Lily",
+        organizer="Riley",
         self_response_status="accepted",
         status="confirmed",
     )
@@ -8670,7 +8670,7 @@ def test_calendar_retry_ignores_old_system_notification_skip(
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="",
-        organizer="Mina",
+        organizer="Avery",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -8737,7 +8737,7 @@ def test_calendar_invite_without_description_asks_for_attendance_reason(
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="",
-        organizer="Mina",
+        organizer="Avery",
     )
     existing = DwsCalendarEvent(
         event_id="event-1",
@@ -8840,7 +8840,7 @@ def test_calendar_invite_ignores_pending_overlapping_event(tmp_path: Path, monke
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="",
-        organizer="Mina",
+        organizer="Avery",
     )
     pending_existing = DwsCalendarEvent(
         event_id="event-1",
@@ -8890,7 +8890,7 @@ def test_calendar_invite_without_description_can_be_tentative_without_conflict(
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="",
-        organizer="Mina",
+        organizer="Avery",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -8933,7 +8933,7 @@ def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="需要 Alex 判断是否承诺本周交付，客户 CEO 会参加。",
-        organizer="Mina",
+        organizer="Avery",
     )
     existing = DwsCalendarEvent(
         event_id="event-1",
@@ -8985,7 +8985,7 @@ def test_calendar_prompt_includes_current_response_status(tmp_path: Path, monkey
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="过商机清单。",
-        organizer="韩露",
+        organizer="吴婷",
         self_response_status="accepted",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
@@ -9022,7 +9022,7 @@ def test_calendar_invite_for_document_review_replies_to_use_document_comment(
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="请 Alex 批阅官网文档并反馈修改意见。",
-        organizer="Mina",
+        organizer="Avery",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -9062,8 +9062,8 @@ def test_calendar_static_review_description_must_process_task_before_document_re
             "请根据官网反馈截图和评论直接给处理结论："
             "上线前必须改、后续可优化，并具体到把 A 改成 B。"
         ),
-        organizer="Mina",
-        comments=["Mina: 重点看首屏定位和客户案例模块，处理完请评论会议。"],
+        organizer="Avery",
+        comments=["Avery: 重点看首屏定位和客户案例模块，处理完请评论会议。"],
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -9105,7 +9105,7 @@ def test_calendar_response_accepts_agent_envelope_domain_payload(
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="讨论客户升级问题。",
-        organizer="Mina",
+        organizer="Avery",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -9279,7 +9279,7 @@ def test_calendar_invite_with_clear_value_auto_accepts_without_chat_reply(
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="客户 CEO 参加，需要 Alex 判断本周交付承诺。",
-        organizer="Mina",
+        organizer="Avery",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -9490,7 +9490,7 @@ def test_calendar_invite_no_reply_without_auto_accept_reason_does_not_accept(
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="同步信息。",
-        organizer="Mina",
+        organizer="Avery",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -9527,7 +9527,7 @@ def test_calendar_invite_agent_can_decline_without_chat_reply(
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="同步信息，不需要 Alex 输入。",
-        organizer="Mina",
+        organizer="Avery",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -9571,7 +9571,7 @@ def test_queued_calendar_response_completes_task_with_terminal_attempt_update(
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
         description="同步信息，不需要 Alex 输入。",
-        organizer="Mina",
+        organizer="Avery",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -9798,7 +9798,7 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text=trigger.content,
         action="oa_approval",
         sensitivity_kind="internal_finance",
@@ -9985,8 +9985,8 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-old-oa",
-        trigger_sender="周俊杰",
-        trigger_text="[Ding]周俊杰提醒您审批他的录用申请",
+        trigger_sender="孙伟",
+        trigger_text="[Ding]孙伟提醒您审批他的录用申请",
         action="oa_approval",
         sensitivity_kind="internal_personnel",
         codex_reason="退回",
@@ -12410,20 +12410,20 @@ def test_stale_processing_task_with_terminal_attempt_is_requeued_not_completed(
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     worker.store.enqueue_reply_task(
         conversation_id="cid-1",
-        conversation_title="Melody",
+        conversation_title="Morgan",
         single_chat=True,
         trigger_message_id="msg-calendar",
         trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Melody",
+        trigger_sender="Morgan",
         trigger_text=trigger.content,
         trigger_message_json=trigger.model_dump_json(),
     )
     claimed = worker.store.claim_reply_tasks(limit=1)[0]
     worker.store.record_reply_attempt(
         conversation_id="cid-1",
-        conversation_title="Melody",
+        conversation_title="Morgan",
         trigger_message_id="msg-calendar",
-        trigger_sender="Melody",
+        trigger_sender="Morgan",
         trigger_text=trigger.content,
         action="send_reply",
         sensitivity_kind="general",
@@ -12502,7 +12502,7 @@ def test_critical_info_unavailable_stop_with_error_fails_queued_task(
 def test_xiaoqing_unavailable_without_mcp_call_forces_retry(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Alex Chen(明哥) 请看一下候选人冯学震的录用申请")
+    trigger = message("@Alex Chen(明哥) 请看一下候选人赵强的录用申请")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     reason = "小青面试系统结构化读取能力暂时不可用。"
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
@@ -12629,7 +12629,7 @@ def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time=trigger.create_time,
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text=trigger.content,
         trigger_message_json=trigger.model_dump_json(),
     )
@@ -12637,7 +12637,7 @@ def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text=trigger.content,
         action="handoff_to_human",
         sensitivity_kind="general",
@@ -12901,7 +12901,7 @@ def test_existing_dry_run_attempt_does_not_call_codex_again(
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text=trigger.content,
         action="send_reply",
         sensitivity_kind="general",
@@ -12910,7 +12910,7 @@ def test_existing_dry_run_attempt_does_not_call_codex_again(
     )
     worker.store.update_reply_attempt(
         attempt_id,
-        final_reply_text="> 周俊杰: @Alex Chen(明哥) 这个怎么处理？\n\n"
+        final_reply_text="> 孙伟: @Alex Chen(明哥) 这个怎么处理？\n\n"
         "<@sender-user-1> 先按A方案走（by明哥分身）",
     )
 
@@ -12940,14 +12940,14 @@ def test_failed_send_retries_existing_final_reply_without_calling_codex(
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     script_completed_result(worker, operation_id="failed-send-rerun")
     final_reply = (
-        "> 周俊杰: @Alex Chen(明哥) 这个怎么处理？\n\n"
+        "> 孙伟: @Alex Chen(明哥) 这个怎么处理？\n\n"
         "<@sender-user-1> 先按A方案走（by明哥分身）"
     )
     attempt_id = worker.store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text=trigger.content,
         action="send_reply",
         sensitivity_kind="general",
@@ -13002,7 +13002,7 @@ def test_sent_reply_prevents_retry_when_latest_attempt_failed(
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text=trigger.content,
         action="stop_with_error",
         sensitivity_kind="general",
@@ -13035,14 +13035,14 @@ def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     script_completed_result(worker, operation_id="manual-failed-rerun")
     final_reply = (
-        "> 周俊杰: @Alex Chen(明哥) 这个怎么处理？\n\n"
+        "> 孙伟: @Alex Chen(明哥) 这个怎么处理？\n\n"
         "<@sender-user-1> 先按A方案走（by明哥分身）"
     )
     attempt_id = worker.store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text=trigger.content,
         action="send_reply",
         sensitivity_kind="general",
@@ -13079,7 +13079,7 @@ def test_rerun_message_cleans_legacy_group_reply_wrappers(tmp_path: Path, monkey
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text=trigger.content,
         action="send_reply",
         sensitivity_kind="general",
@@ -13088,7 +13088,7 @@ def test_rerun_message_cleans_legacy_group_reply_wrappers(tmp_path: Path, monkey
     worker.store.update_reply_attempt(
         attempt_id,
         final_reply_text=(
-            "> 周俊杰: 这个怎么处理？\n\n<@sender-user-1> 先按A方案走（by明哥分身）"
+            "> 孙伟: 这个怎么处理？\n\n<@sender-user-1> 先按A方案走（by明哥分身）"
         ),
         send_error="network",
     )
@@ -13139,7 +13139,7 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text=trigger.content,
         action="send_reply",
         sensitivity_kind="general",
@@ -13272,7 +13272,7 @@ def test_rerun_message_does_not_resend_when_trigger_already_has_sent_reply(
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text=trigger.content,
         action="send_reply",
         sensitivity_kind="general",
@@ -13314,7 +13314,7 @@ def test_force_new_rerun_can_resend_when_trigger_already_has_sent_reply(
         conversation_id="cid-1",
         conversation_title="Friday",
         trigger_message_id="msg-1",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text=trigger.content,
         action="send_reply",
         sensitivity_kind="general",
@@ -13593,9 +13593,9 @@ def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeyp
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     attempt_id = worker.store.record_reply_attempt(
         conversation_id="cid-old",
-        conversation_title="Mina 邹",
+        conversation_title="Avery",
         trigger_message_id="msg-old",
-        trigger_sender="Mina 邹",
+        trigger_sender="Avery",
         trigger_text="你先安装试试这个本地工具",
         action="handoff_to_human",
         sensitivity_kind="general",
@@ -14217,7 +14217,7 @@ def test_single_chat_recovery_processes_unseen_gap_before_later_seen_anchor(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我会处理这条。")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation("cid-1", "韩露", True, None)
+    worker.store.upsert_conversation("cid-1", "吴婷", True, None)
     worker.store.mark_seen("msg-seen-old", "cid-1")
     worker.store.mark_seen("msg-seen-new", "cid-1")
 
@@ -14434,7 +14434,7 @@ def test_single_chat_recovery_does_not_coalesce_across_current_user_context(
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
         monkeypatch,
     )
-    worker.store.upsert_conversation("cid-1", "韩露", True, None)
+    worker.store.upsert_conversation("cid-1", "吴婷", True, None)
     worker.store.mark_seen("msg-seen-anchor", "cid-1")
 
     assert worker.produce_once(recovery=True) == 2
@@ -14487,7 +14487,7 @@ def test_single_chat_recovery_keeps_unseen_message_and_calendar_invitation(
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
         monkeypatch,
     )
-    worker.store.upsert_conversation("cid-1", "韩露", True, None)
+    worker.store.upsert_conversation("cid-1", "吴婷", True, None)
     worker.store.mark_seen("msg-seen-anchor", "cid-1")
 
     assert worker.produce_once(recovery=True, calendar_only=False) == 2
@@ -14700,11 +14700,11 @@ def test_service_handoff_notification_is_not_enqueued_from_self_chat(
 
 def test_new_principal_mention_is_processed(tmp_path: Path, monkeypatch):
     latest = message(
-        "@Melody Xu（Melody） @Alex Chen（明哥）请明哥看一下2026年的战略主线这样写是否合适？[图片消息]",
+        "@Morgan（Morgan） @Alex Chen（明哥）请明哥看一下2026年的战略主线这样写是否合适？[图片消息]",
         message_id="msg-after-handoff",
     )
     latest.create_time = "2026-05-13 18:10:00"
-    latest.sender_name = "Melody"
+    latest.sender_name = "Morgan"
     dws = FakeDws([conversation()], {"cid-1": [latest]})
     dws.conversations[0].title = "26年董事会筹备组"
     codex = FakeCodex(
@@ -15043,7 +15043,7 @@ def test_message_before_current_user_reply_does_not_call_codex(
     )
     requester.create_time = "2026-05-13 08:45:50"
     manual_reply = principal_message(
-        "@周俊杰(周俊杰) 我merge了",
+        "@孙伟(孙伟) 我merge了",
         message_id="msg-self-after",
         create_time="2026-05-13 11:00:03",
     )
@@ -15072,7 +15072,7 @@ def test_message_after_current_user_reply_still_calls_codex(
         create_time="2026-05-13 15:15:14",
     )
     requester = message(
-        "@Alex Chen(明哥) 我和俊杰聊下",
+        "@Alex Chen(明哥) 我和孙伟聊下",
         message_id="msg-after-self",
     )
     requester.create_time = "2026-05-13 15:16:49"
@@ -15087,11 +15087,11 @@ def test_message_after_current_user_reply_still_calls_codex(
     worker.run_once()
 
     assert len(agent_runner(worker).calls) == 1
-    assert "@Alex Chen(明哥) 我和俊杰聊下" in agent_prompt(worker)
+    assert "@Alex Chen(明哥) 我和孙伟聊下" in agent_prompt(worker)
     runner = worker._test_agent_runner
     assert isinstance(runner, FakeAgentResultRunner)
     context = runner.calls[0][2]
-    assert context.trigger_text == "@Alex Chen(明哥) 我和俊杰聊下"
+    assert context.trigger_text == "@Alex Chen(明哥) 我和孙伟聊下"
     assert "这个ACL表@张晓民(Xiaomin张晓民) 看一下" in [
         item.text for item in context.messages
     ]
@@ -16767,7 +16767,7 @@ def test_codex_capacity_pause_skips_claiming_pending_reply_tasks(
         single_chat=False,
         trigger_message_id="msg-capacity",
         trigger_create_time="2026-05-13 10:00:00",
-        trigger_sender="周俊杰",
+        trigger_sender="孙伟",
         trigger_text="请处理这个事项",
         trigger_message_json="{}",
     )

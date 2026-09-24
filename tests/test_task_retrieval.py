@@ -215,7 +215,7 @@ def test_resolve_task_owner_display_summarizes_multiple_todo_owners(tmp_path):
     store.create_work_todo(
         project_id=project_id,
         title="任务 A",
-        owner_name="周俊杰",
+        owner_name="孙伟",
         owner_user_id="owner-1",
         status="open",
     )
@@ -229,7 +229,7 @@ def test_resolve_task_owner_display_summarizes_multiple_todo_owners(tmp_path):
     store.create_work_todo(
         project_id=project_id,
         title="任务 C",
-        owner_name="Mina",
+        owner_name="Avery",
         owner_user_id="owner-3",
         status="open",
     )
@@ -245,7 +245,7 @@ def test_resolve_task_owner_display_summarizes_multiple_todo_owners(tmp_path):
     todos = store.list_work_todos(project_id=project_id)
 
     assert project is not None
-    assert resolve_task_owner_display(project, todos) == "多人：周俊杰、张晓民、Mina 等 4 人"
+    assert resolve_task_owner_display(project, todos) == "多人：孙伟、张晓民、Avery 等 4 人"
 
 
 def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
@@ -257,7 +257,7 @@ def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
         priority="P1",
         risk_level="medium",
         owner_user_id="hr-owner",
-        owner_name="Mina",
+        owner_name="Avery",
         goal="招聘关键技术岗位",
         background="技术部候选人推进。",
         current_state="候选人评估中",
@@ -272,7 +272,7 @@ def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
         title="评估 Colin 售前解决方案候选人",
         description="确认技术面、售前方案能力、薪资预期和下一轮安排。",
         owner_user_id="hr-owner",
-        owner_name="Mina",
+        owner_name="Avery",
         priority="P1",
         deadline_at="2026-07-25 18:00:00",
         next_follow_up_at="2026-07-24 15:00:00",
@@ -282,7 +282,7 @@ def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="hr-owner",
-        owner_name="Mina",
+        owner_name="Avery",
         target_conversation_id="cid-hiring",
         target_kind="group",
         question_text="Colin 的复试结论和下一步安排定了吗？",
@@ -391,7 +391,7 @@ def test_render_project_task_details_uses_todo_owner_as_project_display_fallback
         project_id=project_id,
         title="确认客户验收 ETA",
         owner_user_id="owner-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -404,6 +404,6 @@ def test_render_project_task_details_uses_todo_owner_as_project_display_fallback
     payload = json.loads(render_project_task_details(details))
 
     assert payload[0]["project"]["id"] == project_id
-    assert payload[0]["project"]["owner"] == "Mina"
+    assert payload[0]["project"]["owner"] == "Avery"
     assert payload[0]["todos"][0]["id"] == todo_id
-    assert payload[0]["todos"][0]["owner"] == "Mina"
+    assert payload[0]["todos"][0]["owner"] == "Avery"

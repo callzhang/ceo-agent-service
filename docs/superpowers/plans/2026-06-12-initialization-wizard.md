@@ -1566,7 +1566,7 @@ def test_check_dry_run_fails_when_reply_task_backlog_exists(tmp_path: Path):
         single_chat=False,
         trigger_message_id="msg-1",
         trigger_create_time="2026-06-12 09:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="@Derek ping",
     )
 

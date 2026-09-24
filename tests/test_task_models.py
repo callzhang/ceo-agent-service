@@ -42,8 +42,8 @@ def test_work_item_keeps_input_small():
             "summary": "客户交付项目今天确认 P0 风险，需要 owner 给 ETA。",
             "project_name": "客户交付项目",
             "context": {
-                "sender": "Mina",
-                "participants": ["Mina", "Derek"],
+                "sender": "Avery",
+                "participants": ["Avery", "Derek"],
                 "source_conversation_kind": "group",
                 "source_conversation_title": "项目群",
             },

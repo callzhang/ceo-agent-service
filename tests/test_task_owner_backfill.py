@@ -10,7 +10,7 @@ def test_backfill_todo_owner_ids_dry_run_reports_unique_follow_up_owner(tmp_path
     todo_id = store.create_work_todo(
         project_id=project_id,
         title="补齐 owner id",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -18,7 +18,7 @@ def test_backfill_todo_owner_ids_dry_run_reports_unique_follow_up_owner(tmp_path
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         target_kind="direct",
         question_text="请同步进展。",
         status="sent",
@@ -42,7 +42,7 @@ def test_backfill_todo_owner_ids_apply_writes_owner_and_evidence(tmp_path):
     todo_id = store.create_work_todo(
         project_id=project_id,
         title="补齐 owner id",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -50,7 +50,7 @@ def test_backfill_todo_owner_ids_apply_writes_owner_and_evidence(tmp_path):
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="邹婧玮(Mina 邹)",
+        owner_name="钱芳(Avery)",
         target_kind="direct",
         question_text="请同步进展。",
         status="sent",
@@ -67,10 +67,10 @@ def test_backfill_todo_owner_ids_apply_writes_owner_and_evidence(tmp_path):
     assert result.changed == 1
     assert todo is not None
     assert todo.owner_user_id == "mina-user-1"
-    assert todo.owner_name == "Mina"
+    assert todo.owner_name == "Avery"
     evidence = json.loads(todo.owner_evidence_json)
     assert evidence["user_id"] == "mina-user-1"
-    assert evidence["name"] == "Mina"
+    assert evidence["name"] == "Avery"
     assert evidence["source"] == f"follow_up_drafts:{follow_up_id}"
     assert evidence["created_at"] == "2026-08-29 16:10:00"
     assert updates[0].source_type == "todo_owner_backfill"
@@ -83,7 +83,7 @@ def test_backfill_todo_owner_ids_skips_conflicting_follow_up_owners(tmp_path):
     todo_id = store.create_work_todo(
         project_id=project_id,
         title="补齐 owner id",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -91,7 +91,7 @@ def test_backfill_todo_owner_ids_skips_conflicting_follow_up_owners(tmp_path):
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         target_kind="direct",
         question_text="请同步进展。",
         status="sent",

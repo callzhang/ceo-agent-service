@@ -1564,7 +1564,7 @@ def test_scan_pending_oa_approvals_points_the_turn_at_our_own_skill(tmp_path):
 def test_scan_pending_oa_approvals_names_the_principal_to_the_turn(tmp_path):
     """The turn was only handed the applicant's id and guessed Derek's from it.
 
-    On 张丽丽's contract approval it took her userId 144339455824043200 for
+    On 李明's contract approval it took her userId 100000000000000001 for
     Derek's, concluded that Derek's own task belonged to someone else, and
     skipped it twice. The scanner already knows the principal -- it used that id
     to decide the task was his -- so it must say so outright.

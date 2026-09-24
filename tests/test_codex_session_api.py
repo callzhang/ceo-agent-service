@@ -30,7 +30,7 @@ def _seed_task_history(store: AutoReplyStore) -> tuple[int, int]:
         single_chat=False,
         trigger_message_id=trigger_message_id,
         trigger_create_time="2026-09-15 09:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Please review the release.",
         execution_generation="current-generation",
     )
@@ -79,7 +79,7 @@ def _seed_task_history(store: AutoReplyStore) -> tuple[int, int]:
                     conversation_id, conversation_title, trigger_message_id,
                     trigger_sender, trigger_text, action, sensitivity_kind,
                     agent_run_id, send_status
-                ) values (?, 'Codex session history', ?, 'Mina', 'old result',
+                ) values (?, 'Codex session history', ?, 'Avery', 'old result',
                           'agent_run', 'general', ?, 'failed')
                 """,
                 (conversation_id, trigger_message_id, historical_audit_run_id),
@@ -92,7 +92,7 @@ def _seed_task_history(store: AutoReplyStore) -> tuple[int, int]:
                     conversation_id, conversation_title, trigger_message_id,
                     trigger_sender, trigger_text, action, sensitivity_kind,
                     agent_run_id, send_status
-                ) values (?, 'Codex session history', ?, 'Mina', 'current result',
+                ) values (?, 'Codex session history', ?, 'Avery', 'current result',
                           'agent_run', 'general', ?, 'skipped')
                 """,
                 (conversation_id, trigger_message_id, current_audit_run_id),

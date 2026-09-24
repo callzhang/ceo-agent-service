@@ -24,7 +24,7 @@ from collections.abc import Iterable, Mapping
 # Each is a completed-action claim, not a plan ("将发送") or a recommendation
 # ("建议通过"), which stay outside this check. Phrases that usually describe
 # somebody else's action -- "已提交", "已通过" on their own -- are deliberately
-# absent: run 19542 only relayed that Lily had submitted a plan.
+# absent: run 19542 only relayed that Riley had submitted a plan.
 _CLAIM_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(pattern)
     for pattern in (

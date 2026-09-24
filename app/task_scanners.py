@@ -609,10 +609,9 @@ def scan_pending_oa_approvals(
                 f"[查看审批]({oa_url})\n"
                 # Name the principal outright. The turn was only ever handed the
                 # applicant's id, so it had to work out which id was Derek's and
-                # sometimes picked the one it had: on 张丽丽's contract approval it
-                # took her id 144339455824043200 for Derek's, concluded Derek's
-                # own task 103947112757 belonged to someone else, and skipped it
-                # twice.
+                # sometimes picked the one it had: on one contract approval it
+                # took the applicant's id for Derek's, concluded Derek's own task
+                # belonged to someone else, and skipped it twice.
                 + (
                     f"本条待办属于审批人 Derek（userId {current_user_id}），"
                     f"当前任务 taskId {task_id} 就是他的待办；"

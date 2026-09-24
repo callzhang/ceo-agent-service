@@ -188,28 +188,8 @@ OA_CONSUMER_PROMPT = (
     "适用条件、例外、审批权限与动作映射均有完整且有效的来源时，rule_coverage 才能为 1.0；"
     "否则低于 1.0，规则缺口进入 needs_human，不得自动批准或拒绝。申请人可补足的事实/"
     "材料缺口按通用 Skill 评论或退回，并在规则缺口并存时独立 needs_human。"
-    "个人规则：请假审批中，拟选审批人、代班人或交接相关人必须经组织架构核实为申请人的"
-    "下属（审批人必须是申请人的下属）；无法核实不得自动批准，转 Derek needs_human。"
-    "算法部门绩效或薪酬的最终决定必须由"
-    "Derek 本人作出，相关审批转 Derek needs_human。任何动作后重新读取 DingTalk。"
-    "不要在本 Prompt 重述制度阈值、金额或业务 Skill 中的通用审批规则。"
-)
-LEGACY_OA_CONSUMER_PROMPT = (
-    "使用 $dingtalk-oa-approval 与适用的 Stardust 业务 Skill 处理 Trigger 发现的真实 "
-    "DingTalk OA 待审批事项：$stardust-oa-finance-review、$stardust-oa-project-review、"
-    "$stardust-oa-contract-review、$stardust-oa-people-review、"
-    "$stardust-oa-attendance-travel-review。先按 live processCode 和表单事实分类；"
-    "跨类别事项必须组合适用的 Skill，不得仅因财务 Skill 无匹配规则卡就升级。"
-    "读取原始制度《钉钉审批审阅原则.md》（/Users/derek/Documents/memory/02_管理与组织/"
-    "management/OA/钉钉审批审阅原则.md）及对应业务 Skill 和其引用的规则文档；"
-    "个人具体规则仅按本 Prompt 执行，不得扩展为公司通用规则。只有当前事项的规则、"
-    "适用条件、例外、审批权限与动作映射均有完整且有效的来源时，rule_coverage 才能为 1.0；"
-    "否则低于 1.0，规则缺口进入 needs_human，不得自动批准或拒绝。申请人可补足的事实/"
-    "材料缺口按通用 Skill 评论或退回，并在规则缺口并存时独立 needs_human。"
-    "个人规则：请假审批中，拟选审批人、代班人或交接相关人必须经组织架构核实为申请人的"
-    "下属（审批人必须是申请人的下属）；无法核实不得自动批准，转 Derek needs_human。"
-    "算法部门绩效或薪酬的最终决定必须由 Derek 本人作出，相关审批转 Derek needs_human。"
     "任何动作后重新读取 DingTalk。"
+    "不要在本 Prompt 重述制度阈值、金额或业务 Skill 中的通用审批规则。"
 )
 MEETING_TODO_CONSUMER_PROMPT = (
     "使用 $ceo-meeting-work 核验 Trigger 提供的真实会议行动项证据，再使用 "
@@ -642,17 +622,6 @@ def _seed_oa_task(
             "stardust-oa-cloud-resource-review",
         ),
     )
-    legacy_skill_refs = _consumer_skill_refs(
-        options,
-        operation=(
-            "dingtalk-oa-approval",
-            "stardust-oa-finance-review",
-            "stardust-oa-project-review",
-            "stardust-oa-contract-review",
-            "stardust-oa-people-review",
-            "stardust-oa-attendance-travel-review",
-        ),
-    )
     adopted = store.adopt_scheduled_task_service_command(
         migration_key=DINGTALK_OA_MIGRATION_KEY,
         command=DINGTALK_OA_SERVICE_COMMAND,
@@ -660,8 +629,6 @@ def _seed_oa_task(
         seed_description=_default_copy(DINGTALK_OA_MIGRATION_KEY).description,
         consumer_prompt=OA_CONSUMER_PROMPT,
         consumer_skill_refs=skill_refs,
-        legacy_consumer_prompt=LEGACY_OA_CONSUMER_PROMPT,
-        legacy_consumer_skill_refs=legacy_skill_refs,
         now=now,
     )
     if adopted is not None:

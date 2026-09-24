@@ -91,7 +91,7 @@ def test_transcript_roster_evidence_accepts_current_user_who_did_not_speak():
         discovery_info(),
         {
             "paragraphs": [
-                {"nickName": "Claire", "paragraph": "我补齐调研。"},
+                {"nickName": "Casey", "paragraph": "我补齐调研。"},
                 {"nickName": "外部专家", "paragraph": "我补充案例。"},
             ]
         },
@@ -100,7 +100,7 @@ def test_transcript_roster_evidence_accepts_current_user_who_did_not_speak():
         ),
         speakers=[
             meeting_alignment_source.MeetingParticipant(
-                name="Claire", user_id="u-claire"
+                name="Casey", user_id="u-claire"
             ),
             meeting_alignment_source.MeetingParticipant(
                 name="外部专家", user_id=""
@@ -110,7 +110,7 @@ def test_transcript_roster_evidence_accepts_current_user_who_did_not_speak():
 
     assert [participant.name for participant in evidence.participants] == [
         "Derek",
-        "Claire",
+        "Casey",
         "外部专家",
     ]
 

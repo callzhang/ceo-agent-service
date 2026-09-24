@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make CEO Agent track only important work items while ignoring routine process steps and cleaning up noisy TODOs exposed by Mina's feedback.
+**Goal:** Make CEO Agent track only important work items while ignoring routine process steps and cleaning up noisy TODOs exposed by Avery's feedback.
 
 **Architecture:** Keep judgment inside the task agent prompt instead of adding a deterministic keyword filter. Use the existing `todo_changes.cancel` and `follow_up_changes.suppress` paths for noisy-TODO feedback. Add a conservative manual backfill command that cancels explicitly reviewed TODO IDs and suppresses their follow-ups with an audit trail.
 
@@ -18,7 +18,7 @@
 
 - Modify `tests/test_task_agent.py`
   - Responsibility: task-agent prompt and decision-application tests.
-  - Change: assert prompt includes the new boundary and verify a Mina-style feedback decision cancels a TODO and suppresses its follow-up.
+  - Change: assert prompt includes the new boundary and verify a Avery-style feedback decision cancels a TODO and suppresses its follow-up.
 
 - Create `app/task_noise_backfill.py`
   - Responsibility: deterministic, manually scoped cleanup for already-reviewed noisy TODO IDs.
@@ -51,7 +51,7 @@ Add this test near the existing prompt tests in `tests/test_task_agent.py`, afte
 ```python
 def test_task_agent_prompt_defines_important_vs_routine_process_boundary():
     work_item = _work_item()
-    work_item.summary = "Mina: 这种事情没必要创建待办，我不办这人也没法发 offer。"
+    work_item.summary = "Avery: 这种事情没必要创建待办，我不办这人也没法发 offer。"
     prompt = build_task_agent_prompt(
         work_item,
         candidate_prompt="候选上下文为空。",
@@ -153,7 +153,7 @@ def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_pat
         project_id=project_id,
         title="将唐华 L5/对外总监 title 的 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
-        owner_name="邹婧玮(Mina 邹)",
+        owner_name="钱芳(Avery)",
         status="open",
         priority="P1",
         deadline_at="2026-07-03 18:00:00",
@@ -164,7 +164,7 @@ def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_pat
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="邹婧玮(Mina 邹)",
+        owner_name="钱芳(Avery)",
         target_conversation_id="cid-mina",
         target_kind="direct",
         question_text="基于唐华 offer 推进事项，这个一页纸完成了吗？",
@@ -182,7 +182,7 @@ def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_pat
                 "memory_context": _memory_context().model_dump(mode="json"),
                 "facts": [
                     {
-                        "description": "Mina clarified that routine HR offer-flow steps should not become separate reminders.",
+                        "description": "Avery clarified that routine HR offer-flow steps should not become separate reminders.",
                         "source": "reply_attempt:2163",
                         "created": "2026-07-01 10:50:17",
                         "updated": "2026-07-01 10:50:17",
@@ -211,7 +211,7 @@ def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_pat
                     },
                 }
             ],
-            "update_summary": "Canceled noisy routine-process TODO after Mina feedback.",
+            "update_summary": "Canceled noisy routine-process TODO after Avery feedback.",
             "merge_reason": "matched existing Marketing recruiting project and TODO",
             "memory_recall_used": True,
             "confidence": 0.86,
@@ -362,7 +362,7 @@ def test_backfill_routine_process_todos_dry_run_reports_without_writing(tmp_path
         project_id=project_id,
         title="将唐华 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -370,7 +370,7 @@ def test_backfill_routine_process_todos_dry_run_reports_without_writing(tmp_path
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         target_conversation_id="cid-mina",
         target_kind="direct",
         question_text="这个一页纸完成了吗？",
@@ -414,7 +414,7 @@ def test_backfill_routine_process_todos_apply_cancels_todo_and_suppresses_follow
         project_id=project_id,
         title="将唐华 offer 和试用目标压实成一页纸",
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -422,7 +422,7 @@ def test_backfill_routine_process_todos_apply_cancels_todo_and_suppresses_follow
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="mina-user-1",
-        owner_name="Mina",
+        owner_name="Avery",
         target_conversation_id="cid-mina",
         target_kind="direct",
         question_text="这个一页纸完成了吗？",
@@ -431,7 +431,7 @@ def test_backfill_routine_process_todos_apply_cancels_todo_and_suppresses_follow
     link_id = store.create_work_todo_dingtalk_link(
         work_todo_id=todo_id,
         executor_user_id="mina-user-1",
-        executor_name="Mina",
+        executor_name="Avery",
         title_snapshot="将唐华 offer 和试用目标压实成一页纸",
         deadline_at_snapshot="2026-07-03 18:00:00",
         priority_snapshot="P1",
@@ -773,18 +773,18 @@ git commit -m "Add routine process TODO backfill"
 
 ---
 
-### Task 4: Run Mina Backfill Dry-Run And Apply Reviewed IDs
+### Task 4: Run Avery Backfill Dry-Run And Apply Reviewed IDs
 
 **Files:**
 - No code files expected.
 - Runtime DB: `data/auto-reply.sqlite3`
 
-- [ ] **Step 1: Inspect candidate Mina TODOs**
+- [ ] **Step 1: Inspect candidate Avery TODOs**
 
 Run:
 
 ```bash
-sqlite3 -header -csv data/auto-reply.sqlite3 "select t.id, t.project_id, p.title as project_title, t.title, t.owner_name, t.status, t.priority, t.deadline_at, t.next_follow_up_at, t.follow_up_question from work_todos t join work_projects p on p.id=t.project_id where t.status in ('open','waiting_owner') and (t.owner_name like '%Mina%' or t.owner_name like '%邹婧玮%' or p.related_people_json like '%Mina%' or p.related_people_json like '%邹婧玮%') order by t.updated_at desc limit 80;"
+sqlite3 -header -csv data/auto-reply.sqlite3 "select t.id, t.project_id, p.title as project_title, t.title, t.owner_name, t.status, t.priority, t.deadline_at, t.next_follow_up_at, t.follow_up_question from work_todos t join work_projects p on p.id=t.project_id where t.status in ('open','waiting_owner') and (t.owner_name like '%Avery%' or t.owner_name like '%钱芳%' or p.related_people_json like '%Avery%' or p.related_people_json like '%钱芳%') order by t.updated_at desc limit 80;"
 ```
 
 Expected: output includes candidate noisy TODOs such as the 唐华 offer/probation one-pager. Do not use this query as automatic classification; it is only an inspection list.
@@ -795,7 +795,7 @@ Use these decision rules:
 
 - Select TODOs that are only routine process steps inside HR/recruiting flow.
 - Do not select TODOs for critical hiring decisions, offer cash/equity boundaries, system faults, owner correction, deadline risk, or Derek decisions.
-- At minimum, review these known likely candidates from Mina's feedback window:
+- At minimum, review these known likely candidates from Avery's feedback window:
   - `2622` if it is still open and still titled like "将唐华 L5/对外总监 title 的 offer 和试用目标压实成一页纸".
   - Any duplicate TODO with the same routine offer one-pager meaning.
 
@@ -804,7 +804,7 @@ Use these decision rules:
 Replace `2622` with the reviewed list from Step 2.
 
 ```bash
-.venv/bin/python -m app.cli backfill-routine-process-todos --todo-id 2622 --reason "Mina feedback: routine HR offer-flow step should not be tracked as a separate TODO"
+.venv/bin/python -m app.cli backfill-routine-process-todos --todo-id 2622 --reason "Avery feedback: routine HR offer-flow step should not be tracked as a separate TODO"
 ```
 
 Expected output contains these exact substrings:
@@ -813,7 +813,7 @@ Expected output contains these exact substrings:
 backfill-routine-process-todos dry_run=True planned=1 changed=0
 todo_id=2622
 before=open after=cancelled
-reason=Mina feedback: routine HR offer-flow step should not be tracked as a separate TODO
+reason=Avery feedback: routine HR offer-flow step should not be tracked as a separate TODO
 ```
 
 - [ ] **Step 4: Verify dry-run made no DB changes**
@@ -831,7 +831,7 @@ Expected: selected TODOs are still `open` or their original pre-apply status.
 Only after Step 3 output matches the reviewed list:
 
 ```bash
-.venv/bin/python -m app.cli backfill-routine-process-todos --todo-id 2622 --reason "Mina feedback: routine HR offer-flow step should not be tracked as a separate TODO" --apply
+.venv/bin/python -m app.cli backfill-routine-process-todos --todo-id 2622 --reason "Avery feedback: routine HR offer-flow step should not be tracked as a separate TODO" --apply
 ```
 
 Expected output contains these exact substrings:
@@ -840,7 +840,7 @@ Expected output contains these exact substrings:
 backfill-routine-process-todos dry_run=False planned=1 changed=1
 todo_id=2622
 before=open after=cancelled
-reason=Mina feedback: routine HR offer-flow step should not be tracked as a separate TODO
+reason=Avery feedback: routine HR offer-flow step should not be tracked as a separate TODO
 ```
 
 - [ ] **Step 6: Verify DB state**
@@ -851,7 +851,7 @@ Run:
 sqlite3 -header -csv data/auto-reply.sqlite3 "select id, status, blocker from work_todos where id in (2622);"
 ```
 
-Expected: selected TODOs are `cancelled` and `blocker` contains the Mina feedback reason.
+Expected: selected TODOs are `cancelled` and `blocker` contains the Avery feedback reason.
 
 Run:
 
@@ -859,7 +859,7 @@ Run:
 sqlite3 -header -csv data/auto-reply.sqlite3 "select id, todo_id, status, suppressed_reason from follow_up_drafts where todo_id in (2622) order by id;"
 ```
 
-Expected: draft or approved follow-ups tied to selected TODOs are `skipped` with the Mina feedback reason. Already sent follow-ups are not retroactively unsent.
+Expected: draft or approved follow-ups tied to selected TODOs are `skipped` with the Avery feedback reason. Already sent follow-ups are not retroactively unsent.
 
 - [ ] **Step 7: Commit if the DB is intentionally tracked**
 
@@ -955,7 +955,7 @@ Expected: no `processing` rows. Existing historical `failed` rows may remain if 
 - Spec coverage:
   - Prompt boundary implements routine-process ignore behavior.
   - Existing decision application is tested for canceling noisy TODOs and suppressing follow-ups.
-  - Manual backfill covers Mina's existing noisy TODO cleanup without keyword filtering.
+  - Manual backfill covers Avery's existing noisy TODO cleanup without keyword filtering.
   - Important exceptions remain task-agent decisions and are preserved by prompt language and tests.
 
 - Placeholder scan:

@@ -8,7 +8,7 @@ def _message() -> DingTalkMessage:
         open_message_id="msg-1",
         conversation_title="Friday",
         single_chat=False,
-        sender_name="Mina",
+        sender_name="Avery",
         create_time="2026-07-25 10:00:00",
         content="@Alex Chen 看一下",
     )

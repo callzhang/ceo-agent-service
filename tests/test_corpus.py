@@ -20,7 +20,7 @@ def test_extract_minutes_records_for_exact_principal_speakers_preserves_context(
     minutes = tmp_path / "meeting.md"
     minutes.write_text(
         """# Transcript
-周俊杰
+孙伟
 00:01
 这个怎么处理？
 明哥
@@ -236,7 +236,7 @@ def test_retrieve_similar_examples_does_not_let_repeated_name_dominate_keywords(
             source_type="dingtalk",
             source_title="闲聊",
             timestamp="2026-05-13",
-            context="Claire 今天在吗",
+            context="Casey 今天在吗",
             principal_reply="今天先不展开，等材料齐了再看。",
             message_id="msg-name",
             conversation_id="cid-1",
@@ -257,7 +257,7 @@ def test_retrieve_similar_examples_does_not_let_repeated_name_dominate_keywords(
     ]
 
     examples = retrieve_similar_examples(
-        "Claire Claire Claire 这个项目排期怎么处理，负责人和交付时间怎么定",
+        "Casey Casey Casey 这个项目排期怎么处理，负责人和交付时间怎么定",
         records,
         limit=1,
     )

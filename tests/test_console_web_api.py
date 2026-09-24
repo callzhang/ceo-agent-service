@@ -137,13 +137,13 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
     store = AutoReplyStore(db_path)
     store.replace_wechat_reply_scopes("acct-1", [WechatReplyScope(
         account_id="acct-1", target_type="direct", target_id="melody",
-        conversation_id="melody", display_name="Melody",
+        conversation_id="melody", display_name="Morgan",
         trigger_mode="every_inbound_text", binding_status="verified",
     )])
     store.enqueue_reply_task(
-        channel="wechat", conversation_id="melody", conversation_title="Melody",
+        channel="wechat", conversation_id="melody", conversation_title="Morgan",
         single_chat=True, trigger_message_id="message-1",
-        trigger_create_time="2026-09-08 19:00:00", trigger_sender="Melody",
+        trigger_create_time="2026-09-08 19:00:00", trigger_sender="Morgan",
         trigger_text="Can you help later?",
     )
     delivery_id = store.create_wechat_delivery(
@@ -152,8 +152,8 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
     )
     store.prepare_outbound_postfix("wechat", f"wechat:{delivery_id}", "Yes.", "Can you help later?")
     attempt_id = store.record_reply_attempt(
-        conversation_id="melody", conversation_title="Melody",
-        trigger_message_id="message-1", trigger_sender="Melody",
+        conversation_id="melody", conversation_title="Morgan",
+        trigger_message_id="message-1", trigger_sender="Morgan",
         trigger_text="Can you help later?", action="send_reply",
         sensitivity_kind="normal", send_status="pending", channel="wechat",
     )
@@ -206,8 +206,8 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
     assert response.json()["message"] == "微信消息已发送"
     assert retried == [delivery_id]
     assert open_response.status_code == 200
-    assert open_response.json()["message"] == "已打开微信消息：Melody"
-    assert opened == [("Melody", "Melody", "")]
+    assert open_response.json()["message"] == "已打开微信消息：Morgan"
+    assert opened == [("Morgan", "Morgan", "")]
 
 
 def test_console_api_reuses_the_initialized_audit_store(
@@ -640,7 +640,7 @@ def test_console_tasks_endpoint_returns_paginated_json_envelope_and_serializable
     store.create_work_todo(
         project_id=owner_fallback_id,
         title="Confirm owner fallback",
-        owner_name="Mina",
+        owner_name="Avery",
         status="open",
         priority="P1",
     )
@@ -656,7 +656,7 @@ def test_console_tasks_endpoint_returns_paginated_json_envelope_and_serializable
     assert payload["meta"]["next_cursor"] == ""
     assert payload["meta"]["has_more"] is False
     assert {item["id"] for item in payload["items"]} == {first_id, second_id, owner_fallback_id}
-    assert any(item["owner"] == "Mina" for item in payload["items"])
+    assert any(item["owner"] == "Avery" for item in payload["items"])
     assert "[object Object]" not in json.dumps(payload, ensure_ascii=False)
 
 
@@ -668,7 +668,7 @@ def test_console_tasks_endpoint_keeps_owner_name_distinct_from_display_owner(
     store.create_work_todo(
         project_id=project_id,
         title="TODO A",
-        owner_name="周俊杰",
+        owner_name="孙伟",
         owner_user_id="owner-1",
         status="open",
         priority="P1",
@@ -687,7 +687,7 @@ def test_console_tasks_endpoint_keeps_owner_name_distinct_from_display_owner(
 
     item = response.json()["items"][0]
     assert response.status_code == 200
-    assert item["owner"] == "多人：周俊杰、张晓民"
+    assert item["owner"] == "多人：孙伟、张晓民"
     assert item["owner_name"] == ""
     assert item["owner_user_id"] == ""
 
@@ -730,7 +730,7 @@ def test_console_tasks_endpoint_counts_completed_followups_and_dingtalk_links_as
         work_todo_id=dingtalk_done_todo_id,
         dingtalk_task_id="dt-task-1",
         executor_user_id="owner-2",
-        executor_name="Mina",
+        executor_name="Avery",
         title_snapshot="Checked in DingTalk Todo",
         deadline_at_snapshot="2026-08-29 18:00:00",
         priority_snapshot="P1",
@@ -955,7 +955,7 @@ def test_console_history_counts_live_reply_queue_states(tmp_path: Path):
         single_chat=False,
         trigger_message_id="queue-pending",
         trigger_create_time="2026-09-06T10:00:00Z",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="等待处理的消息",
     )
     store.enqueue_reply_task(
@@ -964,7 +964,7 @@ def test_console_history_counts_live_reply_queue_states(tmp_path: Path):
         single_chat=False,
         trigger_message_id="queue-processing",
         trigger_create_time="2026-09-06T10:01:00Z",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="正在处理的消息",
     )
     store.claim_reply_tasks(limit=1)
@@ -991,7 +991,7 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
         project_id=project_id,
         title="Review history links",
         description="Check that history entries jump back to the task detail page.",
-        owner_name="Mina",
+        owner_name="Avery",
         priority="P1",
     )
     update_id = store.create_work_update(
@@ -1059,7 +1059,7 @@ def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
         meeting_id="meeting-console-1",
         title="项目评审会",
         source_json='{"summary":"讨论上线范围"}',
-        participants_json='[{"name":"Derek"},{"name":"Mina"}]',
+        participants_json='[{"name":"Derek"},{"name":"Avery"}]',
         ended_at="2026-08-29T10:00:00Z",
         eligible_at="2026-08-29T10:05:00Z",
         status="pending",
@@ -2384,7 +2384,7 @@ def test_console_attention_humanizes_markup_and_bounds_primary_summary():
                 "id": "1",
                 "status": "processing",
                 "context": "todo_completion_check",
-                "summary": '> **主题**: 江淮汽车 POC > **时间**: <time data-ts="1738069232000">2026-07-03 17:00:32</time>',
+                "summary": '> **主题**: 某车企汽车 POC > **时间**: <time data-ts="1738069232000">2026-07-03 17:00:32</time>',
                 "updated_at": "2026-08-29 18:00:00",
             },
             {
@@ -2401,7 +2401,7 @@ def test_console_attention_humanizes_markup_and_bounds_primary_summary():
 
     work_item = next(group for group in groups if group.category == "Work item")
     service_error = next(group for group in groups if group.category == "Service error")
-    assert work_item.summary == "主题: 江淮汽车 POC > 时间: 2026-07-03 17:00:32"
+    assert work_item.summary == "主题: 某车企汽车 POC > 时间: 2026-07-03 17:00:32"
     assert "<time" not in work_item.summary
     assert "**" not in work_item.summary
     assert len(service_error.summary) == 240
@@ -2575,7 +2575,7 @@ def test_queue_attention_rows_excludes_unstructured_needs_human_attempts(tmp_pat
         conversation_id="needs-human-conversation",
         conversation_title="Needs human conversation",
         trigger_message_id="needs-human-message",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Choose the applicable travel policy.",
         action="send_reply",
         sensitivity_kind="general",
@@ -2600,7 +2600,7 @@ def test_queue_attention_rows_renders_service_generated_needs_human_without_run(
         conversation_id="service-decision-conversation",
         conversation_title="Service decision",
         trigger_message_id="service-decision-message",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Confirm the provider action.",
         action="send_reply",
         sensitivity_kind="general",
@@ -2632,7 +2632,7 @@ def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_pat
         single_chat=True,
         trigger_message_id="audit-revision-message",
         trigger_create_time="2026-09-14 02:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Submit the verified interview review.",
         execution_generation="initial",
     )
@@ -2640,7 +2640,7 @@ def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_pat
         conversation_id="audit-revision-conversation",
         conversation_title="Hiring review",
         trigger_message_id="audit-revision-message",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Submit the verified interview review.",
         action="agent_run",
         sensitivity_kind="personnel_sensitive",
@@ -2706,7 +2706,7 @@ def test_queue_attention_rows_excludes_actionable_structured_needs_human_attempt
         single_chat=False,
         trigger_message_id="needs-human-message",
         trigger_create_time="2026-08-29 18:00:00",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Choose the applicable travel policy.",
         execution_generation="initial",
     )
@@ -2714,7 +2714,7 @@ def test_queue_attention_rows_excludes_actionable_structured_needs_human_attempt
         conversation_id="needs-human-conversation",
         conversation_title="Needs human conversation",
         trigger_message_id="needs-human-message",
-        trigger_sender="Mina",
+        trigger_sender="Avery",
         trigger_text="Choose the applicable travel policy.",
         action="send_reply",
         sensitivity_kind="general",

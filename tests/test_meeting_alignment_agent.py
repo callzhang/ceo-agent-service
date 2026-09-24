@@ -106,7 +106,7 @@ def source(*, participant_count: int = 3) -> MeetingSource:
     participants = [
         {"name": "Derek", "user_id": "derek"},
         {"name": "Alex", "user_id": "alex"},
-        {"name": "Mina", "user_id": "mina"},
+        {"name": "Avery", "user_id": "mina"},
     ][:participant_count]
     return MeetingSource.model_validate(
         {
@@ -120,14 +120,14 @@ def source(*, participant_count: int = 3) -> MeetingSource:
             "attendee_roster_complete": True,
             "creator": participants[1] if participant_count > 2 else None,
             "current_user_id": "derek",
-            "summary": "Alex 主张全量，Mina 主张灰度。",
+            "summary": "Alex 主张全量，Avery 主张灰度。",
             "transcript": [
                 {
                     "speaker_name": "Alex",
                     "text": "我建议全量上线以验证收入。",
                 },
                 {
-                    "speaker_name": "Mina",
+                    "speaker_name": "Avery",
                     "text": "我建议先灰度以控制故障面。",
                 },
                 {
@@ -222,7 +222,7 @@ def derek_view_payload(*, historical_sources: list[str]) -> dict:
             "historical_sources": historical_sources,
         },
         "key_questions": [],
-        "mention_names": ["Alex", "Mina"],
+        "mention_names": ["Alex", "Avery"],
         "target": {
             "kind": "group",
             "conversation_id": "cid-1",
@@ -726,7 +726,7 @@ def test_runner_normalizes_mechanical_trigger_mismatch(tmp_path: Path):
             "state": "aligned",
             "views": [
                 {"speaker": "Alex", "view": "全量", "reason": "收入"},
-                {"speaker": "Mina", "view": "灰度", "reason": "风险"},
+                {"speaker": "Avery", "view": "灰度", "reason": "风险"},
             ],
             "conclusion": "先 10% 后扩量",
             "alignment_reason": "双方明确同意并承诺执行",
@@ -881,7 +881,7 @@ def _deterministic_payload(case: dict) -> dict:
         "state": state,
         "views": [
             {"speaker": "Alex", "view": "全量", "reason": "验证收入"},
-            {"speaker": "Mina", "view": "灰度", "reason": "控制风险"},
+            {"speaker": "Avery", "view": "灰度", "reason": "控制风险"},
         ],
         "conclusion": "先 10% 后扩量" if state == "aligned" else "",
         "alignment_reason": (
@@ -897,7 +897,7 @@ def _deterministic_payload(case: dict) -> dict:
                     f"取舍问题 {index + 1}："
                     "选择收益时最多接受什么代价？"
                 ),
-                "answer_owner_names": ["Alex", "Mina"],
+                "answer_owner_names": ["Alex", "Avery"],
             }
             for index in range(count)
         ]
@@ -908,7 +908,7 @@ def _deterministic_payload(case: dict) -> dict:
         "topics": [topic],
         "derek_viewpoint": viewpoint,
         "key_questions": questions,
-        "mention_names": ["Alex", "Mina"],
+        "mention_names": ["Alex", "Avery"],
         "target": (
             None
             if case.get("expected_target") is None
