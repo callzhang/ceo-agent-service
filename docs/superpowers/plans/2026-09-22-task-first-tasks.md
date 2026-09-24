@@ -1416,11 +1416,14 @@ Baseline check (2026-09-24, live read-only DB): the latest 100 completed
 `follow_up_completion_check`, and 29 `todo_completion_check` inputs. Their
 latest stored legacy Task Agent decisions were 96 `update_project` and 4
 `create_project`; 98 had no TODO changes and 2 closed an existing TODO. This
-confirms the Project-first baseline but does not validate new Task-first
-decisions: the production service is still running the old implementation, so
-there are no new semantic results to review. Step 2 remains open until the new
-Task Agent produces decisions from a representative current-source sample and
-each surfaced business-attention item is checked against the criteria above.
+confirms the Project-first baseline. The legacy decisions also labeled 38
+Projects high-risk, 14 medium-risk, and 48 with no risk, but these labels are
+not semantic CEO Attention. The production database has no Task-first
+`business_task_*` / business-attention results yet, and the service still runs
+the old implementation, so this sample cannot validate new Task-first
+decisions. Step 2 remains open until the new Task Agent produces decisions
+from a representative current-source sample and each surfaced
+business-attention item is checked against the criteria above.
 
 - [x] **Step 3: Send the runtime-restart handoff**
 
