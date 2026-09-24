@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.agent_runtime_config import load_runtime_config
-from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
+from app.agent_runtime_contracts import CredentialMode, RuntimeFailureClass, RuntimeKind, RuntimeRoute
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 
 
@@ -579,6 +579,19 @@ def test_empty_nonzero_process_failure_does_not_fail_over(adapter):
     assert failure.failure_class.value == "process"
     assert failure.code == "codex_process_failed"
     assert failure.failover_permitted is False
+
+
+def test_session_active_writer_conflict_is_retryable_without_pausing_route(adapter):
+    failure = adapter.classify_failure(
+        stderr="failed to initialize thread persistence: thread x already has an active writer",
+        stdout="",
+        returncode=1,
+    )
+
+    assert failure.failure_class is RuntimeFailureClass.SESSION
+    assert failure.code == "codex_session_writer_conflict"
+    assert failure.retryable_on_same_route is True
+    assert failure.route_pause_required is False
 
 
 def test_unknown_failure_is_fail_closed(adapter):

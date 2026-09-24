@@ -59,6 +59,14 @@ def is_provider_full(failure: RuntimeFailure) -> bool:
     )
 
 
+def is_session_writer_conflict(failure: RuntimeFailure) -> bool:
+    return (
+        failure.failure_class is RuntimeFailureClass.SESSION
+        and failure.code == "codex_session_writer_conflict"
+        and failure.retryable_on_same_route
+    )
+
+
 def consecutive_capacity_failures(
     attempts: Sequence[AgentRuntimeAttempt], route_name: str
 ) -> int:
@@ -68,6 +76,20 @@ def consecutive_capacity_failures(
         if (
             attempt.route_name != route_name
             or attempt.failure_class != RuntimeFailureClass.CAPACITY.value
+        ):
+            break
+        count += 1
+    return count
+
+
+def consecutive_session_writer_conflicts(
+    attempts: Sequence[AgentRuntimeAttempt], route_name: str
+) -> int:
+    count = 0
+    for attempt in reversed(attempts):
+        if (
+            attempt.route_name != route_name
+            or attempt.failure_code != "codex_session_writer_conflict"
         ):
             break
         count += 1
@@ -103,6 +125,19 @@ def plan_runtime_fallback(
                 retry_same_route=True,
                 wait_seconds=retry_delay_seconds(
                     CAPACITY_RETRY_BASE_DELAY_SECONDS, failures - 1
+                ),
+            )
+    if same_route_retry_permitted and is_session_writer_conflict(failure):
+        conflicts = consecutive_session_writer_conflicts(attempts, route.name)
+        if 0 < conflicts <= CAPACITY_RETRIES_ON_SAME_ROUTE:
+            return FallbackPlan(
+                route=route,
+                fresh_session=False,
+                reason="session_writer_retry",
+                pause_route=False,
+                retry_same_route=True,
+                wait_seconds=retry_delay_seconds(
+                    CAPACITY_RETRY_BASE_DELAY_SECONDS, conflicts - 1
                 ),
             )
     decision = select_next_route()

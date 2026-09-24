@@ -218,6 +218,16 @@ class CodexRuntimeAdapter:
                 code="codex_output_schema_invalid",
                 detail="Codex rejected the configured structured-output schema.",
             )
+        if (
+            "failed to initialize thread persistence" in detail.casefold()
+            and "already has an active writer" in detail.casefold()
+        ):
+            return RuntimeFailure(
+                failure_class=RuntimeFailureClass.SESSION,
+                code="codex_session_writer_conflict",
+                detail="Codex session persistence has another active writer.",
+                retryable_on_same_route=True,
+            )
         process_code = classify_codex_process_failure(detail, "")
         if process_code == CODEX_PROVIDER_AUTH_FAILED or _is_structured_invalid_api_key(
             structured_messages
