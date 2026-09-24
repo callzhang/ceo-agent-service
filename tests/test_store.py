@@ -12402,6 +12402,12 @@ def test_a_task_holding_a_lock_with_no_live_run_is_requeued(tmp_path):
     )
     with store._connect() as db:
         db.execute("update agent_runs set status='failed' where id=?", (claim.run.id,))
+        db.execute(
+            "insert into dispatcher_claim_leases "
+            "(adapter_name, source_id, owner, owner_pid, generation, lease_expires_at) "
+            "values ('reply', ?, 'live-dispatcher', 1, 1, datetime('now','-1 minute'))",
+            (str(task.id),),
+        )
 
     recovered = store.recover_stale_processing_reply_tasks(stale_after_seconds=900)
 
@@ -12410,6 +12416,13 @@ def test_a_task_holding_a_lock_with_no_live_run_is_requeued(tmp_path):
     assert updated is not None
     assert updated.status == "pending"
     assert updated.error == "stale_lease_recovered"
+    with store._connect() as db:
+        lease = db.execute(
+            "select owner, lease_expires_at from dispatcher_claim_leases "
+            "where adapter_name='reply' and source_id=?",
+            (str(task.id),),
+        ).fetchone()
+    assert tuple(lease) == ("", "")
 
 
 def test_a_task_with_a_live_run_keeps_its_lock(tmp_path):

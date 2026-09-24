@@ -11610,6 +11610,15 @@ class AutoReplyStore:
                     (int(row["id"]), str(row["execution_generation"])),
                 )
                 if cursor.rowcount == 1:
+                    db.execute(
+                        """
+                        update dispatcher_claim_leases
+                        set owner='', lease_expires_at='', updated_at=current_timestamp
+                        where adapter_name='reply' and source_id=?
+                          and owner<>'' and lease_expires_at<=current_timestamp
+                        """,
+                        (str(row["id"]),),
+                    )
                     recovered.append(self._reply_task_from_row(row))
             return recovered
 
