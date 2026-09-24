@@ -15550,6 +15550,14 @@ class AutoReplyStore:
             if jobs:
                 job_ids = [job.id for job in jobs]
                 placeholders = ",".join("?" for _ in job_ids)
+                db.execute(
+                    "update dispatcher_claim_leases "
+                    "set owner='', owner_pid=0, lease_expires_at='', updated_at=? "
+                    "where adapter_name='meeting' and source_id in ("
+                    + placeholders
+                    + ")",
+                    [now_text, *[str(job_id) for job_id in job_ids]],
+                )
                 run_rows = db.execute(
                     f"select id from meeting_alignment_runs "
                     f"where status='running' and job_id in ({placeholders})",

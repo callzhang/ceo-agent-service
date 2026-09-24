@@ -51,6 +51,8 @@ pending -> running -> done
 任务本身不进入 Attention；旧代次失败也不污染新代次。
 Codex CLI 报告同一 session 有其他 active writer 时，运行时将其视为本地 session 冲突，
 在原路由和原 session 上限次指数退避重试，不因此暂停整个 provider。
+服务启动时恢复被中断的会议作业，会在同一事务内将作业改为 `retry`、关闭运行记录并释放
+该作业的 dispatcher claim；不再等待旧进程的租约自然到期才允许重新领取。
 
 ## 功能机制开关与任务生产
 

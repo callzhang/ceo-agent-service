@@ -336,6 +336,13 @@ def test_startup_recovery_closes_interrupted_meeting_run_and_runtime_attempt(tmp
         lease_seconds=1800,
         now="2026-07-14 02:11:00",
     )
+    with store._connect() as db:
+        db.execute(
+            "insert into dispatcher_claim_leases "
+            "(adapter_name, source_id, owner, owner_pid, generation, lease_expires_at) "
+            "values ('meeting', ?, 'old-service', 123, 1, '2026-07-14 03:00:00')",
+            (str(job_id),),
+        )
 
     [recovered] = store.reset_processing_meeting_alignment_jobs()
 
@@ -348,6 +355,13 @@ def test_startup_recovery_closes_interrupted_meeting_run_and_runtime_attempt(tmp
     assert runtime_attempt.status == "failed"
     assert runtime_attempt.failure_code == "runtime_parent_requeued"
     assert runtime_attempt.finished_at
+    with store._connect() as db:
+        lease = db.execute(
+            "select owner, owner_pid, lease_expires_at from dispatcher_claim_leases "
+            "where adapter_name='meeting' and source_id=?",
+            (str(job_id),),
+        ).fetchone()
+    assert tuple(lease) == ("", 0, "")
 
 
 def test_activation_baseline_silences_unsent_historical_jobs(tmp_path):
