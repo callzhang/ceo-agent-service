@@ -1788,7 +1788,7 @@ def test_recurring_group_candidate_requires_sent_history_and_live_roster(tmp_pat
     assert candidates[0]["participant_coverage"] == "3/3"
 
 
-def test_first_time_meeting_candidate_includes_live_attendee_coverage(tmp_path):
+def test_meeting_group_candidates_prioritize_topic_discussion_over_roster(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     source = MeetingSource.model_validate({
         "meeting_id": "new", "title": "项目内容进展", "status": "ended",
@@ -1800,24 +1800,44 @@ def test_first_time_meeting_candidate_includes_live_attendee_coverage(tmp_path):
             {"name": "C", "user_id": "c", "open_dingtalk_id": "open-c"},
         ],
         "attendee_evidence": "calendar", "attendee_roster_complete": True,
-        "current_user_id": "a", "summary": "内容进展", "transcript": [],
+        "current_user_id": "a", "summary": (
+            '> <time data-ts="123">会议时间</time>\n'
+            '![图片](https://example.test/cover.png?Signature=metadata)\n'
+            '## 会议背景\nMarketing 内容生产计划：基础内容、深度访谈和发布渠道'
+        ), "transcript": [],
     })
     dws = ConsumerDws()
     dws.search_conversations = lambda query: [DingTalkConversation(
-        open_conversation_id="cid-project", title="项目群",
+        open_conversation_id="cid-product", title="项目群",
         single_chat=False, unread_point=0,
-    )] if query == "项目" else []
-    dws.list_group_member_open_dingtalk_ids = lambda group: {
-        "open-a", "open-b", "open-c", "open-other"
-    }
+    )] if query == "项目" else [DingTalkConversation(
+        open_conversation_id="cid-marketing", title="Marketing",
+        single_chat=False, unread_point=0,
+    )] if query == "Marketing" else []
+    dws.list_group_member_open_dingtalk_ids = lambda group: (
+        {"open-a", "open-b", "open-c", "open-other"}
+        if group == "cid-product" else {"open-a", "open-b", "open-other"}
+    )
+    dws.read_recent_messages = lambda conversation, limit=50: [SimpleNamespace(
+        content="基础内容完成后安排深度访谈，Marketing 确认发布渠道和内容生产计划",
+        create_time="2026-07-13 10:00:00",
+    )] if conversation.open_conversation_id == "cid-marketing" else [
+        SimpleNamespace(
+            content="项目会议记录：内容、生产、计划、渠道等信息" + "其他项目记录" * 200,
+            create_time="2026-07-13 11:00:00",
+        )
+    ]
 
     candidates = meeting_alignment._search_meeting_group_candidates(
         dws, source, store
     )
 
-    assert candidates[0]["verified_attendee_coverage"] is True
-    assert candidates[0]["participant_coverage"] == "3/3"
-    assert candidates[0]["member_count"] == 4
+    assert candidates[0]["conversation_id"] == "cid-marketing"
+    assert candidates[0]["summary_title_overlap"] >= 1
+    assert candidates[1]["summary_title_overlap"] == 0
+    assert candidates[0]["topic_discussion_evidence"]
+    assert candidates[0]["participant_coverage"] == "2/3"
+    assert candidates[1]["participant_coverage"] == "3/3"
 
 
 def test_live_group_member_failure_retries_before_meeting_decision(tmp_path):

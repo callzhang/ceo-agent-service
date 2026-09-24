@@ -19,6 +19,7 @@ from app.codex_capacity import (
 from app.codex_failure import CODEX_PROCESS_FAILED, classify_codex_process_failure
 from app.config import codex_capacity_retry_duration, principal_display_name
 from app.decision_quality import DecisionQuality, DecisionRisk, classify_decision_quality
+from app.dingtalk_models import DingTalkConversation
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.dispatcher.models import ClaimGuard
 from app.external_retry import is_external_dependency_error
@@ -788,14 +789,24 @@ def _meeting_fts_text(text: str) -> str:
 def _search_meeting_group_candidates(
     dws: Any, source: MeetingSource, store: AutoReplyStore
 ) -> list[dict[str, Any]]:
-    from app.jieba_loader import jieba_lcut
-
-    terms = []
-    for token in jieba_lcut(source.title):
-        term = str(token).strip()
-        if len(term) >= 2 and term.isalnum() and not term.isdecimal():
-            terms.append(term)
-    queries = sorted(dict.fromkeys(terms), key=len, reverse=True)[:3]
+    title_terms = _meeting_topic_terms(source.title)
+    participant_names = {
+        participant.name.casefold()
+        for participant in source.participants
+        if participant.name
+    }
+    summary_text = "\n".join(
+        line for line in source.summary.splitlines()
+        if not line.lstrip().startswith((">", "![")) and "http" not in line
+    )[:2000]
+    summary_terms = [
+        term
+        for term in _meeting_topic_terms(summary_text)
+        if term.isascii() and term.isalpha()
+        and term.casefold() not in participant_names
+        and term.casefold() not in {value.casefold() for value in title_terms}
+    ]
+    queries = list(dict.fromkeys([*summary_terms[:2], *title_terms[:3]]))
     candidates: dict[str, dict[str, Any]] = {}
     for query in queries:
         for conversation in dws.search_conversations(query):
@@ -839,10 +850,7 @@ def _search_meeting_group_candidates(
                         attendee_overlap=overlap,
                         member_count=len(members),
                     )
-            verified_query = ""
             for group_id, candidate in list(candidates.items())[:12]:
-                if verified_query and candidate["search_query"] != verified_query:
-                    break
                 members = member_sets.get(group_id)
                 if members is None:
                     members = set(dws.list_group_member_open_dingtalk_ids(group_id))
@@ -852,19 +860,58 @@ def _search_meeting_group_candidates(
                     member_count=len(members),
                     participant_coverage=f"{overlap}/{len(attendees)}",
                 )
-                if overlap >= 3 and overlap * 4 >= len(attendees) * 3:
-                    candidate["verified_attendee_coverage"] = True
-                    verified_query = candidate["search_query"]
+    topic_terms = set(_meeting_topic_terms(summary_text))
+    for candidate in list(candidates.values())[:12]:
+        candidate["summary_title_overlap"] = len(
+            topic_terms & set(_meeting_topic_terms(candidate["title"]))
+        )
+        conversation = DingTalkConversation(
+            open_conversation_id=candidate["conversation_id"],
+            title=candidate["title"],
+            single_chat=False,
+            unread_point=0,
+        )
+        matches = []
+        for message in dws.read_recent_messages(conversation, limit=30):
+            message_terms = set(_meeting_topic_terms(message.content[:1200]))
+            overlap = len(topic_terms & message_terms)
+            if overlap >= 3:
+                matches.append((overlap * overlap / len(message_terms), overlap, message))
+        matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        if matches:
+            candidate["topic_discussion_evidence"] = [
+                {
+                    "create_time": message.create_time,
+                    "text": message.content[:500],
+                    "shared_topic_terms": overlap,
+                    "topic_match_score": round(score, 3),
+                }
+                for score, overlap, message in matches[:2]
+            ]
     return sorted(
         candidates.values(),
         key=lambda item: (
+            -item.get("summary_title_overlap", 0),
+            -max(
+                (evidence["topic_match_score"] for evidence in item.get("topic_discussion_evidence", [])),
+                default=0,
+            ),
             not item.get("verified_recurring_group", False),
-            not item.get("verified_attendee_coverage", False),
             -item.get("prior_sent_count", 0),
             -item.get("attendee_overlap", 0),
             item.get("member_count", 0),
         ),
     )
+
+
+def _meeting_topic_terms(text: str) -> list[str]:
+    from app.jieba_loader import jieba_lcut
+
+    return list(dict.fromkeys(
+        term for token in jieba_lcut(text[:5000])
+        if (term := str(token).strip()).isalnum()
+        and len(term) >= 2 and not term.isdecimal()
+    ))
 
 
 def _index_meeting_codex_session(

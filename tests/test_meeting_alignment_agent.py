@@ -455,22 +455,12 @@ def test_agent_rejects_direct_fallback_with_verified_recurring_group():
     assert "verified recurring group" in codex.prompts[1]
 
 
-def test_agent_rejects_direct_fallback_with_live_attendee_group_coverage():
+def test_agent_does_not_force_a_group_based_only_on_attendee_coverage():
     direct = {
         "kind": "direct", "conversation_id": "", "direct_user_id": "alex",
         "title": "Alex", "candidates": [],
     }
-    group = {
-        "kind": "group", "conversation_id": "cid-project", "direct_user_id": "",
-        "title": "项目群",
-        "candidates": [{
-            "conversation_id": "cid-project", "title": "项目群",
-            "evidence": ["实时群成员覆盖全部会议参会人"],
-        }],
-    }
-    codex = SequencedMeetingCodex(
-        [send_payload_with_target(direct), send_payload_with_target(group)]
-    )
+    codex = FakeMeetingCodex(send_payload_with_target(direct))
 
     decision = MeetingAlignmentAgent(codex).decide(
         source(),
@@ -482,8 +472,7 @@ def test_agent_rejects_direct_fallback_with_live_attendee_group_coverage():
     )
 
     assert decision.target is not None
-    assert decision.target.conversation_id == "cid-project"
-    assert "verified attendee coverage" in codex.prompts[1]
+    assert decision.target.kind == "direct"
 
 
 def test_agent_allows_direct_fallback_when_group_roster_does_not_match():
