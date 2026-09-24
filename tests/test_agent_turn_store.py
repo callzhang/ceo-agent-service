@@ -1187,13 +1187,55 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
                             "summary": summary,
                             "proposal": None,
                             "decision_options": options,
+                            **(
+                                {
+                                    "needs_human_reason": (
+                                        "The high-risk, low-confidence fixture "
+                                        "requires a human decision."
+                                    ),
+                                    "decision_basis": {
+                                        "verified_facts": [
+                                            {
+                                                "assertion": (
+                                                    "The fixture has high risk and "
+                                                    "zero confidence."
+                                                ),
+                                                "references": ["test_case"],
+                                            }
+                                        ],
+                                        "rule_evidence": [
+                                            {
+                                                "assertion": (
+                                                    "High risk with confidence below "
+                                                    "0.5 is classified as needs_human."
+                                                ),
+                                                "references": ["current_wire_contract"],
+                                            }
+                                        ],
+                                        "quality_explanation": (
+                                            "The fixture is high risk with zero "
+                                            "confidence and complete information."
+                                        ),
+                                        "no_external_action_evidence": [
+                                            {
+                                                "assertion": (
+                                                    "The fixture performed no external "
+                                                    "action."
+                                                ),
+                                                "references": ["test_case"],
+                                            }
+                                        ],
+                                        "conclusion": "Await a human decision.",
+                                    },
+                                }
+                                if outcome == "needs_human"
+                                else {}
+                            ),
                             "risk": "high" if outcome == "needs_human" else "low",
                             "confidence": 0.0 if outcome == "needs_human" else 1.0,
                             "rule_coverage": 1.0,
                             "information_completeness": 1.0,
-                            "error_code": (
-                                "decision_required" if outcome == "needs_human" else ""
-                            ),
+                            "error_code": "",
                             "error_retryable": False,
                             "error_authorization_required": False,
                         }
