@@ -2312,15 +2312,14 @@ def test_reply_message_command_shape():
     assert command == [
         "dws",
         "chat",
-        "message",
-        "reply",
-        "--conversation-id",
+        "+messages-reply",
+        "--group",
         "cid-1",
         "--ref-msg-id",
         "msg-1",
         "--ref-sender",
         "open-1",
-        "--text",
+        "--content",
         "收到（by明哥分身）",
         "--format",
         "json",
@@ -2359,15 +2358,14 @@ def test_send_reply_to_trigger_prefers_native_reply_over_group_at_send():
         [
             "dws",
             "chat",
-            "message",
-            "reply",
-            "--conversation-id",
+            "+messages-reply",
+            "--group",
             "cid-1",
             "--ref-msg-id",
             "msg-1",
             "--ref-sender",
             "open-lily",
-            "--text",
+            "--content",
             " @ET(张毅倜) 先出方案。",
             "--format",
             "json",
@@ -2410,8 +2408,8 @@ def test_send_reply_to_trigger_chunks_splits_long_text_and_extracts_recall_key()
     assert len(result["chunks"]) == 2
     assert result["chunks"][0]["text"].startswith("【1/2】")
     assert DwsClient.extract_recall_key(result) == "recall-1"
-    first_text = client.commands[0][client.commands[0].index("--text") + 1]
-    second_text = client.commands[1][client.commands[1].index("--text") + 1]
+    first_text = client.commands[0][client.commands[0].index("--content") + 1]
+    second_text = client.commands[1][client.commands[1].index("--content") + 1]
     assert first_text.startswith("【1/2】")
     assert second_text.startswith("【2/2】")
     assert "--at-user-ids" not in client.commands[1]
