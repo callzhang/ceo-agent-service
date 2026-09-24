@@ -2122,7 +2122,7 @@ def test_notification_url_includes_attempt_id(tmp_path, monkeypatch):
     url = worker._notification_url(conversation(single_chat=True), attempt_id=123)
 
     assert url == (
-        "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1&attempt_id=123"
+        "http://127.0.0.1:8765/open-attempt?attempt_id=123"
     )
 
 
@@ -16527,7 +16527,7 @@ def test_untyped_needs_human_agent_attempt_is_failed_not_published_as_a_decision
     ]
 
 
-def test_untyped_needs_human_agent_attempt_does_not_send_human_notification(
+def test_untyped_needs_human_agent_attempt_sends_generic_failed_notification(
     tmp_path: Path, monkeypatch
 ):
     notifications: list[dict[str, str | None]] = []
@@ -16555,7 +16555,11 @@ def test_untyped_needs_human_agent_attempt_does_not_send_human_notification(
 
     worker.run_once()
 
-    assert notifications == []
+    assert len(notifications) == 1
+    assert notifications[0]["title"].startswith("CEO 待处理：")
+    assert notifications[0]["url"] == (
+        "http://127.0.0.1:8765/open-attempt?attempt_id=1"
+    )
 
 
 def test_retryable_failed_agent_attempt_does_not_notify_before_limit(

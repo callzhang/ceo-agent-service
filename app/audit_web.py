@@ -11496,6 +11496,21 @@ def create_audit_app(
             render_dingtalk_open_popup(cid=cid, conversation_id=conversation_id)
         )
 
+    @app.post("/open-attempt")
+    def open_attempt(request: Request, attempt_id: int) -> JSONResponse:
+        if attempt_id <= 0:
+            return JSONResponse({"ok": False, "error": "invalid attempt_id"}, status_code=400)
+        detail_url = f"{request.url.scheme}://{request.url.netloc}/attempts/{attempt_id}"
+        completed = subprocess.run(["/usr/bin/open", detail_url], check=False)
+        return JSONResponse(
+            {
+                "ok": completed.returncode == 0,
+                "attempt_id": attempt_id,
+                "detail_url": detail_url,
+                "open_returncode": completed.returncode,
+            }
+        )
+
     @app.post("/open-dingtalk")
     def open_dingtalk(request: Request, cid: str = "", conversation_id: str = "") -> JSONResponse:
         cleaned_conversation_id = conversation_id.strip()

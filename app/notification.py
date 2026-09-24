@@ -26,6 +26,10 @@ def dingtalk_conversation_notification_url(
     return f"{notification_bridge_base_url()}/open-dingtalk?{query}"
 
 
+def attempt_notification_url(attempt_id: int) -> str:
+    return f"{notification_bridge_base_url()}/open-attempt?attempt_id={int(attempt_id)}"
+
+
 def send_macos_notification(title: str, message: str, url: str | None = None) -> None:
     if _send_terminal_notifier_notification(title=title, message=message, url=url):
         return

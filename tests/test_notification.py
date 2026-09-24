@@ -1,4 +1,10 @@
-from app.notification import send_macos_notification
+from app.notification import attempt_notification_url, send_macos_notification
+
+
+def test_attempt_notification_url_is_generic_and_traceable():
+    assert attempt_notification_url(123) == (
+        "http://127.0.0.1:8765/open-attempt?attempt_id=123"
+    )
 
 
 def test_notification_uses_valid_escaped_applescript_literals(monkeypatch):

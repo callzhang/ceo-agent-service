@@ -5977,6 +5977,30 @@ def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch
     ]
 
 
+def test_open_attempt_bridge_opens_generic_attempt_detail(tmp_path: Path, monkeypatch):
+    commands = []
+
+    def fake_run(command, check):
+        commands.append((command, check))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("app.audit_web.subprocess.run", fake_run)
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post("/open-attempt?attempt_id=123")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "attempt_id": 123,
+        "detail_url": "http://testserver/attempts/123",
+        "open_returncode": 0,
+    }
+    assert commands == [
+        (["/usr/bin/open", "http://testserver/attempts/123"], False),
+    ]
+
+
 def test_open_dingtalk_bridge_opens_pc_jsapi_bridge_for_open_conversation_id(
     tmp_path: Path, monkeypatch
 ):

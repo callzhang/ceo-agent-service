@@ -78,6 +78,7 @@ from app.codex_capacity import (
     is_codex_provider_recovery_code,
 )
 from app.notification import (
+    attempt_notification_url,
     dismiss_browser_notification,
     dingtalk_conversation_notification_url,
     send_browser_notification,
@@ -5569,10 +5570,11 @@ class DingTalkAutoReplyWorker:
             notification_id=self._problem_notification_id(task),
             detail_url=f"/attempts/{attempt_id}",
         )
-        if send_status == "needs_human" and not delivered:
+        if not delivered:
             send_macos_notification(
                 title=title,
                 message=notification_message,
+                url=self._notification_url(conversation, attempt_id=attempt_id),
             )
 
     @staticmethod
@@ -5641,6 +5643,8 @@ class DingTalkAutoReplyWorker:
         *,
         attempt_id: int | None = None,
     ) -> str | None:
+        if attempt_id is not None:
+            return attempt_notification_url(attempt_id)
         if conversation is None:
             return None
         open_conversation_id = conversation.open_conversation_id.strip()
