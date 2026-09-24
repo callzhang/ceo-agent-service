@@ -22943,7 +22943,7 @@ class AutoReplyStore:
                           attempts.trigger_message_id
                       )
                         and current_task.status in (
-                            'done', 'skipped', 'needs_human', 'pending', 'processing'
+                            'done', 'skipped', 'needs_human', 'processing'
                         )
                   )
                   and (
@@ -22969,7 +22969,7 @@ class AutoReplyStore:
                                 and tasks.trigger_message_id=attempts.trigger_message_id
                                 and (
                                     tasks.status in (
-                                        'done', 'skipped', 'needs_human', 'pending', 'processing'
+                                        'done', 'skipped', 'needs_human', 'processing'
                                     )
                                 )
                           )
@@ -23040,7 +23040,7 @@ class AutoReplyStore:
                           attempts.trigger_message_id
                       )
                         and current_task.status in (
-                            'done', 'skipped', 'needs_human', 'pending', 'processing'
+                            'done', 'skipped', 'needs_human', 'processing'
                         )
                   )
                   and (
@@ -23065,7 +23065,7 @@ class AutoReplyStore:
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
                                 and tasks.status in (
-                                    'done', 'skipped', 'needs_human', 'pending', 'processing'
+                                    'done', 'skipped', 'needs_human', 'processing'
                                 )
                           )
                       )
@@ -23133,7 +23133,7 @@ class AutoReplyStore:
                           attempts.trigger_message_id
                       )
                         and current_task.status in (
-                            'done', 'skipped', 'needs_human', 'pending', 'processing'
+                            'done', 'skipped', 'needs_human', 'processing'
                         )
                   )
                   and (
@@ -23159,7 +23159,7 @@ class AutoReplyStore:
                                 and tasks.trigger_message_id=attempts.trigger_message_id
                                 and (
                                     tasks.status in (
-                                        'done', 'skipped', 'needs_human', 'pending', 'processing'
+                                        'done', 'skipped', 'needs_human', 'processing'
                                     )
                                 )
                           )

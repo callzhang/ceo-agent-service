@@ -12938,6 +12938,40 @@ def test_old_generation_attempt_cannot_fail_or_surface_current_task(tmp_path: Pa
     assert store.list_current_unresolved_problem_attempts() == []
 
 
+def test_current_generation_failed_attempt_remains_visible_while_task_retries(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "retry-attention.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+        channel=task.channel,
+    )
+    with store._connect() as db:
+        run = db.execute(
+            """insert into agent_runs (
+                reply_task_id, execution_generation, role, status, final_result_json
+            ) values (?, ?, 'consumer', 'failed', '{}')""",
+            (task.id, task.execution_generation),
+        )
+        db.execute(
+            "update reply_attempts set agent_run_id=?, send_error='codex_process_failed' where id=?",
+            (run.lastrowid, attempt_id),
+        )
+        db.execute("update reply_tasks set status='pending' where id=?", (task.id,))
+    assert store.get_reply_task(task.id).status == "pending"
+    assert [item.id for item in store.list_current_unresolved_problem_attempts()] == [attempt_id]
+    assert [item["id"] for item in store.list_current_unresolved_problem_attempt_summaries()] == [str(attempt_id)]
+    assert store.count_current_unresolved_problem_attempts() == 1
+
+
 def test_the_second_failure_path_keeps_receipt_failure_failed(tmp_path: Path):
     """A missing receipt stays a recoverable technical failure on every path."""
     store = AutoReplyStore(tmp_path / "second-path.sqlite3")

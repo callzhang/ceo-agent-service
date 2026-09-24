@@ -9033,6 +9033,50 @@ def test_worker_attention_excludes_pending_and_processing_reply_and_meeting_rows
     assert all(row["id"] != str(meeting_id) for row in rows)
 
 
+def test_attention_includes_current_failed_attempt_waiting_for_retry(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "retry-attention.sqlite3")
+    task_id = store.enqueue_reply_task(
+        conversation_id="cid-retry-attention",
+        conversation_title="Review",
+        single_chat=False,
+        trigger_message_id="msg-retry-attention",
+        trigger_create_time="2026-09-24 01:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please review.",
+    )
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+        channel=task.channel,
+    )
+    with store._connect() as db:
+        run = db.execute(
+            """insert into agent_runs (
+                reply_task_id, execution_generation, role, status, final_result_json
+            ) values (?, ?, 'consumer', 'failed', '{}')""",
+            (task.id, task.execution_generation),
+        )
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (run.lastrowid, attempt_id),
+        )
+        db.execute("update reply_tasks set status='pending' where id=?", (task.id,))
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert [(row["category"], row["id"]) for row in rows] == [
+        ("Reply", str(attempt_id))
+    ]
+
+
 def test_worker_attention_includes_failed_meeting_memory_writes(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     meeting_id = store.upsert_meeting_alignment_job(
