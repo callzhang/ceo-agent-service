@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
@@ -131,13 +131,20 @@ class ScheduledTaskOptionService:
             raise ScheduledTaskOptionUnavailableError(
                 f"runtime route {route_name}: runtime_not_configured"
             )
-        option = self._runtime_option(
-            route,
-            required_capabilities=required_capabilities,
-        )
-        if not option.available:
+        # The task's route is the first choice, not the only one: a scheduled
+        # turn falls back through the configured routes like any other Agent
+        # turn (Derek 2026-09-24). So the run can go ahead while any route in
+        # that order can take it, and the reason names every route otherwise.
+        options = [
+            self._runtime_option(candidate, required_capabilities=required_capabilities)
+            for candidate in scheduled_route_order(route, self._runtime_config.routes)
+        ]
+        if not any(option.available for option in options):
             raise ScheduledTaskOptionUnavailableError(
-                f"runtime route {route_name}: {option.unavailable_reason}"
+                "; ".join(
+                    f"runtime route {option.route_name}: {option.unavailable_reason}"
+                    for option in options
+                )
             )
         return route
 
@@ -388,6 +395,16 @@ class ScheduledTaskOptionService:
             available=True,
             unavailable_reason=None,
         )
+
+
+def scheduled_route_order(
+    preferred: RuntimeRoute, configured: Sequence[RuntimeRoute]
+) -> tuple[RuntimeRoute, ...]:
+    """The task's own route first, then the rest in configured fallback order."""
+    return (
+        preferred,
+        *(route for route in configured if route.name != preferred.name),
+    )
 
 
 def _single_route_reason(reason: str, route_name: str) -> str:

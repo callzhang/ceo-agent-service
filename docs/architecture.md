@@ -110,9 +110,11 @@ scheduled_tasks[command]
 ```
 
 调度层不补跑停机期间错过的时间点；上一轮仍未终态时，本轮 trigger 记为 `skipped`，不会并行
-创建第二个执行输入。手动运行会创建独立 trigger，但不移动正常计划。任务固定指定 Runtime route、
-model、thinking（仅受支持时）和工作目录，不允许失败后切换其他 Runtime；managed Skill 必须绑定
-精确、已加载且启用的 revision。派发前不可用时 trigger 为 `skipped`：Runtime 未配置、缺少能力、
+创建第二个执行输入。手动运行会创建独立 trigger，但不移动正常计划。任务指定的 Runtime route 是
+**首选**而不是唯一线路（Derek 2026-09-24）：执行先上首选线路，失败时走与其他 Agent 轮次相同的统一
+fallback（`app/runtime_fallback.py`：满载先同线路重试，再暂停该线路、按配置顺序换下一条）；任务的
+model、thinking 只作用于首选线路。managed Skill 必须绑定精确、已加载且启用的 revision。派发前按
+「首选 + 其余配置线路」检查，只有这些线路都不可用时 trigger 才为 `skipped`；Runtime 未配置、缺少能力、
 认证暂停或 Skill revision 不可用属于配置性不可用，每次进入 Attention；provider 暂时不可用导致
 的路由暂停（过载、传输断连）只体现为 run 记录和路由暂停状态，不按每次触发写 Attention。
 派发后的执行可用性失败记录在 execution source，trigger 仍只表示已经派发。

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
@@ -298,6 +299,29 @@ def test_scheduled_orchestrator_pins_parent_execution_mode_for_both_roles(
     }
     assert orchestrator.consumer.execution_environment == expected_environment
     assert orchestrator.audit.execution_environment == expected_environment
+
+
+def test_scheduled_orchestrator_starts_on_the_saved_route_and_keeps_the_fallback(tmp_path):
+    store, run, options = fixture(tmp_path)
+    built = ScheduledAgentContextBuilder(options).build(run, reply_task_id=7)
+    runtime_config = load_runtime_config(
+        {"CEO_AGENT_RUNTIME_ROUTES": "claude_oauth,codex_oauth"}
+    )
+    built = replace(
+        built,
+        route=next(route for route in runtime_config.routes if route.name == "codex_oauth"),
+    )
+
+    orchestrator = build_scheduled_orchestrator(
+        store=store, built=built, runtime_config=runtime_config
+    )
+
+    for role in (orchestrator.consumer, orchestrator.audit):
+        assert role.forced_runtime_route is None
+        assert [route.name for route in role.runtime_config.routes] == [
+            "codex_oauth",
+            "claude_oauth",
+        ]
 
 
 def test_trigger_dispatches_once_and_generic_reply_adapter_excludes_it(tmp_path):

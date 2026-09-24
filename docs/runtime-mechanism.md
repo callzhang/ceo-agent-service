@@ -797,7 +797,7 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 
 ### Cron trigger 与 Consumer Dispatcher
 
-Agent Cron 保存任务定义及其结构化 Skill refs、固定 Runtime route/model/options、工作目录、Cron
+Agent Cron 保存任务定义及其结构化 Skill refs、首选 Runtime route/model/options、工作目录、Cron
 和时区。Scheduler 每次只计算当前时间之后的最近触发点，不枚举停机窗口，所以没有 catch-up。
 手动运行只追加一次 manual trigger，不改变 `next_run_at`。若上一轮关联 execution 尚未终态，
 本轮以 `skipped` 和稳定原因结束，不等待后补。
@@ -805,10 +805,11 @@ Agent Cron 保存任务定义及其结构化 Skill refs、固定 Runtime route/m
 一次正常到期分为两个可恢复阶段：`scheduled` adapter 领取 `scheduled_task_runs.pending`，在一个
 事务中创建或复用唯一 `reply_tasks.channel=scheduled` 输入、保存 execution link，并把 trigger
 标记 `dispatched`；`scheduled_execution` adapter 再领取该 execution source，按派发时冻结的
-prompt、Skill protocol、route、model、thinking 和 workdir 启动 Agent。managed Skill 使用精确
-revision；执行前若指定 Runtime、该 revision 或工作目录已经不可用，execution 以 `skipped`
-收口并产生 Attention，绝不 fallback，也不把业务结果写回 trigger。Scheduler 在派发前发现
-Runtime 不可用时同样记 `skipped`：配置性原因（未配置、缺能力、认证暂停）每次写 Attention，
+prompt、Skill protocol、首选 route、model、thinking 和 workdir 启动 Agent；首选线路失败时按统一
+fallback 换到其余配置线路（Derek 2026-09-24，此前定时任务固定单线路、从不 fallback）。managed Skill
+使用精确 revision；执行前若首选及其余线路都不可用、该 revision 或工作目录已经不可用，execution 以
+`skipped` 收口并产生 Attention，不把业务结果写回 trigger。Scheduler 在派发前发现全部线路不可用时
+同样记 `skipped`：配置性原因（未配置、缺能力、认证暂停）每次写 Attention，
 provider 暂时不可用造成的路由暂停只留下 run 记录和路由暂停状态，不逐次写 Attention。
 
 服务命令任务（`scheduled_tasks.command` 非空）只有第一阶段：`scheduled` adapter 领取 trigger

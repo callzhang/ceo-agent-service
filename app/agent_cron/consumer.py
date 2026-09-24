@@ -16,6 +16,7 @@ from app.agent_cron.context import (
     validate_scheduled_execution_availability,
 )
 from app.agent_cron.models import ScheduledTaskRun
+from app.agent_cron.options import scheduled_route_order
 from app.agent_cron.scheduler import EXECUTION_UNAVAILABLE
 from app.dispatcher.models import ClaimGuard, DispatchEnvelope
 from app.dws_client import is_transient_dependency_error
@@ -247,16 +248,22 @@ def build_scheduled_orchestrator(
     codex_bin: str = "codex", dry_run: bool = False,
     refresh_runtime_capabilities=None,
 ):
-    """Build both roles in the saved workdir on the one saved route."""
+    """Build both roles in the saved workdir, starting on the saved route.
+
+    The saved route is tried first; a failure there takes the same fallback as
+    every other Agent turn, through the rest of the configured routes.
+    """
     from app.agent_orchestrator import AgentOrchestrator
     from app.audit_agent import AuditAgentRunner
     from app.consumer_agent import ConsumerAgentRunner
 
-    scoped_config = runtime_config.model_copy(update={"routes": (built.route,)})
+    scoped_config = runtime_config.model_copy(
+        update={"routes": scheduled_route_order(built.route, runtime_config.routes)}
+    )
     execution_environment = scheduled_execution_environment(dry_run)
     common = {
         "store": store, "workspace": built.workspace, "codex_bin": codex_bin,
-        "runtime_config": scoped_config, "forced_runtime_route": built.route,
+        "runtime_config": scoped_config,
         "reasoning_effort": built.reasoning_effort,
         "skill_protocol_override": built.skill_protocol,
         "refresh_runtime_capabilities": refresh_runtime_capabilities,

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 2026-09-24: A scheduled Agent task's runtime route is now its first choice,
+  not its only one. It starts there and, on failure, takes the same unified
+  fallback as every other Agent turn: capacity retries on that route, then a
+  route pause and the next configured route. A trigger or execution is skipped
+  only when no route in that order can take it. Before, a paused route skipped
+  the run outright (daily report run 83750, Codex at capacity).
+
 - 2026-09-24: The daily report now covers everything since the last report
   that went out, not one calendar day: `daily-report-facts --scheduled-run
   <id>` ends the window at this trigger and starts it where the latest earlier

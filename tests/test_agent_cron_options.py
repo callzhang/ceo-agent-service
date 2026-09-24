@@ -115,7 +115,7 @@ def test_runtime_options_include_only_configured_routes_and_keep_unhealthy_reaso
     assert options[1].unavailable_reason == "snapshot_unhealthy"
 
 
-def test_runtime_resolution_uses_saved_route_name_without_fallback(
+def test_saved_route_is_the_first_choice_and_fallback_keeps_the_run_available(
     tmp_path: Path,
 ) -> None:
     service = _service(
@@ -127,16 +127,32 @@ def test_runtime_resolution_uses_saved_route_name_without_fallback(
     )
 
     assert service.resolve_runtime_route("codex_oauth").name == "codex_oauth"
-    with pytest.raises(
-        ScheduledTaskOptionUnavailableError,
-        match="claude_api: snapshot_unhealthy",
-    ):
-        service.resolve_runtime_route("claude_api")
+    # The saved route is unhealthy, but the run can fall back to codex_oauth,
+    # so the saved route still resolves as the one tried first.
+    assert service.resolve_runtime_route("claude_api").name == "claude_api"
     with pytest.raises(
         ScheduledTaskOptionUnavailableError,
         match="friday_runtime: runtime_not_configured",
     ):
         service.resolve_runtime_route("friday_runtime")
+
+
+def test_run_is_unavailable_only_when_no_route_in_the_fallback_order_can_take_it(
+    tmp_path: Path,
+) -> None:
+    service = _service(
+        tmp_path,
+        snapshots={
+            "codex_oauth": _snapshot("codex_oauth", healthy=False),
+            "claude_api": _snapshot("claude_api", healthy=False),
+        },
+    )
+
+    with pytest.raises(
+        ScheduledTaskOptionUnavailableError,
+        match="claude_api: snapshot_unhealthy; runtime route codex_oauth: snapshot_unhealthy",
+    ):
+        service.resolve_runtime_route("claude_api")
 
 
 @pytest.mark.parametrize(
