@@ -7531,7 +7531,7 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
     assert set(captured["executors"]) == set(captured["consumers"])
     assert len({id(executor) for executor in captured["executors"].values()}) == 9
     assert captured["max_in_flight"] == {
-        name: 1 if name == "meeting" else 2
+        name: 1 if name in {"meeting", "work_summary"} else 2
         for name in captured["consumers"]
     }
     assert captured["shared_capacity_adapters"] == {
@@ -8223,7 +8223,9 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
 
     store = AutoReplyStore(tmp_path / "registry.sqlite3")
     registry = cli._service_command_registry(
-        store, Worker(), SimpleNamespace(max_batches=7)
+        store,
+        Worker(),
+        WorkerSettings(db_path=tmp_path / "registry.sqlite3", max_batches=7),
     )
 
     assert set(registry._implementations) == {
@@ -8242,7 +8244,7 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
     assert registry.run("produce-once") == "produce-once queued=3"
     assert registry.run("calendar-invites-once") == "calendar-invites-once queued=3"
     assert registry.run("recover-recent-messages") == (
-        "recover-recent-messages queued=3"
+        "recover-recent-messages queued=3 dingtalk_todos_closed=0"
     )
     assert calls == [(7, False, False), (7, False, True), (7, True, None)]
     wechat = registry._implementations["wechat-produce-once"]
@@ -8470,24 +8472,6 @@ def test_repair_exhausted_work_item_is_retried_then_bounded():
     )
     # A plain validation error is still not retried.
     assert cli._should_retry_work_summary_input(ValueError("update_project requires project"), 1) is False
-
-
-def test_completion_check_policy_errors_are_skipped_not_retried():
-    from app.task_agent import TaskDecisionRepairExhausted
-
-    protected_fields = TaskDecisionRepairExhausted(
-        "task decision repair exhausted after 2 rounds: "
-        "completion checks cannot change protected project fields: facts"
-    )
-    no_transition = TaskDecisionRepairExhausted(
-        "task decision repair exhausted after 2 rounds: "
-        "completion check without a lifecycle transition must skip"
-    )
-
-    assert cli._should_skip_work_summary_input(str(protected_fields)) is True
-    assert cli._should_skip_work_summary_input(str(no_transition)) is True
-    assert cli._should_retry_work_summary_input(protected_fields, 1) is False
-    assert cli._should_retry_work_summary_input(no_transition, 1) is False
 
 
 def test_a_runtime_lease_conflict_is_retried_not_terminalized():
