@@ -65,7 +65,6 @@ function UnsubscribeEvidence({ event, classificationId, entry }: { event: EmailO
   const [entryUrl, setEntryUrl] = useState("");
   const [loading, setLoading] = useState(entry?.available !== false);
   const [error, setError] = useState("");
-  const [copyState, setCopyState] = useState("");
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (entry?.available === false) { setLoading(false); return; }
@@ -76,20 +75,13 @@ function UnsubscribeEvidence({ event, classificationId, entry }: { event: EmailO
       .catch(() => { if (!controller.signal.aborted) { setError("退订地址暂不可用。"); setLoading(false); } });
     return () => controller.abort();
   }, [classificationId, entry?.available, attempt]);
-  async function copy() {
-    try {
-      if (!navigator.clipboard) throw new Error("unavailable");
-      await navigator.clipboard.writeText(entryUrl);setCopyState("已复制");
-    } catch {setCopyState("复制失败，请选择地址手动复制");}
-  }
   return <>
     {!!event.attempt_ids?.length && <div className="email-unsubscribe-attempts">{event.attempt_ids.map(id => <Link key={id} to={`/attempts/${id}`}>查看处理过程 · Attempt #{id} ↗</Link>)}</div>}
     <div className="email-unsubscribe-entry"><span>退订链接</span>
       {entry?.available === false ? <p>没有保存退订地址：当前记录没有可验证的退订地址。</p>
         : loading ? <p role="status">正在读取退订链接…</p>
         : error ? <p role="alert">{error} <button type="button" onClick={() => setAttempt(value => value + 1)}>重试</button></p>
-        : <><code className="email-unsubscribe-url" aria-label="退订入口地址">{entryUrl}</code><button type="button" onClick={()=>void copy()}>复制地址</button></>}
-      {copyState && <p role="status">{copyState}</p>}
+        : <a className="email-unsubscribe-url" href={entryUrl} target="_blank" rel="noopener noreferrer" aria-label="退订入口地址">{entryUrl}</a>}
     </div>
   </>;
 }

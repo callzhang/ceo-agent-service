@@ -279,9 +279,12 @@ it("shows the unsubscribe link and evidence without opening anything, and links 
   expect(drawer).toHaveTextContent("plan-full-id");expect(drawer).toHaveTextContent("版本 7");
   expect(drawer).toHaveTextContent("Consumer run：101");expect(drawer).toHaveTextContent("Audit run：102");expect(drawer).toHaveTextContent("receipt-2");expect(drawer).toHaveTextContent("digest-2");
   expect(within(drawer).getByRole("link",{name:"查看处理过程 · Attempt #9205 ↗"})).toHaveAttribute("href","/attempts/9205");
-  expect(await within(drawer).findByText("https://example.test/unsubscribe?token=fixture")).toBeInTheDocument();
+  const link=await within(drawer).findByRole("link",{name:"退订入口地址"});
+  expect(link).toHaveAttribute("href","https://example.test/unsubscribe?token=fixture");
+  expect(link).toHaveTextContent("https://example.test/unsubscribe?token=fixture");
+  expect(link).toHaveAttribute("target","_blank");expect(link).toHaveAttribute("rel","noopener noreferrer");
   expect(api.getEmailUnsubscribeEntryUrl).toHaveBeenCalledWith("1",expect.any(AbortSignal));
-  expect(within(drawer).getByRole("button",{name:"复制地址"})).toBeInTheDocument();
+  expect(within(drawer).queryByRole("button",{name:"复制地址"})).not.toBeInTheDocument();
   expect(within(drawer).getByRole("region",{name:"邮箱观察事实"})).toHaveTextContent("legal");
   expect(within(drawer).getByText("Star：未同步")).toBeInTheDocument();
   expect(within(drawer).getByText("Flag：未同步")).toBeInTheDocument();
