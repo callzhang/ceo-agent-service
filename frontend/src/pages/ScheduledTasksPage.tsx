@@ -331,6 +331,8 @@ function RunHistoryRow({ entry }: { entry: RunHistoryEntry }) {
   const counters = runCounters(summary);
   const merged = entry.count > 1;
   const agentRun = run.execution_kind !== "service_command";
+  const [technicalOpen, setTechnicalOpen] = useState(false);
+  const technicalId = `scheduled-task-run-technical-${run.id}`;
   return <li className={entry.idle ? "scheduled-task-run is-idle" : "scheduled-task-run"}>
     <div className="scheduled-task-run-head">
       <span className={`status-badge status-${status.tone}`}>{status.label}</span>
@@ -349,15 +351,13 @@ function RunHistoryRow({ entry }: { entry: RunHistoryEntry }) {
           {run.skip_or_error_reason && <RunReason reason={run.skip_or_error_reason} failed={run.dispatch_status === "failed"} />}
         </>}
     </div>
-    <details className="scheduled-task-run-technical">
-      <summary>技术详情</summary>
-      <dl>
-        <div><dt>Trigger</dt><dd>{merged ? `#${entry.oldest.id} – #${run.id}` : `#${run.id}`}</dd></div>
-        {run.execution_kind && <div><dt>执行</dt><dd>{run.execution_kind === "service_command" ? `${run.execution_kind} ${run.execution_id}` : `${run.execution_kind} #${run.execution_id}`}</dd></div>}
-        {summary && <div><dt>结果</dt><dd>{summary}</dd></div>}
-        {run.skip_or_error_reason && <div><dt>原因</dt><dd>{run.skip_or_error_reason}</dd></div>}
-      </dl>
-    </details>
+    <button type="button" className="scheduled-task-run-technical" aria-expanded={technicalOpen} aria-controls={technicalId} onClick={() => setTechnicalOpen((open) => !open)}>技术详情</button>
+    <dl id={technicalId} className="scheduled-task-run-technical-panel" hidden={!technicalOpen}>
+      <div><dt>Trigger</dt><dd>{merged ? `#${entry.oldest.id} – #${run.id}` : `#${run.id}`}</dd></div>
+      {run.execution_kind && <div><dt>执行</dt><dd>{run.execution_kind === "service_command" ? `${run.execution_kind} ${run.execution_id}` : `${run.execution_kind} #${run.execution_id}`}</dd></div>}
+      {summary && <div><dt>结果</dt><dd>{summary}</dd></div>}
+      {run.skip_or_error_reason && <div><dt>原因</dt><dd>{run.skip_or_error_reason}</dd></div>}
+    </dl>
   </li>;
 }
 
