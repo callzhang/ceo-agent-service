@@ -100,8 +100,8 @@ def test_the_live_rate_counts_only_recent_samples_and_times_only_the_model(tmp_p
 
     assert rate["evaluated"] == 2
     assert rate["per_minute"] == 0.2
-    # The two recent samples only: the old 100 ms one is out of the window.
-    assert rate["latency_ms"] == {"p50": 300.0, "p95": 300.0}
+    # The two recent samples only (the old 100 ms one is out of the window); the mean is not the median.
+    assert rate["latency_ms"] == {"mean": 250.0, "p50": 300.0, "p95": 300.0}
 
 
 def test_a_quiet_window_reports_the_last_batch_and_says_so(tmp_path: Path) -> None:
@@ -121,7 +121,7 @@ def test_a_quiet_window_reports_the_last_batch_and_says_so(tmp_path: Path) -> No
 
     # Nothing was judged in the window, but the model's speed is still known.
     assert rate["evaluated"] == 0
-    assert rate["latency_ms"] == {"p50": 200.0, "p95": 300.0}
+    assert rate["latency_ms"] == {"mean": 200.0, "p50": 200.0, "p95": 300.0}
     assert rate["latency_from_last_batch"] is True
     assert rate["latest_at"] == old
 

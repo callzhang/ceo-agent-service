@@ -14187,7 +14187,13 @@ class EmailStore:
             "per_minute": round(len(rows) / (window_seconds / 60), 1),
             "latest_at": latest_at,
             "latency_ms": (
-                {"p50": percentile(0.5), "p95": percentile(0.95)} if times else None
+                {
+                    "mean": round(sum(times) / len(times), 1),
+                    "p50": percentile(0.5),
+                    "p95": percentile(0.95),
+                }
+                if times
+                else None
             ),
             # True when the figures come from the last batch judged, not from
             # the window itself.

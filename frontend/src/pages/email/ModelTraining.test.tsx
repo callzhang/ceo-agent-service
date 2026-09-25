@@ -207,12 +207,12 @@ function renderWith(extra: Record<string, unknown>) {
 it("shows the model's own time per message, not the mailbox action after it", () => {
   renderWith({
     runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },
-    runtime_rate: { window_seconds: 600, evaluated: 240, per_minute: 24, latest_at: "2026-09-25T09:00:00+00:00", latency_ms: { p50: 180.5, p95: 320 } },
+    runtime_rate: { window_seconds: 600, evaluated: 240, per_minute: 24, latest_at: "2026-09-25T09:00:00+00:00", latency_ms: { mean: 190.2, p50: 180.5, p95: 320 } },
   });
 
   const stat = screen.getByText("实时处理速度").parentElement;
-  expect(stat).toHaveTextContent("180.5 ms/封");
-  expect(stat).toHaveTextContent("最近 10 分钟 240 封 · P95 320 ms · 只算模型耗时，不含邮箱动作");
+  expect(stat).toHaveTextContent("190.2 ms/封");
+  expect(stat).toHaveTextContent("最近 10 分钟 240 封 · 平均 190.2 ms · 只算模型耗时，不含邮箱动作");
 });
 
 it("names what keeps the candidate from being promoted instead of saying pending", () => {
@@ -249,13 +249,13 @@ it("says the candidate can go live when every blocking check passes", () => {
 it("shows the last batch's model time, and when, when nothing came in lately", () => {
   renderWith({
     runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },
-    runtime_rate: { window_seconds: 600, evaluated: 0, per_minute: 0, latest_at: "2026-09-25T20:26:44+00:00", latency_ms: { p50: 210, p95: 340 }, latency_from_last_batch: true },
+    runtime_rate: { window_seconds: 600, evaluated: 0, per_minute: 0, latest_at: "2026-09-25T20:26:44+00:00", latency_ms: { mean: 225.5, p50: 210, p95: 340 }, latency_from_last_batch: true },
   });
 
   const stat = screen.getByText("实时处理速度").parentElement;
-  expect(stat).toHaveTextContent("210 ms/封");
+  expect(stat).toHaveTextContent("225.5 ms/封");
   expect(stat).toHaveTextContent("最近 10 分钟没有邮件进来 · 上一批");
-  expect(stat).toHaveTextContent("P95 340 ms");
+  expect(stat).toHaveTextContent("平均 225.5 ms");
 });
 
 it("says so when the model has never judged anything, and when no model is live", () => {
@@ -277,7 +277,7 @@ it("says so when the model has never judged anything, and when no model is live"
 it("draws the sweep's progress bar with a time estimate from the live speed", () => {
   renderWith({
     runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },
-    runtime_rate: { window_seconds: 600, evaluated: 300, per_minute: 30, latest_at: "2026-09-25T09:00:00+00:00", latency_ms: { p50: 200, p95: 300 } },
+    runtime_rate: { window_seconds: 600, evaluated: 300, per_minute: 30, latest_at: "2026-09-25T09:00:00+00:00", latency_ms: { mean: 205, p50: 200, p95: 300 } },
     model_scan_progress: { remaining: 600, total: 800, done: 200, updated_at: "2026-09-25T09:00:00+00:00" },
   });
 
