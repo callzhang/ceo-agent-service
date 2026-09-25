@@ -2127,3 +2127,36 @@ def test_an_exact_owner_excerpt_from_another_line_is_kept_when_the_work_was_hand
     updated = store.get_business_task(task.task_id)
     assert updated.owner_name == "Claire"
     assert json.loads(updated.owner_evidence_json)["excerpt"] == taking
+
+
+def test_an_owner_the_source_does_not_establish_skips_that_item_and_not_the_whole_meeting(tmp_path):
+    store = AutoReplyStore(tmp_path / "bad-owner.sqlite3")
+    service = TaskSemanticService(store)
+
+    def seed(title, key):
+        return service.record_candidate(RecordCandidate(
+            title=title, signal=SourceSignal(source_type="ai_minutes", source_ref=f"m:{key}#todos-sha256=old",
+                evidence_text=title, dedupe_key=f"seed:{key}"),
+        )).task_id
+
+    first, second = seed("整理清单", "a"), seed("发送文档", "b")
+    good, other = "Zoey：我先列一个list。", "陈思睿：好的。"
+    item = _work_item().model_copy(update={"summary": json.dumps({"lines": [good, other]}, ensure_ascii=False)})
+
+    def update(task_id, title, name, excerpt):
+        return {
+            "action": "update_task", "transition": "update_fields", "task_id": task_id, "title": title,
+            "source_excerpt": excerpt, "source_ref": item.source.ref, "owner_name": name,
+            "owner_evidence": {"source_ref": item.source.ref, "excerpt": excerpt},
+        }
+
+    decision = TaskAgentDecision.model_validate({"task_decisions": [
+        update(first, "整理清单", "陈思睿", good),  # the quoted line is Zoey's: it does not name 陈思睿
+        update(second, "发送文档", "陈思睿", other),
+    ]})
+
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+
+    assert store.get_business_task(first).owner_name == ""
+    assert store.get_business_task(second).owner_name == "陈思睿"
+    assert any(f"Task {first} owner was not applied" in reason for reason in result.skipped_reasons)

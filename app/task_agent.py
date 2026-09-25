@@ -419,8 +419,8 @@ sentence as “speaker：text”. Decide the owner from those lines: it is whoev
 the conversation gives the work to or who takes it on, not automatically the
 speaker (“你写下来” from one person assigns the work to the person addressed).
 Set owner_evidence with two keys: "source_ref" (the Work Item source reference)
-and "excerpt" (one line copied unchanged, speaker label included, that
-contains the owner's name). That line is often not the item's own source_excerpt: when one person
+and "excerpt" (one single line copied unchanged, speaker label included,
+that contains the owner's name; never join several lines or sentences). That line is often not the item's own source_excerpt: when one person
 hands the work to another (“你写下来”), quote the line in which the person who
 takes it on speaks, and keep the assigning line as the decision's source_excerpt. A generic label such as “发言人 N” is DingTalk's placeholder for a
 speaker it could not name; it is not a person and never an owner. When the lines
@@ -983,6 +983,17 @@ def apply_task_agent_decision(
                 store.get_business_task_in_transaction(task_id=item.task_id, _db=db)
                 if item.task_id is not None else None
             )
+            if item.action == "update_task" and item.transition == "update_fields" and item.owner_name:
+                # One item whose owner the source does not establish must not fail the
+                # meeting's other items: leave that Task as it was and say why.
+                try:
+                    TaskSemanticService._require_source_backed_owner(
+                        signal=signal, owner_user_id=owner_user_id, owner_name=item.owner_name,
+                        owner_evidence_json=json.dumps(owner_evidence, ensure_ascii=False),
+                    )
+                except ValueError as exc:
+                    skipped_reasons.append(f"Task {item.task_id} owner was not applied: {exc}.")
+                    continue
             if (
                 item.action == "update_task" and item.transition == "update_fields"
                 and task_before is not None and not date_facts
