@@ -634,9 +634,11 @@ def scan_pending_oa_approvals(
                 # This sentence used to make every template's action obey a
                 # processCode-matched rule card; only the finance templates have
                 # cards, so every other approval had no action authority and
-                # stopped at needs_human from 2026-09-22.
+                # stopped at needs_human from 2026-09-22. Finance cards are
+                # criteria too: their old "no action authorized" column kept
+                # every registered payment at needs_human (2026-09-24).
                 "判断标准由本次所选的星尘业务 Skill 提供，动作一律按通用 Skill 的完整决策表；"
-                "只有财务模板（processCode 在财务 Skill 登记表内）按其规则卡处理，"
+                "财务模板（processCode 在财务 Skill 登记表内）以其规则卡为判断标准，动作同样按决策表，"
                 "其他审批类型没有规则卡不是规则缺口。规则只在 Skill 里，不读参考文档。"
                 "在此前提下审阅完整审批材料、历史处理记录和当前节点。"
             ),
