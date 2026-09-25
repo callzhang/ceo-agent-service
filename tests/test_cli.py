@@ -9283,3 +9283,23 @@ def test_task_agent_queue_runs_one_turn_at_a_time():
     counts = _adapter_worker_counts(("reply", "work_summary", "meeting"), 2)
 
     assert counts == {"reply": 2, "work_summary": 1, "meeting": 1}
+
+
+def test_open_tasks_are_not_rechecked_on_a_schedule(monkeypatch, tmp_path):
+    """Derek, 2026-09-25: 「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」.
+
+    The periodic check re-sent each open to-do with its own snapshot; the
+    turns searched nothing and failed. Nothing is enqueued any more.
+    """
+    import app.cli as cli
+    import app.todo_completion as todo_completion
+
+    calls = []
+    monkeypatch.setattr(
+        todo_completion,
+        "enqueue_todo_completion_evidence_checks",
+        lambda *args, **kwargs: calls.append(kwargs) or 3,
+    )
+
+    assert cli.check_follow_up_completions_command(object(), limit=50) == 0
+    assert calls == []

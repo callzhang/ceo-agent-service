@@ -111,7 +111,6 @@ from app.task_owner_backfill import (
     TodoOwnerBackfillResult,
     backfill_todo_owner_ids_from_follow_ups,
 )
-from app.todo_completion import enqueue_todo_completion_evidence_checks
 from app.todo_sync import (
     dispatch_claimed_business_task_todo_sync_outbox,
     dispatch_claimed_task_todo_sync_outbox,
@@ -2692,21 +2691,18 @@ def check_follow_up_completions_command(
     *,
     limit: int = 1,
 ) -> int:
-    """Confirm follow-up completion evidence; never scan messages, meetings, or OA."""
-    dws = DwsClient(
-        ding_robot_code=settings.ding_robot_code,
-        ding_robot_name=settings.ding_robot_name,
-        ding_receiver_user_id=settings.ding_receiver_user_id,
-    )
-    checked = enqueue_todo_completion_evidence_checks(
-        AutoReplyStore(settings.db_path),
-        dws,
-        workspace=settings.workspace,
-        now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-        limit=limit,
-    )
-    print(f"check-follow-up-completions checked={checked}", flush=True)
-    return checked
+    """Retired: open tasks are no longer re-checked on a schedule.
+
+    Derek, 2026-09-25: 「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应
+    的 task」. A task changes when new information about it arrives -- a
+    message, a meeting, a DingTalk to-do status -- and the source scanners
+    already hand that to Task Agent. The periodic check re-sent each open
+    to-do with its own snapshot; 15 of 16 turns searched nothing, cited the
+    work item itself and failed, some for to-dos three months past due.
+    """
+    del settings, limit
+    print("check-follow-up-completions checked=0 retired=1", flush=True)
+    return 0
 
 
 def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
