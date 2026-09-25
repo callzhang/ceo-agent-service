@@ -332,6 +332,34 @@ def scan_agent_classification_batch(
     return EmailScanResult(len(batch.messages), enqueued, 0, 0)
 
 
+def advance_scan_progress(
+    previous: Mapping[str, object] | None,
+    *,
+    batch_size: int,
+    remaining_after: int,
+    at: str,
+) -> dict[str, object]:
+    """Fold one scanned batch into the running progress of a folder's sweep.
+
+    Progress is measured against the most that was waiting during this sweep:
+    the peak is the backlog seen at the start of a batch, and it only resets once
+    the folder has been emptied. Mail arriving mid-sweep raises the peak a little
+    instead of pushing the bar backwards.
+    """
+
+    remaining_before = remaining_after + batch_size
+    prior_remaining = previous.get("remaining") if previous else None
+    prior_peak = previous.get("peak") if previous else None
+    emptied = prior_remaining in (None, 0) or type(prior_peak) is not int
+    peak = remaining_before if emptied else max(int(prior_peak), remaining_before)
+    return {
+        "remaining": remaining_after,
+        "peak": peak,
+        "last_batch": batch_size,
+        "at": at,
+    }
+
+
 def scan_model_classification_batch(
     source: object,
     store: object,
@@ -351,6 +379,7 @@ def scan_model_classification_batch(
     ],
     include_read: bool = False,
     agent_task_adapter: object | None = None,
+    record_progress: Callable[[int, int], object] | None = None,
     limit: int = 50,
     today: Callable[[], date] | None = None,
 ) -> EmailScanResult:
@@ -512,6 +541,8 @@ def scan_model_classification_batch(
                 else None
             ),
         )
+    if record_progress is not None and batch.remaining is not None:
+        record_progress(len(batch.messages), batch.remaining)
     return EmailScanResult(len(batch.messages), persisted, processed, pending)
 
 

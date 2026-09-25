@@ -53,6 +53,9 @@ class ImapUidBatch:
     uidvalidity: int
     previous_uidvalidity: int | None
     messages: list[dict[str, object]]
+    # Messages that matched the search and were not excluded, but did not fit
+    # in this batch. None when the source cannot say.
+    remaining: int | None = None
 
 
 @dataclass(frozen=True)
@@ -458,11 +461,13 @@ class ImapReadonlyAdapter:
             criterion = f"{criterion} SINCE {_imap_date(since)}"
         status, data = self.session.uid("SEARCH", None, criterion)
         _require_ok(status, "IMAP UID search failed")
-        uids = [
+        matched = [
             uid
             for uid in _search_uids(data)
             if (unread_only or int(uid) >= first_uid) and int(uid) not in excluded_uids
-        ][:limit]
+        ]
+        uids = matched[:limit]
+        not_in_batch = len(matched) - len(uids)
         messages: list[dict[str, object]] = []
         for uid in uids:
             status, structure_data = self.session.uid("FETCH", uid, "(BODYSTRUCTURE)")
@@ -536,6 +541,7 @@ class ImapReadonlyAdapter:
             uidvalidity=uidvalidity,
             previous_uidvalidity=cursor_uidvalidity,
             messages=messages,
+            remaining=not_in_batch,
         )
 
     def fetch_uid_membership(

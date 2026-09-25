@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.email_classifier_scan import (
+    advance_scan_progress,
     AgentScanContext,
     scan_agent_classification_batch,
     scan_model_classification_batch,
@@ -167,6 +170,11 @@ def build_email_discovery_dependencies(
                         lookback_days=int(account.get("model_lookback_days") or 365),
                         online_runtime=runtime_snapshot,
                         agent_task_adapter=classification_task_producer.adapter,
+                        record_progress=lambda batch_size, remaining, _key=(
+                            f"email_model_scan_progress:{account['account_id']}:{folder_name}"
+                        ): _record_model_scan_progress(
+                            task_store, _key, batch_size, remaining
+                        ),
                         accept_model=(
                             lambda message, prediction, entries, model_text, model_id: (
                                 persist_model_primary_classification(
@@ -226,6 +234,29 @@ def build_email_discovery_dependencies(
         load_active_model=load_active_model,
         scan_account=scan_account,
         record_health=record_health,
+    )
+
+
+def _record_model_scan_progress(
+    task_store: object, key: str, batch_size: int, remaining: int
+) -> None:
+    """Keep how far the model's sweep of one folder has got, for the console."""
+
+    previous = None
+    try:
+        raw = task_store.get_service_state(key)
+        loaded = json.loads(raw) if raw else None
+        previous = loaded if isinstance(loaded, dict) else None
+    except (TypeError, ValueError):
+        previous = None
+    state = advance_scan_progress(
+        previous,
+        batch_size=batch_size,
+        remaining_after=remaining,
+        at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    task_store.set_service_state(
+        key, json.dumps(state, sort_keys=True, separators=(",", ":"))
     )
 
 

@@ -695,6 +695,7 @@ def test_imap_adapter_fetches_only_headers_bodystructure_and_bounded_text_sectio
         uidvalidity=42,
         previous_uidvalidity=42,
         messages=messages,
+        remaining=0,
     )
     assert messages[0] == parse_rfc822_message(
         _raw_message(),
@@ -1806,3 +1807,35 @@ def test_imap_adapter_bounds_the_search_to_a_lookback_window():
 
     assert ("uid", "SEARCH", None, "UNSEEN SINCE 03-Sep-2026") in unread.calls
     assert ("uid", "SEARCH", None, "UID 1:* SINCE 17-Jan-2026") in everything.calls
+
+
+def test_imap_batch_says_how_many_matching_messages_did_not_fit() -> None:
+    """The console's progress bar is this number, run down batch by batch."""
+
+    adapter = ImapReadonlyAdapter(
+        _plain_session(search_result=b"1 2 3 4 5"), account_id="account-a"
+    )
+
+    batch = adapter.fetch_uid_batch(
+        "INBOX", cursor_uidvalidity=42, last_seen_uid=0, limit=2
+    )
+
+    assert len(batch.messages) == 2
+    assert batch.remaining == 3
+
+
+def test_imap_batch_does_not_count_excluded_messages_as_remaining() -> None:
+    adapter = ImapReadonlyAdapter(
+        _plain_session(search_result=b"1 2 3 4 5"), account_id="account-a"
+    )
+
+    batch = adapter.fetch_uid_batch(
+        "INBOX",
+        cursor_uidvalidity=42,
+        last_seen_uid=0,
+        limit=2,
+        excluded_uids=frozenset({4, 5}),
+    )
+
+    assert len(batch.messages) == 2
+    assert batch.remaining == 1

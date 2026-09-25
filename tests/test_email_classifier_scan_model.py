@@ -1911,3 +1911,59 @@ def test_a_duplicate_inbox_copy_is_handed_the_existing_decision(tmp_path: Path) 
     assert [(folder, uid) for _identity, folder, uid in reapplied] == [
         (message["folder"], message["uid"])
     ]
+
+
+def test_model_scan_reports_the_backlog_it_left_for_the_progress_bar(tmp_path):
+    from app.email_imap_readonly import ImapUidBatch
+
+    messages = [
+        _message() | {"uid": uid, "messageId": f"<progress-{uid}@example.test>", "providerUnread": False}
+        for uid in (1, 2, 3)
+    ]
+
+    class Source:
+        account_id = "dingtalk-account"
+
+        def fetch_uid_batch(self, mailbox, **kwargs):
+            return ImapUidBatch(
+                account_id=self.account_id,
+                folder=mailbox,
+                uidvalidity=42,
+                previous_uidvalidity=kwargs["cursor_uidvalidity"],
+                messages=tuple(messages),
+                remaining=7,
+            )
+
+    runtime = SimpleNamespace(
+        snapshot=lambda: RuntimeSnapshot.model_primary(
+            predictor=lambda _value: OnlineClassificationResult(
+                source="model", value=SimpleNamespace(category="work")
+            ),
+            model_id="email-embedding-mlp-ready",
+            input_schema_version="email-folder-model-input-v4",
+            compatibility={"embedding_revision": "r1"},
+        )
+    )
+    reported = []
+
+    scan_model_classification_batch(
+        Source(),
+        EmailStore(tmp_path / "progress-hook.sqlite3"),
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        mailbox="INBOX",
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        lookback_days=365,
+        online_runtime=runtime,
+        accept_model=lambda *_args: None,
+        enqueue_agent=lambda *_args: None,
+        request_feedback=lambda *_args: None,
+        record_progress=lambda batch_size, remaining: reported.append((batch_size, remaining)),
+    )
+
+    assert reported == [(3, 7)]
