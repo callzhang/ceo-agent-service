@@ -37,6 +37,7 @@ from app.outbound_postfix import PreparedOutboundMessage
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
+from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 
 
 def test_consumer_records_specific_missing_agent_cli_receipt(
@@ -258,8 +259,8 @@ def _consumer_runtime_dependencies(
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": routes,
-            "CEO_CODEX_API_KEY": "fallback-test-key",
-            "CEO_CLAUDE_API_KEY": "test-claude-secret",
+            **codex_api_env("fallback-test-key"),
+            **claude_api_env("test-claude-secret"),
         }
     )
     capabilities = frozenset(
@@ -1325,7 +1326,7 @@ def test_consumer_read_events_can_fail_over_within_same_run(
     store, task, context, monkeypatch
 ):
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
-    monkeypatch.setenv("CEO_CODEX_API_KEY", "fallback-test-key")
+    set_env(monkeypatch, codex_api_env("fallback-test-key"))
     read_lines = _failed_reviewed_read_jsonl().splitlines()[:3]
     oauth_failure = "\n".join(
         (
@@ -1512,7 +1513,7 @@ def test_consumer_does_not_start_unprobed_api_fallback(
     store, task, context, monkeypatch
 ):
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
-    monkeypatch.setenv("CEO_CODEX_API_KEY", "fallback-test-key")
+    set_env(monkeypatch, codex_api_env("fallback-test-key"))
     executor = SequencedRuntimeExecutor(
         ProcessRunResult(
             1,
@@ -3019,7 +3020,7 @@ def test_claude_route_session_is_not_checked_as_local_codex_history(store, task)
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
-            "CEO_CLAUDE_API_KEY": "test-claude-secret",
+            **claude_api_env("test-claude-secret"),
         }
     )
     checked: list[str] = []

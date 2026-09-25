@@ -4774,6 +4774,8 @@ def probe_agent_runtimes_command(
                 store=AutoReplyStore(settings.db_path),
             )
         except ValueError:
+            from app.agent_runtime_config import added_route_api_key_state
+
             configured = {
                 item.strip()
                 for item in os.getenv(
@@ -4782,6 +4784,15 @@ def probe_agent_runtimes_command(
                 if item.strip()
             }
             selected = route_names or tuple(sorted(configured))
+
+            def failure_code(route_name: str) -> str:
+                # Any configured route whose kind signs in with its own key
+                # names the missing key; nothing depends on the route's name.
+                needs_key, has_key = added_route_api_key_state(route_name, os.environ)
+                if route_name in configured and needs_key and not has_key:
+                    return "missing_secret"
+                return "runtime_configuration_invalid"
+
             routes = [
                 {
                     "route_name": route_name,
@@ -4789,13 +4800,7 @@ def probe_agent_runtimes_command(
                     "capabilities": [],
                     "checked_at": "",
                     "expires_at": "",
-                    "failure_code": (
-                        "missing_secret"
-                        if route_name == "codex_api"
-                        and "codex_api" in configured
-                        and not os.getenv("CEO_CODEX_API_KEY", "").strip()
-                        else "runtime_configuration_invalid"
-                    ),
+                    "failure_code": failure_code(route_name),
                 }
                 for route_name in selected
             ]

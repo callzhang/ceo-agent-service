@@ -57,6 +57,19 @@ class RuntimeRoute(BaseModel):
             raise ValueError("value must be non-empty")
         return value
 
+    @property
+    def is_cli_api_route(self) -> bool:
+        """A Codex or Claude CLI route that signs in with its own API key.
+
+        Rules that depend on how a route authenticates follow this kind, not
+        the route's name: every such route can be added and renamed.
+        """
+
+        return self.credential_mode is CredentialMode.SERVICE_API and self.runtime_kind in {
+            RuntimeKind.CODEX_CLI,
+            RuntimeKind.CLAUDE_CLI,
+        }
+
 
 class RuntimeFailure(BaseModel):
     model_config = ConfigDict(frozen=True)

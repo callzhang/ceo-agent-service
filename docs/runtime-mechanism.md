@@ -19,6 +19,13 @@ workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime a
 原生 `auto_review`；页面不启动自己的 Codex runtime，也不定义独立审批策略。
 旧版确认记录只读，不能从页面或 API 恢复执行。
 
+模型路由的名字：只有 `codex_oauth`、`claude_oauth`、`friday_runtime` 三条内置路由名字固定；其余
+路由（含名为 `codex_api`、`claude_api` 的）都是添加的线路，由 `CEO_RUNTIME_<名字>_*` 描述、可改名，
+运行时规则按路由种类而不按名字判断（详见 `docs/architecture.md` 的「Agent Runtime 路由模型」）。
+旧的 `CEO_CODEX_API_*` / `CEO_CLAUDE_API_*` 在服务启动时由 supervisor 先行一次性迁移，名字不变，
+迁移前备份 `.env`。添加的线路改名由服务端一次完成：先在一个数据库事务里改定时任务首选线路、可派发的
+定时运行快照、会话续接、线路暂停和能力快照，再改 `.env`；运行尝试历史保留旧名。重启后生效。
+
 ## 标准生命周期
 
 ```text
@@ -75,8 +82,13 @@ Codex CLI 报告同一 session 有其他 active writer 时，运行时将其视�
 
 ## 功能机制开关与任务生产
 
-邮件分类使用独立的 `email_agent_classification_tasks` 持久化队列。Responses API
-请求允许正常的模型响应时间；临时网络、超时和租约中断不进入终态 `failed`，而是在同一
+邮件分类使用独立的 `email_agent_classification_tasks` 持久化队列。每封邮件是一次经共享
+Runtime Router 的 Agent 轮次（`EmailClassifierRoutedBackend`），与其他 Agent 轮次使用同一条线路
+顺序和统一 fallback；没有哪条线路名是邮件分类专用的（Derek 2026-09-24）。此前的「直连名为
+`codex_api` 的线路的 Responses API、失败再走路由」主路径已删除，代价是每封邮件变成一次完整的
+命令行轮次，更慢、更耗额度。离线训练标注命令 `app/email_training_labeler.py` 没有持久化的分类
+任务，无法走路由，改由操作者用 `--route <名字>` 指定一条带自己地址和 Key 的添加线路直连调用。
+分类请求允许正常的模型响应时间；临时网络、超时和租约中断不进入终态 `failed`，而是在同一
 任务上按共享指数退避重试，重试间隔最多 15 分钟。只有输入、契约或持久化冲突等不可重试
 错误进入 `failed`。Status、Attention 和每小时 quality gate 都必须覆盖该队列，不能只用
 Email worker 的汇总健康状态代替任务状态。

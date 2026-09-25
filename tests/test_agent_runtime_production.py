@@ -17,6 +17,7 @@ from app.agent_runtime_production import (
 )
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
+from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 
 
 def _snapshot(route_name: str) -> RuntimeCapabilitySnapshot:
@@ -73,9 +74,9 @@ def test_friday_launcher_environment_uses_independent_provider_config():
         base_environment={
             "PATH": "/usr/bin",
             "FRIDAY_LLM_MODEL": "explicit-model",
-            "CEO_CODEX_API_KEY": "must-not-leak",
+            **codex_api_env("must-not-leak"),
             "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "must-not-remain",
-            "CEO_CLAUDE_API_KEY": "must-not-leak",
+            **claude_api_env("must-not-leak"),
             "CEO_FRIDAY_RUNTIME_TICKET": "must-not-leak",
         },
     )
@@ -84,16 +85,16 @@ def test_friday_launcher_environment_uses_independent_provider_config():
     assert launch_env["FRIDAY_LLM_BASE_URL"] == "https://api.minimaxi.com/v1"
     assert launch_env["FRIDAY_LLM_API_KEY"] == "minimax-secret"
     assert launch_env["FRIDAY_LLM_MODEL"] == "explicit-model"
-    assert "CEO_CODEX_API_KEY" not in launch_env
+    assert "CEO_RUNTIME_CODEX_API_API_KEY" not in launch_env
     assert "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY" not in launch_env
-    assert "CEO_CLAUDE_API_KEY" not in launch_env
+    assert "CEO_RUNTIME_CLAUDE_API_API_KEY" not in launch_env
     assert "CEO_FRIDAY_RUNTIME_TICKET" not in launch_env
     assert "minimax-secret" not in repr(config)
 
 
 def test_production_registry_refreshes_existing_router_view(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
-    monkeypatch.setenv("CEO_CODEX_API_KEY", "test-secret")
+    set_env(monkeypatch, codex_api_env("test-secret"))
     registry = RuntimeCapabilityRegistry()
     stdout = "\n".join(
         json.dumps(payload)
@@ -133,7 +134,7 @@ def test_production_registry_refreshes_existing_router_view(tmp_path, monkeypatc
 
 def test_production_factory_requires_preinitialized_api_snapshot(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_api")
-    monkeypatch.setenv("CEO_CODEX_API_KEY", "test-secret")
+    set_env(monkeypatch, codex_api_env("test-secret"))
     stdout = "\n".join(
         json.dumps(payload)
         for payload in (
@@ -168,8 +169,7 @@ def test_production_routed_execution_overrides_only_codex_oauth_model(
 ):
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
     monkeypatch.setenv("CEO_CODEX_MODEL", "gpt-5.6-sol")
-    monkeypatch.setenv("CEO_CODEX_API_MODEL", "MiniMax-M2.5")
-    monkeypatch.setenv("CEO_CODEX_API_KEY", "test-secret")
+    set_env(monkeypatch, codex_api_env("test-secret", model="MiniMax-M2.5"))
 
     routed = build_production_routed_codex_execution(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
@@ -371,7 +371,7 @@ def test_production_agent_runtime_is_pure_and_loads_runtime_transports(
     )
     monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(service_config))
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "claude_api")
-    monkeypatch.setenv("CEO_CLAUDE_API_KEY", "test-anthropic-secret")
+    set_env(monkeypatch, claude_api_env("test-anthropic-secret"))
     registry = RuntimeCapabilityRegistry()
     build_production_runtime_refresher(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),

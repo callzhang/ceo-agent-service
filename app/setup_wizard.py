@@ -67,22 +67,26 @@ def runtime_route_setup_statuses(
     snapshots: Mapping[str, RuntimeCapabilitySnapshot],
     now=lambda: datetime.now(UTC),
 ) -> tuple[dict[str, object], ...]:
-    """Return secret-free setup readiness for every supported runtime route."""
+    """Return secret-free setup readiness for every configured runtime route.
 
-    configured = {
+    The primary `codex_oauth` route is always listed, as `disabled` when it is
+    missing; every other route follows in the configured failover order.
+    """
+
+    from app.agent_runtime_config import added_route_api_key_state
+
+    configured = [
         item.strip()
         for item in env.get("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth").split(",")
         if item.strip()
-    }
+    ]
     checked_now = now()
     statuses: list[dict[str, object]] = []
-    for route_name in ("codex_oauth", "codex_api"):
-        secret_configured = bool(
-            route_name == "codex_api" and env.get("CEO_CODEX_API_KEY", "").strip()
-        )
+    for route_name in ["codex_oauth", *(name for name in configured if name != "codex_oauth")]:
+        needs_secret, secret_configured = added_route_api_key_state(route_name, env)
         if route_name not in configured:
             status = "disabled"
-        elif route_name == "codex_api" and not secret_configured:
+        elif needs_secret and not secret_configured:
             status = "missing_secret"
         else:
             snapshot = snapshots.get(route_name)
@@ -1395,16 +1399,27 @@ def _setup_service_config(
         "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
         "CEO_CODEX_MODEL": DEFAULT_CEO_CODEX_MODEL,
         "CEO_CODEX_MODEL_REASONING_EFFORT": DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT,
-        "CEO_CODEX_API_MODEL": DEFAULT_CEO_CODEX_MODEL,
         "CEO_RUNTIME_PROBE_INTERVAL": "5m",
         "CEO_RUNTIME_ROUTE_RETRY_DELAY": "30m",
     }
     for key, default in defaults.items():
         values[key] = env.get(key, values.get(key) or default)
-    if env.get("CEO_CODEX_API_KEY", values.get("CEO_CODEX_API_KEY", "")).strip():
-        values["CEO_CODEX_API_KEY"] = env.get(
-            "CEO_CODEX_API_KEY", values.get("CEO_CODEX_API_KEY", "")
-        ).strip()
+    # An added route describes itself under its own name, so the settings the
+    # caller supplies for each configured added route are persisted with it.
+    from app.agent_runtime_config import (
+        ADDED_ROUTE_SETTING_SUFFIXES,
+        SUPPORTED_RUNTIME_ROUTES,
+        added_route_settings_prefix,
+    )
+
+    for route_name in values["CEO_AGENT_RUNTIME_ROUTES"].split(","):
+        route_name = route_name.strip()
+        if not route_name or route_name in SUPPORTED_RUNTIME_ROUTES:
+            continue
+        prefix = added_route_settings_prefix(route_name)
+        for suffix in ADDED_ROUTE_SETTING_SUFFIXES:
+            if env.get(f"{prefix}{suffix}", "").strip():
+                values[f"{prefix}{suffix}"] = env[f"{prefix}{suffix}"].strip()
 
     env_path.write_text(
         "".join(f"{key}={values[key]}\n" for key in sorted(values)),

@@ -65,13 +65,6 @@ from app.email_provider_actions import ProviderActionResult
 from app.email_store import StoredEmailLocator
 
 
-@pytest.fixture(autouse=True)
-def configured_email_classifier_api(monkeypatch):
-    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_api")
-    monkeypatch.setenv("CEO_CODEX_API_KEY", "test-email-api-key")
-    monkeypatch.setenv("CEO_CODEX_API_MODEL", "gpt-5.5")
-
-
 def _module():
     return import_module("app.email_worker")
 
@@ -6385,17 +6378,15 @@ def test_email_dependency_builder_applies_classifier_model_override_only(
             tick=lambda: None,
         ),
     )
-    from app.email_agent_api import (
-        EmailClassifierApiBackend,
-        EmailClassifierFallbackBackend,
-    )
+    from app.email_classifier_agent import EmailClassifierRoutedBackend
 
+    # Classification takes the system route order: its only backend is the
+    # shared runtime router, whatever the configured routes are called.
     backend = dependencies.run_classification_once.args[1].backend
-    assert isinstance(backend, EmailClassifierFallbackBackend)
-    assert isinstance(backend._primary, EmailClassifierApiBackend)
+    assert isinstance(backend, EmailClassifierRoutedBackend)
     assert description_agents[0]({"candidate": "test"}) == {"candidate": "test"}
 
-    # One router for the classifier fallback, one for the description optimizer.
+    # One router for the classifier, one for the description optimizer.
     assert len(routed_calls) == 2
     assert all("codex_oauth_model" not in call for call in routed_calls)
 

@@ -12,6 +12,7 @@ from app.claude_runtime_adapter import (
     ClaudeRuntimeResultError,
     ClaudeTerminalProof,
 )
+from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 
 SYSTEM_INIT = {
     "type": "system",
@@ -75,8 +76,7 @@ def config():
     return load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
-            "CEO_CLAUDE_MODEL": "claude-sonnet-test",
-            "CEO_CLAUDE_API_KEY": "anthropic-secret",
+            **claude_api_env("anthropic-secret", model="claude-sonnet-test"),
         }
     )
 
@@ -262,10 +262,10 @@ def test_claude_child_receives_only_configured_anthropic_credential(
     ambient = {
         "OPENAI_API_KEY": "openai-secret",
         "CODEX_API_KEY": "codex-secret",
-        "CEO_CODEX_API_KEY": "ceo-codex-secret",
+        **codex_api_env("ceo-codex-secret"),
         "ANTHROPIC_API_KEY": "ambient-anthropic-secret",
         "ANTHROPIC_AUTH_TOKEN": "ambient-token",
-        "CEO_CLAUDE_API_KEY": "ambient-ceo-secret",
+        **claude_api_env("ambient-ceo-secret"),
         "UNRELATED_SERVICE_TOKEN": "unrelated-secret",
     }
     for key, value in ambient.items():
@@ -277,9 +277,9 @@ def test_claude_child_receives_only_configured_anthropic_credential(
     assert "CLAUDE_CONFIG_DIR" not in env
     assert "OPENAI_API_KEY" not in env
     assert "CODEX_API_KEY" not in env
-    assert "CEO_CODEX_API_KEY" not in env
+    assert "CEO_RUNTIME_CODEX_API_API_KEY" not in env
     assert "ANTHROPIC_AUTH_TOKEN" not in env
-    assert "CEO_CLAUDE_API_KEY" not in env
+    assert "CEO_RUNTIME_CLAUDE_API_API_KEY" not in env
     assert "UNRELATED_SERVICE_TOKEN" not in env
 
 
@@ -991,14 +991,14 @@ def test_claude_oauth_env_carries_no_api_key_and_no_config_dir_override(
     oauth_adapter, oauth_config, monkeypatch
 ):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "ambient-anthropic-secret")
-    monkeypatch.setenv("CEO_CLAUDE_API_KEY", "ambient-ceo-secret")
+    set_env(monkeypatch, claude_api_env("ambient-ceo-secret"))
 
     env = oauth_adapter.build_env(oauth_config.routes[0])
 
     # The CLI resolves the local login from the caller's HOME, so neither an
     # ambient API key nor a redirected config dir may reach the child.
     assert "ANTHROPIC_API_KEY" not in env
-    assert "CEO_CLAUDE_API_KEY" not in env
+    assert "CEO_RUNTIME_CLAUDE_API_API_KEY" not in env
     assert "CLAUDE_CONFIG_DIR" not in env
     assert env["HOME"] == os.environ["HOME"]
 

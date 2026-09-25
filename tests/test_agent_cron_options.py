@@ -19,6 +19,7 @@ from app.agent_runtime_contracts import (
 from app.managed_skills import RuntimeSkillSnapshot
 from app.skill_files import SkillFileService
 from app.store import AutoReplyStore
+from tests.runtime_route_env import claude_api_env
 
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
@@ -58,7 +59,7 @@ def _snapshot(
 def _runtime_environment() -> dict[str, str]:
     return {
         "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,claude_api",
-        "CEO_CLAUDE_API_KEY": "secret",
+        **claude_api_env("secret"),
         "CEO_CODEX_MODEL": "gpt-5.6-sol",
         "CEO_CLAUDE_MODEL": "sonnet",
     }

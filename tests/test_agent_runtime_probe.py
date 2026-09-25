@@ -17,6 +17,7 @@ from app.agent_runtime_probe import (
 from app.agent_runtime_production import RuntimeCapabilityRegistry
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
+from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 
 NOW = datetime(2026, 8, 21, 10, 0, tzinfo=UTC)
 
@@ -82,8 +83,8 @@ def test_probe_accepts_codex_response_item_stream_with_valid_result() -> None:
 
 def _config(monkeypatch, *, routes: str = "codex_oauth,codex_api"):
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", routes)
-    monkeypatch.setenv("CEO_CODEX_API_KEY", "test-api-secret")
-    monkeypatch.setenv("CEO_CLAUDE_API_KEY", "test-anthropic-secret")
+    set_env(monkeypatch, codex_api_env("test-api-secret"))
+    set_env(monkeypatch, claude_api_env("test-anthropic-secret"))
     monkeypatch.setenv("CEO_RUNTIME_PROBE_INTERVAL", "5m")
     monkeypatch.setenv("CEO_RUNTIME_ROUTE_RETRY_DELAY", "30m")
     return load_runtime_config(dict(__import__("os").environ))
@@ -317,7 +318,7 @@ def test_claude_probe_proves_only_runtime_health_and_typed_result(
     assert command[0:2] == ["claude-test", "-p"]
     assert command[command.index("--tools") + 1] == ""
     assert kwargs["env"]["ANTHROPIC_API_KEY"] == "test-anthropic-secret"
-    assert "CEO_CLAUDE_API_KEY" not in kwargs["env"]
+    assert "CEO_RUNTIME_CLAUDE_API_API_KEY" not in kwargs["env"]
 
 
 def test_probe_requires_structured_completion(monkeypatch, tmp_path):
@@ -478,7 +479,7 @@ def test_probe_uses_standard_runtime_command_and_validates_complete_stream(
     assert command[command.index("--cd") + 1].startswith(str(tmp_path))
     assert kwargs["prompt"].startswith("Return only the synthetic probe result")
     assert kwargs["env"]["OPENAI_API_KEY"] == "test-api-secret"
-    assert "CEO_CODEX_API_KEY" not in kwargs["env"]
+    assert "CEO_RUNTIME_CODEX_API_API_KEY" not in kwargs["env"]
 
 
 def test_refresher_opens_and_closes_only_the_probed_route_pause(monkeypatch, tmp_path):

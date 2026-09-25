@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { createEmailAccount, displayValue, getSettings, getSkillDetail, getSkillFeatures, listAttention, listEmailAccounts, listWechat, listWechatTargets, saveSettings, saveSkill as saveSkillApi, saveWechatReplyScope, startConnectorLogin, testEmailAccount, toggleSkillFeature, updateEmailAccount, type EmailAccountItem, type EmailAccountPayload, type ProjectSkill, type SkillDetail, type SkillFeature, type WechatScopeTarget } from "../api/console";
+import { createEmailAccount, displayValue, getSettings, getSkillDetail, getSkillFeatures, listAttention, listEmailAccounts, listWechat, listWechatTargets, renameRuntimeRoute, saveSettings, saveSkill as saveSkillApi, saveWechatReplyScope, startConnectorLogin, testEmailAccount, toggleSkillFeature, updateEmailAccount, type EmailAccountItem, type EmailAccountPayload, type ProjectSkill, type SkillDetail, type SkillFeature, type WechatScopeTarget } from "../api/console";
 import { TokenEditor } from "../components/editor/TokenEditor";
 import { SecretField } from "../components/forms/SecretField";
 import { SearchField } from "../components/filters/SearchField";
@@ -690,46 +690,12 @@ const CLAUDE_MODEL_OPTIONS = [
   { value: "haiku", label: "Haiku" },
 ];
 
-// The API route addresses models by id, not by the local CLI's alias.
-const CLAUDE_API_MODEL_GROUPS = [
-  { label: "别名（跟随本机 CLI）", options: CLAUDE_MODEL_OPTIONS },
-  { label: "Claude 模型 id", options: [
-    { value: "claude-opus-5-5", label: "Opus 5.5" },
-    { value: "claude-opus-5", label: "Opus 5" },
-    { value: "claude-sonnet-5", label: "Sonnet 5" },
-    { value: "claude-fable-5-1", label: "Fable 5.1" },
-    { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
-  ] },
-];
-
 // The service refuses anything outside this set, so the page offers only these.
 const REASONING_EFFORT_OPTIONS = [
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
   { value: "xhigh", label: "Extra high" },
-];
-
-const COMPATIBLE_MODEL_GROUPS = [
-  { label: "OpenAI", options: CODEX_MODEL_OPTIONS },
-  { label: "MiniMax", options: [
-    { value: "MiniMax-M3", label: "MiniMax M3" },
-    { value: "MiniMax-M2.5", label: "MiniMax M2.5" },
-    { value: "MiniMax-M2.1", label: "MiniMax M2.1" },
-    { value: "MiniMax-M2", label: "MiniMax M2" },
-  ] },
-  { label: "Qwen", options: [
-    { value: "qwen3-max", label: "Qwen3 Max" },
-    { value: "qwen3-coder-plus", label: "Qwen3 Coder Plus" },
-    { value: "qwen-plus", label: "Qwen Plus" },
-    { value: "qwen-turbo", label: "Qwen Turbo" },
-  ] },
-  { label: "智谱", options: [
-    { value: "glm-5", label: "GLM-5" },
-    { value: "glm-4.7", label: "GLM-4.7" },
-    { value: "glm-4.6", label: "GLM-4.6" },
-    { value: "glm-4.5", label: "GLM-4.5" },
-  ] },
 ];
 
 function rawValue(draft: RecordValue, payload: RecordValue, key: string) {
@@ -749,11 +715,12 @@ function ModelSelect({ id, label, value, groups, onChange }: { id: string; label
   return <SelectField id={id} label={label} value={value} onChange={onChange}><option value="">请选择模型</option>{modelOptions(groups, value).map((group) => <optgroup key={group.label} label={group.label}>{group.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</optgroup>)}</SelectField>;
 }
 
+// Only these three routes have fixed names (Derek 2026-09-24); every other
+// route, including ones named codex_api or claude_api, is an added route that
+// carries its own settings and can be renamed.
 const RUNTIME_ROUTE_LABELS: Record<string, string> = {
   codex_oauth: "Codex OAuth",
-  codex_api: "Codex API",
   claude_oauth: "Claude OAuth",
-  claude_api: "Claude API",
   friday_runtime: "Friday Runtime",
 };
 
@@ -816,22 +783,22 @@ function AddRuntimeForm({ onAdd, onCancel, taken, restorable, onRestore }: { onA
   </section>;
 }
 
-function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailable, readOnly, onToggle, onDelete, onRename, children }: { title: string; description: string; enabled: boolean; locked?: boolean; wide?: boolean; unavailable?: string; readOnly?: boolean; onToggle?: (next: boolean) => void; onDelete?: () => void; onRename?: (next: string) => void; children?: ReactNode }) {
+function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailable, readOnly, onToggle, onDelete, onRename, children }: { title: string; description: string; enabled: boolean; locked?: boolean; wide?: boolean; unavailable?: string; readOnly?: boolean; onToggle?: (next: boolean) => void; onDelete?: () => void; onRename?: (next: string) => Promise<boolean>; children?: ReactNode }) {
   const blocked = Boolean(unavailable);
   // A rename lands when the field is left, not on every keystroke: renaming
   // per character would carry the settings through every partial name.
   const [nameDraft, setNameDraft] = useState(title);
   useEffect(() => { setNameDraft(title); }, [title]);
-  const commitName = () => {
+  const commitName = async () => {
     const next = nameDraft.trim();
     if (!next || next === title) { setNameDraft(title); return; }
-    onRename?.(next);
+    if (!(await onRename?.(next))) setNameDraft(title);
   };
   return <section className={`${wide ? "runtime-card runtime-card-wide" : "runtime-card"}${blocked ? " runtime-card-unavailable" : ""}`}>
     <div className="runtime-card-head">
       <div className="runtime-card-title">
         {onRename
-          ? <input className="runtime-card-name" aria-label={`${title} 名称`} value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} onBlur={commitName} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitName(); } }} />
+          ? <input className="runtime-card-name" aria-label={`${title} 名称`} value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} onBlur={() => void commitName()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void commitName(); } }} />
           : <h3>{onDelete && <GripVertical className="runtime-card-grip" size={14} aria-hidden="true" />}{title}</h3>}
         <p>{description}</p>
       </div>
@@ -851,9 +818,7 @@ function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailab
 }
 
 function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error"; saveError: string }) {
-  const value = (key: string) => displayValue(draft[key] ?? fieldsOf(payload)[key]);
   const raw = (key: string) => rawValue(draft, payload, key);
-  const input = (key: string, label: string, type = "text") => <label className="runtime-field"><span>{label}</span><input type={type} value={value(key)} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} /></label>;
   const update = (key: string, next: string) => setDraft({ ...draft, [key]: next });
   const routes = routeOrder(raw("CEO_AGENT_RUNTIME_ROUTES"));
   const enabled = (name: string) => routes.includes(name);
@@ -909,19 +874,32 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [dragged, setDragged] = useState("");
-  const renameRoute = (from: string, to: string) => {
+  const [renameError, setRenameError] = useState("");
+  // A rename is done by the service, which moves the route's settings and
+  // every reference to it (scheduled tasks, sessions, pauses) at once. The
+  // draft then follows the new name so unsaved edits stay with the route.
+  const renameRoute = async (from: string, to: string) => {
+    if (!/^[a-z][a-z0-9_]*$/.test(to)) { setRenameError("名称只能用小写字母、数字和下划线，且以字母开头"); return false; }
+    if (routes.includes(to) || Object.keys(RUNTIME_ROUTE_LABELS).includes(to)) { setRenameError("这个名称已经用过了"); return false; }
+    try {
+      await renameRuntimeRoute(from, to);
+    } catch (reason: unknown) {
+      setRenameError(reason instanceof Error && reason.message ? reason.message : "改名失败");
+      return false;
+    }
+    setRenameError("");
     const before = addedRoutePrefix(from);
     const after = addedRoutePrefix(to);
-    const carried: RecordValue = {};
+    const carried: RecordValue = { ...draft };
     for (const suffix of ["KIND", "BASE_URL", "MODEL", "API_KEY"]) {
       carried[`${after}${suffix}`] = raw(`${before}${suffix}`);
-      carried[`${before}${suffix}`] = "";
+      delete carried[`${before}${suffix}`];
     }
     setDraft({
-      ...draft,
       ...carried,
       CEO_AGENT_RUNTIME_ROUTES: routes.map((route) => (route === from ? to : route)).join(","),
     });
+    return true;
   };
   const builtInCard = (name: string) => {
     const common = {
@@ -934,18 +912,9 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
       <ModelSelect id="codex-model" label="Model" value={raw("CEO_CODEX_MODEL")} groups={[{ label: "Codex / OpenAI", options: CODEX_MODEL_OPTIONS }]} onChange={(next) => update("CEO_CODEX_MODEL", next)} />
       <ModelSelect id="codex-effort" label="Thinking strength" value={raw("CEO_CODEX_MODEL_REASONING_EFFORT")} groups={[{ label: "Thinking strength", options: REASONING_EFFORT_OPTIONS }]} onChange={(next) => update("CEO_CODEX_MODEL_REASONING_EFFORT", next)} />
     </RuntimeRouteCard>;
-    if (name === "codex_api") return <RuntimeRouteCard title="Codex API" description="OAuth 不可用时的备用路由" {...common}>
-      {input("CEO_CODEX_API_BASE_URL", "API Base URL", "url")}
-      <ModelSelect id="codex-api-model" label="Fallback model" value={raw("CEO_CODEX_API_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_CODEX_API_MODEL", next)} />
-      <SecretField id="codex-api-token" label="API Token" configured={Boolean(raw("CEO_CODEX_API_KEY"))} value={raw("CEO_CODEX_API_KEY")} onChange={(next) => update("CEO_CODEX_API_KEY", next)} />
-    </RuntimeRouteCard>;
     if (name === "claude_oauth") return <RuntimeRouteCard title="Claude OAuth" description="复用本机 Claude Code 登录的路由" {...common}>
       <ModelSelect id="claude-model" label="Model" value={raw("CEO_CLAUDE_MODEL")} groups={[{ label: "Claude", options: CLAUDE_MODEL_OPTIONS }]} onChange={(next) => update("CEO_CLAUDE_MODEL", next)} />
       <ModelSelect id="claude-effort" label="Thinking strength" value={raw("CEO_CLAUDE_MODEL_REASONING_EFFORT")} groups={[{ label: "Thinking strength", options: REASONING_EFFORT_OPTIONS }]} onChange={(next) => update("CEO_CLAUDE_MODEL_REASONING_EFFORT", next)} />
-    </RuntimeRouteCard>;
-    if (name === "claude_api") return <RuntimeRouteCard title="Claude API" description="Claude 登录不可用时的 API 路由" {...common}>
-      <ModelSelect id="claude-api-model" label="Model" value={raw("CEO_CLAUDE_API_MODEL") || raw("CEO_CLAUDE_MODEL")} groups={CLAUDE_API_MODEL_GROUPS} onChange={(next) => update("CEO_CLAUDE_API_MODEL", next)} />
-      <SecretField id="claude-api-token" label="Claude API Token" configured={Boolean(raw("CEO_CLAUDE_API_KEY"))} value={raw("CEO_CLAUDE_API_KEY")} onChange={(next) => update("CEO_CLAUDE_API_KEY", next)} />
     </RuntimeRouteCard>;
     return <RuntimeRouteCard title="Friday Runtime" description="通过 Friday 自带 CLI 运行，无需配置" {...common} unavailable={fridayCliAvailable ? undefined : "未检测到 Friday 桌面版。Friday 的 CLI 随桌面版一起安装，本服务不单独安装；请先安装 Friday.app 再启用这条线路。"} />;
   };
@@ -961,8 +930,8 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
       onRename={editing ? (next: string) => renameRoute(name, next) : undefined}
       readOnly={!editing}
     >
-      {addedKind(raw(`${prefix}KIND`))?.needsBaseUrl && <label className="runtime-field"><span>API Base URL</span><input aria-label={`${name} API Base URL`} type="url" value={value(`${prefix}BASE_URL`)} onChange={(event) => update(`${prefix}BASE_URL`, event.target.value)} /></label>}
-      <label className="runtime-field"><span>模型</span><input aria-label={`${name} 模型`} value={value(`${prefix}MODEL`)} onChange={(event) => update(`${prefix}MODEL`, event.target.value)} /></label>
+      {addedKind(raw(`${prefix}KIND`))?.needsBaseUrl && <label className="runtime-field"><span>API Base URL</span><input aria-label={`${name} API Base URL`} type="url" value={raw(`${prefix}BASE_URL`)} onChange={(event) => update(`${prefix}BASE_URL`, event.target.value)} /></label>}
+      <label className="runtime-field"><span>模型</span><input aria-label={`${name} 模型`} value={raw(`${prefix}MODEL`)} onChange={(event) => update(`${prefix}MODEL`, event.target.value)} /></label>
       {addedKind(raw(`${prefix}KIND`))?.needsToken && <SecretField id={`added-${name}-token`} label={`${name} API Token`} configured={Boolean(raw(`${prefix}API_KEY`))} value={raw(`${prefix}API_KEY`)} onChange={(next) => update(`${prefix}API_KEY`, next)} />}
     </RuntimeRouteCard>;
   };
@@ -1007,6 +976,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
           <AddRuntimeForm onAdd={(route) => { addRoute(route); setAdding(false); }} onCancel={() => setAdding(false)} taken={routes} restorable={hidden} onRestore={(name) => { restoreBuiltIn(name); setAdding(false); }} />
         </li>}
       </ol>
+      {renameError && <p className="field-error" role="alert">{renameError}</p>}
       <div className="runtime-save-bar"><SaveBar state={saveState} error={saveError} /></div>
     </form>
   </SettingsCard>;

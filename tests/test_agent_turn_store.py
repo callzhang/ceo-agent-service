@@ -42,6 +42,7 @@ from app.store import (
     AgentRuntimeAttemptStartConflictError,
     AutoReplyStore,
 )
+from tests.runtime_route_env import claude_api_env, codex_api_env
 
 
 def _task(store: AutoReplyStore):
@@ -240,8 +241,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
-            "CEO_CLAUDE_API_KEY": "test-claude-secret",
-            "CEO_CLAUDE_MODEL": route.model,
+            **claude_api_env("test-claude-secret", model=route.model),
         }
     )
 
@@ -463,8 +463,8 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,claude_api",
-            "CEO_CODEX_API_KEY": "test-openai-secret",
-            "CEO_CLAUDE_API_KEY": "test-anthropic-secret",
+            **codex_api_env("test-openai-secret"),
+            **claude_api_env("test-anthropic-secret"),
             "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
         }
     )
@@ -751,7 +751,7 @@ def test_audit_pre_session_failure_is_ordinary_failed_retry(tmp_path, codex_fail
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
-    config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_api", "CEO_CODEX_API_KEY": "test-secret"})
+    config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_api", **codex_api_env("test-secret")})
     route = config.routes[0]
     class Router:
         def first_route_decision(self, **kwargs): return RuntimeRouteDecision(route, False, "eligible_route")

@@ -1,4 +1,5 @@
 import base64
+from collections.abc import Iterable
 from contextlib import contextmanager
 import os
 import re
@@ -57,16 +58,28 @@ def read_env_file(path: Path | None = None) -> dict[str, str]:
     return values
 
 
-def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
+def write_env_values(
+    updates: dict[str, str],
+    path: Path | None = None,
+    *,
+    remove: Iterable[str] = (),
+) -> Path:
+    """Write `updates` into the env file and drop every key named in `remove`."""
+
     if any("\x00" in key or "\x00" in value for key, value in updates.items()):
         raise ValueError("environment updates must not contain NUL")
+    removed = frozenset(remove)
+    if removed & updates.keys():
+        raise ValueError("a key cannot be both written and removed")
     env_path = path or env_file_path()
     env_path.parent.mkdir(parents=True, exist_ok=True)
     with _env_write_lock(env_path):
-        return _write_env_values_locked(updates, env_path)
+        return _write_env_values_locked(updates, env_path, removed)
 
 
-def _write_env_values_locked(updates: dict[str, str], env_path: Path) -> Path:
+def _write_env_values_locked(
+    updates: dict[str, str], env_path: Path, removed: frozenset[str] = frozenset()
+) -> Path:
     existing_lines = (
         env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
     )
@@ -78,6 +91,8 @@ def _write_env_values_locked(updates: dict[str, str], env_path: Path) -> Path:
             lines.append(raw_line)
             continue
         key = stripped.split("=", 1)[0].strip()
+        if key in removed:
+            continue
         if key in updates:
             if key not in written:
                 lines.append(f"{key}={_encode_env_value(key, updates[key])}")
@@ -109,6 +124,8 @@ def _write_env_values_locked(updates: dict[str, str], env_path: Path) -> Path:
                 pass
     for key, value in updates.items():
         os.environ[key] = value
+    for key in removed:
+        os.environ.pop(key, None)
     return env_path
 
 

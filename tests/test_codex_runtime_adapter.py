@@ -7,6 +7,7 @@ import pytest
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import CredentialMode, RuntimeFailureClass, RuntimeKind, RuntimeRoute
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from tests.runtime_route_env import claude_api_env, codex_api_env
 
 
 @pytest.fixture
@@ -14,7 +15,7 @@ def config():
     return load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
-            "CEO_CODEX_API_KEY": "service-secret",
+            **codex_api_env("service-secret"),
         }
     )
 
@@ -35,8 +36,8 @@ def test_routes_rebuild_environment_without_ambient_credentials(
     ambient = {
         "OPENAI_API_KEY": "ambient",
         "CODEX_API_KEY": "ambient-codex",
-        "CEO_CODEX_API_KEY": "service-secret",
-        "CEO_CLAUDE_API_KEY": "claude",
+        **codex_api_env("service-secret"),
+        **claude_api_env("claude"),
         "ANTHROPIC_API_KEY": "anthropic",
         "ANTHROPIC_AUTH_TOKEN": "anthropic-token",
         "AZURE_OPENAI_API_KEY": "azure",
@@ -80,7 +81,7 @@ def test_api_route_injects_only_selected_secret(adapter, config):
     env = adapter.build_env(route(config, "codex_api"), api_key="service-secret")
 
     assert env["OPENAI_API_KEY"] == "service-secret"
-    assert "CEO_CODEX_API_KEY" not in env
+    assert "CEO_RUNTIME_CODEX_API_API_KEY" not in env
     assert "ANTHROPIC_API_KEY" not in env
     assert "ANTHROPIC_AUTH_TOKEN" not in env
 
@@ -262,8 +263,9 @@ def test_api_route_command_uses_the_configured_base_url(tmp_path):
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_api",
-            "CEO_CODEX_API_KEY": "service-secret",
-            "CEO_CODEX_API_BASE_URL": "https://gateway.example/v1/",
+            **codex_api_env(
+                "service-secret", base_url="https://gateway.example/v1/"
+            ),
         }
     )
     adapter = CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test")

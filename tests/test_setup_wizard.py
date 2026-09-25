@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import get_args
 
 import pytest
+
+from tests.runtime_route_env import codex_api_env
 from pydantic import ValidationError
 
 import app.setup_wizard as setup_wizard_module
@@ -419,8 +421,8 @@ def test_runtime_route_setup_statuses_are_secret_safe():
     )
     statuses = runtime_route_setup_statuses(
         env={
-            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
-            "CEO_CODEX_API_KEY": "top-secret-value",
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,kksj",
+            **codex_api_env("top-secret-value", name="kksj"),
         },
         snapshots={"codex_oauth": snapshot},
         now=lambda: datetime(2026, 8, 21, 10, 0, tzinfo=timezone.utc),
@@ -433,7 +435,7 @@ def test_runtime_route_setup_statuses_are_secret_safe():
             "secret_configured": False,
         },
         {
-            "route_name": "codex_api",
+            "route_name": "kksj",
             "status": "probe_failed",
             "secret_configured": True,
         },
@@ -441,9 +443,16 @@ def test_runtime_route_setup_statuses_are_secret_safe():
     assert "top-secret-value" not in json.dumps(statuses)
 
 
-def test_runtime_route_setup_statuses_distinguish_disabled_and_missing_secret():
+def test_runtime_route_setup_statuses_list_every_configured_route():
+    """The wizard reports every route in the failover order, whatever its name."""
+
     statuses = runtime_route_setup_statuses(
-        env={"CEO_AGENT_RUNTIME_ROUTES": "codex_api"},
+        env={
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_oauth,kksj,qwen_gpu4",
+            "CEO_RUNTIME_KKSJ_KIND": "claude_api",
+            "CEO_RUNTIME_KKSJ_MODEL": "claude-sonnet-5",
+            **codex_api_env("gateway-key", name="qwen_gpu4"),
+        },
         snapshots={},
     )
 
@@ -454,9 +463,19 @@ def test_runtime_route_setup_statuses_distinguish_disabled_and_missing_secret():
             "secret_configured": False,
         },
         {
-            "route_name": "codex_api",
+            "route_name": "claude_oauth",
+            "status": "probe_failed",
+            "secret_configured": False,
+        },
+        {
+            "route_name": "kksj",
             "status": "missing_secret",
             "secret_configured": False,
+        },
+        {
+            "route_name": "qwen_gpu4",
+            "status": "probe_failed",
+            "secret_configured": True,
         },
     )
 
@@ -496,14 +515,15 @@ def test_setup_service_config_accepts_runtime_secret_without_rendering_it(tmp_pa
         repo_root=tmp_path,
         env={
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
-            "CEO_CODEX_API_KEY": secret,
+            **codex_api_env(secret),
         },
     )
 
     assert event.status == "done"
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api" in env_text
-    assert f"CEO_CODEX_API_KEY={secret}" in env_text
+    assert "CEO_RUNTIME_CODEX_API_KIND=codex_api" in env_text
+    assert f"CEO_RUNTIME_CODEX_API_API_KEY={secret}" in env_text
     assert secret not in event.model_dump_json()
     assert json.loads(event.evidence["runtime_routes_json"]) == [
         {
@@ -658,11 +678,6 @@ def test_check_service_config_accepts_env_and_directories(tmp_path: Path):
         {
             "route_name": "codex_oauth",
             "status": "probe_failed",
-            "secret_configured": False,
-        },
-        {
-            "route_name": "codex_api",
-            "status": "disabled",
             "secret_configured": False,
         },
     ]

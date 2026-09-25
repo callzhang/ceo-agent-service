@@ -1229,6 +1229,11 @@ export function syncFeedback() { return command("/api/console/feedback/sync"); }
 export function saveSettings(section: string, fields: Record<string, unknown>, extras: Record<string, unknown> = {}) {
   return command(`/api/console/settings/${encodeURIComponent(section)}`, { ...extras, fields });
 }
+// The service renames an added route and every reference to it (scheduled
+// tasks, resumable sessions, pauses) in one operation.
+export function renameRuntimeRoute(name: string, newName: string) {
+  return command(`/api/console/settings/agent-runtime/routes/${encodeURIComponent(name)}/rename`, { new_name: newName });
+}
 export function getTutorial(signal?: AbortSignal) { return getResource("/api/console/tutorial", signal); }
 export function startConnectorLogin(connector: string) {
   return request<{ ok: boolean; item: { connector: string; command: string[]; pid: number; started: boolean }; message: string }>(`/api/console/connectors/${encodeURIComponent(connector)}/login`, { method: "POST" });

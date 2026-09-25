@@ -178,12 +178,17 @@ confirmation instead of asking the user to run commands.
 ### Optional Codex API failover rollout
 
 The production route order is `codex_oauth,codex_api`: the existing local OAuth
-identity remains primary and the API credential is a bounded fallback. Configure
-the fallback only in the service environment:
+identity remains primary and the API credential is a bounded fallback. `codex_api`
+is the name of an added route (any lowercase name works, and it can be renamed
+from Settings / Agent Runtime). Configure the fallback only in the service
+environment:
 
 ```sh
 CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api
-CEO_CODEX_API_KEY=<service-owned-secret>
+CEO_RUNTIME_CODEX_API_KIND=codex_api
+CEO_RUNTIME_CODEX_API_BASE_URL=https://api.openai.com/v1
+CEO_RUNTIME_CODEX_API_MODEL=gpt-5.5
+CEO_RUNTIME_CODEX_API_API_KEY=<service-owned-secret>
 ```
 
 Never put the API key in argv, a prompt, a repository file, SQLite, History, a

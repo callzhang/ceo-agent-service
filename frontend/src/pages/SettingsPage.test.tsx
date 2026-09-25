@@ -29,8 +29,9 @@ const exportManagedSkillRevision = vi.hoisted(() => vi.fn());
 const startConnectorLogin = vi.hoisted(() => vi.fn());
 const getMcpSettings = vi.hoisted(() => vi.fn());
 const saveMcpSettings = vi.hoisted(() => vi.fn());
+const renameRuntimeRoute = vi.hoisted(() => vi.fn());
 
-vi.mock("../api/console", () => ({ getMcpSettings, saveMcpSettings, getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, listEmailAccounts, createEmailAccount, updateEmailAccount, testEmailAccount, getSkillFeatures, toggleSkillFeature, startConnectorLogin, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
+vi.mock("../api/console", () => ({ getMcpSettings, saveMcpSettings, getSettings, saveSettings, renameRuntimeRoute, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, listEmailAccounts, createEmailAccount, updateEmailAccount, testEmailAccount, getSkillFeatures, toggleSkillFeature, startConnectorLogin, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
 vi.mock("../api/skills", () => ({ listManagedSkills, createManagedSkill, listManagedSkillRevisions, createManagedSkillRevision, getCurrentRuntimeSkillConfig, createRuntimeSkillConfig, listRuntimeSkillLoadReceipts, getFeedbackIterationCapability, setFeedbackIterationCapability, exportManagedSkillRevision }));
 
 import { SettingsPage } from "./SettingsPage";
@@ -108,14 +109,44 @@ describe("SettingsPage", () => {
   it("prefills saved Agent Runtime credentials from the settings DTO", async () => {
     getSettings.mockResolvedValueOnce(runtimeDto({
       CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,codex_api",
-      CEO_CODEX_API_KEY: "codex-token",
+      CEO_RUNTIME_CODEX_API_KIND: "codex_api",
+      CEO_RUNTIME_CODEX_API_API_KEY: "codex-token",
     }));
     renderSettings("/settings?tab=agent-runtime");
 
-    expect(await screen.findByLabelText("API Token")).toHaveValue("codex-token");
+    expect(await screen.findByLabelText("codex_api API Token")).toHaveValue("codex-token");
     // Nothing is editable until the page is put into edit mode.
-    expect(screen.getByLabelText("API Token")).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "启用 Codex API" })).toBeDisabled();
+    expect(screen.getByLabelText("codex_api API Token")).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "启用 codex_api" })).toBeDisabled();
+  });
+
+  it("gives only the three built-in routes a fixed name; every other route can be renamed", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce(runtimeDto({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,codex_api,claude_oauth,claude_api,friday_runtime,qwen_gpu4",
+      CEO_RUNTIME_CODEX_API_KIND: "codex_api",
+      CEO_RUNTIME_CODEX_API_MODEL: "MiniMax-M3",
+      CEO_RUNTIME_CLAUDE_API_KIND: "claude_api",
+      CEO_RUNTIME_CLAUDE_API_MODEL: "claude-opus-5",
+      CEO_RUNTIME_QWEN_GPU4_KIND: "codex_api",
+      CEO_RUNTIME_QWEN_GPU4_MODEL: "qwen3.8-27b",
+    }));
+    renderSettings("/settings?tab=agent-runtime");
+
+    await enterEditMode(user);
+    for (const builtIn of ["Codex OAuth", "Claude OAuth", "Friday Runtime"]) {
+      expect(screen.getByRole("heading", { name: builtIn })).toBeInTheDocument();
+      expect(screen.queryByLabelText(`${builtIn} 名称`)).toBeNull();
+    }
+    // The former built-in API routes are ordinary added cards now.
+    for (const added of ["codex_api", "claude_api", "qwen_gpu4"]) {
+      expect(screen.getByLabelText(`${added} 名称`)).toHaveValue(added);
+    }
+    expect(screen.queryByRole("heading", { name: "Codex API" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Claude API" })).toBeNull();
+    // An added route's model is free text.
+    expect(screen.getByLabelText("codex_api 模型")).toHaveValue("MiniMax-M3");
+    expect(screen.getByLabelText("claude_api 模型")).toHaveValue("claude-opus-5");
   });
 
   it("numbers the cards in failover order and marks the ones switched off", async () => {
@@ -129,8 +160,9 @@ describe("SettingsPage", () => {
     expect(steps[0]).toContain("Codex OAuth");
     expect(steps[1]).toContain("2");
     expect(steps[1]).toContain("Claude OAuth");
-    // A route that is off keeps its card, without a position in the order.
-    expect(steps.some((text) => text.includes("–") && text.includes("Codex API"))).toBe(true);
+    // A built-in route that is off keeps its card, without a position in the order.
+    expect(steps.some((text) => text.includes("–") && text.includes("Friday Runtime"))).toBe(true);
+    expect(steps).toHaveLength(3);
   });
 
   it("edits only after 编辑, and turns a route on into its canonical place", async () => {
@@ -140,13 +172,14 @@ describe("SettingsPage", () => {
     }));
     renderSettings("/settings?tab=agent-runtime");
 
+    expect(await screen.findByRole("switch", { name: "启用 Claude OAuth" })).toBeDisabled();
     await enterEditMode(user);
-    await user.click(screen.getByRole("switch", { name: "启用 Codex API" }));
+    await user.click(screen.getByRole("switch", { name: "启用 Claude OAuth" }));
 
     saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
     fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
     expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
-      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,codex_api,friday_runtime",
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,claude_oauth,friday_runtime",
     }), {});
   });
 
@@ -230,15 +263,46 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("小写字母");
   });
 
-  it("renames an added runtime, carrying its settings to the new name", async () => {
+  it("renames an added runtime on the service, which carries every reference", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce(runtimeDto({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,codex_api",
+      CEO_RUNTIME_CODEX_API_KIND: "codex_api",
+      CEO_RUNTIME_CODEX_API_BASE_URL: "https://api.kksj.org/v1",
+      CEO_RUNTIME_CODEX_API_MODEL: "MiniMax-M3",
+      CEO_RUNTIME_CODEX_API_API_KEY: "gateway-key",
+    }));
+    renameRuntimeRoute.mockResolvedValueOnce({ ok: true, message: "已改名，重启主服务后生效", meta: { updated_at: "2026-09-24T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    await enterEditMode(user);
+    const name = screen.getByLabelText("codex_api 名称");
+    await user.clear(name);
+    await user.type(name, "kksj");
+    await user.tab();
+
+    expect(renameRuntimeRoute).toHaveBeenCalledWith("codex_api", "kksj");
+    expect(await screen.findByLabelText("kksj 名称")).toHaveValue("kksj");
+    // The draft follows the service, so a later save keeps the new name.
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    const [, fields] = saveSettings.mock.calls[0];
+    expect(fields).toEqual(expect.objectContaining({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,kksj",
+      CEO_RUNTIME_KKSJ_MODEL: "MiniMax-M3",
+      CEO_RUNTIME_KKSJ_API_KEY: "gateway-key",
+    }));
+    expect(fields).not.toHaveProperty("CEO_RUNTIME_CODEX_API_MODEL");
+  });
+
+  it("keeps the old name when the service refuses a rename", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce(runtimeDto({
       CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,qwen_gpu4",
-      CEO_RUNTIME_QWEN_GPU4_KIND: "codex_api",
-      CEO_RUNTIME_QWEN_GPU4_BASE_URL: "http://100.93.145.69:8900/v1",
-      CEO_RUNTIME_QWEN_GPU4_MODEL: "qwen3.8-27b",
-      CEO_RUNTIME_QWEN_GPU4_API_KEY: "gateway-key",
+      CEO_RUNTIME_QWEN_GPU4_KIND: "codex_oauth",
+      CEO_RUNTIME_QWEN_GPU4_MODEL: "gpt-5.5",
     }));
+    renameRuntimeRoute.mockRejectedValueOnce(new Error("线路 qwen_local 已经存在。"));
     renderSettings("/settings?tab=agent-runtime");
 
     await enterEditMode(user);
@@ -247,66 +311,84 @@ describe("SettingsPage", () => {
     await user.type(name, "qwen_local");
     await user.tab();
 
-    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
-    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
-    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
-      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,qwen_local",
-      CEO_RUNTIME_QWEN_LOCAL_MODEL: "qwen3.8-27b",
-      CEO_RUNTIME_QWEN_LOCAL_API_KEY: "gateway-key",
-      CEO_RUNTIME_QWEN_GPU4_MODEL: "",
-    }), {});
+    expect(await screen.findByRole("alert")).toHaveTextContent("已经存在");
+    expect(screen.getByLabelText("qwen_gpu4 名称")).toHaveValue("qwen_gpu4");
   });
 
-  it("picks Claude models from lists, and the API route keeps its own", async () => {
+  it("does not ask the service to rename to a built-in or malformed name", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce(runtimeDto({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,qwen_gpu4",
+      CEO_RUNTIME_QWEN_GPU4_KIND: "codex_oauth",
+      CEO_RUNTIME_QWEN_GPU4_MODEL: "gpt-5.5",
+    }));
+    renderSettings("/settings?tab=agent-runtime");
+
+    await enterEditMode(user);
+    const name = screen.getByLabelText("qwen_gpu4 名称");
+    await user.clear(name);
+    await user.type(name, "friday_runtime");
+    await user.tab();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("已经用过");
+    expect(renameRuntimeRoute).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("qwen_gpu4 名称")).toHaveValue("qwen_gpu4");
+  });
+
+  it("picks the Claude login's settings from lists, and an API route types its own model", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce(runtimeDto({
       CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,claude_oauth,claude_api",
       CEO_CLAUDE_MODEL: "sonnet",
       CEO_CLAUDE_MODEL_REASONING_EFFORT: "medium",
-      CEO_CLAUDE_API_KEY: "claude-token",
+      CEO_RUNTIME_CLAUDE_API_KIND: "claude_api",
+      CEO_RUNTIME_CLAUDE_API_MODEL: "claude-sonnet-5",
+      CEO_RUNTIME_CLAUDE_API_API_KEY: "claude-token",
     }));
     renderSettings("/settings?tab=agent-runtime");
 
     await enterEditMode(user);
-    // Both are select controls, not free text, because the service refuses
-    // anything outside these sets.
+    // The login's effort is a select because the service refuses anything
+    // outside that set; an added route's model is whatever its provider serves.
     await user.selectOptions(screen.getByLabelText("Thinking strength", { selector: "#claude-effort" }), "high");
-    await user.selectOptions(screen.getByLabelText("Model", { selector: "#claude-api-model" }), "claude-opus-5");
+    const apiModel = screen.getByLabelText("claude_api 模型");
+    await user.clear(apiModel);
+    await user.type(apiModel, "claude-opus-5");
 
     saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
     fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
     expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
       CEO_CLAUDE_MODEL: "sonnet",
       CEO_CLAUDE_MODEL_REASONING_EFFORT: "high",
-      CEO_CLAUDE_API_MODEL: "claude-opus-5",
+      CEO_RUNTIME_CLAUDE_API_MODEL: "claude-opus-5",
     }), {});
   });
 
   it("deletes a built-in card and offers it back, which switching off does not", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce(runtimeDto({
-      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,claude_api",
-      CEO_CLAUDE_API_KEY: "claude-token",
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,claude_oauth",
+      CEO_CLAUDE_MODEL: "sonnet",
     }));
     renderSettings("/settings?tab=agent-runtime");
 
     await enterEditMode(user);
-    await user.click(screen.getByRole("switch", { name: "启用 Claude API" }));
-    expect(screen.getByLabelText("Claude API Token")).toHaveValue("claude-token");
+    await user.click(screen.getByRole("switch", { name: "启用 Claude OAuth" }));
+    expect(screen.getByRole("heading", { name: "Claude OAuth" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "删除 Claude API" }));
-    expect(screen.queryByLabelText("Claude API Token")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "删除 Claude OAuth" }));
+    expect(screen.queryByRole("heading", { name: "Claude OAuth" })).toBeNull();
 
     saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
     fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
     expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
       CEO_AGENT_RUNTIME_ROUTES: "codex_oauth",
-      CEO_AGENT_RUNTIME_HIDDEN_ROUTES: "claude_api",
+      CEO_AGENT_RUNTIME_HIDDEN_ROUTES: "claude_oauth",
     }), {});
 
     await user.click(screen.getByRole("button", { name: /新增 runtime/ }));
-    await user.click(screen.getByRole("button", { name: "恢复 Claude API" }));
-    expect(screen.getByLabelText("Claude API Token")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "恢复 Claude OAuth" }));
+    expect(screen.getByRole("heading", { name: "Claude OAuth" })).toBeInTheDocument();
   });
 
   it("shows no Friday fields at all, because its CLI owns every setting", async () => {

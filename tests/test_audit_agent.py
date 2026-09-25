@@ -33,6 +33,7 @@ from app.wechat.codex_safety import (
     make_audit_agent_command,
     make_consumer_agent_command,
 )
+from tests.runtime_route_env import codex_api_env
 
 
 class CapturingExecutor:
@@ -76,7 +77,7 @@ def _audit_runtime_dependencies(
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": routes,
-            "CEO_CODEX_API_KEY": "fallback-test-key",
+            **codex_api_env("fallback-test-key"),
         }
     )
     capabilities = frozenset(
