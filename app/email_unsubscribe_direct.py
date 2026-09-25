@@ -329,6 +329,7 @@ def run_unsubscribe_in_dedicated_profile(
     email_otp_resolver: object | None = None,
     session_manager: object | None = None,
     executed: list[UnsubscribeOperation] | None = None,
+    page_judge: object | None = None,
 ) -> UnsubscribeExecutionResult:
     """Run one whole unsubscribe inside the locked headless profile.
 
@@ -348,6 +349,7 @@ def run_unsubscribe_in_dedicated_profile(
             timeout_ms=timeout_ms,
             connected_recipient=connected_recipient,
             email_otp_resolver=email_otp_resolver,
+            page_judge=page_judge,
         )
 
     try:

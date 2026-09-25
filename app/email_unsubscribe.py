@@ -333,6 +333,7 @@ class UnsubscribeBrowserFailure(str, Enum):
     OTP_REQUEST_REJECTED = "otp_request_rejected"
     OTP_RESPONSE_REJECTED = "otp_response_rejected"
     PAGE_CONTROLS_UNMODELLED = "page_controls_unmodelled"
+    PAGE_JUDGE_UNAVAILABLE = "page_judge_unavailable"
     PAGE_STATE_MISSING = "page_state_missing"
     PAGE_STATE_UNKNOWN = "page_state_unknown"
     POPUP_REJECTED = "popup_rejected"
@@ -412,6 +413,7 @@ TRANSIENT_BROWSER_ERROR_CODES = frozenset(
 )
 _VISIBLE_TEXT_WAIT_MS = 5_000
 _VISIBLE_TEXT_POLL_MS = 250
+_STABLE_TEXT_MS = 1_000
 DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS = 30_000
 
 
@@ -1409,10 +1411,22 @@ class UnsubscribeBrowser(Protocol):
 
 
 @dataclass(frozen=True)
+class UnsubscribePageJudgement:
+    """What an Agent made of a page: a state (None when the page decides
+    nothing) and the words of the page that led there."""
+
+    state: UnsubscribePageState | None
+    evidence: str
+
+
+@dataclass(frozen=True)
 class UnsubscribePageDiscovery:
     state: UnsubscribePageState
     state_reference: str
     controls: tuple[UnsubscribeDiscoveredControl, ...]
+    # Set when an Agent judged the page: the text it read and its evidence.
+    text: str = ""
+    evidence: str = ""
 
 
 @dataclass(frozen=True, repr=False)
@@ -1466,6 +1480,12 @@ def confirmation_target_reference(
 class PlaywrightUnsubscribeBrowser:
     """Bounded sync-Playwright adapter; Playwright remains an optional dependency."""
 
+    #: An Agent that reads each page (see `email_unsubscribe_page_judge`); the
+    #: audited lifecycle, which has none, keeps reading the page by wording.
+    page_judge: (
+        Callable[[str, str, str, Sequence[str]], UnsubscribePageJudgement] | None
+    ) = None
+
     def __init__(
         self,
         page: object,
@@ -1486,9 +1506,12 @@ class PlaywrightUnsubscribeBrowser:
         ]
         | None = None,
         clock: Callable[[], datetime] | None = None,
+        page_judge: Callable[[str, str, str, Sequence[str]], UnsubscribePageJudgement]
+        | None = None,
     ) -> None:
         if timeout_ms <= 0:
             raise ValueError("timeout_ms must be positive")
+        self.page_judge = page_judge
         self.page = page
         self.timeout_ms = timeout_ms
         self.confirmation_receipt_resolver = confirmation_receipt_resolver
@@ -1627,6 +1650,22 @@ class PlaywrightUnsubscribeBrowser:
         waited_ms = 0
         bindings = self._ordinary_controls()
         text = self._visible_text()
+        if self.page_judge is not None:
+            # An Agent reads the page, so no wording can say "settled": wait
+            # for the text to stop changing. A confirmation scripted onto a
+            # page arrives after its shell, and reading the shell alone is
+            # what recorded a completed unsubscribe as needing a login.
+            stable_ms = 0
+            while (stable_ms < _STABLE_TEXT_MS or not text) and wait is not None:
+                if waited_ms >= budget_ms:
+                    break
+                wait(_VISIBLE_TEXT_POLL_MS)
+                waited_ms += _VISIBLE_TEXT_POLL_MS
+                previous = text
+                bindings = self._ordinary_controls()
+                text = self._visible_text()
+                stable_ms = stable_ms + _VISIBLE_TEXT_POLL_MS if text == previous else 0
+            return bindings, text
         while not self._page_read_is_settled(bindings, text):
             if wait is None or waited_ms >= budget_ms:
                 break
@@ -2521,6 +2560,39 @@ class PlaywrightUnsubscribeBrowser:
             return UnsubscribePageState.LOGIN_REQUIRED
         return None
 
+    def _observe_current_page(
+        self, effect: EmailUnsubscribeEffect
+    ) -> UnsubscribeObservation:
+        discovery = self.discover_current_page(effect)
+        visible_text = self._visible_text()
+        if discovery.evidence:
+            # The text the Agent judged, headed by what it relied on, so the
+            # record shows the page's own words beside the decision.
+            visible_text = f"判断依据：{discovery.evidence}\n\n{discovery.text}"
+        state = discovery.state
+        state_reference = discovery.state_reference
+        if state is UnsubscribePageState.ACTION_REQUIRED:
+            return UnsubscribeObservation(
+                state=state,
+                state_reference=state_reference,
+                controls=discovery.controls,
+                visible_text=visible_text,
+            )
+        receipt_id = (
+            f"unsubscribe-receipt:{effect.effect_digest[:24]}:{state.value}"
+        )
+        return UnsubscribeObservation(
+            state=state,
+            state_reference=state_reference,
+            receipt=UnsubscribeTerminalReceipt(
+                receipt_id=receipt_id,
+                evidence="terminal-page",
+                entry_reference=effect.entry_reference,
+                effect_digest=effect.effect_digest,
+            ),
+            visible_text=visible_text,
+        )
+
     def discover_current_page(
         self,
         effect: EmailUnsubscribeEffect,
@@ -2565,9 +2637,30 @@ class PlaywrightUnsubscribeBrowser:
         # site-wide Sign in button is not asking anyone to sign in, and
         # reading the button first recorded a completed unsubscribe as
         # skipped_login_required.
-        state = self._state_from_text(text) or (
-            UnsubscribePageState.ACTION_REQUIRED if authentication_controls else None
-        )
+        judged_evidence = ""
+        if self.page_judge is not None:
+            try:
+                judgement = self.page_judge(
+                    effect.action_identity,
+                    urlsplit(current_url).hostname or "",
+                    text,
+                    tuple(f"{item.kind}:{item.intent}" for item in controls),
+                )
+            except Exception as exc:  # noqa: BLE001 - a route outage or a reply that is no judgement
+                # Nothing was learned about the page, so nothing is recorded as
+                # if it had been: the task fails as a browser fault and retries.
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.PAGE_JUDGE_UNAVAILABLE,
+                    "unsubscribe page judgement unavailable",
+                ) from exc
+            state = judgement.state
+            judged_evidence = judgement.evidence
+            if state is UnsubscribePageState.ACTION_REQUIRED and not controls:
+                state = None
+        else:
+            state = self._state_from_text(text) or (
+                UnsubscribePageState.ACTION_REQUIRED if authentication_controls else None
+            )
         if state is None:
             state = UnsubscribePageState.ACTION_REQUIRED
             if (
@@ -2623,6 +2716,8 @@ class PlaywrightUnsubscribeBrowser:
             state=state,
             state_reference=state_reference,
             controls=controls,
+            text=text if judged_evidence else "",
+            evidence=judged_evidence,
         )
 
     def _sanitized_audit_snapshot(self) -> Mapping[str, object]:
@@ -2866,31 +2961,7 @@ class PlaywrightUnsubscribeBrowser:
                     next_operation_reference=effect.operations[0].operation_reference,
                 )
             del private_url
-            discovery = self.discover_current_page(effect)
-            visible_text = self._visible_text()
-            state = discovery.state
-            state_reference = discovery.state_reference
-            if state is UnsubscribePageState.ACTION_REQUIRED:
-                return UnsubscribeObservation(
-                    state=state,
-                    state_reference=state_reference,
-                    controls=discovery.controls,
-                    visible_text=visible_text,
-                )
-            receipt_id = (
-                f"unsubscribe-receipt:{effect.effect_digest[:24]}:{state.value}"
-            )
-            return UnsubscribeObservation(
-                state=state,
-                state_reference=state_reference,
-                receipt=UnsubscribeTerminalReceipt(
-                    receipt_id=receipt_id,
-                    evidence="terminal-page",
-                    entry_reference=effect.entry_reference,
-                    effect_digest=effect.effect_digest,
-                ),
-                visible_text=visible_text,
-            )
+            return self._observe_current_page(effect)
         except UnsubscribeBrowserError:
             raise
         except Exception:
@@ -3369,6 +3440,8 @@ def open_live_unsubscribe_session(
     connected_recipient: str = "",
     email_otp_resolver: Callable[[EmailOtpChallenge], ConnectedMailboxOtp | None]
     | None = None,
+    page_judge: Callable[[str, str, str, Sequence[str]], UnsubscribePageJudgement]
+    | None = None,
 ) -> tuple[object, object, object, Callable[[], None]]:
     """Open one isolated page in the dedicated profile and adapt it.
 
@@ -3404,6 +3477,7 @@ def open_live_unsubscribe_session(
             timeout_ms=timeout_ms,
             connected_recipient=connected_recipient,
             email_otp_resolver=email_otp_resolver,
+            page_judge=page_judge,
         )
 
         def cleanup() -> None:

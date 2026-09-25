@@ -3668,6 +3668,111 @@ def test_a_page_that_only_ever_says_sign_in_is_still_login_required() -> None:
     assert waits, "the wait runs to its budget before giving up on a stronger statement"
 
 
+def _judged_browser(texts, judgement, *, controls=None, waits=None):
+    from app.email_unsubscribe import UnsubscribePageJudgement
+
+    seen: list[tuple] = []
+
+    def judge(action_identity, host, text, control_kinds):
+        seen.append((action_identity, host, text, tuple(control_kinds)))
+        return judgement
+
+    browser = _discovery_browser(
+        control_snapshots=controls or [{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": len(texts[-1]), "controlCount": 0}],
+        texts=texts,
+        waits=waits,
+    )
+    browser.page_judge = judge
+    return browser, seen
+
+
+def test_an_agents_judgement_decides_the_state_and_travels_with_the_record() -> None:
+    from app.email_unsubscribe import UnsubscribePageJudgement
+
+    text = "Sign in Visit your account page. You've been unsubscribed from notifications."
+    browser, seen = _judged_browser(
+        [text],
+        UnsubscribePageJudgement(
+            UnsubscribePageState.DONE, "You've been unsubscribed from notifications."
+        ),
+    )
+
+    observation = browser._observe_current_page(_effect())
+
+    assert observation.state is UnsubscribePageState.DONE
+    assert observation.visible_text.startswith(
+        "判断依据：You've been unsubscribed from notifications."
+    )
+    assert text in observation.visible_text
+    assert seen[0][1] == "news.example.com" and seen[0][2] == text
+
+
+def test_the_agent_reads_the_page_only_after_its_text_stops_changing() -> None:
+    from app.email_unsubscribe import UnsubscribePageJudgement
+
+    shell = "Start publishing Sign in Visit your account page."
+    final = shell + " You've been unsubscribed from notifications."
+    waits: list[int] = []
+    browser, seen = _judged_browser(
+        [shell, shell, final],
+        UnsubscribePageJudgement(UnsubscribePageState.DONE, "You've been unsubscribed"),
+        waits=waits,
+    )
+
+    browser.discover_current_page(_effect())
+
+    assert seen[0][2] == final
+    assert len(waits) >= 4, "waited for a full second of unchanged text after the toast"
+
+
+def test_a_page_the_agent_cannot_place_takes_the_no_control_path() -> None:
+    from app.email_unsubscribe import UnsubscribePageJudgement
+
+    browser, _seen = _judged_browser(
+        ["This link has expired."],
+        UnsubscribePageJudgement(None, "This link has expired."),
+    )
+
+    with pytest.raises(UnsubscribeBrowserError):
+        browser.discover_current_page(_effect())
+
+
+def test_an_unavailable_agent_fails_the_read_it_does_not_guess_a_state() -> None:
+    from app.email_unsubscribe import (
+        UnsubscribeBrowserFailure,
+        browser_failure_code,
+    )
+
+    def unavailable(*_args):
+        raise RuntimeError("every runtime route is paused")
+
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": 20, "controlCount": 0}],
+        texts=["Sign in to continue"],
+    )
+    browser.page_judge = unavailable
+
+    with pytest.raises(UnsubscribeBrowserError) as raised:
+        browser._observe_current_page(_effect())
+
+    assert raised.value.category is UnsubscribeBrowserFailure.PAGE_JUDGE_UNAVAILABLE
+    # The coarse code stays the retryable browser fault.
+    assert browser_failure_code(raised.value) == "email_unsubscribe_browser_failed"
+
+
+def test_without_an_agent_the_page_is_still_read_by_wording() -> None:
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": 30, "controlCount": 0}],
+        texts=["Sign in to manage your preferences"],
+    )
+
+    assert browser.page_judge is None
+    assert browser.discover_current_page(_effect()).state is UnsubscribePageState.LOGIN_REQUIRED
+
+
 def test_a_page_we_will_not_operate_is_terminal_not_a_retryable_failure() -> None:
     """Re-reading the same page with the same model reaches the same place.
 

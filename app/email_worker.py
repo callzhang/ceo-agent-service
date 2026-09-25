@@ -4353,13 +4353,25 @@ def build_direct_email_unsubscribe_operation(settings: object) -> object:
     """Build the one-call Email unsubscribe operation."""
 
     from app.email_unsubscribe import EmailUnsubscribeEffect, UnsubscribeEntry
+    from app.agent_runtime_production import build_production_routed_codex_execution
     from app.email_unsubscribe_direct import (
         DirectEmailUnsubscribeOperation,
         run_unsubscribe_in_dedicated_profile,
     )
+    from app.email_unsubscribe_page_judge import build_page_judge
 
     context = _build_email_unsubscribe_context(settings)
     email_store = context.email_store
+    # An Agent reads each page and says what it means; the route order and
+    # fallback are the system's, like every other Agent turn.
+    page_judge = build_page_judge(
+        build_production_routed_codex_execution(
+            store=context.task_store,
+            workspace=Path(settings.workspace),
+            total_timeout_seconds=300.0,
+            idle_timeout_seconds=120.0,
+        )
+    )
 
     def run_effect(
         effect: EmailUnsubscribeEffect,
@@ -4386,6 +4398,7 @@ def build_direct_email_unsubscribe_operation(settings: object) -> object:
             ),
             session_manager=context.browser_session_manager,
             executed=executed,
+            page_judge=page_judge,
         )
 
     return DirectEmailUnsubscribeOperation(

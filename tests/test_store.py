@@ -560,6 +560,18 @@ def _seed_runtime_operation_parent(
                 "values (?, ?, 'request-1', 1, 'Inspect sales', 'running')",
                 (workload_key, task_id),
             )
+        elif workload_kind == "email_unsubscribe_page":
+            action_identity, _, _ = workload_key.removeprefix(
+                "email-unsubscribe-page:"
+            ).rpartition(":")
+            db.execute(
+                "insert into reply_tasks (channel, conversation_id, "
+                "conversation_title, single_chat, trigger_message_id, "
+                "trigger_create_time, trigger_sender, trigger_text, "
+                "trigger_message_json, status) values ('email', 'email-thread:1', "
+                "'Email unsubscribe', 0, ?, '', '', '', '{}', 'processing')",
+                (action_identity,),
+            )
         elif workload_kind == "email_description_optimization":
             snapshot_id, _, _ = workload_key.removeprefix(
                 "description-optimization:"
@@ -1039,6 +1051,10 @@ def test_runtime_attempt_upgrade_replaces_pretrim_session_evidence_triggers(
         ("memory", "wechat_memory_import_job:17"),
         ("email_classification", "email-classification:" + "a" * 64),
         (
+            "email_unsubscribe_page",
+            "email-unsubscribe-page:email-action:" + "c" * 64 + ":" + "d" * 64,
+        ),
+        (
             "email_description_optimization",
             "description-optimization:snapshot-1:" + "b" * 64,
         ),
@@ -1107,6 +1123,8 @@ def test_runtime_operation_attempts_are_listed_only_for_exact_workload(tmp_path:
         ("memory", "meeting_memory_write_event:999:missing-generation"),
         ("memory", "wechat_memory_import_job:999"),
         ("email_classification", "email-classification:not-a-digest"),
+        ("email_unsubscribe_page", "email-unsubscribe-page:not-an-action"),
+        ("email_unsubscribe_page", "email-unsubscribe-page:email-action:" + "c" * 64),
         (
             "email_description_optimization",
             "description-optimization:missing-digest",

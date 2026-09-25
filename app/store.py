@@ -823,6 +823,7 @@ RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
         "memory",
         "email_classification",
         "email_description_optimization",
+        "email_unsubscribe_page",
         "workbench",
     }
 )
@@ -11410,6 +11411,22 @@ class AutoReplyStore:
                 raise ValueError(
                     "email classification workload key must name a persisted task"
                 )
+        elif workload_kind == "email_unsubscribe_page":
+            prefix = "email-unsubscribe-page:"
+            action_identity, separator, digest = workload_key.removeprefix(
+                prefix
+            ).rpartition(":")
+            if (
+                not workload_key.startswith(prefix)
+                or not separator
+                or not action_identity.startswith("email-action:")
+                or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)
+            ):
+                raise ValueError(
+                    "email unsubscribe page workload key must name an action "
+                    "and the page text it judges"
+                )
         elif workload_kind == "email_description_optimization":
             prefix = "description-optimization:"
             parent_and_digest = workload_key.removeprefix(prefix)
@@ -11505,6 +11522,15 @@ class AutoReplyStore:
                 "where task_id=? and status='running'"
             )
             args = (workload_key,)
+        elif workload_kind == "email_unsubscribe_page":
+            action_identity, _, _ = workload_key.removeprefix(
+                "email-unsubscribe-page:"
+            ).rpartition(":")
+            query = (
+                "select 1 from reply_tasks where channel='email' "
+                "and trigger_message_id=? and status='processing'"
+            )
+            args = (action_identity,)
         elif workload_kind == "email_description_optimization":
             snapshot_id, _, _ = workload_key.removeprefix(
                 "description-optimization:"
