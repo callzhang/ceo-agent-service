@@ -13034,6 +13034,36 @@ class EmailStore:
                 matches.update(str(row["stable_message_identity"]) for row in rows)
         return frozenset(matches)
 
+    def backfill_email_unsubscribe_entry_url(
+        self, action_identity: str, entry_url: str
+    ) -> bool:
+        """Fill in the address of a receipt written before receipts kept one.
+
+        The address must hash to the receipt's own entry reference, so it can
+        only be the link that receipt was earned against. A receipt that
+        already has an address is left alone. Returns whether one was written.
+        """
+
+        with self._connect() as db:
+            receipt = db.execute(
+                "select entry_reference, entry_url from email_unsubscribe_receipts "
+                "where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            if receipt is None or receipt["entry_url"]:
+                return False
+            validated = _validate_unsubscribe_entry_url(
+                entry_url, entry_reference=receipt["entry_reference"]
+            )
+            if not validated:
+                return False
+            cursor = db.execute(
+                "update email_unsubscribe_receipts set entry_url=? "
+                "where action_identity=? and entry_url=''",
+                (validated, action_identity),
+            )
+            return cursor.rowcount == 1
+
     def get_email_unsubscribe_entry_url(self, classification_id: int) -> str | None:
         """Return one terminal unsubscribe entry URL after full lineage validation."""
 

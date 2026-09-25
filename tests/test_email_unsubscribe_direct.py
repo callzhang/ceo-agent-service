@@ -466,6 +466,30 @@ def test_the_receipt_records_the_entry_this_call_opened(tmp_path: Path) -> None:
     assert receipt["entry_url"] == PRIVATE_URL
 
 
+def test_an_old_receipt_gets_its_address_back_from_the_link_it_was_earned_against(
+    tmp_path: Path,
+) -> None:
+    effect = _effect()
+    operation, task, email_store, _browser = _operation(
+        tmp_path,
+        [_terminal(effect, UnsubscribePageState.DONE, "You have unsubscribed.")],
+    )
+    operation.execute(task.id)
+    with email_store._connect() as db:
+        db.execute(
+            "update email_unsubscribe_receipts set entry_url='' where action_identity=?",
+            (ACTION_IDENTITY,),
+        )
+
+    assert email_store.backfill_email_unsubscribe_entry_url(ACTION_IDENTITY, PRIVATE_URL)
+    receipt = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
+    assert receipt is not None and receipt["entry_url"] == PRIVATE_URL
+    # An address already on the receipt is never replaced.
+    assert not email_store.backfill_email_unsubscribe_entry_url(
+        ACTION_IDENTITY, PRIVATE_URL
+    )
+
+
 def test_a_second_call_returns_the_receipt_instead_of_unsubscribing_again(
     tmp_path: Path,
 ) -> None:

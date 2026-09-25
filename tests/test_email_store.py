@@ -1625,6 +1625,30 @@ def _persist_unsubscribe_result_fixture(
     return store, authorization, receipt
 
 
+def test_backfill_fills_a_missing_entry_url_only_when_it_hashes_to_the_receipt(
+    tmp_path: Path,
+):
+    store, authorization, _receipt = _persist_unsubscribe_result_fixture(
+        tmp_path / "backfill.sqlite3", result_text="退订成功"
+    )
+    action_identity = str(authorization["action_identity"])
+    with store._connect() as db:
+        db.execute(
+            "update email_unsubscribe_receipts set entry_url='' where action_identity=?",
+            (action_identity,),
+        )
+    wrong = "https://elsewhere.example.test/unsubscribe?token=other"
+
+    with pytest.raises(ValueError, match="entry reference"):
+        store.backfill_email_unsubscribe_entry_url(action_identity, wrong)
+    assert store.backfill_email_unsubscribe_entry_url("no-such-action", wrong) is False
+    with store._connect() as db:
+        assert db.execute(
+            "select entry_url from email_unsubscribe_receipts where action_identity=?",
+            (action_identity,),
+        ).fetchone()[0] == ""
+
+
 def test_list_unsubscribe_classifications_projects_durable_claims(tmp_path: Path):
     store = EmailStore(tmp_path / "unsubscribe-list.sqlite3")
     authorization = _unsubscribe_authorization(store)
