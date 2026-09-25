@@ -7,7 +7,6 @@ browser, and so everything that knows about page structure sits in one file.
 from __future__ import annotations
 
 from contextlib import contextmanager
-import json
 from pathlib import Path
 from typing import Any
 
@@ -261,146 +260,65 @@ class PlaywrightMinutesConsole:
         return panel
 
 
+# The console is an organisation's management view, so the sign-in ends on a
+# picker of the organisations this account administers. Only one of them owns
+# the minutes this service archives; the others are Derek's own and would serve
+# an empty console.
+MINUTES_CONSOLE_ORG = "北京星尘纪元智能科技有限公司"
+_ORG_PICK_TIMEOUT_MS = 45_000
+_CONSOLE_SETTLE_MS = 6_000
+
+
+def _service_profile_dir() -> Path:
+    from app import config as app_config
+
+    return app_config.worker_db_path().parent / "minutes-console-profile"
+
+
 @contextmanager
-def signed_in_console(storage_state_path: Path):
-    """Open the console in a headless browser carrying the saved session."""
+def signed_in_console(profile_dir: Path | None = None, *, org: str = ""):
+    """Open the console in the service's headless Chrome, signed in as Derek.
+
+    The browser carries the daily copy of Derek's own Chrome cookies, which
+    authenticates him as far as the organisation picker. The copy is written
+    over the profile on every launch, so the console's own `access_token` never
+    survives a run and the organisation is chosen every time -- which is why
+    there is no stored console session here, and nothing to renew.
+    """
     from playwright.sync_api import sync_playwright
 
-    if not storage_state_path.exists():
-        raise MinutesBrowserSessionExpired(
-            f"no 听记 console session at {storage_state_path}; sign in to create it"
-        )
+    from app.service_browser import launch_service_chrome
+
+    wanted = org or MINUTES_CONSOLE_ORG
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(channel="chrome", headless=True)
+        context = launch_service_chrome(
+            playwright, profile_dir or _service_profile_dir()
+        )
         try:
-            context = browser.new_context(storage_state=str(storage_state_path))
             page = context.new_page()
-            try:
-                yield PlaywrightMinutesConsole(page)
-            finally:
-                context.close()
+            page.goto(HISTORY_URL, wait_until="domcontentloaded", timeout=45_000)
+            page.wait_for_timeout(_CONSOLE_SETTLE_MS)
+            if LOGIN_HOST in page.url:
+                _pick_organisation(page, wanted)
+            if MINUTES_CONSOLE_HOST not in page.url:
+                raise MinutesBrowserSessionExpired(
+                    "the copy of Derek's Chrome cookies no longer carries a "
+                    f"DingTalk login (stopped at {page.url[:120]}); open "
+                    "DingTalk in Chrome and let `sync-chrome-cookies` run"
+                )
+            yield PlaywrightMinutesConsole(page)
         finally:
-            browser.close()
+            context.close()
 
 
-CONSOLE_SIGN_IN_PORT = 19222
-_SIGN_IN_POLL_SECONDS = 3
-
-
-def _console_tab_url(cdp_endpoint: str) -> str:
-    from urllib.request import urlopen
-
-    tabs = json.loads(urlopen(f"{cdp_endpoint}/json/list", timeout=5).read())
-    page = next((tab for tab in tabs if tab.get("type") == "page"), None)
-    return str((page or {}).get("url") or "")
-
-
-def open_console_for_sign_in(
-    *, port: int = CONSOLE_SIGN_IN_PORT, chrome_bin: str = "", profile_dir: Path | None = None
-) -> int:
-    """Open a visible browser at the console so a person can sign in.
-
-    Its own profile and debugging port, not the person's everyday Chrome, so
-    signing in here changes nothing about their browser.
-    """
-    import subprocess
-    from urllib.error import URLError
-
-    binary = chrome_bin or "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    directory = profile_dir or (
-        Path.home() / "Documents" / "dingtalk-minutes-access-request" / ".chrome-profile"
-    )
-    directory.mkdir(parents=True, exist_ok=True)
+def _pick_organisation(page, org: str) -> None:
+    """Choose the organisation whose console holds this service's minutes."""
+    entry = page.get_by_text(org, exact=False).first
     try:
-        _console_tab_url(f"http://127.0.0.1:{port}")
-        return 0
-    except (URLError, OSError, ValueError, StopIteration):
-        pass
-    process = subprocess.Popen(
-        [
-            binary,
-            f"--remote-debugging-port={port}",
-            f"--user-data-dir={directory}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            HISTORY_URL,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    return process.pid
-
-
-def wait_for_console_sign_in(
-    *, port: int = CONSOLE_SIGN_IN_PORT, timeout_seconds: int = 300
-) -> str:
-    """Block until the signed-in console is open in that browser."""
-    import time
-    from urllib.error import URLError
-
-    deadline = time.monotonic() + timeout_seconds
-    url = ""
-    while time.monotonic() < deadline:
-        try:
-            url = _console_tab_url(f"http://127.0.0.1:{port}")
-        except (URLError, OSError, ValueError):
-            url = ""
-        if url and MINUTES_CONSOLE_HOST in url and LOGIN_HOST not in url:
-            return url
-        time.sleep(_SIGN_IN_POLL_SECONDS)
-    raise MinutesBrowserSessionExpired(
-        f"the 听记 console was not signed in within {timeout_seconds}s; last at {url!r}"
-    )
-
-
-def carry_signed_in_session(cdp_endpoint: str, storage_state_path: Path) -> int:
-    """Save the session from a browser a person just signed in to.
-
-    Playwright cannot attach to this Chrome (`connect_over_cdp` fails with
-    "Browser context management is not supported"), so the cookies come
-    straight off the DevTools protocol.
-    """
-    import asyncio
-    from urllib.request import urlopen
-
-    import websockets
-
-    async def read_cookies() -> list[dict[str, Any]]:
-        version = json.loads(urlopen(f"{cdp_endpoint}/json/version", timeout=5).read())
-        async with websockets.connect(
-            version["webSocketDebuggerUrl"], max_size=32 * 1024 * 1024
-        ) as socket:
-            await socket.send(
-                json.dumps({"id": 1, "method": "Storage.getCookies", "params": {}})
-            )
-            while True:
-                message = json.loads(await socket.recv())
-                if message.get("id") == 1:
-                    if "error" in message:
-                        raise MinutesBrowserSessionExpired(str(message["error"]))
-                    return message["result"]["cookies"]
-
-    cookies = asyncio.run(read_cookies())
-    carried = []
-    for cookie in cookies:
-        entry = {
-            "name": cookie["name"],
-            "value": cookie["value"],
-            "domain": cookie["domain"],
-            "path": cookie.get("path", "/"),
-            "httpOnly": bool(cookie.get("httpOnly")),
-            "secure": bool(cookie.get("secure")),
-        }
-        expires = cookie.get("expires")
-        if isinstance(expires, (int, float)) and expires > 0:
-            entry["expires"] = expires
-        if cookie.get("sameSite") in ("Strict", "Lax", "None"):
-            entry["sameSite"] = cookie["sameSite"]
-        carried.append(entry)
-    storage_state_path.parent.mkdir(parents=True, exist_ok=True)
-    storage_state_path.write_text(
-        json.dumps({"cookies": carried, "origins": []}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    return len(carried)
+        entry.click(timeout=_ORG_PICK_TIMEOUT_MS)
+    except Exception as exc:  # the picker is a page; it fails in many ways
+        raise MinutesBrowserSessionExpired(
+            f"the 听记 sign-in stopped without offering {org!r}: {exc}"
+        ) from exc
+    page.wait_for_url(f"**{MINUTES_CONSOLE_HOST}/**", timeout=_ORG_PICK_TIMEOUT_MS)
+    page.wait_for_timeout(_CONSOLE_SETTLE_MS)

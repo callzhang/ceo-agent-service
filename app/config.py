@@ -278,18 +278,6 @@ def corpus_dir() -> Path:
     return env_path("CEO_CORPUS_DIR", repo_root() / "data" / "corpus")
 
 
-def minutes_console_storage_state() -> Path:
-    """The signed-in 听记 console session the access pass reads."""
-    return env_path(
-        "CEO_MINUTES_CONSOLE_STORAGE_STATE",
-        Path.home()
-        / "Library"
-        / "Application Support"
-        / "ceo-agent-service"
-        / "minutes-console-session.json",
-    )
-
-
 def codex_model() -> str:
     return os.getenv("CEO_CODEX_MODEL", DEFAULT_CEO_CODEX_MODEL).strip()
 

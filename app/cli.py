@@ -35,7 +35,6 @@ from app.config import (
     repository_upgrade_enabled,
     repository_upgrade_remote,
     profile_evidence_dir,
-    minutes_console_storage_state,
     service_mcp_config_path,
     worker_db_path,
     work_profile_path,
@@ -368,7 +367,6 @@ def build_parser() -> argparse.ArgumentParser:
         "scan-task-sources",
         "scan-meeting-todos-once",
         "authorize-memory-connector",
-        "renew-minutes-session",
         "request-minutes-access",
         "sync-chrome-cookies",
         "sync-minutes-once",
@@ -2571,41 +2569,6 @@ def authorize_memory_connector_command(settings: WorkerSettings) -> int:
     return 0
 
 
-def renew_minutes_session_command(settings: WorkerSettings) -> int:
-    """Renew the 听记 console session a person alone can create.
-
-    Opens a visible browser on its own profile at the console, waits for the
-    sign-in, and saves the session where the access pass reads it. Everything
-    afterwards runs headless until the session expires, about a month later.
-    """
-    del settings
-    from app.minutes_access import session_expiry
-    from app.minutes_console_browser import (
-        CONSOLE_SIGN_IN_PORT,
-        carry_signed_in_session,
-        open_console_for_sign_in,
-        wait_for_console_sign_in,
-    )
-
-    storage_state = minutes_console_storage_state()
-    open_console_for_sign_in()
-    print(
-        "renew-minutes-session waiting for sign-in in the opened browser",
-        flush=True,
-    )
-    wait_for_console_sign_in()
-    carried = carry_signed_in_session(
-        f"http://127.0.0.1:{CONSOLE_SIGN_IN_PORT}", storage_state
-    )
-    expires_at = session_expiry(storage_state)
-    print(
-        f"renew-minutes-session carried={carried} "
-        f"expires_at={expires_at.isoformat() if expires_at else 'unknown'}",
-        flush=True,
-    )
-    return carried
-
-
 def sync_chrome_cookies_command(settings: WorkerSettings) -> str:
     """Refresh the service's copy of the owner's Chrome cookies.
 
@@ -2646,35 +2609,25 @@ def request_minutes_access_command(settings: WorkerSettings) -> str:
     Deterministic throughout: the console says which minutes exist, the read
     API says which of them we may not read, and a request counts only when the
     minute's page reads it back. It needs a signed-in console session, which is
-    the one thing it cannot make for itself, so an expired session fails the
-    command rather than reporting an empty pass.
+    the one thing it cannot make for itself: it comes from the service's shared
+    headless Chrome carrying the copy of Derek's own Chrome cookies, and a copy
+    without a DingTalk login fails the command rather than reporting an empty
+    pass.
     """
     from app.minutes_access import request_minutes_access
     from app.minutes_console_browser import signed_in_console
 
-    storage_state = minutes_console_storage_state()
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
         ding_robot_name=settings.ding_robot_name,
         ding_receiver_user_id=settings.ding_receiver_user_id,
     )
-    with signed_in_console(storage_state) as console:
-        result = request_minutes_access(
-            store,
-            dws,
-            console,
-            storage_state_path=storage_state,
-        )
+    with signed_in_console() as console:
+        result = request_minutes_access(store, dws, console)
     print(f"request-minutes-access {result.summary()}", flush=True)
     if result.failed:
         raise RuntimeError(f"request-minutes-access incomplete: {result.summary()}")
-    if result.session_needs_renewal:
-        print(
-            "request-minutes-access session-renewal-required "
-            f"days_left={result.session_expires_in_days:.1f}",
-            flush=True,
-        )
     return result.summary()
 
 
@@ -4993,8 +4946,6 @@ def main() -> None:
         scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)
     elif args.command == "authorize-memory-connector":
         authorize_memory_connector_command(settings)
-    elif args.command == "renew-minutes-session":
-        renew_minutes_session_command(settings)
     elif args.command == "request-minutes-access":
         request_minutes_access_command(settings)
     elif args.command == "sync-chrome-cookies":

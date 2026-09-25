@@ -14,7 +14,6 @@ from app.minutes_access import (
     MinutesAccessResult,
     MinutesBrowserSessionExpired,
     request_minutes_access,
-    session_expiry,
 )
 from app.store import AutoReplyStore
 
@@ -71,35 +70,6 @@ def _store(tmp_path: Path) -> AutoReplyStore:
 def _cursor(store: AutoReplyStore) -> dict:
     state = store.get_daily_scan_state(MINUTES_ACCESS_SCANNER) or {}
     return json.loads(state.get("cursor_json") or "{}")
-
-
-def _session(tmp_path: Path, *, days: float = 30.0) -> Path:
-    path = tmp_path / "session.json"
-    expires = (NOW + timedelta(days=days)).timestamp()
-    path.write_text(
-        json.dumps(
-            {
-                "cookies": [
-                    {
-                        "name": "access_token",
-                        "value": "x",
-                        "domain": "shanji-admin.dingtalk.com",
-                        "expires": expires,
-                    },
-                    {
-                        "name": "XSRF-TOKEN",
-                        "value": "x",
-                        "domain": "shanji-admin.dingtalk.com",
-                        "expires": -1,
-                    },
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    return path
-
-
 def _rows(*keys, size="12.0 MB - Meeting"):
     return [{"row_key": key, "size": size, "initiator": "同事"} for key in keys]
 
@@ -110,7 +80,7 @@ def test_only_the_minutes_the_provider_refuses_are_asked_for(tmp_path: Path) -> 
     dws = FakeDws(readable={"readable"})
 
     result = request_minutes_access(
-        store, dws, console, storage_state_path=_session(tmp_path), now=NOW
+        store, dws, console, now=NOW
     )
 
     assert [uuid for uuid, _ in console.requested] == ["restricted"]
@@ -123,11 +93,10 @@ def test_a_minute_already_asked_for_is_never_asked_again(tmp_path: Path) -> None
     store = _store(tmp_path)
     console = FakeConsole(_rows("restricted"))
     dws = FakeDws()
-    session = _session(tmp_path)
 
-    request_minutes_access(store, dws, console, storage_state_path=session, now=NOW)
+    request_minutes_access(store, dws, console, now=NOW)
     second = request_minutes_access(
-        store, dws, console, storage_state_path=session, now=NOW
+        store, dws, console, now=NOW
     )
 
     assert len(console.requested) == 1
@@ -142,7 +111,7 @@ def test_a_cleaned_minute_is_never_asked_for(tmp_path: Path) -> None:
     dws = FakeDws()
 
     result = request_minutes_access(
-        store, dws, console, storage_state_path=_session(tmp_path), now=NOW
+        store, dws, console, now=NOW
     )
 
     assert console.requested == []
@@ -156,7 +125,7 @@ def test_a_page_that_never_read_the_request_back_is_a_failure(tmp_path: Path) ->
     dws = FakeDws()
 
     result = request_minutes_access(
-        store, dws, console, storage_state_path=_session(tmp_path), now=NOW
+        store, dws, console, now=NOW
     )
 
     assert result.failed == 1 and result.requested == 0
@@ -170,14 +139,13 @@ def test_an_unresolved_owner_is_retried_rather_than_recorded_as_asked(
     store = _store(tmp_path)
     console = FakeConsole(_rows("slow"), outcomes={"slow": "unresolved"})
     dws = FakeDws()
-    session = _session(tmp_path)
 
     first = request_minutes_access(
-        store, dws, console, storage_state_path=session, now=NOW
+        store, dws, console, now=NOW
     )
     console._outcomes = {}
     second = request_minutes_access(
-        store, dws, console, storage_state_path=session, now=NOW
+        store, dws, console, now=NOW
     )
 
     assert first.unresolved == 1
@@ -193,69 +161,11 @@ def test_a_transport_failure_is_not_read_as_a_permission_decision(
     dws = FakeDws(errors={"flaky": DwsError("mcp 后端依赖暂时不可用", "1")})
 
     result = request_minutes_access(
-        store, dws, console, storage_state_path=_session(tmp_path), now=NOW
+        store, dws, console, now=NOW
     )
 
     assert console.requested == []
     assert result.failed == 1
-
-
-def test_an_expired_session_fails_instead_of_reporting_an_empty_pass(
-    tmp_path: Path,
-) -> None:
-    store = _store(tmp_path)
-    console = FakeConsole(_rows("restricted"))
-
-    with pytest.raises(MinutesBrowserSessionExpired):
-        request_minutes_access(
-            store,
-            FakeDws(),
-            console,
-            storage_state_path=_session(tmp_path, days=-1),
-            now=NOW,
-        )
-
-    assert console.requested == []
-
-
-def test_a_session_close_to_expiry_asks_to_be_renewed(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    result = request_minutes_access(
-        store,
-        FakeDws(),
-        FakeConsole([]),
-        storage_state_path=_session(tmp_path, days=2),
-        now=NOW,
-    )
-
-    assert result.session_needs_renewal is True
-    assert "session_expires_in_days=2.0" in result.summary()
-
-
-def test_a_fresh_session_does_not_ask_to_be_renewed(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    result = request_minutes_access(
-        store,
-        FakeDws(),
-        FakeConsole([]),
-        storage_state_path=_session(tmp_path, days=29),
-        now=NOW,
-    )
-
-    assert result.session_needs_renewal is False
-
-
-def test_session_expiry_ignores_the_csrf_cookie(tmp_path: Path) -> None:
-    """Only the console cookies carry the session; CSRF is re-issued on load."""
-    assert session_expiry(_session(tmp_path, days=30)) == NOW + timedelta(days=30)
-
-
-def test_session_expiry_is_unknown_when_there_is_no_session_file(
-    tmp_path: Path,
-) -> None:
-    assert session_expiry(tmp_path / "missing.json") is None
-
-
 def test_every_candidate_lands_in_exactly_one_outcome() -> None:
     with pytest.raises(ValueError):
         MinutesAccessResult(discovered=2, requested=1)
@@ -274,38 +184,74 @@ def test_a_console_without_the_admin_role_is_not_an_expired_session() -> None:
     assert not issubclass(MinutesBrowserSessionExpired, MinutesConsoleUnavailable)
 
 
-def test_the_sign_in_wait_accepts_only_the_signed_in_console(monkeypatch) -> None:
-    """The console redirects to the sign-in host until a person signs in.
+class FakePage:
+    """Just enough of a Playwright page to drive the sign-in hop."""
 
-    Waiting on the tab merely existing would save a session that cannot read
-    anything, which is the failure this whole flow exists to avoid.
+    def __init__(self, urls, org_offered=True):
+        self._urls = list(urls)
+        self.url = self._urls.pop(0)
+        self.org_offered = org_offered
+        self.clicked = ""
+
+    def goto(self, url, **kwargs):
+        return None
+
+    def wait_for_timeout(self, ms):
+        return None
+
+    def get_by_text(self, text, exact=False):
+        page = self
+
+        class Locator:
+            first = None
+
+            def click(self, timeout=0):
+                if not page.org_offered:
+                    raise RuntimeError("no such organisation on the page")
+                page.clicked = text
+                if page._urls:
+                    page.url = page._urls.pop(0)
+
+        locator = Locator()
+        locator.first = locator
+        return locator
+
+    def wait_for_url(self, pattern, timeout=0):
+        return None
+
+
+def test_the_console_chooses_the_organisation_that_owns_these_minutes() -> None:
+    """Chrome's cookie copy signs Derek in as far as the organisation picker.
+
+    He administers three organisations and only one of them holds the minutes
+    this service archives, so the console has to say which; left unanswered,
+    the pass reads an empty console and reports a clean nothing-to-do.
     """
     import app.minutes_console_browser as browser
 
-    seen = iter(
+    page = FakePage(
         [
-            "https://login.dingtalk.com/oauth2/challenge.htm",
-            "https://login.dingtalk.com/oauth2/challenge.htm",
+            "https://login.dingtalk.com/oauth2/challenge.htm?x=1",
             "https://shanji-admin.dingtalk.com/history",
         ]
     )
-    monkeypatch.setattr(browser, "_console_tab_url", lambda endpoint: next(seen))
-    monkeypatch.setattr(browser.time if hasattr(browser, "time") else __import__("time"), "sleep", lambda _s: None)
+    browser._pick_organisation(page, browser.MINUTES_CONSOLE_ORG)
 
-    assert browser.wait_for_console_sign_in(timeout_seconds=30).endswith("/history")
+    assert page.clicked == browser.MINUTES_CONSOLE_ORG
+    assert page.url.startswith("https://shanji-admin.dingtalk.com/")
 
 
-def test_the_sign_in_wait_gives_up_instead_of_saving_a_signed_out_session(
-    monkeypatch,
-) -> None:
+def test_a_cookie_copy_without_a_dingtalk_login_fails_the_pass() -> None:
+    """Otherwise the pass reads a signed-out console as "no minutes exist".
+
+    The remedy is not a sign-in here: the browser carries a copy of Derek's own
+    Chrome cookies, so the login has to come back in Chrome.
+    """
     import app.minutes_console_browser as browser
 
-    monkeypatch.setattr(
-        browser,
-        "_console_tab_url",
-        lambda endpoint: "https://login.dingtalk.com/oauth2/challenge.htm",
+    page = FakePage(
+        ["https://login.dingtalk.com/oauth2/challenge.htm"], org_offered=False
     )
-    monkeypatch.setattr(__import__("time"), "sleep", lambda _s: None)
 
     with pytest.raises(MinutesBrowserSessionExpired):
-        browser.wait_for_console_sign_in(timeout_seconds=1)
+        browser._pick_organisation(page, browser.MINUTES_CONSOLE_ORG)

@@ -10,16 +10,17 @@ every one of their pages still offered `Send Application` afterwards).
 
 So this pass reads the console for candidates, asks the provider which of them
 we may not read, and sends a request on the page, counting it only when the
-page reads the request back.  Every step is a fixed rule; the browser session
-is the one thing it cannot produce for itself.
+page reads the request back.  Every step is a fixed rule, and the browser it
+drives is the service's shared headless Chrome, which carries the daily copy
+of Derek's own Chrome cookies -- so this pass no longer keeps a console session
+of its own, and there is nothing here that expires or has to be renewed.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import json
-from pathlib import Path
 from typing import Any, Protocol
 
 from app.dws_client import DwsError
@@ -29,9 +30,6 @@ from app.minutes_sync import _is_restricted_minute_error
 MINUTES_ACCESS_SCANNER = "ai_minutes_access"
 
 MINUTES_CONSOLE_HOST = "shanji-admin.dingtalk.com"
-# The cookies that carry the console session itself, as opposed to the CSRF
-# token the page re-issues on every load.
-MINUTES_SESSION_COOKIE_NAMES = frozenset({"access_token", "corp_id"})
 
 # The reason the minute's owner reads. It says what is asking and invites a
 # refusal, because the request reaches a colleague, not a system.
@@ -39,14 +37,14 @@ ACCESS_REQUEST_REASON = (
     "AI自动抓取，用于会议纪要整理，如和工作内容无关或者涉及个人隐私，请拒绝"
 )
 
-# Warn this far ahead of the browser session's expiry. The session is renewed
-# by a person signing in, so the warning has to arrive while there is still
-# time to act on it.
-SESSION_RENEWAL_WARNING = timedelta(days=3)
-
-
 class MinutesBrowserSessionExpired(RuntimeError):
-    """The saved browser session can no longer reach the 听记 admin console."""
+    """The service's headless Chrome could not reach the 听记 admin console.
+
+    It carries the daily copy of Derek's own Chrome cookies, so the remedy is
+    to give that copy a DingTalk login again -- open DingTalk in Chrome, and
+    let the daily `sync-chrome-cookies` pass run -- not to sign in anywhere on
+    the console's behalf.
+    """
 
 
 class MinutesConsoleUnavailable(RuntimeError):
@@ -70,7 +68,6 @@ class MinutesAccessResult:
     readable: int = 0
     unresolved: int = 0
     failed: int = 0
-    session_expires_in_days: float | None = None
 
     def __post_init__(self) -> None:
         accounted = (
@@ -83,21 +80,11 @@ class MinutesAccessResult:
         if accounted != self.discovered:
             raise ValueError("minutes access outcomes do not account for every item")
 
-    @property
-    def session_needs_renewal(self) -> bool:
-        days = self.session_expires_in_days
-        return days is not None and days <= SESSION_RENEWAL_WARNING.days
-
     def summary(self) -> str:
-        session = (
-            "session_expires_in_days=unknown"
-            if self.session_expires_in_days is None
-            else f"session_expires_in_days={self.session_expires_in_days:.1f}"
-        )
         return (
             f"discovered={self.discovered} requested={self.requested} "
             f"already_requested={self.already_requested} readable={self.readable} "
-            f"unresolved={self.unresolved} failed={self.failed} {session}"
+            f"unresolved={self.unresolved} failed={self.failed}"
         )
 
 
@@ -119,32 +106,6 @@ class MinutesConsole(Protocol):
 
     def request_access(self, task_uuid: str, *, reason: str) -> MinutesAccessRequest:
         """Send one request on the minute's page and read the result back."""
-
-
-def session_expiry(storage_state_path: Path) -> datetime | None:
-    """When the saved console session stops working, or None if unknown.
-
-    The session is a set of cookies with real expiry dates -- about a month
-    from the sign-in -- so it survives restarts and does not need a person at
-    every run. Only the CSRF cookies are session-scoped, and the console
-    re-issues those on load.
-    """
-    try:
-        payload = json.loads(storage_state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    expiries: list[datetime] = []
-    for cookie in payload.get("cookies") or []:
-        if not isinstance(cookie, dict):
-            continue
-        if MINUTES_CONSOLE_HOST not in str(cookie.get("domain") or ""):
-            continue
-        if str(cookie.get("name") or "") not in MINUTES_SESSION_COOKIE_NAMES:
-            continue
-        expires = cookie.get("expires")
-        if isinstance(expires, (int, float)) and expires > 0:
-            expiries.append(datetime.fromtimestamp(expires, tz=timezone.utc))
-    return min(expiries) if expiries else None
 
 
 def _task_uuid(row: dict[str, Any]) -> str:
@@ -174,21 +135,10 @@ def request_minutes_access(
     dws,
     console: MinutesConsole,
     *,
-    storage_state_path: Path,
     now: datetime | None = None,
 ) -> MinutesAccessResult:
     """Request access to every console-listed minute this account cannot read."""
-    expires_at = session_expiry(storage_state_path)
     moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    days_left = (
-        None if expires_at is None else (expires_at - moment).total_seconds() / 86400
-    )
-    if days_left is not None and days_left <= 0:
-        raise MinutesBrowserSessionExpired(
-            f"the 听记 console session expired at {expires_at.isoformat()}; "
-            "sign in again to renew it"
-        )
-
     state = store.get_daily_scan_state(MINUTES_ACCESS_SCANNER) or {}
     try:
         cursor = json.loads(state.get("cursor_json") or "{}")
@@ -255,14 +205,9 @@ def request_minutes_access(
             {
                 "requested_ids": sorted(requested_ids),
                 "readable_ids": sorted(readable_ids),
-                **({"session_expires_at": expires_at.isoformat()} if expires_at else {}),
             },
             sort_keys=True,
         ),
         last_error=last_error,
     )
-    return MinutesAccessResult(
-        discovered=len(candidates),
-        session_expires_in_days=days_left,
-        **counts,
-    )
+    return MinutesAccessResult(discovered=len(candidates), **counts)
