@@ -1593,7 +1593,16 @@ class PlaywrightUnsubscribeBrowser:
         must not be operated at all.
         """
 
-        return self._state_from_text(text) is not None or bool(bindings and text)
+        state = self._state_from_text(text)
+        # "Sign in" is also the site navigation every page of a provider
+        # carries, and it paints with the static shell, before a script-rendered
+        # confirmation does. Substack answers an unsubscribe with a toast that
+        # arrives after the shell: reading the shell alone recorded a
+        # completed unsubscribe as skipped_login_required. Login wording only
+        # ends the wait when the budget does.
+        if state is not None and state is not UnsubscribePageState.LOGIN_REQUIRED:
+            return True
+        return bool(bindings and text)
 
     def _awaited_page_read(self) -> tuple[tuple[_AuditedControlBinding, ...], str]:
         """Read the page until it settles, within a bounded budget.
@@ -2472,15 +2481,11 @@ class PlaywrightUnsubscribeBrowser:
             return UnsubscribePageState.ALREADY_UNSUBSCRIBED
         if any(
             marker in normalized
-            for marker in ("sign in", "log in", "login", "password", "登录")
-        ):
-            return UnsubscribePageState.LOGIN_REQUIRED
-        if any(
-            marker in normalized
             for marker in (
                 "successfully unsubscribed",
                 "you are unsubscribed",
                 "you have been unsubscribed",
+                "you've been unsubscribed",
                 # The confirmation LinkedIn and others actually print.
                 "you've unsubscribed",
                 "you have unsubscribed",
@@ -2501,6 +2506,14 @@ class PlaywrightUnsubscribeBrowser:
             )
         ):
             return UnsubscribePageState.DONE
+        # After the statements the page makes about this address: a page that
+        # confirms the unsubscribe and also carries a site-wide "Sign in" link
+        # is not asking anyone to sign in.
+        if any(
+            marker in normalized
+            for marker in ("sign in", "log in", "login", "password", "登录")
+        ):
+            return UnsubscribePageState.LOGIN_REQUIRED
         return None
 
     def discover_current_page(

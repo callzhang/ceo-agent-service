@@ -3612,6 +3612,62 @@ def test_a_typographic_apostrophe_does_not_hide_a_confirmed_unsubscribe() -> Non
     )
 
 
+def test_a_confirmation_outranks_the_sites_own_sign_in_link() -> None:
+    state_from_text = PlaywrightUnsubscribeBrowser._state_from_text
+
+    assert (
+        state_from_text(
+            "Start publishing Sign in You've been unsubscribed from "
+            "notifications about this topic. Visit your account page to update "
+            "these settings any time."
+        )
+        is UnsubscribePageState.DONE
+    )
+    assert (
+        state_from_text("Sign in to manage your preferences")
+        is UnsubscribePageState.LOGIN_REQUIRED
+    )
+
+
+def test_a_confirmation_that_paints_after_the_shell_is_waited_for() -> None:
+    """Substack: the static shell says "Sign in ... update these settings any
+    time"; the toast "You've been unsubscribed ..." arrives a moment later."""
+
+    waits: list[int] = []
+    shell = "Start publishing Sign in Visit your account page to update these settings any time."
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": len(shell), "controlCount": 0}],
+        texts=[
+            shell,
+            shell,
+            shell + " You've been unsubscribed from notifications about this topic.",
+        ],
+        waits=waits,
+    )
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert discovery.state is UnsubscribePageState.DONE
+    assert len(waits) == 2
+
+
+def test_a_page_that_only_ever_says_sign_in_is_still_login_required() -> None:
+    waits: list[int] = []
+    text = "Sign in to manage your preferences"
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": len(text), "controlCount": 0}],
+        texts=[text],
+        waits=waits,
+    )
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert discovery.state is UnsubscribePageState.LOGIN_REQUIRED
+    assert waits, "the wait runs to its budget before giving up on a stronger statement"
+
+
 def test_a_page_we_will_not_operate_is_terminal_not_a_retryable_failure() -> None:
     """Re-reading the same page with the same model reaches the same place.
 

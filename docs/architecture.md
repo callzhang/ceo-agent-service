@@ -387,7 +387,7 @@ Consumer→Audit 往返——退订在真实世界本来就是幂等的，那套
 却让每一次点击都要花一整轮 agent，而过期的 continuation 会让任务失败在机制上而不是页面上。
 同理，有浏览器步骤但没有 receipt 不再升级为 needs_human：重跑一次即可。
 
-页面要求登录或 CAPTCHA 时记 `skipped_login_required` / `skipped_captcha`；页面读到了但这个服务
+页面要求登录或 CAPTCHA 时记 `skipped_login_required` / `skipped_captcha`。读页面文字时，页面对这个地址说的话（已退订、不会再收到……）优先于站点自带的“Sign in”导航；“登录”字样不算页面已经渲染完，会一直等到读取预算用完才作结论，因为 Substack 这类站点先渲染带导航的静态外壳，几百毫秒后才用脚本弹出“You've been unsubscribed”的提示，只读外壳会把已经成功的退订记成需要登录（2026-09-25）；页面读到了但这个服务
 不操作它提供的控件时记 `skipped_no_reliable_entry`，并保留页面原文，这类结果不重试。
 
 任务已关闭（done / skipped / needs_human）却没有 receipt 时，启动与训练维护里的对账会补一条 `skipped_no_reliable_entry`（证据 `durable_context_entry_unavailable`），让后续动作不被卡住。`failed` 的任务不在此列：它结束于技术故障，不是对链接的结论。2026-09-25 一个退订任务因数据库校验错误失败，对账把它写成“找不到退订入口”，而同一条链接其实一直在邮件里；失败的任务保持 `failed`，由人重跑。
