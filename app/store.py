@@ -14255,6 +14255,65 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def skip_failed_legacy_email_unsubscribe_tasks(self) -> list[int]:
+        """Close old direct-unsubscribe tasks that never reached an Agent run.
+
+        These rows are the durable residue of the pre-repair email-store startup
+        failure.  They cannot be rerun through the normal Attempt API because no
+        reply attempt or Agent run was created.  Restrict the transition to the
+        exact retired lifecycle, the known persistence error, and tasks without
+        any Agent run; provider/browser failures remain failed and actionable.
+        """
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                """
+                select tasks.id, tasks.error
+                from reply_tasks as tasks
+                where tasks.channel='email'
+                  and tasks.status='failed'
+                  and tasks.error='email_consumer_runtime_error:EmailPersistenceCorruption'
+                  and case
+                          when json_valid(tasks.trigger_message_json)
+                          then json_extract(tasks.trigger_message_json, '$.schema')
+                          else null
+                      end='email_agent_action.v1'
+                  and case
+                          when json_valid(tasks.trigger_message_json)
+                          then json_extract(tasks.trigger_message_json, '$.action_type')
+                          else null
+                      end='unsubscribe'
+                  and case
+                          when json_valid(tasks.trigger_message_json)
+                          then json_extract(tasks.trigger_message_json, '$.lifecycle_version')
+                          else null
+                      end='email_unsubscribe_consumer_direct_v1'
+                  and not exists (
+                      select 1 from agent_runs
+                      where agent_runs.reply_task_id=tasks.id
+                  )
+                order by tasks.id
+                """
+            ).fetchall()
+            recovered: list[int] = []
+            for row in rows:
+                updated = db.execute(
+                    """
+                    update reply_tasks
+                    set status='skipped',
+                        locked_at=null,
+                        error='legacy_email_unsubscribe_recovery_skipped:' || error,
+                        available_at='',
+                        updated_at=current_timestamp
+                    where id=?
+                      and status='failed'
+                      and error='email_consumer_runtime_error:EmailPersistenceCorruption'
+                    """,
+                    (int(row['id']),),
+                ).rowcount
+                if updated == 1:
+                    recovered.append(int(row['id']))
+            return recovered
+
     def terminalize_exhausted_pending_reply_tasks(
         self,
         *,

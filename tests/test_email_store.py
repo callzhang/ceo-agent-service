@@ -1362,6 +1362,49 @@ def test_terminalizes_processing_legacy_unsubscribe_with_exact_generation(
     assert terminal.available_at == ""
 
 
+def test_skips_failed_legacy_unsubscribe_without_agent_run(tmp_path: Path):
+    database = tmp_path / "failed-legacy-recovery.sqlite3"
+    task_store = AutoReplyStore(database)
+    EmailStore(database)
+    task = _create_legacy_terminalization_task(task_store, "failed")
+    claimed = task_store.claim_reply_task(task.id)
+    assert claimed is not None
+    task_store.fail_reply_task(
+        task.id,
+        "email_consumer_runtime_error:EmailPersistenceCorruption",
+        expected_execution_generation=claimed.execution_generation,
+    )
+
+    assert task_store.skip_failed_legacy_email_unsubscribe_tasks() == [task.id]
+    terminal = task_store.get_reply_task(task.id)
+    assert terminal is not None
+    assert terminal.status == "skipped"
+    assert terminal.error == (
+        "legacy_email_unsubscribe_recovery_skipped:"
+        "email_consumer_runtime_error:EmailPersistenceCorruption"
+    )
+
+
+def test_failed_provider_unsubscribe_is_not_legacy_recovered(tmp_path: Path):
+    database = tmp_path / "failed-provider-recovery.sqlite3"
+    task_store = AutoReplyStore(database)
+    EmailStore(database)
+    task = _create_legacy_terminalization_task(task_store, "provider")
+    claimed = task_store.claim_reply_task(task.id)
+    assert claimed is not None
+    task_store.fail_reply_task(
+        task.id,
+        "email_unsubscribe_browser_failed",
+        expected_execution_generation=claimed.execution_generation,
+    )
+
+    assert task_store.skip_failed_legacy_email_unsubscribe_tasks() == []
+    terminal = task_store.get_reply_task(task.id)
+    assert terminal is not None
+    assert terminal.status == "failed"
+    assert terminal.error == "email_unsubscribe_browser_failed"
+
+
 @pytest.mark.parametrize(
     ("name", "task_kwargs", "terminal_status"),
     (

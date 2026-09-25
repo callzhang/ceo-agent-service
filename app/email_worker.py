@@ -4576,6 +4576,13 @@ def run_email_worker(
     active_model: object | None = None
     try:
         bootstrap = dependencies or dependency_builder(settings)
+        skip_failed_legacy = getattr(
+            bootstrap.task_store,
+            "skip_failed_legacy_email_unsubscribe_tasks",
+            None,
+        )
+        if callable(skip_failed_legacy):
+            skip_failed_legacy()
         final_reconciliation = _fail_nonterminal_legacy_unsubscribe_tasks(bootstrap)
         accounts = tuple(bootstrap.load_enabled_accounts())
         if not accounts:
