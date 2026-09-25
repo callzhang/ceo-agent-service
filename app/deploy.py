@@ -49,7 +49,18 @@ def deploy(root: Path, database_path: Path) -> str:
         # look at, not something to preserve and deploy over.
         raise SystemExit(f"{root} has local changes; nothing was deployed")
     if not repository.is_ancestor(current, target):
-        raise SystemExit(f"{root} is not behind origin/{BRANCH}; nothing was deployed")
+        # A commit made in the production checkout itself (2026-09-25: a test
+        # sync committed there) leaves it diverged, and every later deploy
+        # would stop here. Name the stray commits so they can be moved to
+        # main; never reset them away automatically.
+        stray = repository._run(
+            ["log", "--format=%h %s", f"refs/remotes/{REMOTE}/{BRANCH}..refs/heads/{BRANCH}"],
+            category="deploy_stray_commits",
+        ).stdout.decode().strip()
+        raise SystemExit(
+            f"{root} has diverged from origin/{BRANCH}; nothing was deployed. "
+            f"Commits only in production (move them to main, then reset production to origin/{BRANCH}):\n{stray}"
+        )
     operation = UpgradeOperation(
         operation_id=f"deploy-{uuid4()}",
         expected_fingerprint=repository.fingerprint(BRANCH, current, target, records),

@@ -311,3 +311,19 @@ def test_deploy_that_loses_the_race_reports_the_winner(tmp_path: Path, monkeypat
     message = deploy_module.deploy(local, tmp_path / "db.sqlite3")
 
     assert message == f"another deploy got there first; production is at {moved_to[0][:8]}"
+
+
+def test_deploy_names_commits_made_in_the_production_checkout(tmp_path: Path):
+    import app.deploy as deploy_module
+
+    local, _ = fixture_repo(tmp_path)
+    (local / "stray.txt").write_text("made in production\n", encoding="utf-8")
+    git(local, "add", "stray.txt")
+    git(local, "commit", "-m", "stray production commit")
+
+    with pytest.raises(SystemExit) as stopped:
+        deploy_module.deploy(local, tmp_path / "db.sqlite3")
+
+    assert "has diverged from origin/main" in str(stopped.value)
+    assert "stray production commit" in str(stopped.value)
+    assert git(local, "log", "-1", "--format=%s") == "stray production commit"
