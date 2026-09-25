@@ -440,7 +440,9 @@ typed result 里的这些字段命名一次外发，但不构成它发生过的�
 
 因此，当被接受的 proposal 里存在一个携带外发正文的 `dingtalk-chat` 动作时，Audit 的 `executed`
 要求本轮调用流里至少有一个 provider 回执；没有则该 result 无效，模型在下一轮收到纠正，而不是
-让任务带着没有依据的成功收口。消息投影同样以该回执为前提。
+让任务带着没有依据的成功收口。消息投影同样以该回执为前提。这项检查覆盖钉钉消息任务和定时任务
+（`DINGTALK_MESSAGE_CHANNELS`，Derek 2026-09-24）：定时任务的审核轮同样挂 `DingTalkSendEvidenceDriver`，
+日报给 Derek 的单聊、写入的钉钉文档都要有回执。
 
 回执只回答“副作用是否发生”。至于 typed result 用哪个 ID 标记它，允许来自读回会话——真实发送后
 用 `+chat-messages` 认出自己那条消息是正常做法，要求上报 ID 必须等于回执会拦下已送达的消息，

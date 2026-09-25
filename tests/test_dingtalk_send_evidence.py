@@ -128,6 +128,19 @@ def test_a_send_identified_by_reading_the_conversation_back_still_has_evidence()
     assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
 
 
+def test_a_scheduled_task_answers_to_the_same_evidence() -> None:
+    """A scheduled notice claimed without a send is refused (Derek 2026-09-24)."""
+    driver, task = _driver(action=CHAT_SEND, tool_events=[])
+    task.channel = "scheduled"
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is False
+
+    driver, task = _driver(
+        action=CHAT_SEND, tool_events=[_receipt_event("T4iUBCTxjrrq=")]
+    )
+    task.channel = "scheduled"
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
 def test_a_task_on_another_channel_keeps_its_own_contract() -> None:
     driver, task = _driver(action=CHAT_SEND, tool_events=[])
     task.channel = "email"

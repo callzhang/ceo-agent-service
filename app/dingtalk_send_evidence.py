@@ -25,6 +25,7 @@ import json
 import shlex
 from dataclasses import replace
 
+from app.agent_contracts import DINGTALK_MESSAGE_CHANNELS
 from app.agent_effect_guard import provider_receipts
 from app.agent_effects import McpToolEffectRegistry
 from app.agent_result import EffectKind
@@ -55,7 +56,10 @@ class DingTalkSendEvidenceDriver:
     def audit_run_has_execution_evidence(
         self, task: ReplyTask, *, audit_run_id: int
     ) -> bool:
-        if task.channel != "dingtalk":
+        # A scheduled task that notifies Derek or writes a DingTalk document
+        # makes the same external effects as a DingTalk conversation, so it
+        # answers to the same evidence (Derek 2026-09-24).
+        if task.channel not in DINGTALK_MESSAGE_CHANNELS:
             return True
         run = self.store.get_agent_run(audit_run_id)
         if run is None:

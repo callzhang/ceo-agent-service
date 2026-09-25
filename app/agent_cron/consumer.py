@@ -256,6 +256,7 @@ def build_scheduled_orchestrator(
     from app.agent_orchestrator import AgentOrchestrator
     from app.audit_agent import AuditAgentRunner
     from app.consumer_agent import ConsumerAgentRunner
+    from app.dingtalk_send_evidence import DingTalkSendEvidenceDriver
 
     scoped_config = runtime_config.model_copy(
         update={"routes": scheduled_route_order(built.route, runtime_config.routes)}
@@ -271,7 +272,13 @@ def build_scheduled_orchestrator(
     }
     return AgentOrchestrator(
         store=store, consumer=ConsumerAgentRunner(**common),
-        audit=AuditAgentRunner(**common, dry_run=dry_run),
+        # The same evidence the DingTalk worker asks of its Audit rounds: an
+        # executed send or document write needs the provider's receipt.
+        audit=AuditAgentRunner(
+            **common,
+            dry_run=dry_run,
+            domain_continuation=DingTalkSendEvidenceDriver(store),
+        ),
     )
 
 

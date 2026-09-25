@@ -324,6 +324,19 @@ def test_scheduled_orchestrator_starts_on_the_saved_route_and_keeps_the_fallback
         ]
 
 
+def test_scheduled_audit_checks_execution_evidence(tmp_path):
+    from app.dingtalk_send_evidence import DingTalkSendEvidenceDriver
+
+    store, run, options = fixture(tmp_path)
+    built = ScheduledAgentContextBuilder(options).build(run, reply_task_id=7)
+    orchestrator = build_scheduled_orchestrator(
+        store=store, built=built,
+        runtime_config=load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth"}),
+    )
+
+    assert isinstance(orchestrator.audit.domain_continuation, DingTalkSendEvidenceDriver)
+
+
 def test_trigger_dispatches_once_and_generic_reply_adapter_excludes_it(tmp_path):
     store, run, options = fixture(tmp_path)
     persisted = dispatch(store, run, options)
