@@ -600,8 +600,7 @@ def test_execution_uses_persisted_preflight_context_after_current_options_change
                 update={"operation_id": "persisted-context"})})
             store.complete_agent_run(claimed.id, result.model_dump(mode="json"), owner="fake")
             return SimpleNamespace(status="executed", final_run_id=claimed.id,
-                summary="done", error=AgentError(code="", retryable=False), audit_result=result,
-                consumer_result=None)
+                summary="done", error=AgentError(code="", retryable=False), audit_result=result)
 
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
@@ -681,7 +680,7 @@ def test_provider_failure_only_fails_execution_fact(tmp_path):
     store.fail_agent_run(claimed.id, error.model_dump(mode="json"), owner="fake")
     result = SimpleNamespace(
         status="failed_terminal", final_run_id=claimed.id, summary="provider failed",
-        error=error, audit_result=None, consumer_result=None,
+        error=error, audit_result=None,
     )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
@@ -724,7 +723,7 @@ def test_retry_reclaims_same_execution_source(tmp_path):
             if calls == 1:
                 return SimpleNamespace(status="failed_retryable", final_run_id=0,
                     summary="retry", error=AgentError(code="temporary", retryable=True),
-                    audit_result=None, consumer_result=None)
+                    audit_result=None)
             run_claim = store.claim_agent_run(
                 task.id, task.execution_generation, role=AgentRole.AUDIT,
                 proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
@@ -734,8 +733,7 @@ def test_retry_reclaims_same_execution_source(tmp_path):
                 audit("executed", 0).external_result.model_copy(update={"operation_id": "stable-operation"})})
             store.complete_agent_run(run_claim.id, result.model_dump(mode="json"), owner="fake")
             return SimpleNamespace(status="executed", final_run_id=run_claim.id,
-                summary="done", error=AgentError(code="", retryable=False), audit_result=result,
-                consumer_result=None)
+                summary="done", error=AgentError(code="", retryable=False), audit_result=result)
     consumer = ScheduledAgentConsumer(
         store=store, option_service=options,
         orchestrator_factory=lambda _built: Orchestrator(), now=lambda: NOW,

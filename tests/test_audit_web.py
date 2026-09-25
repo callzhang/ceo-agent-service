@@ -9257,15 +9257,22 @@ def test_worker_attention_includes_failed_task_memory_writes(tmp_path: Path):
         trigger_text="text",
     )
     [task] = store.claim_reply_tasks(limit=1)
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    store.complete_agent_run(
+        consumer.id,
+        {"outcome": "no_action", "durable_memories": [
+            {"title": "t", "content": "c", "source_time": "2026-09-24T10:00:00Z",
+             "source_refs": ["msg-memory"], "subject": None}
+        ]},
+        owner="consumer",
+    )
     with store._connect() as db:
         store._enqueue_task_memory_write_in_connection(
-            db,
-            task_id=task.id,
-            execution_generation=task.execution_generation,
-            durable_memories_json=json.dumps(
-                [{"title": "t", "content": "c", "source_time": "2026-09-24T10:00:00Z",
-                  "source_refs": ["msg-memory"], "subject": None}]
-            ),
+            db, task_id=task.id, execution_generation=task.execution_generation,
         )
     from app.dispatcher.adapters import TaskMemoryWriteQueueAdapter
 

@@ -740,8 +740,9 @@ Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写�
   （消息 id、文档链接、审批单号）和可选 `subject`（Person/Project/Customer/Organization + 名称）。
   写什么、不写什么只由字段说明约束（`app/agent_contracts.py` 的 `DurableMemory`）。
   旧结果读回时视为空列表。
-- 任务在 `finalize_orchestrated_reply_task` 里进入 `done` 的同一事务中，服务把最后一版 Consumer
-  结果的这个字段写进 `task_memory_write_events`：每个任务执行代一行（键为 `reply_task_id +
+- 任务在 `finalize_orchestrated_reply_task` 里进入 `done` 的同一事务中，服务从库里存的、该执行代最后一次
+  完成的 Consumer 结果读出这个字段（不用内存里的编排结果对象，它多数情况下不带 Consumer 结果），写进
+  `task_memory_write_events`：每个任务执行代一行（键为 `reply_task_id +
   execution_generation`），`pending` 带待写条目；没有条目记 `skipped / no_durable_memories`，
   没有 Consumer 结果记 `skipped / no_consumer_result`。所以每个经编排结束的任务都有一个记忆结论。
 - 写入是系统自动行为，不是定时任务（Derek 2026-09-24）：统一 Dispatcher 的 `task_memory_write`

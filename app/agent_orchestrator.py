@@ -145,16 +145,6 @@ class OrchestrationResult:
     audit_result: AuditAgentResult | None = None
 
 
-def durable_memories_json(consumer_result: ConsumerAgentResult | None) -> str | None:
-    """What the final Consumer result asked to remember; None without one."""
-    if consumer_result is None:
-        return None
-    return json.dumps(
-        [memory.model_dump(mode="json") for memory in consumer_result.durable_memories],
-        ensure_ascii=False,
-    )
-
-
 @dataclass(frozen=True)
 class _NextConsumer:
     proposal_revision: int

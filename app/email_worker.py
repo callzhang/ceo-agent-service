@@ -3307,13 +3307,10 @@ def _finalize_email_task(
         return
     if run is None:
         raise RuntimeError("email orchestration final run was not persisted")
-    from app.agent_orchestrator import durable_memories_json
-
     store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,
         run_id=run.id,
-        durable_memories_json=durable_memories_json(result.consumer_result),
         task_status=task_status,
         task_error=error,
         available_at="",

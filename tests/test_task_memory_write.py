@@ -36,7 +36,8 @@ OTHER = {
 }
 
 
-def _finished_task(store: AutoReplyStore, durable_memories_json: str | None):
+def _finished_task(store: AutoReplyStore, memories: list[dict] | None):
+    """Finish a task the way orchestration does; ``None`` means no Consumer ran."""
     store.enqueue_reply_task(
         conversation_id="cid-daily",
         conversation_title="CEO 日报",
@@ -47,22 +48,37 @@ def _finished_task(store: AutoReplyStore, durable_memories_json: str | None):
         trigger_text="text",
     )
     [task] = store.claim_reply_tasks(limit=1)
-    consumer = store.claim_agent_run(
-        task.id, task.execution_generation, role=AgentRole.CONSUMER,
-        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
-        operation_id="", owner="consumer",
-    ).run
-    store.complete_agent_run(consumer.id, {"outcome": "no_action"}, owner="consumer")
+    consumer = None
+    if memories is None:
+        audit = store.claim_agent_run(
+            task.id, task.execution_generation, role=AgentRole.AUDIT,
+            proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+            operation_id=f"direct-agent:{task.id}:{task.execution_generation}",
+            owner="audit",
+        ).run
+        store.complete_agent_run(audit.id, {"outcome": "executed"}, owner="audit")
+        run_id = audit.id
+    else:
+        consumer = store.claim_agent_run(
+            task.id, task.execution_generation, role=AgentRole.CONSUMER,
+            proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+            operation_id="", owner="consumer",
+        ).run
+        store.complete_agent_run(
+            consumer.id,
+            {"outcome": "no_action", "durable_memories": memories},
+            owner="consumer",
+        )
+        run_id = consumer.id
     store.finalize_orchestrated_reply_task(
         task_id=task.id, expected_execution_generation=task.execution_generation,
-        run_id=consumer.id, task_status="done", task_error="", available_at="",
+        run_id=run_id, task_status="done", task_error="", available_at="",
         conversation_id=task.conversation_id, conversation_title=task.conversation_title,
         trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
         trigger_text=task.trigger_text, codex_reason="", codex_session_id="",
         codex_transcript_start_line=0, codex_transcript_end_line=0,
         audit_tool_events_json="[]", audit_summary="", send_status="skipped",
         send_error="", channel="dingtalk",
-        durable_memories_json=durable_memories_json,
     )
     return task, consumer
 
@@ -101,8 +117,13 @@ class _Writer:
 
 
 def test_a_finished_task_queues_what_its_consumer_asked_to_remember(tmp_path: Path):
+    """Read from the stored Consumer result, not from the orchestration object.
+
+    Most orchestration results carry no ``consumer_result``; OA task 384747
+    was queued as having none although its Consumer run 21281 had completed.
+    """
     store = AutoReplyStore(tmp_path / "memory.sqlite3")
-    task, consumer = _finished_task(store, json.dumps([MEMORY, OTHER]))
+    task, consumer = _finished_task(store, [MEMORY, OTHER])
 
     [row] = _rows(store)
     assert row["reply_task_id"] == task.id
@@ -113,14 +134,14 @@ def test_a_finished_task_queues_what_its_consumer_asked_to_remember(tmp_path: Pa
 
 
 @pytest.mark.parametrize(
-    ("durable_memories_json", "skip_reason"),
-    [("[]", "no_durable_memories"), (None, "no_consumer_result")],
+    ("memories", "skip_reason"),
+    [([], "no_durable_memories"), (None, "no_consumer_result")],
 )
 def test_a_finished_task_with_nothing_to_remember_still_gets_a_decision(
-    tmp_path: Path, durable_memories_json, skip_reason
+    tmp_path: Path, memories, skip_reason
 ):
     store = AutoReplyStore(tmp_path / "memory.sqlite3")
-    _finished_task(store, durable_memories_json)
+    _finished_task(store, memories)
 
     [row] = _rows(store)
     assert (row["status"], row["skip_reason"]) == ("skipped", skip_reason)
@@ -128,7 +149,7 @@ def test_a_finished_task_with_nothing_to_remember_still_gets_a_decision(
 
 def test_writes_carry_the_agents_content_and_the_services_own_provenance(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "memory.sqlite3")
-    task, consumer = _finished_task(store, json.dumps([MEMORY, OTHER]))
+    task, consumer = _finished_task(store, [MEMORY, OTHER])
     writer = _Writer()
 
     assert _dispatch(store, now=NOW, writer=writer) == "written"
@@ -153,7 +174,7 @@ def test_writes_carry_the_agents_content_and_the_services_own_provenance(tmp_pat
 
 def test_a_retry_writes_only_the_memories_not_yet_written(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "memory.sqlite3")
-    _finished_task(store, json.dumps([MEMORY, OTHER]))
+    _finished_task(store, [MEMORY, OTHER])
 
     assert _dispatch(store, now=NOW, writer=_Writer(fail_after=1)) == "pending"
     [row] = _rows(store)
@@ -169,7 +190,7 @@ def test_a_retry_writes_only_the_memories_not_yet_written(tmp_path: Path):
 
 def test_a_write_that_keeps_failing_becomes_visible(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "memory.sqlite3")
-    _finished_task(store, json.dumps([MEMORY]))
+    _finished_task(store, [MEMORY])
     with store._connect() as db:
         db.execute(
             "update task_memory_write_events set attempts=?",
@@ -203,7 +224,7 @@ def test_the_retired_never_written_queue_shape_is_rebuilt(tmp_path: Path):
 
 def test_memory_write_arguments_leave_out_an_absent_subject(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "memory.sqlite3")
-    task, _consumer = _finished_task(store, json.dumps([OTHER]))
+    task, _consumer = _finished_task(store, [OTHER])
     envelope = TaskMemoryWriteQueueAdapter(store).claim(
         NOW, owner="test", lease=timedelta(minutes=1)
     )
@@ -219,7 +240,7 @@ def test_memory_write_arguments_leave_out_an_absent_subject(tmp_path: Path):
 
 def test_skipped_rows_are_never_claimed(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "memory.sqlite3")
-    _finished_task(store, "[]")
+    _finished_task(store, [])
 
     assert TaskMemoryWriteQueueAdapter(store).claim(
         NOW, owner="dispatcher", lease=timedelta(minutes=1)

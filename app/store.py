@@ -16847,7 +16847,6 @@ class AutoReplyStore:
         *,
         task_id: int,
         execution_generation: str,
-        durable_memories_json: str | None,
     ) -> None:
         """Queue what a finished execution asked to remember, in its own transaction.
 
@@ -16857,25 +16856,35 @@ class AutoReplyStore:
         2026-09-24: the Consumer names what to remember, the system writes it,
         nothing reviews it. Every finished execution gets a row, including one
         with nothing to write, so "was this considered" always has an answer.
-        ``durable_memories_json`` is None when the execution produced no Consumer
-        result at all.
+
+        The memories are read from the stored result of the execution's last
+        completed Consumer run, the revision the task finished on. The
+        in-memory orchestration result is not used: most of its constructors
+        leave ``consumer_result`` empty (OA task 384747 was queued as having no
+        Consumer result although run 21281 had completed).
         """
         consumer_run = db.execute(
             """
-            select id from agent_runs
+            select id, final_result_json from agent_runs
             where reply_task_id=? and execution_generation=?
               and role='consumer' and status='completed'
             order by id desc limit 1
             """,
             (task_id, execution_generation),
         ).fetchone()
-        memories = json.loads(durable_memories_json) if durable_memories_json else []
-        if memories:
-            status, skip_reason = "pending", ""
-        elif durable_memories_json is None:
+        memories: list[object] = []
+        if consumer_run is None:
             status, skip_reason = "skipped", "no_consumer_result"
         else:
-            status, skip_reason = "skipped", "no_durable_memories"
+            memories = list(
+                json.loads(consumer_run["final_result_json"] or "{}").get(
+                    "durable_memories"
+                )
+                or []
+            )
+            status, skip_reason = (
+                ("pending", "") if memories else ("skipped", "no_durable_memories")
+            )
         db.execute(
             """
             insert into task_memory_write_events (
@@ -23376,13 +23385,11 @@ class AutoReplyStore:
         oa_action_result_json: str = "",
         sent_reply_text: str = "",
         sent_reply_result_json: str = "",
-        durable_memories_json: str | None = None,
     ) -> int:
         """Persist one orchestration result and its task transition atomically.
 
         A task that ends ``done`` also queues the durable memories its final
-        Consumer result named (``durable_memories_json``; None when there was no
-        Consumer result) in the same transaction.
+        Consumer result named, in the same transaction.
         """
         if task_status not in {"done", "failed", "pending", "unchanged"}:
             raise ValueError("invalid reply task terminal status")
@@ -23587,7 +23594,6 @@ class AutoReplyStore:
                     db,
                     task_id=task_id,
                     execution_generation=expected_execution_generation,
-                    durable_memories_json=durable_memories_json,
                 )
             if sent_reply_text:
                 db.execute(

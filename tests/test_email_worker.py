@@ -8824,7 +8824,6 @@ def test_deferred_orchestration_result_requeues_the_email_task():
     result = SimpleNamespace(
         status="failed_retryable",
         final_run_id=0,
-        consumer_result=None,
         summary="runtime not ready",
         error=SimpleNamespace(
             code="runtime_provider_unreachable", authorization_required=False
@@ -8870,7 +8869,6 @@ def test_bare_authorization_required_result_is_failed():
     result = SimpleNamespace(
         status="failed_terminal",
         final_run_id=70,
-        consumer_result=None,
         summary="authorization_required",
         error=SimpleNamespace(code="authorization_required", authorization_required=True),
     )
@@ -8933,7 +8931,6 @@ def test_a_durable_step_without_a_receipt_stays_an_ordinary_retry():
     result = SimpleNamespace(
         status="failed_terminal",
         final_run_id=run.id,
-        consumer_result=None,
         summary="unsubscribe_operation_rejected:EmailUnsubscribeClaimConflict",
         error=SimpleNamespace(
             code="unsubscribe_operation_rejected:EmailUnsubscribeClaimConflict",
@@ -8993,7 +8990,6 @@ def test_structured_authorization_result_keeps_needs_human_options():
     result = SimpleNamespace(
         status="needs_human",
         final_run_id=70,
-        consumer_result=None,
         summary="authorization_required",
         audit_result=SimpleNamespace(decision_options=options),
         error=SimpleNamespace(code="authorization_required", authorization_required=True),
@@ -9039,7 +9035,6 @@ def test_domain_authorization_rejection_remains_failed():
     result = SimpleNamespace(
         status="failed_terminal",
         final_run_id=80,
-        consumer_result=None,
         summary="email_unsubscribe_risk_rejected",
         error=SimpleNamespace(
             code="email_unsubscribe_risk_rejected",
@@ -9127,7 +9122,6 @@ def _route_refusal_case(error: str = ""):
     result = SimpleNamespace(
         status="failed_terminal",
         final_run_id=90,
-        consumer_result=None,
         summary="email_unsubscribe_risk_rejected",
         error=SimpleNamespace(
             code="email_unsubscribe_risk_rejected",
@@ -9193,7 +9187,6 @@ def test_route_refusal_runs_service_owned_direct_unsubscribe_once():
         SimpleNamespace(
             status="failed_terminal",
             final_run_id=90,
-            consumer_result=None,
             summary="email_unsubscribe_risk_rejected",
             error=SimpleNamespace(
                 code="email_unsubscribe_risk_rejected",
@@ -9351,7 +9344,6 @@ def test_audited_unsubscribe_receipt_does_not_override_a_failed_audit_run():
     result = SimpleNamespace(
         status="failed_terminal",
         final_run_id=11859,
-        consumer_result=None,
         summary="login_required",
         error=SimpleNamespace(code="login_required", authorization_required=False),
     )
@@ -9387,7 +9379,6 @@ def test_audited_unsubscribe_retryable_login_receipt_keeps_retry_pending():
     result = SimpleNamespace(
         status="failed_retryable",
         final_run_id=16936,
-        consumer_result=None,
         summary="unsubscribe_operation_rejected:login_required",
         error=SimpleNamespace(
             code="unsubscribe_operation_rejected:login_required",
@@ -9424,7 +9415,6 @@ def test_audited_unsubscribe_no_work_receipt_keeps_failed_audit_visible(outcome)
     result = SimpleNamespace(
         status="failed_terminal",
         final_run_id=90,
-        consumer_result=None,
         summary=outcome,
         error=SimpleNamespace(code="unsubscribe_entry_missing", authorization_required=False),
     )
@@ -9450,7 +9440,6 @@ def test_audited_unsubscribe_skip_never_overrides_a_management_decision():
     result = SimpleNamespace(
         status="needs_human",
         final_run_id=92,
-        consumer_result=None,
         summary="sender is a sensitive target",
         error=SimpleNamespace(
             code="email_unsubscribe_target_sensitive",
@@ -9474,7 +9463,6 @@ def test_audited_unsubscribe_receipt_keeps_bare_authorization_failure_failed():
     result = SimpleNamespace(
         status="failed_terminal",
         final_run_id=93,
-        consumer_result=None,
         summary="authorization_required",
         error=SimpleNamespace(
             code="authorization_required",
@@ -9499,7 +9487,6 @@ def test_audited_unsubscribe_browser_failure_remains_failed():
     result = SimpleNamespace(
         status="failed_terminal",
         final_run_id=91,
-        consumer_result=None,
         summary="failed_browser",
         error=SimpleNamespace(code="unsubscribe_browser_unavailable", authorization_required=False),
     )
@@ -9870,7 +9857,6 @@ def _browser_failure_result(run, code: str):
     return SimpleNamespace(
         status="failed_terminal",
         final_run_id=run.id,
-        consumer_result=None,
         summary=f"{code}; audit retry attempts exhausted",
         error=SimpleNamespace(code=code, authorization_required=False),
     )
