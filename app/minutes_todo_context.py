@@ -5,7 +5,7 @@ meeting, so the owner is not in the action item. It is in the conversation: each
 action item carries `createdTime`, the millisecond offset in the recording at
 which it was extracted, and the transcript gives every paragraph a speaker and a
 start and end offset. This cuts the few paragraphs around that moment out of the
-transcript, one line per paragraph as "speaker：text", so an Agent can quote a
+transcript, one line per sentence as "speaker：text", so an Agent can quote a
 line that contains both the person and what was said (Derek 2026-09-25: the owner
 information is in the original material; only the summary was being passed on).
 
@@ -69,9 +69,24 @@ def todo_transcript_excerpts(todos_payload: Any, paragraphs: list[dict[str, Any]
         excerpts.append({
             "todo": title,
             "created_ms": created,
-            "lines": [
-                f"{str(paragraph.get('nickName') or '').strip()}：{str(paragraph.get('paragraph') or '').strip()}"
-                for _start, _end, paragraph in window
-            ],
+            "lines": [line for _start, _end, paragraph in window for line in _lines(paragraph)],
         })
     return excerpts
+
+
+def _lines(paragraph: dict[str, Any]) -> list[str]:
+    """One line per sentence, each with the speaker label.
+
+    A paragraph is often several sentences long. A line per sentence lets an Agent
+    quote the one sentence that matters with its label as an exact substring; a
+    line per paragraph invites "label + a sentence from the middle", which is not
+    text the source contains.
+    """
+    speaker = str(paragraph.get("nickName") or "").strip()
+    sentences = [
+        str(sentence.get("sentence") or "").strip()
+        for sentence in paragraph.get("sentenceList") or []
+        if isinstance(sentence, dict)
+    ]
+    sentences = [sentence for sentence in sentences if sentence]
+    return [f"{speaker}：{text}" for text in sentences or [str(paragraph.get("paragraph") or "").strip()]]

@@ -51,3 +51,12 @@ def test_speaker_labels_are_kept_exactly_as_dingtalk_gave_them():
     paragraphs = [{"nickName": "发言人 3", "paragraph": "我来做", "startTime": "1000", "endTime": "2000"}]
     [excerpt] = todo_transcript_excerpts(_todos({"title": "t", "createdTime": 1500}), paragraphs)
     assert excerpt["lines"] == ["发言人 3：我来做"]
+
+
+def test_each_sentence_is_its_own_line_so_it_can_be_quoted_with_its_speaker_label():
+    paragraph = {
+        "nickName": "Claire", "paragraph": "我们很希望合作。然后请威尔帮忙准备材料。", "startTime": 1000, "endTime": 5000,
+        "sentenceList": [{"sentence": "我们很希望合作。"}, {"sentence": "然后请威尔帮忙准备材料。"}, {"sentence": " "}],
+    }
+    [excerpt] = todo_transcript_excerpts(_todos({"title": "t", "createdTime": 2000}), [paragraph])
+    assert excerpt["lines"] == ["Claire：我们很希望合作。", "Claire：然后请威尔帮忙准备材料。"]
