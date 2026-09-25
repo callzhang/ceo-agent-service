@@ -351,3 +351,41 @@
   line-height: 1.45;
   overflow-wrap: break-word;
 }
+
+.training-progress {
+  display: grid;
+  gap: 7px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel, #fff);
+}
+.training-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.training-progress-head strong {
+  font-size: 14px;
+  color: var(--ink);
+}
+.training-progress-bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+.training-progress-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.training-progress small {
+  color: var(--ink-soft);
+  font-size: 12px;
+}

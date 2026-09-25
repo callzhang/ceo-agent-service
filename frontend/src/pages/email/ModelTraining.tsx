@@ -15,8 +15,10 @@ import {
   saveEmailRuntimeMode,
   type EmailCategoryConfig,
   type EmailLearningEvidence,
+  type EmailModelScanProgress,
   type EmailPromotionConfig,
   type EmailRuntime,
+  type EmailRuntimeRate,
   type EmailStagedModel,
 } from "../../api/console";
 import { EmailDrawer } from "./EmailDrawer";
@@ -101,14 +103,6 @@ export function ModelTraining({
   const candidate =
     models.find((model) => model.model_id === runtime?.candidate_model_id) ||
     null;
-  const candidateLatency = candidate?.end_to_end_latency_ms?.p95 ??
-    candidate?.head_timing_percentiles_ms?.p95 ??
-    null;
-  const candidateLatencyNote = candidate?.end_to_end_latency_ms?.p95 != null
-    ? "端到端实际测量"
-    : candidate?.head_timing_percentiles_ms?.p95 != null
-      ? "输出头实际测量；端到端未测量"
-      : "当前候选无延迟测量";
   const allVersions = useMemo(
     () => [
       ...models.map((model) => ({ kind: "staged" as const, model })),
@@ -401,11 +395,19 @@ export function ModelTraining({
           note={candidate ? "全部分类，含模型不接手的" : "当前候选无评测"}
         />
         <Stat
-          label="候选 P95 延迟"
-          value={measured(candidateLatency, " ms")}
-          note={candidate ? candidateLatencyNote : "当前候选无延迟测量"}
+          label="实时处理速度"
+          value={
+            learning.runtime_rate
+              ? `${learning.runtime_rate.per_minute} 封/分钟`
+              : "暂无"
+          }
+          note={liveRateNote(learning.runtime, learning.runtime_rate)}
         />
       </section>
+      <ScanProgress
+        progress={learning.model_scan_progress}
+        perMinute={learning.runtime_rate?.per_minute ?? 0}
+      />
       <div className="training-middle">
         <ModelTrend
           models={allVersions
@@ -774,6 +776,64 @@ export function ModelTraining({
     </FamilyNames.Provider>
   );
 }
+function liveRateNote(
+  runtime: EmailRuntime | undefined,
+  rate: EmailRuntimeRate | null | undefined,
+) {
+  if (!rate) return "服务未提供实时数据";
+  if (runtime?.mode !== "model_primary") return "模型未上线，没有实时处理";
+  const minutes = Math.round(rate.window_seconds / 60);
+  return rate.evaluated
+    ? `最近 ${minutes} 分钟模型判断了 ${rate.evaluated} 封，线上实测`
+    : `最近 ${minutes} 分钟没有邮件进来`;
+}
+
+function waitLabel(minutes: number) {
+  if (minutes < 1) return "不到 1 分钟";
+  if (minutes < 60) return `约 ${Math.ceil(minutes)} 分钟`;
+  const hours = minutes / 60;
+  return hours < 24 ? `约 ${hours.toFixed(1)} 小时` : `约 ${Math.ceil(hours / 24)} 天`;
+}
+
+function ScanProgress({
+  progress,
+  perMinute,
+}: {
+  progress: EmailModelScanProgress | null | undefined;
+  perMinute: number;
+}) {
+  if (!progress || progress.total <= 0) return null;
+  const percent = Math.min(100, Math.round((progress.done / progress.total) * 100));
+  const finished = progress.remaining === 0;
+  return (
+    <section className="training-progress" aria-label="模型处理进度">
+      <div className="training-progress-head">
+        <span>模型处理进度</span>
+        <strong>
+          {progress.done} / {progress.total} 封 · {percent}%
+        </strong>
+      </div>
+      <div
+        className="training-progress-bar"
+        role="progressbar"
+        aria-label="模型处理进度"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+      >
+        <i style={{ width: `${percent}%` }} />
+      </div>
+      <small>
+        {finished
+          ? "窗口内的邮件已全部处理，之后只跟进新邮件。"
+          : perMinute > 0
+            ? `还剩 ${progress.remaining} 封，${waitLabel(progress.remaining / perMinute)}处理完`
+            : `还剩 ${progress.remaining} 封，当前没有处理速度，无法估算时间`}
+      </small>
+    </section>
+  );
+}
+
 function Stat({
   label,
   value,

@@ -175,12 +175,9 @@ it("keeps the runtime header visible and opens compact setup and promotion dialo
   expect(screen.getByText("候选整体准确率").parentElement).toHaveTextContent(
     "88.0%",
   );
-  expect(screen.getByText("候选 P95 延迟").parentElement).toHaveTextContent(
-    "82.0 ms",
-  );
-  expect(screen.getByText("候选 P95 延迟").parentElement).toHaveTextContent(
-    "输出头实际测量；端到端未测量",
-  );
+  // The card shows what the live model is doing, not a benchmark of the candidate.
+  expect(screen.queryByText("候选 P95 延迟")).not.toBeInTheDocument();
+  expect(screen.getByText("实时处理速度").parentElement).toHaveTextContent("暂无");
   expect(screen.getByText("类别检查（1 类）")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "新建训练" }));
   expect(
@@ -191,6 +188,72 @@ it("keeps the runtime header visible and opens compact setup and promotion dialo
   expect(screen.getByRole("dialog", { name: "晋升设置" })).toHaveTextContent(
     "保存晋升门槛",
   );
+});
+
+function renderWith(extra: Record<string, unknown>) {
+  const withExtra = { ...learning, ...extra } as any;
+  return render(
+    <ModelTraining
+      learning={withExtra}
+      configs={[]}
+      reload={async () => withExtra}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+}
+
+it("shows how many messages the live model handles per minute", () => {
+  renderWith({
+    runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },
+    runtime_rate: { window_seconds: 600, evaluated: 240, per_minute: 24, latest_at: "2026-09-25T09:00:00+00:00" },
+  });
+
+  const stat = screen.getByText("实时处理速度").parentElement;
+  expect(stat).toHaveTextContent("24 封/分钟");
+  expect(stat).toHaveTextContent("最近 10 分钟模型判断了 240 封，线上实测");
+});
+
+it("says so when no message came in, and when no model is live", () => {
+  const { unmount } = renderWith({
+    runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },
+    runtime_rate: { window_seconds: 600, evaluated: 0, per_minute: 0, latest_at: null },
+  });
+  expect(screen.getByText("实时处理速度").parentElement).toHaveTextContent("最近 10 分钟没有邮件进来");
+  unmount();
+
+  renderWith({
+    runtime: { ...learning.runtime, mode: "agent_primary", active_model_id: null },
+    runtime_rate: { window_seconds: 600, evaluated: 0, per_minute: 0, latest_at: null },
+  });
+  expect(screen.getByText("实时处理速度").parentElement).toHaveTextContent("模型未上线，没有实时处理");
+});
+
+it("draws the sweep's progress bar with a time estimate from the live speed", () => {
+  renderWith({
+    runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },
+    runtime_rate: { window_seconds: 600, evaluated: 300, per_minute: 30, latest_at: "2026-09-25T09:00:00+00:00" },
+    model_scan_progress: { remaining: 600, total: 800, done: 200, updated_at: "2026-09-25T09:00:00+00:00" },
+  });
+
+  const bar = screen.getByRole("progressbar", { name: "模型处理进度" });
+  expect(bar).toHaveAttribute("aria-valuenow", "25");
+  const section = screen.getByRole("region", { name: "模型处理进度" });
+  expect(section).toHaveTextContent("200 / 800 封 · 25%");
+  expect(section).toHaveTextContent("还剩 600 封，约 20 分钟处理完");
+});
+
+it("has no progress bar until the scan has reported, and says when the sweep is done", () => {
+  const { unmount } = renderWith({ model_scan_progress: null });
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  unmount();
+
+  renderWith({
+    model_scan_progress: { remaining: 0, total: 800, done: 800, updated_at: "2026-09-25T09:00:00+00:00" },
+  });
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+  expect(screen.getByRole("region", { name: "模型处理进度" })).toHaveTextContent("已全部处理");
 });
 
 it("shows a family by the name the catalog gives it, not by its stored key", () => {
