@@ -42,6 +42,7 @@ from app.task_semantic_models import (
     BusinessActorKind,
     BusinessEvidenceRole,
     BusinessRelationType,
+    BusinessTask,
     BusinessTaskDateType,
     BusinessTaskStatus,
     BusinessRelevance,
@@ -974,6 +975,15 @@ def apply_task_agent_decision(
                 store.get_business_task_in_transaction(task_id=item.task_id, _db=db)
                 if item.task_id is not None else None
             )
+            if (
+                item.action == "update_task" and item.transition == "update_fields"
+                and task_before is not None and not date_facts
+                and _update_fields_restates_task(task_before, item, owner_user_id)
+            ):
+                # The source says nothing the Task does not already say; there is
+                # nothing to apply, and one such item must not fail the whole batch.
+                skipped_reasons.append(f"Task {item.task_id} already matches this source; nothing to update.")
+                continue
             if item.action == "record_candidate":
                 result = service.record_candidate(RecordCandidate(
                     title=item.title,
@@ -1225,6 +1235,22 @@ def apply_task_agent_decision(
     if _db is None:
         _project_task_attention(store, result.attention_proposals, result.affected_task_ids)
     return result
+
+
+def _update_fields_restates_task(task: BusinessTask, item: TaskDecision, owner_user_id: str) -> bool:
+    """True when every field the decision sets already has that value on the Task."""
+    return (
+        (not item.title or item.title == task.title)
+        and (not item.description or item.description == task.description)
+        and (not item.status or BusinessTaskStatus(item.status) is task.status)
+        # "unknown" is the absence of a judgement, so restating it asserts nothing;
+        # restating "relevant" is a confirmation the Task's evidence should record.
+        and (not item.business_relevance
+             or (BusinessRelevance(item.business_relevance) is BusinessRelevance.UNKNOWN
+                 and task.business_relevance is BusinessRelevance.UNKNOWN))
+        and (not (owner_user_id or item.owner_name)
+             or (owner_user_id == task.owner_user_id and item.owner_name == task.owner_name))
+    )
 
 
 def _project_task_attention(

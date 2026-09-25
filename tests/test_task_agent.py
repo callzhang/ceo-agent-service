@@ -2046,3 +2046,39 @@ def test_task_agent_prompt_reads_minutes_owners_from_the_conversation_around_eac
     assert "speaker label included" in prompt
     assert '"excerpt"' in prompt  # the owner_evidence key the service reads
     assert "发言人 N" in prompt  # DingTalk's placeholder for an unnamed speaker is not an owner
+
+
+def test_update_restating_current_fields_adds_the_owner_and_an_unchanged_item_is_skipped_not_fatal(tmp_path):
+    """One item that only repeats what a Task already says must not fail the meeting's other items."""
+    store = AutoReplyStore(tmp_path / "restated.sqlite3")
+    service = TaskSemanticService(store)
+
+    def seed(title, key):
+        return service.record_candidate(RecordCandidate(
+            title=title, signal=SourceSignal(source_type="ai_minutes", source_ref=f"m:{key}#todos-sha256=old",
+                evidence_text=title, dedupe_key=f"seed:{key}"),
+        )).task_id
+
+    first, second = seed("整理访谈问题清单", "a"), seed("收集用户诉求", "b")
+    line = "Zoey：那这个我们可以先列一个list吧，给你看一下。"
+    item = _work_item().model_copy(update={"summary": json.dumps({"transcript_excerpts": [{"lines": [line]}]}, ensure_ascii=False)})
+
+    def update(task_id, title, **extra):
+        return {
+            "action": "update_task", "transition": "update_fields", "task_id": task_id,
+            "source_excerpt": line, "source_ref": item.source.ref, "title": title,
+            "status": "open", "business_relevance": "unknown", **extra,
+        }
+
+    decision = TaskAgentDecision.model_validate({"task_decisions": [
+        update(first, "整理访谈问题清单", owner_name="Zoey", owner_evidence={"excerpt": line}),
+        update(second, "收集用户诉求"),
+    ]})
+
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+
+    assert store.get_business_task(first).owner_name == "Zoey"
+    assert [event.event_type.value for event in store.list_business_task_events(first)] == ["created", "owner_changed"]
+    assert store.get_business_task(second).owner_name == ""
+    assert [event.event_type.value for event in store.list_business_task_events(second)] == ["created"]
+    assert any(f"Task {second} already matches this source" in reason for reason in result.skipped_reasons)

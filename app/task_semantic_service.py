@@ -800,12 +800,9 @@ class TaskSemanticService:
             # transition: an Agent that adds the owner and repeats "status open" made
             # one change. Restated on its own it stays what it was, a recorded
             # confirmation.
-            restated = {
-                name for name in ("status", "business_relevance")
-                if name in changed and getattr(task, name) == changed[name]
-            }
-            if set(changed) - restated:
-                changed = {name: value for name, value in changed.items() if name not in restated}
+            for name in ("status", "business_relevance"):
+                if name in changed and getattr(task, name) == changed[name] and set(changed) - {name}:
+                    changed = {key: value for key, value in changed.items() if key != name}
             if not changed and not command.date_facts:
                 raise ValueError("task update must change at least one field")
             event_type = (
