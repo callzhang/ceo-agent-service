@@ -23,6 +23,7 @@ import { ConversationTimeline } from "./components/ConversationTimeline";
 import { FeedbackDrawer } from "./components/FeedbackDrawer";
 import { GlobalNav } from "./components/GlobalNav";
 import { TaskList } from "./components/TaskList";
+import { NeedsDecisionPanel } from "./components/NeedsDecisionPanel";
 import { TurnInspector } from "./components/TurnInspector";
 import { applyWorkbenchEvent, createEventState, EventStreamConnection } from "./events";
 import type {
@@ -1403,6 +1404,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
         ) : (
           <>
             {mutationError && <p className="inline-alert" role="alert">{mutationError}</p>}
+            <NeedsDecisionPanel />
             <TaskList
               tasks={tasks}
               activeTaskId={selectedTaskId}

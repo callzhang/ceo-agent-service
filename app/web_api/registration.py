@@ -166,6 +166,31 @@ def register_console_routes(
             return f"/attempts/{source_id}"
         return ""
 
+    def first_line(text: str) -> str:
+        return next((line.strip() for line in str(text).splitlines() if line.strip()), "")
+
+    def readable_history_title(title: str, trigger_text: str) -> str:
+        """Name the thing, not the channel it arrived on.
+
+        Derek, 2026-09-25: an approval waiting on him showed as 审批待办 or
+        工作通知:公司名, with the scanner's prompt as the body, so he could not
+        tell which approval it was without opening it. The scanner's first
+        line already names it.
+        """
+        line = first_line(trigger_text)
+        for marker in ("待处理审批：", "待处理审批:"):
+            if marker in line:
+                name = line.split(marker, 1)[1].strip()
+                if name:
+                    return name
+        reminded = re.match(r"^\[Ding\]\s*(.+?)提醒您审批[他她]?的?(.+)$", line)
+        if reminded:
+            return f"{reminded.group(2).strip()}（{reminded.group(1).strip()}催办）"
+        mentioned = re.match(r"^(.+?)在(.+?)里提到了你", line)
+        if mentioned:
+            return f"{mentioned.group(2).strip()}（{mentioned.group(1).strip()}提到你）"
+        return title
+
     def history_log_item(log: Any) -> dict[str, Any]:
         source_table = str(getattr(log, "source_table", "") or "")
         history_type = str(getattr(log, "history_type", "") or "")
@@ -196,13 +221,19 @@ def register_console_routes(
         else:
             input_text = summary
             output_text = detail or summary
+        status_text = normalize_display_value(getattr(log, "status", ""))
+        title = readable_history_title(title, input_text)
+        display_summary = summary or output_text or input_text
+        if status_text.strip().lower() == "needs_human" and output_text:
+            # What he has to decide, not the trigger that started it.
+            display_summary = first_line(output_text)
         return {
             "id": str(getattr(log, "source_id", 0) or 0),
             "occurred_at": getattr(log, "occurred_at", ""),
             "title": title,
             "type": history_type or kind,
-            "status": normalize_display_value(getattr(log, "status", "")),
-            "summary": summary or output_text or input_text,
+            "status": status_text,
+            "summary": display_summary,
             "actor": normalize_display_value(getattr(log, "source_actor", "")),
             "detail_url": history_log_detail_url(log),
             "kind": kind,
