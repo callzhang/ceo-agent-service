@@ -743,13 +743,18 @@ def derive_runtime_mode(
             return EmailClassifierRuntimeMode.AGENT_PRIMARY
         model_id = str(payload["model_id"])
         artifact_digest = str(payload["artifact_sha256"])
-        evidence_rows = tuple(registry.list_staged_evidence())
-        readiness = assess_staged_candidate_readiness(evidence_rows)
+        # An unreadable staged file still fails closed, as it always did.
+        registry.list_staged_evidence()
         evidence = registry.get_staged_evidence(model_id)
+        # A live model is judged on its own evidence. Being the newest
+        # candidate is the test for activating one, not for keeping it: a later
+        # training run, passing or not, used to turn the live model off, and
+        # from 2026-09-21 four automatic candidates left the service on the
+        # Agent for days with nothing failing.
+        readiness = assess_staged_candidate_readiness((evidence,))
         if (
             not readiness.ready
-            or not readiness.passing_model_ids
-            or readiness.passing_model_ids[-1] != model_id
+            or tuple(readiness.passing_model_ids) != (model_id,)
             or evidence.get("compatibility") != payload.get("compatibility")
             or not isinstance(evidence.get("hashes"), Mapping)
             or evidence["hashes"].get("artifact_sha256") != artifact_digest

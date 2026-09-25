@@ -298,17 +298,20 @@ def assess_whole_model_readiness(
 def assess_staged_candidate_readiness(
     candidates: Sequence[Mapping[str, object]],
 ) -> WholeModelReadiness:
-    """Fail closed when either of the two consecutive evidence rows is invalid."""
+    """Fail closed when the newest evidence row is invalid.
 
-    if len(candidates) < 2:
-        return WholeModelReadiness(False, (), "two_consecutive_candidates_required")
+    The row is judged alone. This still demanded two rows after the two-run
+    requirement was removed, which made a single candidate unjudgeable — the
+    reason a live model could not be checked against its own evidence.
+    """
+
+    if not candidates:
+        return WholeModelReadiness(False, (), "no_candidate_evidence")
     try:
-        previous, current = (
-            candidate_maturity_from_mapping(item) for item in candidates[-2:]
-        )
+        current = candidate_maturity_from_mapping(candidates[-1])
     except (KeyError, TypeError, ValueError):
         return WholeModelReadiness(False, (), "candidate_evidence_invalid")
-    return assess_whole_model_readiness((previous, current))
+    return assess_whole_model_readiness((current,))
 
 
 def candidate_maturity_from_mapping(

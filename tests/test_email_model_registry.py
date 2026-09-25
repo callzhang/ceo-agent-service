@@ -239,16 +239,29 @@ def test_staged_evidence_requires_explicit_boolean_systematic_error_flag(
         candidate_maturity_from_mapping(evidence)
 
 
-def test_invalid_intervening_staged_evidence_breaks_consecutive_readiness() -> None:
-    first = _maturity_mapping("candidate-1")
+def test_only_the_newest_staged_evidence_is_judged() -> None:
+    """Readiness no longer needs two runs, so an older invalid row is irrelevant."""
+
+    older = _maturity_mapping("candidate-1")
     invalid = _maturity_mapping("candidate-invalid")
     invalid.pop("unresolved_historical_systematic_error")
     current = _maturity_mapping("candidate-2")
 
-    result = assess_staged_candidate_readiness((first, invalid, current))
+    assert assess_staged_candidate_readiness((invalid, current)).ready is True
+    assert assess_staged_candidate_readiness((older, current)).ready is True
+
+    result = assess_staged_candidate_readiness((older, invalid))
 
     assert result.ready is False
     assert result.reason == "candidate_evidence_invalid"
+
+
+def test_a_single_staged_candidate_can_be_judged_alone() -> None:
+    result = assess_staged_candidate_readiness((_maturity_mapping("candidate-1"),))
+
+    assert result.ready is True
+    assert result.passing_model_ids == ("candidate-1",)
+    assert assess_staged_candidate_readiness(()).reason == "no_candidate_evidence"
 
 
 def test_historical_systematic_error_state_is_durable_and_missing_fails_closed(

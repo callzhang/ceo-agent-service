@@ -1377,7 +1377,9 @@ def test_frozen_snapshot_embedding_training_stages_metrics_without_activation(
         "test": 8,
     }
     assert persisted["whole_model_readiness"]["ready"] is False
-    assert persisted["whole_model_readiness"]["reason"] == "candidate_evidence_invalid"
+    # The evidence is valid and simply proves no category: judged alone now,
+    # not read as half of a pair whose first row it lacks.
+    assert persisted["whole_model_readiness"]["reason"] == "maturity_gate_not_met"
 
     proposal = DescriptionProposal(
         proposal_id="description-proposal-real-training",

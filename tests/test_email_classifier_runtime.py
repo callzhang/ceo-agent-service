@@ -358,6 +358,62 @@ def test_atomic_activation_requires_latest_whole_model_ready_candidate(tmp_path)
     assert not list(root.glob(".online-active.*.tmp"))
 
 
+def test_a_later_candidate_does_not_turn_the_live_model_off(tmp_path):
+    """Four automatic candidates once left the service on the Agent for days.
+
+    Being the newest candidate is what activating needs; a live model is kept
+    on its own evidence, whatever is trained after it and whether or not that
+    passes.
+    """
+
+    root = tmp_path / "registry"
+    live_id = "email-embedding-mlp-live"
+    later_id = "email-embedding-mlp-later"
+    live_bytes = b"live"
+    later_bytes = b"later"
+    registry = _ActivationRegistry(
+        root, (_mature_evidence(live_id, sha256(live_bytes).hexdigest()),)
+    )
+    artifact = registry.embedding_artifacts / f"{live_id}.artifact"
+    artifact.write_bytes(live_bytes)
+    _activate_test_model(
+        registry,
+        live_id,
+        classifier_loader=lambda path: _LoadedOnlineModel() if path == artifact else None,
+    )
+    assert derive_runtime_mode(registry) is EmailClassifierRuntimeMode.MODEL_PRIMARY
+
+    # A newer candidate arrives, and it is not eligible for anything.
+    immature = _mature_evidence(later_id, sha256(later_bytes).hexdigest())
+    for metrics in immature["metrics"]["categories"].values():
+        metrics["accepted_hits"] = 0
+        metrics["independent_groups"] = 0
+    immature["metrics"]["important"]["accepted_hits"] = 0
+    immature["metrics"]["important"]["independent_groups"] = 0
+    registry._evidence = (*registry._evidence, immature)
+
+    assert derive_runtime_mode(registry) is EmailClassifierRuntimeMode.MODEL_PRIMARY
+
+
+def test_a_live_model_still_goes_off_when_its_own_artifact_changes(tmp_path):
+    root = tmp_path / "registry"
+    live_id = "email-embedding-mlp-live"
+    registry = _ActivationRegistry(
+        root, (_mature_evidence(live_id, sha256(b"live").hexdigest()),)
+    )
+    artifact = registry.embedding_artifacts / f"{live_id}.artifact"
+    artifact.write_bytes(b"live")
+    _activate_test_model(
+        registry,
+        live_id,
+        classifier_loader=lambda path: _LoadedOnlineModel() if path == artifact else None,
+    )
+
+    artifact.write_bytes(b"tampered")
+
+    assert derive_runtime_mode(registry) is EmailClassifierRuntimeMode.AGENT_PRIMARY
+
+
 def test_runtime_mode_fails_closed_for_missing_or_tampered_activation(tmp_path):
     registry = _ActivationRegistry(tmp_path / "registry", ())
     assert derive_runtime_mode(registry) is EmailClassifierRuntimeMode.AGENT_PRIMARY
