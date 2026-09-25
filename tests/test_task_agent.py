@@ -1280,6 +1280,29 @@ def test_update_task_decision_applies_evidence_backed_description_change(tmp_pat
     assert store.list_business_task_events(task.task_id)[-1].event_type.value == "details_changed"
 
 
+def test_owner_evidence_uses_exact_decision_source_excerpt(tmp_path):
+    store = AutoReplyStore(tmp_path / "owner-evidence-excerpt.sqlite3")
+    item = _work_item(
+        assignment_authorized=True,
+    ).model_copy(update={"summary": "Alex 负责提交周报，周五前完成。"})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none",
+        "source_excerpt": item.summary, "source_ref": item.source.ref,
+        "title": "提交周报", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": "Alex负责提交周报"},
+        "formal_basis": "explicit_assignment",
+    }]})
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    task = store.get_business_task(result.task_ids[0])
+    assert task is not None
+    evidence = json.loads(task.owner_evidence_json)
+    assert evidence["excerpt"] == item.summary
+
+
 def _seed_identity_task(store, source_ref, *, external_task_id=""):
     context = {"owner_identity": {"name": "Alex", "user_id": "alex-id"}}
     if external_task_id:

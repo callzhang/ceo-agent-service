@@ -959,7 +959,11 @@ def apply_task_agent_decision(
             owner_user_id = source_owner_id
             if owner_evidence:
                 owner_evidence.setdefault("source_ref", item.source_ref)
-                owner_evidence.setdefault("excerpt", item.source_excerpt)
+                # The decision's exact source excerpt is the canonical evidence
+                # boundary. Model-provided owner excerpts may be paraphrases or
+                # punctuation variants, so never persist one that is not an
+                # exact substring of the source evidence.
+                owner_evidence["excerpt"] = item.source_excerpt
                 owner_evidence.setdefault("user_id", owner_user_id)
                 owner_evidence.setdefault("name", item.owner_name)
             formality = FormalityEvidence(
