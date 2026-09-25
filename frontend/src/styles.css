@@ -479,6 +479,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .email-account-card { display: grid; gap: 12px; padding: 15px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-muted); }
 .email-account-switch { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); font-size: .78rem; font-weight: 700; }
 .email-account-switch input { width: 18px; height: 18px; accent-color: var(--accent); }
+.email-account-read-scope { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; font-size: .82rem; font-weight: 700; }
+.email-account-read-scope small { grid-column: 1 / -1; color: var(--ink-soft); font-weight: 400; line-height: 1.5; }
 .email-account-status-row, .email-account-actions, .email-account-options { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .email-account-status-row { color: var(--ink-soft); font-size: .76rem; }
 .email-account-status-row span { padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }

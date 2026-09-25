@@ -716,6 +716,25 @@ describe("SettingsPage", () => {
     expect(updateEmailAccount.mock.calls[0][1]).not.toHaveProperty("imap_secret");
   });
 
+  it("flips whether the Agent also takes read mail from the account card, without opening the form", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
+    const account = { account_id: "work_mail", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, agent_lookback_days: 30, model_lookback_days: 365, scan_read_state: "unread" as const, created_at: "", updated_at: "" };
+    listEmailAccounts.mockResolvedValueOnce({ items: [account], meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
+    updateEmailAccount.mockResolvedValueOnce({ ok: true, item: { ...account, scan_read_state: "all" }, restart_required: false, message: "Email account configuration saved" });
+
+    renderSettings("/settings?tab=connectors&connector=email");
+    const scope = await screen.findByRole("switch", { name: "Agent 也处理已读邮件（工作邮箱）" });
+    expect(scope).not.toBeChecked();
+    expect(screen.getByText(/模型拿不准的已读邮件不经 Agent，直接等你标注/)).toBeInTheDocument();
+
+    await user.click(scope);
+
+    expect(updateEmailAccount).toHaveBeenCalledWith("work_mail", expect.objectContaining({ scan_read_state: "all", enabled: true }));
+    expect(await screen.findByRole("switch", { name: "Agent 也处理已读邮件（工作邮箱）" })).toBeChecked();
+    expect(screen.getByText(/未读和已读都先交给 Agent/)).toBeInTheDocument();
+  });
+
   it("toggles an account, tests IMAP only, and shows restart-required state", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });

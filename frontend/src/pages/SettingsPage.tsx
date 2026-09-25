@@ -474,6 +474,21 @@ function EmailAccountsPanel() {
     }
   }
 
+  async function toggleReadScope(account: EmailAccountItem) {
+    if (busyAccountId) return;
+    setBusyAccountId(account.account_id);
+    setError("");
+    try {
+      const response = await updateEmailAccount(account.account_id, { ...savedAccountPayload(account), scan_read_state: account.scan_read_state === "all" ? "unread" : "all" });
+      replaceAccount(response.item);
+      setRestartRequired(response.restart_required);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Agent 处理范围保存失败");
+    } finally {
+      setBusyAccountId("");
+    }
+  }
+
   async function toggleAccount(account: EmailAccountItem) {
     if (busyAccountId) return;
     setBusyAccountId(account.account_id);
@@ -515,6 +530,7 @@ function EmailAccountsPanel() {
     {state === "ready" && <div className="email-account-list">
       {accounts.length ? accounts.map((account) => <article className="email-account-card" key={account.account_id}>
         <div className="email-account-summary"><div><h4>{account.display_name}</h4><p>{account.email_address}</p><p className="muted">{account.imap_host}:{account.imap_port} · {account.scan_folders.join("、")}</p><p className="muted">Agent {account.agent_lookback_days} 天 · 模型 {account.model_lookback_days} 天 · Agent 处理{account.scan_read_state === "all" ? "未读和已读" : "仅未读"}</p></div><label className="email-account-switch"><span>启用</span><input type="checkbox" role="switch" aria-label={`启用${account.display_name}`} checked={account.enabled} disabled={Boolean(busyAccountId)} onChange={() => void toggleAccount(account)} /></label></div>
+        <label className="email-scan-read-state email-account-read-scope"><span>Agent 也处理已读邮件</span><span className="email-account-switch"><span>{account.scan_read_state === "all" ? "开" : "关"}</span><input type="checkbox" role="switch" aria-label={`Agent 也处理已读邮件（${account.display_name}）`} checked={account.scan_read_state === "all"} disabled={Boolean(busyAccountId)} onChange={() => void toggleReadScope(account)} /></span><small>{account.scan_read_state === "all" ? "模型拿不准的邮件，未读和已读都先交给 Agent；Agent 也拿不准才等你标注。" : "关闭时 Agent 只处理未读邮件；模型拿不准的已读邮件不经 Agent，直接等你标注。"}</small></label>
         <div className="email-account-status-row"><span>{account.imap_secret_configured ? "已保存密码" : "尚未设置密码"}</span><span>{connectionStates[account.account_id] || "尚未测试连接"}</span></div>
         {account.unverified_categories?.length ? <p className="field-error" role="status">这些分类在本邮箱里没有验证到文件夹，已暂停：{account.unverified_categories.join("、")}。确认密码和文件夹权限后重新保存邮箱即可恢复。</p> : null}
         <div className="email-account-actions"><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`编辑${account.display_name}`} onClick={() => { setDraft(emailAccountDraft(account)); setError(""); }}>编辑</button><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`测试${account.display_name}连接`} onClick={() => void testConnection(account)}>测试连接</button></div>
