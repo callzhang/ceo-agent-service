@@ -697,6 +697,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .history-workspace-card, .tasks-workspace-card, .feedback-workspace-card { padding: 16px 18px; }
 .history-toolbar, .tasks-toolbar, .feedback-toolbar { margin-bottom: 14px; }
 .attempt-feed { display: grid; gap: 12px; }
+/* History: one line per record, like the email list (Derek 2026-09-25). */
+.history-row-list { min-width: 0; border-top: 1px solid var(--line); }
+.history-dense-row { display: grid; grid-template-columns: 76px 104px minmax(90px, 14%) minmax(0, 1fr) 96px; gap: 10px; align-items: center; height: 44px; padding: 0 12px; border-bottom: 1px solid var(--line); color: inherit; font-size: 13px; text-decoration: none; }
+.history-dense-row:hover { background: var(--surface-muted); }
+.history-dense-row > span, .history-dense-row time { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.history-dense-row .history-type-badge { justify-self: start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.history-row-actor { color: var(--ink-soft); }
+.history-row-content strong { font-weight: 650; }
+.history-row-preview { margin-left: 8px; color: var(--ink-soft); }
+.history-row-content .attempt-copy-code { margin-left: 6px; }
+.history-dense-row time { color: var(--ink-soft); font-size: 12px; text-align: right; }
+@media (max-width: 759px) {
+  .history-dense-row { grid-template-columns: 64px 78px minmax(0, 1fr) 76px; gap: 6px; padding: 0 6px; }
+  .history-row-actor { display: none; }
+}
 .attempt-item { display: grid; gap: 13px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .attempt-item:hover { border-color: var(--line-strong); box-shadow: 0 6px 18px rgb(24 31 27 / 5%); }
 .attempt-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }

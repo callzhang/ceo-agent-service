@@ -38,17 +38,6 @@ export function splitStatusCode(text: string): { copy: string; code: string } {
   return { copy: text.slice(0, match.index).trim(), code: match[1] };
 }
 
-function AttemptLine({ label, value }: { label: string; value: unknown }) {
-  const { copy, code } = splitStatusCode(previewText(value));
-  return <div className="attempt-line">
-    <span className="attempt-label">{label}</span>
-    <span className="attempt-copy">
-      {copy}
-      {code && <code className="attempt-copy-code" title={code}>{code}</code>}
-    </span>
-  </div>;
-}
-
 function HistoryChart({ chart, loading }: { chart?: HistoryChartData; loading?: boolean }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const range = searchParams.get("chart_range") || "24h";
@@ -61,6 +50,13 @@ const statusOptions = statusFilters.map((value) => ({ value, label: statusLabel(
 const listParam = (value: string) => value.split(",").map((item) => item.trim()).filter(Boolean);
 const pageSizes = [20, 50, 100];
 const HISTORY_REFRESH_INTERVAL_MS = 10_000;
+
+/** Month, day and minute: what a one-line row has room for; the full time is the tooltip. */
+function shortTime(value: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 
 function localTime(value: string) {
   if (!value) return "未提供";
@@ -134,5 +130,16 @@ export function HistoryPage() {
   // A value the service no longer lists (the retired `replay`) filters nothing there, so the menu says 全部 too.
   const selectedTypes = listParam(objectType).filter((value) => typeLabels.has(value));
 
-  return <ConsolePageLayout showHeader={false} title="History" actions={<SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />}><div className="history-page" role="region" aria-label="History workspace"><HistoryChart chart={chart} loading={chartState === "loading"} /><section className="card history-workspace-card"><FilterBar><div className="filter-bar-main"><SearchField id="history-search-input" label="搜索历史" value={query} placeholder="搜索标题、内容或来源" onChange={(value) => update("q", value)} onClear={() => update("q", "")} /><MultiSelectField id="history-status-filter" label="状态" allLabel="全部状态" options={statusOptions} values={selectedStatuses} onChange={(values) => update("status", values.join(","))} /><MultiSelectField id="history-type-filter" label="任务类型" allLabel="全部类型" options={typeOptions} values={selectedTypes} onChange={(values) => update("object_type", values.join(","))} /></div><div className="filter-bar-side"><SelectField id="history-page-size" label="每页" value={String(pageSize)} options={pageSizes.map((size) => ({ value: String(size), label: `${size} 条` }))} onChange={(value) => update("page_size", value)} /><span className="table-toolbar-total">共 {total} 条</span></div></FilterBar>{state === "error" ? <div className="page-state page-state-error" role="alert">{error}</div> : state === "loading" && !rows.length ? <div className="page-state" role="status">正在加载…</div> : !rows.length ? <div className="page-state">No reply attempts recorded.</div> : <><section className="attempt-feed" aria-label="执行历史">{rows.map((row) => <article className={`attempt-item history-kind-${row.kind || row.type}`} role="article" aria-label={row.title} key={`${row.kind || row.type}-${row.id}`}><div className="attempt-head"><div className="attempt-title"><Link className="attempt-id" to={row.detail_url || `/attempts/${row.id}`}>#{row.id}</Link><span className={`history-type-badge history-type-${row.kind || row.type}`}>{typeLabels.get(row.type) || row.type || row.kind || "History"}</span><StatusBadge value={row.status} /><div className="attempt-main">{row.title}</div><div className="attempt-meta">{row.actor || "未提供"}</div></div><div className="attempt-side"><time className="attempt-time">{localTime(row.occurred_at)}</time><div className="attempt-actions"><Link className="review-link" to={row.detail_url || `/attempts/${row.id}`}>查看详情</Link></div></div></div><div className="attempt-lines">{row.input && <AttemptLine label="问" value={row.input} />}{row.output && <AttemptLine label="答" value={row.output} />}{!row.output && <AttemptLine label="结果" value={row.summary} />}</div></article>)}</section><Pagination page={page} pageSize={pageSize} total={total} onPageChange={(nextPage) => update("page", nextPage)} /></>}</section></div></ConsolePageLayout>;
+  return <ConsolePageLayout showHeader={false} title="History" actions={<SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />}><div className="history-page" role="region" aria-label="History workspace"><HistoryChart chart={chart} loading={chartState === "loading"} /><section className="card history-workspace-card"><FilterBar><div className="filter-bar-main"><SearchField id="history-search-input" label="搜索历史" value={query} placeholder="搜索标题、内容或来源" onChange={(value) => update("q", value)} onClear={() => update("q", "")} /><MultiSelectField id="history-status-filter" label="状态" allLabel="全部状态" options={statusOptions} values={selectedStatuses} onChange={(values) => update("status", values.join(","))} /><MultiSelectField id="history-type-filter" label="任务类型" allLabel="全部类型" options={typeOptions} values={selectedTypes} onChange={(values) => update("object_type", values.join(","))} /></div><div className="filter-bar-side"><SelectField id="history-page-size" label="每页" value={String(pageSize)} options={pageSizes.map((size) => ({ value: String(size), label: `${size} 条` }))} onChange={(value) => update("page_size", value)} /><span className="table-toolbar-total">共 {total} 条</span></div></FilterBar>{state === "error" ? <div className="page-state page-state-error" role="alert">{error}</div> : state === "loading" && !rows.length ? <div className="page-state" role="status">正在加载…</div> : !rows.length ? <div className="page-state">No reply attempts recorded.</div> : <><section className="history-row-list" aria-label="执行历史">{rows.map((row) => {
+  const typeName = typeLabels.get(row.type) || row.type || row.kind || "History";
+  const { copy, code } = splitStatusCode(previewText(row.output || row.summary || row.input));
+  const when = localTime(row.occurred_at);
+  return <Link className={`history-dense-row history-kind-${row.kind || row.type}`} key={`${row.kind || row.type}-${row.id}`} to={row.detail_url || `/attempts/${row.id}`} aria-label={`${typeName} ${row.title}`} title={`#${row.id} · ${row.title}`}>
+    <span className={`history-type-badge history-type-${row.kind || row.type}`}>{typeName}</span>
+    <span className="history-row-status"><StatusBadge value={row.status} /></span>
+    <span className="history-row-actor" title={row.actor}>{row.actor || "未提供"}</span>
+    <span className="history-row-content"><strong>{row.title}</strong>{copy && <span className="history-row-preview">{copy}</span>}{code && <code className="attempt-copy-code" title={code}>{code}</code>}</span>
+    <time dateTime={row.occurred_at} title={when}>{shortTime(row.occurred_at)}</time>
+  </Link>;
+})}</section><Pagination page={page} pageSize={pageSize} total={total} onPageChange={(nextPage) => update("page", nextPage)} /></>}</section></div></ConsolePageLayout>;
 }

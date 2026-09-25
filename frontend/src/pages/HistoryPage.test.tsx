@@ -106,9 +106,12 @@ describe("HistoryPage", () => {
     // Derek 2026-09-25: the quick status chips are gone; the menus do the filtering.
     expect(screen.queryByLabelText("快速状态筛选")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Recent 24 hour events" })).toBeInTheDocument();
-    expect(screen.getByRole("article", { name: /客户项目/ })).toBeInTheDocument();
-    expect(screen.getByText("问")).toBeInTheDocument();
-    expect(screen.getByText("答")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /客户项目/ })).toBeInTheDocument();
+    // One line per record (Derek 2026-09-25): title, then the outcome, no 问/答 blocks.
+    const row = screen.getByRole("link", { name: /客户项目/ });
+    expect(row).toHaveTextContent("已完成同步");
+    expect(row).toHaveAttribute("href", "/tasks/836");
+    expect(screen.queryByText("问")).not.toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "分页导航" })).toBeInTheDocument();
   });
 
@@ -139,7 +142,7 @@ describe("HistoryPage", () => {
     const user = (await import("@testing-library/user-event")).default.setup();
     render(<MemoryRouter><HistoryPage /></MemoryRouter>);
 
-    await screen.findByRole("article", { name: /客户项目/ });
+    await screen.findByRole("link", { name: /客户项目/ });
     await user.click(screen.getByRole("button", { name: "任务类型：全部类型" }));
     expect(screen.getByRole("checkbox", { name: "日历邀请" })).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Reply" })).not.toBeInTheDocument();
@@ -157,7 +160,7 @@ describe("HistoryPage", () => {
     listHistoryTypes.mockRejectedValue(new Error("unavailable"));
     render(<MemoryRouter><HistoryPage /></MemoryRouter>);
 
-    expect(await screen.findByRole("article", { name: /客户项目/ })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /客户项目/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "任务类型：全部类型" }));
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
   });
@@ -172,17 +175,17 @@ describe("HistoryPage", () => {
     });
     render(<MemoryRouter><HistoryPage /></MemoryRouter>);
 
-    const run = await screen.findByRole("article", { name: "分类新邮件" });
+    const run = await screen.findByRole("link", { name: /分类新邮件/ });
     expect(run).toHaveTextContent("定时命令");
-    expect(run).toHaveTextContent("结果");
-    expect(screen.getByRole("article", { name: "季度复盘" })).toHaveTextContent("邮件动作");
-    expect(screen.getByRole("article", { name: "季度复盘" })).toHaveTextContent("移动到「工作」");
+    expect(run).toHaveTextContent("imap timeout");
+    expect(screen.getByRole("link", { name: /季度复盘/ })).toHaveTextContent("邮件动作");
+    expect(screen.getByRole("link", { name: /季度复盘/ })).toHaveTextContent("移动到「工作」");
   });
 
   it("shows 全部 for a retired type in the address", async () => {
     render(<MemoryRouter initialEntries={["/history?object_type=replay"]}><HistoryPage /></MemoryRouter>);
 
-    await screen.findByRole("article", { name: /客户项目/ });
+    await screen.findByRole("link", { name: /客户项目/ });
     expect(await screen.findByRole("button", { name: "任务类型：全部类型" })).toBeInTheDocument();
   });
 
@@ -211,12 +214,12 @@ describe("HistoryPage", () => {
 
     render(<MemoryRouter><HistoryPage /></MemoryRouter>);
     await act(async () => {});
-    expect(screen.getByRole("article", { name: "正在执行的任务" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /正在执行的任务/ })).toBeInTheDocument();
 
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
 
-    expect(screen.getByRole("article", { name: "已完成的任务" })).toBeInTheDocument();
-    expect(screen.queryByRole("article", { name: "正在执行的任务" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /已完成的任务/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /正在执行的任务/ })).not.toBeInTheDocument();
     expect(listHistory).toHaveBeenCalledTimes(2);
   });
 });
