@@ -1524,6 +1524,43 @@ def register_email_routes(
             "important_flag": "$important" in lowered,
         }
 
+    @app.post("/api/console/email/classifications/{classification_id}/mark-read")
+    async def email_mark_read(classification_id: int, request: Request):
+        """The owner opened this message in the console; mark it read in the mailbox."""
+
+        email_store = require_store()
+        if "application/json" not in request.headers.get("content-type", ""):
+            raise HTTPException(status_code=415, detail="JSON Content-Type required")
+        locator = email_store.get_stored_email_locator(classification_id)
+        account = (
+            None if locator is None else email_store.get_account(locator.account_id)
+        )
+        if locator is None or account is None or not account.get("enabled"):
+            return error_response(
+                "not_found", "The mailbox holding this email is not available", 404
+            )
+        try:
+            provider = connect_signal_provider(account)
+        except Exception:  # noqa: BLE001 - every connection fault reads the same
+            return error_response(
+                "email_provider_unavailable", "Could not reach the mailbox", 502
+            )
+        try:
+            provider.mark_read(locator)
+        except ImapMessageUnavailable:
+            return error_response(
+                "email_message_unavailable",
+                "The message is no longer where the console last saw it",
+                409,
+            )
+        except ImapProviderError:
+            return error_response(
+                "email_provider_rejected", "The mailbox refused the change", 502
+            )
+        finally:
+            provider.close()
+        return {"ok": True}
+
     @app.post("/api/console/email/classifications/{classification_id}/feedback")
     async def email_classification_feedback(classification_id: int, request: Request):
         email_store = require_store()

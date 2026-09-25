@@ -928,6 +928,14 @@ export function setEmailProviderSignal(id: string, signal: "star" | "flag", valu
   }));
 }
 
+/** The owner opened this message: mark it read in the mailbox. */
+export function markEmailRead(id: string) {
+  return request<Record<string, unknown>>(`/api/console/email/classifications/${id}/mark-read`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  }).then((payload) => payload.ok === true);
+}
+
 export interface EmailProcessingProgress {
   window_hours: number;
   /** How fast mailbox actions are carried out end to end (claim to verified result). */

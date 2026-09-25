@@ -730,6 +730,15 @@ class ImapDeterministicProvider:
         state = self.read_state(locator, action_type=EmailAction.MARK_READ)
         return state.important_signal_names
 
+    def mark_read(self, locator: StoredEmailLocator) -> None:
+        """Set \\Seen on one message because the owner opened it in the console.
+
+        The owner's own action, like a Star click; the server's OK is the result.
+        """
+
+        self._validate_locator(locator)
+        self._uid_store(locator, ("\\Seen",), wildcard_permits=False)
+
     def _uid_store(
         self,
         locator: StoredEmailLocator,

@@ -98,6 +98,7 @@ class _FakeSignalProvider:
         self.names = names
         self.unavailable = unavailable
         self.calls: list[tuple[str, bool]] = []
+        self.read: list[int] = []
         self.closed = False
 
     def set_important_signal(self, locator, signal, *, present):
@@ -108,6 +109,13 @@ class _FakeSignalProvider:
         self.calls.append((signal, present))
         (self.names.add if present else self.names.discard)(signal)
         return frozenset(self.names)
+
+    def mark_read(self, locator):
+        from app.email_provider_actions import ImapMessageUnavailable
+
+        if self.unavailable:
+            raise ImapMessageUnavailable("gone")
+        self.read.append(locator.uid)
 
     def close(self):
         self.closed = True
@@ -4374,3 +4382,20 @@ def test_the_list_refuses_a_filter_value_it_does_not_know(tmp_path: Path) -> Non
         response = client.get("/api/console/email/classifications", params={"status": "all", **params})
         assert response.status_code == 400
         assert response.json()["code"] == "invalid_email_filter"
+
+
+def test_opening_a_message_marks_it_read_on_the_mailbox(tmp_path: Path):
+    provider = _FakeSignalProvider(set())
+    client, _store, identity = _signal_client(tmp_path, provider)
+    url = f"/api/console/email/classifications/{identity}/mark-read"
+
+    response = client.post(url, json={})
+
+    assert response.status_code == 200 and response.json() == {"ok": True}
+    assert provider.read == [5] and provider.closed
+    assert client.post(url, content=b"", headers={"content-type": "text/plain"}).status_code == 415
+    assert client.post("/api/console/email/classifications/999/mark-read", json={}).status_code == 404
+    gone = _FakeSignalProvider(set(), unavailable=True)
+    (tmp_path / "gone").mkdir()
+    client, _store, identity = _signal_client(tmp_path / "gone", gone)
+    assert client.post(f"/api/console/email/classifications/{identity}/mark-read", json={}).status_code == 409

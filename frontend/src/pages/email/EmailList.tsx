@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type SelectHTMLAttributes } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Flag, Star } from "lucide-react";
-import { confirmEmailClassification, getEmailClassification, listEmailClassifications, setEmailProviderSignal, type EmailCategoryConfig, type EmailClassificationDetail, type EmailClassificationItem, type EmailClassificationStatus, type EmailProviderClassification } from "../../api/console";
+import { confirmEmailClassification, getEmailClassification, listEmailClassifications, markEmailRead, setEmailProviderSignal, type EmailCategoryConfig, type EmailClassificationDetail, type EmailClassificationItem, type EmailClassificationStatus, type EmailProviderClassification } from "../../api/console";
 import { EmailReadingPanel } from "./EmailReadingPanel";
 import { unsubscribeStateLabel } from "./Evidence";
 import { configurableCategories, errorMessage, localTime, measured, sourceLabel, statusLabel } from "./shared";
@@ -29,6 +29,9 @@ function actionBadge(item:EmailClassificationItem) {
   if(actions.some(action=>action.status==="pending"||action.status==="processing"))return {tone:"pending",text:"动作待执行",reason:""};
   return null;
 }
+
+/** How long a message has to stay open before it counts as read. */
+export const MARK_READ_DELAY_MS=3000;
 
 export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfig[]; status:EmailClassificationStatus; onBusy:(value:boolean)=>void}) {
   const [params,setParams]=useSearchParams();
@@ -67,6 +70,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   const [signalBusy,setSignalBusy]=useState("");
   const [signalError,setSignalError]=useState("");
   const lock=useRef(false);
+  const markedRead=useRef(new Set<string>());
   const rowRefs=useRef(new Map<string,HTMLButtonElement>());
   const open=!!selected && closed!==selected;
   const options=[...configurableCategories(configs).filter(item=>item.enabled),{category_key:"junk",display_name:"垃圾（Trash）"}];
@@ -104,6 +108,12 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
     }).catch(reason=>{if(!controller.signal.aborted){setError(errorMessage(reason));setLoading(false);}});
     return ()=>controller.abort();
   },[status,page,pageSize,revision,query,categoryFilter,actionFilter,sourceFilter]);
+  useEffect(()=>{
+    // Reading it for a moment is what makes it read; skimming past a row is not.
+    if(!open || markedRead.current.has(selected))return;
+    const timer=window.setTimeout(()=>{markedRead.current.add(selected);void markEmailRead(selected).catch(()=>markedRead.current.delete(selected));},MARK_READ_DELAY_MS);
+    return ()=>window.clearTimeout(timer);
+  },[open,selected]);
   useEffect(()=>{
     setCategory("");setDetail(null);setDetailError("");setSaveError("");
     if(!open)return;

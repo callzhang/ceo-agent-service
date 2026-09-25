@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { EmailClassificationListParams } from "../api/console";
-const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "previewEmailTraining", "getEmailClassification", "getEmailUnsubscribeEntryUrl", "setEmailProviderSignal", "getEmailProcessingProgress", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
+const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "previewEmailTraining", "getEmailClassification", "getEmailUnsubscribeEntryUrl", "setEmailProviderSignal", "getEmailProcessingProgress", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory", "markEmailRead"].map(key => [key, vi.fn()])));
 vi.mock("../api/console", async importOriginal => ({ ...await importOriginal<object>(), ...api }));
 import { EmailPage } from "./EmailPage";
 const idleProgress = { window_hours: 24, throughput: {window_minutes: 30, finished: 0, per_minute: 0, median_seconds: null}, provider_actions: {done: 0, pending: 0, processing: 0, failed: 0, skipped: 0}, classification_queue: {pending: 0, processing: 0}, unsubscribe_queue: {pending: 0, processing: 0}, waiting_for_owner: 0, scans: [] };
@@ -46,6 +46,7 @@ it("waits for Chinese composition and distinguishes empty search results from er
 });
 beforeEach(() => {
   vi.resetAllMocks();
+  api.markEmailRead.mockResolvedValue(true);
   api.getEmailProcessingProgress.mockResolvedValue(idleProgress);
   api.listEmailConfigs.mockResolvedValue({items:[config]});
   api.listEmailClassifications.mockResolvedValue({items:[row("1"),row("2")], meta:{total:55,page:1,page_size:50,snapshot_at:""}});
@@ -681,3 +682,15 @@ it("drops the list filters when the tab changes, so the next tab is not silently
   expect(screen.getByLabelText("URL")).not.toHaveTextContent("action_status");
   expect(screen.getByLabelText("URL")).not.toHaveTextContent("source=");
 });
+
+it("marks a message read only after it has stayed open for three seconds",async()=>{
+  const user=userEvent.setup();
+  show("/email?tab=all");
+  await user.click(await screen.findByRole("button",{name:"打开邮件 邮件1"}));
+  await act(async()=>{await new Promise(resolve=>setTimeout(resolve,1000));});
+  // Moving on before the three seconds are up leaves the first one unread.
+  await user.click(screen.getByRole("button",{name:"打开邮件 邮件2"}));
+  expect(api.markEmailRead).not.toHaveBeenCalled();
+  await waitFor(()=>expect(api.markEmailRead).toHaveBeenCalledTimes(1),{timeout:4000});
+  expect(api.markEmailRead).toHaveBeenCalledWith("2");
+},10000);

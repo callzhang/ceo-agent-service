@@ -845,6 +845,22 @@ def test_owner_toggle_sets_and_clears_exactly_one_keyword_and_reads_it_back() ->
     ]
 
 
+def test_opening_in_the_console_stores_seen_once_and_reads_nothing_back() -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(
+        permanent_flags={"\\Seen", "\\Flagged"},
+        messages={"INBOX": {7: ("<message@example.com>", set())}},
+    )
+    provider = module.ImapDeterministicProvider(session, account_id="account-1")
+
+    provider.mark_read(_action(EmailAction.MARK_READ, {}).locator)
+
+    assert session.messages["INBOX"][7][1] == {"\\Seen"}
+    calls = [call[2:] for call in session.calls if call[:2] == ("uid", "STORE")]
+    assert calls == [("7", "+FLAGS.SILENT", "(\\Seen)")]
+    assert not [call for call in session.calls if call[:2] == ("uid", "FETCH")]
+
+
 def test_production_imap_important_keyword_alone_adds_required_flagged() -> None:
     module = import_module("app.email_provider_actions")
     session = FakeWritableImapSession(
