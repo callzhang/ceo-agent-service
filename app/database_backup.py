@@ -99,6 +99,7 @@ def _remove_older_backups(backup_dir: Path, *, keep: Path | None) -> list[Path]:
         *backup_dir.glob("*.sqlite3-journal"),
         # Leftovers of the earlier scheme, which wrote to a hidden temp name.
         *backup_dir.glob(".*.tmp"),
+        *backup_dir.glob(".*.tmp-journal"),
     ]
     deleted: list[Path] = []
     for path in sorted(set(candidates)):

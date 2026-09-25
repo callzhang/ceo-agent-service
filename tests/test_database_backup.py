@@ -121,6 +121,7 @@ def test_a_backup_removes_the_earlier_ones_first_and_leaves_one_file(tmp_path: P
         "auto-reply-2026-07-22.sqlite3",
         "auto-reply-before-upgrade-x.sqlite3",
         ".auto-reply-2026-07-21.sqlite3.deadbeef.tmp",
+        ".auto-reply-2026-07-21.sqlite3.deadbeef.tmp-journal",
         "auto-reply-2026-07-22.sqlite3-wal",
     ):
         (backup_dir / name).write_bytes(b"old")
