@@ -390,6 +390,9 @@ def _close_session(manager: object, profile: object, action_identity: str) -> No
             pass
 
 
+_RETRYABLE_SKIP_OUTCOMES = frozenset({"skipped_no_reliable_entry", "skipped_login_required"})
+
+
 class DirectEmailUnsubscribeOperation:
     """Unsubscribe one email task in a single call and record the evidence.
 
@@ -442,10 +445,15 @@ class DirectEmailUnsubscribeOperation:
             identity = _validate_task_identity(task, payload)
             action_identity = str(identity["action_identity"])
             existing = self.email_store.get_email_unsubscribe_receipt(action_identity)
-            retrying_unreliable_entry = bool(
-                existing is not None
-                and existing.get("outcome") == "skipped_no_reliable_entry"
+            # A skip is a reading of the page at that time, not a fact about the
+            # link: "no reliable entry" and "login required" can each be a
+            # misreading, or the page can change (a login now covered by the
+            # owner's cookie copy). A rerun reads the page again; the previous
+            # receipt stays the record unless the new reading differs.
+            previous_outcome = (
+                str(existing.get("outcome") or "") if existing is not None else ""
             )
+            retrying_unreliable_entry = previous_outcome in _RETRYABLE_SKIP_OUTCOMES
             if existing is not None and not retrying_unreliable_entry:
                 # Already done once. Unsubscribing twice is harmless but
                 # pointless, and the first receipt is the record.
@@ -508,7 +516,7 @@ class DirectEmailUnsubscribeOperation:
                 and result.receipt
                 and (
                     not retrying_unreliable_entry
-                    or result.outcome is not UnsubscribeOutcome.SKIPPED_NO_RELIABLE_ENTRY
+                    or result.outcome.value != previous_outcome
                 )
             ):
                 # The effect that gets persisted is the one this run actually

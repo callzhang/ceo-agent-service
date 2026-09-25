@@ -508,6 +508,48 @@ def test_a_second_call_returns_the_receipt_instead_of_unsubscribing_again(
     assert len(browser.calls) == 1
 
 
+def test_a_rerun_re_reads_a_login_required_skip_and_keeps_it_only_when_it_still_reads_so(
+    tmp_path: Path,
+) -> None:
+    effect = _effect()
+    operation, task, email_store, browser = _operation(
+        tmp_path,
+        [_terminal(effect, UnsubscribePageState.LOGIN_REQUIRED, "Sign in to continue")],
+    )
+    first = operation.execute(task.id)
+    assert first["outcome"] == "skipped_login_required"
+    old = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
+    assert old is not None
+
+    # Read again and still a login wall: the record does not change.
+    browser.observations.append(
+        _terminal(
+            replace(effect, previous_effect_digest=old["effect_digest"]),
+            UnsubscribePageState.LOGIN_REQUIRED,
+            "Sign in to continue",
+        )
+    )
+    same = operation.execute(task.id)
+    assert same["outcome"] == "skipped_login_required"
+    unchanged = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
+    assert unchanged is not None and unchanged["receipt_id"] == old["receipt_id"]
+
+    # Read again and the page now says the unsubscribe happened: it replaces the skip.
+    browser.observations.append(
+        _terminal(
+            replace(effect, previous_effect_digest=old["effect_digest"]),
+            UnsubscribePageState.DONE,
+            "You've been unsubscribed.",
+        )
+    )
+    promoted = operation.execute(task.id)
+
+    assert promoted["outcome"] == "done", promoted
+    current = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
+    assert current is not None and current["outcome"] == "done"
+    assert current["receipt_id"] != old["receipt_id"]
+
+
 def test_an_explicit_retry_promotes_a_previous_unreliable_entry_skip(
     tmp_path: Path,
 ) -> None:

@@ -11981,8 +11981,9 @@ class EmailStore:
                     existing_receipt
                 )
                 retrying_unreliable_entry = (
-                    persisted_receipt["outcome"] == "skipped_no_reliable_entry"
-                    and outcome != "skipped_no_reliable_entry"
+                    persisted_receipt["outcome"]
+                    in {"skipped_no_reliable_entry", "skipped_login_required"}
+                    and outcome != persisted_receipt["outcome"]
                 )
                 if retrying_unreliable_entry:
                     # An explicit retry may promote a page that the old
