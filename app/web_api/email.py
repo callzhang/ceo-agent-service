@@ -737,18 +737,6 @@ def _active_embedding_model_id(
     return str(payload["model_id"])
 
 
-def _latest_unsubscribe_state(events: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The newest unsubscribe event's state, as the detail view would show it.
-
-    Events come back oldest first, so the last unsubscribe event is the one
-    that decides what the Unsubscribe list says about the mail.
-    """
-    for event in reversed(events):
-        if event.get("kind") == "unsubscribe":
-            return {"status": event.get("status"), "outcome": event.get("outcome")}
-    return None
-
-
 def _project_runtime_observability(
     value: object,
 ) -> tuple[dict[str, object], dict[str, int]]:
@@ -1353,9 +1341,16 @@ def register_email_routes(
                 limit=page_size,
                 offset=(page - 1) * page_size,
             )
+        row_ids = [int(row["id"]) for row in rows]
+        provider_states = email_store.get_provider_classification_states(row_ids)
+        unsubscribe_states = (
+            email_store.list_unsubscribe_states(row_ids)
+            if status == "unsubscribe"
+            else {}
+        )
         items = []
         for row in rows:
-            provider_state = email_store.get_provider_classification_state(row["id"])
+            provider_state = provider_states[int(row["id"])]
             item = {
                 **row,
                 "id": str(row["id"]),
@@ -1363,9 +1358,7 @@ def register_email_routes(
                 "provider_classification": provider_state,
             }
             if status == "unsubscribe":
-                item["unsubscribe_state"] = _latest_unsubscribe_state(
-                    email_store.list_email_classification_observability(row["id"])
-                )
+                item["unsubscribe_state"] = unsubscribe_states[int(row["id"])]
             items.append(item)
         return {
             "items": items,

@@ -449,11 +449,14 @@ def test_list_includes_current_provider_important_state(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "list_classifications", lambda **_: ([{"id": 42}], 1))
     monkeypatch.setattr(
         store,
-        "get_provider_classification_state",
-        lambda _: {
-            "state": "categorized",
-            "category_key": "legal",
-            "important": True,
+        "get_provider_classification_states",
+        lambda ids: {
+            classification_id: {
+                "state": "categorized",
+                "category_key": "legal",
+                "important": True,
+            }
+            for classification_id in ids
         },
     )
     item = client.get("/api/console/email/classifications?status=processed").json()[

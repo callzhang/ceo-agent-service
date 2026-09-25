@@ -12743,14 +12743,14 @@ class EmailStore:
             task_clause = ""
             if task_tables == {"reply_tasks", "agent_runs"}:
                 task_clause = """
-                    or exists (
-                        select 1 from reply_tasks as tasks
+                    or classifications.id in (
+                        select json_extract(
+                                   tasks.trigger_message_json,
+                                   '$.classification_id'
+                               )
+                        from reply_tasks as tasks
                         where tasks.channel='email'
                           and json_valid(tasks.trigger_message_json)
-                          and json_extract(
-                                tasks.trigger_message_json,
-                                '$.classification_id'
-                              )=classifications.id
                           and json_extract(
                                 tasks.trigger_message_json,
                                 '$.action_type'
@@ -12758,13 +12758,13 @@ class EmailStore:
                     )
                 """
             where = """
-                exists (
-                    select 1 from email_unsubscribe_claims as claims
-                    where claims.classification_id=classifications.id
+                classifications.id in (
+                    select claims.classification_id
+                    from email_unsubscribe_claims as claims
                 )
-                or exists (
-                    select 1 from email_unsubscribe_receipts as receipts
-                    where receipts.classification_id=classifications.id
+                or classifications.id in (
+                    select receipts.classification_id
+                    from email_unsubscribe_receipts as receipts
                 )
             """ + task_clause
             where = "(" + where + ")" + search
@@ -13162,8 +13162,52 @@ class EmailStore:
             for row in rows
         )
 
+    @contextmanager
+    def _connect_or_reuse(
+        self, db: sqlite3.Connection | None
+    ) -> Iterator[sqlite3.Connection]:
+        if db is not None:
+            yield db
+            return
+        with self._connect() as opened:
+            yield opened
+
+    def list_unsubscribe_states(
+        self, classification_ids: Sequence[int]
+    ) -> dict[int, dict[str, Any] | None]:
+        """Newest unsubscribe outcome per email, read on one connection.
+
+        Each state is the last unsubscribe event of the same projection the
+        detail page shows, so a list row and its detail cannot disagree. Events
+        come back oldest first.
+        """
+
+        states: dict[int, dict[str, Any] | None] = {}
+        with self._connect() as db:
+            for classification_id in classification_ids:
+                events = self.list_email_classification_observability(
+                    classification_id, db=db
+                )
+                latest = next(
+                    (
+                        event
+                        for event in reversed(events)
+                        if event.get("kind") == "unsubscribe"
+                    ),
+                    None,
+                )
+                states[classification_id] = (
+                    None
+                    if latest is None
+                    else {
+                        "status": latest.get("status"),
+                        "outcome": latest.get("outcome"),
+                    }
+                )
+        return states
+
     def list_email_classification_observability(
-        self, classification_id: int
+        self, classification_id: int, *, db: sqlite3.Connection | None = None
     ) -> list[dict[str, Any]]:
         """Project safe action and external-write evidence for one email.
 
@@ -13173,7 +13217,7 @@ class EmailStore:
         """
 
         _require_positive_int(classification_id, field="classification_id")
-        with self._connect() as db:
+        with self._connect_or_reuse(db) as db:
             classification = db.execute(
                 """
                 select classifications.id, classifications.account_id,
@@ -14133,6 +14177,52 @@ class EmailStore:
                     classification["stable_message_identity"],
                 ),
             ).fetchone()
+        return self._provider_state_from_observation(row)
+
+    def get_provider_classification_states(
+        self, classification_ids: Sequence[int]
+    ) -> dict[int, dict[str, object]]:
+        """Project provider-folder truth for a page of emails in one connection.
+
+        Opening a connection per row made a 50-row list spend more time
+        connecting than reading.
+        """
+
+        for classification_id in classification_ids:
+            _require_positive_int(classification_id, field="classification_id")
+        states: dict[int, dict[str, object]] = {}
+        with self._connect() as db:
+            for classification_id in classification_ids:
+                row = db.execute(
+                    """
+                    select observations.state, observations.category_key,
+                           observations.important,
+                           observations.important_signals_json,
+                           observations.provider_folder_id,
+                           observations.provider_folder_name,
+                           observations.observed_at
+                    from email_classifications as classifications
+                    left join email_provider_observations as observations
+                      on observations.account_id=classifications.account_id
+                     and observations.stable_message_identity=
+                         classifications.stable_message_identity
+                    where classifications.id=?
+                    """,
+                    (classification_id,),
+                ).fetchone()
+                states[classification_id] = (
+                    {"state": "unavailable", "reason": "classification_missing"}
+                    if row is None
+                    else self._provider_state_from_observation(
+                        row if row["state"] is not None else None
+                    )
+                )
+        return states
+
+    @staticmethod
+    def _provider_state_from_observation(
+        row: sqlite3.Row | None,
+    ) -> dict[str, object]:
         if row is None:
             return {"state": "unavailable", "reason": "provider_truth_not_observed"}
         if row["state"] != "available":

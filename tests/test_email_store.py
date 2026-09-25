@@ -1644,6 +1644,56 @@ def test_list_unsubscribe_classifications_projects_durable_claims(tmp_path: Path
         store.list_unsubscribe_classifications(limit=0, offset=0)
 
 
+def _count_connections(store: EmailStore, monkeypatch) -> list[int]:
+    opened = [0]
+    original = store._open_connection
+
+    def counted() -> sqlite3.Connection:
+        opened[0] += 1
+        return original()
+
+    monkeypatch.setattr(store, "_open_connection", counted)
+    return opened
+
+
+def test_page_lookups_open_one_connection_and_match_the_per_row_answers(
+    tmp_path: Path, monkeypatch
+):
+    """The list once opened two connections per row, and a 50-row page spent
+    its time connecting to a multi-GB database rather than reading it."""
+
+    store = EmailStore(tmp_path / "page-lookups.sqlite3")
+    first = _persist_scan(store, _classification(status=EmailClassificationStatus.PENDING_FEEDBACK))
+    ids = [int(first["id"]), 999999]
+    opened = _count_connections(store, monkeypatch)
+
+    provider_states = store.get_provider_classification_states(ids)
+    assert opened[0] == 1
+    unsubscribe_states = store.list_unsubscribe_states(ids)
+    assert opened[0] == 2
+
+    assert provider_states == {
+        classification_id: store.get_provider_classification_state(classification_id)
+        for classification_id in ids
+    }
+    assert provider_states[999999]["reason"] == "classification_missing"
+    assert unsubscribe_states == {ids[0]: None, 999999: None}
+
+
+def test_unsubscribe_state_is_the_newest_unsubscribe_event_of_the_detail(tmp_path: Path):
+    store, authorization, receipt = _persist_unsubscribe_result_fixture(
+        tmp_path / "state.sqlite3", result_text="退订成功"
+    )
+    classification_id = authorization["classification_id"]
+
+    events = store.list_email_classification_observability(classification_id)
+    newest = [event for event in events if event["kind"] == "unsubscribe"][-1]
+
+    assert store.list_unsubscribe_states([classification_id]) == {
+        classification_id: {"status": newest["status"], "outcome": newest["outcome"]}
+    }
+
+
 def _downgrade_email_database_to_v16(database: Path) -> None:
     """Recreate the exact parent-v16 receipt shape from a current fixture."""
 

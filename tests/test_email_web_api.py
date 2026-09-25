@@ -132,7 +132,7 @@ def test_email_unsubscribe_filter_reports_each_rows_newest_unsubscribe_state(tmp
         ],
         48: [{"kind": "unsubscribe", "status": "processing"}],
     }
-    store.list_email_classification_observability = lambda classification_id: events[classification_id]
+    store.list_email_classification_observability = lambda classification_id, **_: events[classification_id]
     app = FastAPI()
     register_email_routes(app, lambda: store)
 
