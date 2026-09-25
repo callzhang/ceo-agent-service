@@ -64,16 +64,18 @@ def _insert_needs_human_projection(store, *, result, status="needs_human"):
     return attempt_id
 
 
-def _insert_reply_task(store, *, status="pending", updated_at="2026-08-07 00:59:00"):
+def _insert_reply_task(
+    store, *, channel="dingtalk", status="pending", updated_at="2026-08-07 00:59:00"
+):
     with store._connect() as db:
         db.execute(
             """insert into reply_tasks (
                 channel, conversation_id, conversation_title, single_chat,
                 trigger_message_id, trigger_create_time, trigger_sender,
                 trigger_text, status, updated_at
-            ) values ('dingtalk', 'conversation', 'group', 0, 'message',
+            ) values (?, 'conversation', 'group', 0, 'message',
                 '2026-08-07 00:00:00', 'sender', 'trigger', ?, ?)""",
-            (status, updated_at),
+            (channel, status, updated_at),
         )
 
 
@@ -255,6 +257,21 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
         ("email_agent_classification_tasks", "failed"),
         ("errors", "recent_error"),
     }
+
+
+def test_quality_gate_does_not_count_email_tasks_as_generic_reply_backlog(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    stale = (NOW - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    _insert_reply_task(store, channel="email", status="pending", updated_at=stale)
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not [
+        issue
+        for issue in (*report.violations, *report.attention)
+        if issue.source == "reply_tasks"
+        and issue.code in {"pending_overdue", "processing_stale", "failed"}
+    ]
 
 
 def test_quality_gate_accepts_explicit_terminal_failures(tmp_path):

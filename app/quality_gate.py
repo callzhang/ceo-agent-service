@@ -297,20 +297,26 @@ def _check_reply_tasks(
     *,
     capacity_paused: bool = False,
 ) -> None:
+    # Email unsubscribe tasks are consumed by the dedicated email worker. The
+    # generic reply dispatcher only owns these channels, so do not report the
+    # email backlog as an unclaimed reply task.
+    reply_channels = "channel in ('dingtalk','wechat','scheduled')"
     _add(violations, source="reply_tasks", code="failed", count=_count(
         db,
-        """select count(*) from reply_tasks
-           where lower(status)='failed' and trim(coalesce(error, ''))=''""",
+        f"""select count(*) from reply_tasks
+           where {reply_channels}
+             and lower(status)='failed' and trim(coalesce(error, ''))=''""",
     ), severity="error", detail="reply task has no concrete terminal failure")
     _add(violations, source="reply_tasks", code="processing_stale", count=_count(
         db,
-        "select count(*) from reply_tasks where lower(status)='processing' and datetime(updated_at) < datetime(?)",
+        f"select count(*) from reply_tasks where {reply_channels} and lower(status)='processing' and datetime(updated_at) < datetime(?)",
         (_cutoff(now, REPLY_PROCESSING_STALE_SECONDS),),
     ), severity="error", detail="reply task exceeded the worker recovery lease")
     pending_overdue = _count(
         db,
-        """select count(*) from reply_tasks
-           where lower(status)='pending'
+        f"""select count(*) from reply_tasks
+           where {reply_channels}
+             and lower(status)='pending'
              and (available_at='' or datetime(available_at) <= datetime(?))
              and datetime(updated_at) < datetime(?)""",
         (now.strftime("%Y-%m-%d %H:%M:%S"), _cutoff(now, PENDING_STALE_SECONDS)),
