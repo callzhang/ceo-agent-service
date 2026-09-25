@@ -797,3 +797,24 @@ def test_repairing_a_healthy_action_changes_nothing(tmp_path: Path) -> None:
 
     assert result["repaired"] is False
     assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) == before
+
+
+def test_a_body_with_a_malformed_link_is_not_an_extraction_failure():
+    """One message with a stray "https://[" used to fail the whole account scan."""
+
+    entries = extract_unsubscribe_entries(
+        body_text="see https://[not-a-host/x and https://[::1/unsubscribe for details",
+        body_html='<a href="https://[bad">unsubscribe</a>',
+    )
+
+    assert entries == ()
+
+
+def test_a_malformed_link_does_not_hide_a_good_one():
+    good = "https://mail.example.test/unsubscribe/abc"
+
+    entries = extract_unsubscribe_entries(
+        body_text=f"broken https://[nope then real {good}",
+    )
+
+    assert [entry for entry in entries if good in getattr(entry, "private_url", "")]

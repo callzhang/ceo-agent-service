@@ -854,8 +854,25 @@ def _assert_strict_opaque_reference(value: str, *, field_name: str) -> None:
         raise ValueError(f"{field_name} must be an opaque redacted reference") from None
 
 
+def _split_or_none(value: str):
+    """Split a URL, or say it is not one.
+
+    Mail bodies hold arbitrary text, and a stray "https://[" is not a URL. The
+    parser raises ValueError on it, and one such message used to fail the whole
+    classification scan for the account on every round, blocking all the mail
+    behind it.
+    """
+
+    try:
+        return urlsplit(value)
+    except ValueError:
+        return None
+
+
 def _is_private_https_url(value: str) -> bool:
-    parsed = urlsplit(value)
+    parsed = _split_or_none(value)
+    if parsed is None:
+        return False
     return bool(
         parsed.scheme.casefold() == "https"
         and parsed.hostname
@@ -867,7 +884,9 @@ def _is_private_https_url(value: str) -> bool:
 
 
 def _is_loopback_http_url(value: str) -> bool:
-    parsed = urlsplit(value)
+    parsed = _split_or_none(value)
+    if parsed is None:
+        return False
     return bool(
         parsed.scheme.casefold() == "http"
         and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
@@ -883,7 +902,9 @@ def _is_private_browser_url(value: str) -> bool:
 
 
 def _is_mailto_url(value: str) -> bool:
-    parsed = urlsplit(value)
+    parsed = _split_or_none(value)
+    if parsed is None:
+        return False
     return bool(parsed.scheme.casefold() == "mailto" and parsed.path.strip())
 
 
