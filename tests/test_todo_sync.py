@@ -12,7 +12,8 @@ from app.todo_sync import (
     dispatch_claimed_business_task_todo_sync_outbox,
     dispatch_task_todo_sync_outbox,
     maybe_create_dingtalk_todo,
-    pull_dingtalk_todo_statuses,
+    reconcile_unknown_business_task_todo_creates,
+    scan_completed_dingtalk_todos,
     refresh_dingtalk_todo_before_follow_up,
     retry_failed_dingtalk_todo_links,
     sync_completed_todo_to_dingtalk,
@@ -30,6 +31,8 @@ class FakeTodoDws:
         self.get_errors = {}
         self.done_calls = []
         self.done_error = None
+        self.completed_task_ids = []
+        self.list_calls = []
 
     def create_todo_task(
         self,
@@ -65,6 +68,18 @@ class FakeTodoDws:
         if error is not None:
             raise error
         return self.get_payloads.get(task_id, {"id": task_id, "done": False})
+
+    def list_completed_todo_tasks(self, *, page=1, size=20):
+        self.list_calls.append({"page": page, "size": size})
+        start = (page - 1) * size
+        cards = [
+            {"taskId": task_id, "subject": f"todo {task_id}"}
+            for task_id in self.completed_task_ids[start:start + size]
+        ]
+        return {
+            "result": {"hasMore": start + size < len(self.completed_task_ids), "todoCards": cards},
+            "success": True,
+        }
 
     def mark_todo_task_done(self, task_id, *, done=True):
         if self.done_error is not None:
@@ -227,7 +242,7 @@ def test_unknown_business_task_create_with_known_id_settles_after_provider_readb
     assert store.get_business_task_todo_sync_outbox(claimed["id"])["status"] == "unknown"
     dws.get_errors.clear()
 
-    pull_dingtalk_todo_statuses(store, dws, now="2026-06-27 11:00:00")
+    assert reconcile_unknown_business_task_todo_creates(store, dws) == 1
 
     link = store.get_active_business_task_dingtalk_link(task_id)
     assert link is not None and link["status"] == "active"
@@ -353,7 +368,7 @@ def test_completed_business_task_sync_marks_linked_external_todo_done(tmp_path):
     assert link is None
 
 
-def test_pull_external_todo_done_closes_only_its_business_task(tmp_path):
+def test_completion_scan_closes_only_the_listed_business_task(tmp_path):
     store = _store(tmp_path)
     first = _formal_business_task(store)
     sibling = _formal_business_task(store, title="Separate quote")
@@ -361,9 +376,9 @@ def test_pull_external_todo_done_closes_only_its_business_task(tmp_path):
         business_task_id=first, dingtalk_task_id="dt-task-1", status="active"
     )
     dws = FakeTodoDws()
-    dws.get_payloads["dt-task-1"] = {"id": "dt-task-1", "done": True}
+    dws.completed_task_ids = ["dt-unrelated", "dt-task-1"]
 
-    closed = pull_dingtalk_todo_statuses(
+    closed = scan_completed_dingtalk_todos(
         store, dws, now="2026-06-29 01:00:00"
     )
 
@@ -1102,7 +1117,7 @@ def test_maybe_create_dingtalk_todo_prefers_active_link_over_failed_recovery(
     assert store.get_work_todo_dingtalk_link(active_link_id).status == "active"
 
 
-def test_pull_done_dingtalk_todo_closes_internal_todo(tmp_path):
+def test_completion_scan_closes_internal_todo(tmp_path):
     store = _store(tmp_path)
     project_id, todo_id = _project_and_todo(store)
     follow_up_id = store.create_follow_up_draft(
@@ -1126,15 +1141,16 @@ def test_pull_done_dingtalk_todo_closes_internal_todo(tmp_path):
         status="active",
     )
     dws = FakeTodoDws()
-    dws.get_payloads["dt-task-1"] = {"id": "dt-task-1", "done": True}
+    dws.completed_task_ids = ["dt-task-1"]
 
-    updated = pull_dingtalk_todo_statuses(
+    updated = scan_completed_dingtalk_todos(
         store,
         dws,
         now="2026-06-27 11:00:00",
     )
 
     assert updated == 1
+    assert dws.get_calls == []
     todo = store.get_work_todo(todo_id)
     assert todo.status == "done"
     assert "dingtalk_todo:dt-task-1" in todo.completion_evidence_json
@@ -1147,7 +1163,7 @@ def test_pull_done_dingtalk_todo_closes_internal_todo(tmp_path):
     assert check["reason"] == "DingTalk Todo marked done by owner"
 
 
-def test_pull_done_dingtalk_todo_closes_from_detail_model_done(tmp_path):
+def test_completion_scan_pages_until_the_linked_todo_is_found(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)
     link_id = store.create_work_todo_dingtalk_link(
@@ -1160,11 +1176,11 @@ def test_pull_done_dingtalk_todo_closes_from_detail_model_done(tmp_path):
         status="active",
     )
     dws = FakeTodoDws()
-    dws.get_payloads["dt-task-1"] = {
-        "result": {"todoDetailModel": {"taskId": "dt-task-1", "done": True}}
-    }
+    dws.completed_task_ids = [f"dt-other-{index}" for index in range(25)] + [
+        "dt-task-1"
+    ] + [f"dt-later-{index}" for index in range(40)]
 
-    updated = pull_dingtalk_todo_statuses(
+    updated = scan_completed_dingtalk_todos(
         store,
         dws,
         now="2026-06-27 11:00:00",
@@ -1173,9 +1189,33 @@ def test_pull_done_dingtalk_todo_closes_from_detail_model_done(tmp_path):
     assert updated == 1
     assert store.get_work_todo(todo_id).status == "done"
     assert store.get_work_todo_dingtalk_link(link_id).status == "done"
+    # Stops once no active link is left to match, instead of reading every page.
+    assert [call["page"] for call in dws.list_calls] == [1, 2]
 
 
-def test_pull_dingtalk_todo_skips_cancelled_backfill_link(tmp_path):
+def test_completion_scan_leaves_open_todo_that_dingtalk_does_not_list(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+    )
+    dws = FakeTodoDws()
+    dws.completed_task_ids = ["dt-other-1"]
+
+    assert scan_completed_dingtalk_todos(store, dws, now="2026-06-27 11:00:00") == 0
+
+    assert store.get_work_todo(todo_id).status != "done"
+    assert store.get_work_todo_dingtalk_link(link_id).status == "active"
+    assert [call["page"] for call in dws.list_calls] == [1]
+
+
+def test_completion_scan_skips_cancelled_backfill_link(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(
         store,
@@ -1196,9 +1236,9 @@ def test_pull_dingtalk_todo_skips_cancelled_backfill_link(tmp_path):
         ),
     )
     dws = FakeTodoDws()
-    dws.get_payloads["dt-task-1"] = {"id": "dt-task-1", "done": True}
+    dws.completed_task_ids = ["dt-task-1"]
 
-    updated = pull_dingtalk_todo_statuses(
+    updated = scan_completed_dingtalk_todos(
         store,
         dws,
         now="2026-06-27 11:00:00",
@@ -1208,7 +1248,7 @@ def test_pull_dingtalk_todo_skips_cancelled_backfill_link(tmp_path):
     link = store.get_work_todo_dingtalk_link(link_id)
 
     assert updated == 0
-    assert dws.get_calls == []
+    assert dws.list_calls == []
     assert todo.status == "cancelled"
     assert todo.blocker == "routine HR offer-flow step"
     assert link.status == "cancelled"

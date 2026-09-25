@@ -1520,6 +1520,25 @@ class DwsClient:
             "json",
         ]
 
+    def build_completed_todo_list_command(self, *, page: int, size: int) -> list[str]:
+        """Completed DingTalk TODOs Derek created: the service creates them as him."""
+        return [
+            self.dws_bin,
+            "todo",
+            "task",
+            "list",
+            "--status",
+            "true",
+            "--role-types",
+            "creator",
+            "--page",
+            str(int(page)),
+            "--size",
+            str(int(size)),
+            "--format",
+            "json",
+        ]
+
     def build_todo_done_command(self, task_id: str, *, done: bool) -> list[str]:
         if not task_id.strip():
             raise ValueError("DingTalk todo task_id is required")
@@ -2805,6 +2824,9 @@ class DwsClient:
         if not isinstance(payload, dict):
             raise DwsError("invalid todo create response")
         return payload
+
+    def list_completed_todo_tasks(self, *, page: int = 1, size: int = 20) -> dict[str, Any]:
+        return self.run_json(self.build_completed_todo_list_command(page=page, size=size))
 
     def get_todo_task(self, task_id: str) -> dict[str, Any]:
         payload = self.run_json(self.build_todo_get_command(task_id))

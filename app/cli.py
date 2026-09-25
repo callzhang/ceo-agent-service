@@ -114,8 +114,9 @@ from app.task_owner_backfill import (
 from app.todo_sync import (
     dispatch_claimed_business_task_todo_sync_outbox,
     dispatch_claimed_task_todo_sync_outbox,
-    pull_dingtalk_todo_statuses,
+    reconcile_unknown_business_task_todo_creates,
     retry_failed_dingtalk_todo_links,
+    scan_completed_dingtalk_todos,
 )
 from app.work_profile import (
     build_initial_profile,
@@ -1012,7 +1013,8 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
                 recovery=True,
                 max_tasks=settings.max_batches,
             )
-        return f"recover-recent-messages queued={queued}"
+        closed = scan_completed_dingtalk_todos_command(settings)
+        return f"recover-recent-messages queued={queued} dingtalk_todos_closed={closed}"
 
     return ServiceCommandRegistry(
         {
@@ -2685,6 +2687,29 @@ def process_follow_ups_command(
     return sent
 
 
+def scan_completed_dingtalk_todos_command(
+    settings: WorkerSettings, *, dws: DwsClient | None = None
+) -> int:
+    """Close the Tasks and TODOs whose DingTalk TODO is now completed.
+
+    Runs inside 补查遗漏的钉钉消息和日历更新: a completed TODO is new
+    information like a missed message, not a separate completion check.
+    """
+    store = AutoReplyStore(settings.db_path)
+    if dws is None:
+        dws = DwsClient(
+            ding_robot_code=settings.ding_robot_code,
+            ding_robot_name=settings.ding_robot_name,
+            ding_receiver_user_id=settings.ding_receiver_user_id,
+        )
+    reconcile_unknown_business_task_todo_creates(store, dws)
+    return scan_completed_dingtalk_todos(
+        store,
+        dws,
+        now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+    )
+
+
 def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     sources = scan_task_sources_command(settings)
     oa_approvals = scan_oa_approvals_command(settings)
@@ -2695,11 +2720,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         ding_robot_name=settings.ding_robot_name,
         ding_receiver_user_id=settings.ding_receiver_user_id,
     )
-    dingtalk_todos_closed = pull_dingtalk_todo_statuses(
-        AutoReplyStore(settings.db_path),
-        dws,
-        now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-    )
+    dingtalk_todos_closed = scan_completed_dingtalk_todos_command(settings, dws=dws)
     dingtalk_todos_recovered = retry_failed_dingtalk_todo_links(
         AutoReplyStore(settings.db_path),
         dws,

@@ -573,14 +573,22 @@ def maybe_create_dingtalk_todo(
     )
 
 
-def pull_dingtalk_todo_statuses(
+#: How far back the completion scan looks each run, in list pages of 20.
+DINGTALK_COMPLETION_SCAN_PAGES = 30
+DINGTALK_COMPLETION_SCAN_PAGE_SIZE = 20
+
+
+def reconcile_unknown_business_task_todo_creates(
     store: AutoReplyStore,
     dws: Any,
     *,
-    now: str,
     limit: int = 100,
 ) -> int:
-    closed_count = 0
+    """Settle TODO creates whose outcome was unknown, from their saved receipt.
+
+    Delivery bookkeeping for the TODO create outbox, not a completion check.
+    """
+    settled = 0
     for pending in store.list_unknown_business_task_todo_creates_with_receipts(limit=limit):
         task_id = str(pending["dingtalk_task_id"])
         try:
@@ -591,67 +599,98 @@ def pull_dingtalk_todo_statuses(
                 outbox_id=int(pending["outbox_id"]),
                 provider_readback_json=json.dumps(readback, ensure_ascii=False),
             )
+            settled += 1
         except (DwsError, RuntimeError, ValueError) as exc:
             store.update_business_task_dingtalk_link(
                 int(pending["link_id"]), last_error=str(exc)
             )
-    links = store.list_work_todo_dingtalk_links(statuses=("active",), limit=limit)
-    for link in links:
-        task_id = link.dingtalk_task_id.strip()
-        if not task_id:
-            store.update_work_todo_dingtalk_link(
-                link.id,
-                last_pull_at=now,
-                last_error="active DingTalk todo link has no task id",
-            )
-            continue
-        try:
-            payload = dws.get_todo_task(task_id)
-            done = _payload_done(payload)
-            store.update_work_todo_dingtalk_link(
-                link.id,
-                last_dingtalk_done=done,
-                last_dingtalk_payload_json=json.dumps(payload, ensure_ascii=False),
-                last_pull_at=now,
-                last_error="",
-            )
-            if done:
+    return settled
+
+
+def scan_completed_dingtalk_todos(
+    store: AutoReplyStore,
+    dws: Any,
+    *,
+    now: str,
+    pages: int = DINGTALK_COMPLETION_SCAN_PAGES,
+) -> int:
+    """Close linked TODOs and Tasks that DingTalk now lists as completed.
+
+    Derek, 2026-09-25: completion is new information, not a separate check.
+    The old pull read every active link one by one (660 of them) and only ran
+    from the manually started daily maintenance, so the 20 most recent
+    completed TODOs Derek created were all still open here. This lists
+    completed TODOs instead -- one query per page -- and closes what matches.
+    """
+    work_links = {
+        link.dingtalk_task_id.strip(): link
+        for link in store.list_work_todo_dingtalk_links(statuses=("active",), limit=100000)
+        if link.dingtalk_task_id.strip()
+    }
+    business_links = {
+        str(link["dingtalk_task_id"] or "").strip(): link
+        for link in store.list_business_task_dingtalk_links(statuses=("active",), limit=100000)
+        if str(link["dingtalk_task_id"] or "").strip()
+    }
+    if not work_links and not business_links:
+        return 0
+    closed = 0
+    for page in range(1, max(1, int(pages)) + 1):
+        payload = dws.list_completed_todo_tasks(
+            page=page, size=DINGTALK_COMPLETION_SCAN_PAGE_SIZE
+        )
+        items = _completed_todo_items(payload)
+        for item in items:
+            task_id = str(item.get("taskId") or item.get("id") or "").strip()
+            if task_id in work_links:
+                link = work_links.pop(task_id)
+                store.update_work_todo_dingtalk_link(
+                    link.id,
+                    last_dingtalk_done=True,
+                    last_dingtalk_payload_json=json.dumps(item, ensure_ascii=False),
+                    last_pull_at=now,
+                    last_error="",
+                )
                 if _close_internal_todo_from_dingtalk(store, link, task_id, now):
-                    closed_count += 1
+                    closed += 1
                 store.update_work_todo_dingtalk_link(link.id, status="done")
-        except (DwsError, RuntimeError) as exc:
-            store.update_work_todo_dingtalk_link(link.id, last_error=str(exc))
-    for link in store.list_business_task_dingtalk_links(statuses=("active",), limit=limit):
-        task_id = str(link["dingtalk_task_id"] or "").strip()
-        if not task_id:
-            store.update_business_task_dingtalk_link(
-                link["id"], last_pull_at=now,
-                last_error="active DingTalk todo link has no task id",
-            )
-            continue
-        try:
-            payload = dws.get_todo_task(task_id)
-            done = _payload_done(payload)
-            store.update_business_task_dingtalk_link(
-                link["id"], last_dingtalk_done=done,
-                last_dingtalk_payload_json=json.dumps(payload, ensure_ascii=False),
-                last_pull_at=now, last_error="",
-            )
-            if done:
+            elif task_id in business_links:
+                link = business_links.pop(task_id)
+                store.update_business_task_dingtalk_link(
+                    link["id"], last_dingtalk_done=True,
+                    last_dingtalk_payload_json=json.dumps(item, ensure_ascii=False),
+                    last_pull_at=now, last_error="",
+                )
                 if complete_business_task_from_external_todo(
                     store, business_task_id=int(link["business_task_id"]),
                     evidence={
                         "source": f"dingtalk_todo:{task_id}",
                         "reason": "DingTalk TODO marked done",
-                        "description": payload,
+                        "description": item,
                         "checked_at": now,
                     },
                 ):
-                    closed_count += 1
+                    closed += 1
                 store.update_business_task_dingtalk_link(link["id"], status="done")
-        except (DwsError, RuntimeError) as exc:
-            store.update_business_task_dingtalk_link(link["id"], last_error=str(exc))
-    return closed_count
+        if len(items) < DINGTALK_COMPLETION_SCAN_PAGE_SIZE or not (work_links or business_links):
+            break
+    return closed
+
+
+def _completed_todo_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("result", "data", "items", "list", "todoCards", "tasks"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            nested = _completed_todo_items(value)
+            if nested:
+                return nested
+    return []
 
 
 def retry_failed_dingtalk_todo_links(

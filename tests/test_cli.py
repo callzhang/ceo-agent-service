@@ -1584,9 +1584,9 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(cli, "DwsClient", lambda **_: FakeDwsClient())
     monkeypatch.setattr(
         cli,
-        "pull_dingtalk_todo_statuses",
-        lambda store, dws, now: calls.append(
-            ("dingtalk_todo_pull", dws.__class__.__name__)
+        "scan_completed_dingtalk_todos_command",
+        lambda settings, dws=None: calls.append(
+            ("dingtalk_todo_scan", dws.__class__.__name__)
         )
         or 4,
         raising=False,
@@ -1619,7 +1619,7 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         ("oa-scan", tmp_path / "worker.sqlite3"),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
-        ("dingtalk_todo_pull", "FakeDwsClient"),
+        ("dingtalk_todo_scan", "FakeDwsClient"),
         ("dingtalk_todo_retry", "FakeDwsClient"),
         ("work", tmp_path / "worker.sqlite3"),
         ("follow", tmp_path / "worker.sqlite3", False),
@@ -1708,9 +1708,9 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
     monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
     monkeypatch.setattr(
         cli,
-        "pull_dingtalk_todo_statuses",
-        lambda store, dws, now: calls.append(
-            ("dingtalk_todo_pull", dws.__class__.__name__)
+        "scan_completed_dingtalk_todos_command",
+        lambda settings, dws=None: calls.append(
+            ("dingtalk_todo_scan", dws.__class__.__name__)
         )
         or 4,
         raising=False,
@@ -1731,7 +1731,7 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
         ("oa-scan", db_path),
         ("work", db_path),
         ("okr", db_path),
-        ("dingtalk_todo_pull", "FakeDwsClient"),
+        ("dingtalk_todo_scan", "FakeDwsClient"),
         ("dingtalk_todo_retry", "FakeDwsClient"),
         ("work", db_path),
         ("follow", db_path, False),
@@ -5666,6 +5666,7 @@ def test_dingtalk_message_and_recovery_commands_never_run_concurrently(
             events.append(f"end:{label}")
             return 0
 
+    monkeypatch.setattr(cli, "scan_completed_dingtalk_todos_command", lambda settings: 0)
     store = AutoReplyStore(tmp_path / "lock.sqlite3")
     registry = cli._service_command_registry(
         store, Worker(), SimpleNamespace(max_batches=1)
@@ -5687,6 +5688,34 @@ def test_dingtalk_message_and_recovery_commands_never_run_concurrently(
     recovery.join(timeout=5)
 
     assert events == ["start:fast", "end:fast", "start:recovery", "end:recovery"]
+
+
+def test_recover_recent_messages_service_command_also_scans_completed_todos(
+    tmp_path, monkeypatch
+):
+    # Derek, 2026-09-25: a TODO completed in DingTalk is new information, read
+    # by the same scheduled task that picks up missed messages.
+    events: list[str] = []
+
+    class Worker:
+        def produce_once(self, max_tasks=None, *, recovery=False, calendar_only=None):
+            events.append(f"produce:recovery={recovery}")
+            return 2
+
+    settings = SimpleNamespace(max_batches=1)
+    monkeypatch.setattr(
+        cli,
+        "scan_completed_dingtalk_todos_command",
+        lambda received: events.append(f"scan:{received is settings}") or 3,
+    )
+    registry = cli._service_command_registry(
+        AutoReplyStore(tmp_path / "scan.sqlite3"), Worker(), settings
+    )
+
+    assert registry.run("recover-recent-messages") == (
+        "recover-recent-messages queued=2 dingtalk_todos_closed=3"
+    )
+    assert events == ["produce:recovery=True", "scan:True"]
 
 
 def test_consume_once_command_calls_worker_consume_once(monkeypatch, tmp_path):
