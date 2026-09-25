@@ -133,7 +133,7 @@ class ServiceMessageSender:
         conversation: Any,
         trigger: Any,
     ) -> SendReceipt:
-        """Dispatch a persisted reply through the native DingTalk reply path."""
+        """Dispatch a persisted reply: a Markdown message quoting the trigger."""
         self._require_persisted_message(message, channel="dingtalk")
         if self.dingtalk is None:
             raise RuntimeError("DingTalk adapter is required")

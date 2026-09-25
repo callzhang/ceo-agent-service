@@ -2327,8 +2327,7 @@ def test_reply_message_command_shape():
     ]
 
 
-def test_send_reply_to_trigger_prefers_native_reply_over_group_at_send():
-    client = RecordingDwsClient({"success": True})
+def _group_reply_fixture():
     conversation = DingTalkConversation(
         open_conversation_id="cid-1",
         title="CEO-2 管理群",
@@ -2345,6 +2344,18 @@ def test_send_reply_to_trigger_prefers_native_reply_over_group_at_send():
         create_time="2026-06-09 09:00:00",
         content="@Derek Zen(磊哥) 看一下",
     )
+    return conversation, trigger
+
+
+def test_a_group_reply_is_a_markdown_message_that_quotes_the_trigger():
+    """Derek, 2026-09-24: every outbound message is Markdown-structured.
+
+    A DingTalk quote reply renders as plain text, so a reply is a Markdown
+    message quoting the first 50 characters of the original and
+    @-mentioning the asker.
+    """
+    client = RecordingDwsClient({"success": True})
+    conversation, trigger = _group_reply_fixture()
 
     client.send_reply_to_trigger(
         conversation,
@@ -2354,65 +2365,60 @@ def test_send_reply_to_trigger_prefers_native_reply_over_group_at_send():
         at_open_dingtalk_names=["ET"],
     )
 
-    assert client.commands == [
-        [
-            "dws",
-            "chat",
-            "+messages-reply",
-            "--group",
-            "cid-1",
-            "--ref-msg-id",
-            "msg-1",
-            "--ref-sender",
-            "open-lily",
-            "--content",
-            " @ET(张毅倜) 先出方案。",
-            "--format",
-            "json",
-            "--yes",
-        ]
-    ]
+    (command,) = client.commands
+    assert command[:5] == ["dws", "chat", "+messages-send", "--as", "user"]
+    assert command[command.index("--group") + 1] == "cid-1"
+    body = command[command.index("--markdown") + 1]
+    assert body.startswith("> Riley: @Derek Zen(磊哥) 看一下\n\n")
+    assert "<@open-lily>" in body and "<@open-et>" in body
+    assert "+messages-reply" not in command
 
 
-def test_send_reply_to_trigger_chunks_splits_long_text_and_extracts_recall_key():
-    client = SequenceRecordingDwsClient(
-        [
-            {"result": {"processQueryKey": "recall-1"}},
-            {"result": {"processQueryKey": "recall-2"}},
-        ]
-    )
+def test_a_single_chat_reply_goes_to_the_asker_with_the_quote():
+    client = RecordingDwsClient({"success": True})
     conversation = DingTalkConversation(
-        open_conversation_id="cid-1",
-        title="CEO-2 管理群",
-        single_chat=False,
+        open_conversation_id="cid-dm",
+        title="Riley",
+        single_chat=True,
         unread_point=1,
     )
     trigger = DingTalkMessage(
-        open_conversation_id="cid-1",
+        open_conversation_id="cid-dm",
         open_message_id="msg-1",
-        conversation_title="CEO-2 管理群",
-        single_chat=False,
+        conversation_title="Riley",
+        single_chat=True,
         sender_name="Riley",
         sender_open_dingtalk_id="open-lily",
         create_time="2026-06-09 09:00:00",
-        content="@Derek Zen(磊哥) 看一下",
+        content="这个" * 40,
     )
+
+    client.send_reply_to_trigger(conversation, trigger, "**结论**：先出方案。")
+
+    (command,) = client.commands
+    assert command[command.index("--open-dingtalk-id") + 1] == "open-lily"
+    body = command[command.index("--markdown") + 1]
+    assert body.startswith("> Riley: " + ("这个" * 25) + "…\n\n")
+    assert body.endswith("**结论**：先出方案。")
+
+
+def test_send_reply_to_trigger_chunks_quotes_only_the_first_chunk():
+    client = SequenceRecordingDwsClient([{"success": True}, {"success": True}])
+    conversation, trigger = _group_reply_fixture()
 
     result = client.send_reply_to_trigger_chunks(
         conversation,
         trigger,
         "第一段" * 500 + "\n\n" + "第二段" * 500,
-        at_users=["user-lily"],
     )
 
     assert len(result["chunks"]) == 2
-    assert result["chunks"][0]["text"].startswith("【1/2】")
-    assert DwsClient.extract_recall_key(result) == "recall-1"
-    first_text = client.commands[0][client.commands[0].index("--content") + 1]
-    second_text = client.commands[1][client.commands[1].index("--content") + 1]
-    assert first_text.startswith("【1/2】")
-    assert second_text.startswith("【2/2】")
-    assert "--at-user-ids" not in client.commands[1]
+    first = client.commands[0][client.commands[0].index("--markdown") + 1]
+    second = client.commands[1][client.commands[1].index("--markdown") + 1]
+    assert first.startswith("> Riley: ")
+    assert "【1/2】" in first
+    assert not second.startswith(">")
+    assert "【2/2】" in second
 
 
 def test_send_message_title_uses_reply_body_after_fake_quote():
@@ -6742,3 +6748,17 @@ def test_a_business_error_carries_the_provider_message_and_server_key(
     assert raised.value.business_message == "no permission"
     assert raised.value.server_key == "minutes"
     assert raised.value.needs_authorization is False
+
+
+def test_the_push_title_of_a_markdown_message_has_no_markdown_markers():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id=None,
+        text="> Riley: 看一下\n\n## 结论\n\n**先出方案**。\n\n- 张三：周五前",
+        user_id="user-1",
+    )
+
+    title = command[command.index("--title") + 1]
+    assert "**" not in title and "##" not in title and "- " not in title
+    assert title.startswith("结论 先出方案")
