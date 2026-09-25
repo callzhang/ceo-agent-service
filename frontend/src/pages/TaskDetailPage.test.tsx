@@ -76,4 +76,16 @@ describe("TaskDetailPage", () => {
     expect(await screen.findByRole("button", { name: "恢复 整理访谈问题清单" })).toBeInTheDocument();
     expect(screen.getByText("已取消")).toBeInTheDocument();
   });
+
+  it("treats a candidate without an owner as ordinary, not as something missing", async () => {
+    getBusinessTaskDetail.mockResolvedValue({ item: {
+      summary: { id: "43", title: "整理访谈问题清单", stage: "candidate", status: "open", commitment_status: "none", owner: "", deadline_at: "", business_relevance: "unknown", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/43" },
+      description: "", missing_evidence: ["明确任务负责人"], evidence: [], date_evidence: [], events: [], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [],
+    }, meta: { snapshot_at: "2026-09-25" } });
+    render(<MemoryRouter><TaskDetailPage taskId="43" /></MemoryRouter>);
+    expect(await screen.findByText("转为正式任务还需")).toBeInTheDocument();
+    expect(screen.getByText("未指定")).toBeInTheDocument();
+    expect(screen.queryByText("还缺依据")).not.toBeInTheDocument();
+    expect(screen.queryByText(/尚无明确负责人|负责人未明确/)).not.toBeInTheDocument();
+  });
 });

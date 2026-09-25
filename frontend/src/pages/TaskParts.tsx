@@ -22,7 +22,7 @@ export function DetailSection({ title, count, open = true, children }: { title: 
 export function LinkedTaskList({ tasks }: { tasks: BusinessTaskSummary[] }) {
   return <ul className="business-linked-list">{tasks.map((task) => {
     const facts = [
-      task.owner || "负责人未明确",
+      task.owner,
       task.status !== "open" ? labelOf(taskStatusLabels, task.status) : "",
       commitmentText(task.status, task.commitment_status),
       task.deadline_at ? `截止 ${task.deadline_at}` : "",

@@ -124,7 +124,7 @@ export function TaskDetailPage({ taskId }: { taskId: string }) {
     <div className="task-domain-page business-detail-page">
       <section className="console-card business-detail-section"><div className="business-detail-badges"><span className={`business-stage ${task.stage}`}>{task.stage === "candidate" ? "候选任务" : "正式任务"}</span><span>{labelOf(taskStatusLabels, task.status)}</span>{labelOf(commitmentLabels, task.commitment_status) !== labelOf(taskStatusLabels, task.status) && <span>{labelOf(commitmentLabels, task.commitment_status)}</span>}<span className="business-detail-badge-actions"><CandidateAction task={task} showLabel onDone={() => setReloadKey((key) => key + 1)} /></span></div>
         {detail.description && <p className="business-detail-description">{detail.description}</p>}
-        <dl className="business-detail-facts"><div><dt>负责人</dt><dd>{task.owner || "尚无明确负责人"}</dd></div><div><dt>截止日期</dt><dd>{task.deadline_at || "未明确"}</dd></div><div><dt>业务主线</dt><dd>{task.anchor_labels.join(" · ") || "尚未确认"}</dd></div>{missing.length > 0 && <div><dt>还缺依据</dt><dd>{missing.join("；")}</dd></div>}</dl>
+        <dl className="business-detail-facts"><div><dt>负责人</dt><dd>{task.owner || "未指定"}</dd></div><div><dt>截止日期</dt><dd>{task.deadline_at || "未明确"}</dd></div><div><dt>业务主线</dt><dd>{task.anchor_labels.join(" · ") || "尚未确认"}</dd></div>{missing.length > 0 && <div><dt>{task.stage === "candidate" ? "转为正式任务还需" : "还缺依据"}</dt><dd>{missing.join("；")}</dd></div>}</dl>
       </section>
       <FollowUpSection taskId={taskId} rows={detail.follow_ups || []} onChanged={() => setReloadKey((key) => key + 1)} />
       <SourceRecordList title="来源证据" rows={detail.evidence || []} />
