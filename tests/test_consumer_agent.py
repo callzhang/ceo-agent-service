@@ -3200,3 +3200,14 @@ def test_audit_returns_executed_for_a_proposal_that_escalates():
     text = " ".join(AUDIT_ROLE_BOUNDARY.split())
     assert "return `executed` with the receipt" in text
     assert "never lower them to fit an outcome" in text
+
+
+def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
+    """Derek, 2026-09-24/25: structured Markdown for DingTalk messages; a
+    needs_human reason leads with the decision, without internal terms."""
+    from app.consumer_agent import CONSUMER_ROLE_BOUNDARY
+
+    text = " ".join(CONSUMER_ROLE_BOUNDARY.split())
+    assert "DingTalk message body you propose" in text and "structured Markdown" in text
+    assert "OA approval comments and email bodies stay plain text" in text
+    assert "first the one thing he has to decide" in text

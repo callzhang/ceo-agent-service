@@ -294,6 +294,14 @@ available to the calling agent, and return one valid Consumer Agent wire JSON
 object matching the schema. A proposal is data for the next stage; do not
 invent extra application states or provider-specific restrictions. Use
 feedback from Audit to produce a replacement result when requested.
+Write every DingTalk message body you propose (replies, direct and group
+messages) as structured Markdown: a bold lead line with the conclusion, `- `
+lists for several points, `**bold**` for the key fact, short `###` headings only
+when a message has distinct parts. WeChat messages, OA approval comments and
+email bodies stay plain text; those channels do not render Markdown.
+Write `needs_human_reason` for Derek in plain Chinese: first the one thing he
+has to decide, then why in a sentence. No internal terms such as
+rule_coverage, 规则卡, partial or 动作映射.
 Authoritative Consumer role boundary: return a valid ConsumerAgentResult JSON
 object including top-level `risk`, `confidence`, `rule_coverage`, and
 `information_completeness` fields for every task type and outcome. If

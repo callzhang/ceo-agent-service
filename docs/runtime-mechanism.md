@@ -705,7 +705,7 @@ Derek，2026-09-18：外发消息的正文必须是服务为该动作准备好�
 的最终正文，业务模块直接调用原始发送方法会被架构测试拒绝。
 
 DingTalk provider 将该最终正文通过 `dws chat +messages-send --as user --markdown` 发送，使 Markdown
-标题、列表和反馈链接由钉钉按 Markdown 渲染。回复触发消息用钉钉原生引用回复（`+messages-reply --content`），正文同样按 Markdown 渲染：2026-09-25 在Derek 自己的会话实测，标题、加粗、行内代码、无序与有序列表都正常显示，相邻行的列表项也分行——DWS 帮助里「普通引用按纯文本解释」与实际不符，读回接口把列表拼成一行只是读回的呈现。推送横幅标题去掉 Markdown 标记。群聊、单聊仍使用稳定的 conversation/user/openDingTalk ID；
+标题、列表和反馈链接由钉钉按 Markdown 渲染。回复触发消息用钉钉原生引用回复（`+messages-reply --content`），正文同样按 Markdown 渲染：2026-09-25 在Derek 自己的会话实测，标题、加粗、行内代码、无序与有序列表都正常显示，相邻行的列表项也分行——DWS 帮助里「普通引用按纯文本解释」与实际不符，读回接口把列表拼成一行只是读回的呈现。推送横幅标题去掉 Markdown 标记。Consumer 起草的钉钉消息正文一律写成结构化 Markdown（加粗结论行、`- ` 列表、关键事实加粗，分段时用短`###` 小标题）；微信、OA 审批评论和邮件正文保持纯文本。`needs_human_reason` 用中文大白话先写 Derek 要决定的那一件事，再用一句话说原因，不出现 rule_coverage、规则卡、partial、动作映射等内部词（Derek 2026-09-24/25）。群聊、单聊仍使用稳定的 conversation/user/openDingTalk ID；
 delivery UUID、结构化群 @ 及 `ServiceMessageSender` 准备的签名与反馈链接保持原样随正文发送。
 
 Consumer 修订版可以原样复用上一 revision 中已持久化的服务反馈链接。敏感值校验只会对配置域名、
