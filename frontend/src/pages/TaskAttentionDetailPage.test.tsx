@@ -17,6 +17,8 @@ describe("TaskAttentionDetailPage", () => {
     expect(await screen.findByRole("heading", { name: "美国客户报价" })).toBeInTheDocument();
     expect(screen.getByText("当前无需处理")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "交付报价首版" })).toHaveAttribute("href", "/tasks/item/42");
-    expect(screen.getByText("opened")).toBeInTheDocument();
+    expect(screen.getByText("开始关注")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "你的动作" })).toHaveTextContent("当前无需处理");
+    expect(screen.getByRole("navigation", { name: "当前位置" })).toHaveTextContent("Tasks需关注关注事项");
   });
 });

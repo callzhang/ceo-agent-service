@@ -49,8 +49,10 @@ describe("TasksPage", () => {
     api.tasks.mockResolvedValue({ items: [routine, { ...routine, id: "10", title: "讨论拓展方案", stage: "candidate", detail_url: "/tasks/item/10" }], meta: { ...meta, total: 2 } });
     render(<MemoryRouter initialEntries={["/tasks?view=all"]}><TasksPage /></MemoryRouter>);
     expect(await screen.findByRole("link", { name: "整理办公室绿植" })).toHaveAttribute("href", "/tasks/item/9");
-    expect(screen.getByText("候选任务")).toBeInTheDocument();
-    expect(screen.getAllByText(/待处理 · 已接受/)).toHaveLength(2);
+    const rows = screen.getAllByRole("listitem");
+    expect(within(rows[1]).getByText("候选任务")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("负责人 Avery")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("已接受")).toBeInTheDocument();
     expect(screen.queryByText(/\bopen\b/)).not.toBeInTheDocument();
     expect(api.attention).not.toHaveBeenCalled();
   });
@@ -78,5 +80,54 @@ describe("TasksPage", () => {
     expect(screen.getByRole("navigation", { name: "项目线索分页" })).toHaveTextContent("1 / 2");
     await user.click(screen.getByRole("button", { name: "项目线索下一页" }));
     await waitFor(() => expect(api.projects).toHaveBeenLastCalledWith(expect.objectContaining({ candidate_page: 2 }), expect.anything()));
+  });
+
+  it("leaves out facts that carry no information, so a bare candidate is one line", async () => {
+    api.tasks.mockResolvedValue({ items: [{ ...routine, id: "10", title: "讨论拓展方案", stage: "candidate", owner: "", commitment_status: "none", detail_url: "/tasks/item/10" }], meta });
+    render(<MemoryRouter initialEntries={["/tasks?view=all"]}><TasksPage /></MemoryRouter>);
+    const row = (await screen.findByRole("link", { name: "讨论拓展方案" })).closest("li")!;
+    expect(row.querySelector(".business-task-meta")).toBeNull();
+    expect(row).not.toHaveTextContent("负责人未明确");
+    expect(row).not.toHaveTextContent("暂无业务主线关联");
+  });
+
+  it("filters 全部任务 by stage and status through the API and can clear them", async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={["/tasks?view=all"]}><TasksPage /></MemoryRouter>);
+    await screen.findByRole("link", { name: "整理办公室绿植" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "任务阶段" }), "candidate");
+    await waitFor(() => expect(api.tasks).toHaveBeenLastCalledWith(expect.objectContaining({ stage: "candidate" }), expect.anything()));
+    await user.selectOptions(screen.getByRole("combobox", { name: "任务状态" }), "done");
+    await waitFor(() => expect(api.tasks).toHaveBeenLastCalledWith(expect.objectContaining({ stage: "candidate", status: "done" }), expect.anything()));
+    api.tasks.mockResolvedValue({ items: [], meta: { ...meta, total: 0 } });
+    await user.selectOptions(screen.getByRole("combobox", { name: "任务状态" }), "waiting");
+    expect(await screen.findByText("没有符合条件的任务。")).toBeInTheDocument();
+    api.tasks.mockResolvedValue({ items: [routine], meta });
+    await user.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(await screen.findByRole("link", { name: "整理办公室绿植" })).toBeInTheDocument();
+    expect(api.tasks).toHaveBeenLastCalledWith(expect.objectContaining({ stage: "", status: "" }), expect.anything());
+  });
+
+  it("offers a way on from an empty 需关注, and never draws another tab's rows while the next tab loads", async () => {
+    const user = userEvent.setup();
+    api.attention.mockResolvedValue({ items: [], meta: { ...meta, total: 0 } });
+    let release: (value: unknown) => void = () => undefined;
+    api.tasks.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    render(<MemoryRouter initialEntries={["/tasks"]}><TasksPage /></MemoryRouter>);
+    expect(await screen.findByText("当前没有需要关注的事项。")).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "查看全部任务" }));
+    expect(await screen.findByRole("status", { name: "正在加载" })).toBeInTheDocument();
+    expect(screen.queryByText("当前没有需要关注的事项。")).not.toBeInTheDocument();
+    release({ items: [routine], meta });
+    expect(await screen.findByRole("link", { name: "整理办公室绿植" })).toBeInTheDocument();
+  });
+
+  it("folds project leads once official projects exist and shows the count", async () => {
+    const project = { id: "1", title: "美国市场拓展", registry_source: "经营会确认", canonical_anchor_id: 1, confirmed_task_count: 2, detail_url: "/tasks/project/1" };
+    api.projects.mockResolvedValue({ items: [project], candidates: [{ id: "4", title: "海外渠道拓展", reason: "待确认", status: "proposed", cluster_id: 2, provisional: true, confirmed_project_id: null }], candidate_meta: { ...meta, total: 1 }, meta });
+    render(<MemoryRouter initialEntries={["/tasks?view=projects"]}><TasksPage /></MemoryRouter>);
+    expect(await screen.findByRole("link", { name: "美国市场拓展" })).toBeInTheDocument();
+    expect(screen.getByText("待确认的项目线索").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("正式项目 1 个")).toBeInTheDocument();
   });
 });
