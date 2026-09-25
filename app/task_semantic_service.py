@@ -117,7 +117,7 @@ class PromoteCandidate:
     owner_user_id: str | None = None
     owner_name: str | None = None
     owner_evidence_json: str | None = None
-    reason: str = "Task now has formal evidence."
+    reason: str = "任务已有正式依据。"
     date_facts: tuple[TaskDateInput, ...] = ()
 
 
@@ -129,7 +129,7 @@ class ApplyAcceptance:
     acceptance_polarity: AcceptancePolarity = AcceptancePolarity.AMBIGUOUS
     acceptance_excerpt: str = ""
     referenced_signal_id: int | None = None
-    reason: str = "Task owner accepted the commitment."
+    reason: str = "负责人接受了这项承诺。"
     date_facts: tuple[TaskDateInput, ...] = ()
 
 
@@ -146,7 +146,7 @@ class UpdateBusinessTask:
     deadline_at: str | None = None
     status: BusinessTaskStatus | None = None
     business_relevance: BusinessRelevance | None = None
-    reason: str = "Task state changed."
+    reason: str = "任务状态发生变化。"
     date_facts: tuple[TaskDateInput, ...] = ()
 
 
@@ -156,7 +156,7 @@ class MergeBusinessTasks:
     target_task_id: int
     signal: SourceSignal
     identity_evidence: IdentityEvidence
-    reason: str = "Confirmed as the same deliverable."
+    reason: str = "确认为同一交付物。"
 
 
 @dataclass(frozen=True)
@@ -445,7 +445,7 @@ class TaskSemanticService:
                 "missing_evidence_json": command.missing_evidence_json,
             },
             evidence_role=BusinessEvidenceRole.DISCOVERY,
-            reason="Candidate task recorded from source evidence.",
+            reason="根据来源证据记录为候选任务。",
             date_facts=command.date_facts,
             _db=_db,
         )
@@ -497,7 +497,7 @@ class TaskSemanticService:
                 ),
             },
             evidence_role=self._formal_evidence_role(command.formality.basis),
-            reason="Formal task recorded from source evidence.",
+            reason="根据来源证据记录为正式任务。",
             date_facts=command.date_facts,
             _db=_db,
         )
@@ -850,7 +850,7 @@ class TaskSemanticService:
                 before_json=self._snapshot(task),
                 after_json=self._snapshot(after),
                 reason=(
-                    f"{command.reason} Prior owner acceptance reset on reassignment."
+                    f"{command.reason} 改派后，原负责人的接受已作废。"
                     if acceptance_reset else command.reason
                 ),
                 _db=db,

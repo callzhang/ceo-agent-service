@@ -867,14 +867,20 @@ def _task_summary_payload(store: Any, task: Any, anchors: dict[int, Any]) -> dic
 
 def business_task_list_response(store: Any, *, page: int, page_size: int,
                                 query: str = "", stage: str = "", status: str = "",
-                                business_relevance: str = "") -> ConsoleBusinessTaskListEnvelope:
+                                business_relevance: str = "", owner: str = "",
+                                sort: str = "updated") -> ConsoleBusinessTaskListEnvelope:
+    if owner not in ("", "assigned", "unassigned"):
+        raise ValueError(f"unknown owner filter: {owner}")
+    if sort not in ("updated", "created"):
+        raise ValueError(f"unknown sort: {sort}")
     needle = query.strip().casefold()
     tasks = [task for task in _all_business_tasks(store)
              if (not stage or task.stage.value == stage)
              and (not status or task.status.value == status)
+             and (not owner or bool(task.owner_name or task.owner_user_id) == (owner == "assigned"))
              and (not business_relevance or task.business_relevance.value == business_relevance)
              and (not needle or needle in f"{task.title} {task.description} {task.owner_name}".casefold())]
-    tasks.sort(key=lambda task: (task.updated_at, task.id), reverse=True)
+    tasks.sort(key=lambda task: (task.created_at if sort == "created" else task.updated_at, task.id), reverse=True)
     selected, meta = _page(tasks, page=page, page_size=page_size)
     anchors = _anchors_by_id(store)
     return ConsoleBusinessTaskListEnvelope(

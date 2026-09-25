@@ -343,8 +343,12 @@ def register_console_routes(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),
         q: str = "", stage: str = "", status: str = "", business_relevance: str = "",
+        owner: str = "", sort: str = "updated",
     ):
-        return business_task_list_response(store_factory(), page=page, page_size=page_size, query=q, stage=stage, status=status, business_relevance=business_relevance)
+        try:
+            return business_task_list_response(store_factory(), page=page, page_size=page_size, query=q, stage=stage, status=status, business_relevance=business_relevance, owner=owner, sort=sort)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     @app.get("/api/console/tasks/projects", response_model=ConsoleBusinessProjectListEnvelope)
     def console_business_projects(

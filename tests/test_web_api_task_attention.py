@@ -76,3 +76,24 @@ def test_project_candidates_are_labeled_provisional_and_not_official(tmp_path):
         "status": "proposed", "cluster_id": cluster_id, "provisional": True,
         "confirmed_project_id": None,
     }]
+
+
+def test_task_list_filters_by_owner_and_sorts_by_creation_or_update(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    owned = store.create_business_task(title="有人负责", stage="candidate", owner_name="王明")
+    bare = store.create_business_task(title="无人负责", stage="candidate")
+    with store._immediate_write_transaction() as db:
+        db.execute("update business_tasks set created_at='2026-09-01 00:00:00', updated_at='2026-09-03 00:00:00' where id=?", (owned,))
+        db.execute("update business_tasks set created_at='2026-09-02 00:00:00', updated_at='2026-09-02 00:00:00' where id=?", (bare,))
+    with _client(tmp_path) as client:
+        def ids(query):
+            response = client.get(f"/api/console/tasks/all?{query}")
+            assert response.status_code == 200
+            return [row["id"] for row in response.json()["items"]]
+        assert ids("owner=assigned") == [owned]
+        assert ids("owner=unassigned") == [bare]
+        assert ids("") == [owned, bare]
+        assert ids("sort=updated") == [owned, bare]
+        assert ids("sort=created") == [bare, owned]
+        assert client.get("/api/console/tasks/all?owner=nobody").status_code == 400
+        assert client.get("/api/console/tasks/all?sort=title").status_code == 400
