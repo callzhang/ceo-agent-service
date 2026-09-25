@@ -999,7 +999,9 @@ def _normalize_result(value: object) -> EmailUnsubscribeAuditOperationResult:
             ),
             outcome=value.outcome.value,
             receipt_id="" if receipt is None else receipt.receipt_id,
-            evidence="" if receipt is None else receipt.evidence,
+            # A failure has no receipt; its evidence is what the unexpected
+            # exception said, so the task and History can show why it failed.
+            evidence=value.error_detail if receipt is None else receipt.evidence,
             result_text=value.result_text,
             observation_digest=value.observation_digest,
             started_at=value.started_at,

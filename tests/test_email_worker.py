@@ -6071,6 +6071,53 @@ def test_direct_unsubscribe_browser_timeout_does_not_loop_after_one_retry():
     ]
 
 
+def test_direct_unsubscribe_failure_detail_reaches_the_attempt_and_task():
+    module = _module()
+    task = SimpleNamespace(
+        id=93,
+        execution_generation="generation-93",
+        channel="email",
+        error="email_unsubscribe_browser_failed",
+        conversation_id="email-thread:93",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-action:unexpected-93",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    calls = []
+
+    class Store:
+        def record_reply_attempt(self, **kwargs):
+            calls.append(("attempt", kwargs["audit_summary"]))
+
+        def fail_reply_task(self, task_id, error, **kwargs):
+            calls.append(("fail", task_id, error))
+
+        def defer_reply_task(self, *args, **kwargs):
+            calls.append(("defer", args, kwargs))
+
+    module._finalize_direct_email_unsubscribe_task(
+        Store(),
+        task,
+        {
+            "status": "failed",
+            "outcome": "failed_browser",
+            "summary": "failed_browser",
+            "evidence": "ConnectionResetError: peer reset while loading [url]",
+            "error": {"code": "email_unsubscribe_browser_failed", "retryable": True},
+        },
+    )
+
+    assert calls == [
+        ("attempt", "failed_browser: ConnectionResetError: peer reset while loading [url]"),
+        (
+            "fail",
+            93,
+            "email_unsubscribe_browser_failed: ConnectionResetError: peer reset while loading [url]",
+        ),
+    ]
+
+
 def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     tmp_path, monkeypatch
 ):

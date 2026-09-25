@@ -1824,12 +1824,18 @@ def _finalize_direct_email_unsubscribe_task(
         else ""
     )
     retryable = bool(error.get("retryable")) if isinstance(error, Mapping) else False
+    failure_detail = ""
     if status == "done":
         send_status = "completed" if outcome == "done" else "skipped"
         task_error = ""
     else:
         send_status = "failed"
         task_error = error_code or outcome or "email_unsubscribe_failed"
+        # The redacted exception behind a fallback code (class and message),
+        # so the attempt and Attention say why, not only which bucket.
+        failure_detail = str(result.get("evidence") or "").strip()
+        if failure_detail:
+            task_error = f"{task_error}: {failure_detail}"
 
     store.record_reply_attempt(
         conversation_id=task.conversation_id,
@@ -1840,7 +1846,8 @@ def _finalize_direct_email_unsubscribe_task(
         action="direct_unsubscribe",
         sensitivity_kind="email",
         codex_reason=summary,
-        audit_summary=summary,
+        # History reads the attempt's summary; a failure carries its detail.
+        audit_summary=f"{summary}: {failure_detail}" if failure_detail else summary,
         send_status=send_status,
         channel="email",
     )

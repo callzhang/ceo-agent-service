@@ -36,6 +36,7 @@ from app.email_unsubscribe import (
     UnsubscribeTerminalReceipt,
     browser_failure_code,
     browser_failure_category,
+    browser_failure_detail,
     browser_failure_observation_fields,
     is_unoperable_page,
     make_unsubscribe_result,
@@ -207,6 +208,9 @@ def _failure(
         journal,
         error_code=browser_failure_code(exc),
         error_category=browser_failure_category(exc),
+        # An exception outside the modelled browser failures otherwise leaves
+        # only the fallback code behind (reply task 384835, 2026-09-25).
+        error_detail=browser_failure_detail(exc),
         # The same field a success uses for the page it read: a failure that
         # records nothing cannot be diagnosed later.
         **browser_failure_observation_fields(exc),

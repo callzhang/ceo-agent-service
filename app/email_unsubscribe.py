@@ -466,6 +466,36 @@ def _browser_failure_code(error: Exception) -> str:
     )
 
 
+MAX_BROWSER_FAILURE_DETAIL = 240
+_DETAIL_URL = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
+_DETAIL_SECRET_FIELD = re.compile(
+    r"(?i)\b(cookie|set-cookie|authorization|password|token|session|secret)\b\s*[:=]\s*\S+"
+)
+_DETAIL_TOKENISH = re.compile(r"[A-Za-z0-9_\-+/=]{32,}")
+
+
+def _browser_failure_detail(error: Exception) -> str:
+    """Name an unexpected exception so its failure can be diagnosed later.
+
+    Reply task 384835 (2026-09-25) failed twice as email_unsubscribe_browser_failed
+    with nothing recorded: the fallback code is all that survived. The class
+    name is always safe to keep; the message is flattened, stripped of URLs,
+    secret-looking fields and token-like strings, and cut to a fixed length.
+    """
+
+    if isinstance(error, UnsubscribeBrowserError):
+        return ""
+    message = " ".join(str(error).split())
+    message = _DETAIL_URL.sub("[url]", message)
+    message = _DETAIL_SECRET_FIELD.sub(lambda match: f"{match.group(1)}=[redacted]", message)
+    message = _DETAIL_TOKENISH.sub("[redacted]", message)
+    name = type(error).__name__
+    detail = f"{name}: {message}" if message else name
+    if len(detail) > MAX_BROWSER_FAILURE_DETAIL:
+        detail = detail[: MAX_BROWSER_FAILURE_DETAIL - 1] + "…"
+    return detail
+
+
 def _browser_failure_category(error: Exception) -> str:
     """Name the internal condition one browser failure came from.
 
@@ -1195,6 +1225,10 @@ class UnsubscribeExecutionResult:
     # Fixed internal category of the browser failure the code came from. It
     # never replaces the code, which other modules match on exactly.
     error_category: str = ""
+    # What an unexpected exception said: its class name and a bounded message
+    # with URLs and token-like strings removed. Empty for UnsubscribeBrowserError,
+    # whose category already names the condition.
+    error_detail: str = ""
     result_text: str = ""
     observation_digest: str = ""
     result_text_digest: str = ""
@@ -1211,6 +1245,8 @@ class UnsubscribeExecutionResult:
             UnsubscribeBrowserFailure
         ):
             raise ValueError("error_category must be a known browser failure")
+        if len(self.error_detail) > MAX_BROWSER_FAILURE_DETAIL or "://" in self.error_detail:
+            raise ValueError("error_detail must be bounded and carry no URL")
         if any(not isinstance(item, RedactedUnsubscribeStep) for item in self.journal):
             raise TypeError("journal must contain RedactedUnsubscribeStep")
         if (
@@ -1251,6 +1287,7 @@ class UnsubscribeExecutionResult:
             "receipt": asdict(self.receipt) if self.receipt is not None else None,
             "error_code": self.error_code,
             "error_category": self.error_category,
+            "error_detail": self.error_detail,
             "result_text": self.result_text,
             "observation_digest": self.observation_digest,
             "started_at": self.started_at,
@@ -3806,6 +3843,7 @@ def _result(
     receipt: UnsubscribeTerminalReceipt | None = None,
     error_code: str = "",
     error_category: str = "",
+    error_detail: str = "",
     result_text: str = "",
     observation_digest: str = "",
     result_text_digest: str = "",
@@ -3820,6 +3858,7 @@ def _result(
         receipt=receipt,
         error_code=error_code,
         error_category=error_category,
+        error_detail=error_detail,
         result_text=result_text,
         observation_digest=observation_digest,
         result_text_digest=result_text_digest,
@@ -4236,6 +4275,7 @@ class UnsubscribeExecutor:
                     else _browser_failure_code(exc)
                 ),
                 error_category=_browser_failure_category(exc),
+                error_detail=_browser_failure_detail(exc),
                 # The same field a success uses for the page it read. A failure
                 # that records nothing cannot be diagnosed later, and this one
                 # could not be: see _unreadable_page_observation.
@@ -4337,6 +4377,7 @@ class UnsubscribeExecutor:
                     else _browser_failure_code(exc)
                 ),
                 error_category=_browser_failure_category(exc),
+                error_detail=_browser_failure_detail(exc),
                 # The same field a success uses for the page it read. A failure
                 # that records nothing cannot be diagnosed later, and this one
                 # could not be: see _unreadable_page_observation.
@@ -4467,6 +4508,7 @@ class UnsubscribeExecutor:
                     journal,
                     error_code=_browser_failure_code(exc),
                     error_category=_browser_failure_category(exc),
+                    error_detail=_browser_failure_detail(exc),
                     **_browser_failure_observation_fields(exc),
                 )
             operation_step = RedactedUnsubscribeStep(
@@ -4562,5 +4604,6 @@ make_unsubscribe_result = _result
 terminal_unsubscribe_result = _terminal_result
 browser_failure_code = _browser_failure_code
 browser_failure_category = _browser_failure_category
+browser_failure_detail = _browser_failure_detail
 browser_failure_observation_fields = _browser_failure_observation_fields
 is_unoperable_page = _is_unoperable_page

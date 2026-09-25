@@ -642,6 +642,48 @@ def test_a_browser_failure_writes_no_receipt(tmp_path: Path) -> None:
     assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
 
 
+def test_an_unexpected_browser_exception_leaves_its_class_in_the_evidence(
+    tmp_path: Path,
+) -> None:
+    # Reply task 384835 (2026-09-25) failed twice as the fallback
+    # email_unsubscribe_browser_failed with nothing recorded about why.
+    operation, task, email_store, _browser = _operation(
+        tmp_path,
+        [
+            ConnectionResetError(
+                "peer reset while loading https://mail.example.com/unsub?token="
+                "AbCdEf0123456789AbCdEf0123456789xyz cookie=session-secret"
+            )
+        ],
+    )
+
+    result = operation.execute(task.id)
+
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "email_unsubscribe_browser_failed"
+    assert result["evidence"].startswith("ConnectionResetError: peer reset while loading")
+    assert "://" not in result["evidence"]
+    assert "session-secret" not in result["evidence"]
+    assert "AbCdEf0123456789" not in result["evidence"]
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
+
+
+def test_a_modelled_browser_failure_adds_no_exception_detail() -> None:
+    browser = ScriptedBrowser(
+        [
+            UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
+                "browser operation timed out",
+            )
+        ]
+    )
+
+    result = run_direct_unsubscribe(browser, _effect(), ENTRY)
+
+    assert result.error_code == "email_unsubscribe_browser_timeout"
+    assert result.error_detail == ""
+
+
 def test_a_missing_task_fails_closed(tmp_path: Path) -> None:
     operation, _task, _email_store, _browser = _operation(tmp_path, [])
 
