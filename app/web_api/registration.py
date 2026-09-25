@@ -477,7 +477,12 @@ def register_console_routes(
         status: str = "",
         object_type: str = "",
         chart_range: str = Query(default="24h"),
-        include_chart: bool = Query(default=True),
+        # Failure polling is also used by the runtime health loop.  A chart
+        # is useful for the interactive History page, but it adds a large
+        # aggregate query to the failure endpoint and can hold a SQLite read
+        # snapshot open on the production database.  Keep the UI default for
+        # ordinary history while making the bare failed-status probe cheap.
+        include_chart: bool | None = Query(default=None),
     ):
         store = store_factory()
         status_key = status.strip().lower()
@@ -532,7 +537,12 @@ def register_console_routes(
         start = (page - 1) * page_size
         items = all_items[start:start + page_size]
         response = list_envelope(items, page=page, page_size=page_size, total=total)
-        if include_chart and history_chart_factory is not None:
+        render_chart = (
+            include_chart
+            if include_chart is not None
+            else status_key != "failed"
+        )
+        if render_chart and history_chart_factory is not None:
             chart_hours = {"24h": 24, "1w": 24 * 7, "1m": 24 * 30}.get(chart_range.strip().lower(), 24)
             response["chart"] = json_safe(history_chart_factory(chart_hours))
         return response

@@ -839,6 +839,16 @@ def test_console_history_chart_can_load_independently(tmp_path: Path):
     assert len(chart_response.json()["chart"]["labels"]) == 24 * 7
 
 
+def test_console_failed_history_probe_skips_chart_by_default(tmp_path: Path):
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/history?status=failed")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["total"] == 0
+    assert "chart" not in payload
+
+
 def test_console_history_chart_reuses_a_short_lived_snapshot(monkeypatch, tmp_path: Path):
     calls: list[int] = []
 
