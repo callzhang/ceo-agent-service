@@ -15509,7 +15509,14 @@ class EmailStore:
         return missing
 
     def list_terminal_unsubscribe_tasks_missing_receipts(self) -> list[dict[str, Any]]:
-        """Find terminal unsubscribe tasks whose durable receipt projection is absent."""
+        """Find closed unsubscribe tasks whose durable receipt projection is absent.
+
+        A `failed` task is not one of them. It ended on a technical fault, not
+        on a finding about the link, and writing "no reliable entry" for it
+        recorded a conclusion nobody had reached: on 2026-09-25 a task failed
+        on a database validation error, and the receipt written for it said its
+        link was unavailable, when the same link was in the message all along.
+        """
 
         terminal: list[dict[str, Any]] = []
         with self._connect() as db:
@@ -15550,7 +15557,6 @@ class EmailStore:
                 ).fetchone()
                 if task is None or task["status"] not in {
                     "done",
-                    "failed",
                     "skipped",
                     "needs_human",
                 }:

@@ -547,6 +547,97 @@ def test_worker_startup_repairs_missing_unsubscribe_task_and_repeated_tick_is_id
     )
 
 
+def _closed_unsubscribe_task_without_receipt(tmp_path, *, close):
+    """A junk mail whose unsubscribe task ended without writing a receipt."""
+
+    module = _module()
+    database = tmp_path / "closed-task-without-receipt.sqlite3"
+    email_store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    message = _model_accept_message() | {
+        "textBody": "Unsubscribe at https://news.example.test/unsubscribe",
+        "listUnsubscribe": "<https://news.example.test/unsubscribe>",
+        "listUnsubscribePost": "",
+    }
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe=str(message["listUnsubscribe"]),
+        list_unsubscribe_post="",
+        body_text=str(message["textBody"]),
+        body_html="",
+    )
+    module.persist_model_primary_classification(
+        email_store,
+        SimpleNamespace(produce=lambda *_args: None),
+        message=message,
+        prediction=_accepted_model_prediction("junk", important=False),
+        context=AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        model_id="email-embedding-mlp-ready",
+        model_text="exact current text",
+        unsubscribe_entries=entries,
+    )
+    assert module.reconcile_missing_model_action_tasks(
+        email_store,
+        EmailActionTaskProducer(task_store, email_store),
+        load_message=lambda _classification: message,
+        record_health=lambda *_args: None,
+    ) == {"candidates": 1, "repaired": 1, "conflicts": 0}
+    (task,) = task_store.claim_reply_tasks(1, channel="email")
+    close(task_store, task)
+    return module, email_store, task_store, message, task
+
+
+def test_reconciliation_does_not_turn_a_failed_unsubscribe_task_into_a_missing_link(
+    tmp_path,
+):
+    module, email_store, task_store, message, task = _closed_unsubscribe_task_without_receipt(
+        tmp_path,
+        close=lambda store, claimed: store.fail_reply_task(
+            claimed.id,
+            "email_consumer_runtime_error:EmailPersistenceCorruption",
+            expected_execution_generation=claimed.execution_generation,
+        ),
+    )
+
+    result = module.reconcile_missing_model_action_tasks(
+        email_store,
+        EmailActionTaskProducer(task_store, email_store),
+        load_message=lambda _classification: message,
+        record_health=lambda *_args: None,
+    )
+
+    assert result == {"candidates": 0, "repaired": 0, "conflicts": 0}
+    assert email_store.get_email_unsubscribe_receipt(task.trigger_message_id) is None
+    assert task_store.get_reply_task(task.id).status == "failed"
+
+
+def test_reconciliation_still_records_a_receipt_for_a_task_that_closed_without_one(
+    tmp_path,
+):
+    module, email_store, task_store, message, task = _closed_unsubscribe_task_without_receipt(
+        tmp_path,
+        close=lambda store, claimed: store.complete_reply_task(
+            claimed.id,
+            expected_execution_generation=claimed.execution_generation,
+        ),
+    )
+
+    result = module.reconcile_missing_model_action_tasks(
+        email_store,
+        EmailActionTaskProducer(task_store, email_store),
+        load_message=lambda _classification: message,
+        record_health=lambda *_args: None,
+    )
+
+    assert result == {"candidates": 1, "repaired": 1, "conflicts": 0}
+    receipt = email_store.get_email_unsubscribe_receipt(task.trigger_message_id)
+    assert receipt is not None and receipt["outcome"] == "skipped_no_reliable_entry"
+
+
 def test_model_action_reconciliation_skips_nonunsubscribe_and_reports_conflict(
     tmp_path,
 ):
