@@ -12071,3 +12071,13 @@ def test_attention_excludes_an_email_action_still_inside_its_retry_window(
     rows = audit_web_module._queue_attention_rows(store)
 
     assert not any(row["category"] == "Email action" for row in rows)
+
+
+def test_status_lists_the_outbox_and_memory_write_queues(tmp_path: Path):
+    """Both were dispatched but missing from Status (found 2026-09-24)."""
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    names = [row["name"] for row in audit_web_module._dispatcher_queue_snapshots(store)]
+
+    assert "business_task_todo_sync_outbox" in names
+    assert "task_memory_write" in names

@@ -2569,11 +2569,13 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
 def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
     """Read each adapter's native queue projection without claiming work."""
     from app.dispatcher.adapters import (
+        BusinessTaskTodoSyncOutboxQueueAdapter,
         MeetingQueueAdapter,
         OkrReviewQueueAdapter,
         ReplyQueueAdapter,
         ScheduledExecutionQueueAdapter,
         ScheduledTaskQueueAdapter,
+        TaskMemoryWriteQueueAdapter,
         TaskTodoSyncOutboxQueueAdapter,
         WorkSummaryQueueAdapter,
     )
@@ -2587,6 +2589,8 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
         WorkSummaryQueueAdapter(store),
         OkrReviewQueueAdapter(store),
         TaskTodoSyncOutboxQueueAdapter(store),
+        BusinessTaskTodoSyncOutboxQueueAdapter(store),
+        TaskMemoryWriteQueueAdapter(store),
     )
     rows = []
     for adapter in adapters:
