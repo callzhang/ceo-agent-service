@@ -282,8 +282,8 @@ class TaskSemanticService:
         excerpt = evidence.get("excerpt")
         if evidence.get("source_ref") != signal.source_ref or not isinstance(excerpt, str):
             raise ValueError("owner evidence must cite the source")
-        if not excerpt.strip() or excerpt not in signal.evidence_text:
-            raise ValueError("owner evidence excerpt must occur in the source")
+        if not excerpt.strip():
+            raise ValueError("owner evidence needs an excerpt from the source")
         if owner_name and owner_name not in excerpt:
             raise ValueError("owner identity must appear in its source evidence excerpt")
         if owner_user_id:

@@ -315,7 +315,8 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         f"Problems in the previous output:\n{detail}\n\n"
         "Rules that must hold:\n"
         "- Return the TaskAgentDecision envelope with task_decisions (0..N); "
-        "every non-skip item needs exact source_excerpt and source_ref.\n"
+        "every non-skip item needs a source_excerpt (a sentence of the source), source_ref and a locator (source_link, or source_group and source_person) "
+        "(evidence_origin says whether it is the current Work Item, an earlier session turn, or memory provenance).\n"
         "- A formal assignment requires an explicit owner and authorized "
         "assignment source. Owner evidence alone does not prove authority.\n"
         "- apply_acceptance requires accepted polarity, an explicitly cited "
@@ -402,13 +403,25 @@ an enforced permission boundary.
 Current execution time: {effective_current_time}
 Memory connector status: {memory_status}
 
-Prior session turns are background only. Decide this turn from the current
-Work Item, current retrieved state, and fresh source evidence. Never cite an
-earlier turn as proof of a current assignment, status, deadline, or completion.
+This runtime session is shared by every Work Item so that context is not lost,
+and Tasks may be completed from what you learned earlier. You may rely on
+evidence you read earlier in this session, and you may look up related
+information through memory_recall and follow its provenance to the original
+source. When a decision rests on that, set evidence_origin to "session" or
+"memory", source_ref to the ORIGINAL source's reference, and source_excerpt to an
+exact quote of the original text; use "current" for the Work Item being processed.
+Earlier or remembered evidence may refine a Task (update_fields) or record a
+candidate. Creating a formal Task, promoting, accepting, and merging identities
+still need the current Work Item's authority and identity metadata, and dates
+still need current, identified source evidence.
 
 Extract every distinct source-backed deliverable, or return an empty list.
-One source may yield multiple decisions. Each non-skip item must quote an exact
-substring of the supplied source summary and use its exact source reference.
+One source may yield multiple decisions. Each non-skip item cites its source: the
+source_ref, a sentence of the original text as source_excerpt (an extract is fine;
+it need not be word for word), and where a reader can find it: source_link, or
+source_group and source_person when there is no link. For the current Work Item
+the service fills in what it knows, but state them whenever you can, and always
+for earlier or remembered evidence.
 Never invent a task, owner, assignment, acceptance, date, relevance, or
 authority. An owner must be explicit in source text or authoritative source
 metadata; an ownerless assignment stays candidate/unmatched evidence.
@@ -418,11 +431,12 @@ Work Item's transcript_excerpts hold the conversation around it, one line per
 sentence as “speaker：text”. Decide the owner from those lines: it is whoever
 the conversation gives the work to or who takes it on, not automatically the
 speaker (“你写下来” from one person assigns the work to the person addressed).
-Set owner_evidence with two keys: "source_ref" (the Work Item source reference)
-and "excerpt" (one single line copied unchanged, speaker label included,
-that contains the owner's name; never join several lines or sentences). That line is often not the item's own source_excerpt: when one person
-hands the work to another (“你写下来”), quote the line in which the person who
-takes it on speaks, and keep the assigning line as the decision's source_excerpt. A generic label such as “发言人 N” is DingTalk's placeholder for a
+Set owner_evidence with two keys: "source_ref" (the decision's source_ref) and
+"excerpt" (a sentence, speaker label included, that contains the owner's name; an
+extract is fine). That sentence is often not the item's own source_excerpt: when
+one person hands the work to another (“你写下来”), cite the sentence in which the
+person who takes it on speaks, and keep the assigning sentence as the decision's
+source_excerpt. A generic label such as “发言人 N” is DingTalk's placeholder for a
 speaker it could not name; it is not a person and never an owner. When the lines
 do not settle who owns it, or an action item has no excerpt, leave the owner
 empty.
@@ -451,7 +465,7 @@ reference/excerpt. Project candidates must cite an existing cluster and the
 authoritative weekly-report or meeting evidence; anchor and Project matches
 remain proposals.
 
-Dates use typed date_evidence with exact source excerpt/reference and actor.
+Dates use typed date_evidence with an exact source excerpt/reference and actor.
 Normalized dates must equal the full exact parseable date phrase; do not add
 time precision absent from the source. assigned_at comes only from trusted
 source timestamp metadata. An estimate keeps the identified source actor who
@@ -610,13 +624,39 @@ def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
     )
 
 
+def _source_locator(work_item: WorkItem, item: TaskDecision) -> tuple[str, str, str]:
+    """Where a reader can find the source: a link, or the group and the person (Derek 2026-09-25).
+
+    What the decision states wins. For the current Work Item the service fills in what it
+    already knows: a URL reference, the meeting page link inside an AI-minutes summary, or
+    the conversation and its sender. A Work Item that offers none of these still has its
+    `source_ref` on the record; earlier or remembered evidence must state its own locator
+    (the decision model requires it).
+    """
+    link, group, person = item.source_link.strip(), item.source_group.strip(), item.source_person.strip()
+    if item.evidence_origin != "current" or link or (group and person):
+        return link, group, person
+    if work_item.source.ref.startswith(("http://", "https://")):
+        return work_item.source.ref, group, person
+    try:
+        meeting = json.loads(work_item.summary).get("meeting")
+    except (ValueError, AttributeError):
+        meeting = None
+    share_url = meeting.get("shareUrl") if isinstance(meeting, dict) else None
+    if isinstance(share_url, str) and share_url.strip():
+        return share_url.strip(), group, person
+    return link, group or work_item.source.conversation_title, person or work_item.context.sender
+
+
 def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal:
     import hashlib
 
-    if item.source_ref != work_item.source.ref:
-        raise ValueError("task decision source_ref must match the Work Item source")
-    if not item.source_excerpt or item.source_excerpt not in work_item.summary:
-        raise ValueError("task decision source_excerpt must be an exact source substring")
+    if item.evidence_origin == "current":
+        if item.source_ref != work_item.source.ref:
+            raise ValueError("task decision source_ref must match the Work Item source")
+        if not item.source_excerpt.strip():
+            raise ValueError("task decision needs a source_excerpt")
+    link, group, person = _source_locator(work_item, item)
     def normalized(value: str) -> str:
         return " ".join(value.split()).casefold()
     date_effects = sorted(
@@ -699,6 +739,25 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
     stable_item = hashlib.sha256(json.dumps(
         semantic_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")).hexdigest()
+    if item.evidence_origin != "current":
+        # Earlier evidence (this session's history, or provenance Memory pointed to) is
+        # kept as its own source signal, under the ORIGINAL reference and text, with the
+        # Work Item that led to it in the context. The service cannot re-read the original,
+        # so the origin is recorded and a reader can see this was cited, not observed now.
+        source_type = f"{item.evidence_origin}_provenance"
+        return SourceSignal(
+            source_type=source_type,
+            source_ref=item.source_ref,
+            evidence_text=item.source_excerpt,
+            dedupe_key=f"{source_type}:{item.source_ref}:task-item:{stable_item}",
+            conversation_title=group,
+            author_name=person,
+            context_json=json.dumps(
+                {"evidence_origin": item.evidence_origin, "cited_while_processing": work_item.source.ref,
+                 **({"source_link": link} if link else {})},
+                ensure_ascii=False, sort_keys=True,
+            ),
+        )
     return SourceSignal(
         source_type=work_item.source.type.value,
         source_ref=work_item.source.ref,
@@ -706,14 +765,15 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
         dedupe_key=f"{work_item.source.type.value}:{work_item.source.ref}:task-item:{stable_item}",
         source_time=work_item.source.created_at,
         conversation_id=work_item.source.conversation_id,
-        conversation_title=work_item.source.conversation_title,
+        conversation_title=group,
         author_user_id=work_item.context.sender_user_id,
-        author_name=work_item.context.sender,
+        author_name=person or work_item.context.sender,
         author_kind=(BusinessActorKind.HUMAN if work_item.context.sender_user_id else BusinessActorKind.UNKNOWN),
         context_json=json.dumps(
             {
                 "work_item_title": work_item.source.title,
                 "assignment_authorized": work_item.context.assignment_authorized,
+                **({"source_link": link} if link else {}),
                 **({"reply_to_source_ref": work_item.context.reply_to_source_ref}
                    if work_item.context.reply_to_source_ref else {}),
                 **({"external_task_id": work_item.context.external_task_id}
@@ -954,19 +1014,17 @@ def apply_task_agent_decision(
                 if work_item.context.sender == item.owner_name
                 else ""
             )
+            if item.evidence_origin != "current":
+                # Sender and owner identity metadata describe the current Work Item only.
+                source_owner_id = ""
             if item.owner_user_id and item.owner_user_id != source_owner_id:
                 raise ValueError("owner_user_id is not established by source identity metadata")
             owner_user_id = source_owner_id
             if owner_evidence:
+                # The owner's citation is a sentence from the source, not necessarily word for
+                # word; default to the decision's own excerpt.
                 owner_evidence.setdefault("source_ref", item.source_ref)
-                # Never persist an owner excerpt that is not an exact substring of
-                # the source: a model may paraphrase or change punctuation, and the
-                # decision's own source_excerpt is validated as exact. But an exact
-                # owner excerpt is kept: when one person hands the work to another
-                # (“你写下来”), the line that names who takes it on is not the
-                # decision's source_excerpt.
-                model_excerpt = owner_evidence.get("excerpt")
-                if not (isinstance(model_excerpt, str) and model_excerpt.strip() and model_excerpt in work_item.summary):
+                if not str(owner_evidence.get("excerpt") or "").strip():
                     owner_evidence["excerpt"] = item.source_excerpt
                 owner_evidence.setdefault("user_id", owner_user_id)
                 owner_evidence.setdefault("name", item.owner_name)

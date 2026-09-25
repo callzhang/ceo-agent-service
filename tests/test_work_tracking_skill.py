@@ -29,7 +29,8 @@ def test_work_tracking_skill_owns_judgment_and_delegates_only_mechanics():
         "An external TODO proves a formal record exists; it does not prove its assignee accepted it",
         "Keep date meanings separate and source-backed",
         "confirmed business anchor and a concrete material trigger",
-        "Memory is optional context, not source evidence or completion proof",
+        "A memory summary without its original source is not evidence",
+        "Evidence read earlier in the session, and evidence found",
         "one Task Agent returns one `TaskAgentDecision` lifecycle contract",
         "The Task Agent cannot create a TODO through completion fields",
         "The current Codex route has no per-turn",
@@ -93,7 +94,7 @@ def _formal_task(**overrides) -> dict[str, object]:
 
 
 def test_formal_task_cannot_be_created_without_source_binding():
-    with pytest.raises(ValidationError, match="exact source excerpt and reference"):
+    with pytest.raises(ValidationError, match="source excerpt .* and reference"):
         TaskDecision.model_validate(_formal_task(source_excerpt="", source_ref=""))
 
 

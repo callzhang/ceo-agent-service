@@ -378,6 +378,17 @@ class TaskDecision(StrictTaskModel):
     target_task_id: int | None = Field(default=None, gt=0)
     source_excerpt: str = ""
     source_ref: str = ""
+    source_link: str = Field(default="", description="A link to the source (a document, minutes page, message or thread URL).")
+    source_group: str = Field(default="", description="The group or conversation the source was said in, when there is no link.")
+    source_person: str = Field(default="", description="Who said it, when there is no link.")
+    evidence_origin: Literal["current", "session", "memory"] = Field(
+        default="current",
+        description=(
+            "Where source_excerpt comes from. current: the Work Item being processed. "
+            "session: something read earlier in this Agent session. memory: provenance found through memory_recall. "
+            "For session and memory, source_ref is the ORIGINAL source's reference and source_excerpt an exact quote of its text."
+        ),
+    )
     title: str = ""
     description: str = ""
     formal_basis: FormalTaskBasis | None = None
@@ -424,7 +435,21 @@ class TaskDecision(StrictTaskModel):
     @model_validator(mode="after")
     def validate_transition_shape(self) -> "TaskDecision":
         if self.action != "skip" and (not self.source_excerpt.strip() or not self.source_ref.strip()):
-            raise ValueError("task decisions require an exact source excerpt and reference")
+            raise ValueError("task decisions require a source excerpt (a sentence taken from the source) and reference")
+        if self.evidence_origin != "current" and not (
+            self.action == "record_candidate"
+            or (self.action == "update_task" and self.transition == "update_fields")
+        ):
+            raise ValueError(
+                "earlier session or memory evidence may refine a Task (update_fields) or record a candidate; "
+                "formal creation, promotion, acceptance and merges need the current Work Item's authority"
+            )
+        if self.action != "skip" and self.evidence_origin != "current" and not (
+            self.source_link.strip() or (self.source_group.strip() and self.source_person.strip())
+        ):
+            raise ValueError("earlier or remembered evidence needs a source link, or the group and the person")
+        if self.evidence_origin != "current" and self.date_evidence:
+            raise ValueError("date evidence must come from the current Work Item")
         if self.action == "create_task" and self.formal_basis is None:
             raise ValueError("formal Task creation requires formal_basis")
         if self.action == "record_candidate" and self.formal_basis is not None:

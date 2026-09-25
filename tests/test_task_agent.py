@@ -3,6 +3,7 @@ import sqlite3
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from app.store import AutoReplyStore
 from app.agent_runtime_router import CodexCommandFactory, RoutedResultValidationError
@@ -619,7 +620,10 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
     assert "use connected tools only for read-only discovery" in prompt.lower()
     assert "Do not use CLI, API, or MCP tools to create, update, delete, send, or complete" in prompt
     assert "the service validates and applies supported operations" in prompt.lower()
-    assert "Prior session turns are background only" in prompt
+    # Derek 2026-09-25: earlier session evidence and Memory provenance may be relied on.
+    assert "You may rely on evidence you read earlier in this session" in prompt
+    assert 'set evidence_origin to "session" or "memory"' in prompt
+    assert "Prior session turns are background only" not in prompt
 
 
 def test_task_agent_prompt_prioritizes_weekly_report_then_meeting_evidence():
@@ -772,12 +776,12 @@ def test_process_work_item_rolls_back_batch_and_marks_input_and_run_failed(tmp_p
          "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
          "title": "有效候选", "missing_evidence": ["owner"]},
         {"action": "record_candidate", "transition": "none",
-         "source_excerpt": "不在原文中的内容", "source_ref": item.source.ref,
+         "source_excerpt": "另一个来源里的话", "source_ref": "other-source-ref",
          "title": "必须回滚", "missing_evidence": ["owner"]},
     ]}
     codex = FakeCodexWithAuditEvents(payload, [])
 
-    with pytest.raises(ValueError, match="exact source substring"):
+    with pytest.raises(ValueError, match="must match the Work Item source"):
         process_work_item(store, TaskAgentRunner(codex), work_input)
 
     assert store.list_business_tasks() == ()
@@ -791,7 +795,7 @@ def test_process_work_item_rolls_back_batch_and_marks_input_and_run_failed(tmp_p
         ).fetchone()
     assert input_status == "failed"
     assert run[0] == "failed"
-    assert "exact source substring" in run[1]
+    assert "must match the Work Item source" in run[1]
 
 
 
@@ -1280,7 +1284,8 @@ def test_update_task_decision_applies_evidence_backed_description_change(tmp_pat
     assert store.list_business_task_events(task.task_id)[-1].event_type.value == "details_changed"
 
 
-def test_owner_evidence_uses_exact_decision_source_excerpt(tmp_path):
+def test_owner_evidence_keeps_the_citation_the_agent_gave(tmp_path):
+    """Derek 2026-09-25: a citation is a sentence from the source; it need not be word for word."""
     store = AutoReplyStore(tmp_path / "owner-evidence-excerpt.sqlite3")
     item = _work_item(
         assignment_authorized=True,
@@ -1300,7 +1305,7 @@ def test_owner_evidence_uses_exact_decision_source_excerpt(tmp_path):
     task = store.get_business_task(result.task_ids[0])
     assert task is not None
     evidence = json.loads(task.owner_evidence_json)
-    assert evidence["excerpt"] == item.summary
+    assert evidence["excerpt"] == "Alex负责提交周报"
 
 
 def _seed_identity_task(store, source_ref, *, external_task_id=""):
@@ -1398,12 +1403,12 @@ def test_batch_rolls_back_task_signal_and_all_proposals_on_later_invalid_evidenc
          "cluster_proposal": {"cluster_id": cluster_id, "task_ids": [source_id, target_id], "reason": "同一目标"},
          "anchor_match_proposals": [{"anchor_id": anchor_id, "reason": "客户事项"}],
          "project_candidate_proposal": {"cluster_id": cluster_id, "title": "客户项目候选", "reason": "持续任务"}},
-        {"action": "record_candidate", "transition": "none", "source_excerpt": "不存在的原文",
-         "source_ref": item.source.ref, "title": "无来源候选", "missing_evidence": ["source"]},
+        {"action": "record_candidate", "transition": "none", "source_excerpt": "另一个来源里的话",
+         "source_ref": "other-source-ref", "title": "无来源候选", "missing_evidence": ["source"]},
     ]})
     original = store.get_business_task(source_id)
 
-    with pytest.raises(ValueError, match="exact source substring"):
+    with pytest.raises(ValueError, match="must match the Work Item source"):
         apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
 
     assert store.get_business_task(source_id) == original
@@ -2160,3 +2165,85 @@ def test_an_owner_the_source_does_not_establish_skips_that_item_and_not_the_whol
     assert store.get_business_task(first).owner_name == ""
     assert store.get_business_task(second).owner_name == "陈思睿"
     assert any(f"Task {first} owner was not applied" in reason for reason in result.skipped_reasons)
+
+
+def _earlier_evidence_decision(existing_task_id, item, **overrides):
+    return {
+        "action": "update_task", "transition": "update_fields", "task_id": existing_task_id,
+        "evidence_origin": "memory", "source_ref": "meeting:2026-09-10#todos-sha256=abc",
+        "source_link": "https://shanji.example/transcribes/abc",
+        "source_excerpt": "Zoey：我来负责访谈问题清单。", "title": "整理访谈问题清单",
+        "owner_name": "Zoey", "owner_evidence": {"excerpt": "Zoey：我来负责访谈问题清单。"},
+        **overrides,
+    }
+
+
+def test_earlier_or_remembered_evidence_can_refine_a_task_and_is_kept_as_its_own_source(tmp_path):
+    """Derek 2026-09-25: the Agent may use earlier evidence and Memory provenance; it is recorded as cited, not observed."""
+    store = AutoReplyStore(tmp_path / "earlier.sqlite3")
+    task = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="整理访谈问题清单",
+        signal=SourceSignal(source_type="ai_minutes", source_ref="m:1#todos-sha256=a", evidence_text="整理访谈问题清单", dedupe_key="seed:earlier"),
+    ))
+    item = _work_item().model_copy(update={"summary": "本次来源没有提到负责人。"})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(task.task_id, item)]})
+
+    apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+
+    updated = store.get_business_task(task.task_id)
+    assert updated.owner_name == "Zoey"
+    signals = {signal.id: signal for signal in store.list_business_task_signals()}
+    cited = [signals[row.signal_id] for row in store.list_business_task_evidence(task.task_id) if signals[row.signal_id].source_type == "memory_provenance"]
+    assert [(s.source_ref, s.evidence_text) for s in cited] == [("meeting:2026-09-10#todos-sha256=abc", "Zoey：我来负责访谈问题清单。")]
+    assert json.loads(cited[0].context_json) == {
+        "evidence_origin": "memory", "cited_while_processing": item.source.ref,
+        "source_link": "https://shanji.example/transcribes/abc",
+    }
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"action": "create_task", "transition": "none", "formal_basis": "explicit_assignment", "task_id": None},
+        {"transition": "promote_candidate"},
+        {"transition": "apply_acceptance", "acceptance_polarity": "accepted"},
+        {"date_evidence": [{"kind": "next_check_at", "value": "2026-10-01", "raw_phrase": "x", "source_ref": "meeting:2026-09-10#todos-sha256=abc", "source_excerpt": "x"}]},
+    ],
+)
+def test_earlier_evidence_does_not_stand_in_for_the_current_sources_authority_or_dates(extra):
+    item = _work_item()
+    with pytest.raises(ValidationError):
+        TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(1, item, **extra)]})
+
+
+def test_earlier_evidence_needs_a_link_or_the_group_and_the_person():
+    item = _work_item()
+    for missing in ({"source_link": ""}, {"source_link": "", "source_group": "产品群"}, {"source_link": "", "source_person": "Zoey"}):
+        with pytest.raises(ValidationError, match="link, or the group and the person"):
+            TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(1, item, **missing)]})
+    TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(1, item, source_link="", source_group="产品群", source_person="Zoey")]})
+
+
+def test_the_current_sources_link_or_group_and_person_are_recorded_and_the_excerpt_may_be_an_extract(tmp_path):
+    store = AutoReplyStore(tmp_path / "locator.sqlite3")
+    minutes = _work_item().model_copy(update={"summary": json.dumps({"meeting": {"shareUrl": "https://shanji.example/transcribes/1"}, "lines": ["Zoey：我先列一个list给你看。"]}, ensure_ascii=False)})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none", "title": "列问题清单",
+        "source_ref": minutes.source.ref, "source_excerpt": "Zoey 说先列个清单给看",  # an extract, not word for word
+    }]})
+    apply_task_agent_decision(store, summary_input_id=1, work_item=minutes, decision=decision, record_run=False)
+
+    [signal] = store.list_business_task_signals()
+    assert json.loads(signal.context_json)["source_link"] == "https://shanji.example/transcribes/1"
+
+    chat = _work_item().model_copy(update={"summary": "王明：周五前交报价。"})
+    chat = chat.model_copy(update={"source": chat.source.model_copy(update={"ref": "message:9", "conversation_title": "报价群"}),
+                                   "context": chat.context.model_copy(update={"sender": "王明"})})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none", "title": "交报价",
+        "source_ref": "message:9", "source_excerpt": "周五前交报价",
+    }]})
+    apply_task_agent_decision(store, summary_input_id=2, work_item=chat, decision=decision, record_run=False)
+
+    signal = next(row for row in store.list_business_task_signals() if row.source_ref == "message:9")
+    assert (signal.conversation_title, signal.author_name) == ("报价群", "王明")
