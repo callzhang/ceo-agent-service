@@ -4838,6 +4838,9 @@ def _render_system_config(*, db_path: Path | None = None) -> str:
 
 
 _AGENT_RUNTIME_MODELS = (
+    ("gpt-6-astra", "GPT-6 Astra"),
+    ("gpt-6-sol", "GPT-6 Sol"),
+    ("gpt-6-luna", "GPT-6 Luna"),
     ("gpt-5.5", "GPT-5.5"),
     ("gpt-5.6-sol", "GPT-5.6 Sol"),
     ("gpt-5.6-terra", "GPT-5.6 Terra"),

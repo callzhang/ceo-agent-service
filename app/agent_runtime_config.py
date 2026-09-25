@@ -14,7 +14,15 @@ from app.config import DEFAULT_CEO_CODEX_MODEL, parse_duration_value
 DEFAULT_CODEX_API_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_FRIDAY_RUNTIME_BASE_URL = "http://127.0.0.1:8080"
 SUPPORTED_CODEX_RUNTIME_MODELS = frozenset(
-    {"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+    {
+        "gpt-5.5",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+    }
 )
 ROUTE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 ADDED_ROUTE_KINDS = ("codex_oauth", "codex_api", "claude_oauth", "claude_api")

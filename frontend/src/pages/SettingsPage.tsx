@@ -673,6 +673,9 @@ function LegacySkillsPanel() {
 }
 
 const CODEX_MODEL_OPTIONS = [
+  { value: "gpt-6-astra", label: "GPT-6 Astra" },
+  { value: "gpt-6-sol", label: "GPT-6 Sol" },
+  { value: "gpt-6-luna", label: "GPT-6 Luna" },
   { value: "gpt-5.5", label: "GPT-5.5" },
   { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
   { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
@@ -691,6 +694,7 @@ const CLAUDE_MODEL_OPTIONS = [
 const CLAUDE_API_MODEL_GROUPS = [
   { label: "别名（跟随本机 CLI）", options: CLAUDE_MODEL_OPTIONS },
   { label: "Claude 模型 id", options: [
+    { value: "claude-opus-5-5", label: "Opus 5.5" },
     { value: "claude-opus-5", label: "Opus 5" },
     { value: "claude-sonnet-5", label: "Sonnet 5" },
     { value: "claude-fable-5-1", label: "Fable 5.1" },

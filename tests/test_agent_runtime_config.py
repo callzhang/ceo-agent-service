@@ -379,3 +379,21 @@ def test_runtime_duration_settings_are_parsed_from_the_supplied_environment():
 
     assert config.probe_interval == timedelta(minutes=15)
     assert config.retry_delay == timedelta(hours=2)
+
+
+@pytest.mark.parametrize("model", ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"])
+def test_gpt_6_models_are_selectable_for_both_codex_routes(model):
+    """Derek 2026-09-24: add the GPT-6 family to the model list."""
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
+            "CEO_CODEX_MODEL": model,
+            "CEO_CODEX_API_MODEL": model,
+            "CEO_CODEX_API_KEY": "test-key",
+        }
+    )
+
+    assert {route.name: route.model for route in config.routes} == {
+        "codex_oauth": model,
+        "codex_api": model,
+    }
