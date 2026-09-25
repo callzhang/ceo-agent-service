@@ -626,6 +626,7 @@ function mapEmailClassification(value: unknown, includeBody = false): EmailClass
     message_text: emailText(row.message_text),
     important: typeof row.important === "boolean" ? row.important : null,
     provider_classification: isRecord(row.provider_classification) ? row.provider_classification as unknown as EmailProviderClassification : null,
+    unsubscribe_state: isRecord(row.unsubscribe_state) ? {status: emailText(row.unsubscribe_state.status), outcome: typeof row.unsubscribe_state.outcome === "string" ? row.unsubscribe_state.outcome : null} : null,
     description_version: emailText(row.description_version),
     cc: emailText(row.cc),
     recipients: Array.isArray(row.recipients) ? row.recipients.map(emailText) : [],

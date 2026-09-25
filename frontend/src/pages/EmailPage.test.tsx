@@ -96,6 +96,14 @@ it("confirms the displayed pending suggestion without changing the dropdown",asy
   await user.click(screen.getByRole("button",{name:"保存修改"}));
   expect(api.confirmEmailClassification).toHaveBeenCalledExactlyOnceWith("1","work",expect.any(String),null);
 });
+it("keeps each row's unsubscribe state through the real list response mapper",async()=>{
+  const actual=await vi.importActual<typeof import("../api/console")>("../api/console");
+  const fetchMock=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({items:[{id:"1",status:"processed",unsubscribe_state:{status:"done",outcome:"skipped_login_required"}},{id:"2",status:"processed",unsubscribe_state:null}],meta:{page:1,page_size:20,total:2,next_cursor:"",has_more:false,snapshot_at:""}}),{status:200}));
+  const result=await actual.listEmailClassifications("unsubscribe",{page:1,page_size:20});
+  expect(result.items[0].unsubscribe_state).toEqual({status:"done",outcome:"skipped_login_required"});
+  expect(result.items[1].unsubscribe_state).toBeNull();
+  fetchMock.mockRestore();
+});
 it("maps persisted original text from the unified list response",async()=>{
   const params: EmailClassificationListParams = { page: 1, page_size: 20 };
   const actual=await vi.importActual<typeof import("../api/console")>("../api/console");
