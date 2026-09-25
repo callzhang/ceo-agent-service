@@ -860,6 +860,10 @@ Router 取下一条已配置且健康的路由。列表里出现的名字分两�
 控制台的 Settings / Agent Runtime 直接编辑这份列表：拖动卡片改顺序，开关决定该路由是否在列表
 里，删除则把名字记进 `CEO_AGENT_RUNTIME_HIDDEN_ROUTES` 并只清除该路由**独有**的凭据（共用的
 设置保留）。被删除的内置路由可以从「新增 runtime」恢复，恢复后仍用原来的固定键名。
+保存只有一个入口：React 设置页提交到 `POST /api/console/settings/agent-runtime`，字段用 `.env`
+键名，由 `app/web_api/agent_runtime_settings.py` 校验并写入。旧的服务端渲染页
+（`/config?tab=agent-runtime` 与表单 `POST /config/agent-runtime`）已删除——React 设置页
+上线（2026-08-29）后浏览器访问页面时拿到的一直是 SPA，那套页面只剩测试在用。
 
 健康探测（`app/agent_runtime_probe.py`）与真实 turn 走同一条 provider 路径，因此超时按一条真实
 turn 的长度给：`PROBE_TOTAL_TIMEOUT_SECONDS` 和 `PROBE_IDLE_TIMEOUT_SECONDS` 都是 300 秒，

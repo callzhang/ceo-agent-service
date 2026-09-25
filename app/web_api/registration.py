@@ -80,31 +80,6 @@ def _legacy_settings_error_message(body_text: str) -> str:
     return unescape(re.sub(r"<[^>]+>", "", match.group(1))).strip() or "保存失败，请检查字段"
 
 
-def _added_route_payloads(
-    fields: dict[str, Any], routes: set[str]
-) -> list[dict[str, str]]:
-    """Collect the settings of every route the operator added by name."""
-
-    from app.agent_runtime_config import (
-        SUPPORTED_RUNTIME_ROUTES,
-        added_route_settings_prefix,
-    )
-
-    payloads = []
-    for name in sorted(routes - SUPPORTED_RUNTIME_ROUTES):
-        prefix = added_route_settings_prefix(name)
-        payloads.append(
-            {
-                "name": name,
-                "kind": str(fields.get(f"{prefix}KIND") or "").strip(),
-                "base_url": str(fields.get(f"{prefix}BASE_URL") or "").strip(),
-                "model": str(fields.get(f"{prefix}MODEL") or "").strip(),
-                "api_key": str(fields.get(f"{prefix}API_KEY") or "").strip(),
-            }
-        )
-    return payloads
-
-
 def register_console_routes(
     app: FastAPI,
     store_factory: Callable[[], Any],
@@ -2102,83 +2077,16 @@ def register_console_routes(
         elif section in {"prompts", "audit-rules"}:
             encoded = {"prompt": str(payload.get("prompt") or "developer"), "template": str(payload.get("template") or fields.get("template") or "")}
         elif section == "agent-runtime":
-            from app import config as app_config
+            from app.web_api.agent_runtime_settings import (
+                AgentRuntimeSettingsError,
+                save_agent_runtime_settings,
+            )
 
-            # A payload that names no route at all used to disable every
-            # optional route and still answer 已保存. Saving one field must
-            # never turn off a route the caller never mentioned.
-            route_selection_keys = {
-                "codex_api_enabled",
-                "claude_oauth_enabled",
-                "claude_api_enabled",
-                "friday_runtime_enabled",
-            }
-            if fields.get("CEO_AGENT_RUNTIME_ROUTES") is None and not (
-                route_selection_keys & set(fields)
-            ):
-                return JSONResponse(
-                    {
-                        "ok": False,
-                        "code": "validation_error",
-                        "message": "保存 Agent Runtime 必须带上启用的线路，否则未列出的线路会被关闭。",
-                        "details": {},
-                    },
-                    status_code=400,
-                )
-            routes = {
-                route.strip()
-                for route in str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or "").split(",")
-                if route.strip()
-            }
-            codex_api_enabled = fields.get("codex_api_enabled")
-            if codex_api_enabled is None:
-                codex_api_enabled = "1" if "codex_api" in routes else "0"
-            claude_oauth_enabled = fields.get("claude_oauth_enabled")
-            if claude_oauth_enabled is None:
-                claude_oauth_enabled = "1" if "claude_oauth" in routes else "0"
-            claude_api_enabled = fields.get("claude_api_enabled")
-            if claude_api_enabled is None:
-                claude_api_enabled = "1" if "claude_api" in routes else "0"
-            friday_auth_disabled = fields.get("friday_runtime_auth_disabled")
-            if friday_auth_disabled is None:
-                friday_auth_disabled = fields.get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED")
-            if friday_auth_disabled is None:
-                friday_auth_disabled = app_config.read_env_file().get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED", "0")
-            encoded = {
-                "codex_model": str(fields.get("codex_model") or fields.get("CEO_CODEX_MODEL") or ""),
-                "codex_reasoning_effort": str(fields.get("codex_reasoning_effort") or fields.get("CEO_CODEX_MODEL_REASONING_EFFORT") or ""),
-                "codex_api_enabled": "1" if str(codex_api_enabled).lower() in {"1", "true", "yes", "on"} else "0",
-                "codex_api_model": str(fields.get("codex_api_model") or fields.get("CEO_CODEX_API_MODEL") or ""),
-                "codex_api_base_url": str(fields.get("codex_api_base_url") or fields.get("CEO_CODEX_API_BASE_URL") or ""),
-                "codex_api_token": str(fields.get("codex_api_token") or fields.get("CEO_CODEX_API_KEY") or ""),
-                "claude_oauth_enabled": "1" if str(claude_oauth_enabled).lower() in {"1", "true", "yes", "on"} else "0",
-                "claude_model": str(fields.get("claude_model") or fields.get("CEO_CLAUDE_MODEL") or app_config.read_env_file().get("CEO_CLAUDE_MODEL", "")),
-                "claude_reasoning_effort": str(fields.get("claude_reasoning_effort") or fields.get("CEO_CLAUDE_MODEL_REASONING_EFFORT") or app_config.read_env_file().get("CEO_CLAUDE_MODEL_REASONING_EFFORT", "")),
-                "claude_api_enabled": "1" if str(claude_api_enabled).lower() in {"1", "true", "yes", "on"} else "0",
-                "claude_api_token": str(fields.get("claude_api_token") or fields.get("CEO_CLAUDE_API_KEY") or ""),
-                "claude_api_model": str(fields.get("claude_api_model") or fields.get("CEO_CLAUDE_API_MODEL") or ""),
-                "friday_runtime_settings_present": "1",
-                "friday_runtime_enabled": "1" if "friday_runtime" in str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or "").split(",") else "0",
-                "friday_runtime_base_url": str(fields.get("friday_runtime_base_url") or fields.get("CEO_FRIDAY_RUNTIME_BASE_URL") or ""),
-                "friday_runtime_project_id": str(fields.get("friday_runtime_project_id") or fields.get("CEO_FRIDAY_RUNTIME_PROJECT_ID") or ""),
-                "friday_runtime_provider_base_url": str(fields.get("friday_runtime_provider_base_url") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL") or ""),
-                "friday_runtime_provider_model": str(fields.get("friday_runtime_provider_model") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL") or ""),
-                "friday_runtime_provider_api_key": str(fields.get("friday_runtime_provider_api_key") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY") or ""),
-                "friday_runtime_ticket": str(fields.get("friday_runtime_ticket") or fields.get("CEO_FRIDAY_RUNTIME_TICKET") or ""),
-                "friday_session_token": str(fields.get("friday_session_token") or fields.get("CEO_FRIDAY_SESSION_TOKEN") or ""),
-                "friday_runtime_auth_disabled": str(friday_auth_disabled),
-                "added_routes_json": json.dumps(
-                    _added_route_payloads(fields, routes), ensure_ascii=False
-                ),
-                # The submitted order is the failover order, so the console can
-                # move a route up or down.
-                "route_order": str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or ""),
-                # A built-in route the operator deleted from the console keeps
-                # its card hidden, which a disabled route does not.
-                "hidden_routes": str(
-                    fields.get("CEO_AGENT_RUNTIME_HIDDEN_ROUTES") or ""
-                ),
-            }
+            try:
+                save_agent_runtime_settings(fields)
+            except AgentRuntimeSettingsError as exc:
+                return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=400)
+            return command_result(message="已保存")
         else:
             encoded = {str(k): str(v) for k, v in fields.items()}
         body = urlencode(encoded, doseq=True).encode()
@@ -2190,8 +2098,8 @@ def register_console_routes(
             except (OSError, ValueError) as exc:
                 return JSONResponse({"ok": False, "code": "validation_error", "message": normalize_display_value(str(exc)), "details": {}}, status_code=400)
             return command_result(message="已保存")
-        from app.audit_web import handle_agent_runtime_config_post, handle_configuration_post, handle_settings_audit_rules_post, handle_settings_prompt_post
-        handlers = {"configuration": handle_configuration_post, "prompts": handle_settings_prompt_post, "audit-rules": handle_settings_audit_rules_post, "agent-runtime": handle_agent_runtime_config_post}
+        from app.audit_web import handle_configuration_post, handle_settings_audit_rules_post, handle_settings_prompt_post
+        handlers = {"configuration": handle_configuration_post, "prompts": handle_settings_prompt_post, "audit-rules": handle_settings_audit_rules_post}
         handler = handlers.get(section)
         if handler is None:
             return JSONResponse({"ok": False, "code": "unsupported", "message": "此 Settings 区域不支持写入", "details": {}}, status_code=400)
