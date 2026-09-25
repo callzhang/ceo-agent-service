@@ -44,6 +44,16 @@ out ends `failed`, after a completed external action had been made to end
 the three loops that became scheduled tasks. All of that shipped the same day.
 Write the line when you make the change, not when someone notices.
 
+## Running tests
+
+Derek, 2026-09-25: do not run the whole test suite in this working tree while
+the service is live. On 2026-09-25 a serial `pytest -q` (about 9,500 tests)
+took 48 minutes. The same run took 11 minutes the day before. It overlapped
+with two service restarts, pushed the load average past 30, and left the
+console answering in 80 seconds. Run the test files that cover your change.
+If a full run is really needed, run it in parallel (`pytest -q -n 6`, about
+3 minutes) and not while a restart is in progress.
+
 ## Who restarts the service
 
 Derek, 2026-09-17, reaffirmed 2026-09-18: restarting
