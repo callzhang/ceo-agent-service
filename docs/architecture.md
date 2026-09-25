@@ -858,8 +858,8 @@ Router 取下一条已配置且健康的路由。列表里出现的名字分两�
   `CEO_CLAUDE_API_*`），现在只是两条添加线路的名字，没有任何代码按名字认它们。
 - **按种类、不按名字**：依赖认证方式的规则看 `RuntimeRoute.is_cli_api_route`（凭自己 API Key
   登录的 Codex/Claude CLI 路由）。「临时失败后在同一路由换新会话重试一次」适用于所有这类路由；
-  Consumer 连续两次结果不可用时强制换新会话，凭 Key 的 Codex CLI 路由沿用以前 `codex_api` 的例外
-  （保留已持久化会话）。安装向导按配置顺序列出全部路由，`probe-agent-runtimes` 在配置无效时对
+  Consumer 连续两次结果不可用时强制换新会话，对所有路由一视同仁，没有例外（Derek 2026-09-25；
+  此前凭 Key 的 Codex CLI 路由沿用 `codex_api` 的例外，已去掉）。安装向导按配置顺序列出全部路由，`probe-agent-runtimes` 在配置无效时对
   任何缺 Key 的 API 种类路由报 `missing_secret`。
 
 **一次性迁移**：服务 supervisor 在启动 worker、web、email 三个子进程之前，先用独立进程运行

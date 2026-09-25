@@ -413,84 +413,31 @@ def _scan_context(email_store: object, account_id: str) -> object:
     )
 
 
-class _WaitAndRetryBackend:
-    """Wait out a rate-limited classifier API instead of losing the batch.
+OFFLINE_TASK_OWNER = "email-training-labeler"
 
-    The service falls back to the runtime router, which needs a live parent
-    runtime operation this command does not have. A labelling batch is not
-    latency-sensitive, so it simply waits and tries the same API again.
+
+class _OfflineTaskBackend:
+    """Run each classification as a recorded work item on the system routing.
+
+    Classification follows the same route order and fallback as every other
+    Agent turn (Derek 2026-09-25). The router runs only recorded work, so each
+    call records one for its own duration.
     """
 
-    def __init__(
-        self,
-        backend: object,
-        *,
-        attempts: int = 5,
-        first_wait_seconds: float = 20.0,
-        report: Callable[[Mapping[str, object]], None] | None = None,
-        sleeper: Callable[[float], None] | None = None,
-    ) -> None:
-        if attempts < 1:
-            raise ValueError("attempts must be positive")
+    def __init__(self, backend: object, tasks: object) -> None:
         self._backend = backend
-        self._attempts = attempts
-        self._first_wait_seconds = first_wait_seconds
-        self._report = report or (lambda _event: None)
-        import time as _time
-
-        self._sleeper = sleeper or _time.sleep
+        self._tasks = tasks
 
     def classify(self, **kwargs: object) -> str:
-        from app.email_agent_api import EmailClassifierApiError
-
-        for attempt in range(1, self._attempts + 1):
-            try:
-                return self._backend.classify(**kwargs)
-            except EmailClassifierApiError as exc:
-                if attempt == self._attempts:
-                    raise
-                wait = self._first_wait_seconds * (2 ** (attempt - 1))
-                self._report(
-                    {
-                        "request_status": "waiting",
-                        "error_code": str(exc),
-                        "attempt": attempt,
-                        "wait_seconds": wait,
-                    }
-                )
-                self._sleeper(wait)
-        raise AssertionError("unreachable")
-
-
-def labeling_api_backend(runtime_config: object, route_name: str) -> object:
-    """Call the named route's provider endpoint directly for an offline batch.
-
-    The service classifies through the runtime router, which needs a running
-    classification task this command does not create. The operator therefore
-    names the route to use; only a route with its own provider endpoint and
-    key (an added Codex API route) can be called directly.
-    """
-
-    from app.email_agent_api import EmailClassifierApiBackend
-
-    route = next(
-        (item for item in runtime_config.routes if item.name == route_name), None
-    )
-    secret = runtime_config.secret_for(route_name)
-    if route is None or not route.base_url or secret is None:
-        raise SystemExit(
-            f"runtime route {route_name} must be configured with its own "
-            "provider endpoint and API key"
-        )
-    return EmailClassifierApiBackend(
-        base_url=route.base_url,
-        model=route.model,
-        api_key=secret.get_secret_value(),
-    )
+        task_id = str(kwargs["task_id"])
+        self._tasks.open_offline_task(task_id=task_id, owner=OFFLINE_TASK_OWNER)
+        try:
+            return self._backend.classify(**kwargs)
+        finally:
+            self._tasks.close_offline_task(task_id)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
-    from app.agent_runtime_config import load_runtime_config
     from app.config import load_env_file, worker_db_path, workspace_path
     from app.email_classifier_agent import EmailClassifierAgent
     from app.email_store import EmailStore
@@ -507,7 +454,6 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--gmail-query", help="Gmail search (X-GM-RAW), e.g. category:purchases")
     parser.add_argument("--folder", default="INBOX", help="mailbox to search")
     parser.add_argument("--target", default="", help="with a search: the category this search aims at, for the report")
-    parser.add_argument("--route", default="", help="a configured Codex API-kind runtime route whose endpoint, model and key label the batch")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     load_env_file()
@@ -567,12 +513,23 @@ def main(argv: Iterable[str] | None = None) -> int:
     snapshot = runtime_skill_snapshot_for_process(task_store, pid=args.service_pid)
     if snapshot is None:
         raise SystemExit("no classifier Skill snapshot is loaded by that service process")
-    if not args.route:
-        parser.error("--route is required to name the runtime route that labels the batch")
+    from app.agent_runtime_production import build_production_routed_codex_execution
+    from app.email_classifier_agent import EmailClassifierRoutedBackend
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    tasks = EmailClassificationTaskAdapter(email_store)
+    tasks.purge_offline_tasks(OFFLINE_TASK_OWNER)
     agent = EmailClassifierAgent(
-        _WaitAndRetryBackend(
-            labeling_api_backend(load_runtime_config(os.environ), args.route),
-            report=lambda event: print(json.dumps(event, ensure_ascii=False)),
+        _OfflineTaskBackend(
+            EmailClassifierRoutedBackend(
+                build_production_routed_codex_execution(
+                    store=task_store,
+                    workspace=workspace_path(),
+                    total_timeout_seconds=300.0,
+                    idle_timeout_seconds=120.0,
+                )
+            ),
+            tasks,
         ),
         runtime_skill_snapshot=snapshot,
         skill_name="ceo-email-classifier",

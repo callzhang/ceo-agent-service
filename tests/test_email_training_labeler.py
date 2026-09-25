@@ -232,73 +232,58 @@ def test_gmail_search_takes_newest_unclassified_hits_over_a_readonly_select():
     assert found[0][1]["uid"] == 7
 
 
-def test_a_rate_limited_batch_waits_and_retries_the_same_api():
-    """The router fallback needs a live service parent; a batch just waits."""
+def test_each_classification_runs_as_a_recorded_item_and_leaves_none_behind(tmp_path):
+    """The router runs only recorded work, so a batch records one item per call."""
 
-    from app.email_agent_api import EmailClassifierApiError
-    from app.email_training_labeler import _WaitAndRetryBackend
+    from app.email_store import EmailStore
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+    from app.email_training_labeler import OFFLINE_TASK_OWNER, _OfflineTaskBackend
 
-    attempts = []
-    waits = []
-
-    class Backend:
-        def classify(self, **kwargs):
-            attempts.append(kwargs["task_id"])
-            if len(attempts) < 3:
-                raise EmailClassifierApiError(
-                    "non-retryable email classifier API error (http_429)",
-                    retryable=False,
-                )
-            return "labelled"
-
-    backend = _WaitAndRetryBackend(
-        Backend(), first_wait_seconds=10, sleeper=waits.append, report=lambda _e: None
-    )
-
-    assert backend.classify(task_id="t1") == "labelled"
-    assert len(attempts) == 3
-    assert waits == [10, 20]
-
-
-def test_a_batch_gives_up_after_its_last_attempt():
-    import pytest
-
-    from app.email_agent_api import EmailClassifierApiError
-    from app.email_training_labeler import _WaitAndRetryBackend
+    email_store = EmailStore(tmp_path / "labeler.sqlite3")
+    tasks = EmailClassificationTaskAdapter(email_store)
+    task_id = "email-classification:" + "a" * 64
+    seen = []
 
     class Backend:
         def classify(self, **kwargs):
-            raise EmailClassifierApiError("http_429", retryable=False)
+            seen.append(tasks.get_task(kwargs["task_id"]))
+            return "{}"
 
-    with pytest.raises(EmailClassifierApiError):
-        _WaitAndRetryBackend(
-            Backend(), attempts=2, first_wait_seconds=1, sleeper=lambda _s: None
-        ).classify(task_id="t1")
+    assert _OfflineTaskBackend(Backend(), tasks).classify(task_id=task_id) == "{}"
+
+    assert seen[0].status == "running" and seen[0].owner == OFFLINE_TASK_OWNER
+    assert tasks.get_task(task_id) is None
 
 
-def test_labeling_calls_the_route_the_operator_names_not_a_fixed_one():
-    """No route name is special: the batch uses the endpoint of the route it names."""
-
+def test_a_failed_classification_still_removes_its_recorded_item(tmp_path):
     import pytest
 
-    from app.agent_runtime_config import load_runtime_config
-    from app.email_training_labeler import labeling_api_backend
+    from app.email_store import EmailStore
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+    from app.email_training_labeler import _OfflineTaskBackend
 
-    config = load_runtime_config(
-        {
-            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,kksj",
-            "CEO_RUNTIME_KKSJ_KIND": "codex_api",
-            "CEO_RUNTIME_KKSJ_BASE_URL": "https://gateway.example/v1/",
-            "CEO_RUNTIME_KKSJ_MODEL": "MiniMax-M3",
-            "CEO_RUNTIME_KKSJ_API_KEY": "kksj-key",
-        }
-    )
+    email_store = EmailStore(tmp_path / "labeler.sqlite3")
+    tasks = EmailClassificationTaskAdapter(email_store)
+    task_id = "email-classification:" + "b" * 64
 
-    backend = labeling_api_backend(config, "kksj")
+    class Backend:
+        def classify(self, **_kwargs):
+            raise RuntimeError("route failed")
 
-    assert backend._url == "https://gateway.example/v1/responses"
-    assert backend._model == "MiniMax-M3"
-    with pytest.raises(SystemExit, match="codex_oauth"):
-        labeling_api_backend(config, "codex_oauth")
-    with pytest.raises(SystemExit, match="missing"):
-        labeling_api_backend(config, "missing")
+    with pytest.raises(RuntimeError):
+        _OfflineTaskBackend(Backend(), tasks).classify(task_id=task_id)
+
+    assert tasks.get_task(task_id) is None
+
+
+def test_recorded_items_never_reach_the_scan_worker_or_uid_protection(tmp_path):
+    from app.email_store import EmailStore
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    email_store = EmailStore(tmp_path / "labeler.sqlite3")
+    tasks = EmailClassificationTaskAdapter(email_store)
+    tasks.open_offline_task(task_id="email-classification:" + "c" * 64, owner="labeler")
+
+    assert tasks.claim_next(owner="worker") is None
+    assert tasks.stable_provider_uids(account_id="a", folder="INBOX", uidvalidity=1) == frozenset()
+    assert tasks.purge_offline_tasks("labeler") == 1

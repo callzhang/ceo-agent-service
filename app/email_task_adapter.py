@@ -328,6 +328,49 @@ class EmailClassificationTaskAdapter:
         assert row is not None
         return self._row(row)
 
+    def open_offline_task(self, *, task_id: str, owner: str) -> None:
+        """Register a running classification work item for an offline batch.
+
+        The runtime router only runs work the service has recorded as running.
+        An offline labelling batch has no scan task, so it records one under
+        its own identity for the length of one classification and removes it
+        afterwards; it is never claimable and holds no message locator.
+        """
+
+        with self.email_store._connect() as db:
+            db.execute(
+                """
+                insert or replace into email_agent_classification_tasks (
+                    task_id, channel, stable_message_identity, status, owner,
+                    generation, attempt_count, lease_expires_at, input_json
+                ) values (?, 'email', ?, 'running', ?, 1, 1, ?, '{}')
+                """,
+                (
+                    task_id,
+                    "offline:" + task_id,
+                    owner,
+                    self._timestamp(self._now() + timedelta(hours=6)),
+                ),
+            )
+
+    def close_offline_task(self, task_id: str) -> None:
+        with self.email_store._connect() as db:
+            db.execute(
+                "delete from email_agent_classification_tasks "
+                "where task_id=? and input_json='{}'",
+                (task_id,),
+            )
+
+    def purge_offline_tasks(self, owner: str) -> int:
+        """Drop work items a crashed offline batch left behind."""
+
+        with self.email_store._connect() as db:
+            return db.execute(
+                "delete from email_agent_classification_tasks "
+                "where owner=? and input_json='{}'",
+                (owner,),
+            ).rowcount
+
     def has_stable_record(self, stable_message_identity: str) -> bool:
         with self.email_store._connect() as db:
             return (
@@ -352,6 +395,7 @@ class EmailClassificationTaskAdapter:
                   and json_extract(input_json, '$.provider_locator.folder')=?
                   and json_extract(input_json, '$.provider_locator.uidvalidity')=?
                   and status in ('pending','running','done')
+                  and json_extract(input_json, '$.provider_locator.uid') is not null
                 """,
                 (account_id, folder, uidvalidity),
             ).fetchall()

@@ -86,8 +86,10 @@ Codex CLI 报告同一 session 有其他 active writer 时，运行时将其视�
 Runtime Router 的 Agent 轮次（`EmailClassifierRoutedBackend`），与其他 Agent 轮次使用同一条线路
 顺序和统一 fallback；没有哪条线路名是邮件分类专用的（Derek 2026-09-24）。此前的「直连名为
 `codex_api` 的线路的 Responses API、失败再走路由」主路径已删除，代价是每封邮件变成一次完整的
-命令行轮次，更慢、更耗额度。离线训练标注命令 `app/email_training_labeler.py` 没有持久化的分类
-任务，无法走路由，改由操作者用 `--route <名字>` 指定一条带自己地址和 Key 的添加线路直连调用。
+命令行轮次，更慢、更耗额度。离线训练标注命令 `app/email_training_labeler.py` 同样走系统模型路由（Derek 2026-09-25，不再有
+`--route` 直连）：路由只运行服务记录为运行中的工作，所以标注命令为每次分类临时登记一条运行中的
+分类工作项（`EmailClassificationTaskAdapter.open_offline_task`，不含邮件定位、不可被扫描领取，分类结束即删，
+启动时清掉崩溃遗留），再交给同一个 `EmailClassifierRoutedBackend`。
 分类请求允许正常的模型响应时间；临时网络、超时和租约中断不进入终态 `failed`，而是在同一
 任务上按共享指数退避重试，重试间隔最多 15 分钟。只有输入、契约或持久化冲突等不可重试
 错误进入 `failed`。Status、Attention 和每小时 quality gate 都必须覆盖该队列，不能只用

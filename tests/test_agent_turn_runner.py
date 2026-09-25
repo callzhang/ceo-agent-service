@@ -440,18 +440,18 @@ def test_a_result_correction_names_what_the_contract_says_is_wrong() -> None:
 
 
 @pytest.mark.parametrize(
-    ("runtime_kind", "credential_mode", "expected"),
+    ("runtime_kind", "credential_mode"),
     [
-        # A Codex API route keeps its session through a forced fresh turn,
-        # whatever the operator named it.
-        ("codex_cli", "service_api", "persisted-session"),
-        ("claude_cli", "service_api", None),
-        ("codex_cli", "local_oauth", None),
+        ("codex_cli", "service_api"),
+        ("claude_cli", "service_api"),
+        ("codex_cli", "local_oauth"),
     ],
 )
-def test_forced_fresh_session_exemption_follows_the_route_kind(
-    tmp_path, runtime_kind, credential_mode, expected
+def test_forced_fresh_session_applies_to_every_route(
+    tmp_path, runtime_kind, credential_mode
 ):
+    """No route is exempt: a forced fresh turn never resumes a persisted session."""
+
     from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
 
     store = AutoReplyStore(tmp_path / "runner.sqlite3")
@@ -476,5 +476,5 @@ def test_forced_fresh_session_exemption_follows_the_route_kind(
         force_new_session=True,
     )
 
-    assert session == expected
+    assert session is None
 

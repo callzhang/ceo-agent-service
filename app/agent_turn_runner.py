@@ -1572,9 +1572,7 @@ class AgentTurnProcess(Generic[ResultT]):
         conversation_contract_hash: str = "",
         force_new_session: bool = False,
     ) -> str | None:
-        if force_new_session and not (
-            route.is_cli_api_route and route.runtime_kind is RuntimeKind.CODEX_CLI
-        ):
+        if force_new_session:
             return None
         if role is AgentRole.AUDIT:
             # Audit retries are new immutable runs, but they continue the same
