@@ -174,3 +174,5 @@
 .email-unsubscribe-state { font-weight: 600; color: #96620b; }
 .email-unsubscribe-state.success { color: #17694f; }
 .email-unsubscribe-state.failure { color: #a43030; }
+.email-unsubscribe-state small { display: block; font-weight: 400; font-size: 11px; line-height: 1.2; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; }
+.email-dense-row > span.email-unsubscribe-state { line-height: 1.25; }

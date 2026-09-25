@@ -292,15 +292,18 @@ it("reveals unsubscribe evidence only on demand and links the verified Attempt",
   expect(screen.queryByText("Flag：未知")).not.toBeInTheDocument();
 });
 it("shows each unsubscribe record's outcome in the 退订记录 list instead of the classification status",async()=>{
-  const states=[{status:"done",outcome:"done"},{status:"done",outcome:"skipped_login_required"},{status:"failed",outcome:null},{status:"processing",outcome:null}];
-  api.listEmailClassifications.mockResolvedValue({items:states.map((state,index)=>({...row(String(index+1),"processed"),unsubscribe_state:state})),meta:{page:1,page_size:50,total:4}});
+  const states=[{status:"done",outcome:"done"},{status:"done",outcome:"skipped_login_required"},{status:"failed",outcome:null},{status:"processing",outcome:null},{status:"done",outcome:"skipped_no_reliable_entry"}];
+  api.listEmailClassifications.mockResolvedValue({items:states.map((state,index)=>({...row(String(index+1),"processed"),unsubscribe_state:state})),meta:{page:1,page_size:50,total:5}});
   show("/email?tab=unsubscribe");
   const rows=await screen.findAllByRole("button",{name:/打开邮件/});
   expect(rows[0]).toHaveTextContent("退订成功");expect(rows[0].querySelector(".email-unsubscribe-state")).toHaveClass("success");
-  expect(rows[1]).toHaveTextContent("本次未完成退订");
+  expect(rows[1]).toHaveTextContent("本次未完成退订");expect(rows[1]).toHaveTextContent("退订需要登录验证。");
+  expect(rows[0]).not.toHaveTextContent("退订需要登录验证。");
   expect(rows[2]).toHaveTextContent("退订执行失败");expect(rows[2].querySelector(".email-unsubscribe-state")).toHaveClass("failure");
   expect(rows[3]).toHaveTextContent("正在退订");
+  expect(rows[4]).toHaveTextContent("本次未完成退订");expect(rows[4]).toHaveTextContent("未找到可操作的退订入口。");
   for (const item of rows) expect(item).not.toHaveTextContent("已处理");
+  expect(rows[1]).not.toHaveTextContent("未找到可操作的退订入口。");
 });
 it("opens the detail on the 处理记录 tab, ahead of the original text, when the mail has records",async()=>{
   const user=userEvent.setup();

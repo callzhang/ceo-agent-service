@@ -46,12 +46,18 @@ export function actionResultLabel(event: EmailObservabilityEvent): string {
   return event.status === "done" || event.status === "succeeded" ? `已完成：${action}` : event.status === "failed" ? `${action}失败` : `${action} · ${event.status === "processing" ? "处理中" : "待执行"}`;
 }
 
-export function unsubscribeStateLabel(state: {status: string; outcome?: string | null} | null | undefined): {text: string; tone: "success" | "failure" | "pending"} {
-  if (!state) return {text: "退订状态未知", tone: "pending"};
+export function unsubscribeReason(outcome: string | null | undefined): string | null {
+  if (outcome === "skipped_no_reliable_entry") return "未找到可操作的退订入口。";
+  if (outcome === "skipped_login_required") return "退订需要登录验证。";
+  return null;
+}
+
+export function unsubscribeStateLabel(state: {status: string; outcome?: string | null} | null | undefined): {text: string; tone: "success" | "failure" | "pending"; reason: string | null} {
+  if (!state) return {text: "退订状态未知", tone: "pending", reason: null};
   const event = {kind: "unsubscribe", operation: "unsubscribe", status: state.status, outcome: state.outcome ?? undefined};
   const success = ["done", "already_unsubscribed"].includes(event.outcome || "");
   const failed = event.status === "failed" || !!event.outcome?.startsWith("failed");
-  return {text: actionResultLabel(event), tone: success ? "success" : failed ? "failure" : "pending"};
+  return {text: actionResultLabel(event), tone: success ? "success" : failed ? "failure" : "pending", reason: unsubscribeReason(event.outcome)};
 }
 
 function UnsubscribeEvidence({ event, classificationId, entry }: { event: EmailObservabilityEvent; classificationId: string; entry?: {available: boolean; reason: string | null} }) {
@@ -89,7 +95,7 @@ export function ObservabilityDetails({ events, classificationId, entry }: { even
     const failed=event.status === "failed" || event.outcome?.startsWith("failed");
     return <article className="email-observability-item" key={event.action_identity || event.action_id || index}>
       <div className="email-event-heading"><span className={success ? "email-event-icon success" : failed ? "email-event-icon failure" : "email-event-icon"}>{success ? "✓" : failed ? "!" : "—"}</span><h3>{actionResultLabel(event)}</h3>{recordedAt && <time>{localTime(recordedAt)}</time>}</div>
-      {event.kind === "unsubscribe" && <><p className="email-event-reason">{event.outcome === "skipped_no_reliable_entry" ? "未找到可操作的退订入口。" : event.outcome === "skipped_login_required" ? "退订需要登录验证。" : event.outcome === "done" ? "已记录退订成功结果。" : event.status === "done" && !event.outcome ? "历史记录未提供明确的退订结果。" : null}</p><UnsubscribeEvidence event={event} classificationId={classificationId} entry={entry}/></>}
+      {event.kind === "unsubscribe" && <><p className="email-event-reason">{unsubscribeReason(event.outcome) ?? (event.outcome === "done" ? "已记录退订成功结果。" : event.status === "done" && !event.outcome ? "历史记录未提供明确的退订结果。" : null)}</p><UnsubscribeEvidence event={event} classificationId={classificationId} entry={entry}/></>}
       {event.error && <p role="alert">{event.error}</p>}
       <details className="email-technical"><summary>技术详情</summary>
         {event.summary && <p>{event.summary}</p>}
