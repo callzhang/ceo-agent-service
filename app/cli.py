@@ -360,6 +360,7 @@ def build_parser() -> argparse.ArgumentParser:
         "backfill-routine-process-todos",
         "backfill-todo-owner-ids",
         "backfill-todo-deadlines",
+        "backfill-minutes-owners",
         "process-okr-reviews",
         "weekly-okr-report",
         "refresh-okr-archive",
@@ -585,6 +586,18 @@ def build_parser() -> argparse.ArgumentParser:
                 "--apply",
                 action="store_true",
                 help="Apply changes. Omit for dry-run.",
+            )
+        if command == "backfill-minutes-owners":
+            subparser.add_argument(
+                "--limit",
+                type=_positive_int,
+                default=None,
+                help="maximum meetings to queue again. Omit for all.",
+            )
+            subparser.add_argument(
+                "--apply",
+                action="store_true",
+                help="Queue the meetings. Omit for dry-run.",
             )
         if command == "backfill-todo-deadlines":
             subparser.add_argument(
@@ -2053,6 +2066,28 @@ def backfill_todo_owner_ids_command(
         now=now,
     )
     _print_todo_owner_backfill_result(result)
+    return result
+
+
+def backfill_minutes_owners_command(
+    settings: WorkerSettings,
+    *,
+    limit: int | None = None,
+    apply: bool = False,
+):
+    from app.dws_client import DwsClient
+    from app.minutes_owner_backfill import backfill_minutes_owners
+
+    result = backfill_minutes_owners(
+        AutoReplyStore(settings.db_path), DwsClient(), dry_run=not apply, limit=limit
+    )
+    for decision in result.decisions:
+        print(json.dumps(decision, ensure_ascii=False), flush=True)
+    print(
+        "backfill-minutes-owners "
+        f"dry_run={result.dry_run} inspected={result.inspected} queued={result.queued}",
+        flush=True,
+    )
     return result
 
 
@@ -4809,6 +4844,8 @@ def main() -> None:
             reason=args.reason,
             apply=args.apply,
         )
+    elif args.command == "backfill-minutes-owners":
+        backfill_minutes_owners_command(settings, limit=args.limit, apply=args.apply)
     elif args.command == "backfill-todo-deadlines":
         initialize_agent_runtime_routes(settings)
         backfill_todo_deadlines_command(

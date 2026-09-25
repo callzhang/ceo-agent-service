@@ -228,6 +228,39 @@ def _canonical_minutes_todos_payload(
     )
 
 
+def minutes_work_item(
+    minutes: dict[str, Any],
+    *,
+    minutes_id: str,
+    digest: str,
+    canonical: str,
+    scheduled_consumer: Any = None,
+) -> WorkItem:
+    """The Work Item a meeting's action items become; the scan and the owner backfill build it the same way."""
+    title = str(minutes.get("title") or f"AI minutes {minutes_id}").strip()
+    return WorkItem.model_validate(
+        {
+            "source": {
+                "type": "ai_minutes",
+                "ref": f"{minutes_id}#todos-sha256={digest}",
+                "title": f"{title}行动项",
+                "created_at": _minutes_item_time(minutes),
+            },
+            "summary": canonical,
+            "project_name": title,
+            "context": {
+                "sender": "",
+                "participants": [],
+                "source_conversation_kind": "minutes",
+                "source_conversation_title": title,
+            },
+            "scheduled_consumer": (
+                scheduled_consumer.to_payload() if scheduled_consumer else {}
+            ),
+        }
+    )
+
+
 def scan_meeting_todos(
     store: AutoReplyStore,
     dws,
@@ -319,28 +352,12 @@ def scan_meeting_todos(
             transcript_excerpts=todo_transcript_excerpts(todos_payload, paragraphs),
         )
 
-        title = str(minutes.get("title") or f"AI minutes {minutes_id}").strip()
-        source_ref = f"{minutes_id}#todos-sha256={digest}"
-        item = WorkItem.model_validate(
-            {
-                "source": {
-                    "type": "ai_minutes",
-                    "ref": source_ref,
-                    "title": f"{title}行动项",
-                    "created_at": _minutes_item_time(minutes),
-                },
-                "summary": canonical,
-                "project_name": title,
-                "context": {
-                    "sender": "",
-                    "participants": [],
-                    "source_conversation_kind": "minutes",
-                    "source_conversation_title": title,
-                },
-                "scheduled_consumer": (
-                    scheduled_consumer.to_payload() if scheduled_consumer else {}
-                ),
-            }
+        item = minutes_work_item(
+            minutes,
+            minutes_id=minutes_id,
+            digest=digest,
+            canonical=canonical,
+            scheduled_consumer=scheduled_consumer,
         )
         store.enqueue_work_summary_input(
             source_type=item.source.type.value,
