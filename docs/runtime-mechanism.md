@@ -955,12 +955,6 @@ estimate、requester/external deadline 和 next check 均不能充当镜像期�
 创建。`failed` outbox 在有界 `next_attempt_at` 退避后才可再次领取。外部 TODO 状态轮询只按其 Task
 链接关闭 Task，写入完成来源证据、事件，并关闭该 Task 的 follow-up；关联 Project 或同聚类 Task 不随之完成。
 
-**Task 决定可以引用之前的证据和 Memory provenance，来源必须可回溯，引文不必逐字**（Derek 2026-09-25）：Task Agent 用同一个长期 session 是为了不丢上下文，不禁止它用此前读到的证据，也不禁止它通过 `memory_recall` 顺着 provenance 找到原始来源。`TaskDecision.evidence_origin` 为 `current`（当前 Work Item，默认）、`session`（此前 session 里读到的）或 `memory`（Memory provenance 指向的原始来源）；后两者的 `source_ref` 是原始来源的引用，`source_excerpt` 是原文里的一句，并且有链接就必须给 `source_link`，没有链接则用 `source_description` 描述在哪里（例如钉钉消息就是群加发送人；`source_group` 加 `source_person` 也算），二者都没有则模型校验拒绝。它们只能用于完善已有 Task（`update_fields`）或记录候选；创建正式 Task、晋升、确认接受、身份合并仍要当前 Work Item 的授权与身份元数据，日期证据仍要当前来源和明确说话人。引用的来源单独存成一条来源信号（`source_type` 为 `session_provenance` 或 `memory_provenance`，引文作证据文本，链接放 `context_json.source_link`，描述放 `context_json.source_description`，群和人放会话标题与作者名，`cited_while_processing` 记录当时在处理哪个 Work Item），服务无法重读原文，所以标明的是“引用而非当下观察”。每条来源的引文是取自原文的一句，可以摘取、不必逐字，服务不再校验它是原文子串（仍要求非空，负责人的名字必须出现在负责人引文里，日期证据仍要求是来源子串）；当前来源的定位由服务补全（URL 引用、听记摘要里的页面链接，或会话加发送人），没有的话记录里仍有 `source_ref`。一条负责人证据不成立的更新只跳过那一条并写明原因，不让同一场会议其余条目一起失败。
-
-**会议行动项带上前后对话**（Derek 2026-09-25：负责人的信息其实在原始材料里）：钉钉从听记抽出的行动项，`executorList` 恒为空，负责人不在行动项里，而在被抽出那一刻的对话里——每条行动项带 `createdTime`（在录音里的毫秒位置），逐字稿每段带说话人昵称和起止毫秒。`scan_meeting_todos` 在把会议入队前读完整份逐字稿，`app/minutes_todo_context.py` 为每条有有效 `createdTime` 的行动项截取包含该时刻的那一段及前 6 段、后 4 段，每句写成一行“说话人：内容”（一段常有好几句，而钉钉的 `sentenceList` 把整段当作一句，所以在句末标点处自己拆；Agent 引用其中一句时带着标签仍是来源里的原文），放进来源摘要的 `transcript_excerpts`；位置未知（`createdTime` 缺失或为 0，或超出逐字稿）的行动项没有摘录，逐字稿为空的会议照常入队。逐字稿读不到时这场会议本轮不入队、也不记为已见，下一轮重读；去重摘要仍只覆盖行动项本身，所以之后补读逐字稿不会让已处理的会议重复入队。Task Agent 的提示词把这些行当作来源：负责人是对话把事情交给的人或接下的人，不一定是说话人（甲说“你写下来”是指派给被点名的乙），引用的原话要带上说话人标签，这样名字出现在负责人证据里；钉钉对认不出的说话人给的“发言人 N”是占位标签，不是人名，绝不作负责人；读不出来就留空。日期仍不从听记取（没有可信的说话人到身份映射）。已经入库的候选任务由命令 `python -m app.cli backfill-minutes-owners`（`app/minutes_owner_backfill.py`）补：找出有「无负责人的开放候选 Task 且发现来源是 AI 听记」的会议，重读行动项和逐字稿，用同样的方式组装 Work Item，以新的来源引用再入队一次（引用里的摘要覆盖行动项和摘录，所以重复运行不会再入队），由 Task Agent 用普通更新路径给已有候选补负责人（检索上下文一定包含同一来源此前产生的 Task，不论词面排名；否则 Agent 看不到它们，会把同一件事再记一遍；一条只重复 Task 现状的更新记为跳过，不让同一场会议的其他条目一起失败）；默认只预演，`--apply` 才入队，`--limit N` 取最近的 N 场。
-
-**候选 Task 可在控制台忽略或恢复**（Derek 2026-09-25）：Tasks 页「全部任务」的候选任务行和候选 Task 详情页有一个忽略按钮，点击调用 `POST /api/console/tasks/items/{task_id}/candidate-decision`（`action` 为 `ignore` 或 `restore`，实现在 `app/task_console_actions.py`）。忽略把 Task 状态改为 `cancelled`（阶段仍是 `candidate`），恢复改回 `open`；走普通的 `TaskSemanticService.update_task`，所以留下与其他变更相同的痕迹：一条 Derek 署名的 `console` 来源信号（`author_kind=human`）、`correction` 证据链接和 `status_changed` 事件，原发现证据不动，什么都不删除。信号的来源引用带上一次的 `updated_at`，同一状态下重复点击被拒绝（409 `not_applicable`）而不是重复记录；提交后照 Task Agent 的做法重算受影响的关注成员。只有候选可以忽略：正式 Task 有负责人和来源引文，它的状态只能由证据推动。控制台**不提供**「确认为正式任务」——晋升要求已识别的负责人和来自来源的负责人原话，点击给不出这两样，见 `docs/task-semantic-storage.md`。`GET /api/console/tasks/all` 另接受 `owner=assigned|unassigned` 和 `sort=updated|created`，非法取值返回 400。服务写入的固定事件原因（如“根据来源证据记录为候选任务”）现在是中文；此前写入的英文原因是历史记录，不改写。
-
 **催办由 Derek 点按钮发送**（Derek 2026-09-25：「催办应该变成 UI 上的一个按钮，让用户决定是否要发送催办（点击一键发送），如果后面有新的信息更新了 task，应该取消可催办状态」）：Task 详情页「催办」区列出该 Task 的全部 follow-up；待发送（`draft`/`approved`）和发送失败（`failed`）的每条带一个发送按钮，点击调用 `POST /api/console/tasks/items/{task_id}/follow-ups/{follow_up_id}/send`（带当前 `revision`），由 `send_business_task_follow_up` 当场发送：不看工作时间、不经 Agent 审核，点击就是决定。失败或结果未知的发送保持 `failed` 并把结果留在该行上，不排 Agent 修复；再点一次作为新 revision 发送，原 attempt 不改。Task Agent 把新信息应用到已有 Task 时，在同一事务里用 `cancel_pending_business_task_follow_ups` 撤回该 Task 其余未发出的 follow-up（`cancelled`，原因写明被哪条来源更新），同一来源信号新建的 follow-up 保留，正在发送的不动。
 
 Task 7 的新 follow-up 只从链接来源信号的精确群/单聊目标与明确、可解析 `next_check_at` 创建，
@@ -971,6 +965,64 @@ Task 7 的新 follow-up 只从链接来源信号的精确群/单聊目标与明�
 旧 `follow_up_drafts` 只是历史记录：不会再被发送，失败的旧记录也不再提供「让 Agent 重新核验负责人 /
 取消本次跟进」表单（`/follow-ups/{id}/resolution-form` 已删除）；小时质检和安装向导的 dry-run 检查
 不再把未发送或失败的旧记录当作积压。Task 8 的旧记录导入与生产切换仍是独立边界。
+
+### Task 的来源与证据
+
+Derek 2026-09-25 定的规则。Task Agent 用同一个长期 session 是为了不丢上下文，所以**不禁止它用之前的证据**，也不禁止它通过 `memory_recall` 顺着 provenance 找到原始来源；但每条来源都要能回溯到出处。
+
+**每个决定引用什么**
+
+| 字段 | 含义 |
+| --- | --- |
+| `evidence_origin` | `current`（当前 Work Item，默认）、`session`（此前 session 里读到的）、`memory`（Memory provenance 指向的原始来源） |
+| `source_ref` | 来源引用；`session` / `memory` 时是**原始来源**的引用 |
+| `source_excerpt` | 取自原文的一句话，可以摘取，**不必逐字** |
+| `source_link` | 来源有链接就必须给 |
+| `source_description` | 没有链接时用文字描述在哪里，例如钉钉消息写“群 + 发送人”；`source_group` 加 `source_person` 也算 |
+
+- 对 `session` / `memory`，链接和描述至少要有一个，否则模型校验拒绝。对 `current`，缺的定位由服务补：URL 引用、听记摘要里的页面链接、或会话加发送人；都没有时记录里仍有 `source_ref`。
+- 引文不再校验是不是原文子串。仍然要求：引文非空；负责人的名字必须出现在负责人引文里；日期证据仍要求是来源子串。
+- `session` / `memory` 只能用于完善已有 Task（`update_fields`）或记录候选。创建正式 Task、晋升、确认接受、身份合并仍要当前 Work Item 的授权与身份元数据；日期证据仍要当前来源和明确说话人。
+- 引用的旧证据单独存成一条来源信号：`source_type` 为 `session_provenance` 或 `memory_provenance`，引文作证据文本，链接和描述放 `context_json`（`source_link`、`source_description`），群和人放会话标题与作者名，`cited_while_processing` 记录当时在处理哪个 Work Item。服务无法重读原文，所以这条记录标明的是“引用而非当下观察”。
+
+**批处理里的容错**：同一场会议的多个条目在一次提交里应用，一条不成立不应拖垮其余。
+
+- 负责人证据不成立（负责人的名字不在引文里）的更新，只跳过那一条并写明原因。
+- 一条只重复 Task 现状的 `update_fields`（标题、状态等都没变，且“unknown”的相关性不算判断）记为跳过，不报错。
+- 检索上下文一定包含同一来源此前产生的 Task，不论词面排名，否则 Agent 看不到它们，会把同一件事再记一遍。
+
+### 听记行动项的负责人
+
+**问题**：钉钉从听记抽出的行动项，`executorList` 恒为空，负责人不在行动项里，而在被抽出那一刻的对话里。每条行动项带 `createdTime`（在录音里的毫秒位置），逐字稿每段带说话人昵称和起止毫秒。
+
+**做法**（`app/minutes_todo_context.py`，由 `scan_meeting_todos` 调用）：
+
+1. 入队前读完整份逐字稿。
+2. 对每条有有效 `createdTime` 的行动项，截取包含该时刻的那一段及前 6 段、后 4 段。
+3. 每句写成一行“说话人：内容”，放进来源摘要的 `transcript_excerpts`。钉钉的 `sentenceList` 把整段当作一句，所以在句末标点处自己拆句。
+4. 没有摘录的情况：`createdTime` 缺失或为 0、超出逐字稿的行动项没有摘录；逐字稿为空的会议照常入队。逐字稿读不到时，这场会议本轮不入队、也不记为已见，下一轮重读。
+5. 去重摘要仍只覆盖行动项本身，所以之后补读逐字稿不会让处理过的会议重复入队。
+
+**提示词规则**：负责人是对话把事情交给的人或接下的人，不一定是说话人（甲说“你写下来”是指派给被点名的乙）；负责人引文用一句带说话人标签、包含负责人名字的话，它常常不是决定本身的 `source_excerpt`；钉钉对认不出的说话人给的“发言人 N”是占位标签，绝不作负责人；说不清就留空。日期仍不从听记取，因为没有可信的说话人到身份映射。
+
+**回填已入库的候选**（已处理过的会议不会被再读到，所以必须回填）：`python -m app.cli backfill-minutes-owners`（`app/minutes_owner_backfill.py`）。
+
+- 找出“有无负责人的开放候选 Task，且发现来源是 AI 听记”的会议，重读行动项和逐字稿，用同样方式组装 Work Item，以新的来源引用再入队一次，由 Task Agent 用普通更新路径补负责人。
+- 默认只预演；`--apply` 才入队；`--limit N` 取最近的 N 场。
+- 来源引用里的摘要覆盖行动项、摘录和 `BACKFILL_REVISION`，所以重复运行不会重复入队；改了提示词、引文格式或校验规则后递增这个版本号，才会让上一轮没补上的会议再读一次。
+
+### 控制台对候选 Task 的操作
+
+Derek 2026-09-25。候选只是没确认的猜测，所以可以在控制台“忽略”，也可以“恢复”。
+
+- Tasks 页“全部任务”的候选行和候选 Task 详情页有忽略按钮，调用 `POST /api/console/tasks/items/{task_id}/candidate-decision`（`action` 为 `ignore` 或 `restore`，实现在 `app/task_console_actions.py`）。
+- 忽略把 Task 状态改为 `cancelled`（阶段仍是 `candidate`），恢复改回 `open`。走普通的 `TaskSemanticService.update_task`，留下与其他变更相同的痕迹：一条 Derek 署名的 `console` 来源信号（`author_kind=human`）、`correction` 证据链接和 `status_changed` 事件。原发现证据不动，什么都不删除。
+- 来源引用带上一次的 `updated_at`，同一状态下重复点击返回 409 `not_applicable`，不重复记录。提交后照 Task Agent 的做法重算受影响的关注成员。
+- 只有候选可以忽略：正式 Task 有负责人和来源引文，状态只能由证据推动。控制台**不提供**“确认为正式任务”——晋升要求已识别的负责人和来自来源的负责人原话，点击给不出这两样，见 `docs/task-semantic-storage.md`。
+- 忽略后的 Task 仍在“全部任务”里（灰显、划线），Task Agent 见到已取消的候选不会自行恢复它。
+- `GET /api/console/tasks/all` 另接受 `owner=assigned|unassigned` 和 `sort=updated|created`，非法取值返回 400。
+- 服务写入的固定事件原因现在是中文（如“根据来源证据记录为候选任务”）；此前写入的英文原因是历史记录，不改写。候选没有负责人是正常状态，界面不把它当缺口。
+
 
 ## 任务类型
 

@@ -689,7 +689,7 @@ DDL、状态和下周任务。周报即使汇总会议纪要与项目沟通记�
 不能单独创建正式 Project，也不能自行覆盖周报中明确的字段；来源冲突时先取
 最新明确周报字段，再取最新确认的会议决策，并保留精确来源引用。
 
-Task Agent 的结构化结果是 `task_decisions` 列表，同一来源可以得到 0 到多个决定。每个非 skip 项必须引用原始来源中的精确摘录与来源引用；Task、负责人、日期和承诺不得由 Agent 自行补造。正式 Task 必须有来源支持的明确负责人；正式指派先记为 `assigned_unaccepted`。只有负责人本人对唯一现存 Task 的明确接受证据才能进入 `accepted`。外部 TODO 的存在只证明有一条外部记录，不证明负责人接受。
+Task Agent 的结构化结果是 `task_decisions` 列表，同一来源可以得到 0 到多个决定。每个非 skip 项必须引用来源：来源引用、取自原文的一句话（可摘取，不必逐字）、以及来源的链接（没有链接则描述在哪里，如钉钉消息的群加发送人）；引用可以来自当前 Work Item，也可以来自此前 session 里读到的证据或 Memory provenance（只能用于完善已有 Task 或记录候选，见 `docs/runtime-mechanism.md` “Task 的来源与证据”）；Task、负责人、日期和承诺不得由 Agent 自行补造。正式 Task 必须有来源支持的明确负责人；正式指派先记为 `assigned_unaccepted`。只有负责人本人对唯一现存 Task 的明确接受证据才能进入 `accepted`。外部 TODO 的存在只证明有一条外部记录，不证明负责人接受。
 更新既有 Task 时，Agent 可用本轮来源证据修订标题或描述；内容变更、新信号证据链接及 before/after 事件原子提交。纯内容更新记为 `details_changed`，内容与其他 Task 字段同时更新记为 `fields_changed`。重复回放不重复追加事件；只有新证据、没有字段实际变化的更新会被拒绝。
 
 Task Agent 使用一个统一的 `TaskAgentDecision` 生命周期契约：同一来源可产生 0..N 个新建/更新 Task 决定。单独的 Task completion Agent 已删除（Derek 2026-09-25，完成由新证据驱动）：服务不再产生 `todo_completion_evidence_candidate`、`todo_completion_check`、`follow_up_completion_check` 三类 Work Item，队列里残留的这类输入在到达 Task Agent 前被标为 `skipped`（原因 `completion checks retired (Derek 2026-09-25: 完成由新证据驱动)`）；枚举值只为历史记录保留。契约里的 `todo_changes`、`follow_up_changes`、`search_trace` 字段仍在 schema 中，但当前没有服务端路径应用它们。外部 TODO 完成与类型化 Task 完成在事务提交后按受影响 Task 重算当前 Attention 成员；完成的 Task 从成员列表退出，但不会仅凭读取或完成动作把 Attention 标成已解决。Task Agent prompt 明确要求只读发现，不得通过 CLI/API/MCP 工具创建、更新、删除、发送或完成外部记录；这是 prompt-only 的 best-effort 指引，不是运行时权限边界，Codex route 仍没有 per-turn MCP 写工具 allowlist。外部完成只由现有 outbox 同步。

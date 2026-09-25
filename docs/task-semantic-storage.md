@@ -212,12 +212,6 @@ acceptance signal and role commit together. Generic `UpdateBusinessTask`
 cannot set commitment status or write the old untyped deadline; date inputs
 create typed evidence rows instead.
 
-A Task decision may cite evidence the Agent read earlier in its session or reached through Memory provenance (`evidence_origin` `session` or `memory`), only to refine an existing Task or record a candidate. It is stored as a source signal of type `session_provenance` or `memory_provenance` with the original reference, one sentence of the original text, and its link (or, when it has none, a description of where it is, e.g. group and person); the service cannot re-read it, so it records that the evidence was cited. A citation is a sentence taken from the source and need not be word for word (Derek, 2026-09-25); an owner citation must still contain the owner's name. Formal creation, promotion, acceptance and merges still rest on the current Work Item's authority.
-
-For AI-minutes action items the owner comes from the conversation around the item, not from the item: DingTalk leaves `executorList` empty, so the scanner attaches `transcript_excerpts` (lines “speaker：text” around the item's `createdTime`) to the source summary, and an owner excerpt is a line quoted with its speaker label. The source-backed owner check is unchanged: a name that appears in the exact excerpt is kept without a verified ID. A generic “发言人 N” label is never an owner.
-
-The console may set a candidate aside or take that back (Derek, 2026-09-25) through this same `update_task` path: the click is a `console` source signal authored by the principal (`author_kind=human`), the status moves between `open` and `cancelled` while the stage stays `candidate`, and the discovery evidence is untouched (`app/task_console_actions.py`). The console has no promotion action: promotion needs an identified owner and an owner excerpt, and a click supplies neither.
-
 Same-deliverable merging requires structured `IdentityEvidence`. The service
 merges only when the evidence identifies the same external task, cites an
 explicit source reference, or establishes the full deliverable/owner/context/
@@ -225,6 +219,20 @@ time-window match. Weaker identity evidence is insufficient for merging.
 The merge also carries append-only typed date facts to the surviving Task,
 preserving each fact's original signal, actor, phrase, parsed value, and
 creation time. Replays or an already-present identical fact do not duplicate it.
+
+## Sources, earlier evidence, and citations
+
+Derek, 2026-09-25. Every Task decision cites its source, and the Agent may rely on evidence it read earlier.
+
+**What a citation is.** The source reference, one sentence of the original text (`source_excerpt`, an extract is fine and need not be word for word), and where a reader can find it: `source_link` whenever the source has one, otherwise `source_description` (a DingTalk message is its group and the person who sent it; group and person also count). The service no longer checks that the excerpt is a substring of the source. It still requires a non-empty excerpt, the owner's name inside an owner citation, and, for date evidence, an exact substring.
+
+**Earlier evidence.** `evidence_origin` is `current` (default), `session` (read earlier in the Agent's session) or `memory` (found through Memory provenance). `session` and `memory` cite the original source's reference and text, must carry a link or description, and may only refine an existing Task (`update_fields`) or record a candidate. Formal creation, promotion, acceptance, merges and dates still rest on the current Work Item's authority and identity metadata. Each such citation is stored as its own source signal of type `session_provenance` or `memory_provenance` (link and description in `context_json`, group and person in the conversation title and author name, `cited_while_processing` naming the Work Item). The service cannot re-read the original, so the record says the evidence was cited, not observed.
+
+**AI-minutes owners.** DingTalk leaves `executorList` empty, so the owner comes from the conversation around the action item. The scanner attaches `transcript_excerpts` (lines `speaker：text` around the item's `createdTime`) to the source summary; an owner citation is one such sentence, speaker label included. The source-backed owner check is unchanged apart from the substring rule: a name that appears in the citation is kept without a verified ID. A generic “发言人 N” label is never an owner.
+
+**Console.** The console can set a candidate aside or take that back through this same `update_task` path (`app/task_console_actions.py`): the click is a `console` source signal authored by the principal (`author_kind=human`), the status moves between `open` and `cancelled` while the stage stays `candidate`, and the discovery evidence is untouched. The console has no promotion action: promotion needs an identified owner and an owner citation, and a click supplies neither.
+
+Operational detail (the transcript window, the backfill command, the console endpoint) is in `docs/runtime-mechanism.md`.
 
 ## Business resolution commands
 
