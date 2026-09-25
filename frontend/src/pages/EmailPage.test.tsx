@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { EmailClassificationListParams } from "../api/console";
-const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "previewEmailTraining", "getEmailClassification", "getEmailUnsubscribeEntryUrl", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
+const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "previewEmailTraining", "getEmailClassification", "getEmailUnsubscribeEntryUrl", "setEmailProviderSignal", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
 vi.mock("../api/console", async importOriginal => ({ ...await importOriginal<object>(), ...api }));
 import { EmailPage } from "./EmailPage";
 const config = { category_key: "work", display_name: "工作", core_description: "工作定义", include: ["项目"], exclude: ["私人"], threshold: .9, actions: ["move"], action_parameters: {}, enabled: true, config_version: "c1", description_version: "d1", updated_at: "", bindings: [] };
@@ -315,6 +315,31 @@ it("shows the 处理记录 before the original text on one open page, with nothi
   expect(within(drawer).getByText("a@example.com",{exact:false})).toBeInTheDocument();
   expect(drawer.querySelector("details")).toBeNull();
   expect(within(drawer).queryByRole("tab")).toBeNull();
+});
+it("toggles Star and Flag from their icons, showing only what the mailbox confirmed",async()=>{
+  const user=userEvent.setup();
+  api.listEmailClassifications.mockResolvedValue({items:[row("1","processed")],meta:{page:1,page_size:50,total:1}});
+  api.getEmailClassification.mockResolvedValue({item:{...row("1","processed"),message_text:"正文"},provider_classification:{state:"categorized",category_key:"work",important:false,starred:false,important_flag:false,important_signals:[]},observability:[]});
+  api.setEmailProviderSignal.mockResolvedValueOnce({ok:true,starred:true,important_flag:false}).mockResolvedValueOnce({ok:true,starred:true,important_flag:true}).mockRejectedValueOnce(new Error("邮箱拒绝了这次修改"));
+  show("/email?tab=all&selected=1");
+  const drawer=await screen.findByRole("region",{name:"邮件详情"});
+  expect(await within(drawer).findByText("Star：未标星")).toBeInTheDocument();
+  const listCalls=api.listEmailClassifications.mock.calls.length;
+
+  await user.click(within(drawer).getByRole("button",{name:"标记 Star"}));
+  expect(api.setEmailProviderSignal).toHaveBeenLastCalledWith("1","star",true);
+  expect(await within(drawer).findByText("Star：已标星")).toBeInTheDocument();
+  expect(within(drawer).getByRole("button",{name:"取消 Star"})).toHaveAttribute("aria-pressed","true");
+  await waitFor(()=>expect(api.listEmailClassifications.mock.calls.length).toBeGreaterThan(listCalls));
+
+  await user.click(within(drawer).getByRole("button",{name:"标记 Flag"}));
+  expect(api.setEmailProviderSignal).toHaveBeenLastCalledWith("1","flag",true);
+  expect(await within(drawer).findByText("Flag：已标记")).toBeInTheDocument();
+
+  await user.click(within(drawer).getByRole("button",{name:"取消 Star"}));
+  expect(api.setEmailProviderSignal).toHaveBeenLastCalledWith("1","star",false);
+  expect(await within(drawer).findByRole("alert")).toHaveTextContent("邮箱拒绝了这次修改");
+  expect(within(drawer).getByText("Star：已标星")).toBeInTheDocument();
 });
 it("supports keyboard tabs and drawer tab traversal",async()=>{
   const user=userEvent.setup();show();

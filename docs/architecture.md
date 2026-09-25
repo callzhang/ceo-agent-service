@@ -331,7 +331,7 @@ Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 A
 provider 文件夹”绑定并单向创建/校验目标文件夹；分类结果本身不能覆盖文件夹事实。Inbox
 表示尚未分类，Spam/Trash 固定为内部 `junk`，Sent/Draft 不参加训练。`important` 不是类别，
 而是独立注意信号：兼容 provider 的 Starred/Important/Flagged 信号与成熟模型信号取并集，
-但 junk 始终抑制 important。分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。确定性动作清单是
+但 junk 始终抑制 important。控制台详情页的 Star / Flag 图标是主人本人的手动点击，直接让服务连上邮箱增删 `\Flagged` / `$Important` 这一个关键字并读回确认，不经过 ActionPlan；观察到的状态随后更新，下一轮扫描再对账。分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。确定性动作清单是
 `label`、`mark_read`、`archive`、`move`、`trash`；它们属于 Email 子系统，由独立
 Email worker 领取、执行并通过 provider readback 验证结果。这些确定性动作
 不创建 CEO Agent task，也不创建 Consumer/Audit run。`trash` 只允许可恢复的 move-to-Trash；

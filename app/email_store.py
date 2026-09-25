@@ -14157,6 +14157,64 @@ class EmailStore:
                 "category_group_counts": latest_category_group_counts,
             }
 
+    def get_stored_email_locator(
+        self, classification_id: int
+    ) -> StoredEmailLocator | None:
+        """Where the mailbox currently holds this classified message."""
+
+        _require_positive_int(classification_id, field="classification_id")
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select account_id, folder, uidvalidity, uid, rfc_message_id,
+                       thread_id, stable_message_identity
+                from email_classifications where id=?
+                """,
+                (classification_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredEmailLocator(
+            account_id=row["account_id"],
+            folder=row["folder"],
+            uidvalidity=row["uidvalidity"],
+            uid=row["uid"],
+            rfc_message_id=row["rfc_message_id"] or None,
+            thread_id=row["thread_id"] or None,
+            stable_message_identity=row["stable_message_identity"],
+        )
+
+    def record_provider_important_signals(
+        self,
+        account_id: str,
+        stable_message_identity: str,
+        signal_names: Sequence[str],
+    ) -> bool:
+        """Carry a just-verified Star/Flag change into the observed state.
+
+        Only a message the scan already observed is updated; the next scan
+        generation is what publishes the rest. Returns whether a row changed.
+        """
+
+        names = tuple(sorted(str(name) for name in signal_names))
+        trusted = {"\\flagged", "$important"}
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update email_provider_observations
+                set important=?, important_signals_json=?
+                where account_id=? and stable_message_identity=?
+                  and state='available'
+                """,
+                (
+                    int(any(name.casefold() in trusted for name in names)),
+                    _json_dump(list(names)),
+                    account_id,
+                    stable_message_identity,
+                ),
+            )
+            return cursor.rowcount == 1
+
     def get_provider_classification_state(
         self, classification_id: int
     ) -> dict[str, object]:

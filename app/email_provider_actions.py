@@ -599,6 +599,32 @@ class ImapDeterministicProvider:
         self._closed = True
         _logout_or_shutdown(self.session)
 
+    def set_important_signal(
+        self,
+        locator: StoredEmailLocator,
+        signal: Literal["\\Flagged", "$Important"],
+        *,
+        present: bool,
+    ) -> frozenset[str]:
+        """Set or clear one Star/Flag keyword and return the signals now on it.
+
+        This is the owner's own click in the console, not an authorized
+        ActionPlan step, so it writes exactly one keyword and reads it back.
+        """
+
+        self._validate_locator(locator)
+        if signal not in ("\\Flagged", "$Important"):
+            raise ValueError("unsupported important signal")
+        self._uid_store(
+            locator,
+            (signal,),
+            wildcard_permits=False,
+            allow_absent_standard_flagged=True,
+            remove=not present,
+        )
+        state = self.read_state(locator, action_type=EmailAction.MARK_READ)
+        return state.important_signal_names
+
     def _uid_store(
         self,
         locator: StoredEmailLocator,
@@ -606,6 +632,7 @@ class ImapDeterministicProvider:
         *,
         wildcard_permits: bool,
         allow_absent_standard_flagged: bool = False,
+        remove: bool = False,
     ) -> None:
         selected_uidvalidity = self._select(locator.folder, readonly=False)
         if selected_uidvalidity != locator.uidvalidity:
@@ -632,7 +659,7 @@ class ImapDeterministicProvider:
         status, _ = self.session.uid(
             "STORE",
             str(locator.uid),
-            "+FLAGS.SILENT",
+            "-FLAGS.SILENT" if remove else "+FLAGS.SILENT",
             "(" + " ".join(flags) + ")",
         )
         _require_ok(status, "IMAP UID STORE failed")

@@ -93,6 +93,102 @@ def test_email_large_classification_id_round_trips_as_text(tmp_path: Path):
     assert store.get_classification(identity)["classification_source"] == "user"
 
 
+class _FakeSignalProvider:
+    def __init__(self, names: set[str], *, unavailable: bool = False) -> None:
+        self.names = names
+        self.unavailable = unavailable
+        self.calls: list[tuple[str, bool]] = []
+        self.closed = False
+
+    def set_important_signal(self, locator, signal, *, present):
+        from app.email_provider_actions import ImapMessageUnavailable
+
+        if self.unavailable:
+            raise ImapMessageUnavailable("gone")
+        self.calls.append((signal, present))
+        (self.names.add if present else self.names.discard)(signal)
+        return frozenset(self.names)
+
+    def close(self):
+        self.closed = True
+
+
+def _signal_client(tmp_path: Path, provider: _FakeSignalProvider):
+    store = EmailStore(tmp_path / "signals.sqlite3")
+    store.create_account({
+        "account_id": "account-1", "display_name": "Mail", "email_address": "me@example.test",
+        "imap_host": "imap.example.test", "imap_port": 993, "imap_tls": True,
+        "imap_username": "me@example.test", "imap_secret_reference": "keychain://x",
+        "smtp_host": "", "smtp_port": 465, "smtp_tls": True, "smtp_username": "",
+        "smtp_secret_reference": "", "enabled": True, "scan_folders": ["INBOX"],
+        "scan_interval_seconds": 60,
+    })
+    identity = 4242
+    store.persist_scan_result(
+        EmailClassification.model_validate({
+            "classification_id": identity,
+            "stable_message_identity": "account-1:message-id:<signal@example.com>",
+            "provider_locator": {"account_id": "account-1", "folder": "INBOX", "uidvalidity": 1, "uid": 5, "rfc_message_id": "<signal@example.com>", "thread_id": "signal"},
+            "category": EmailCategory.NOTIFICATION, "confidence": 0.5, "margin": 0.1,
+            "probabilities": {"notification": 0.5}, "model_id": "m", "config_version": "v1",
+            "status": EmailClassificationStatus.PENDING_FEEDBACK,
+            "classification_source": "model", "action_plan": None,
+        }),
+        sender="s@example.com", subject="Signal", preview="p", model_text="t",
+    )
+    app = FastAPI()
+    register_email_routes(app, lambda: store, imap_provider_factory=lambda account: provider)
+    return TestClient(app), store, identity
+
+
+def test_star_and_flag_are_toggled_on_the_mailbox_and_read_back(tmp_path: Path):
+    provider = _FakeSignalProvider(set())
+    client, store, identity = _signal_client(tmp_path, provider)
+    url = f"/api/console/email/classifications/{identity}/provider-signal"
+
+    starred = client.post(url, json={"signal": "star", "value": True})
+    both = client.post(url, json={"signal": "flag", "value": True})
+    cleared = client.post(url, json={"signal": "star", "value": False})
+
+    assert starred.json() == {"ok": True, "starred": True, "important_flag": False}
+    assert both.json() == {"ok": True, "starred": True, "important_flag": True}
+    assert cleared.json() == {"ok": True, "starred": False, "important_flag": True}
+    assert provider.calls == [("\\Flagged", True), ("$Important", True), ("\\Flagged", False)]
+    assert provider.closed
+
+
+def test_a_signal_change_updates_the_observed_state_the_lists_read(tmp_path: Path):
+    provider = _FakeSignalProvider(set())
+    client, store, identity = _signal_client(tmp_path, provider)
+    store.record_current_provider_observations(
+        [{
+            "account_id": "account-1",
+            "stable_message_identity": "account-1:message-id:<signal@example.com>",
+            "provider_folder_id": "INBOX", "provider_folder_name": "INBOX",
+            "folder_role": "inbox", "bound_category_key": None,
+            "folder_binding_status": "unbound",
+            "important_signals": {"provider_important": False, "raw_signal_names": []},
+        }],
+        unavailable_folders=(), observed_at="2026-09-25T00:00:00+00:00",
+    )
+
+    client.post(f"/api/console/email/classifications/{identity}/provider-signal", json={"signal": "star", "value": True})
+
+    state = store.get_provider_classification_state(identity)
+    assert state["starred"] is True and state["important"] is True
+
+
+def test_a_moved_message_is_reported_instead_of_pretending_to_toggle(tmp_path: Path):
+    provider = _FakeSignalProvider(set(), unavailable=True)
+    client, _store, identity = _signal_client(tmp_path, provider)
+
+    response = client.post(f"/api/console/email/classifications/{identity}/provider-signal", json={"signal": "flag", "value": True})
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "email_message_unavailable"
+    assert provider.closed
+
+
 def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path):
     store = EmailStore(tmp_path / "unsubscribe-filter.sqlite3")
     store.list_unsubscribe_classifications = lambda *, limit, offset: ([{

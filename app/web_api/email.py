@@ -65,6 +65,7 @@ from app.email_store import (
     EmailFolderBindingConflict,
     EmailStore,
 )
+from app.email_provider_actions import ImapMessageUnavailable, ImapProviderError
 from app.email_store import EmailPersistenceCorruption
 from app.email_training_snapshot import TRAINING_SNAPSHOT_ID_PATTERN
 
@@ -882,6 +883,13 @@ class EmailRuntimeModePayload(BaseModel):
     expected_model_id: str | None = None
 
 
+class EmailProviderSignalPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    signal: Literal["star", "flag"]
+    value: bool
+
+
 class EmailFeedbackPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -913,6 +921,7 @@ def register_email_routes(
     email_learning_factory: Any | None = None,
     email_env_path: Path | None = None,
     imap_client_factory: Any | None = None,
+    imap_provider_factory: Any | None = None,
     smtp_client_factory: Any | None = None,
     folder_binding_coordinator: EmailFolderBindingCoordinator | None = None,
 ) -> None:
@@ -1409,6 +1418,77 @@ def register_email_routes(
             {"ok": True, "entry_url": entry_url},
             headers={"Cache-Control": "no-store"},
         )
+
+    def connect_signal_provider(account: dict[str, Any]) -> Any:
+        if imap_provider_factory is not None:
+            return imap_provider_factory(account)
+        from app.email_provider_actions import ImapDeterministicProvider
+
+        secret = resolve_secret(account["imap_secret_reference"], secret_environment())
+        if not secret or not bool(account.get("imap_tls")):
+            raise ConnectionError("email IMAP account is not usable")
+        return ImapDeterministicProvider.connect(
+            str(account["imap_host"]),
+            str(account["imap_username"]),
+            secret,
+            port=int(account["imap_port"]),
+            account_id=str(account["account_id"]),
+            move_mode=str(account.get("imap_move_mode") or "move"),
+        )
+
+    @app.post(
+        "/api/console/email/classifications/{classification_id}/provider-signal"
+    )
+    async def email_set_provider_signal(classification_id: int, request: Request):
+        email_store = require_store()
+        if "application/json" not in request.headers.get("content-type", ""):
+            raise HTTPException(status_code=415, detail="JSON Content-Type required")
+        try:
+            payload = EmailProviderSignalPayload.model_validate(await request.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=400, detail="email signal request is invalid"
+            ) from exc
+        locator = email_store.get_stored_email_locator(classification_id)
+        account = (
+            None if locator is None else email_store.get_account(locator.account_id)
+        )
+        if locator is None or account is None or not account.get("enabled"):
+            return error_response(
+                "not_found", "The mailbox holding this email is not available", 404
+            )
+        keyword = "\\Flagged" if payload.signal == "star" else "$Important"
+        try:
+            provider = connect_signal_provider(account)
+        except Exception:  # noqa: BLE001 - every connection fault reads the same
+            return error_response(
+                "email_provider_unavailable", "Could not reach the mailbox", 502
+            )
+        try:
+            names = provider.set_important_signal(
+                locator, keyword, present=payload.value
+            )
+        except ImapMessageUnavailable:
+            return error_response(
+                "email_message_unavailable",
+                "The message is no longer where the console last saw it",
+                409,
+            )
+        except ImapProviderError:
+            return error_response(
+                "email_provider_rejected", "The mailbox refused the change", 502
+            )
+        finally:
+            provider.close()
+        email_store.record_provider_important_signals(
+            locator.account_id, locator.stable_message_identity, names
+        )
+        lowered = {name.casefold() for name in names}
+        return {
+            "ok": True,
+            "starred": "\\flagged" in lowered,
+            "important_flag": "$important" in lowered,
+        }
 
     @app.post("/api/console/email/classifications/{classification_id}/feedback")
     async def email_classification_feedback(classification_id: int, request: Request):

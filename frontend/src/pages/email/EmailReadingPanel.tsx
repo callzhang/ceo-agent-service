@@ -1,8 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Flag, Maximize2, Minimize2, Star, X } from "lucide-react";
-import type { EmailClassificationDetail, EmailCategoryConfig } from "../../api/console";
+import { setEmailProviderSignal, type EmailClassificationDetail, type EmailCategoryConfig } from "../../api/console";
 import { ObservabilityDetails, ProcessedClassificationEvidence } from "./Evidence";
-import { localTime, measured, sourceLabel } from "./shared";
+import { errorMessage, localTime, measured, sourceLabel } from "./shared";
 
 interface Props {
   detail: EmailClassificationDetail | null;
@@ -24,6 +24,7 @@ interface Props {
   onPrevious: () => void;
   onNext: () => void;
   onExpand: () => void;
+  onSignalChanged: () => void;
 }
 
 export function EmailReadingPanel(props: Props) {
@@ -42,9 +43,27 @@ export function EmailReadingPanel(props: Props) {
   const label = (key: string | null | undefined) => !key ? "未分类（留在收件箱）" : configs.find(item => item.category_key === key)?.display_name || (key === "junk" ? "垃圾（Trash）" : key);
   const item = detail?.item;
   const provider = detail?.provider_classification || item?.provider_classification;
-  const signalsAvailable = typeof provider?.starred === "boolean" || typeof provider?.important_flag === "boolean";
-  const starLabel = typeof provider?.starred === "boolean" ? provider.starred ? "已标星" : "未标星" : "未同步";
-  const flagLabel = typeof provider?.important_flag === "boolean" ? provider.important_flag ? "已标记" : "未标记" : "未同步";
+  // A click is verified against the mailbox before it shows; until then the
+  // page keeps what the last mailbox scan observed.
+  const [toggled, setToggled] = useState<{starred: boolean; important_flag: boolean} | null>(null);
+  const [togglingSignal, setTogglingSignal] = useState<"star" | "flag" | null>(null);
+  const [signalError, setSignalError] = useState("");
+  const starred = toggled ? toggled.starred : typeof provider?.starred === "boolean" ? provider.starred : null;
+  const importantFlag = toggled ? toggled.important_flag : typeof provider?.important_flag === "boolean" ? provider.important_flag : null;
+  const signalsAvailable = starred !== null || importantFlag !== null;
+  const starLabel = starred !== null ? starred ? "已标星" : "未标星" : "未同步";
+  const flagLabel = importantFlag !== null ? importantFlag ? "已标记" : "未标记" : "未同步";
+  async function toggle(signal: "star" | "flag") {
+    if (!item || togglingSignal) return;
+    const current = signal === "star" ? starred : importantFlag;
+    setTogglingSignal(signal); setSignalError("");
+    try {
+      const result = await setEmailProviderSignal(item.id, signal, current !== true);
+      setToggled({starred: result.starred, important_flag: result.important_flag});
+      props.onSignalChanged();
+    } catch (reason) { setSignalError(errorMessage(reason)); }
+    finally { setTogglingSignal(null); }
+  }
   const rawSignals = Array.isArray(provider?.important_signals) ? provider.important_signals.join("、") || "无" : "未同步";
   const editable = item?.status === "pending_feedback" || item?.status === "processed";
   const events = detail?.observability || [];
@@ -65,9 +84,10 @@ export function EmailReadingPanel(props: Props) {
             <button type="submit" className="primary-button" disabled={!props.category || saving || loading}>{saving ? "正在保存…" : "保存修改"}</button>
           </form>}
           <span className="email-important-state" title={signalsAvailable ? `原始邮箱信号：${rawSignals}` : "Star / Flag 状态未同步"}>
-            <Star size={15} fill={provider?.starred === true ? "currentColor" : "none"}/><span>Star：{starLabel}</span>
-            <Flag size={15} fill={provider?.important_flag === true ? "currentColor" : "none"}/><span>Flag：{flagLabel}</span>
+            <button type="button" className={`email-signal-toggle${starred === true ? " on" : ""}`} aria-pressed={starred === true} aria-label={starred === true ? "取消 Star" : "标记 Star"} title="点击切换邮箱里的 Star" disabled={togglingSignal !== null} onClick={() => void toggle("star")}><Star size={15} fill={starred === true ? "currentColor" : "none"}/></button><span>Star：{starLabel}</span>
+            <button type="button" className={`email-signal-toggle${importantFlag === true ? " on" : ""}`} aria-pressed={importantFlag === true} aria-label={importantFlag === true ? "取消 Flag" : "标记 Flag"} title="点击切换邮箱里的重要标记" disabled={togglingSignal !== null} onClick={() => void toggle("flag")}><Flag size={15} fill={importantFlag === true ? "currentColor" : "none"}/></button><span>Flag：{flagLabel}</span>
           </span>
+          {signalError && <span role="alert" className="email-signal-error">{signalError}</span>}
         </div>
         {props.saveError && <p role="alert">{props.saveError}</p>}{props.saved && <p role="status" className="email-saved">分类已保存</p>}
       </header>

@@ -495,7 +495,10 @@ class FakeWritableImapSession:
             uid = int(args[0])
             message_id, flags = self.messages[self.selected][uid]
             encoded_flags = str(args[2]).removeprefix("(").removesuffix(")")
-            flags.update(encoded_flags.split())
+            if str(args[1]).startswith("-FLAGS"):
+                flags.difference_update(encoded_flags.split())
+            else:
+                flags.update(encoded_flags.split())
             self.messages[self.selected][uid] = (message_id, flags)
             if self.timeout_after_store:
                 self.timeout_after_store = False
@@ -810,6 +813,31 @@ def test_production_imap_important_applies_flagged_and_only_advertised_keyword(
     assert result.status == "done"
     assert session.messages["INBOX"][7][1] == expected_flags
     assert [call[1] for call in session.calls if call[0] == "uid"].count("STORE") == 1
+
+
+def test_owner_toggle_sets_and_clears_exactly_one_keyword_and_reads_it_back() -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession(
+        permanent_flags={"\\Seen", "\\Flagged", "$Important"},
+        messages={"INBOX": {7: ("<message@example.com>", {"\\Seen"})}},
+    )
+    provider = module.ImapDeterministicProvider(session, account_id="account-1")
+    locator = _action(EmailAction.FLAG_IMPORTANT, {}).locator
+
+    starred = provider.set_important_signal(locator, "\\Flagged", present=True)
+    both = provider.set_important_signal(locator, "$Important", present=True)
+    cleared = provider.set_important_signal(locator, "\\Flagged", present=False)
+
+    assert starred == {"\\Flagged"}
+    assert both == {"\\Flagged", "$Important"}
+    assert cleared == {"$Important"}
+    assert session.messages["INBOX"][7][1] == {"\\Seen", "$Important"}
+    stores = [call[2:] for call in session.calls if call[:2] == ("uid", "STORE")]
+    assert stores == [
+        ("7", "+FLAGS.SILENT", "(\\Flagged)"),
+        ("7", "+FLAGS.SILENT", "($Important)"),
+        ("7", "-FLAGS.SILENT", "(\\Flagged)"),
+    ]
 
 
 def test_production_imap_important_keyword_alone_adds_required_flagged() -> None:

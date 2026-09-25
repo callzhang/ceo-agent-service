@@ -885,6 +885,17 @@ export function confirmEmailClassification(
   }));
 }
 
+export function setEmailProviderSignal(id: string, signal: "star" | "flag", value: boolean) {
+  return request<Record<string, unknown>>(`/api/console/email/classifications/${id}/provider-signal`, {
+    method: "POST",
+    body: JSON.stringify({ signal, value }),
+  }).then((payload) => ({
+    ok: payload.ok === true,
+    starred: payload.starred === true,
+    important_flag: payload.important_flag === true,
+  }));
+}
+
 export function listEmailConfigs(signal?: AbortSignal) {
   return request<{ items: EmailCategoryConfig[]; meta: { snapshot_at: string } }>("/api/console/email/config", { signal });
 }
