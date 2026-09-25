@@ -30,6 +30,13 @@ from app.task_scanners import (
 )
 
 
+# Bump when what the Agent is asked to do with the excerpts changes (their format, the prompt's
+# owner rules, the checks a decision passes), so meetings whose earlier attempt ended without an
+# owner are read again instead of being reported as already queued. Revision 1 was the first
+# attempt (2026-09-25); 2 followed the sentence split and the per-item owner check.
+BACKFILL_REVISION = 2
+
+
 @dataclass
 class OwnerBackfillResult:
     dry_run: bool
@@ -85,7 +92,7 @@ def backfill_minutes_owners(
         canonical = _canonical_minutes_todos_payload(
             minutes=record, todos_payload=todos_payload, transcript_excerpts=excerpts
         )
-        digest = _actions_digest([actions, excerpts])
+        digest = _actions_digest([BACKFILL_REVISION, actions, excerpts])
         item = minutes_work_item(record, minutes_id=minutes_id, digest=digest, canonical=canonical)
         decision["source_ref"] = item.source.ref
         if dry_run:
