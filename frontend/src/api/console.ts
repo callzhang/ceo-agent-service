@@ -493,6 +493,8 @@ export interface EmailRuntimeRate {
   evaluated: number;
   per_minute: number;
   latest_at: string | null;
+  /** The model's own time per message (queue, embedding call, output head); no mailbox action. */
+  latency_ms: {p50: number; p95: number} | null;
 }
 export interface EmailModelScanProgress {
   remaining: number;
@@ -914,6 +916,8 @@ export function setEmailProviderSignal(id: string, signal: "star" | "flag", valu
 
 export interface EmailProcessingProgress {
   window_hours: number;
+  /** How fast mailbox actions are carried out end to end (claim to verified result). */
+  throughput: {window_minutes: number; finished: number; per_minute: number; median_seconds: number | null};
   provider_actions: {done: number; pending: number; processing: number; failed: number; skipped: number};
   classification_queue: {pending: number; processing: number};
   unsubscribe_queue: {pending: number; processing: number};
@@ -926,6 +930,12 @@ export function getEmailProcessingProgress(signal?: AbortSignal) {
     const counts = (value: unknown, keys: string[]) => Object.fromEntries(keys.map((key) => [key, isRecord(value) && typeof value[key] === "number" ? value[key] : 0]));
     return {
       window_hours: typeof payload.window_hours === "number" ? payload.window_hours : 24,
+      throughput: {
+        window_minutes: isRecord(payload.throughput) && typeof payload.throughput.window_minutes === "number" ? payload.throughput.window_minutes : 30,
+        finished: isRecord(payload.throughput) && typeof payload.throughput.finished === "number" ? payload.throughput.finished : 0,
+        per_minute: isRecord(payload.throughput) && typeof payload.throughput.per_minute === "number" ? payload.throughput.per_minute : 0,
+        median_seconds: isRecord(payload.throughput) && typeof payload.throughput.median_seconds === "number" ? payload.throughput.median_seconds : null,
+      },
       provider_actions: counts(payload.provider_actions, ["done", "pending", "processing", "failed", "skipped"]),
       classification_queue: counts(payload.classification_queue, ["pending", "processing"]),
       unsubscribe_queue: counts(payload.unsubscribe_queue, ["pending", "processing"]),

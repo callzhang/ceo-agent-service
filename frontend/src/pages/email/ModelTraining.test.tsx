@@ -204,28 +204,28 @@ function renderWith(extra: Record<string, unknown>) {
   );
 }
 
-it("shows how many messages the live model handles per minute", () => {
+it("shows the model's own time per message, not the mailbox action after it", () => {
   renderWith({
     runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },
-    runtime_rate: { window_seconds: 600, evaluated: 240, per_minute: 24, latest_at: "2026-09-25T09:00:00+00:00" },
+    runtime_rate: { window_seconds: 600, evaluated: 240, per_minute: 24, latest_at: "2026-09-25T09:00:00+00:00", latency_ms: { p50: 180.5, p95: 320 } },
   });
 
   const stat = screen.getByText("实时处理速度").parentElement;
-  expect(stat).toHaveTextContent("24 封/分钟");
-  expect(stat).toHaveTextContent("最近 10 分钟模型判断了 240 封，线上实测");
+  expect(stat).toHaveTextContent("180.5 ms/封");
+  expect(stat).toHaveTextContent("最近 10 分钟 240 封 · P95 320 ms · 只算模型耗时，不含邮箱动作");
 });
 
 it("says so when no message came in, and when no model is live", () => {
   const { unmount } = renderWith({
     runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },
-    runtime_rate: { window_seconds: 600, evaluated: 0, per_minute: 0, latest_at: null },
+    runtime_rate: { window_seconds: 600, evaluated: 0, per_minute: 0, latest_at: null, latency_ms: null },
   });
   expect(screen.getByText("实时处理速度").parentElement).toHaveTextContent("最近 10 分钟没有邮件进来");
   unmount();
 
   renderWith({
     runtime: { ...learning.runtime, mode: "agent_primary", active_model_id: null },
-    runtime_rate: { window_seconds: 600, evaluated: 0, per_minute: 0, latest_at: null },
+    runtime_rate: { window_seconds: 600, evaluated: 0, per_minute: 0, latest_at: null, latency_ms: null },
   });
   expect(screen.getByText("实时处理速度").parentElement).toHaveTextContent("模型未上线，没有实时处理");
 });
@@ -233,7 +233,7 @@ it("says so when no message came in, and when no model is live", () => {
 it("draws the sweep's progress bar with a time estimate from the live speed", () => {
   renderWith({
     runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },
-    runtime_rate: { window_seconds: 600, evaluated: 300, per_minute: 30, latest_at: "2026-09-25T09:00:00+00:00" },
+    runtime_rate: { window_seconds: 600, evaluated: 300, per_minute: 30, latest_at: "2026-09-25T09:00:00+00:00", latency_ms: { p50: 200, p95: 300 } },
     model_scan_progress: { remaining: 600, total: 800, done: 200, updated_at: "2026-09-25T09:00:00+00:00" },
   });
 

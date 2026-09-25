@@ -6,7 +6,7 @@ import type { EmailClassificationListParams } from "../api/console";
 const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "previewEmailTraining", "getEmailClassification", "getEmailUnsubscribeEntryUrl", "setEmailProviderSignal", "getEmailProcessingProgress", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
 vi.mock("../api/console", async importOriginal => ({ ...await importOriginal<object>(), ...api }));
 import { EmailPage } from "./EmailPage";
-const idleProgress = { window_hours: 24, provider_actions: {done: 0, pending: 0, processing: 0, failed: 0, skipped: 0}, classification_queue: {pending: 0, processing: 0}, unsubscribe_queue: {pending: 0, processing: 0}, waiting_for_owner: 0, scans: [] };
+const idleProgress = { window_hours: 24, throughput: {window_minutes: 30, finished: 0, per_minute: 0, median_seconds: null}, provider_actions: {done: 0, pending: 0, processing: 0, failed: 0, skipped: 0}, classification_queue: {pending: 0, processing: 0}, unsubscribe_queue: {pending: 0, processing: 0}, waiting_for_owner: 0, scans: [] };
 const config = { category_key: "work", display_name: "工作", core_description: "工作定义", include: ["项目"], exclude: ["私人"], threshold: .9, actions: ["move"], action_parameters: {}, enabled: true, config_version: "c1", description_version: "d1", updated_at: "", bindings: [] };
 const row = (id: string, status = "pending_feedback") => ({ id, sender: "sender@example.com", subject: "邮件" + id, preview: "生成的摘要不应出现在列表", message_text: "原始邮件正文前段 " + id, category: "work", confidence: .7, margin: .2, probabilities: {work:.7}, status, classification_source: "agent", model_version: "model-full-v1", config_version: "c1", attachment_metadata: [], action_plan: {}, current_action_plan_id: null, received_at: "", updated_at: "" });
 const runtime = {mode:"agent_primary", active_model_id:null, candidate_model_id:"model-v2", candidate_ready:true, toggle_enabled:true};
@@ -401,11 +401,13 @@ it("selects the whole page at once",async()=>{
   expect(screen.queryByRole("group",{name:"批量标注"})).not.toBeInTheDocument();
 });
 it("shows how far mail processing has got, above the tabs",async()=>{
-  api.getEmailProcessingProgress.mockResolvedValue({window_hours:24,provider_actions:{done:1249,pending:478,processing:1,failed:252,skipped:1},classification_queue:{pending:2,processing:0},unsubscribe_queue:{pending:0,processing:1},waiting_for_owner:141,scans:[{account:"DingTalk 企业邮箱",folder:"INBOX",last_seen_uid:32909,last_success_at:"2026-09-25T09:34:24+00:00",last_error:""},{account:"Gmail",folder:"INBOX",last_seen_uid:9,last_success_at:"",last_error:"登录失败"}]});
+  api.getEmailProcessingProgress.mockResolvedValue({window_hours:24,throughput:{window_minutes:30,finished:90,per_minute:3,median_seconds:9},provider_actions:{done:1249,pending:478,processing:1,failed:252,skipped:1},classification_queue:{pending:2,processing:0},unsubscribe_queue:{pending:0,processing:1},waiting_for_owner:141,scans:[{account:"DingTalk 企业邮箱",folder:"INBOX",last_seen_uid:32909,last_success_at:"2026-09-25T09:34:24+00:00",last_error:""},{account:"Gmail",folder:"INBOX",last_seen_uid:9,last_success_at:"",last_error:"登录失败"}]});
   show("/email?tab=all");
   const progress=await screen.findByRole("region",{name:"邮件处理进度"});
   expect(await within(progress).findByText(/邮件处理中 · 还有 482 项在排队/)).toBeInTheDocument();
   expect(progress).toHaveTextContent("近 24 小时邮箱动作 1250/1981");
+  // End to end: the whole action, connection and read-back included, then the wait it implies.
+  expect(progress).toHaveTextContent("端到端 3 项/分钟 · 每项约 9 秒 · 预计还要 2.7 小时");
   expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuenow","63");
   expect(progress).toHaveTextContent("邮箱动作失败 252");
   expect(progress).toHaveTextContent("Agent 分类排队 2");
@@ -414,6 +416,12 @@ it("shows how far mail processing has got, above the tabs",async()=>{
   expect(within(progress).getByRole("alert")).toHaveTextContent("Gmail INBOX 扫描出错：登录失败");
   const tabs=screen.getByRole("tablist",{name:"邮件页面分区"});
   expect(progress.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+it("says so when mailbox actions are queued but none has finished lately",async()=>{
+  api.getEmailProcessingProgress.mockResolvedValue({...idleProgress,provider_actions:{done:0,pending:5,processing:0,failed:0,skipped:0}});
+  show("/email?tab=all");
+  const progress=await screen.findByRole("region",{name:"邮件处理进度"});
+  expect(await within(progress).findByText(/端到端速度：最近 30 分钟没有完成的动作/)).toBeInTheDocument();
 });
 it("says the queues are empty when nothing is waiting",async()=>{
   show("/email?tab=all");

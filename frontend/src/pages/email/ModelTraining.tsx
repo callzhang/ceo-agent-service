@@ -397,8 +397,8 @@ export function ModelTraining({
         <Stat
           label="实时处理速度"
           value={
-            learning.runtime_rate
-              ? `${learning.runtime_rate.per_minute} 封/分钟`
+            learning.runtime_rate?.latency_ms
+              ? `${learning.runtime_rate.latency_ms.p50} ms/封`
               : "暂无"
           }
           note={liveRateNote(learning.runtime, learning.runtime_rate)}
@@ -783,9 +783,11 @@ function liveRateNote(
   if (!rate) return "服务未提供实时数据";
   if (runtime?.mode !== "model_primary") return "模型未上线，没有实时处理";
   const minutes = Math.round(rate.window_seconds / 60);
-  return rate.evaluated
-    ? `最近 ${minutes} 分钟模型判断了 ${rate.evaluated} 封，线上实测`
-    : `最近 ${minutes} 分钟没有邮件进来`;
+  if (!rate.evaluated || !rate.latency_ms)
+    return `最近 ${minutes} 分钟没有邮件进来`;
+  // Only what the model itself spends. Moving or deleting the mail afterwards
+  // happens in the mailbox and is timed on the Email page.
+  return `最近 ${minutes} 分钟 ${rate.evaluated} 封 · P95 ${rate.latency_ms.p95} ms · 只算模型耗时，不含邮箱动作`;
 }
 
 function waitLabel(minutes: number) {

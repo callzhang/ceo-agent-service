@@ -200,6 +200,7 @@ def test_processing_progress_reports_exact_queue_counts_and_scan_cursors(tmp_pat
     assert payload["provider_actions"] == {"done": 0, "pending": 0, "processing": 0, "failed": 0, "skipped": 0}
     assert payload["classification_queue"] == {"pending": 0, "processing": 0}
     assert payload["unsubscribe_queue"] == {"pending": 0, "processing": 0}
+    assert payload["throughput"] == {"window_minutes": 30, "finished": 0, "per_minute": 0.0, "median_seconds": None}
     assert [(scan["account"], scan["folder"], scan["last_seen_uid"], scan["last_error"]) for scan in payload["scans"]] == [("Mail", "INBOX", 77, "")]
     assert payload["scans"][0]["last_success_at"]
 
@@ -4221,3 +4222,42 @@ def test_learning_reports_the_active_run_only_while_it_is_still_running(tmp_path
     running_rows = [row for row in live["training_runs_without_model"] if row["run_id"] == "run-live"]
     assert running_rows and running_rows[0]["status"] == "running"
     assert running_rows[0]["model_families"] == ["embedding-mlp"]
+
+
+def test_action_throughput_is_the_whole_action_over_the_recent_window(tmp_path: Path):
+    from datetime import datetime, timedelta, timezone
+
+    from app.email_store import EmailStore
+
+    store = EmailStore(tmp_path / "throughput.sqlite3")
+    now = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)
+
+    def action(index: int, *, status: str, started: datetime, seconds: int) -> None:
+        with store._connect() as db:
+            db.execute("pragma foreign_keys=off")
+            db.execute(
+                """insert into email_actions (
+                       action_id, action_plan_id, classification_id, account_id, action_type,
+                       parameters_json, config_version, status, attempt_count, started_at,
+                       finished_at, next_attempt_at, provider_operation, provider_target,
+                       provider_result_id, error, created_at, updated_at
+                   ) values (?, ?, 1, 'a', 'move', '{}', 'c', ?, 0, ?, ?, '', '', '', '', '', ?, ?)""",
+                (
+                    f"action-{index}", f"plan-{index}", status, started.isoformat(),
+                    (started + timedelta(seconds=seconds)).isoformat(),
+                    started.isoformat(), started.isoformat(),
+                ),
+            )
+
+    for index, seconds in enumerate((4, 8, 12)):
+        action(index, status="done", started=now - timedelta(minutes=5 + index), seconds=seconds)
+    action(9, status="skipped", started=now - timedelta(minutes=2), seconds=2)
+    # Too old to count, and one that never finished.
+    action(10, status="done", started=now - timedelta(hours=3), seconds=30)
+    action(11, status="failed", started=now - timedelta(minutes=1), seconds=5)
+
+    speed = store._provider_action_throughput(now=now)
+
+    assert speed["finished"] == 4
+    assert speed["per_minute"] == 0.1
+    assert speed["median_seconds"] == 8.0

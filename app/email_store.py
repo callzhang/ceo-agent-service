@@ -14017,10 +14017,12 @@ class EmailStore:
         }
 
     def classifier_runtime_rate(self, *, window_seconds: int = 600) -> dict[str, object]:
-        """How many messages the live model has judged lately, per minute.
+        """What the live model has done lately: how many, and how long each took.
 
         Every runtime sample is one message the model was asked about, whatever
-        it answered, so the count over a window is the real throughput.
+        it answered, so the count over a window is how many it judged. The time
+        is the model's own (queue, embedding call and output head), never the
+        mailbox action that follows it.
         """
 
         if type(window_seconds) is not int or window_seconds <= 0:
@@ -14029,20 +14031,26 @@ class EmailStore:
             datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
         ).isoformat()
         with self._connect() as db:
-            row = db.execute(
+            rows = db.execute(
                 """
-                select count(*) as evaluated, max(recorded_at) as latest_at
-                from email_classifier_runtime_samples
+                select total_ms, recorded_at from email_classifier_runtime_samples
                 where recorded_at >= ?
                 """,
                 (cutoff,),
-            ).fetchone()
-        evaluated = int(row["evaluated"] or 0)
+            ).fetchall()
+        times = sorted(float(row["total_ms"]) for row in rows)
+
+        def percentile(fraction: float) -> float:
+            return round(times[min(len(times) - 1, int(len(times) * fraction))], 1)
+
         return {
             "window_seconds": window_seconds,
-            "evaluated": evaluated,
-            "per_minute": round(evaluated / (window_seconds / 60), 1),
-            "latest_at": row["latest_at"],
+            "evaluated": len(rows),
+            "per_minute": round(len(rows) / (window_seconds / 60), 1),
+            "latest_at": max((row["recorded_at"] for row in rows), default=None),
+            "latency_ms": (
+                {"p50": percentile(0.5), "p95": percentile(0.95)} if times else None
+            ),
         }
 
     def classifier_runtime_observability(
@@ -14269,6 +14277,47 @@ class EmailStore:
                 "category_group_counts": latest_category_group_counts,
             }
 
+    def _provider_action_throughput(
+        self, *, now: datetime, window_minutes: int = 30
+    ) -> dict[str, object]:
+        """How fast mailbox actions are really being carried out, end to end.
+
+        This is the time a mailbox action takes from the claim to the verified
+        result, including the connection and the read-back, not the model's own
+        time. It is measured over the actions finished lately.
+        """
+
+        cutoff = (
+            (now - timedelta(minutes=window_minutes))
+            .astimezone(timezone.utc)
+            .isoformat(timespec="seconds")
+        )
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select started_at, finished_at from email_actions
+                where status in ('done', 'skipped') and finished_at>=?
+                """,
+                (cutoff,),
+            ).fetchall()
+        seconds: list[float] = []
+        for row in rows:
+            try:
+                started = datetime.fromisoformat(str(row["started_at"]))
+                finished = datetime.fromisoformat(str(row["finished_at"]))
+            except ValueError:
+                continue
+            seconds.append(max(0.0, (finished - started).total_seconds()))
+        seconds.sort()
+        return {
+            "window_minutes": window_minutes,
+            "finished": len(rows),
+            "per_minute": round(len(rows) / window_minutes, 1),
+            "median_seconds": (
+                round(seconds[len(seconds) // 2], 1) if seconds else None
+            ),
+        }
+
     def email_processing_progress(self, *, now: datetime) -> dict[str, Any]:
         """Exact counts of where mail processing stands, in one read.
 
@@ -14342,6 +14391,7 @@ class EmailStore:
             ]
         return {
             "window_hours": 24,
+            "throughput": self._provider_action_throughput(now=now),
             "provider_actions": {
                 key: actions.get(key, 0)
                 for key in ("done", "pending", "processing", "failed", "skipped")

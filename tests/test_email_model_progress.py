@@ -81,14 +81,14 @@ def test_a_malformed_progress_row_is_skipped(tmp_path: Path) -> None:
     assert progress is not None and progress["total"] == 4
 
 
-def test_the_live_rate_counts_only_recent_samples(tmp_path: Path) -> None:
+def test_the_live_rate_counts_only_recent_samples_and_times_only_the_model(tmp_path: Path) -> None:
     from datetime import datetime, timedelta, timezone
 
     store = EmailStore(tmp_path / "rate.sqlite3")
-    for _ in range(3):
+    for total_ms in (100.0, 200.0, 300.0):
         store.record_classifier_runtime_sample(
             model_id="m1", outcome="success", fallback_code="", cache_hit=False,
-            runtime_warm=True, queue_ms=0, http_ms=0, embedding_ms=0, head_ms=1, total_ms=1,
+            runtime_warm=True, queue_ms=0, http_ms=0, embedding_ms=0, head_ms=1, total_ms=total_ms,
         )
     old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     with store._connect() as db:
@@ -100,3 +100,12 @@ def test_the_live_rate_counts_only_recent_samples(tmp_path: Path) -> None:
 
     assert rate["evaluated"] == 2
     assert rate["per_minute"] == 0.2
+    # The two recent samples only: the old 100 ms one is out of the window.
+    assert rate["latency_ms"] == {"p50": 300.0, "p95": 300.0}
+
+
+def test_no_recent_samples_means_no_latency_not_zero(tmp_path: Path) -> None:
+    rate = EmailStore(tmp_path / "quiet.sqlite3").classifier_runtime_rate()
+
+    assert rate["evaluated"] == 0
+    assert rate["latency_ms"] is None
