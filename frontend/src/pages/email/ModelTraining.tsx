@@ -783,8 +783,12 @@ function liveRateNote(
   if (!rate) return "服务未提供实时数据";
   if (runtime?.mode !== "model_primary") return "模型未上线，没有实时处理";
   const minutes = Math.round(rate.window_seconds / 60);
-  if (!rate.evaluated || !rate.latency_ms)
-    return `最近 ${minutes} 分钟没有邮件进来`;
+  if (!rate.latency_ms) return `最近 ${minutes} 分钟没有邮件进来`;
+  if (!rate.evaluated) {
+    // The model's speed is unchanged by a quiet spell, so the last batch's time
+    // is shown, with when that was.
+    return `最近 ${minutes} 分钟没有邮件进来 · 上一批${rate.latest_at ? `（${localTime(rate.latest_at)}）` : ""}P95 ${rate.latency_ms.p95} ms · 只算模型耗时`;
+  }
   // Only what the model itself spends. Moving or deleting the mail afterwards
   // happens in the mailbox and is timed on the Email page.
   return `最近 ${minutes} 分钟 ${rate.evaluated} 封 · P95 ${rate.latency_ms.p95} ms · 只算模型耗时，不含邮箱动作`;

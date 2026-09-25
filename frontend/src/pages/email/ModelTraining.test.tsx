@@ -215,11 +215,24 @@ it("shows the model's own time per message, not the mailbox action after it", ()
   expect(stat).toHaveTextContent("最近 10 分钟 240 封 · P95 320 ms · 只算模型耗时，不含邮箱动作");
 });
 
-it("says so when no message came in, and when no model is live", () => {
+it("shows the last batch's model time, and when, when nothing came in lately", () => {
+  renderWith({
+    runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },
+    runtime_rate: { window_seconds: 600, evaluated: 0, per_minute: 0, latest_at: "2026-09-25T20:26:44+00:00", latency_ms: { p50: 210, p95: 340 }, latency_from_last_batch: true },
+  });
+
+  const stat = screen.getByText("实时处理速度").parentElement;
+  expect(stat).toHaveTextContent("210 ms/封");
+  expect(stat).toHaveTextContent("最近 10 分钟没有邮件进来 · 上一批");
+  expect(stat).toHaveTextContent("P95 340 ms");
+});
+
+it("says so when the model has never judged anything, and when no model is live", () => {
   const { unmount } = renderWith({
     runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },
     runtime_rate: { window_seconds: 600, evaluated: 0, per_minute: 0, latest_at: null, latency_ms: null },
   });
+  expect(screen.getByText("实时处理速度").parentElement).toHaveTextContent("暂无");
   expect(screen.getByText("实时处理速度").parentElement).toHaveTextContent("最近 10 分钟没有邮件进来");
   unmount();
 

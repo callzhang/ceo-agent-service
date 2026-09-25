@@ -104,8 +104,31 @@ def test_the_live_rate_counts_only_recent_samples_and_times_only_the_model(tmp_p
     assert rate["latency_ms"] == {"p50": 300.0, "p95": 300.0}
 
 
-def test_no_recent_samples_means_no_latency_not_zero(tmp_path: Path) -> None:
-    rate = EmailStore(tmp_path / "quiet.sqlite3").classifier_runtime_rate()
+def test_a_quiet_window_reports_the_last_batch_and_says_so(tmp_path: Path) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    store = EmailStore(tmp_path / "quiet-window.sqlite3")
+    for total_ms in (100.0, 200.0, 300.0):
+        store.record_classifier_runtime_sample(
+            model_id="m1", outcome="success", fallback_code="", cache_hit=False,
+            runtime_warm=True, queue_ms=0, http_ms=0, embedding_ms=0, head_ms=1, total_ms=total_ms,
+        )
+    old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    with store._connect() as db:
+        db.execute("update email_classifier_runtime_samples set recorded_at=?", (old,))
+
+    rate = store.classifier_runtime_rate(window_seconds=600)
+
+    # Nothing was judged in the window, but the model's speed is still known.
+    assert rate["evaluated"] == 0
+    assert rate["latency_ms"] == {"p50": 200.0, "p95": 300.0}
+    assert rate["latency_from_last_batch"] is True
+    assert rate["latest_at"] == old
+
+
+def test_a_model_that_never_judged_anything_has_no_latency(tmp_path: Path) -> None:
+    rate = EmailStore(tmp_path / "never.sqlite3").classifier_runtime_rate()
 
     assert rate["evaluated"] == 0
     assert rate["latency_ms"] is None
+    assert rate["latency_from_last_batch"] is False

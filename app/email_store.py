@@ -77,6 +77,7 @@ _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     }
 )
 MAX_CLASSIFIER_RUNTIME_SAMPLES = 2048
+_RUNTIME_LATENCY_FALLBACK_SAMPLES = 200
 HISTORICAL_DEFER_RETRY_SECONDS = 60
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 DIRECT_ACTION_EXHAUSTED_TRANSIENT_RETRY_SECONDS = 300
@@ -14039,6 +14040,22 @@ class EmailStore:
                 (cutoff,),
             ).fetchall()
         times = sorted(float(row["total_ms"]) for row in rows)
+        latest_at = max((row["recorded_at"] for row in rows), default=None)
+        recent_only = False
+        if not rows:
+            # Nothing came in during the window. The model's speed has not
+            # changed for that, so report the last batch it did judge and say so.
+            with self._connect() as db:
+                last = db.execute(
+                    """
+                    select total_ms, recorded_at from email_classifier_runtime_samples
+                    order by id desc limit ?
+                    """,
+                    (_RUNTIME_LATENCY_FALLBACK_SAMPLES,),
+                ).fetchall()
+            times = sorted(float(row["total_ms"]) for row in last)
+            latest_at = max((row["recorded_at"] for row in last), default=None)
+            recent_only = bool(last)
 
         def percentile(fraction: float) -> float:
             return round(times[min(len(times) - 1, int(len(times) * fraction))], 1)
@@ -14047,10 +14064,13 @@ class EmailStore:
             "window_seconds": window_seconds,
             "evaluated": len(rows),
             "per_minute": round(len(rows) / (window_seconds / 60), 1),
-            "latest_at": max((row["recorded_at"] for row in rows), default=None),
+            "latest_at": latest_at,
             "latency_ms": (
                 {"p50": percentile(0.5), "p95": percentile(0.95)} if times else None
             ),
+            # True when the figures come from the last batch judged, not from
+            # the window itself.
+            "latency_from_last_batch": recent_only,
         }
 
     def classifier_runtime_observability(

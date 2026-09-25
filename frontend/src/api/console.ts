@@ -495,6 +495,8 @@ export interface EmailRuntimeRate {
   latest_at: string | null;
   /** The model's own time per message (queue, embedding call, output head); no mailbox action. */
   latency_ms: {p50: number; p95: number} | null;
+  /** True when the figures are the last batch judged, because the window itself was empty. */
+  latency_from_last_batch?: boolean;
 }
 export interface EmailModelScanProgress {
   remaining: number;
