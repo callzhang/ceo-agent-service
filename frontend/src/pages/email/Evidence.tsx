@@ -42,7 +42,8 @@ export function actionResultLabel(event: EmailObservabilityEvent): string {
     };
     return states[event.status] || "退订状态未知";
   }
-  const action = event.operation === "trash" ? "移入已删除邮件" : event.operation === "move" ? "移动邮件" : event.operation === "flag_important" ? "标记重要" : event.operation || "邮箱动作";
+  const operations: Record<string, string> = {trash: "移入已删除邮件", move: "移动邮件", flag_important: "标记重要", mark_read: "标为已读", label: "打标签", archive: "归档"};
+  const action = operations[event.operation] || event.operation || "邮箱动作";
   return event.status === "done" || event.status === "succeeded" ? `已完成：${action}` : event.status === "failed" ? `${action}失败` : `${action} · ${event.status === "processing" ? "处理中" : "待执行"}`;
 }
 
@@ -93,31 +94,49 @@ function UnsubscribeEvidence({ event, classificationId, entry }: { event: EmailO
   </>;
 }
 
+function pageText(value: string) {
+  return value.replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{2,}/g, "\n").trim();
+}
+
+function eventTime(event: EmailObservabilityEvent) {
+  return event.completed_at || event.finished_at || event.created_at || "";
+}
+
+/** One "label  value" line of technical evidence; long identifiers keep their full text in the tooltip. */
+function Fact({ name, children }: { name: string; children: string | number | undefined | null }) {
+  if (children === undefined || children === null || children === "") return null;
+  return <><dt>{name}</dt><dd title={String(children)}>{children}</dd></>;
+}
+
 export function ObservabilityDetails({ events, classificationId, entry }: { events: EmailObservabilityEvent[]; classificationId: string; entry?: {available: boolean; reason: string | null} }) {
   if (!events.length) return <p className="email-reading-empty">暂无外部处理记录。</p>;
-  return <div className="email-observability-list">{events.map((event,index) => {
-    const recordedAt=event.completed_at || event.finished_at || event.created_at;
+  const newestFirst = [...events].sort((left, right) => eventTime(right).localeCompare(eventTime(left)));
+  return <div className="email-observability-list">{newestFirst.map((event,index) => {
+    const recordedAt=eventTime(event);
     const success=event.kind === "unsubscribe" ? ["done", "already_unsubscribed"].includes(event.outcome || "") : ["done","succeeded"].includes(event.status);
     const failed=event.status === "failed" || event.outcome?.startsWith("failed");
+    const reason = event.kind === "unsubscribe" ? (unsubscribeReason(event.outcome) ?? (event.outcome === "done" ? "已记录退订成功结果。" : event.status === "done" && !event.outcome ? "历史记录未提供明确的退订结果。" : null)) : null;
+    const text = event.result_text ? pageText(event.result_text) : "";
     return <article className="email-observability-item" key={event.action_identity || event.action_id || index}>
       <div className="email-event-heading"><span className={success ? "email-event-icon success" : failed ? "email-event-icon failure" : "email-event-icon"}>{success ? "✓" : failed ? "!" : "—"}</span><h3>{actionResultLabel(event)}</h3>{recordedAt && <time>{localTime(recordedAt)}</time>}</div>
-      {event.kind === "unsubscribe" && <><p className="email-event-reason">{unsubscribeReason(event.outcome) ?? (event.outcome === "done" ? "已记录退订成功结果。" : event.status === "done" && !event.outcome ? "历史记录未提供明确的退订结果。" : null)}</p><UnsubscribeEvidence event={event} classificationId={classificationId} entry={entry}/></>}
-      {event.error && <p role="alert">{event.error}</p>}
-      <div className="email-technical"><h4>技术详情</h4>
-        {event.summary && <p>{event.summary}</p>}
-        {event.result_text && <pre>{event.result_text}</pre>}
-        <dl className="detail-definition-list">
-          {event.lifecycle_version && <div><dt>生命周期</dt><dd>{event.lifecycle_version}</dd></div>}
-          {event.outcome && <div><dt>退订结果</dt><dd>{event.outcome}</dd></div>}
-          {event.task_id && <div><dt>Task</dt><dd>{event.task_id} · {event.task_status}</dd></div>}
-          {!!event.consumer_run_ids?.length && <div><dt>Consumer</dt><dd>Consumer run：{event.consumer_run_ids.join("、")}</dd></div>}
-          {!!event.audit_run_ids?.length && <div><dt>Audit</dt><dd>Audit run：{event.audit_run_ids.join("、")}</dd></div>}
-          {event.evidence && <div><dt>最终结果页证据</dt><dd>{event.evidence}</dd></div>}
-          {event.receipt_id && <div><dt>Receipt</dt><dd>{event.receipt_id}</dd></div>}
-          {event.observation_digest && <div><dt>观察摘要</dt><dd>{event.observation_digest}</dd></div>}
-          {event.provider_result_id && <div><dt>Provider 结果</dt><dd>{event.provider_result_id}</dd></div>}
+      <div className="email-event-body">
+        {reason && <p className="email-event-reason">{reason}</p>}
+        {event.kind === "unsubscribe" && <UnsubscribeEvidence event={event} classificationId={classificationId} entry={entry}/>}
+        {event.error && <p role="alert" className="email-event-error">{event.error}</p>}
+        {event.summary && <p className="email-event-reason">{event.summary}</p>}
+        {text && <pre className="email-page-text" aria-label="页面原文">{text}</pre>}
+        <dl className="email-kv">
+          <Fact name="生命周期">{event.lifecycle_version}</Fact>
+          <Fact name="退订结果">{event.outcome}</Fact>
+          <Fact name="Task">{event.task_id ? `${event.task_id} · ${event.task_status}` : undefined}</Fact>
+          <Fact name="Consumer">{event.consumer_run_ids?.length ? `Consumer run：${event.consumer_run_ids.join("、")}` : undefined}</Fact>
+          <Fact name="Audit">{event.audit_run_ids?.length ? `Audit run：${event.audit_run_ids.join("、")}` : undefined}</Fact>
+          <Fact name="结果页证据">{event.evidence}</Fact>
+          <Fact name="Receipt">{event.receipt_id}</Fact>
+          <Fact name="观察摘要">{event.observation_digest}</Fact>
+          <Fact name="Provider 结果">{event.provider_result_id}</Fact>
         </dl>
-        {!!event.steps?.length && <ol>{event.steps.map(step => <li key={step.sequence}>{step.operation}：{step.state}（{step.reference}）</li>)}</ol>}
+        {!!event.steps?.length && <ol className="email-steps">{event.steps.map(step => <li key={step.sequence}>{step.operation}：{step.state}</li>)}</ol>}
       </div>
     </article>;
   })}</div>;

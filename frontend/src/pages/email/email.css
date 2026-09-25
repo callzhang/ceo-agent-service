@@ -211,3 +211,44 @@
 .email-progress-counts span { white-space: nowrap; }
 .email-progress-warning, .email-progress-inline-error { color: #a43030; }
 .email-progress-inline-error { margin: 6px 0 0; }
+
+/* Detail page: chips, compact timeline, quiet technical facts */
+.email-reading-header { padding: 20px 24px 12px; }
+.email-reading-header h2 { margin-bottom: 8px; }
+.email-recipient-details { margin: 6px 0 0; font-size: 12px; color: var(--ink-soft); }
+.email-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.email-chip { display: inline-flex; align-items: center; padding: 3px 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.email-chip.quiet { color: var(--ink-soft); font-weight: 500; }
+.email-chip.success { color: var(--status-success-ink); border-color: var(--status-success-line); background: var(--status-success-surface); }
+.email-chip.failure { color: var(--danger); border-color: var(--error-line); background: var(--error-surface); }
+.email-chip.pending { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); background: color-mix(in srgb, #f0b429 16%, transparent); }
+.email-reading-actions { margin-top: 14px; }
+.email-select-field .filter-control-shell { min-height: 34px; border-radius: 10px; }
+.email-select-field select { height: 32px; min-width: 132px; width: auto; font-size: .8rem; font-weight: 500; }
+.email-reading-actions .primary-button { min-height: 34px; padding: 0 14px; border-radius: 10px; font-size: 13px; }
+.email-reading-body { min-height: 0; padding: 22px 24px; }
+.email-reading-activity { padding-top: 18px; }
+.email-reading-body > h3 { margin: 0 0 12px; font-size: 14px; }
+.email-observability-item { padding: 0 0 14px; margin-bottom: 14px; }
+.email-observability-item:last-of-type { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+.email-event-body { margin: 6px 0 0 34px; display: grid; gap: 6px; min-width: 0; }
+.email-event-body > p { margin: 0; }
+.email-event-error { color: var(--danger); font-size: 12px; }
+.email-page-text { margin: 0; padding: 8px 10px; max-height: 132px; overflow: auto; border-radius: 8px; background: var(--surface-muted); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); }
+.email-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 14px; margin: 0; font-size: 11px; color: var(--ink-soft); }
+.email-kv dt { font-weight: 650; }
+.email-kv dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.email-steps { margin: 0; padding-left: 18px; font-size: 11px; color: var(--ink-soft); }
+.email-unsubscribe-entry { display: grid; gap: 4px; font-size: 12px; }
+.email-unsubscribe-entry > span { font-weight: 650; color: var(--ink-soft); }
+.email-unsubscribe-url { margin: 0; font-size: 11px; line-height: 1.45; max-height: 96px; overflow: auto; }
+.email-unsubscribe-entry button { justify-self: start; padding: 3px 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); font-size: 12px; font-weight: 650; cursor: pointer; }
+.email-unsubscribe-attempts a { font-size: 12px; }
+.email-provider-state { margin: 14px 0 0; padding: 8px 0 0; border-top: 1px dashed var(--line); font-size: 12px; color: var(--ink-soft); }
+.email-reading-body .email-body-text { font-size: 14px; line-height: 1.75; }
+.email-classification-details, .email-technical { margin: 0; padding: 16px 24px; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
+.email-candidate-row { margin: 6px 0; }
+.email-candidate-rest { margin: 4px 0 0; font-size: 12px; color: var(--ink-soft); }
+.email-reading-actions .email-select-field select { min-width: 132px; border: 0; background: transparent; }
+.email-unsubscribe-attempts { margin: 0; }
+.email-reading-activity .email-reading-empty { padding: 0; margin: 0 0 4px; font-size: 13px; }

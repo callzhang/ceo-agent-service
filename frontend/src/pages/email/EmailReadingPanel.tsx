@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Flag, Maximize2, Minimize2, Star, X } from "lucide-react";
 import { setEmailProviderSignal, type EmailClassificationDetail, type EmailCategoryConfig } from "../../api/console";
-import { ObservabilityDetails, ProcessedClassificationEvidence } from "./Evidence";
-import { errorMessage, localTime, measured, sourceLabel } from "./shared";
+import { ObservabilityDetails, ProcessedClassificationEvidence, unsubscribeStateLabel } from "./Evidence";
+import { errorMessage, localTime, measured, sourceLabel, statusLabel } from "./shared";
 
 interface Props {
   detail: EmailClassificationDetail | null;
@@ -67,6 +67,11 @@ export function EmailReadingPanel(props: Props) {
   const rawSignals = Array.isArray(provider?.important_signals) ? provider.important_signals.join("、") || "无" : "未同步";
   const editable = item?.status === "pending_feedback" || item?.status === "processed";
   const events = detail?.observability || [];
+  const newestUnsubscribe = [...events].reverse().find(event => event.kind === "unsubscribe");
+  const unsubscribe = newestUnsubscribe ? unsubscribeStateLabel({status: newestUnsubscribe.status, outcome: newestUnsubscribe.outcome ?? null}) : null;
+  const ranked = Object.entries(item?.probabilities || {}).sort(([, a], [, b]) => b - a);
+  const shown = ranked.slice(0, 5);
+  const restTotal = ranked.slice(5).reduce((sum, [, value]) => sum + value, 0);
   return <section className="email-reading" role="region" aria-label="邮件详情">
     <div className="email-reading-toolbar">
       <button ref={closeRef} type="button" onClick={props.onClose} disabled={saving} aria-label="关闭详情"><X size={16}/> 返回列表</button>
@@ -77,10 +82,16 @@ export function EmailReadingPanel(props: Props) {
       <header className="email-reading-header">
         <h2>{item.subject || "无主题"}</h2>
         <div className="email-sender-line"><span>{item.sender || "发件人未知"}</span><time>{localTime(item.received_at)}</time></div>
-        <div className="email-recipient-details"><p>收件人：{item.recipients?.join("、") || "未提供"}</p>{item.cc && <p>抄送：{item.cc}</p>}</div>
+        <p className="email-recipient-details">收件人：{item.recipients?.join("、") || "未提供"}{item.cc && ` · 抄送：${item.cc}`}</p>
+        <div className="email-chips" aria-label="邮件状态">
+          <span className="email-chip">{label(item.category)}</span>
+          <span className="email-chip quiet">{sourceLabel(item.classification_source)} · {measured(item.confidence)}</span>
+          <span className={`email-chip ${item.status === "pending_feedback" ? "pending" : "quiet"}`}>{statusLabel(item.status)}</span>
+          {unsubscribe && <span className={`email-chip ${unsubscribe.tone}`}>{unsubscribe.text}</span>}
+        </div>
         <div className="email-reading-actions">
           {editable && <form aria-label="分类确认" onSubmit={event => {event.preventDefault(); props.onSave();}}>
-            <label><span className="sr-only">选择分类</span><select aria-label="选择分类" value={props.category || ""} disabled={saving || loading} onChange={event => props.onCategory(event.target.value)}><option value="" disabled>选择类别</option>{props.options.map(option => <option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</select></label>
+            <label className="filter-select email-select email-select-field"><span className="sr-only">选择分类</span><span className="filter-control-shell"><select aria-label="选择分类" value={props.category || ""} disabled={saving || loading} onChange={event => props.onCategory(event.target.value)}><option value="" disabled>选择类别</option>{props.options.map(option => <option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</select></span></label>
             <button type="submit" className="primary-button" disabled={!props.category || saving || loading}>{saving ? "正在保存…" : "保存修改"}</button>
           </form>}
           <span className="email-important-state" title={signalsAvailable ? `原始邮箱信号：${rawSignals}` : "Star / Flag 状态未同步"}>
@@ -94,7 +105,7 @@ export function EmailReadingPanel(props: Props) {
       <section aria-label="处理记录" className="email-reading-body email-reading-activity">
         <h3>处理记录 · {events.length}</h3>
         <ObservabilityDetails key={item.id} events={events} classificationId={item.id} entry={detail?.unsubscribe_entry}/>
-        {provider && <section aria-label="邮箱观察事实" className="email-provider-state"><h3>邮箱当前状态</h3><p>文件夹：{String(provider.provider_folder_name || provider.category_key || "未知")}</p><p>Star：{starLabel} · Flag：{flagLabel}</p><p>原始信号：{rawSignals}</p></section>}
+        {provider && <p aria-label="邮箱观察事实" role="region" className="email-provider-state">邮箱文件夹：{String(provider.provider_folder_name || provider.category_key || "未知")} · 原始信号：{rawSignals}</p>}
       </section>
       <section aria-label="原文" className="email-reading-body">
         <h3>原文</h3>
@@ -104,7 +115,7 @@ export function EmailReadingPanel(props: Props) {
       </section>
         <section className="email-classification-details" aria-label="分类依据"><h3>分类依据 · {sourceLabel(item.classification_source)} · {measured(item.confidence)}</h3>
           <p>{item.status === "pending_feedback" ? "建议" : "当前分类"}：{label(item.category)}</p>
-          <section aria-label="候选分布" className="email-candidate-distribution"><h3>候选分布</h3>{Object.entries(item.probabilities || {}).sort(([,a],[,b]) => b-a).map(([key,value]) => <div className="email-candidate-row" key={key}><span>{label(key)}</span><div className="email-probability-bar"><span style={{width: `${Math.max(0,Math.min(1,value))*100}%`}}/></div><strong>{measured(value)}</strong></div>)}{!Object.keys(item.probabilities || {}).length && <p>未提供候选分布</p>}</section>
+          <section aria-label="候选分布" className="email-candidate-distribution"><h3>候选分布</h3>{shown.map(([key,value]) => <div className="email-candidate-row" key={key}><span>{label(key)}</span><div className="email-probability-bar"><span style={{width: `${Math.max(0,Math.min(1,value))*100}%`}}/></div><strong>{measured(value)}</strong></div>)}{restTotal > 0 && <p className="email-candidate-rest">其余 {ranked.length - shown.length} 类合计 {measured(restTotal)}</p>}{!ranked.length && <p>未提供候选分布</p>}</section>
           <p>模型：{item.model_version || "未提供"} · 描述版本：{item.description_version || "未提供"}</p>
         </section>
       <section className="email-technical" aria-label="技术详情"><h3>技术详情</h3><ProcessedClassificationEvidence row={item}/>{provider && <pre>{JSON.stringify(provider,null,2)}</pre>}</section>

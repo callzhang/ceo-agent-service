@@ -155,7 +155,7 @@ it("labels the pending decision bar for keyboard and assistive navigation",async
 it("shows an explicit inbox fallback when the agent leaves a message unclassified",async()=>{
   api.getEmailClassification.mockResolvedValueOnce({item:{...row("1"),category:null,message_text:"Hi"},observability:[]});
   show("/email?tab=pending&selected=1");
-  expect(await screen.findByText(/未分类（留在收件箱）/)).toBeInTheDocument();
+  expect((await screen.findAllByText(/未分类（留在收件箱）/)).length).toBeGreaterThan(0);
 });
 it("cancels stale detail requests when selection changes",async()=>{
   const user=userEvent.setup();const first=deferred<unknown>();api.getEmailClassification.mockReturnValueOnce(first.promise);show();
