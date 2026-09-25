@@ -270,7 +270,7 @@ class ConsumerProposal(BaseModel):
 
 
 class DecisionOption(BaseModel):
-    """One actionable, mutually exclusive instruction for a real management choice."""
+    """One actionable rule choice for a reusable task class."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -278,6 +278,7 @@ class DecisionOption(BaseModel):
     label: str = Field(min_length=1)
     instruction: str = Field(min_length=1)
     consequence: str = Field(min_length=1)
+    applies_to: Literal["task_class"]
 
 
 class DecisionBasis(BaseModel):

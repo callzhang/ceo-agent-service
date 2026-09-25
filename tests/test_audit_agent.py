@@ -263,12 +263,14 @@ def test_an_earlier_turns_send_does_not_reject_this_one(setup):
                     "label": "确认已送达",
                     "instruction": "确认上一轮已发出的消息就是要发的内容。",
                     "consequence": "本事项收口，不再发送。",
+                    "applies_to": "task_class",
                 },
                 {
                     "key": "option_2",
                     "label": "由服务重发",
                     "instruction": "按服务准备好的文案重新发送一次。",
                     "consequence": "对方会收到第二条消息。",
+                    "applies_to": "task_class",
                 },
             ],
             "error": {

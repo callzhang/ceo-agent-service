@@ -197,7 +197,7 @@
     },
     "DecisionOption": {
       "additionalProperties": false,
-      "description": "One actionable, mutually exclusive instruction for a real management choice.",
+      "description": "One actionable rule choice for a reusable task class.",
       "properties": {
         "key": {
           "minLength": 1,
@@ -218,13 +218,19 @@
           "minLength": 1,
           "title": "Consequence",
           "type": "string"
+        },
+        "applies_to": {
+          "const": "task_class",
+          "title": "Applies To",
+          "type": "string"
         }
       },
       "required": [
         "key",
         "label",
         "instruction",
-        "consequence"
+        "consequence",
+        "applies_to"
       ],
       "title": "DecisionOption",
       "type": "object"

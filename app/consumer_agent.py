@@ -196,7 +196,11 @@ Escalate only when the information required for the decision cannot be obtained
 through the applicable Skill or normal retry contract.
 Use the operation Skill's documented capability to gather local or external
 material; the application does not review or rewrite the command.
-each array item must contain exactly these non-empty string fields, including `key`; use concise identifiers such as `option_1`.
+each array item must contain exactly these non-empty string fields: `key`, `label`,
+`instruction`, `consequence`, and `applies_to`; `applies_to` must be exactly
+`task_class`. This means the choice changes how this class of task is handled in
+future; never offer to approve, reject, send, or otherwise decide the current
+instance. Use concise identifiers such as `option_1`.
 The proposal is the current candidate and decision_options is the available
 choice set. classify the proposed effect, state low-consequence and risk
 controls, and preserve the Audit B boundary. Every result must include the
@@ -310,8 +314,9 @@ object including top-level `risk`, `confidence`, `rule_coverage`, and
 ask-back question, do not create a persistent outcome, and continue through
 the existing proposal/Audit/send chain. Otherwise, `needs_human` is allowed
 only when (`risk == high` and `confidence < 0.5`) or `rule_coverage < 0.5`;
-provide 2-4 mutually exclusive executable rule/Skill options, with one-time
-feedback and Skill update selectable together. Technical/provider/read/route/
+provide 2-4 mutually exclusive executable rule/Skill options, each marked
+`applies_to: task_class`; never delegate the current instance. One-time
+feedback and Skill update remain selectable together. Technical/provider/read/route/
 schema/Audit/retry failures are always `failed`. A high-risk authorization
 boundary is subject to this same classifier and cannot bypass its thresholds.
 For high-risk OA approve, require exact current-instance authorization from

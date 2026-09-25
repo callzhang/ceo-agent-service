@@ -134,7 +134,9 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 问题的 ask-back，沿现有 Audit/send 链路处理，不新增 ask-back 持久化 outcome；否则，
 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 才进入 `needs_human`，并提供 2--4 个
 互斥、可执行的规则/Skill 选项；每项必须包含唯一稳定的 `key`、显示用 `label`、可执行的
-`instruction` 和 `consequence`/影响；其余由适用 Skill 自主完成。ask-back 不计入 needs_human。
+`instruction`、`consequence`/影响，以及 `applies_to=task_class`。选项只能选择以后如何处理
+这一类任务的规则，不能让 Derek 直接批准、拒绝或执行当前实例；缺少该字段或违反范围的结果
+按无效人工决策收口为 `failed`。其余由适用 Skill 自主完成。ask-back 不计入 needs_human。
 读到 Skill 不等于它覆盖本案：Skill 自己写明本案所依赖的分支（门槛、例外边界、谁有权决定）未定义时，
 `rule_coverage` 低于 1.0；以缺规则、缺门槛或缺授权为理由的 `needs_human` 配 `rule_coverage=1.0` 属于自相矛盾。
 反馈可同时选择 one-time 与 Skill update；二者复用同一业务对象和同一 attempt，在 provider 仍可访问的

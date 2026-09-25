@@ -64,12 +64,14 @@ def _decision_options() -> list[dict[str, str]]:
             "label": "Proceed",
             "instruction": "Proceed with the verified candidate.",
             "consequence": "The accepted candidate can move to Audit.",
+            "applies_to": "task_class",
         },
         {
             "key": "B",
             "label": "Revise",
             "instruction": "Request a corrected candidate.",
             "consequence": "No candidate executes yet.",
+            "applies_to": "task_class",
         },
     ]
 
@@ -597,14 +599,6 @@ def test_wire_schema_is_discriminated_and_contains_only_nested_fields(model):
         ),
         (
             ConsumerAgentWireResult,
-            _consumer_wire_payload(
-                outcome="proposal",
-                proposal=_proposal(),
-                decision_options=_decision_options(),
-            ),
-        ),
-        (
-            ConsumerAgentWireResult,
             _consumer_wire_payload(outcome="needs_human"),
         ),
         (
@@ -769,12 +763,14 @@ def test_needs_human_requires_actionable_options_and_wire_preserves_them():
             "label": "同意当前方案",
             "instruction": "同意已核验的当前方案并发布。",
             "consequence": "会执行经过审计的外部动作。",
+            "applies_to": "task_class",
         },
         {
             "key": "B",
             "label": "要求补充材料",
             "instruction": "要求申请人补充缺失材料并发布。",
             "consequence": "当前外部动作不会执行。",
+            "applies_to": "task_class",
         },
     ]
     with pytest.raises(ValidationError, match="decision options"):
@@ -812,6 +808,56 @@ def test_needs_human_requires_actionable_options_and_wire_preserves_them():
     ).to_result()
 
     assert result.decision_options[0].instruction == options[0]["instruction"]
+
+
+def test_needs_human_options_must_target_a_reusable_task_class_rule():
+    payload = _consumer_wire_payload(
+        outcome="needs_human",
+        decision_options=[
+            {
+                "key": "approve-current",
+                "label": "批准当前申请",
+                "instruction": "直接批准本次申请。",
+                "consequence": "当前申请进入已批准状态。",
+            },
+            {
+                "key": "reject-current",
+                "label": "拒绝当前申请",
+                "instruction": "直接拒绝本次申请。",
+                "consequence": "当前申请进入已拒绝状态。",
+            },
+        ],
+        needs_human_reason="缺少可复用规则。",
+        decision_basis=_decision_basis(),
+    )
+
+    with pytest.raises(ValidationError, match="applies_to"):
+        ConsumerAgentWireResult.model_validate(payload)
+
+
+def test_audit_needs_human_options_must_target_a_reusable_task_class_rule():
+    payload = _audit_wire_payload(
+        outcome="needs_human",
+        error_code="",
+        error_retryable=False,
+        decision_options=[
+            {
+                "key": "approve-current",
+                "label": "批准当前申请",
+                "instruction": "直接批准本次申请。",
+                "consequence": "当前申请进入已批准状态。",
+            },
+            {
+                "key": "reject-current",
+                "label": "拒绝当前申请",
+                "instruction": "直接拒绝本次申请。",
+                "consequence": "当前申请进入已拒绝状态。",
+            },
+        ],
+    )
+
+    with pytest.raises(ValidationError, match="applies_to"):
+        AuditAgentWireResult.model_validate(payload)
 
 
 def test_audit_needs_human_requires_actionable_options_and_wire_preserves_them():
