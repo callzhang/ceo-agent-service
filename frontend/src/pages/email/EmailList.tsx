@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type SelectHTMLAttributes } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Flag, Star } from "lucide-react";
 import { confirmEmailClassification, getEmailClassification, listEmailClassifications, setEmailProviderSignal, type EmailCategoryConfig, type EmailClassificationDetail, type EmailClassificationItem, type EmailClassificationStatus, type EmailProviderClassification } from "../../api/console";
 import { EmailReadingPanel } from "./EmailReadingPanel";
 import { unsubscribeStateLabel } from "./Evidence";
 import { configurableCategories, errorMessage, localTime, measured, sourceLabel, statusLabel } from "./shared";
+
+function ShellSelect({children, ...props}: SelectHTMLAttributes<HTMLSelectElement>) {
+  return <span className="filter-select email-select"><span className="filter-control-shell"><select {...props}>{children}</select></span></span>;
+}
 
 export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfig[]; status:EmailClassificationStatus; onBusy:(value:boolean)=>void}) {
   const [params,setParams]=useSearchParams();
@@ -140,7 +144,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
     <section className="console-card email-dense-list" aria-label="邮件分类列表">
     <div className="email-list-controls">
     <nav className="email-list-toolbar" aria-label="邮件分页"><label className="email-bulk-all"><input type="checkbox" checked={allChecked} disabled={!rows.length||bulkBusy||saving} onChange={()=>{setChecked(allChecked?new Set():new Set(rows.map(item=>item.id)));setBulkDone(null);setBulkError("");}}/> 全选本页</label><span>第 {page} / {Math.max(1,Math.ceil(total/pageSize))} 页 · 共 {total} 封</span>
-      <label>每页邮件数 <select aria-label="每页邮件数" value={pageSize} disabled={saving||loading} onChange={event=>navigate(1,Number(event.target.value))}>{[20,50,100].map(size=><option key={size}>{size}</option>)}</select></label>
+      <label>每页邮件数 <ShellSelect aria-label="每页邮件数" value={pageSize} disabled={saving||loading} onChange={event=>navigate(1,Number(event.target.value))}>{[20,50,100].map(size=><option key={size}>{size}</option>)}</ShellSelect></label>
       <button className="compact-button" disabled={saving||loading||page===1} onClick={()=>navigate(page-1)}>上一页</button>
       <button className="compact-button" disabled={saving||loading||page*pageSize>=total} onClick={()=>navigate(page+1)}>下一页</button>
       {loading&&<span role="status">正在加载邮件…</span>}
@@ -183,13 +187,13 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
       onNext={()=>{const index=rows.findIndex(item=>item.id===selected);if(index>=0&&index<rows.length-1){navigate(page,pageSize,rows[index+1].id);setSaved(false);}}}/>}
     {(checked.size>0||bulkBusy||bulkError||bulkDone!==null||signalError)&&<div className="email-bulk-popup" role="group" aria-label="批量标注">
       {checked.size>0&&<><span className="email-bulk-count">已选 {checked.size} 封</span>
-      <select aria-label="统一标注类别" value={bulkCategory} disabled={bulkBusy} onChange={event=>setBulkCategory(event.target.value)}><option value="" disabled>选择类别</option>{options.map(option=><option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</select>
+      <ShellSelect aria-label="统一标注类别" value={bulkCategory} disabled={bulkBusy} onChange={event=>setBulkCategory(event.target.value)}><option value="" disabled>选择类别</option>{options.map(option=><option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</ShellSelect>
       <button type="button" className="primary-button" disabled={!bulkCategory||bulkBusy||saving} onClick={()=>void applyBulk()}>{bulkBusy?`正在标注 ${bulkDone ?? 0}/${checked.size}…`:"统一标注"}</button>
-      <button type="button" disabled={bulkBusy} onClick={()=>{setChecked(new Set());setBulkDone(null);setBulkError("");}}>取消选择</button></>}
+      <button type="button" className="secondary-button" disabled={bulkBusy} onClick={()=>{setChecked(new Set());setBulkDone(null);setBulkError("");}}>取消选择</button></>}
       {!bulkBusy&&bulkDone!==null&&!bulkError&&<span role="status" className="email-saved">已标注 {bulkDone} 封</span>}
       {bulkError&&<span role="alert" className="email-signal-error">{bulkError}</span>}
       {signalError&&<span role="alert" className="email-signal-error">{signalError}</span>}
-      {checked.size===0&&!bulkBusy&&<button type="button" onClick={()=>{setBulkDone(null);setBulkError("");setSignalError("");}}>关闭</button>}
+      {checked.size===0&&!bulkBusy&&<button type="button" className="secondary-button" onClick={()=>{setBulkDone(null);setBulkError("");setSignalError("");}}>关闭</button>}
     </div>}
   </div>;
 }

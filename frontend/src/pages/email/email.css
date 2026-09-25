@@ -192,9 +192,15 @@
 .email-row-wrap.is-pending .email-dense-row { background: color-mix(in srgb, #f0b429 16%, transparent); box-shadow: inset 3px 0 0 #d99a1b; }
 .email-row-wrap.is-pending .email-dense-row:hover { background: color-mix(in srgb, #f0b429 26%, transparent); }
 .email-row-wrap.is-checked .email-dense-row { background: var(--accent-soft, #e9efff); }
-.email-bulk-all { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; }
-.email-bulk-popup { position: fixed; z-index: 45; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 12px; width: max-content; max-width: calc(100vw - 32px); padding: 10px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); font-size: 13px; }
-.email-bulk-count { font-weight: 600; }
+.email-bulk-all { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; font-weight: 650; }
+.email-row-controls input[type="checkbox"], .email-bulk-all input[type="checkbox"] { accent-color: var(--accent); }
+.email-select { display: inline-flex; }
+.email-select .filter-control-shell { min-height: 30px; border-radius: 999px; padding-left: 12px; }
+.email-select select { height: 28px; width: auto; min-width: 48px; font-size: .76rem; font-weight: 700; }
+.email-bulk-popup { position: fixed; z-index: 45; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 12px; width: max-content; max-width: calc(100vw - 32px); padding: 10px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); font-size: 13px; }
+.email-bulk-popup .email-select .filter-control-shell { min-height: 38px; border-radius: 10px; }
+.email-bulk-popup .email-select select { height: 36px; min-width: 132px; font-size: .8rem; font-weight: 500; }
+.email-bulk-count { padding: 5px 12px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-weight: 700; white-space: nowrap; }
 
 .email-progress { min-height: 44px; margin: 0 0 8px; padding: 0 0 12px; border-bottom: 1px solid var(--line); color: var(--ink-soft); font-size: 12px; }
 .email-progress > p { margin: 0; }
