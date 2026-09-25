@@ -8,11 +8,9 @@ import importlib.util
 import json
 import fcntl
 import signal
-import socket
 import subprocess
 import sys
 import time
-import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -174,68 +172,17 @@ def _nudge_dingteam_pages(context) -> None:
             continue
 
 
-def _headless_cdp_command(playwright, *, port: int, profile_dir: str) -> list[str]:
-    """Launch an isolated Chrome process that Playwright connects to over loopback."""
-    return [
-        playwright.chromium.executable_path,
-        "--headless=new",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-features=LocalNetworkAccessChecks",
-        "--remote-debugging-address=127.0.0.1",
-        f"--remote-debugging-port={port}",
-        f"--user-data-dir={profile_dir}",
-        "about:blank",
-    ]
-
-
-def _reserve_loopback_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        return int(listener.getsockname()[1])
-
-
 @contextmanager
-def _headless_cdp_browser(playwright):
-    """Run the authenticated headless profile without Playwright's pipe mode."""
-    port = _reserve_loopback_port()
+def _service_browser(playwright):
+    """Run the OKR capture through the shared real-Chrome service launcher."""
+    from app.service_browser import launch_service_chrome
+
     browser.PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    process = subprocess.Popen(
-        _headless_cdp_command(
-            playwright,
-            port=port,
-            profile_dir=str(browser.PROFILE_DIR),
-        ),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    endpoint = f"http://127.0.0.1:{port}"
+    context = launch_service_chrome(playwright, browser.PROFILE_DIR)
     try:
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if process.poll() is not None:
-                raise RuntimeError("okr_headless_browser_exited")
-            try:
-                with urllib.request.urlopen(f"{endpoint}/json/version", timeout=1):
-                    break
-            except OSError:
-                time.sleep(0.2)
-        else:
-            raise RuntimeError("okr_headless_browser_start_timeout")
-        browser_instance = playwright.chromium.connect_over_cdp(endpoint)
-        try:
-            yield browser_instance
-        finally:
-            browser_instance.close()
+        yield context
     finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+        context.close()
 
 
 @contextmanager
@@ -262,8 +209,7 @@ def _capture_stable_headless_headers() -> dict[str, str]:
     browser.PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     captured: dict[str, str] = {}
     with sync_playwright() as playwright:
-        with _headless_cdp_browser(playwright) as browser_instance:
-            context = browser_instance.contexts[0]
+        with _service_browser(playwright) as context:
             try:
                 def on_request(request):
                     if "/data/okr/" not in request.url or captured:

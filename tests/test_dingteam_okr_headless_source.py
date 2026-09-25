@@ -25,9 +25,10 @@ def test_service_entrypoint_disables_visible_browser_fallback():
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert "_capture_stable_headless_headers" in source
-    assert '"--headless=new"' in source
+    assert "launch_service_chrome" in source
     assert "headless" in source.casefold()
-    assert "headful" not in source.casefold()
+    assert "_headless_cdp_command" not in source
+    assert "connect_over_cdp" not in source
 
 
 def test_expired_cache_is_refreshed_headlessly(monkeypatch):
@@ -97,28 +98,24 @@ def test_unmounted_okr_shell_is_checked_only_after_auth_wait():
     assert source.index(wait_marker) < source.rindex(state_check)
 
 
-def test_headless_cdp_launch_uses_playwright_browser_binary_and_loopback_only():
+def test_service_browser_uses_shared_launcher_and_closes_context(monkeypatch, tmp_path):
     module = load_module()
+    calls = []
 
-    class Chromium:
-        executable_path = "/tmp/playwright-chrome"
+    class Context:
+        def close(self):
+            calls.append("close")
 
-    class Playwright:
-        chromium = Chromium()
+    monkeypatch.setattr(module.browser, "PROFILE_DIR", tmp_path)
+    monkeypatch.setattr(
+        "app.service_browser.launch_service_chrome",
+        lambda playwright, profile_dir: calls.append((playwright, profile_dir)) or Context(),
+    )
 
-    assert module._headless_cdp_command(
-        Playwright(), port=9222, profile_dir="/tmp/ceo-okr-profile"
-    ) == [
-        "/tmp/playwright-chrome",
-        "--headless=new",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-features=LocalNetworkAccessChecks",
-        "--remote-debugging-address=127.0.0.1",
-        "--remote-debugging-port=9222",
-        "--user-data-dir=/tmp/ceo-okr-profile",
-        "about:blank",
-    ]
+    with module._service_browser("playwright"):
+        pass
+
+    assert calls == [("playwright", tmp_path), "close"]
 
 
 def test_login_redirect_uses_local_dingtalk_sso_before_expiring(monkeypatch):
@@ -449,12 +446,9 @@ def test_header_refresh_reuses_the_authenticated_persistent_context(monkeypatch,
 
     context = Context()
 
-    class BrowserInstance:
-        contexts = [context]
-
     @contextmanager
-    def cdp_browser(_playwright):
-        yield BrowserInstance()
+    def service_browser(_playwright):
+        yield context
 
     @contextmanager
     def playwright():
@@ -462,7 +456,7 @@ def test_header_refresh_reuses_the_authenticated_persistent_context(monkeypatch,
 
     monkeypatch.setattr(module.browser, "PROFILE_DIR", tmp_path)
     monkeypatch.setattr(module.browser, "_jwt_exp", lambda _headers: int(time.time()) + 3600)
-    monkeypatch.setattr(module, "_headless_cdp_browser", cdp_browser)
+    monkeypatch.setattr(module, "_service_browser", service_browser)
     monkeypatch.setattr(module, "sync_playwright", playwright)
 
     assert module._capture_stable_headless_headers() == {
@@ -523,16 +517,6 @@ def test_headless_browser_uses_process_lock():
     assert "fcntl.LOCK_NB" in source
     assert "HEADLESS_LOCK_TIMEOUT_SECONDS" in source
     assert module.HEADLESS_LOCK_TIMEOUT_SECONDS > module.HEADLESS_REFRESH_SECONDS
-
-
-def test_headless_browser_force_kills_chrome_after_bounded_shutdown_wait():
-    source = SCRIPT_PATH.read_text(encoding="utf-8")
-
-    terminate_marker = "process.terminate()"
-    timeout_marker = "except subprocess.TimeoutExpired:"
-    kill_marker = "process.kill()"
-
-    assert source.index(terminate_marker) < source.index(timeout_marker) < source.index(kill_marker)
 
 
 def test_bounded_source_kills_its_entire_worker_group_on_timeout(monkeypatch):
