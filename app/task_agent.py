@@ -1045,7 +1045,7 @@ def apply_task_agent_decision(
                         fields["business_relevance"] = BusinessRelevance(item.business_relevance)
                     result = service.update_task(UpdateBusinessTask(
                         task_id=item.task_id, signal=signal, date_facts=date_facts,
-                        reason=item.update_summary or "Task fields updated from source evidence.",
+                        reason=item.update_summary or "根据来源证据更新了任务字段。",
                         **fields,
                     ), _db=db)
             if (
