@@ -33,8 +33,8 @@ from app.task_scanners import (
 # Bump when what the Agent is asked to do with the excerpts changes (their format, the prompt's
 # owner rules, the checks a decision passes), so meetings whose earlier attempt ended without an
 # owner are read again instead of being reported as already queued. Revision 1 was the first
-# attempt (2026-09-25); 2 followed the sentence split and the per-item owner check.
-BACKFILL_REVISION = 2
+# attempt (2026-09-25); 2 followed the sentence split and the per-item owner check; 3 the citation rules (extracts allowed, earlier evidence citable).
+BACKFILL_REVISION = 3
 
 
 @dataclass
