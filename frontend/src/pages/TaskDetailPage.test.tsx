@@ -44,4 +44,23 @@ describe("TaskDetailPage", () => {
     expect(await screen.findByText("催办已发送")).toBeInTheDocument();
     expect(sendBusinessTaskFollowUp).toHaveBeenCalledWith("42", "7", 3);
   });
+
+  it("shows JSON evidence as a readable line with the raw record folded, and Chinese status labels", async () => {
+    const raw = { meeting: { title: "每周friday视频内容进展同步", durationMicros: 1972792000 } };
+    getBusinessTaskDetail.mockResolvedValue({ item: {
+      summary: { id: "43", title: "整理访谈问题清单", stage: "candidate", status: "open", commitment_status: "none", owner: "", deadline_at: "", business_relevance: "unknown", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/43" },
+      description: "", evidence: [{ role: "discovery", signal: { id: 43, source_type: "ai_minutes", source_time: "2026-09-24T11:29:21+08:00", evidence_text: JSON.stringify(raw), context_json: JSON.stringify({ work_item_title: "每周friday视频内容进展同步行动项" }) } }],
+      date_evidence: [], events: [{ id: 43, event_type: "created", reason: "Candidate task recorded", created_at: "2026-09-24 23:48:47" }], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [],
+    }, meta: { snapshot_at: "2026-09-25" } });
+    render(<MemoryRouter><TaskDetailPage taskId="43" /></MemoryRouter>);
+    expect(await screen.findByText("每周friday视频内容进展同步行动项")).toBeInTheDocument();
+    expect(screen.getByText(/AI 听记/)).toBeInTheDocument();
+    expect(screen.getByText("待处理")).toBeInTheDocument();
+    expect(screen.getByText("承诺待明确")).toBeInTheDocument();
+    expect(screen.getByText("已创建")).toBeInTheDocument();
+    expect(screen.queryByText(/^open$/)).not.toBeInTheDocument();
+    const details = screen.getByText("查看原始记录").closest("details");
+    expect(details).not.toHaveAttribute("open");
+    expect(screen.queryByText(/domesticSummaryOutcome/)).not.toBeInTheDocument();
+  });
 });

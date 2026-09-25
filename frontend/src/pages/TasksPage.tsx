@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { listBusinessAttention, listBusinessProjects, listBusinessTasks, type AttentionCategory, type BusinessAttentionSummary, type BusinessProjectCandidateSummary, type BusinessProjectSummary, type BusinessTaskSummary, type TaskView } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
+import { commitmentLabels, labelOf, taskStatusLabels } from "./taskLabels";
 
 const categoryLabels: Record<AttentionCategory, string> = { fyi: "仅需知晓", watch: "持续观察", decision: "需要决策", push: "需要推动" };
 const categoryOrder: AttentionCategory[] = ["fyi", "watch", "decision", "push"];
@@ -30,7 +31,7 @@ function AttentionCard({ item }: { item: BusinessAttentionSummary }) {
 function TaskRow({ item }: { item: BusinessTaskSummary }) {
   return <li className="business-task-row">
     <div className="business-task-row-main"><Link to={item.detail_url}>{item.title}</Link><span className={`business-stage ${item.stage}`}>{item.stage === "candidate" ? "候选任务" : "正式任务"}</span></div>
-    <p>{item.owner || "负责人未明确"} · {item.status} · {item.commitment_status}</p>
+    <p>{item.owner || "负责人未明确"} · {labelOf(taskStatusLabels, item.status)} · {labelOf(commitmentLabels, item.commitment_status)}</p>
     <small>{item.anchor_labels.join(" · ") || "暂无业务主线关联"} · 更新于 {localTime(item.updated_at)}</small>
   </li>;
 }

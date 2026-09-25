@@ -9,6 +9,10 @@ describe("workbench dark color contract", () => {
     expect(workbenchStyles).toMatch(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*\.scheduled-tasks-route\s*\{[\s\S]*?color-scheme:\s*dark;[\s\S]*?--canvas:[^;]+;[\s\S]*?--surface:[^;]+;[\s\S]*?--ink:[^;]+;[\s\S]*?--ink-soft:[^;]+;[\s\S]*?--line-strong:[^;]+;/);
   });
 
+  it("gives the Tasks route its own text color so header text follows the dark tokens", () => {
+    expect(workbenchStyles).toMatch(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*\.task-domain-route\s*\{[^}]*color:\s*var\(--ink\);/);
+  });
+
   it("routes status, error, focus, and disabled colors through shared tokens", () => {
     for (const token of [
       "--status-success-ink", "--status-success-line", "--status-success-surface",

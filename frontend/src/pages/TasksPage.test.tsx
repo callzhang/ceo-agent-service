@@ -50,6 +50,8 @@ describe("TasksPage", () => {
     render(<MemoryRouter initialEntries={["/tasks?view=all"]}><TasksPage /></MemoryRouter>);
     expect(await screen.findByRole("link", { name: "整理办公室绿植" })).toHaveAttribute("href", "/tasks/item/9");
     expect(screen.getByText("候选任务")).toBeInTheDocument();
+    expect(screen.getAllByText(/待处理 · 已接受/)).toHaveLength(2);
+    expect(screen.queryByText(/\bopen\b/)).not.toBeInTheDocument();
     expect(api.attention).not.toHaveBeenCalled();
   });
 

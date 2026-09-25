@@ -1870,6 +1870,9 @@ h1, h2, h3, p { margin-top: 0; }
 .business-detail-facts dd { min-width: 0; margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .business-source-list, .business-linked-list { display: grid; gap: 8px; margin: 0; padding-left: 20px; }
 .business-source-list li, .business-linked-list li { min-width: 0; overflow-wrap: anywhere; }
+.business-source-raw { margin-top: 4px; }
+.business-source-raw summary { color: var(--ink-soft); font-size: .72rem; cursor: pointer; }
+.business-source-raw pre { max-height: 320px; margin: 6px 0 0; padding: 10px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-muted); color: var(--ink); font-size: .72rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .business-source-list li small, .business-linked-list li span { display: block; color: var(--ink-soft); font-size: .72rem; }
 .follow-up-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .follow-up-body { min-width: 0; }
@@ -1879,6 +1882,7 @@ h1, h2, h3, p { margin-top: 0; }
 @media (prefers-color-scheme: dark) {
   .task-domain-route {
     color-scheme: dark;
+    color: var(--ink);
     --canvas: #111411;
     --panel: #171b17;
     --surface: #1b1f1b;

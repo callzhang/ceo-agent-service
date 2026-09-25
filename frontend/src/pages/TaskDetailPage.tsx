@@ -5,16 +5,34 @@ import { Link } from "react-router-dom";
 import { getBusinessTaskDetail, getLegacyProjectDetail, sendBusinessTaskFollowUp, type BusinessTaskDetail, type TaskDetail } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
+import { commitmentLabels, labelOf, sourceTypeLabels, taskEventLabels, taskStatusLabels } from "./taskLabels";
 
-const commitmentLabels: Record<string, string> = { none: "承诺待明确", assigned_unaccepted: "已指派，未接受", accepted: "已接受", disputed: "存在争议", completed: "已完成", cancelled: "已取消" };
+function parseJson(value: unknown): unknown {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
+  try { return JSON.parse(trimmed); } catch { return undefined; }
+}
 
+function nonEmpty(value: unknown): value is string { return typeof value === "string" && value !== ""; }
+
+/** One evidence-style row: a readable line, and the raw record folded away when the source stored JSON. */
 export function SourceRecordList({ title, rows }: { title: string; rows: Array<Record<string, unknown>> }) {
   if (!rows.length) return null;
   return <section className="console-card business-detail-section"><h2>{title}</h2><ol className="business-source-list">{rows.map((row, index) => {
     const signal = row.signal && typeof row.signal === "object" ? row.signal as Record<string, unknown> : null;
-    const primary = [signal?.evidence_text, row.evidence_text, row.raw_phrase, row.title, row.summary, row.reason, row.event_type, row.source_type].find((value) => typeof value === "string" && value);
-    const secondary = [row.role, row.date_type, row.value_at, signal?.source_type, row.source_type, row.created_at].filter((value) => typeof value === "string" && value && value !== primary);
-    return <li key={String(row.id ?? index)}><span>{typeof primary === "string" ? primary : "记录"}</span>{secondary.length > 0 && <small>{secondary.join(" · ")}</small>}</li>;
+    const rawText = [signal?.evidence_text, row.evidence_text].find(nonEmpty);
+    const raw = parseJson(rawText);
+    const context = parseJson(signal?.context_json) as Record<string, unknown> | undefined;
+    const readable = [raw === undefined ? rawText : undefined, row.raw_phrase, row.title, row.summary].find(nonEmpty);
+    const eventLabel = typeof row.event_type === "string" ? taskEventLabels[row.event_type] : undefined;
+    const primary = eventLabel
+      ?? readable
+      ?? [context?.work_item_title, row.reason, row.event_type, sourceTypeLabels[String(signal?.source_type ?? row.source_type)], signal?.source_type, row.source_type].find(nonEmpty);
+    const secondary = [row.role, row.date_type, row.value_at, eventLabel ? row.reason : undefined, labelOf(sourceTypeLabels, String(signal?.source_type ?? row.source_type ?? "")), signal?.source_time, row.created_at]
+      .filter((value) => nonEmpty(value) && value !== primary);
+    return <li key={String(row.id ?? index)}><span>{typeof primary === "string" ? primary : "记录"}</span>{secondary.length > 0 && <small>{secondary.join(" · ")}</small>}
+      {raw !== undefined && <details className="business-source-raw"><summary>查看原始记录</summary><pre>{JSON.stringify(raw, null, 2)}</pre></details>}</li>;
   })}</ol></section>;
 }
 
@@ -83,7 +101,7 @@ export function TaskDetailPage({ taskId }: { taskId: string }) {
   const task = detail.summary;
   return <ConsolePageLayout title={task.title} actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to="/tasks?view=all">返回全部任务</Link></>}>
     <div className="task-domain-page business-detail-page">
-      <section className="console-card business-detail-section"><div className="business-detail-badges"><span className={`business-stage ${task.stage}`}>{task.stage === "candidate" ? "候选任务" : "正式任务"}</span><span>{task.status}</span><span>{commitmentLabels[task.commitment_status] || task.commitment_status}</span></div>
+      <section className="console-card business-detail-section"><div className="business-detail-badges"><span className={`business-stage ${task.stage}`}>{task.stage === "candidate" ? "候选任务" : "正式任务"}</span><span>{labelOf(taskStatusLabels, task.status)}</span><span>{labelOf(commitmentLabels, task.commitment_status)}</span></div>
         {detail.description && <p>{detail.description}</p>}
         <dl className="business-detail-facts"><div><dt>负责人</dt><dd>{task.owner || "尚无明确负责人"}</dd></div><div><dt>截止日期</dt><dd>{task.deadline_at || "未明确"}</dd></div><div><dt>业务主线</dt><dd>{task.anchor_labels.join(" · ") || "尚未确认"}</dd></div></dl>
       </section>
