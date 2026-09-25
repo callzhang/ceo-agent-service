@@ -1440,11 +1440,9 @@ def test_parser_supports_single_meeting_scan_with_explicit_database(tmp_path):
     assert args.db == str(tmp_path / "production.sqlite3")
 
 
-def test_parser_supports_daily_task_maintenance():
-    args = build_parser().parse_args(["daily-task-maintenance", "--max-batches", "4"])
-
-    assert args.command == "daily-task-maintenance"
-    assert args.max_batches == 4
+def test_parser_rejects_retired_daily_task_maintenance():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["daily-task-maintenance"])
 
 
 def test_parser_supports_setup_memory_connector():
@@ -1514,81 +1512,6 @@ def test_setup_memory_connector_command_requires_memory_url(tmp_path):
         )
 
 
-def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys):
-    calls = []
-
-    class FakeDwsClient:
-        pass
-
-    monkeypatch.setattr(
-        cli,
-        "scan_task_sources_command",
-        lambda settings: calls.append(("scan", settings.db_path)) or 3,
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_oa_approvals_command",
-        lambda settings: calls.append(("oa-scan", settings.db_path)) or 6,
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_work_items_command",
-        lambda settings: calls.append(("work", settings.db_path)) or 2,
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_okr_reviews_command",
-        lambda settings: calls.append(("okr", settings.db_path)) or 5,
-    )
-    monkeypatch.setattr(cli, "DwsClient", lambda **_: FakeDwsClient())
-    monkeypatch.setattr(
-        cli,
-        "scan_completed_dingtalk_todos_command",
-        lambda settings, dws=None: calls.append(
-            ("dingtalk_todo_scan", dws.__class__.__name__)
-        )
-        or 4,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        cli,
-        "retry_failed_dingtalk_todo_links",
-        lambda store, dws, now: calls.append(
-            ("dingtalk_todo_retry", dws.__class__.__name__)
-        )
-        or 8,
-        raising=False,
-    )
-    result = cli.daily_task_maintenance_command(
-        WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
-    )
-
-    assert result == {
-        "sources": 3,
-        "oa_approvals": 6,
-        "work_items": 2,
-        "okr_reviews": 5,
-        "dingtalk_todos_closed": 4,
-        "dingtalk_todos_recovered": 8,
-        "completion_items_processed": 2,
-    }
-    assert calls == [
-        ("scan", tmp_path / "worker.sqlite3"),
-        ("oa-scan", tmp_path / "worker.sqlite3"),
-        ("work", tmp_path / "worker.sqlite3"),
-        ("okr", tmp_path / "worker.sqlite3"),
-        ("dingtalk_todo_scan", "FakeDwsClient"),
-        ("dingtalk_todo_retry", "FakeDwsClient"),
-        ("work", tmp_path / "worker.sqlite3"),
-    ]
-    assert capsys.readouterr().out == (
-        "daily-task-maintenance sources=3 oa_approvals=6 work_items=2 "
-        "okr_reviews=5 dingtalk_todos_closed=4 "
-        "dingtalk_todos_recovered=8 "
-        "completion_items_processed=2\n"
-    )
-
-
 def test_scan_oa_approvals_command_honors_enabled_and_lookback(
     tmp_path, monkeypatch, capsys
 ):
@@ -1623,70 +1546,6 @@ def test_scan_oa_approvals_command_honors_enabled_and_lookback(
         )
     ]
     assert capsys.readouterr().out == "scan-oa-approvals queued=7\n"
-
-
-def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, capsys):
-    calls = []
-    db_path = tmp_path / "worker.sqlite3"
-
-    class FakeDwsClient:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-    monkeypatch.setattr(
-        cli,
-        "scan_task_sources_command",
-        lambda settings: calls.append(("scan", settings.db_path)) or 3,
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_oa_approvals_command",
-        lambda settings: calls.append(("oa-scan", settings.db_path)) or 6,
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_work_items_command",
-        lambda settings: calls.append(("work", settings.db_path)) or 2,
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_okr_reviews_command",
-        lambda settings: calls.append(("okr", settings.db_path)) or 5,
-    )
-    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
-    monkeypatch.setattr(
-        cli,
-        "scan_completed_dingtalk_todos_command",
-        lambda settings, dws=None: calls.append(
-            ("dingtalk_todo_scan", dws.__class__.__name__)
-        )
-        or 4,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        cli,
-        "retry_failed_dingtalk_todo_links",
-        lambda store, dws, now: calls.append(
-            ("dingtalk_todo_retry", dws.__class__.__name__)
-        )
-        or 8,
-        raising=False,
-    )
-    result = cli.daily_task_maintenance_command(WorkerSettings(db_path=db_path))
-
-    assert calls == [
-        ("scan", db_path),
-        ("oa-scan", db_path),
-        ("work", db_path),
-        ("okr", db_path),
-        ("dingtalk_todo_scan", "FakeDwsClient"),
-        ("dingtalk_todo_retry", "FakeDwsClient"),
-        ("work", db_path),
-    ]
-    assert result["dingtalk_todos_closed"] == 4
-    assert result["dingtalk_todos_recovered"] == 8
-    assert result["oa_approvals"] == 6
-    assert "dingtalk_todos_closed=4" in capsys.readouterr().out
 
 
 def test_process_okr_reviews_command_processes_and_sends_reply(
@@ -5230,21 +5089,6 @@ def test_live_send_allows_guarded_override(monkeypatch, tmp_path):
     )
 
     ensure_live_send_allowed(settings)
-
-
-@pytest.mark.parametrize("command", ["daily-task-maintenance"])
-def test_main_guards_follow_up_send_commands(monkeypatch, tmp_path, command):
-    monkeypatch.delenv("CEO_LIVE_SEND_BLOCKERS_ACCEPTED", raising=False)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["ceo-agent", command, "--db", str(tmp_path / "worker.sqlite3")],
-    )
-    monkeypatch.setattr(cli, "scan_task_sources_command", lambda settings: 0)
-    monkeypatch.setattr(cli, "process_work_items_command", lambda settings: 0)
-
-    with pytest.raises(SystemExit, match="CEO_NOT_SEND_MESSAGE=0 is blocked"):
-        cli.main()
 
 
 def test_poll_interval_seconds_must_be_positive():
@@ -9062,4 +8906,3 @@ def test_task_agent_queue_runs_one_turn_at_a_time():
     counts = _adapter_worker_counts(("reply", "work_summary", "meeting"), 2)
 
     assert counts == {"reply": 2, "work_summary": 1, "meeting": 1}
-

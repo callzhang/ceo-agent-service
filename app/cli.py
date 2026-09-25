@@ -114,7 +114,6 @@ from app.todo_sync import (
     dispatch_claimed_business_task_todo_sync_outbox,
     dispatch_claimed_task_todo_sync_outbox,
     reconcile_unknown_business_task_todo_creates,
-    retry_failed_dingtalk_todo_links,
     scan_completed_dingtalk_todos,
 )
 from app.work_profile import (
@@ -375,7 +374,6 @@ def build_parser() -> argparse.ArgumentParser:
         "read-dingteam-okr",
         "daily-report-facts",
         "weekly-report-materials",
-        "daily-task-maintenance",
         "quality-check",
         "channel-doctor",
         "doctor-mcp",
@@ -2685,45 +2683,6 @@ def scan_completed_dingtalk_todos_command(
     )
 
 
-def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
-    sources = scan_task_sources_command(settings)
-    oa_approvals = scan_oa_approvals_command(settings)
-    work_items = process_work_items_command(settings)
-    okr_reviews = process_okr_reviews_command(settings)
-    dws = DwsClient(
-        ding_robot_code=settings.ding_robot_code,
-        ding_robot_name=settings.ding_robot_name,
-        ding_receiver_user_id=settings.ding_receiver_user_id,
-    )
-    dingtalk_todos_closed = scan_completed_dingtalk_todos_command(settings, dws=dws)
-    dingtalk_todos_recovered = retry_failed_dingtalk_todo_links(
-        AutoReplyStore(settings.db_path),
-        dws,
-        now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-    )
-    completion_items_processed = process_work_items_command(settings)
-    result = {
-        "sources": sources,
-        "oa_approvals": oa_approvals,
-        "work_items": work_items,
-        "okr_reviews": okr_reviews,
-        "dingtalk_todos_closed": dingtalk_todos_closed,
-        "dingtalk_todos_recovered": dingtalk_todos_recovered,
-        "completion_items_processed": completion_items_processed,
-    }
-    print(
-        "daily-task-maintenance "
-        f"sources={sources} oa_approvals={oa_approvals} "
-        f"work_items={work_items} "
-        f"okr_reviews={okr_reviews} "
-        f"dingtalk_todos_closed={dingtalk_todos_closed} "
-        f"dingtalk_todos_recovered={dingtalk_todos_recovered} "
-        f"completion_items_processed={completion_items_processed}",
-        flush=True,
-    )
-    return result
-
-
 def setup_memory_connector_command(
     *,
     memory_url: str,
@@ -5002,10 +4961,6 @@ def main() -> None:
         daily_report_facts_command(settings, scheduled_run_id=args.scheduled_run)
     elif args.command == "weekly-report-materials":
         weekly_report_materials_command(settings, scheduled_run_id=args.scheduled_run)
-    elif args.command == "daily-task-maintenance":
-        ensure_live_send_allowed(settings)
-        initialize_agent_runtime_routes(settings)
-        daily_task_maintenance_command(settings)
     elif args.command == "quality-check":
         raise SystemExit(
             quality_check_command(
