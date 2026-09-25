@@ -15,8 +15,11 @@ leaves it to the reading Agent to decide who is being asked to do the work.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
+# Split after 。！？!? (and any closing quote or bracket) so the mark stays with its sentence.
+_SENTENCE_END = re.compile(r"(?<=[。！？!?])[”’」』）)\"']*\s*")
 PARAGRAPHS_BEFORE = 6
 PARAGRAPHS_AFTER = 4
 
@@ -77,16 +80,13 @@ def todo_transcript_excerpts(todos_payload: Any, paragraphs: list[dict[str, Any]
 def _lines(paragraph: dict[str, Any]) -> list[str]:
     """One line per sentence, each with the speaker label.
 
-    A paragraph is often several sentences long. A line per sentence lets an Agent
-    quote the one sentence that matters with its label as an exact substring; a
-    line per paragraph invites "label + a sentence from the middle", which is not
-    text the source contains.
+    A paragraph is often several sentences long, and DingTalk's own `sentenceList`
+    holds the whole paragraph as one "sentence", so the split is made here at
+    sentence-final punctuation. A line per sentence lets an Agent quote the one
+    sentence that matters with its label as an exact substring; a line per
+    paragraph invites "label + a sentence from the middle", which is not text the
+    source contains.
     """
     speaker = str(paragraph.get("nickName") or "").strip()
-    sentences = [
-        str(sentence.get("sentence") or "").strip()
-        for sentence in paragraph.get("sentenceList") or []
-        if isinstance(sentence, dict)
-    ]
-    sentences = [sentence for sentence in sentences if sentence]
-    return [f"{speaker}：{text}" for text in sentences or [str(paragraph.get("paragraph") or "").strip()]]
+    text = str(paragraph.get("paragraph") or "").strip()
+    return [f"{speaker}：{sentence.strip()}" for sentence in _SENTENCE_END.split(text) if sentence.strip()] or [f"{speaker}：{text}"]

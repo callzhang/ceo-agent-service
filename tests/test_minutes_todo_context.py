@@ -54,9 +54,16 @@ def test_speaker_labels_are_kept_exactly_as_dingtalk_gave_them():
 
 
 def test_each_sentence_is_its_own_line_so_it_can_be_quoted_with_its_speaker_label():
+    """DingTalk's sentenceList holds the whole paragraph as one sentence, so the split is ours."""
     paragraph = {
-        "nickName": "Claire", "paragraph": "我们很希望合作。然后请威尔帮忙准备材料。", "startTime": 1000, "endTime": 5000,
-        "sentenceList": [{"sentence": "我们很希望合作。"}, {"sentence": "然后请威尔帮忙准备材料。"}, {"sentence": " "}],
+        "nickName": "Claire", "paragraph": "我们很希望合作。然后请威尔帮忙准备材料！好，谢谢? Yes. no", "startTime": 1000, "endTime": 5000,
+        "sentenceList": [{"sentence": "我们很希望合作。然后请威尔帮忙准备材料！好，谢谢? Yes. no"}],
     }
     [excerpt] = todo_transcript_excerpts(_todos({"title": "t", "createdTime": 2000}), [paragraph])
-    assert excerpt["lines"] == ["Claire：我们很希望合作。", "Claire：然后请威尔帮忙准备材料。"]
+    assert excerpt["lines"] == ["Claire：我们很希望合作。", "Claire：然后请威尔帮忙准备材料！", "Claire：好，谢谢?", "Claire：Yes. no"]
+
+
+def test_a_paragraph_without_sentence_punctuation_stays_one_line():
+    paragraph = {"nickName": "Zoey", "paragraph": "行", "startTime": 1000, "endTime": 2000}
+    [excerpt] = todo_transcript_excerpts(_todos({"title": "t", "createdTime": 1500}), [paragraph])
+    assert excerpt["lines"] == ["Zoey：行"]
