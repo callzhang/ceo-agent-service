@@ -19,16 +19,28 @@
 - Completion is recorded when that new signal carries the evidence. The
   evidence rules are unchanged: closing a Task still needs a source read in
   the turn that closes it.
-- Follow-up target repair after a rejected delivery still sends one
-  `follow_up_completion_check` work item for that follow-up. It is triggered
-  by the delivery failure, not by a schedule.
+- There is no separate completion check of any kind (Derek, 2026-09-25: "也是改
+  成由 evidence 驱动的更新而不是单独检查"):
+  - **DingTalk TODO completion is new information.** The periodic source scan
+    lists DingTalk TODOs completed since its last run (one query, not one read
+    per linked TODO). A completed TODO that is linked to a Task closes that
+    Task directly, recording the DingTalk completion as its evidence. The rule
+    is fixed, so the service does it without an Agent turn.
+  - **No Task completion Agent.** Task Agent already records completion when a
+    message, meeting or email shows the work is done; that is the only Agent
+    path that changes a Task's status.
+  - **A failed follow-up send is a delivery failure, not a completion
+    question.** An unknown outcome is reconciled against the provider receipt;
+    a failed send retries with backoff and, once retries are exhausted, stays
+    failed and visible. Nothing asks an Agent whether the Task might be done.
 
 Why: the periodic check re-sent each open TODO with its own snapshot and the
 previous check's conclusion. From Task-first cutover to 2026-09-25, 15 of 16
 such turns searched nothing, cited the work item itself as their source and
 failed the evidence check, some for TODOs three months past due. The code path
 (`enqueue_todo_completion_evidence_checks`, `check-follow-up-completions` and
-its maintenance-loop callers) is removed.
+its maintenance-loop callers) is removed. The per-link DingTalk TODO status poll, the Task completion Agent and the
+follow-up repair work item are removed with it.
 
 ## Task 6 implementation amendments (approved 2026-09-22)
 
