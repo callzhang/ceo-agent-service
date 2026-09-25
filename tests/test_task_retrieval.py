@@ -812,3 +812,29 @@ def test_render_project_task_details_uses_todo_owner_as_project_display_fallback
     assert payload[0]["project"]["owner"] == "Avery"
     assert payload[0]["todos"][0]["id"] == todo_id
     assert payload[0]["todos"][0]["owner"] == "Avery"
+
+
+def test_a_source_read_again_sees_its_own_earlier_tasks_however_the_words_rank(tmp_path):
+    """The lexical top 20 cannot be what decides whether a meeting's own Tasks are in context."""
+    store = AutoReplyStore(tmp_path / "same-source.sqlite3")
+
+    def candidate(title, source_ref, key):
+        task_id = store.create_business_task(title=title, stage="candidate")
+        signal_id = store.create_business_task_signal(
+            source_type="ai_minutes", source_ref=source_ref, evidence_text=title, dedupe_key=key)
+        store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="discovery")
+        return task_id
+
+    for index in range(25):
+        candidate(f"报价 首版 评审 {index}", f"other-{index}#todos-sha256=x", f"other:{index}")
+    own = candidate("完全无关的措辞", "meeting-1#todos-sha256=old", "own:1")
+    item = WorkItem.model_validate({
+        "source": {"type": "ai_minutes", "ref": "meeting-1#todos-sha256=new"},
+        "summary": "报价 首版 评审", "context": {"source_conversation_kind": "minutes"},
+    })
+
+    context = retrieve_task_semantic_context(store, item)
+
+    assert own in [task.id for task in context.task_candidates]
+    assert len(context.task_candidates) == 20
+    assert context.task_candidates[0].id == own

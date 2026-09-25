@@ -152,6 +152,16 @@ def retrieve_task_semantic_context(
             conversation_id=work_item.source.conversation_id, limit=limit, offset=offset
         )
     ))
+    # What this source produced before is what it most likely updates now, however
+    # the words rank: a meeting read again must see its own earlier Tasks, or the
+    # Agent records them a second time.
+    same_source_task_ids = set(_all_pages(
+        lambda *, limit, offset: store.list_business_task_ids_for_source(
+            source_type=work_item.source.type.value,
+            source_id=work_item.source.ref.split("#", 1)[0],
+            limit=limit, offset=offset,
+        )
+    ))
     tasks = _all_pages(store.list_business_tasks)
     ranked_tasks = sorted(
         (
@@ -165,16 +175,20 @@ def retrieve_task_semantic_context(
         ),
         key=lambda pair: (-pair[0], -pair[1].id),
     )
-    candidates = tuple(
+    same_source_candidates = tuple(
+        task for _score, task in ranked_tasks
+        if task.id in same_source_task_ids and task.stage.value == "candidate"
+    )
+    candidates = same_source_candidates + tuple(
         task for score, task in ranked_tasks
-        if score > 0 and task.stage.value == "candidate"
-    )[:limit_per_kind]
+        if score > 0 and task.stage.value == "candidate" and task.id not in same_source_task_ids
+    )[:max(0, limit_per_kind - len(same_source_candidates))]
     formal_rows: list[BusinessTask] = []
     unverified_rows: list[BusinessTask] = []
     evidence_by_task: dict[int, tuple[BusinessTaskEvidence, ...]] = {}
     owner_signal_by_task: dict[int, int] = {}
     for score, task in ranked_tasks:
-        if score <= 0 or task.stage.value != "formal":
+        if (score <= 0 and task.id not in same_source_task_ids) or task.stage.value != "formal":
             continue
         task_evidence = store.list_business_task_evidence(task.id)
         owner_signal_id = _source_backed_owner_signal_id(store, task, task_evidence)

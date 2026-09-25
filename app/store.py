@@ -7111,6 +7111,24 @@ class AutoReplyStore:
             ).fetchall()
             return tuple(int(row["task_id"]) for row in rows)
 
+    def list_business_task_ids_for_source(
+        self, *, source_type: str, source_id: str, limit: int = 100, offset: int = 0
+    ) -> tuple[int, ...]:
+        """Tasks found through one source: its signals' references are the source id, or the id then `#` and a revision."""
+        if limit < 1 or offset < 0:
+            raise ValueError("business source pagination requires positive limit and non-negative offset")
+        if not source_id.strip():
+            return ()
+        with self._connect() as db:
+            rows = db.execute(
+                "select distinct evidence.task_id from business_task_evidence evidence "
+                "join business_task_signals signal on signal.id=evidence.signal_id "
+                "where signal.source_type=? and (signal.source_ref=? or substr(signal.source_ref, 1, ?)=?) "
+                "order by evidence.task_id limit ? offset ?",
+                (source_type, source_id, len(source_id) + 1, source_id + "#", limit, offset),
+            ).fetchall()
+            return tuple(int(row["task_id"]) for row in rows)
+
     def list_business_task_events(
         self, task_id: int
     ) -> tuple[BusinessTaskEvent, ...]:
