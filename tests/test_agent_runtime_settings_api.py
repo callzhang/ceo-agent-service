@@ -12,8 +12,6 @@ ENDPOINT = "/api/console/settings/agent-runtime"
 BASE_FIELDS = {
     "CEO_CODEX_MODEL": "gpt-5.5",
     "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-    "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
-    "CEO_CODEX_API_MODEL": "gpt-5.5",
     "CEO_CLAUDE_MODEL": "sonnet",
     "CEO_CLAUDE_MODEL_REASONING_EFFORT": "medium",
 }
@@ -134,7 +132,7 @@ def test_claude_oauth_is_enabled_with_its_model_and_no_api_key(
     assert "CEO_CLAUDE_MODEL=opus" in env_text
     assert "CEO_CLAUDE_MODEL_REASONING_EFFORT=high" in env_text
     # The local login is the credential, so no Anthropic API key is written.
-    assert "CEO_CLAUDE_API_KEY" not in env_text
+    assert "API_KEY" not in env_text
 
 
 def test_unsupported_claude_effort_is_refused(tmp_path: Path, env_path: Path):
@@ -180,6 +178,36 @@ def test_the_primary_route_stays_even_when_the_submission_omits_it(
     assert "CEO_AGENT_RUNTIME_ROUTES=claude_oauth,codex_oauth" in env_path.read_text(
         encoding="utf-8"
     )
+
+
+def test_claude_api_is_saved_as_an_added_route_with_its_own_key(
+    tmp_path: Path, env_path: Path
+):
+    """The former built-in name carries the same settings as any added route."""
+
+    refused = _save(
+        tmp_path,
+        CEO_AGENT_RUNTIME_ROUTES="codex_oauth,claude_api",
+        CEO_RUNTIME_CLAUDE_API_KIND="claude_api",
+        CEO_RUNTIME_CLAUDE_API_MODEL="claude-opus-5",
+    )
+    (tmp_path / "saved").mkdir()
+    saved = _save(
+        tmp_path / "saved",
+        CEO_AGENT_RUNTIME_ROUTES="codex_oauth,claude_api",
+        CEO_RUNTIME_CLAUDE_API_KIND="claude_api",
+        CEO_RUNTIME_CLAUDE_API_MODEL="claude-opus-5",
+        CEO_RUNTIME_CLAUDE_API_API_KEY="claude-secret",
+    )
+
+    assert refused.status_code == 400
+    assert refused.json()["message"] == "Runtime claude_api requires an API token."
+    assert saved.status_code == 200, saved.json()
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,claude_api" in env_text
+    assert "CEO_RUNTIME_CLAUDE_API_MODEL=claude-opus-5" in env_text
+    assert "CEO_RUNTIME_CLAUDE_API_API_KEY=claude-secret" in env_text
+    assert "CEO_CLAUDE_API_KEY" not in env_text
 
 
 def test_the_legacy_form_route_is_gone(tmp_path: Path, env_path: Path):

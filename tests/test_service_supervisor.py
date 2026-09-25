@@ -287,9 +287,20 @@ def test_main_supervises_email_worker(monkeypatch, tmp_path):
         "run_supervisor",
         lambda *commands: calls.append(commands) or 0,
     )
+    monkeypatch.setattr(
+        service_supervisor.subprocess,
+        "run",
+        lambda command, check: calls.append(("migrate", command, check)),
+    )
 
     assert service_supervisor.main() == 0
-    assert [command[3] for command in calls[0]] == [
+    # The env migration finishes before any child starts.
+    assert calls[0] == (
+        "migrate",
+        [service_supervisor.sys.executable, "-m", "app.agent_runtime_migration"],
+        True,
+    )
+    assert [command[3] for command in calls[1]] == [
         "service",
         "audit-web",
         "email-worker",

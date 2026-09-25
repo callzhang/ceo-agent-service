@@ -120,8 +120,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_env_migration_command() -> list[str]:
+    return [sys.executable, "-m", "app.agent_runtime_migration"]
+
+
 def main() -> int:
     args = build_parser().parse_args()
+    # Settings written by an older release are rewritten before any child
+    # reads `.env`. It runs as its own process: importing app.config here
+    # would copy the file into this process's environment, and every child
+    # restarted later would inherit those stale values as authoritative.
+    subprocess.run(build_env_migration_command(), check=True)
     return run_supervisor(
         build_child_command("service", args),
         build_child_command("audit-web", args),

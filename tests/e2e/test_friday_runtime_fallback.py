@@ -38,6 +38,7 @@ from app.agent_runtime_production import build_friday_runtime_launch_environment
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
+from tests.runtime_route_env import codex_api_env
 
 
 CAPABILITIES = frozenset({"structured_output", "local_schema_validation"})
@@ -141,7 +142,7 @@ def _config(base_url: str):
     return load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,friday_runtime",
-            "CEO_CODEX_API_KEY": "synthetic-codex-key",
+            **codex_api_env("synthetic-codex-key"),
             "CEO_FRIDAY_RUNTIME_BASE_URL": base_url,
             "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-agent-e2e",
             "CEO_FRIDAY_RUNTIME_MODEL": "MiniMax-M3",

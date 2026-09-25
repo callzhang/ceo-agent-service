@@ -30,6 +30,7 @@ from app.audit_web import _runtime_attempt_evidence_card
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRole, AutoReplyStore
+from tests.runtime_route_env import claude_api_env, codex_api_env
 
 _LIVE_MARK = pytest.mark.skipif(
     os.getenv("CEO_LIVE_RUNTIME_FAILOVER_E2E") != "1",
@@ -54,10 +55,9 @@ def test_runtime_failover_contract_runs_by_default(tmp_path):
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,claude_api",
-            "CEO_CODEX_API_KEY": "synthetic-codex-secret",
-            "CEO_CLAUDE_API_KEY": "synthetic-claude-secret",
+            **codex_api_env("synthetic-codex-secret", model="gpt-5.6-terra"),
+            **claude_api_env("synthetic-claude-secret"),
             "CEO_CODEX_MODEL": "gpt-5.6-sol",
-            "CEO_CODEX_API_MODEL": "gpt-5.6-terra",
         }
     )
     store = AutoReplyStore(tmp_path / "runtime-contract.sqlite3")
@@ -88,9 +88,8 @@ def test_claude_oauth_takes_over_when_the_codex_routes_are_unhealthy(tmp_path):
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,claude_oauth",
-            "CEO_CODEX_API_KEY": "synthetic-codex-secret",
+            **codex_api_env("synthetic-codex-secret", model="gpt-5.6-terra"),
             "CEO_CODEX_MODEL": "gpt-5.6-sol",
-            "CEO_CODEX_API_MODEL": "gpt-5.6-terra",
         }
     )
     store = AutoReplyStore(tmp_path / "claude-oauth-contract.sqlite3")
@@ -141,7 +140,7 @@ def _live_config():
         pytest.fail(f"live runtime routes are missing: {sorted(missing)}")
     secret = config.secret_for("codex_api")
     if secret is None or not secret.get_secret_value():
-        pytest.fail("CEO_CODEX_API_KEY is required for live failover E2E")
+        pytest.fail("the codex_api route needs its API key for live failover E2E")
     return config
 
 

@@ -846,20 +846,39 @@ session 中的对应 MCP 工具；只有直接工具调用或 provider 操作失
 `CEO_AGENT_RUNTIME_ROUTES` 是一个有序的路由名列表，**顺序就是故障切换顺序**：前一条不可用时
 Router 取下一条已配置且健康的路由。列表里出现的名字分两类：
 
-- **内置路由**：`codex_oauth`、`codex_api`、`claude_oauth`、`claude_api`、`friday_runtime`
-  （常量 `SUPPORTED_RUNTIME_ROUTES`）。它们使用各自固定的环境变量，其中有些键被别的功能共用，
-  例如 `CEO_CODEX_API_BASE_URL` 也被邮件分类器读取。
-- **新增路由**：列表里任何其它名字（小写字母、数字、下划线，字母开头）都是运维自己加的路由，
-  由它自己名下的 `CEO_RUNTIME_<大写名>_KIND` / `_BASE_URL` / `_MODEL` / `_API_KEY` 描述。
-  `KIND` 取 `codex_oauth`、`codex_api`、`claude_oauth`、`claude_api` 之一
+- **内置路由**：只有 `codex_oauth`、`claude_oauth`、`friday_runtime` 三条（常量
+  `SUPPORTED_RUNTIME_ROUTES`，Derek 2026-09-24），名字固定、不能改名，使用各自固定的环境变量
+  （`CEO_CODEX_MODEL*`、`CEO_CLAUDE_MODEL*`、`CEO_FRIDAY_RUNTIME_*`）。
+- **添加的路由**：列表里任何其它名字（小写字母、数字、下划线，字母开头）都是运维自己加的路由，
+  由它自己名下的 `CEO_RUNTIME_<大写名>_KIND` / `_BASE_URL` / `_MODEL` / `_API_KEY` 描述，
+  模型自由填写。`KIND` 取 `codex_oauth`、`codex_api`、`claude_oauth`、`claude_api` 之一
   （常量 `ADDED_ROUTE_KINDS`）；OAuth 两种复用本机 CLI 登录，只需要模型、不需要 Token
   （`ADDED_ROUTE_KINDS_WITH_KEY` 之外）。因此同一种 provider 可以配置多条，各自指向不同地址
   和模型——`RuntimeRoute.base_url` 就是为此存在，Codex adapter 用的是**该路由自己的**地址，
-  而不是某个全局配置。
+  而不是某个全局配置。`codex_api`、`claude_api` 以前是内置路由（`CEO_CODEX_API_*`、
+  `CEO_CLAUDE_API_*`），现在只是两条添加线路的名字，没有任何代码按名字认它们。
+- **按种类、不按名字**：依赖认证方式的规则看 `RuntimeRoute.is_cli_api_route`（凭自己 API Key
+  登录的 Codex/Claude CLI 路由）。「临时失败后在同一路由换新会话重试一次」适用于所有这类路由；
+  Consumer 连续两次结果不可用时强制换新会话，凭 Key 的 Codex CLI 路由沿用以前 `codex_api` 的例外
+  （保留已持久化会话）。安装向导按配置顺序列出全部路由，`probe-agent-runtimes` 在配置无效时对
+  任何缺 Key 的 API 种类路由报 `missing_secret`。
+
+**一次性迁移**：服务 supervisor 在启动 worker、web、email 三个子进程之前，先用独立进程运行
+`python -m app.agent_runtime_migration`。`.env` 里仍有 `CEO_CODEX_API_*` / `CEO_CLAUDE_API_*`
+时，把在 `CEO_AGENT_RUNTIME_ROUTES` 里的 `codex_api` / `claude_api` 原样写成
+`CEO_RUNTIME_CODEX_API_*`（KIND=codex_api，BASE_URL 缺省为 `https://api.openai.com/v1`，
+MODEL 缺省取 `CEO_CODEX_MODEL`）和 `CEO_RUNTIME_CLAUDE_API_*`（KIND=claude_api，MODEL 缺省取
+`CEO_CLAUDE_MODEL`），**名字不变**，定时任务、会话续接、暂停这些引用都不用动；不在列表里的
+那条不迁移（添加的线路只在列表里时才存在），`CEO_AGENT_RUNTIME_HIDDEN_ROUTES` 里的这两个名字
+去掉（隐藏列表只记内置卡片）。写之前把 `.env` 备份为 `.env.runtime-routes-migration.bak`
+（固定文件名，只留最新一份，写前核对字节一致），然后删掉旧键。旧键不在时什么也不做，所以重复
+运行无副作用。迁移放在独立进程是因为 supervisor 进程一旦 import `app.config` 就会把 `.env`
+抄进自己的环境，之后重启的子进程会把这份旧值当成权威。
 
 控制台的 Settings / Agent Runtime 直接编辑这份列表：拖动卡片改顺序，开关决定该路由是否在列表
-里，删除则把名字记进 `CEO_AGENT_RUNTIME_HIDDEN_ROUTES` 并只清除该路由**独有**的凭据（共用的
-设置保留）。被删除的内置路由可以从「新增 runtime」恢复，恢复后仍用原来的固定键名。
+里。内置卡片删除时把名字记进 `CEO_AGENT_RUNTIME_HIDDEN_ROUTES` 并只清除该路由**独有**的凭据
+（共用的设置保留），可以从「新增 runtime」恢复；添加的线路关掉或删除都会把它移出列表，保存时
+清掉它名下的 `CEO_RUNTIME_<名字>_*`。
 保存只有一个入口：React 设置页提交到 `POST /api/console/settings/agent-runtime`，字段用 `.env`
 键名，由 `app/web_api/agent_runtime_settings.py` 校验并写入。旧的服务端渲染页
 （`/config?tab=agent-runtime` 与表单 `POST /config/agent-runtime`）已删除——React 设置页
@@ -874,15 +893,16 @@ turn 的长度给：`PROBE_TOTAL_TIMEOUT_SECONDS` 和 `PROBE_IDLE_TIMEOUT_SECOND
 
 ### Claude Runtime 路由
 
-Claude CLI 有两条并列路由，共用 `CEO_CLAUDE_MODEL`（默认 `sonnet`）和
-`CEO_CLAUDE_MODEL_REASONING_EFFORT`（默认 `medium`，取值 `low`/`medium`/`high`/`xhigh`，
+Claude CLI 有两种路由：内置的 `claude_oauth` 用 `CEO_CLAUDE_MODEL`（默认 `sonnet`），
+Claude API 种类的添加线路（例如名为 `claude_api` 的那条）用它自己的 `CEO_RUNTIME_<名字>_MODEL`。
+两种共用 `CEO_CLAUDE_MODEL_REASONING_EFFORT`（默认 `medium`，取值 `low`/`medium`/`high`/`xhigh`，
 作为 `--effort` 传给 CLI）。调度任务上的 thinking 选项会按次覆盖该默认值，与 Codex 的
-`reasoning_effort` 使用同一套取值。
+`reasoning_effort` 使用同一套取值。下文的 `claude_api` 指任何 Claude API 种类的线路。
 
 | 路由 | 凭据 | 命令差异 |
 | --- | --- | --- |
 | `claude_oauth` | 本机 `claude` CLI 的登录态（订阅） | 不使用 `--bare`，不设置 `ANTHROPIC_API_KEY`，`CLAUDE_CONFIG_DIR` 不覆盖 |
-| `claude_api` | `CEO_CLAUDE_API_KEY` | 使用 `--bare`，凭据只进子进程环境，`CLAUDE_CONFIG_DIR` 同样不覆盖 |
+| `claude_api` | `CEO_RUNTIME_<名字>_API_KEY` | 使用 `--bare`，凭据只进子进程环境，`CLAUDE_CONFIG_DIR` 同样不覆盖 |
 
 两条路由都不覆盖 `CLAUDE_CONFIG_DIR`，直接复用调用方真实的 `~/.claude`：`--bare` 已经
 保证 `claude_api` 的认证只能来自 `ANTHROPIC_API_KEY`（不会读到 `~/.claude` 里缓存的 OAuth
@@ -927,8 +947,7 @@ Claude。Claude 没有独立的 developer instructions 和 output schema 通道�
 
 ### Friday Runtime 路由
 
-`friday_runtime` 是与 `codex_oauth`、`codex_api`、`claude_oauth` 和 `claude_api` 并列的内置
-Agent Runtime 路由。它通过 Friday Runtime 的 HTTP 接口创建一个 Thread、提交一个 turn、等待
+`friday_runtime` 是与 `codex_oauth`、`claude_oauth` 并列的内置 Agent Runtime 路由。它通过 Friday Runtime 的 HTTP 接口创建一个 Thread、提交一个 turn、等待
 operation 完成，再读取该 Thread 的最终 Artifact；CEO Agent 不直接调用 provider 的 API。
 
 **Friday 由它自己的 CLI 运行，本服务不安装也不启动 Friday。** CLI 随 Friday 桌面版一起安装，

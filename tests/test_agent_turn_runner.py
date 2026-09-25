@@ -437,3 +437,44 @@ def test_a_result_correction_names_what_the_contract_says_is_wrong() -> None:
 
     assert "requires complete information and rule coverage" in detail
     assert "secret model text" not in detail
+
+
+@pytest.mark.parametrize(
+    ("runtime_kind", "credential_mode", "expected"),
+    [
+        # A Codex API route keeps its session through a forced fresh turn,
+        # whatever the operator named it.
+        ("codex_cli", "service_api", "persisted-session"),
+        ("claude_cli", "service_api", None),
+        ("codex_cli", "local_oauth", None),
+    ],
+)
+def test_forced_fresh_session_exemption_follows_the_route_kind(
+    tmp_path, runtime_kind, credential_mode, expected
+):
+    from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
+
+    store = AutoReplyStore(tmp_path / "runner.sqlite3")
+    store.upsert_conversation_runtime_session(
+        "cid-kind", "kksj", "persisted-session", "contract-v1"
+    )
+    route = RuntimeRoute(
+        name="kksj",
+        runtime_kind=RuntimeKind(runtime_kind),
+        credential_mode=CredentialMode(credential_mode),
+        model="qwen3.8-27b",
+    )
+    process = SimpleNamespace(
+        store=store, task=SimpleNamespace(conversation_id="cid-kind")
+    )
+
+    session = agent_turn_runner.AgentTurnProcess._session_for_route(
+        process,
+        route,
+        role=AgentRole.CONSUMER,
+        requested_session_id=None,
+        force_new_session=True,
+    )
+
+    assert session == expected
+

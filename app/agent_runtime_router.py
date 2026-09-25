@@ -832,7 +832,7 @@ class AgentRuntimeRouter:
             for attempt in attempts
         )
         if (
-            route.name in {"codex_api", "claude_api"}
+            route.is_cli_api_route
             and failed_attempt.route_name == route.name
             and failed_attempt.session_mode == RuntimeAttemptSessionMode.FRESH
             and failure.retryable_on_same_route
@@ -847,7 +847,7 @@ class AgentRuntimeRouter:
             and attempt.session_mode == RuntimeAttemptSessionMode.FRESH
             for attempt in attempts
         ) and (
-            route.name in {"codex_api", "claude_api"}
+            route.is_cli_api_route
             and failed_attempt.route_name == route.name
             and failed_attempt.session_mode == RuntimeAttemptSessionMode.RESUME
             and bool(failed_attempt.source_session_id.strip())

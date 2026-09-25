@@ -1808,7 +1808,9 @@ def test_console_agent_runtime_returns_saved_credentials_for_prefill(monkeypatch
         app_config_module,
         "read_env_file",
         lambda: {
-            "CEO_CODEX_API_KEY": "codex-token",
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
+            "CEO_RUNTIME_CODEX_API_KIND": "codex_api",
+            "CEO_RUNTIME_CODEX_API_API_KEY": "codex-token",
             "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "provider-token",
             "CEO_FRIDAY_RUNTIME_TICKET": "runtime-ticket",
             "CEO_FRIDAY_SESSION_TOKEN": "session-token",
@@ -1819,23 +1821,28 @@ def test_console_agent_runtime_returns_saved_credentials_for_prefill(monkeypatch
         response = client.get("/api/console/settings/agent-runtime")
 
     assert response.status_code == 200
-    fields = response.json()["item"]["fields"]
-    assert fields["CEO_CODEX_API_KEY"] == "codex-token"
+    item = response.json()["item"]
+    fields = item["fields"]
+    assert fields["CEO_RUNTIME_CODEX_API_API_KEY"] == "codex-token"
     assert fields["CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"] == "provider-token"
     assert fields["CEO_FRIDAY_RUNTIME_TICKET"] == "runtime-ticket"
     assert fields["CEO_FRIDAY_SESSION_TOKEN"] == "session-token"
+    # The retired built-in API settings are no longer part of the page.
+    assert "CEO_CODEX_API_KEY" not in fields
+    assert "CEO_CLAUDE_API_KEY" not in fields
+    assert "CEO_RUNTIME_CODEX_API_API_KEY" in item["secrets"]
 
 
 def test_console_agent_runtime_delete_hides_a_card_and_drops_only_its_own_key(
     monkeypatch, tmp_path: Path
 ):
-    """Deleting a card must not clear settings other features read."""
+    """Deleting a built-in card must not clear settings other cards own."""
 
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api\n"
-        "CEO_CODEX_API_BASE_URL=https://api.kksj.org/v1\n"
-        "CEO_CODEX_API_KEY=codex-token\n"
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,claude_oauth,friday_runtime\n"
+        "CEO_FRIDAY_RUNTIME_PROJECT_ID=ceo\n"
+        "CEO_FRIDAY_RUNTIME_TICKET=runtime-ticket\n"
         "CEO_CLAUDE_MODEL=sonnet\n"
         "CEO_CLAUDE_MODEL_REASONING_EFFORT=medium\n",
         encoding="utf-8",
@@ -1846,12 +1853,11 @@ def test_console_agent_runtime_delete_hides_a_card_and_drops_only_its_own_key(
         response = client.post(
             "/api/console/settings/agent-runtime",
             json={"fields": {
-                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
-                "CEO_AGENT_RUNTIME_HIDDEN_ROUTES": "codex_api",
+                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,claude_oauth",
+                # Only built-in cards hide; an added route is simply removed.
+                "CEO_AGENT_RUNTIME_HIDDEN_ROUTES": "friday_runtime,codex_api",
                 "CEO_CODEX_MODEL": "gpt-5.5",
                 "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                "CEO_CODEX_API_BASE_URL": "https://api.kksj.org/v1",
-                "CEO_CODEX_API_MODEL": "gpt-5.5",
                 "CEO_CLAUDE_MODEL": "sonnet",
                 "CEO_CLAUDE_MODEL_REASONING_EFFORT": "medium",
                 "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:52628",
@@ -1860,11 +1866,11 @@ def test_console_agent_runtime_delete_hides_a_card_and_drops_only_its_own_key(
 
     assert response.status_code == 200, response.json()
     env_text = env_path.read_text(encoding="utf-8")
-    assert "CEO_AGENT_RUNTIME_HIDDEN_ROUTES=codex_api" in env_text
-    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n" in env_text
-    assert 'CEO_CODEX_API_KEY=""' in env_text
-    # The email classifier reads this endpoint too, so it survives the delete.
-    assert "CEO_CODEX_API_BASE_URL=https://api.kksj.org/v1" in env_text
+    assert "CEO_AGENT_RUNTIME_HIDDEN_ROUTES=friday_runtime\n" in env_text
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,claude_oauth\n" in env_text
+    assert 'CEO_FRIDAY_RUNTIME_TICKET=""' in env_text
+    # Claude OAuth's card owns its model, so deleting Friday keeps it.
+    assert "CEO_CLAUDE_MODEL=sonnet" in env_text
 
 
 def test_console_agent_runtime_adds_a_runtime_and_keeps_its_order(
@@ -1888,8 +1894,6 @@ def test_console_agent_runtime_adds_a_runtime_and_keeps_its_order(
                 "CEO_AGENT_RUNTIME_ROUTES": "qwen_gpu4,codex_oauth",
                 "CEO_CODEX_MODEL": "gpt-5.5",
                 "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
-                "CEO_CODEX_API_MODEL": "gpt-5.5",
                 "CEO_CLAUDE_MODEL": "sonnet",
                 "CEO_CLAUDE_MODEL_REASONING_EFFORT": "medium",
                 "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:52628",
@@ -1934,8 +1938,6 @@ def test_console_agent_runtime_removing_an_added_runtime_clears_its_settings(
                 "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
                 "CEO_CODEX_MODEL": "gpt-5.5",
                 "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
-                "CEO_CODEX_API_MODEL": "gpt-5.5",
                 "CEO_CLAUDE_MODEL": "sonnet",
                 "CEO_CLAUDE_MODEL_REASONING_EFFORT": "medium",
                 "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:52628",
@@ -1968,8 +1970,6 @@ def test_console_agent_runtime_refuses_an_added_runtime_without_a_token(
                 "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,qwen_gpu4",
                 "CEO_CODEX_MODEL": "gpt-5.5",
                 "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
-                "CEO_CODEX_API_MODEL": "gpt-5.5",
                 "CEO_CLAUDE_MODEL": "sonnet",
                 "CEO_CLAUDE_MODEL_REASONING_EFFORT": "medium",
                 "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:52628",
@@ -1991,8 +1991,7 @@ def test_console_agent_runtime_save_without_routes_is_refused(
 
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api,claude_oauth,friday_runtime\n"
-        "CEO_CODEX_API_KEY=codex-token\n"
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,claude_oauth,friday_runtime\n"
         "CEO_CLAUDE_MODEL=sonnet\n"
         "CEO_CLAUDE_MODEL_REASONING_EFFORT=medium\n",
         encoding="utf-8",
@@ -2005,9 +2004,6 @@ def test_console_agent_runtime_save_without_routes_is_refused(
             json={"fields": {
                 "CEO_CODEX_MODEL": "gpt-5.5",
                 "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
-                "CEO_CODEX_API_MODEL": "gpt-5.5",
-                "CEO_CODEX_API_KEY": "codex-token",
                 "CEO_CLAUDE_MODEL": "sonnet",
                 "CEO_CLAUDE_MODEL_REASONING_EFFORT": "medium",
                 "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:52628",
@@ -2021,7 +2017,7 @@ def test_console_agent_runtime_save_without_routes_is_refused(
     assert response.status_code == 400, response.json()
     assert response.json()["code"] == "validation_error"
     assert (
-        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api,claude_oauth,friday_runtime"
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,claude_oauth,friday_runtime"
         in env_path.read_text(encoding="utf-8")
     )
 
@@ -2047,8 +2043,6 @@ def test_console_agent_runtime_save_keeps_the_configured_claude_route(
                 "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,claude_oauth",
                 "CEO_CODEX_MODEL": "gpt-5.5",
                 "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
-                "CEO_CODEX_API_MODEL": "gpt-5.5",
                 "CEO_CLAUDE_MODEL": "sonnet",
                 "CEO_CLAUDE_MODEL_REASONING_EFFORT": "high",
                 "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080",
@@ -2067,34 +2061,6 @@ def test_console_agent_runtime_save_keeps_the_configured_claude_route(
 
 
 def test_console_agent_runtime_writes_prefilled_credentials_and_compatible_model(monkeypatch, tmp_path: Path):
-    runtime_env_keys = (
-        "CEO_AGENT_RUNTIME_ROUTES",
-        "CEO_CODEX_MODEL",
-        "CEO_CODEX_MODEL_REASONING_EFFORT",
-        "CEO_CODEX_API_BASE_URL",
-        "CEO_CODEX_API_MODEL",
-        "CEO_CODEX_API_KEY",
-        "CEO_FRIDAY_RUNTIME_BASE_URL",
-        "CEO_FRIDAY_RUNTIME_PROJECT_ID",
-        "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL",
-        "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL",
-        "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY",
-        "CEO_FRIDAY_RUNTIME_TICKET",
-        "CEO_FRIDAY_SESSION_TOKEN",
-        "CEO_FRIDAY_RUNTIME_AUTH_DISABLED",
-    )
-    original_runtime_env = {
-        key: os.environ.get(key)
-        for key in runtime_env_keys
-    }
-
-    def restore_runtime_env() -> None:
-        for key, value in original_runtime_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
     import app.friday_runtime_adapter as friday_module
 
     monkeypatch.setattr(friday_module, "bundled_friday_cli", lambda: "/tmp/friday-cli")
@@ -2106,9 +2072,10 @@ def test_console_agent_runtime_writes_prefilled_credentials_and_compatible_model
         "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api,friday_runtime\n"
         "CEO_CODEX_MODEL=gpt-5.5\n"
         "CEO_CODEX_MODEL_REASONING_EFFORT=medium\n"
-        "CEO_CODEX_API_BASE_URL=https://api.openai.com/v1\n"
-        "CEO_CODEX_API_MODEL=gpt-5.5\n"
-        "CEO_CODEX_API_KEY=old-codex-token\n"
+        "CEO_RUNTIME_CODEX_API_KIND=codex_api\n"
+        "CEO_RUNTIME_CODEX_API_BASE_URL=https://api.openai.com/v1\n"
+        "CEO_RUNTIME_CODEX_API_MODEL=gpt-5.5\n"
+        "CEO_RUNTIME_CODEX_API_API_KEY=old-codex-token\n"
         "CEO_FRIDAY_RUNTIME_BASE_URL=http://127.0.0.1:8080\n"
         "CEO_FRIDAY_RUNTIME_PROJECT_ID=project-1\n"
         "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL=https://provider.example/v1\n"
@@ -2119,39 +2086,38 @@ def test_console_agent_runtime_writes_prefilled_credentials_and_compatible_model
     )
     monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
 
-    try:
-        with _client(tmp_path) as client:
-            response = client.post(
-                "/api/console/settings/agent-runtime",
-                json={"fields": {
-                    "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,friday_runtime",
-                    "CEO_CODEX_MODEL": "gpt-5.5",
-                    "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                    "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
-                    "CEO_CODEX_API_MODEL": "MiniMax-M2.5",
-                    "CEO_CODEX_API_KEY": "new-codex-token",
-                    "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080",
-                    "CEO_FRIDAY_RUNTIME_PROJECT_ID": "project-1",
-                    "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "https://provider.example/v1",
-                    "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": "MiniMax-M3",
-                    "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "new-provider-token",
-                }},
-            )
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/console/settings/agent-runtime",
+            json={"fields": {
+                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,friday_runtime",
+                "CEO_CODEX_MODEL": "gpt-5.5",
+                "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
+                "CEO_RUNTIME_CODEX_API_KIND": "codex_api",
+                "CEO_RUNTIME_CODEX_API_BASE_URL": "https://api.openai.com/v1",
+                # An added route's model is free text, not a fixed list.
+                "CEO_RUNTIME_CODEX_API_MODEL": "MiniMax-M2.5",
+                "CEO_RUNTIME_CODEX_API_API_KEY": "new-codex-token",
+                "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080",
+                "CEO_FRIDAY_RUNTIME_PROJECT_ID": "project-1",
+                "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "https://provider.example/v1",
+                "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": "MiniMax-M3",
+                "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "new-provider-token",
+            }},
+        )
 
-        assert response.status_code == 200
-        env_text = env_path.read_text(encoding="utf-8")
-        assert "CEO_CODEX_API_MODEL=MiniMax-M2.5" in env_text
-        assert "CEO_CODEX_API_KEY=new-codex-token" in env_text
-        assert "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY=new-provider-token" in env_text
-        # Friday's CLI signs its own ticket, so the console stores none.
-        assert 'CEO_FRIDAY_RUNTIME_TICKET=""' in env_text
-    finally:
-        restore_runtime_env()
+    assert response.status_code == 200, response.json()
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_RUNTIME_CODEX_API_MODEL=MiniMax-M2.5" in env_text
+    assert "CEO_RUNTIME_CODEX_API_API_KEY=new-codex-token" in env_text
+    assert "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY=new-provider-token" in env_text
+    # Friday's CLI signs its own ticket, so the console stores none.
+    assert 'CEO_FRIDAY_RUNTIME_TICKET=""' in env_text
 
 
 def test_console_agent_runtime_returns_field_validation_message(monkeypatch, tmp_path: Path):
     env_path = tmp_path / ".env"
-    env_path.write_text("CEO_CODEX_API_KEY=existing-token\n", encoding="utf-8")
+    env_path.write_text("CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n", encoding="utf-8")
     monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
 
     with _client(tmp_path) as client:
@@ -2161,13 +2127,16 @@ def test_console_agent_runtime_returns_field_validation_message(monkeypatch, tmp
                 "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
                 "CEO_CODEX_MODEL": "gpt-5.5",
                 "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
-                "CEO_CODEX_API_MODEL": "not-a-runtime-model",
+                "CEO_RUNTIME_CODEX_API_KIND": "codex_api",
+                "CEO_RUNTIME_CODEX_API_BASE_URL": "gateway.example/v1",
+                "CEO_RUNTIME_CODEX_API_MODEL": "gpt-5.5",
+                "CEO_RUNTIME_CODEX_API_API_KEY": "token",
             }},
         )
 
     assert response.status_code == 400
-    assert response.json()["message"] == "Fallback model must be selected from this page."
+    assert response.json()["message"].startswith("Runtime codex_api: API Base URL")
+    assert env_path.read_text(encoding="utf-8") == "CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n"
 
 
 def test_console_agent_runtime_preserves_omitted_auth_disabled_setting(monkeypatch, tmp_path: Path):
@@ -2187,8 +2156,6 @@ def test_console_agent_runtime_preserves_omitted_auth_disabled_setting(monkeypat
                 "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,friday_runtime",
                 "CEO_CODEX_MODEL": "gpt-5.5",
                 "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
-                "CEO_CODEX_API_MODEL": "gpt-5.5",
                 "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080",
                 "CEO_FRIDAY_RUNTIME_PROJECT_ID": "project-1",
                 "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "",
@@ -2204,7 +2171,10 @@ def test_console_agent_runtime_preserves_api_fallback_when_token_is_omitted(monk
     env_path = tmp_path / ".env"
     env_path.write_text(
         "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api\n"
-        "CEO_CODEX_API_KEY=existing-token\n"
+        "CEO_RUNTIME_CODEX_API_KIND=codex_api\n"
+        "CEO_RUNTIME_CODEX_API_BASE_URL=https://api.openai.com/v1\n"
+        "CEO_RUNTIME_CODEX_API_MODEL=gpt-5.5\n"
+        "CEO_RUNTIME_CODEX_API_API_KEY=existing-token\n"
         "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY=\n",
         encoding="utf-8",
     )
@@ -2217,8 +2187,9 @@ def test_console_agent_runtime_preserves_api_fallback_when_token_is_omitted(monk
                 "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
                 "CEO_CODEX_MODEL": "gpt-5.5",
                 "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
-                "CEO_CODEX_API_MODEL": "gpt-5.5",
+                "CEO_RUNTIME_CODEX_API_KIND": "codex_api",
+                "CEO_RUNTIME_CODEX_API_BASE_URL": "https://api.openai.com/v1",
+                "CEO_RUNTIME_CODEX_API_MODEL": "gpt-5.5",
                 "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080",
                 "CEO_FRIDAY_RUNTIME_PROJECT_ID": "",
                 "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "",
@@ -2227,10 +2198,10 @@ def test_console_agent_runtime_preserves_api_fallback_when_token_is_omitted(monk
             }},
         )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.json()
     env_text = env_path.read_text(encoding="utf-8")
     assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api" in env_text
-    assert "CEO_CODEX_API_KEY=existing-token" in env_text
+    assert "CEO_RUNTIME_CODEX_API_API_KEY=existing-token" in env_text
 
 
 def test_console_attention_returns_grouped_json_with_snapshot(monkeypatch, tmp_path: Path):

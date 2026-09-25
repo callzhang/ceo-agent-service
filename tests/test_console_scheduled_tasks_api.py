@@ -22,6 +22,7 @@ from app.managed_skills import RuntimeSkillSnapshot
 from app.skill_files import SkillFileService
 from app.store import AutoReplyStore
 from app.web_api.registration import register_console_routes
+from tests.runtime_route_env import claude_api_env
 
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
@@ -87,7 +88,7 @@ def _client(
         "CEO_CODEX_MODEL": "gpt-5.6-sol",
     }
     if runtime_id == "claude_api":
-        runtime_environment["CEO_CLAUDE_API_KEY"] = "secret"
+        runtime_environment.update(claude_api_env("secret"))
     elif runtime_id == "friday_runtime":
         runtime_environment.update(
             {

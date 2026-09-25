@@ -915,6 +915,78 @@ def test_resumed_codex_api_session_incompatibility_gets_one_fresh_retry(
     assert decision.reason == "fresh_session_retry"
 
 
+@pytest.mark.parametrize(
+    ("runtime_kind", "model"),
+    [(RuntimeKind.CODEX_CLI, "qwen3.8-27b"), (RuntimeKind.CLAUDE_CLI, "claude-sonnet-5")],
+)
+def test_fresh_session_retry_follows_the_route_kind_not_its_name(
+    store, running_attempt, runtime_kind, model
+):
+    """A renamed or added API route gets the same bounded fresh retry."""
+
+    store.fail_agent_runtime_attempt(
+        running_attempt.id, "authentication", "codex_login_required", True
+    )
+    renamed = RuntimeRoute(
+        name="kksj",
+        runtime_kind=runtime_kind,
+        credential_mode=CredentialMode.SERVICE_API,
+        model=model,
+    )
+    resumed = store.claim_agent_runtime_attempt(
+        running_attempt.agent_run_id,
+        renamed.name,
+        renamed.runtime_kind.value,
+        renamed.credential_mode.value,
+        renamed.model,
+        session_mode="resume",
+        source_session_id="kksj-session-1",
+    )
+
+    decision = next_route(
+        make_router(store, routes=(renamed,)),
+        store,
+        resumed,
+        failure=session_incompatible_failure(),
+    )
+
+    assert decision.route == renamed
+    assert decision.fresh_session is True
+    assert decision.reason == "fresh_session_retry"
+
+
+def test_a_local_login_route_does_not_get_the_api_fresh_retry(store, running_attempt):
+    store.fail_agent_runtime_attempt(
+        running_attempt.id, "authentication", "codex_login_required", True
+    )
+    login = RuntimeRoute(
+        name="codex_api",
+        runtime_kind=RuntimeKind.CODEX_CLI,
+        credential_mode=CredentialMode.LOCAL_OAUTH,
+        model="gpt-5.5",
+    )
+    resumed = store.claim_agent_runtime_attempt(
+        running_attempt.agent_run_id,
+        login.name,
+        login.runtime_kind.value,
+        login.credential_mode.value,
+        login.model,
+        session_mode="resume",
+        source_session_id="login-session-1",
+    )
+
+    decision = next_route(
+        make_router(store, routes=(login,)),
+        store,
+        resumed,
+        failure=session_incompatible_failure(),
+    )
+
+    # The name alone used to grant the retry; a login route never had it.
+    assert decision.fresh_session is False
+    assert decision.reason != "fresh_session_retry"
+
+
 def test_resumed_claude_session_incompatibility_gets_one_fresh_retry(
     store, running_attempt
 ):

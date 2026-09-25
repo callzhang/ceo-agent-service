@@ -2,8 +2,9 @@ from datetime import timedelta
 
 import pytest
 
-from app.agent_runtime_config import load_runtime_config
+from app.agent_runtime_config import SUPPORTED_RUNTIME_ROUTES, load_runtime_config
 from app.agent_runtime_contracts import CredentialMode, RuntimeKind
+from tests.runtime_route_env import claude_api_env, codex_api_env
 
 
 def test_default_runtime_uses_only_codex_oauth():
@@ -14,30 +15,42 @@ def test_default_runtime_uses_only_codex_oauth():
     assert config.retry_delay == timedelta(minutes=30)
 
 
-def test_dual_auth_requires_a_private_api_key():
+def test_only_three_routes_have_fixed_names():
+    """Derek 2026-09-24: every other route is an added, renamable route."""
+
+    assert SUPPORTED_RUNTIME_ROUTES == frozenset(
+        {"codex_oauth", "claude_oauth", "friday_runtime"}
+    )
+
+
+def test_codex_api_is_an_ordinary_added_route_name():
+    """The retired built-in name is now described by its own added settings."""
+
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
-            "CEO_CODEX_API_MODEL": "gpt-5.5",
-            "CEO_CODEX_API_KEY": "secret-value",
+            **codex_api_env("secret-value", base_url="https://gateway.example/v1/"),
         }
     )
 
-    assert config.routes[1].name == "codex_api"
+    route = config.routes[1]
+    assert route.name == "codex_api"
+    assert route.runtime_kind is RuntimeKind.CODEX_CLI
+    assert route.credential_mode is CredentialMode.SERVICE_API
+    assert route.base_url == "https://gateway.example/v1"
+    assert route.is_cli_api_route
     assert "secret-value" not in repr(config)
     assert config.secret_for("codex_api").get_secret_value() == "secret-value"
 
 
-def test_codex_api_base_url_is_normalized_for_the_runtime_route():
-    config = load_runtime_config(
-        {
-            "CEO_AGENT_RUNTIME_ROUTES": "codex_api",
-            "CEO_CODEX_API_KEY": "secret-value",
-            "CEO_CODEX_API_BASE_URL": "https://gateway.example/v1/",
-        }
-    )
-
-    assert config.codex_api_base_url == "https://gateway.example/v1"
+def test_retired_built_in_api_settings_no_longer_configure_a_route():
+    with pytest.raises(ValueError, match="CEO_RUNTIME_CODEX_API_KIND"):
+        load_runtime_config(
+            {
+                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
+                "CEO_CODEX_API_KEY": "secret-value",
+            }
+        )
 
 
 @pytest.mark.parametrize(
@@ -49,43 +62,27 @@ def test_codex_api_base_url_is_normalized_for_the_runtime_route():
         "https://gateway.example/v1#fragment",
     ],
 )
-def test_codex_api_base_url_rejects_unsafe_or_ambiguous_urls(base_url: str):
-    with pytest.raises(ValueError, match="CEO_CODEX_API_BASE_URL"):
+def test_api_route_base_url_rejects_unsafe_or_ambiguous_urls(base_url: str):
+    with pytest.raises(ValueError, match="API Base URL"):
         load_runtime_config(
             {
-                "CEO_AGENT_RUNTIME_ROUTES": "codex_api",
-                "CEO_CODEX_API_KEY": "secret-value",
-                "CEO_CODEX_API_BASE_URL": base_url,
+                "CEO_AGENT_RUNTIME_ROUTES": "kksj",
+                **codex_api_env("secret-value", name="kksj", base_url=base_url),
             }
         )
 
 
-def test_codex_api_route_rejects_a_missing_api_key():
-    with pytest.raises(ValueError, match="codex_api requires CEO_CODEX_API_KEY"):
-        load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_api"})
+def test_api_route_model_is_free_text():
+    """An added route names whatever model its provider serves."""
 
-
-def test_codex_api_route_accepts_common_openai_compatible_model():
     config = load_runtime_config(
         {
-            "CEO_AGENT_RUNTIME_ROUTES": "codex_api",
-            "CEO_CODEX_API_KEY": "secret-value",
-            "CEO_CODEX_API_MODEL": "qwen-plus",
+            "CEO_AGENT_RUNTIME_ROUTES": "kksj",
+            **codex_api_env("secret-value", name="kksj", model="qwen3.8-27b"),
         }
     )
 
-    assert config.routes[0].model == "qwen-plus"
-
-
-def test_codex_api_route_rejects_an_unsuffixed_gpt_5_6_model():
-    with pytest.raises(ValueError, match="CEO_CODEX_API_MODEL"):
-        load_runtime_config(
-            {
-                "CEO_AGENT_RUNTIME_ROUTES": "codex_api",
-                "CEO_CODEX_API_KEY": "secret-value",
-                "CEO_CODEX_API_MODEL": "gpt-5.6",
-            }
-        )
+    assert config.routes[0].model == "qwen3.8-27b"
 
 
 def test_runtime_routes_must_be_unique_and_described():
@@ -151,19 +148,23 @@ def test_route_order_is_the_failover_order():
     assert [route.name for route in config.routes] == ["claude_oauth", "codex_oauth"]
 
 
-def test_claude_route_requires_anthropic_secret():
-    with pytest.raises(ValueError, match="CEO_CLAUDE_API_KEY"):
+def test_claude_api_route_requires_its_own_key():
+    with pytest.raises(ValueError, match="CEO_RUNTIME_CLAUDE_API_API_KEY"):
         load_runtime_config(
-            {"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,claude_api"}
+            {
+                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,claude_api",
+                "CEO_RUNTIME_CLAUDE_API_KIND": "claude_api",
+                "CEO_RUNTIME_CLAUDE_API_MODEL": "claude-sonnet-5",
+            }
         )
 
 
-def test_claude_route_uses_independent_model_and_secret():
+def test_claude_api_route_uses_its_own_model_and_secret():
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,claude_api",
-            "CEO_CLAUDE_MODEL": "claude-sonnet-test",
-            "CEO_CLAUDE_API_KEY": "anthropic-secret",
+            "CEO_CLAUDE_MODEL": "sonnet",
+            **claude_api_env("anthropic-secret", model="claude-sonnet-test"),
         }
     )
 
@@ -172,6 +173,7 @@ def test_claude_route_uses_independent_model_and_secret():
     assert route.runtime_kind is RuntimeKind.CLAUDE_CLI
     assert route.credential_mode is CredentialMode.SERVICE_API
     assert route.model == "claude-sonnet-test"
+    assert route.is_cli_api_route
     assert config.secret_for("claude_api").get_secret_value() == "anthropic-secret"
     assert "anthropic-secret" not in repr(config)
 
@@ -276,9 +278,11 @@ def test_friday_provider_does_not_inherit_codex_provider_settings():
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
-            "CEO_CODEX_API_BASE_URL": "https://api.minimaxi.com/v1",
-            "CEO_CODEX_API_MODEL": "MiniMax-M3",
-            "CEO_CODEX_API_KEY": "codex-secret",
+            **codex_api_env(
+                "codex-secret",
+                model="MiniMax-M3",
+                base_url="https://api.minimaxi.com/v1",
+            ),
             "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
             "CEO_FRIDAY_RUNTIME_TICKET": "runtime-ticket",
         }
@@ -388,8 +392,7 @@ def test_gpt_6_models_are_selectable_for_both_codex_routes(model):
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
             "CEO_CODEX_MODEL": model,
-            "CEO_CODEX_API_MODEL": model,
-            "CEO_CODEX_API_KEY": "test-key",
+            **codex_api_env("test-key", model=model),
         }
     )
 

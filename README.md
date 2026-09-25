@@ -113,11 +113,11 @@ Agent 必须如实返回动作结果；只有诊断、没有完成用户要求�
 ## Codex 双认证运行时与故障切换
 
 后台 Agent 的默认路由顺序是 `codex_oauth`（安装用户已有的 Codex OAuth
-登录）后接可选的 `codex_api`（service-owned API credential）。API 路由不是一套
-独立业务执行器；两条路由共用同一持久化 `agent_run`、能力快照、attempt ledger、
-结果 codec 和 effect fence。API key 只在生成 `codex_api` 子进程环境时以
-`OPENAI_API_KEY` 注入，不进入 argv、prompt、SQLite、History 或日志；OAuth 子进程
-不会收到该变量。
+登录）后接可选的 API 路由（例如名为 `codex_api` 的添加线路，service-owned API
+credential）。API 路由不是一套独立业务执行器；所有路由共用同一持久化 `agent_run`、
+能力快照、attempt ledger、结果 codec 和 effect fence。API key 只在生成该路由的
+子进程环境时以 `OPENAI_API_KEY` 注入，不进入 argv、prompt、SQLite、History 或日志；
+OAuth 子进程不会收到该变量。
 
 运维人员可在不消费业务队列的情况下刷新两条路由的独立健康状态：
 
@@ -136,7 +136,7 @@ reconciliation，绝不通过切换 provider 重放写入。
 workload 启用 OAuth→API 故障切换并核对同一 run 的 attempt 与 secret 扫描；Stage 3
 只有在 Stage 2 留下完整证据后，才允许 Audit fallback，并必须用专用测试目标验证写入
 前中断可安全切换、写入后中断只核对不重放。紧急回滚只需从
-`CEO_AGENT_RUNTIME_ROUTES` 移除 `codex_api` 并重启服务；不要删除 attempt/History
+`CEO_AGENT_RUNTIME_ROUTES` 移除该 API 路由并重启服务；不要删除 attempt/History
 证据，也不要把未知写入改成新一轮 OAuth 执行。
 
 ## 消息如何被处理
@@ -295,7 +295,7 @@ cp .env.example .env
 | `CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS` | 自动检查远端更新的周期，默认 21600 秒（6 小时） |
 | `CEO_REPOSITORY_UPGRADE_DISABLED` | 设为 `1` 禁用周期检查；History 页面仍可手动查看已保存状态 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex OAuth 默认模型、thinking 强度和可选 provider；默认 `gpt-5.5` + `medium`。在 `Settings → Agent Runtime` 中用下拉菜单修改；模型可选 `gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。不提供 `gpt-5.6` 别名，因为 Codex CLI 的 ChatGPT OAuth 会拒绝该别名。保存到 `.env` 后重启主服务统一生效，认证与 MCP/skills 保持沿用当前安装用户配置。 |
-| `CEO_AGENT_RUNTIME_ROUTES` / `CEO_CODEX_API_BASE_URL` / `CEO_CODEX_API_MODEL` / `CEO_CODEX_API_KEY` | 可选 Codex API fallback：在 `Settings → Agent Runtime` 启用，填写 Base URL、模型和 Token。已配置的 Token 以圆点掩码显示，页面不会重新下发密钥；眼睛按钮只显示或隐藏本次输入的内容。留空保存会保留已有 Token。 |
+| `CEO_AGENT_RUNTIME_ROUTES` / `CEO_RUNTIME_<名字>_KIND` / `_BASE_URL` / `_MODEL` / `_API_KEY` | 可选的 API 路由（Codex API 或 Claude API）：在 `Settings → Agent Runtime` 用「新增 runtime」添加，名字自己起、可改名，模型自由填写。Token 留空保存会保留已有 Token。旧的 `CEO_CODEX_API_*` / `CEO_CLAUDE_API_*` 在服务启动时一次性迁移为名为 `codex_api` / `claude_api` 的添加线路。 |
 | `CEO_AGENT_RUNTIME_ROUTES` / `CEO_FRIDAY_RUNTIME_BASE_URL` / `CEO_FRIDAY_RUNTIME_PROJECT_ID` / `CEO_FRIDAY_RUNTIME_MODEL` / `CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL` / `CEO_FRIDAY_RUNTIME_PROVIDER_MODEL` / `CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY` / `CEO_FRIDAY_RUNTIME_TICKET`（或 `CEO_FRIDAY_SESSION_TOKEN`） | 可选 Friday Runtime fallback：启用 `friday_runtime` 后填写 Friday Runtime 地址、project ID、Runtime provider 地址/模型/API Token 和一个 Runtime 凭据。Friday provider 配置使用独立的 `CEO_FRIDAY_RUNTIME_PROVIDER_*` 字段，不与 Codex API URL/key 共享；Runtime ticket/session token 仍只用于访问 Friday Runtime。本地无鉴权测试必须显式设置 `CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1`。 |
 | `CEO_CODEX_CAPACITY_RETRY_DELAY` | Codex 明确返回 workspace credits、quota 或 usage limit 后的全局暂停期；默认 30 分钟，暂停期内不再启动新的 Codex 回复、工作汇总或会议分析，过期后自动恢复 |
 | `CEO_CODEX_CAPACITY_RETRY_MAX_DELAY` | Codex 容量持续不足时的最长探测间隔；默认 4 小时。探测从 `CEO_CODEX_CAPACITY_RETRY_DELAY` 开始逐次翻倍，成功后重置 |
@@ -316,7 +316,7 @@ Friday Runtime fallback 的默认契约测试不访问网络或真实 provider�
 "$HOME/miniforge3/bin/python" -m pytest -q tests/e2e/test_friday_runtime_fallback.py
 ```
 
-它会在临时 HTTP server 中验证 `codex_oauth`、`codex_api` 失败后，
+它会在临时 HTTP server 中验证 `codex_oauth` 和名为 `codex_api` 的 API 路由失败后，
 `friday_runtime` 在同一个 agent run 内成功，并检查 thread → turn → operation →
 artifact 的调用顺序。
 

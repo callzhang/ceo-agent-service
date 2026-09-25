@@ -1763,10 +1763,7 @@ def register_console_routes(
                 fields = {key: env.get(key, "") for key in (
                     "CEO_CODEX_MODEL", "CEO_CODEX_MODEL_REASONING_EFFORT",
                     "CEO_AGENT_RUNTIME_ROUTES", "CEO_AGENT_RUNTIME_HIDDEN_ROUTES",
-                    "CEO_CODEX_API_BASE_URL",
-                    "CEO_CODEX_API_MODEL", "CEO_CODEX_API_KEY",
                     "CEO_CLAUDE_MODEL", "CEO_CLAUDE_MODEL_REASONING_EFFORT",
-                    "CEO_CLAUDE_API_KEY", "CEO_CLAUDE_API_MODEL",
                     "CEO_FRIDAY_RUNTIME_BASE_URL", "CEO_FRIDAY_RUNTIME_PROJECT_ID",
                     "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL",
                     "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL",
@@ -1777,6 +1774,7 @@ def register_console_routes(
                 # An added route describes itself, so the console reads and
                 # writes its settings under the route's own name.
                 from app.agent_runtime_config import (
+                    ADDED_ROUTE_SETTING_SUFFIXES,
                     SUPPORTED_RUNTIME_ROUTES,
                     added_route_settings_prefix,
                 )
@@ -1789,7 +1787,7 @@ def register_console_routes(
                     if not name or name in SUPPORTED_RUNTIME_ROUTES:
                         continue
                     prefix = added_route_settings_prefix(name)
-                    for suffix in ("KIND", "BASE_URL", "MODEL", "API_KEY"):
+                    for suffix in ADDED_ROUTE_SETTING_SUFFIXES:
                         fields[f"{prefix}{suffix}"] = env.get(f"{prefix}{suffix}", "")
                     added_secrets.append(f"{prefix}API_KEY")
                 from app.friday_runtime_adapter import bundled_friday_cli
@@ -1804,7 +1802,7 @@ def register_console_routes(
                     "available": bool(friday_cli),
                     "path": friday_cli,
                 }
-            payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_CLAUDE_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN", *added_secrets] if section == "agent-runtime" else []
+            payload["secrets"] = ["CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN", *added_secrets] if section == "agent-runtime" else []
         return item_envelope(payload)
 
     @app.get("/api/console/tutorial")

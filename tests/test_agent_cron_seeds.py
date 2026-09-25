@@ -38,6 +38,7 @@ from app.skill_files import SkillFileService
 from app.dispatcher.adapters import ScheduledTaskQueueAdapter
 from app.dispatcher.models import ClaimGuard
 from app.store import AutoReplyStore
+from tests.runtime_route_env import claude_api_env
 
 
 NOW = datetime(2026, 9, 8, 19, 0, tzinfo=UTC)
@@ -127,7 +128,7 @@ def _options(
         )
     environment = {
         "CEO_AGENT_RUNTIME_ROUTES": ",".join(runtime_routes),
-        "CEO_CLAUDE_API_KEY": "test-secret",
+        **claude_api_env("test-secret"),
         "CEO_CLAUDE_MODEL": "sonnet",
         "CEO_CODEX_MODEL": "gpt-5.6-sol",
     }

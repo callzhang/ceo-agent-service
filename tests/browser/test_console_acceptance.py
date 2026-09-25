@@ -143,7 +143,7 @@ def _install_interaction_routes(page) -> None:
         elif path.endswith("/api/console/settings/audit-rules"):
             payload = {"item": {"section": "audit-rules", "fields": {"template": "Check {{principal}}."}, "preview": {"template": "Check Derek.", "consumer": "Consumer: Check Derek.", "audit": "Audit: Check Derek."}}, "meta": {"snapshot_at": SNAPSHOT}}
         elif path.endswith("/api/console/settings/agent-runtime"):
-            payload = {"item": {"section": "agent-runtime", "fields": {"CEO_CODEX_MODEL": "gpt-5.6-sol", "CEO_AGENT_RUNTIME_ROUTES": "codex_api", "CEO_CODEX_API_BASE_URL": "https://api.example.test", "CEO_CODEX_API_MODEL": "MiniMax-M2.5", "CEO_CODEX_API_KEY": "saved-token"}, "secrets": ["CEO_CODEX_API_KEY"]}, "meta": {"snapshot_at": SNAPSHOT}}
+            payload = {"item": {"section": "agent-runtime", "fields": {"CEO_CODEX_MODEL": "gpt-5.6-sol", "CEO_AGENT_RUNTIME_ROUTES": "codex_api", "CEO_RUNTIME_CODEX_API_KIND": "codex_api", "CEO_RUNTIME_CODEX_API_BASE_URL": "https://api.example.test", "CEO_RUNTIME_CODEX_API_MODEL": "MiniMax-M2.5", "CEO_RUNTIME_CODEX_API_API_KEY": "saved-token"}, "secrets": ["CEO_RUNTIME_CODEX_API_API_KEY"]}, "meta": {"snapshot_at": SNAPSHOT}}
         elif path.endswith("/api/console/attention"):
             payload = {"items": [{"category": "Service error", "root_cause": "database is locked", "context": "worker", "severity": "error", "count": 4, "summary": "database is locked", "error": "database is locked", "detail_label": "错误", "detail": "database is locked", "updated_at": SNAPSHOT, "records": [{"detail_url": "/attempts/12830"}]}], "meta": _meta(1)}
         elif path.endswith("/api/console/wechat/conversations"):
@@ -373,11 +373,11 @@ def test_console_keyboard_and_aria_acceptance(viewport):
 
             page.goto(f"{BASE_URL}/settings?tab=agent-runtime", wait_until="domcontentloaded")
             _wait_for_root(page)
-            secret_toggle = page.locator("button[aria-controls='codex-api-token']")
+            secret_toggle = page.locator("button[aria-controls='added-codex_api-token']")
             secret_toggle.wait_for(state="visible", timeout=30_000)
             secret_toggle.click()
             assert secret_toggle.get_attribute("aria-pressed") == "true"
-            assert page.locator("button[aria-controls='codex-api-token']").evaluate("element => element === document.activeElement")
+            assert page.locator("button[aria-controls='added-codex_api-token']").evaluate("element => element === document.activeElement")
 
             page.goto(f"{BASE_URL}/settings?tab=connectors&connector=wechat", wait_until="domcontentloaded")
             _wait_for_root(page)

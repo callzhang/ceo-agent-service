@@ -31,6 +31,7 @@ from app.claude_runtime_adapter import CLAUDE_MAX_TURNS_PER_INVOCATION
 from app.friday_runtime_adapter import FridayExecutionResult, FridayRuntimeError
 from app.process_runner import ProcessRunResult
 from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AgentRole, AutoReplyStore
+from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 
 NOW = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
 CAPABILITIES = frozenset({"structured_output", "reviewed_read_tools"})
@@ -199,7 +200,7 @@ def config():
     return load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
-            "CEO_CODEX_API_KEY": "configured-secret",
+            **codex_api_env("configured-secret"),
         }
     )
 
@@ -233,8 +234,8 @@ def _friday_int(raw: str) -> int:
 
 def _friday_config(monkeypatch, routes):
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", routes)
-    monkeypatch.setenv("CEO_CODEX_API_KEY", "configured-secret")
-    monkeypatch.setenv("CEO_CLAUDE_API_KEY", "configured-claude-secret")
+    set_env(monkeypatch, codex_api_env("configured-secret"))
+    set_env(monkeypatch, claude_api_env("configured-claude-secret"))
     monkeypatch.setenv("CEO_FRIDAY_RUNTIME_PROJECT_ID", "ceo-agent")
     monkeypatch.setenv("CEO_FRIDAY_RUNTIME_MODEL", "MiniMax-M3")
     monkeypatch.setenv("CEO_FRIDAY_RUNTIME_AUTH_DISABLED", "1")

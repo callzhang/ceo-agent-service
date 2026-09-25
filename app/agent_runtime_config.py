@@ -29,35 +29,20 @@ ADDED_ROUTE_KINDS = ("codex_oauth", "codex_api", "claude_oauth", "claude_api")
 # An OAuth kind reuses this machine's login, so an added one carries a model
 # and no credential of its own.
 ADDED_ROUTE_KINDS_WITH_KEY = ("codex_api", "claude_api")
+ADDED_ROUTE_SETTING_SUFFIXES = ("KIND", "BASE_URL", "MODEL", "API_KEY")
+# The only routes with fixed names (Derek 2026-09-24). Every other name in
+# CEO_AGENT_RUNTIME_ROUTES is an added route that describes itself through
+# CEO_RUNTIME_<NAME>_* settings and can be renamed.
 SUPPORTED_RUNTIME_ROUTES = frozenset(
     {
         "codex_oauth",
-        "codex_api",
         "claude_oauth",
-        "claude_api",
         "friday_runtime",
     }
 )
 SUPPORTED_RUNTIME_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULT_CEO_CLAUDE_MODEL = "sonnet"
 DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT = "medium"
-SUPPORTED_OPENAI_COMPATIBLE_MODELS = frozenset(
-    {
-        *SUPPORTED_CODEX_RUNTIME_MODELS,
-        "MiniMax-M3",
-        "MiniMax-M2.5",
-        "MiniMax-M2.1",
-        "MiniMax-M2",
-        "qwen3-max",
-        "qwen3-coder-plus",
-        "qwen-plus",
-        "qwen-turbo",
-        "glm-5",
-        "glm-4.7",
-        "glm-4.6",
-        "glm-4.5",
-    }
-)
 
 
 class AgentRuntimeConfig(BaseModel):
@@ -65,7 +50,6 @@ class AgentRuntimeConfig(BaseModel):
 
     routes: tuple[RuntimeRoute, ...]
     secrets: dict[str, SecretStr]
-    codex_api_base_url: str
     probe_interval: timedelta
     retry_delay: timedelta
     friday_runtime_base_url: str
@@ -121,16 +105,8 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
                 f"runtime route name must be lowercase letters, digits or _: {name}"
             )
     model = env.get("CEO_CODEX_MODEL", DEFAULT_CEO_CODEX_MODEL).strip()
-    api_model = env.get("CEO_CODEX_API_MODEL", model).strip()
     if "codex_oauth" in names and model not in SUPPORTED_CODEX_RUNTIME_MODELS:
         raise ValueError("CEO_CODEX_MODEL must select a supported Codex runtime model")
-    if "codex_api" in names and api_model not in SUPPORTED_OPENAI_COMPATIBLE_MODELS:
-        raise ValueError(
-            "CEO_CODEX_API_MODEL must select a supported Codex runtime model"
-        )
-    codex_api_base_url = normalize_codex_api_base_url(
-        env.get("CEO_CODEX_API_BASE_URL", DEFAULT_CODEX_API_BASE_URL)
-    )
     friday_runtime_base_url = normalize_friday_runtime_base_url(
         env.get("CEO_FRIDAY_RUNTIME_BASE_URL", DEFAULT_FRIDAY_RUNTIME_BASE_URL)
     )
@@ -143,9 +119,6 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     friday_provider_model = env.get("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", "").strip()
     friday_provider_key = env.get("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", "").strip()
     claude_model = env.get("CEO_CLAUDE_MODEL", DEFAULT_CEO_CLAUDE_MODEL).strip()
-    # The API route reaches other Claude models than the local login does, so it
-    # carries its own model and falls back to the login's when unset.
-    claude_api_model = env.get("CEO_CLAUDE_API_MODEL", "").strip() or claude_model
     claude_reasoning_effort = env.get(
         "CEO_CLAUDE_MODEL_REASONING_EFFORT",
         DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT,
@@ -167,20 +140,6 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
                     model=model,
                 )
             )
-        elif name == "codex_api":
-            raw_secret = env.get("CEO_CODEX_API_KEY", "").strip()
-            if not raw_secret:
-                raise ValueError("codex_api requires CEO_CODEX_API_KEY")
-            routes.append(
-                RuntimeRoute(
-                    name=name,
-                    runtime_kind=RuntimeKind.CODEX_CLI,
-                    credential_mode=CredentialMode.SERVICE_API,
-                    model=api_model,
-                    base_url=codex_api_base_url,
-                )
-            )
-            secrets[name] = SecretStr(raw_secret)
         elif name in added:
             route, secret = _added_route(name, env)
             routes.append(route)
@@ -195,19 +154,6 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
                     model=claude_model,
                 )
             )
-        elif name == "claude_api":
-            raw_secret = env.get("CEO_CLAUDE_API_KEY", "").strip()
-            if not raw_secret:
-                raise ValueError("claude_api requires CEO_CLAUDE_API_KEY")
-            routes.append(
-                RuntimeRoute(
-                    name=name,
-                    runtime_kind=RuntimeKind.CLAUDE_CLI,
-                    credential_mode=CredentialMode.SERVICE_API,
-                    model=claude_api_model,
-                )
-            )
-            secrets[name] = SecretStr(raw_secret)
         else:
             if not friday_runtime_project_id:
                 raise ValueError("friday_runtime requires CEO_FRIDAY_RUNTIME_PROJECT_ID")
@@ -242,7 +188,6 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     return AgentRuntimeConfig(
         routes=tuple(routes),
         secrets=secrets,
-        codex_api_base_url=codex_api_base_url,
         probe_interval=parse_duration_value(
             "CEO_RUNTIME_PROBE_INTERVAL",
             env.get("CEO_RUNTIME_PROBE_INTERVAL"),
@@ -273,6 +218,20 @@ def added_route_settings_prefix(name: str) -> str:
     """Return the env prefix that describes one added runtime route."""
 
     return f"CEO_RUNTIME_{name.upper()}_"
+
+
+def added_route_api_key_state(name: str, env: Mapping[str, str]) -> tuple[bool, bool]:
+    """Return whether a configured route needs its own API key, and whether it has one.
+
+    Only an added route whose kind calls a provider API carries a key; the
+    built-in routes use this machine's logins or Friday's own credentials.
+    """
+
+    if name in SUPPORTED_RUNTIME_ROUTES:
+        return False, False
+    prefix = added_route_settings_prefix(name)
+    needs_key = env.get(f"{prefix}KIND", "").strip() in ADDED_ROUTE_KINDS_WITH_KEY
+    return needs_key, bool(env.get(f"{prefix}API_KEY", "").strip())
 
 
 def _added_route(
@@ -332,7 +291,7 @@ def normalize_codex_api_base_url(value: str) -> str:
         or parsed.fragment
     ):
         raise ValueError(
-            "CEO_CODEX_API_BASE_URL must be an absolute HTTP(S) URL without "
+            "API Base URL must be an absolute HTTP(S) URL without "
             "credentials, query, or fragment"
         )
     return normalized

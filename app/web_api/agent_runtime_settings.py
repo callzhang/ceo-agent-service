@@ -12,12 +12,12 @@ from app import config as app_config
 from app.agent_runtime_config import (
     ADDED_ROUTE_KINDS,
     ADDED_ROUTE_KINDS_WITH_KEY,
+    ADDED_ROUTE_SETTING_SUFFIXES,
     DEFAULT_CEO_CLAUDE_MODEL,
     DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT,
     DEFAULT_FRIDAY_RUNTIME_BASE_URL,
     ROUTE_NAME_PATTERN,
     SUPPORTED_CODEX_RUNTIME_MODELS,
-    SUPPORTED_OPENAI_COMPATIBLE_MODELS,
     SUPPORTED_RUNTIME_REASONING_EFFORTS,
     SUPPORTED_RUNTIME_ROUTES,
     added_route_settings_prefix,
@@ -26,9 +26,6 @@ from app.agent_runtime_config import (
     normalize_friday_runtime_base_url,
     normalize_optional_provider_base_url,
 )
-
-
-ADDED_ROUTE_SETTING_SUFFIXES = ("KIND", "BASE_URL", "MODEL", "API_KEY")
 
 
 class AgentRuntimeSettingsError(ValueError):
@@ -64,17 +61,11 @@ def save_agent_runtime_settings(fields: Mapping[str, object]) -> None:
     ]
     model = submitted("CEO_CODEX_MODEL")
     reasoning_effort = submitted("CEO_CODEX_MODEL_REASONING_EFFORT")
-    api_enabled = "codex_api" in selected
-    api_model = submitted("CEO_CODEX_API_MODEL")
-    api_token = submitted("CEO_CODEX_API_KEY")
     claude_enabled = "claude_oauth" in selected
     claude_model = current("CEO_CLAUDE_MODEL", DEFAULT_CEO_CLAUDE_MODEL)
     claude_reasoning_effort = current(
         "CEO_CLAUDE_MODEL_REASONING_EFFORT", DEFAULT_CEO_CLAUDE_MODEL_REASONING_EFFORT
     )
-    claude_api_enabled = "claude_api" in selected
-    claude_api_token = submitted("CEO_CLAUDE_API_KEY")
-    claude_api_model = current("CEO_CLAUDE_API_MODEL")
     friday_enabled = "friday_runtime" in selected
     friday_project_id = submitted("CEO_FRIDAY_RUNTIME_PROJECT_ID")
     friday_provider_model = submitted("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")
@@ -86,10 +77,6 @@ def save_agent_runtime_settings(fields: Mapping[str, object]) -> None:
         raise AgentRuntimeSettingsError(
             "Thinking strength must be selected from this page."
         )
-    if api_model not in SUPPORTED_OPENAI_COMPATIBLE_MODELS:
-        raise AgentRuntimeSettingsError(
-            "Fallback model must be selected from this page."
-        )
     if claude_reasoning_effort not in SUPPORTED_RUNTIME_REASONING_EFFORTS:
         raise AgentRuntimeSettingsError(
             "Claude thinking strength must be selected from this page."
@@ -100,7 +87,6 @@ def save_agent_runtime_settings(fields: Mapping[str, object]) -> None:
         persisted,
     )
     try:
-        api_base_url = normalize_codex_api_base_url(submitted("CEO_CODEX_API_BASE_URL"))
         friday_base_url = normalize_friday_runtime_base_url(
             current("CEO_FRIDAY_RUNTIME_BASE_URL", DEFAULT_FRIDAY_RUNTIME_BASE_URL)
         )
@@ -109,16 +95,6 @@ def save_agent_runtime_settings(fields: Mapping[str, object]) -> None:
         )
     except ValueError as exc:
         raise AgentRuntimeSettingsError(str(exc)) from exc
-    if api_enabled and not (api_token or persisted.get("CEO_CODEX_API_KEY", "").strip()):
-        raise AgentRuntimeSettingsError(
-            "API Token is required before API fallback can be enabled."
-        )
-    if claude_api_enabled and not (
-        claude_api_token or persisted.get("CEO_CLAUDE_API_KEY", "").strip()
-    ):
-        raise AgentRuntimeSettingsError(
-            "API Token is required before Claude API can be enabled."
-        )
     provider_values = (
         friday_provider_base_url,
         friday_provider_model,
@@ -135,9 +111,7 @@ def save_agent_runtime_settings(fields: Mapping[str, object]) -> None:
         )
     enabled = {
         "codex_oauth": True,
-        "codex_api": api_enabled and "codex_api" not in hidden_routes,
         "claude_oauth": claude_enabled and "claude_oauth" not in hidden_routes,
-        "claude_api": claude_api_enabled and "claude_api" not in hidden_routes,
         "friday_runtime": friday_enabled and "friday_runtime" not in hidden_routes,
     }
     updates = {
@@ -145,32 +119,22 @@ def save_agent_runtime_settings(fields: Mapping[str, object]) -> None:
         "CEO_CODEX_MODEL_REASONING_EFFORT": reasoning_effort,
         "CEO_CLAUDE_MODEL": claude_model,
         "CEO_CLAUDE_MODEL_REASONING_EFFORT": claude_reasoning_effort,
-        "CEO_CLAUDE_API_MODEL": claude_api_model,
         "CEO_AGENT_RUNTIME_HIDDEN_ROUTES": ",".join(hidden_routes),
         "CEO_AGENT_RUNTIME_ROUTES": _composed_route_order(
             enabled=enabled,
             added=[route["name"] for route in added_routes],
             submitted_order=route_order,
         ),
-        "CEO_CODEX_API_BASE_URL": api_base_url,
-        "CEO_CODEX_API_MODEL": api_model,
         "CEO_FRIDAY_RUNTIME_BASE_URL": friday_base_url,
         "CEO_FRIDAY_RUNTIME_PROJECT_ID": friday_project_id,
         "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": friday_provider_base_url,
         "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": friday_provider_model,
         "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1" if friday_auth_disabled else "0",
     }
-    if api_token:
-        updates["CEO_CODEX_API_KEY"] = api_token
-    if claude_api_token:
-        updates["CEO_CLAUDE_API_KEY"] = claude_api_token
     updates.update(_added_route_updates(added_routes, persisted))
-    # Deleting a card drops the credential that belongs to that route only.
-    # Shared settings stay: CEO_CODEX_API_BASE_URL also feeds the email
-    # classifier, and the Claude model is shared with Claude OAuth.
+    # Deleting a built-in card drops the credentials that belong to that route
+    # only; the Claude model stays because Claude OAuth's card owns it.
     own_credentials = {
-        "codex_api": ("CEO_CODEX_API_KEY",),
-        "claude_api": ("CEO_CLAUDE_API_KEY",),
         "friday_runtime": (
             "CEO_FRIDAY_RUNTIME_TICKET",
             "CEO_FRIDAY_SESSION_TOKEN",

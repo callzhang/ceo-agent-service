@@ -22,6 +22,7 @@ from tests.test_meeting_alignment_models import (
     cross_field_rule_payloads,
     valid_send_decision,
 )
+from tests.runtime_route_env import codex_api_env
 
 
 class FakeRoutedMeetingExecution:
@@ -1253,7 +1254,7 @@ def test_runner_correction_turn_uses_repair_prompt_with_field_errors(tmp_path):
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
-            "CEO_CODEX_API_KEY": "configured-secret",
+            **codex_api_env("configured-secret"),
         }
     )
     store.upsert_meeting_alignment_job(

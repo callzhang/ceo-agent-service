@@ -690,46 +690,12 @@ const CLAUDE_MODEL_OPTIONS = [
   { value: "haiku", label: "Haiku" },
 ];
 
-// The API route addresses models by id, not by the local CLI's alias.
-const CLAUDE_API_MODEL_GROUPS = [
-  { label: "别名（跟随本机 CLI）", options: CLAUDE_MODEL_OPTIONS },
-  { label: "Claude 模型 id", options: [
-    { value: "claude-opus-5-5", label: "Opus 5.5" },
-    { value: "claude-opus-5", label: "Opus 5" },
-    { value: "claude-sonnet-5", label: "Sonnet 5" },
-    { value: "claude-fable-5-1", label: "Fable 5.1" },
-    { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
-  ] },
-];
-
 // The service refuses anything outside this set, so the page offers only these.
 const REASONING_EFFORT_OPTIONS = [
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
   { value: "xhigh", label: "Extra high" },
-];
-
-const COMPATIBLE_MODEL_GROUPS = [
-  { label: "OpenAI", options: CODEX_MODEL_OPTIONS },
-  { label: "MiniMax", options: [
-    { value: "MiniMax-M3", label: "MiniMax M3" },
-    { value: "MiniMax-M2.5", label: "MiniMax M2.5" },
-    { value: "MiniMax-M2.1", label: "MiniMax M2.1" },
-    { value: "MiniMax-M2", label: "MiniMax M2" },
-  ] },
-  { label: "Qwen", options: [
-    { value: "qwen3-max", label: "Qwen3 Max" },
-    { value: "qwen3-coder-plus", label: "Qwen3 Coder Plus" },
-    { value: "qwen-plus", label: "Qwen Plus" },
-    { value: "qwen-turbo", label: "Qwen Turbo" },
-  ] },
-  { label: "智谱", options: [
-    { value: "glm-5", label: "GLM-5" },
-    { value: "glm-4.7", label: "GLM-4.7" },
-    { value: "glm-4.6", label: "GLM-4.6" },
-    { value: "glm-4.5", label: "GLM-4.5" },
-  ] },
 ];
 
 function rawValue(draft: RecordValue, payload: RecordValue, key: string) {
@@ -749,11 +715,12 @@ function ModelSelect({ id, label, value, groups, onChange }: { id: string; label
   return <SelectField id={id} label={label} value={value} onChange={onChange}><option value="">请选择模型</option>{modelOptions(groups, value).map((group) => <optgroup key={group.label} label={group.label}>{group.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</optgroup>)}</SelectField>;
 }
 
+// Only these three routes have fixed names (Derek 2026-09-24); every other
+// route, including ones named codex_api or claude_api, is an added route that
+// carries its own settings and can be renamed.
 const RUNTIME_ROUTE_LABELS: Record<string, string> = {
   codex_oauth: "Codex OAuth",
-  codex_api: "Codex API",
   claude_oauth: "Claude OAuth",
-  claude_api: "Claude API",
   friday_runtime: "Friday Runtime",
 };
 
@@ -851,9 +818,7 @@ function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailab
 }
 
 function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error"; saveError: string }) {
-  const value = (key: string) => displayValue(draft[key] ?? fieldsOf(payload)[key]);
   const raw = (key: string) => rawValue(draft, payload, key);
-  const input = (key: string, label: string, type = "text") => <label className="runtime-field"><span>{label}</span><input type={type} value={value(key)} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} /></label>;
   const update = (key: string, next: string) => setDraft({ ...draft, [key]: next });
   const routes = routeOrder(raw("CEO_AGENT_RUNTIME_ROUTES"));
   const enabled = (name: string) => routes.includes(name);
@@ -934,18 +899,9 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
       <ModelSelect id="codex-model" label="Model" value={raw("CEO_CODEX_MODEL")} groups={[{ label: "Codex / OpenAI", options: CODEX_MODEL_OPTIONS }]} onChange={(next) => update("CEO_CODEX_MODEL", next)} />
       <ModelSelect id="codex-effort" label="Thinking strength" value={raw("CEO_CODEX_MODEL_REASONING_EFFORT")} groups={[{ label: "Thinking strength", options: REASONING_EFFORT_OPTIONS }]} onChange={(next) => update("CEO_CODEX_MODEL_REASONING_EFFORT", next)} />
     </RuntimeRouteCard>;
-    if (name === "codex_api") return <RuntimeRouteCard title="Codex API" description="OAuth 不可用时的备用路由" {...common}>
-      {input("CEO_CODEX_API_BASE_URL", "API Base URL", "url")}
-      <ModelSelect id="codex-api-model" label="Fallback model" value={raw("CEO_CODEX_API_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_CODEX_API_MODEL", next)} />
-      <SecretField id="codex-api-token" label="API Token" configured={Boolean(raw("CEO_CODEX_API_KEY"))} value={raw("CEO_CODEX_API_KEY")} onChange={(next) => update("CEO_CODEX_API_KEY", next)} />
-    </RuntimeRouteCard>;
     if (name === "claude_oauth") return <RuntimeRouteCard title="Claude OAuth" description="复用本机 Claude Code 登录的路由" {...common}>
       <ModelSelect id="claude-model" label="Model" value={raw("CEO_CLAUDE_MODEL")} groups={[{ label: "Claude", options: CLAUDE_MODEL_OPTIONS }]} onChange={(next) => update("CEO_CLAUDE_MODEL", next)} />
       <ModelSelect id="claude-effort" label="Thinking strength" value={raw("CEO_CLAUDE_MODEL_REASONING_EFFORT")} groups={[{ label: "Thinking strength", options: REASONING_EFFORT_OPTIONS }]} onChange={(next) => update("CEO_CLAUDE_MODEL_REASONING_EFFORT", next)} />
-    </RuntimeRouteCard>;
-    if (name === "claude_api") return <RuntimeRouteCard title="Claude API" description="Claude 登录不可用时的 API 路由" {...common}>
-      <ModelSelect id="claude-api-model" label="Model" value={raw("CEO_CLAUDE_API_MODEL") || raw("CEO_CLAUDE_MODEL")} groups={CLAUDE_API_MODEL_GROUPS} onChange={(next) => update("CEO_CLAUDE_API_MODEL", next)} />
-      <SecretField id="claude-api-token" label="Claude API Token" configured={Boolean(raw("CEO_CLAUDE_API_KEY"))} value={raw("CEO_CLAUDE_API_KEY")} onChange={(next) => update("CEO_CLAUDE_API_KEY", next)} />
     </RuntimeRouteCard>;
     return <RuntimeRouteCard title="Friday Runtime" description="通过 Friday 自带 CLI 运行，无需配置" {...common} unavailable={fridayCliAvailable ? undefined : "未检测到 Friday 桌面版。Friday 的 CLI 随桌面版一起安装，本服务不单独安装；请先安装 Friday.app 再启用这条线路。"} />;
   };
@@ -961,8 +917,8 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
       onRename={editing ? (next: string) => renameRoute(name, next) : undefined}
       readOnly={!editing}
     >
-      {addedKind(raw(`${prefix}KIND`))?.needsBaseUrl && <label className="runtime-field"><span>API Base URL</span><input aria-label={`${name} API Base URL`} type="url" value={value(`${prefix}BASE_URL`)} onChange={(event) => update(`${prefix}BASE_URL`, event.target.value)} /></label>}
-      <label className="runtime-field"><span>模型</span><input aria-label={`${name} 模型`} value={value(`${prefix}MODEL`)} onChange={(event) => update(`${prefix}MODEL`, event.target.value)} /></label>
+      {addedKind(raw(`${prefix}KIND`))?.needsBaseUrl && <label className="runtime-field"><span>API Base URL</span><input aria-label={`${name} API Base URL`} type="url" value={raw(`${prefix}BASE_URL`)} onChange={(event) => update(`${prefix}BASE_URL`, event.target.value)} /></label>}
+      <label className="runtime-field"><span>模型</span><input aria-label={`${name} 模型`} value={raw(`${prefix}MODEL`)} onChange={(event) => update(`${prefix}MODEL`, event.target.value)} /></label>
       {addedKind(raw(`${prefix}KIND`))?.needsToken && <SecretField id={`added-${name}-token`} label={`${name} API Token`} configured={Boolean(raw(`${prefix}API_KEY`))} value={raw(`${prefix}API_KEY`)} onChange={(next) => update(`${prefix}API_KEY`, next)} />}
     </RuntimeRouteCard>;
   };

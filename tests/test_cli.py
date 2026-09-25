@@ -12,6 +12,7 @@ import pytest
 
 from app import cli
 from app.agent_runtime_config import SUPPORTED_RUNTIME_ROUTES
+from tests.runtime_route_env import claude_api_env
 from app.cli import (
     WorkerSettings,
     backfill_task_memory_context_command,
@@ -814,25 +815,37 @@ def test_probe_agent_runtimes_prints_safe_route_json(tmp_path, capsys):
 def test_probe_agent_runtimes_missing_api_secret_is_safe_json(
     tmp_path, capsys, monkeypatch
 ):
-    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
-    monkeypatch.delenv("CEO_CODEX_API_KEY", raising=False)
+    """Any API-kind route without its key is named, whatever it is called."""
+
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,kksj")
+    monkeypatch.setenv("CEO_RUNTIME_KKSJ_KIND", "claude_api")
+    monkeypatch.setenv("CEO_RUNTIME_KKSJ_MODEL", "claude-sonnet-5")
+    monkeypatch.delenv("CEO_RUNTIME_KKSJ_API_KEY", raising=False)
 
     result = cli.probe_agent_runtimes_command(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
-        route_names=("codex_api",),
+        route_names=("kksj", "codex_oauth"),
     )
 
     assert result == 1
     assert json.loads(capsys.readouterr().out) == {
         "routes": [
             {
-                "route_name": "codex_api",
+                "route_name": "kksj",
                 "healthy": False,
                 "capabilities": [],
                 "checked_at": "",
                 "expires_at": "",
                 "failure_code": "missing_secret",
-            }
+            },
+            {
+                "route_name": "codex_oauth",
+                "healthy": False,
+                "capabilities": [],
+                "checked_at": "",
+                "expires_at": "",
+                "failure_code": "runtime_configuration_invalid",
+            },
         ]
     }
 
@@ -1066,7 +1079,8 @@ def test_worker_constructor_never_refreshes_or_spawns_runtime(tmp_path, monkeypa
         "dws api --user-id {user_id} --period {period_label} --format json",
     )
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "claude_api")
-    monkeypatch.setenv("CEO_CLAUDE_API_KEY", "test-anthropic-secret")
+    for key, value in claude_api_env("test-anthropic-secret").items():
+        monkeypatch.setenv(key, value)
 
     worker = create_worker(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
