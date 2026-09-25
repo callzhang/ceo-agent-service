@@ -3,12 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const api = vi.hoisted(() => ({ attention: vi.fn(), tasks: vi.fn(), projects: vi.fn() }));
+const api = vi.hoisted(() => ({ attention: vi.fn(), tasks: vi.fn(), projects: vi.fn(), decide: vi.fn() }));
 vi.mock("../api/console", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/console")>()),
   listBusinessAttention: api.attention,
   listBusinessTasks: api.tasks,
   listBusinessProjects: api.projects,
+  decideCandidateTask: api.decide,
 }));
 import { TasksPage } from "./TasksPage";
 
@@ -129,5 +130,35 @@ describe("TasksPage", () => {
     expect(await screen.findByRole("link", { name: "美国市场拓展" })).toBeInTheDocument();
     expect(screen.getByText("待确认的项目线索").closest("details")).not.toHaveAttribute("open");
     expect(screen.getByText("正式项目 1 个")).toBeInTheDocument();
+  });
+
+  it("filters by owner and sort through the API", async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={["/tasks?view=all"]}><TasksPage /></MemoryRouter>);
+    await screen.findByRole("link", { name: "整理办公室绿植" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "负责人" }), "unassigned");
+    await waitFor(() => expect(api.tasks).toHaveBeenLastCalledWith(expect.objectContaining({ owner: "unassigned" }), expect.anything()));
+    await user.selectOptions(screen.getByRole("combobox", { name: "排序" }), "created");
+    await waitFor(() => expect(api.tasks).toHaveBeenLastCalledWith(expect.objectContaining({ owner: "unassigned", sort: "created" }), expect.anything()));
+  });
+
+  it("lets Derek ignore a candidate and take it back, and offers no button on a formal Task", async () => {
+    const user = userEvent.setup();
+    const candidate = { ...routine, id: "10", title: "讨论拓展方案", stage: "candidate", owner: "", commitment_status: "none", detail_url: "/tasks/item/10" };
+    api.tasks.mockResolvedValue({ items: [routine, candidate], meta: { ...meta, total: 2 } });
+    api.decide.mockResolvedValue({ ok: true, message: "已忽略这个候选任务", meta: { updated_at: "" } });
+    render(<MemoryRouter initialEntries={["/tasks?view=all"]}><TasksPage /></MemoryRouter>);
+    await screen.findByRole("link", { name: "讨论拓展方案" });
+    expect(screen.queryByRole("button", { name: /整理办公室绿植/ })).not.toBeInTheDocument();
+    api.tasks.mockResolvedValue({ items: [routine, { ...candidate, status: "cancelled" }], meta: { ...meta, total: 2 } });
+    await user.click(screen.getByRole("button", { name: "忽略 讨论拓展方案" }));
+    expect(api.decide).toHaveBeenCalledWith("10", "ignore");
+    const restore = await screen.findByRole("button", { name: "恢复 讨论拓展方案" });
+    expect(within(screen.getByRole("link", { name: "讨论拓展方案" }).closest("li")!).getByText("已取消")).toBeInTheDocument();
+    api.decide.mockClear();
+    api.tasks.mockResolvedValue({ items: [routine, candidate], meta: { ...meta, total: 2 } });
+    await user.click(restore);
+    expect(api.decide).toHaveBeenCalledWith("10", "restore");
+    expect(await screen.findByRole("button", { name: "忽略 讨论拓展方案" })).toBeInTheDocument();
   });
 });

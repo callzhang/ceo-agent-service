@@ -430,6 +430,22 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": f"send_{status}", "message": message, "details": {}}, status_code=409)
         return command_result(item={"status": status}, message="催办已发送")
 
+    @app.post("/api/console/tasks/items/{task_id}/candidate-decision")
+    async def console_business_task_candidate_decision(task_id: int, request: Request):
+        # Derek, 2026-09-25: he can set a candidate Task aside, or take that back.
+        from app.config import principal_display_name
+        from app.task_console_actions import CandidateActionNotApplicable, decide_candidate
+        payload = await json_object(request)
+        try:
+            status = decide_candidate(store_factory(), task_id, str(payload.get("action") or ""), operator_name=principal_display_name())
+        except LookupError:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "这个任务不存在", "details": {}}, status_code=404)
+        except CandidateActionNotApplicable as exc:
+            return JSONResponse({"ok": False, "code": "not_applicable", "message": str(exc), "details": {}}, status_code=409)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "code": "invalid_action", "message": str(exc), "details": {}}, status_code=400)
+        return command_result(item={"status": status.value}, message="已忽略这个候选任务" if status.value == "cancelled" else "已恢复这个候选任务")
+
     @app.get("/api/console/tasks/projects/{project_id}", response_model=ConsoleBusinessProjectDetailEnvelope)
     def console_business_project_detail(project_id: int):
         store = store_factory()

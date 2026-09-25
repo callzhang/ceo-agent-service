@@ -124,7 +124,7 @@ function page(rows: Row[], url: URL, extra: Row = {}) {
   return { items: rows.slice(start, start + size), meta: { snapshot_at: snapshot(), page: current, page_size: size, total: rows.length, next_cursor: start + size < rows.length ? String(current + 1) : "", has_more: start + size < rows.length }, ...extra };
 }
 
-function route(pathname: string, url: URL, scenario: string): { status: number; body: unknown } | null {
+function route(pathname: string, url: URL, scenario: string, method: string, body: Row): { status: number; body: unknown } | null {
   const send = (body: unknown, status = 200) => ({ status, body });
   const meta = { snapshot_at: snapshot() };
   const q = (url.searchParams.get("q") || "").toLowerCase();
@@ -136,8 +136,10 @@ function route(pathname: string, url: URL, scenario: string): { status: number; 
   if (pathname === "/api/console/tasks/all") {
     const stage = url.searchParams.get("stage");
     const status = url.searchParams.get("status");
-    const rows = scenario === "empty" ? [] : allTasks.filter((row) => (!stage || row.stage === stage) && (!status || row.status === status) && (!q || String(row.title).toLowerCase().includes(q)));
-    return send(page(rows, url));
+    const owner = url.searchParams.get("owner");
+    const created = url.searchParams.get("sort") === "created";
+    const rows = scenario === "empty" ? [] : allTasks.filter((row) => (!stage || row.stage === stage) && (!status || row.status === status) && (!owner || Boolean(row.owner) === (owner === "assigned")) && (!q || String(row.title).toLowerCase().includes(q)));
+    return send(page(created ? [...rows].sort((left, right) => Number(right.id) - Number(left.id)) : rows, url));
   }
   if (pathname === "/api/console/tasks/projects") {
     const rows = scenario === "empty" ? [] : projects.filter((row) => !q || String(row.title).toLowerCase().includes(q));
@@ -163,6 +165,14 @@ function route(pathname: string, url: URL, scenario: string): { status: number; 
   if (pathname.startsWith("/api/console/tasks/legacy-projects/")) {
     return send({ item: { project: { id: 9, title: "旧版海外渠道项目", status: "active", goal: "早期用旧流程登记的项目，未经确认。", facts: [{ id: 1, description: "2025 年底曾与两家渠道商接触", source: "旧记录", created_at: "2025-12-20 10:00:00" }] }, todos: [], updates: [] }, meta });
   }
+  if ((match = pathname.match(/^\/api\/console\/tasks\/items\/(\d+)\/candidate-decision$/)) && method === "POST") {
+    const row = allTasks.find((candidate) => candidate.id === match![1]);
+    if (!row) return send({ ok: false, code: "not_found", message: "这个任务不存在", details: {} }, 404);
+    if (row.stage !== "candidate") return send({ ok: false, code: "not_applicable", message: "只有候选任务可以忽略或恢复", details: {} }, 409);
+    row.status = body.action === "restore" ? "open" : "cancelled";
+    row.updated_at = ago(0);
+    return send({ ok: true, item: { status: row.status }, message: body.action === "restore" ? "已恢复这个候选任务" : "已忽略这个候选任务", meta: { updated_at: snapshot() } });
+  }
   if (/^\/api\/console\/tasks\/items\/\d+\/follow-ups\/\d+\/send$/.test(pathname)) return send({ ok: true, message: "催办已发送（演示数据，未真正发送）", meta: { updated_at: snapshot() } });
   return null;
 }
@@ -175,14 +185,20 @@ export function tasksMock(): Plugin {
         const url = new URL(request.url || "/", "http://localhost");
         if (!url.pathname.startsWith("/api/console/tasks")) return next();
         const scenario = new URL(String(request.headers.referer || "http://localhost/"), "http://localhost").searchParams.get("mock") || "";
-        const respond = () => {
-          const result = scenario === "error" ? { status: 500, body: { detail: "演示：服务暂时不可用" } } : route(url.pathname, url, scenario);
+        const respond = (body: Row) => {
+          const result = scenario === "error" ? { status: 500, body: { detail: "演示：服务暂时不可用" } } : route(url.pathname, url, scenario, request.method || "GET", body);
           if (!result) return next();
           response.statusCode = result.status;
           response.setHeader("content-type", "application/json");
           response.end(JSON.stringify(result.body));
         };
-        if (scenario === "slow") setTimeout(respond, 4000); else respond();
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk: Buffer) => chunks.push(chunk));
+        request.on("end", () => {
+          const raw = Buffer.concat(chunks).toString();
+          const body = raw ? JSON.parse(raw) as Row : {};
+          if (scenario === "slow") setTimeout(() => respond(body), 4000); else respond(body);
+        });
       });
     },
   };

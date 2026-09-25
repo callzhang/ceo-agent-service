@@ -801,6 +801,10 @@ export function getBusinessTaskDetail(id: string, signal?: AbortSignal): Promise
 export function sendBusinessTaskFollowUp(taskId: string, followUpId: string, revision: number) {
   return command(`/api/console/tasks/items/${encodeURIComponent(taskId)}/follow-ups/${encodeURIComponent(followUpId)}/send`, { revision });
 }
+/** Derek, 2026-09-25: set a candidate Task aside, or take that back. Nothing is deleted. */
+export function decideCandidateTask(taskId: string, action: "ignore" | "restore") {
+  return command(`/api/console/tasks/items/${encodeURIComponent(taskId)}/candidate-decision`, { action });
+}
 export function getBusinessProjectDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessProjectDetail>> {
   return request<unknown>(`/api/console/tasks/projects/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessProjectDetail>(value, "project", (item) => isRecord(item.summary) && isProjectSummary(item.summary) && Array.isArray(item.confirmed_tasks)));
 }

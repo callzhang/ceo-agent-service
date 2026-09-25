@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { getBusinessTaskDetail, getLegacyProjectDetail, sendBusinessTaskFollowUp, type BusinessTaskDetail, type TaskDetail } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
-import { DetailSection, TaskSkeleton } from "./TaskParts";
+import { CandidateAction, DetailSection, TaskSkeleton } from "./TaskParts";
 import { formatTaskTime } from "./TaskTime";
 import { attentionEventLabels, commitmentLabels, dateTypeLabels, evidenceRoleLabels, labelOf, relationTypeLabels, sourceTypeLabels, taskEventLabels, taskStatusLabels } from "./taskLabels";
 
@@ -17,6 +17,8 @@ function parseJson(value: unknown): unknown {
 }
 
 function nonEmpty(value: unknown): value is string { return typeof value === "string" && value !== ""; }
+
+const legacyStatusLabels: Record<string, string> = { active: "进行中", paused: "已暂停", blocked: "受阻", completed: "已完成", done: "已完成", cancelled: "已取消" };
 
 const eventLabels = { ...taskEventLabels, ...attentionEventLabels };
 
@@ -120,7 +122,7 @@ export function TaskDetailPage({ taskId }: { taskId: string }) {
   const missing = detail.missing_evidence || [];
   return <ConsolePageLayout title={task.title} breadcrumb={[...trail, { label: "任务详情" }]} actions={<SnapshotBadge timestamp={snapshot} />}>
     <div className="task-domain-page business-detail-page">
-      <section className="console-card business-detail-section"><div className="business-detail-badges"><span className={`business-stage ${task.stage}`}>{task.stage === "candidate" ? "候选任务" : "正式任务"}</span><span>{labelOf(taskStatusLabels, task.status)}</span>{labelOf(commitmentLabels, task.commitment_status) !== labelOf(taskStatusLabels, task.status) && <span>{labelOf(commitmentLabels, task.commitment_status)}</span>}</div>
+      <section className="console-card business-detail-section"><div className="business-detail-badges"><span className={`business-stage ${task.stage}`}>{task.stage === "candidate" ? "候选任务" : "正式任务"}</span><span>{labelOf(taskStatusLabels, task.status)}</span>{labelOf(commitmentLabels, task.commitment_status) !== labelOf(taskStatusLabels, task.status) && <span>{labelOf(commitmentLabels, task.commitment_status)}</span>}<span className="business-detail-badge-actions"><CandidateAction task={task} showLabel onDone={() => setReloadKey((key) => key + 1)} /></span></div>
         {detail.description && <p className="business-detail-description">{detail.description}</p>}
         <dl className="business-detail-facts"><div><dt>负责人</dt><dd>{task.owner || "尚无明确负责人"}</dd></div><div><dt>截止日期</dt><dd>{task.deadline_at || "未明确"}</dd></div><div><dt>业务主线</dt><dd>{task.anchor_labels.join(" · ") || "尚未确认"}</dd></div>{missing.length > 0 && <div><dt>还缺依据</dt><dd>{missing.join("；")}</dd></div>}</dl>
       </section>
@@ -148,7 +150,7 @@ export function LegacyProjectDetailPage({ legacyProjectId }: { legacyProjectId: 
   return <ConsolePageLayout title={title} breadcrumb={[{ label: "Tasks", to: "/tasks" }, { label: "正式项目", to: "/tasks?view=projects" }, { label: "历史项目记录" }]}>
     <div className="task-domain-page business-detail-page">
       {error ? <div className="page-state page-state-error" role="alert">{error}</div> : !detail ? <TaskSkeleton /> : <>
-        <section className="console-card business-detail-section"><div className="business-detail-badges"><span className="business-stage candidate">历史记录 · 非正式项目</span><span>{detail.status}</span></div>
+        <section className="console-card business-detail-section"><div className="business-detail-badges"><span className="business-stage candidate">历史记录 · 非正式项目</span><span>{labelOf(legacyStatusLabels, detail.status)}</span></div>
           {detail.description && <p className="business-detail-description">{detail.description}</p>}
           <dl className="business-detail-facts"><div><dt>负责人</dt><dd>{detail.owner || "未提供"}</dd></div></dl></section>
         <SourceRecordList title="历史事实" rows={detail.facts.map((fact) => ({ ...fact, evidence_text: String(fact.description) }))} />

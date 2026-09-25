@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 
 const getBusinessTaskDetail = vi.hoisted(() => vi.fn());
 const sendBusinessTaskFollowUp = vi.hoisted(() => vi.fn());
-vi.mock("../api/console", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api/console")>()), getBusinessTaskDetail, sendBusinessTaskFollowUp }));
+const decideCandidateTask = vi.hoisted(() => vi.fn());
+vi.mock("../api/console", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api/console")>()), getBusinessTaskDetail, sendBusinessTaskFollowUp, decideCandidateTask }));
 import { TaskDetailPage } from "./TaskDetailPage";
 
 describe("TaskDetailPage", () => {
@@ -62,5 +63,17 @@ describe("TaskDetailPage", () => {
     const details = screen.getByText("查看原始记录").closest("details");
     expect(details).not.toHaveAttribute("open");
     expect(screen.queryByText(/domesticSummaryOutcome/)).not.toBeInTheDocument();
+  });
+
+  it("ignores a candidate from its own page and shows the result", async () => {
+    const summary = (status: string) => ({ id: "43", title: "整理访谈问题清单", stage: "candidate", status, commitment_status: "none", owner: "", deadline_at: "", business_relevance: "unknown", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/43" });
+    const detail = (status: string) => ({ item: { summary: summary(status), description: "", evidence: [], date_evidence: [], events: [], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [] }, meta: { snapshot_at: "2026-09-25" } });
+    getBusinessTaskDetail.mockResolvedValueOnce(detail("open")).mockResolvedValue(detail("cancelled"));
+    decideCandidateTask.mockResolvedValue({ ok: true, message: "已忽略这个候选任务", meta: { updated_at: "" } });
+    render(<MemoryRouter><TaskDetailPage taskId="43" /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "忽略 整理访谈问题清单" }));
+    expect(decideCandidateTask).toHaveBeenCalledWith("43", "ignore");
+    expect(await screen.findByRole("button", { name: "恢复 整理访谈问题清单" })).toBeInTheDocument();
+    expect(screen.getByText("已取消")).toBeInTheDocument();
   });
 });

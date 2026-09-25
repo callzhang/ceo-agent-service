@@ -4,12 +4,14 @@ import { Link, useSearchParams } from "react-router-dom";
 import { listBusinessAttention, listBusinessProjects, listBusinessTasks, type AttentionCategory, type BusinessAttentionSummary, type BusinessProjectCandidateSummary, type BusinessProjectSummary, type BusinessTaskSummary, type TaskView } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
-import { TaskSkeleton } from "./TaskParts";
+import { CandidateAction, TaskSkeleton } from "./TaskParts";
 import { TaskTime } from "./TaskTime";
 import { categoryLabels, categoryOrder, commitmentText, labelOf, taskStatusLabels } from "./taskLabels";
 
 const stageOptions = [{ value: "candidate", label: "候选任务" }, { value: "formal", label: "正式任务" }];
 const statusOptions = ["open", "waiting", "done", "cancelled"];
+const ownerOptions = [{ value: "assigned", label: "已有负责人" }, { value: "unassigned", label: "暂无负责人" }];
+const sortOptions = [{ value: "updated", label: "按更新时间" }, { value: "created", label: "按创建时间" }];
 
 function AttentionCard({ item }: { item: BusinessAttentionSummary }) {
   return <article className={`business-attention-card category-${item.category}`} aria-label={item.title}>
@@ -35,11 +37,11 @@ function taskFacts(item: BusinessTaskSummary) {
   ].filter(Boolean);
 }
 
-function TaskRow({ item }: { item: BusinessTaskSummary }) {
+function TaskRow({ item, onChanged }: { item: BusinessTaskSummary; onChanged: () => void }) {
   const facts = taskFacts(item);
-  return <li className="business-task-row">
+  return <li className={`business-task-row${item.status === "cancelled" ? " is-set-aside" : ""}`}>
     <div className="business-task-row-main"><Link to={item.detail_url}>{item.title}</Link><span className={`business-stage ${item.stage}`}>{item.stage === "candidate" ? "候选任务" : "正式任务"}</span></div>
-    <span className="business-task-time"><TaskTime value={item.updated_at} /></span>
+    <span className="business-task-time"><TaskTime value={item.updated_at} /><CandidateAction task={item} onDone={onChanged} /></span>
     {facts.length > 0 && <p className="business-task-meta">{facts.map((fact) => <span key={fact}>{fact}</span>)}</p>}
   </li>;
 }
@@ -72,6 +74,8 @@ export function TasksPage() {
   const q = params.get("q") || "";
   const stage = params.get("stage") || "";
   const status = params.get("status") || "";
+  const owner = params.get("owner") || "";
+  const sort = params.get("sort") || "";
   const page = Math.max(1, Number(params.get("page") || 1));
   const candidatePage = Math.max(1, Number(params.get("candidate_page") || 1));
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -79,6 +83,7 @@ export function TasksPage() {
   const [snapshot, setSnapshot] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   const workspace = useRef<HTMLDivElement>(null);
   const firstRender = useRef(true);
 
@@ -89,7 +94,7 @@ export function TasksPage() {
     const request = view === "attention"
       ? listBusinessAttention({ category, page, page_size: 20 }, controller.signal)
       : view === "all"
-        ? listBusinessTasks({ q, stage, status, page, page_size: 20 }, controller.signal)
+        ? listBusinessTasks({ q, stage, status, owner, sort, page, page_size: 20 }, controller.signal)
         : listBusinessProjects({ q, page, page_size: 20, candidate_page: candidatePage, candidate_page_size: 20 }, controller.signal);
     request.then((result) => {
       if (controller.signal.aborted) return;
@@ -108,7 +113,7 @@ export function TasksPage() {
       setState("error");
     });
     return () => controller.abort();
-  }, [view, category, q, stage, status, page, candidatePage]);
+  }, [view, category, q, stage, status, owner, sort, page, candidatePage, reloadKey]);
 
   // Turning a page should land on the top of the list, not stay at the bottom where the button was.
   useEffect(() => {
@@ -128,7 +133,7 @@ export function TasksPage() {
   const candidatePages = Math.max(1, Math.ceil(candidateMeta.total / candidateMeta.page_size));
   // Rows of another tab must never be drawn by this tab's renderer; within one tab, the previous page stays (dimmed) while the next loads.
   const data = loaded?.view === view ? loaded : null;
-  const filtered = view === "all" ? Boolean(q || stage || status) : view === "projects" ? Boolean(q) : Boolean(category);
+  const filtered = view === "all" ? Boolean(q || stage || status || owner) : view === "projects" ? Boolean(q) : Boolean(category);
   const clearFilters = () => setParams(new URLSearchParams(view === "attention" ? { } : { view }));
 
   const empty = (message: string) => <div className="business-empty"><p>{message}</p>{filtered ? <button type="button" className="secondary-button" onClick={clearFilters}>清除筛选</button> : view === "attention" ? <Link className="secondary-button" to="/tasks?view=all">查看全部任务</Link> : null}</div>;
@@ -137,7 +142,7 @@ export function TasksPage() {
   if (state === "error") body = <div className="page-state page-state-error" role="alert">{error}</div>;
   else if (!data) body = <TaskSkeleton />;
   else if (view === "attention") body = data.items.length ? <div className="business-attention-list">{(data.items as BusinessAttentionSummary[]).map((item) => <AttentionCard key={item.id} item={item} />)}</div> : empty(filtered ? "该类别下没有事项。" : "当前没有需要关注的事项。");
-  else if (view === "all") body = data.items.length ? <ul className="business-task-list">{(data.items as BusinessTaskSummary[]).map((item) => <TaskRow key={item.id} item={item} />)}</ul> : empty(filtered ? "没有符合条件的任务。" : "暂无任务。");
+  else if (view === "all") body = data.items.length ? <ul className="business-task-list">{(data.items as BusinessTaskSummary[]).map((item) => <TaskRow key={item.id} item={item} onChanged={() => setReloadKey((key) => key + 1)} />)}</ul> : empty(filtered ? "没有符合条件的任务。" : "暂无任务。");
   else body = <>
     {data.items.length ? <ul className="business-task-list">{(data.items as BusinessProjectSummary[]).map((item) => <ProjectRow key={item.id} item={item} />)}</ul> : empty(filtered ? "没有符合条件的项目。" : "暂无正式项目。")}
     {candidateMeta.total > 0 && <details className="business-project-candidates" open={data.items.length === 0}>
@@ -162,6 +167,8 @@ export function TasksPage() {
         {view === "all" && <>
           <select aria-label="任务阶段" value={stage} onChange={(event) => update("stage", event.target.value)}><option value="">全部阶段</option>{stageOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
           <select aria-label="任务状态" value={status} onChange={(event) => update("status", event.target.value)}><option value="">全部状态</option>{statusOptions.map((value) => <option key={value} value={value}>{taskStatusLabels[value]}</option>)}</select>
+          <select aria-label="负责人" value={owner} onChange={(event) => update("owner", event.target.value)}><option value="">全部负责人</option>{ownerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+          <select aria-label="排序" value={sort} onChange={(event) => update("sort", event.target.value)}>{sortOptions.map((option) => <option key={option.value} value={option.value === "updated" ? "" : option.value}>{option.label}</option>)}</select>
         </>}
         {state !== "error" && data && <span className="business-task-count">{view === "all" ? "共" : "正式项目"} {total} {view === "all" ? "个任务" : "个"}</span>}
       </div>}
