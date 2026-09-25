@@ -1871,6 +1871,10 @@ h1, h2, h3, p { margin-top: 0; }
 .business-source-list, .business-linked-list { display: grid; gap: 8px; margin: 0; padding-left: 20px; }
 .business-source-list li, .business-linked-list li { min-width: 0; overflow-wrap: anywhere; }
 .business-source-list li small, .business-linked-list li span { display: block; color: var(--ink-soft); font-size: .72rem; }
+.follow-up-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.follow-up-body { min-width: 0; }
+.follow-up-send { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.business-source-list li small.follow-up-error { color: var(--danger, #b42318); }
 
 @media (prefers-color-scheme: dark) {
   .task-domain-route {

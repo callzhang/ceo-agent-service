@@ -790,8 +790,9 @@ turn 可以复用仍有效的对话 session，或在该 session 已失效时安�
 
 `ceo-work-tracking` 把同一事项从识别到关闭作为一个流程：从对话、会议或材料中提取有证据的
 Task，按需链接正式 Project，记录负责人及类型化日期。只有符合承诺与期限条件的 Task 才通过
-outbox 镜像为钉钉 TODO；只有来源明确给出下次检查时间与目标会话才创建 follow-up。发送由
-Task 键控的 follow-up worker 负责，并记录 revision、租约、幂等 ID 与 provider 回执；
+outbox 镜像为钉钉 TODO；只有来源明确给出下次检查时间与目标会话才创建 follow-up。follow-up
+只是建议：由 Derek 在 Task 详情页点按钮发送（Derek 2026-09-25），新信息更新该 Task 时撤回未发出的
+follow-up，见 `docs/runtime-mechanism.md`。发送记录 revision、租约、幂等 ID 与 provider 回执；
 结果未知先进入核查而不是自动重发。读取后续回复或外部 TODO 状态后，仅凭明确完成证据关闭
 对应 Task 与其 follow-up。旧 Project/TODO/follow-up 记录保留在历史边界，等待 Task 8 导入。
 

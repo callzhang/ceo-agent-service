@@ -5,7 +5,13 @@ import pytest
 
 from app.dws_client import DwsUserProfile
 import app.follow_up as follow_up
-from app.follow_up import process_due_business_task_follow_ups, process_due_follow_ups, resolve_failed_follow_up
+from app.follow_up import (
+    FollowUpNotSendable,
+    process_due_business_task_follow_ups,
+    process_due_follow_ups,
+    resolve_failed_follow_up,
+    send_business_task_follow_up,
+)
 from app.skill_features import FeatureRegistry
 from app.store import AutoReplyStore
 from app.task_completion_agent import (
@@ -116,6 +122,101 @@ def test_business_task_follow_up_sends_to_exact_source_conversation_with_receipt
         store, dws, now="2026-06-29 01:01:00", auto_send=True
     ) == 0
     assert len(dws.sent) == 1
+
+
+def test_clicked_business_task_follow_up_sends_outside_working_hours(tmp_path):
+    # Derek, 2026-09-25: 催办 is a button; the click is the decision, so no
+    # working-hours gate and no Agent review stand in front of it.
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    task_id, draft_id = _business_follow_up(store, title="客户验收", source_ref="message:1")
+    dws = FakeDws()
+
+    status, _ = send_business_task_follow_up(
+        store, dws, follow_up_id=draft_id, expected_revision=1,
+        now="2026-06-28 16:00:00",  # Monday 00:00 in Shanghai, outside working hours
+    )
+
+    assert status == "sent"
+    assert dws.sent[0]["conversation_id"] == "cid-1"
+    [draft] = store.list_business_task_follow_ups(business_task_id=task_id)
+    assert draft["status"] == "sent"
+    with pytest.raises(FollowUpNotSendable):
+        send_business_task_follow_up(
+            store, dws, follow_up_id=draft_id, expected_revision=1,
+            now="2026-06-28 16:01:00",
+        )
+    assert len(dws.sent) == 1
+
+
+def test_clicked_follow_up_failure_stays_failed_and_resends_as_new_revision(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    task_id, draft_id = _business_follow_up(store, title="客户验收", source_ref="message:1")
+
+    class RejectingDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            super().send_message(*args, **kwargs)
+            return {"success": False, "errorMsg": "rejected"}
+
+    status, _ = send_business_task_follow_up(
+        store, RejectingDws(), follow_up_id=draft_id, expected_revision=1,
+        now="2026-06-29 01:00:00",
+    )
+    assert status == "failed"
+    [draft] = store.list_business_task_follow_ups(business_task_id=task_id)
+    assert draft["status"] == "failed"
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from work_summary_inputs where source_type='follow_up_completion_check'"
+        ).fetchone()[0] == 0
+
+    dws = FakeDws()
+    status, _ = send_business_task_follow_up(
+        store, dws, follow_up_id=draft_id, expected_revision=1,
+        now="2026-06-29 01:05:00",
+    )
+
+    assert status == "sent"
+    [draft] = store.list_business_task_follow_ups(business_task_id=task_id)
+    assert draft["status"] == "sent" and draft["revision"] == 2
+    attempts = store.list_business_task_follow_up_send_attempts(draft_id=draft_id)
+    assert [(a["draft_revision"], a["state"]) for a in attempts] == [(1, "failed"), (2, "sent")]
+
+
+def test_new_information_withdraws_pending_follow_ups_except_its_own(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    task_id, old_id = _business_follow_up(store, title="客户验收", source_ref="message:1")
+    [evidence] = store.list_business_task_evidence(task_id)
+    with store.business_task_transaction() as db:
+        new_signal = store.create_business_task_signal_in_transaction(
+            source_type="reply_attempt", source_ref="message:2",
+            evidence_text="Alex 说下周交付", dedupe_key="message:2",
+            conversation_id="cid-1", _db=db,
+        )
+        store.link_business_task_evidence_in_transaction(
+            task_id=task_id, signal_id=new_signal, evidence_role="correction", _db=db,
+        )
+        new_id = store.create_business_task_follow_up(
+            business_task_id=task_id, source_signal_id=new_signal,
+            target_conversation_id="cid-1", target_kind="group",
+            question_text="请确认下周交付安排", scheduled_at="2026-07-06 09:00:00",
+            owner_user_id="owner-1", owner_name="Alex", dedupe_key="follow-up:new", _db=db,
+        )
+        cancelled = store.cancel_pending_business_task_follow_ups(
+            business_task_id=task_id, keep_source_signal_id=new_signal,
+            reason="Task 已被新信息更新", _db=db,
+        )
+
+    assert evidence.signal_id != new_signal
+    assert cancelled == 1
+    rows = {row["id"]: row for row in store.list_business_task_follow_ups(business_task_id=task_id)}
+    assert rows[old_id]["status"] == "cancelled"
+    assert rows[old_id]["suppressed_reason"] == "Task 已被新信息更新"
+    assert rows[new_id]["status"] == "draft"
+    with pytest.raises(FollowUpNotSendable):
+        send_business_task_follow_up(
+            store, FakeDws(), follow_up_id=old_id, expected_revision=1,
+            now="2026-06-29 01:00:00",
+        )
 
 
 def test_business_task_follow_up_rejects_unparseable_check_time(tmp_path):

@@ -1063,6 +1063,13 @@ def apply_task_agent_decision(
             task_ids.append(task_id)
             affected_task_ids.append(task_id)
             task_after = store.get_business_task_in_transaction(task_id=task_id, _db=db)
+            if task_before is not None:
+                store.cancel_pending_business_task_follow_ups(
+                    business_task_id=task_id,
+                    keep_source_signal_id=result.signal_id,
+                    reason=f"Task 已被新信息更新（{item.source_ref}），原催办不再适用",
+                    _db=db,
+                )
             if (
                 task_before is not None
                 and task_before.status.value != "done"

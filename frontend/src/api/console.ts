@@ -795,6 +795,10 @@ export function getBusinessAttentionDetail(id: string, signal?: AbortSignal): Pr
 export function getBusinessTaskDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessTaskDetail>> {
   return request<unknown>(`/api/console/tasks/items/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessTaskDetail>(value, "task", (item) => isRecord(item.summary) && isTaskSummary(item.summary) && Array.isArray(item.evidence) && Array.isArray(item.events)));
 }
+/** Derek, 2026-09-25: 催办 goes out only when he clicks send. */
+export function sendBusinessTaskFollowUp(taskId: string, followUpId: string, revision: number) {
+  return command(`/api/console/tasks/items/${encodeURIComponent(taskId)}/follow-ups/${encodeURIComponent(followUpId)}/send`, { revision });
+}
 export function getBusinessProjectDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessProjectDetail>> {
   return request<unknown>(`/api/console/tasks/projects/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessProjectDetail>(value, "project", (item) => isRecord(item.summary) && isProjectSummary(item.summary) && Array.isArray(item.confirmed_tasks)));
 }

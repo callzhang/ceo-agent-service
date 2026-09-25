@@ -1,7 +1,8 @@
+import { Send } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { getBusinessTaskDetail, getLegacyProjectDetail, type BusinessTaskDetail, type TaskDetail } from "../api/console";
+import { getBusinessTaskDetail, getLegacyProjectDetail, sendBusinessTaskFollowUp, type BusinessTaskDetail, type TaskDetail } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 
@@ -17,17 +18,66 @@ export function SourceRecordList({ title, rows }: { title: string; rows: Array<R
   })}</ol></section>;
 }
 
+const followUpStatusLabels: Record<string, string> = { draft: "待你决定", approved: "待你决定", sent: "已发送", failed: "发送失败", cancelled: "已取消", completed: "Task 已完成", skipped: "已跳过" };
+
+function text(value: unknown) { return typeof value === "string" ? value : ""; }
+
+function followUpFailure(row: Record<string, unknown>) {
+  try {
+    const result = JSON.parse(text(row.send_result_json) || "{}") as Record<string, unknown>;
+    return text(result.error) ? "结果未知，请先到钉钉确认" : "钉钉未接收";
+  } catch { return ""; }
+}
+
+/**
+ * 催办 on this Task. Derek, 2026-09-25: nothing is sent automatically; he
+ * decides with one click, and new information that updates the Task
+ * withdraws the pending suggestion (shown as 已取消 with the reason).
+ */
+export function FollowUpSection({ taskId, rows, onChanged }: { taskId: string; rows: Array<Record<string, unknown>>; onChanged: () => void }) {
+  const [sending, setSending] = useState("");
+  const [message, setMessage] = useState<{ id: string; text: string; error: boolean } | null>(null);
+  if (!rows.length) return null;
+  const send = (row: Record<string, unknown>) => {
+    const id = String(row.id);
+    setSending(id);
+    setMessage(null);
+    sendBusinessTaskFollowUp(taskId, id, Number(row.revision) || 0)
+      .then((result) => { setMessage({ id, text: result.message, error: false }); onChanged(); })
+      .catch((reason: unknown) => { setMessage({ id, text: reason instanceof Error ? reason.message : "发送失败", error: true }); onChanged(); })
+      .finally(() => setSending(""));
+  };
+  return <section className="console-card business-detail-section"><h2>催办</h2><ol className="business-source-list follow-up-list">{rows.map((row) => {
+    const id = String(row.id);
+    const status = text(row.status);
+    const sendable = status === "draft" || status === "approved" || status === "failed";
+    const facts = [
+      followUpStatusLabels[status] || status,
+      status === "failed" ? followUpFailure(row) : "",
+      text(row.target_kind) === "group" ? "群里 @负责人" : "私聊负责人",
+      text(row.owner_name),
+      status === "sent" ? `发送于 ${text(row.sent_at)}` : `建议 ${text(row.scheduled_at)}`,
+      status === "cancelled" || status === "skipped" ? text(row.suppressed_reason) : "",
+    ].filter(Boolean);
+    return <li key={id} className="follow-up-row"><div className="follow-up-body"><span>{text(row.question_text)}</span><small>{facts.join(" · ")}</small>
+      {message?.id === id && <small role={message.error ? "alert" : "status"} className={message.error ? "follow-up-error" : ""}>{message.text}</small>}</div>
+      {sendable && <button type="button" className="secondary-button follow-up-send" disabled={sending === id} onClick={() => send(row)} title={status === "failed" ? "重新发送这条催办" : "发送这条催办"}><Send size={14} aria-hidden="true" />{sending === id ? "发送中…" : status === "failed" ? "重发" : "发送"}</button>}
+    </li>;
+  })}</ol></section>;
+}
+
 export function TaskDetailPage({ taskId }: { taskId: string }) {
   const [detail, setDetail] = useState<BusinessTaskDetail | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    setState("loading");
+    if (reloadKey === 0) setState("loading");
     getBusinessTaskDetail(taskId, controller.signal).then((result) => { if (!controller.signal.aborted) { setDetail(result.item); setSnapshot(result.meta.snapshot_at); setState("ready"); } }).catch((reason: unknown) => { if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); } });
     return () => controller.abort();
-  }, [taskId]);
+  }, [taskId, reloadKey]);
   if (state === "loading") return <ConsolePageLayout title="任务详情"><div className="page-state" role="status">正在加载…</div></ConsolePageLayout>;
   if (state === "error" || !detail) return <ConsolePageLayout title="任务详情"><div className="page-state page-state-error" role="alert">{error || "任务不存在"}</div></ConsolePageLayout>;
   const task = detail.summary;
@@ -42,7 +92,7 @@ export function TaskDetailPage({ taskId }: { taskId: string }) {
       <SourceRecordList title="任务变化" rows={detail.events || []} />
       <SourceRecordList title="关联关系" rows={detail.relations || []} />
       <SourceRecordList title="工作聚类" rows={detail.clusters || []} />
-      <SourceRecordList title="跟进记录" rows={detail.follow_ups || []} />
+      <FollowUpSection taskId={taskId} rows={detail.follow_ups || []} onChanged={() => setReloadKey((key) => key + 1)} />
       <SourceRecordList title="钉钉待办" rows={detail.dingtalk_todos || []} />
       {!!detail.official_projects?.length && <section className="console-card business-detail-section"><h2>正式项目</h2><ul className="business-linked-list">{detail.official_projects.map((project) => <li key={project.id}><Link to={project.detail_url}>{project.title}</Link></li>)}</ul></section>}
     </div>

@@ -6,6 +6,7 @@ old form routes during the migration, but React never consumes their HTML.
 """
 
 from collections.abc import Callable
+from datetime import datetime, timezone
 from html import unescape
 import json
 import re
@@ -420,6 +421,35 @@ def register_console_routes(
         if item is None:
             raise HTTPException(status_code=404, detail="Business task not found")
         return ConsoleBusinessTaskDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
+
+    @app.post("/api/console/tasks/items/{task_id}/follow-ups/{follow_up_id}/send")
+    async def console_business_task_follow_up_send(task_id: int, follow_up_id: int, request: Request):
+        # Derek, 2026-09-25: 催办 is sent only when he clicks this button.
+        payload = await json_object(request)
+        if dws_factory is None:
+            return JSONResponse({"ok": False, "code": "send_unavailable", "message": "当前服务未配置钉钉发送通道", "details": {}}, status_code=503)
+        from app.config import feedback_spike_vercel_base_url
+        from app.follow_up import FollowUpNotSendable, send_business_task_follow_up
+        store = store_factory()
+        follow_up = next(
+            (row for row in store.list_business_task_follow_ups(business_task_id=task_id) if int(row["id"]) == follow_up_id),
+            None,
+        )
+        if follow_up is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "这条催办不存在", "details": {}}, status_code=404)
+        try:
+            status, _result = send_business_task_follow_up(
+                store, dws_factory(), follow_up_id=follow_up_id,
+                expected_revision=int(payload.get("revision") or 0),
+                now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                feedback_base_url=feedback_spike_vercel_base_url(),
+            )
+        except FollowUpNotSendable as exc:
+            return JSONResponse({"ok": False, "code": "not_sendable", "message": str(exc), "details": {}}, status_code=409)
+        if status != "sent":
+            message = "发送失败，结果已记在这条催办上" if status == "failed" else "发送结果未知，请到钉钉确认后再决定是否重发"
+            return JSONResponse({"ok": False, "code": f"send_{status}", "message": message, "details": {}}, status_code=409)
+        return command_result(item={"status": status}, message="催办已发送")
 
     @app.get("/api/console/tasks/projects/{project_id}", response_model=ConsoleBusinessProjectDetailEnvelope)
     def console_business_project_detail(project_id: int):

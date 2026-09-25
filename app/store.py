@@ -27394,6 +27394,78 @@ class AutoReplyStore:
             )
             return True
 
+    def claim_business_task_follow_up_for_send(
+        self, *, follow_up_id: int, expected_revision: int, now: str,
+        claim_token: str, lease_owner: str, lease_until: str, idempotency_uuid: str,
+    ) -> sqlite3.Row | None:
+        """Claim the one follow-up Derek chose to send from the console.
+
+        Derek, 2026-09-25: 催办 is a button, not an automatic send. A failed
+        follow-up can be sent again; the retry is a new revision, so the
+        earlier attempt and its result stay as they were.
+        """
+        with self._immediate_write_transaction() as db:
+            db.execute(
+                "update business_task_follow_up_send_attempts set state='expired_before_send', "
+                "lease_owner='', updated_at=? where state='claimed' and lease_until<=?",
+                (now, now),
+            )
+            row = db.execute(
+                "select f.* from business_task_follow_ups f "
+                "join business_tasks t on t.id=f.business_task_id "
+                "where f.id=? and f.revision=? and f.status in ('draft','approved','failed') "
+                "and t.status in ('open','waiting') and not exists ("
+                "select 1 from business_task_follow_up_send_attempts a "
+                "where a.draft_id=f.id and a.state in ('claimed','sending'))",
+                (follow_up_id, expected_revision),
+            ).fetchone()
+            if row is None:
+                return None
+            if db.execute(
+                "select 1 from business_task_follow_up_send_attempts "
+                "where draft_id=? and draft_revision=? and state<>'expired_before_send'",
+                (follow_up_id, expected_revision),
+            ).fetchone() is not None:
+                db.execute(
+                    "update business_task_follow_ups set status='draft', revision=revision+1, "
+                    "updated_at=? where id=?",
+                    (now, follow_up_id),
+                )
+                row = db.execute(
+                    "select * from business_task_follow_ups where id=?", (follow_up_id,)
+                ).fetchone()
+            db.execute(
+                "insert into business_task_follow_up_send_attempts "
+                "(draft_id, draft_revision, claim_token, idempotency_uuid, state, "
+                "lease_owner, claimed_at, lease_until) values (?, ?, ?, ?, 'claimed', ?, ?, ?)",
+                (row["id"], row["revision"], claim_token, idempotency_uuid,
+                 lease_owner, now, lease_until),
+            )
+            return row
+
+    def cancel_pending_business_task_follow_ups(
+        self, *, business_task_id: int, keep_source_signal_id: int,
+        reason: str, _db: sqlite3.Connection | None = None,
+    ) -> int:
+        """Withdraw unsent follow-ups once new information has updated the Task.
+
+        Derek, 2026-09-25: a follow-up asks about the Task as it stood; after
+        an update it is no longer the right question. A follow-up created from
+        this same signal is kept (a replayed decision must not cancel its own
+        suggestion), and one that is being sent right now is left to finish.
+        """
+        with self._optional_connection(_db) as db:
+            return db.execute(
+                "update business_task_follow_ups set status='cancelled', "
+                "revision=revision+1, suppressed_reason=?, updated_at=current_timestamp "
+                "where business_task_id=? and source_signal_id<>? "
+                "and status in ('draft','approved','failed') and not exists ("
+                "select 1 from business_task_follow_up_send_attempts a "
+                "where a.draft_id=business_task_follow_ups.id "
+                "and a.state in ('claimed','sending'))",
+                (reason, business_task_id, keep_source_signal_id),
+            ).rowcount
+
     def get_business_task_dingtalk_link(self, link_id: int):
         with self._connect() as db:
             return db.execute("select * from business_task_dingtalk_links where id=?", (link_id,)).fetchone()
