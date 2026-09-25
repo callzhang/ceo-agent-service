@@ -1397,7 +1397,7 @@ Manifest `5ca9dd76c7ce46b7d311100e6d90e8e575882d3f9492a3d79c421b16048ebc8c`,
 database fingerprint `68ca285f382fce9b341a7e42704eed7be12119d71773e32d658f9dc84c03df42`.
 No apply was run against the copy or production.
 
-- [ ] **Step 2: Review the product acceptance sample**
+- [x] **Step 2: Review the product acceptance sample**
 
 Use the latest 100 eligible source inputs, or all when fewer than 100 exist. For each surfaced business attention item verify:
 
@@ -1411,25 +1411,24 @@ Use the latest 100 eligible source inputs, or all when fewer than 100 exist. For
 
 Record counts and every disagreement; do not summarize a partial sample as complete.
 
-Baseline check (2026-09-24, live read-only DB): the latest 100 completed
-`work_summary_inputs` were 56 `local_file`, 12 `ai_minutes`, 3
-`follow_up_completion_check`, and 29 `todo_completion_check` inputs. Their
-latest stored legacy Task Agent decisions were 96 `update_project` and 4
-`create_project`; 98 had no TODO changes and 2 closed an existing TODO. This
-confirms the Project-first baseline. The legacy decisions also labeled 38
-Projects high-risk, 14 medium-risk, and 48 with no risk, but these labels are
-not semantic CEO Attention. The production database has no Task-first
-`business_task_*` / business-attention results yet, and the service still runs
-the old implementation, so this sample cannot validate new Task-first
-decisions. Step 2 remains open until the new Task Agent produces decisions
-from a representative current-source sample and each surfaced
-business-attention item is checked against the criteria above.
+Acceptance sample (2026-09-25, live read-only DB after the Task-first
+restart): the latest 100 eligible `work_summary_inputs` contained 80
+`ai_minutes` (73 skipped, 7 done), 19 `todo_completion_check` (all skipped),
+and 1 `follow_up_completion_check` (skipped). There were no pending,
+processing, or failed inputs. The semantic projection contained 43 Tasks, all
+`candidate/open/unknown`, each linked to exactly one immutable signal; there
+were 0 active business-attention items, 0 confirmed anchors, and 0 official
+Projects. Therefore there were no surfaced attention items to disagree with:
+the default view correctly showed no items, routine unrelated work remained
+out of default attention, and no Project was created without registry evidence.
+The “全部任务” view and one Task detail were checked in the live console;
+the detail showed its source evidence and `承诺待明确` state.
 
 - [x] **Step 3: Send the runtime-restart handoff**
 
 Do not restart `com.ceo-agent-service.main` from this implementation task. Send the heartbeat task `CEO 服务错误检查与修复` the final commit SHA and exact runtime/frontend files changed. Ask it to wait for an idle queue, verify imports, restart, and read back the new PID, health endpoint, queues, operational Attention, History, and Tasks APIs.
 
-- [ ] **Step 4: Require live readback before release completion**
+- [x] **Step 4: Require live readback before release completion**
 
 The heartbeat session must return evidence for:
 
@@ -1442,9 +1441,26 @@ The heartbeat session must return evidence for:
 - one semantic Task detail showing evidence and commitment state;
 - no new writes to `work_projects`, `work_todos`, or `work_updates` after the cutover time.
 
-- [ ] **Step 5: Stop at the production migration gate**
+Live readback (2026-09-25): the heartbeat restart produced supervisor PID
+3356 (`launchctl` state `running`, run count 357) and `/healthz` returned
+`{"ok":true,"status":"ok"}`. The Task APIs returned the expected shapes:
+attention 0, all 43 candidates, projects 0, while operational `/attention`
+and failed History were both empty. The browser rendered the default empty
+view, the all-Tasks list, and Task 43's evidence detail; the scoped Task
+theme resolved to dark canvas `#111411`, surface `#1b1f1b`, and ink `#f0f3ed`.
+The Task-first queues had 0 pending/processing/failed work-summary inputs,
+0 reply tasks processing, and 0 active runtime attempts. One unrelated
+scheduled run lease was still in flight at the final readback and is not a
+Task-first cutover backlog. Legacy maxima remained unchanged at
+`2026-09-25 03:16:01` for `work_todos`, `work_projects`, and `work_updates`.
 
-If the code is live and verified but the legacy manifest has not been explicitly approved, report: “Task-first code is deployed and new inputs use the semantic model; legacy import is planned but not applied.” Do not describe historical migration as complete.
+- [x] **Step 5: Stop at the production migration gate**
+
+The code is live and verified, but the legacy manifest has not been explicitly
+approved: **Task-first code is deployed and new inputs use the semantic model;
+legacy import is planned but not applied.** The 8 old `follow_up_drafts` remain
+history-only pending human review and were not sent or converted into new
+Tasks.
 
 ## Completion definition
 
