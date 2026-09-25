@@ -222,7 +222,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-24.2"
+STORE_SCHEMA_VERSION = "2026-09-25.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -273,6 +273,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "sent_reply_observers",
     "business_object_tasks",
     "reply_task_inputs",
+    "oa_notification_events",
     "follow_up_send_attempts",
     "todo_evidence_candidates",
     "runtime_route_pauses",
@@ -328,6 +329,8 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_transitions_batch_round",
     "idx_feedback_processing_transitions_round",
     "idx_reply_attempts_agent_run_recovery",
+    "idx_oa_notification_events_case_status",
+    "idx_oa_notification_events_claim",
     "idx_runtime_attempt_active_route",
     "idx_runtime_attempt_active_lease",
     "idx_task_agent_runs_active_input",
@@ -4865,6 +4868,7 @@ class AutoReplyStore:
             self._migrate_reply_task_channel_identity(db)
             self._migrate_reply_task_business_objects(db)
             self._migrate_reply_task_input_revisions(db)
+            self._migrate_oa_notification_events(db)
             db.execute(
                 """
                 create index if not exists idx_reply_tasks_channel_status_id
@@ -10434,6 +10438,48 @@ class AutoReplyStore:
             )
 
     @staticmethod
+    @staticmethod
+    def _migrate_oa_notification_events(db: sqlite3.Connection) -> None:
+        db.executescript(
+            """
+            create table if not exists oa_notification_events (
+                id integer primary key autoincrement,
+                event_kind text not null check(
+                    event_kind in ('system_notification', 'chat_reminder')
+                ),
+                requires_reply integer not null default 0,
+                process_instance_id text not null default '',
+                task_id text not null default '',
+                channel text not null default 'dingtalk',
+                conversation_id text not null,
+                conversation_title text not null default '',
+                trigger_message_id text not null,
+                trigger_create_time text not null default '',
+                trigger_sender text not null default '',
+                trigger_text text not null default '',
+                trigger_message_json text not null default '{}',
+                oa_url text not null default '',
+                status text not null default 'pending' check(
+                    status in ('pending', 'adopted', 'sending', 'sent', 'failed', 'ignored')
+                ),
+                claimed_attempt_id integer not null default 0,
+                result_attempt_id integer not null default 0,
+                last_error text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                sent_at text not null default '',
+                unique(channel, conversation_id, trigger_message_id)
+            );
+            create index if not exists idx_oa_notification_events_case_status
+                on oa_notification_events(
+                    process_instance_id, task_id, requires_reply, status, id
+                );
+            create index if not exists idx_oa_notification_events_claim
+                on oa_notification_events(status, claimed_attempt_id, id);
+            """
+        )
+
+    @staticmethod
     def _migrate_reply_task_input_revisions(db: sqlite3.Connection) -> None:
         columns = {
             row["name"]
@@ -10847,6 +10893,160 @@ class AutoReplyStore:
                     (task_id,),
                 ).fetchall()
             ]
+
+    def record_oa_notification_event(
+        self,
+        *,
+        kind: str,
+        process_instance_id: str,
+        task_id: str,
+        channel: str,
+        conversation_id: str,
+        conversation_title: str,
+        trigger_message_id: str,
+        trigger_create_time: str,
+        trigger_sender: str,
+        trigger_text: str,
+        trigger_message_json: str,
+        oa_url: str,
+        requires_reply: bool | None = None,
+    ) -> int:
+        event_kind = str(kind).strip()
+        if event_kind not in {"system_notification", "chat_reminder"}:
+            raise ValueError("invalid OA notification kind")
+        reply_required = (
+            event_kind == "chat_reminder"
+            if requires_reply is None
+            else bool(requires_reply)
+        )
+        with self._immediate_write_transaction() as db:
+            db.execute(
+                """
+                insert or ignore into oa_notification_events (
+                    event_kind, requires_reply, process_instance_id, task_id,
+                    channel, conversation_id, conversation_title,
+                    trigger_message_id, trigger_create_time, trigger_sender,
+                    trigger_text, trigger_message_json, oa_url, status
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_kind,
+                    int(reply_required),
+                    process_instance_id.strip(),
+                    task_id.strip(),
+                    channel,
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    oa_url,
+                    "pending" if reply_required else "ignored",
+                ),
+            )
+            row = db.execute(
+                """
+                select id from oa_notification_events
+                where channel=? and conversation_id=? and trigger_message_id=?
+                """,
+                (channel, conversation_id, trigger_message_id),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("OA notification event was not persisted")
+            return int(row["id"])
+
+    def adopt_oa_notification_events(
+        self, process_instance_id: str, task_id: str
+    ) -> int:
+        process_id = process_instance_id.strip()
+        node_id = task_id.strip()
+        if not process_id or not node_id:
+            return 0
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update oa_notification_events
+                set task_id=?, status='adopted', updated_at=current_timestamp
+                where requires_reply=1 and process_instance_id=?
+                  and status in ('pending', 'adopted')
+                  and (task_id='' or task_id=?)
+                """,
+                (node_id, process_id, node_id),
+            )
+            return int(cursor.rowcount)
+
+    def list_pending_oa_reminder_targets(
+        self, process_instance_id: str = "", task_id: str = ""
+    ) -> list[dict[str, object]]:
+        process_id = process_instance_id.strip()
+        node_id = task_id.strip()
+        with self._connect() as db:
+            if process_id:
+                rows = db.execute(
+                    """
+                    select * from oa_notification_events
+                    where requires_reply=1 and process_instance_id=?
+                      and status in ('pending', 'adopted')
+                      and (task_id='' or task_id=? )
+                    order by id
+                    """,
+                    (process_id, node_id),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    """
+                    select * from oa_notification_events
+                    where requires_reply=1 and status in ('pending', 'adopted')
+                    order by id
+                    """
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+    def claim_oa_reminder_target(self, event_id: int, attempt_id: int) -> bool:
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update oa_notification_events
+                set status='sending', claimed_attempt_id=?, updated_at=current_timestamp
+                where id=? and requires_reply=1
+                  and status in ('pending', 'adopted')
+                  and claimed_attempt_id=0
+                """,
+                (attempt_id, event_id),
+            )
+            return cursor.rowcount == 1
+
+    def mark_oa_reminder_sent(
+        self, event_id: int, attempt_id: int, result_attempt_id: int
+    ) -> bool:
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update oa_notification_events
+                set status='sent', result_attempt_id=?, sent_at=current_timestamp,
+                    updated_at=current_timestamp
+                where id=? and status='sending' and claimed_attempt_id=?
+                """,
+                (result_attempt_id, event_id, attempt_id),
+            )
+            return cursor.rowcount == 1
+
+    def mark_oa_reminder_failed(
+        self, event_id: int, attempt_id: int, error: str
+    ) -> bool:
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update oa_notification_events
+                set status='adopted', claimed_attempt_id=0, last_error=?,
+                    updated_at=current_timestamp
+                where id=? and status='sending' and claimed_attempt_id=?
+                """,
+                (error, event_id, attempt_id),
+            )
+            return cursor.rowcount == 1
 
     def ensure_reply_tasks(
         self,

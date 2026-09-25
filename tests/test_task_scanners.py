@@ -12,10 +12,26 @@ from app.dws_client import DwsOaApprovalCandidate
 from app.skill_features import FeatureRegistry
 from app.store import AutoReplyStore
 from app.task_scanners import (
+    _pending_oa_task_ids_for_current_user,
     scan_ai_minutes,
     scan_meeting_todos,
     scan_pending_oa_approvals,
 )
+
+
+def test_pending_oa_task_resolution_refuses_ambiguous_current_nodes():
+    payload = {
+        "result": {
+            "tasks": [
+                {"taskId": "task-1", "status": "RUNNING", "userId": "me"},
+                {"taskId": "task-2", "status": "RUNNING", "userId": "me"},
+            ]
+        }
+    }
+
+    assert _pending_oa_task_ids_for_current_user(
+        payload, current_user_id="me"
+    ) == ["task-1", "task-2"]
 
 
 def test_disabled_work_tracking_does_not_scan_or_enqueue_ai_minutes(tmp_path):

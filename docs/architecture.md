@@ -109,6 +109,15 @@ scheduled_tasks[command]
   -> trigger: dispatched + service_command link, or failed + Attention
 ```
 
+OA 的钉钉系统通知和聊天催办是外部观察事件，不是第二条审批执行入口。消息生产器将
+`OA审批` 系统通知以及 `[Ding]…提醒您审批` 聊天消息写入 `oa_notification_events`；前者只
+留痕，后者保存原会话和原消息作为结果回传目标，二者都不创建 Agent run。OA 定时扫描读取
+`processInstanceId` 的实时节点：只有当前用户恰好有一个运行中 `taskId` 时，才把无
+`taskId` 事件归并到该 OA task；多个候选或无法解析时不猜测。审批 task 完成并收到 provider
+回执后，服务使用独立的 `oa-reminder-result:{event_id}:{attempt_id}` 投递键通过原生引用回复
+催办人。结果回复有自己的事件状态和回执，不改变 OA 审批 Attempt 的业务结论，也不会重新
+启动一个聊天 Agent。
+
 调度层不补跑停机期间错过的时间点；上一轮仍未终态时，本轮 trigger 记为 `skipped`，不会并行
 创建第二个执行输入。手动运行会创建独立 trigger，但不移动正常计划。任务指定的 Runtime route 是
 **首选**而不是唯一线路（Derek 2026-09-24）：执行先上首选线路，失败时走与其他 Agent 轮次相同的统一

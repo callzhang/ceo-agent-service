@@ -570,13 +570,15 @@ def scan_pending_oa_approvals(
         except Exception:
             read_failures.append(process_instance_id)
             continue
-        task_id = _pending_oa_task_id_for_current_user(
+        task_ids = _pending_oa_task_ids_for_current_user(
             {"result": [detail_payload, tasks_payload]},
             current_user_id=current_user_id,
         )
-        if not task_id:
+        if len(task_ids) != 1:
             skipped_missing_task_id.append(process_instance_id)
             continue
+        task_id = task_ids[0]
+        store.adopt_oa_notification_events(process_instance_id, task_id)
         applicant_user_id, applicant_open_dingtalk_id = _cache_oa_applicant_profile(
             store,
             dws,
@@ -863,9 +865,20 @@ def _pending_oa_task_id_for_current_user(
     *,
     current_user_id: str = "",
 ) -> str:
+    task_ids = _pending_oa_task_ids_for_current_user(
+        payload, current_user_id=current_user_id
+    )
+    return task_ids[0] if task_ids else ""
+
+
+def _pending_oa_task_ids_for_current_user(
+    payload: Any,
+    *,
+    current_user_id: str = "",
+) -> list[str]:
     tasks = _oa_task_records(payload)
     if not tasks:
-        return ""
+        return []
     running_for_current_user: list[str] = []
     running: list[str] = []
     all_task_ids: list[str] = []
@@ -882,11 +895,11 @@ def _pending_oa_task_id_for_current_user(
         if is_running and current_user_id and user_id == current_user_id:
             running_for_current_user.append(task_id)
     if current_user_id:
-        return running_for_current_user[0] if running_for_current_user else ""
+        return list(dict.fromkeys(running_for_current_user))
     for candidates in (running, all_task_ids):
         if candidates:
-            return candidates[0]
-    return ""
+            return list(dict.fromkeys(candidates))
+    return []
 
 
 def _oa_approval_revision(

@@ -307,6 +307,17 @@ provider session 仍可访问，就继续该 session 并在新 turn 注入当前
 明确返回 session 不存在或认证上下文失效时才清除绑定；这两类重跑都保留旧
 run/session/provider 事实。
 
+OA 通知不等于 OA 执行任务。来自 `OA审批` 的系统通知只写入
+`oa_notification_events(event_kind=system_notification)` 并标记已读；聊天窗口中形如
+`[Ding]…提醒您审批` 的催办写入同一表的 `chat_reminder` 事件，保留原会话、原消息、发送人和
+原生回复所需的消息 JSON，但不创建 `reply_task`、`agent_run` 或独立审批 Session。定时
+`scan-oa-approvals` 读取实时待办后，如果当前用户恰好只有一个 `RUNNING` 节点，就把没有
+`task_id` 的催办事件认领到该节点；没有节点或有多个候选节点时不猜测，继续等待下一次扫描。
+实际审批仍只由定时扫描创建的 OA `reply_task` 执行。Audit 有 provider 回执并完成 OA
+动作后，服务使用 `oa-reminder-result:{event_id}:{attempt_id}` 的稳定投递键，对原催办消息
+做一次原生引用回复；发送失败会释放事件等待重试，已发送事件不会重复回复。这样通知页、
+系统通知和聊天催办都能作为同一个 OA 案例的观察输入，而不会重复启动审批。
+
 DingTalk 日程卡片改期可能原地覆盖卡片内容而不产生新消息 ID。每小时的近期消息恢复读取
 该消息当前可读内容；若它和当前 task 投影不同，且实时日程仍有效、本人仍待响应，就以新的
 `input_revision_key` 追加一条 `reply_task_inputs`，提高 `input_version`，并为同一个 task
@@ -383,6 +394,11 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
   因此入队时清空该 conversation 的全部路线会话（`clear_conversation_runtime_sessions`）。
 - **唤醒条件**：已经评论过的审批不再按天唤醒，等指纹变动——指纹本就排除本人记录，所以只有他人
   评论或操作才会叫醒它；**没有评论过的**保留每日重看，因为那种是静默丢掉的，没有别的机制能捞回来。
+- **通知归并**：OA 系统通知和聊天窗口催办不再各自创建 Agent 输入。系统通知只记录观察事件；
+  `[Ding]…提醒您审批` 只记录原消息作为待回复目标。扫描器解析实时当前节点后才创建一个 OA
+  执行任务；唯一当前节点才允许归并无 `taskId` 的催办，多节点或无法解析时保持待归并状态。
+  OA provider 回执确认后，服务沿原消息的会话和消息 ID回复催办人；该回复与 OA 审批 Agent
+  执行分开记账并按事件/Attempt 幂等。
 - 扫描任务绑定通用 `dingtalk-oa-approval` 与适用的 Stardust 业务 Skills。曾把
   `dingtalk-misc/references/oa.md` 当作审批规则来源，导致我们自己的审批规则从未进入模型；
   官方技能还会被 `dws upgrade` 覆盖，规则写在那里留不住。

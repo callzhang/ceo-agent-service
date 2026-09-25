@@ -8,9 +8,10 @@ import re
 import shlex
 import sqlite3
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
@@ -86,6 +87,14 @@ from app.notification import (
 )
 from app.leak_check import contains_forbidden_leak, redact_forbidden_leak_markers
 from app.oa_approval import extract_oa_url
+from app.oa_notification_routing import (
+    OA_APPROVAL_LINK_PATTERN as DINGTALK_APPROVAL_LINK_PATTERN,
+    OA_CHAT_REMINDER_PATTERN as DINGTALK_APPROVAL_REMINDER_PATTERN,
+    OaNotificationKind,
+    classify_oa_notification,
+    render_oa_result_reply,
+)
+from app.service_message_sender import ServiceMessageSender
 from app.org_cache import (
     ORG_CACHE_REFRESHED_DATE_STATE_KEY,
     refresh_org_cache,
@@ -230,13 +239,6 @@ RENDERED_NON_TEXT_PREFIX_PATTERN = re.compile(
 DINGTALK_INTERNAL_OR_RENDERED_MEDIA_PATTERN = re.compile(
     r"dingtalk://|https?://[^\s)]*dingtalk\.com|\[(?:文件|图片|视频|日程)\]",
     re.IGNORECASE,
-)
-DINGTALK_APPROVAL_LINK_PATTERN = re.compile(
-    r"aflow\.dingtalk\.com|dinghash(?:=|%3D)approval|swfrom(?:=|%3D)oa",
-    re.IGNORECASE,
-)
-DINGTALK_APPROVAL_REMINDER_PATTERN = re.compile(
-    r"^\s*\[Ding]\S{1,40}提醒您审批", re.IGNORECASE
 )
 ORDINARY_EXTERNAL_LINK_PATTERN = re.compile(
     r"https?://(?![^\s)]*dingtalk\.com)\S+",
@@ -666,8 +668,11 @@ class DingTalkAutoReplyWorker:
         return ()
 
     def run_once(self, max_batches: int | None = None) -> None:
+        if max_batches == 0:
+            return
         self.produce_once(max_tasks=max_batches)
         self.consume_once(max_tasks=max_batches)
+        self._retry_oa_reminder_results()
 
     def _call_dws(
         self,
@@ -1183,6 +1188,11 @@ class DingTalkAutoReplyWorker:
             new_messages = self._skip_messages_outside_recent_window(
                 conversation,
                 new_messages,
+            )
+            if not new_messages:
+                continue
+            new_messages = self._capture_oa_notification_events(
+                conversation, new_messages
             )
             if not new_messages:
                 continue
@@ -2594,6 +2604,12 @@ class DingTalkAutoReplyWorker:
             and task_status == "pending",
             **self._orchestration_oa_metadata(task, result),
         )
+        self._deliver_oa_reminder_results(
+            task=task,
+            attempt_id=attempt_id,
+            result=result,
+            audit_run=run,
+        )
         if send_status == "needs_human" or task_status == "failed":
             self._notify_problem_attempt(
                 task,
@@ -2604,6 +2620,108 @@ class DingTalkAutoReplyWorker:
         elif task_status == "done":
             self._dismiss_problem_notification(task)
         return task_status == "done"
+
+    def _deliver_oa_reminder_results(
+        self,
+        *,
+        task: ReplyTask,
+        attempt_id: int,
+        result: OrchestrationResult,
+        audit_run: AgentRun,
+    ) -> None:
+        """Reply to chat reminders only after the OA provider confirmed the action."""
+
+        if task.channel != "dingtalk":
+            return
+        audit_result = result.audit_result
+        if (
+            audit_result is None
+            or audit_result.external_result is None
+            or not provider_receipts(audit_run.tool_events)
+        ):
+            return
+        attempt = self.store.get_reply_attempt(attempt_id)
+        if attempt is None or not attempt.oa_process_instance_id.strip():
+            return
+        targets = self.store.list_pending_oa_reminder_targets(
+            attempt.oa_process_instance_id,
+            attempt.oa_task_id,
+        )
+        if not targets:
+            return
+        for target in targets:
+            event_id = int(target["id"])
+            if not self.store.claim_oa_reminder_target(event_id, attempt_id):
+                continue
+            try:
+                trigger = DingTalkMessage.model_validate_json(
+                    str(target["trigger_message_json"])
+                )
+                conversation = DingTalkConversation(
+                    open_conversation_id=str(target["conversation_id"]),
+                    title=str(target["conversation_title"]),
+                    single_chat=trigger.single_chat,
+                    unread_point=0,
+                )
+                body = render_oa_result_reply(
+                    process_instance_id=attempt.oa_process_instance_id,
+                    task_id=attempt.oa_task_id,
+                    action=attempt.oa_action,
+                    status=attempt.send_status,
+                    summary=attempt.oa_remark or result.summary,
+                    oa_url=attempt.oa_url,
+                )
+                sender = ServiceMessageSender(store=self.store, dingtalk=self.dws)
+                message = sender.prepare(
+                    channel="dingtalk",
+                    delivery_key=f"oa-reminder-result:{event_id}:{attempt_id}",
+                    body=body,
+                    original_text=str(target["trigger_text"]),
+                )
+                sender.send_dingtalk_reply_to_trigger_prepared(
+                    message,
+                    conversation=conversation,
+                    trigger=trigger,
+                )
+            except Exception as exc:
+                self.store.mark_oa_reminder_failed(event_id, attempt_id, str(exc))
+                continue
+            self.store.mark_oa_reminder_sent(event_id, attempt_id, attempt_id)
+
+    def _retry_oa_reminder_results(self) -> None:
+        """Retry reminder replies whose provider send failed after OA completion."""
+
+        for target in self.store.list_pending_oa_reminder_targets():
+            process_id = str(target["process_instance_id"] or "").strip()
+            if not process_id:
+                continue
+            attempt = next(
+                (
+                    item
+                    for item in self.store.list_oa_attempt_history(process_id)
+                    if item.send_status in {"completed", "commented"}
+                    and (
+                        not str(target["task_id"] or "").strip()
+                        or item.oa_task_id.strip() == str(target["task_id"]).strip()
+                    )
+                    and item.agent_run_id is not None
+                ),
+                None,
+            )
+            if attempt is None:
+                continue
+            audit_run = self.store.get_agent_run(attempt.agent_run_id)
+            if audit_run is None:
+                continue
+            self._deliver_oa_reminder_results(
+                task=SimpleNamespace(channel=attempt.channel),
+                attempt_id=attempt.id,
+                result=SimpleNamespace(
+                    audit_result=SimpleNamespace(external_result=object()),
+                    summary=attempt.oa_remark or attempt.audit_summary,
+                ),
+                audit_run=audit_run,
+            )
 
     @staticmethod
     def _sent_reply_projection_from_result(
@@ -4072,6 +4190,53 @@ class DingTalkAutoReplyWorker:
             else:
                 remaining.append(message)
         self._mark_seen(skipped)
+        return remaining
+
+    def _capture_oa_notification_events(
+        self,
+        conversation: DingTalkConversation,
+        messages: list[DingTalkMessage],
+    ) -> list[DingTalkMessage]:
+        """Persist OA observations and keep them out of the Agent queue.
+
+        The scheduled OA scanner owns the review.  A chat reminder is only a
+        reply target; the system notification is context-only.  Both messages
+        are marked seen after their durable event row is written.
+        """
+
+        remaining: list[DingTalkMessage] = []
+        consumed: list[DingTalkMessage] = []
+        for message in messages:
+            oa_url = extract_oa_url(message.content)
+            route = classify_oa_notification(message, oa_url)
+            if route is None:
+                remaining.append(message)
+                continue
+            raw_process_id, raw_task_id = self._raw_oa_identifiers(message.raw_payload)
+            if raw_process_id or raw_task_id:
+                route = replace(
+                    route,
+                    process_instance_id=route.process_instance_id or raw_process_id,
+                    task_id=route.task_id or raw_task_id,
+                )
+            self.store.record_oa_notification_event(
+                kind=route.kind.value,
+                process_instance_id=route.process_instance_id,
+                task_id=route.task_id,
+                channel="dingtalk",
+                conversation_id=conversation.open_conversation_id,
+                conversation_title=conversation.title,
+                trigger_message_id=message.open_message_id,
+                trigger_create_time=message.create_time,
+                trigger_sender=message.sender_name,
+                trigger_text=message.content,
+                trigger_message_json=message.model_dump_json(),
+                oa_url=oa_url,
+                requires_reply=route.requires_reply,
+            )
+            consumed.append(message)
+        if consumed:
+            self._mark_seen(consumed)
         return remaining
 
     def _minutes_permission_request(self, message: DingTalkMessage):

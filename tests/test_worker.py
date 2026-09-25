@@ -9813,19 +9813,14 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     script_no_action(worker)
     worker.run_once()
 
-    assert len(agent_runner(worker).calls) == 1
-    assert "Safe prior execution receipts" in agent_prompt(worker)
-    assert "退回" in agent_prompt(worker)
-    assert "read-oa-approval-detail --instance-id proc-1" in agent_prompt(worker)
-    assert "dws oa approval tasks --instance-id proc-1" in agent_prompt(worker)
-    assert "2. [output_contracts] Return exactly one valid structured result" in agent_prompt(worker)
+    assert len(agent_runner(worker).calls) == 0
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
     assert worker.store.count_reply_attempts() == 1
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
-    assert latest.action == "agent_run"
-    assert latest.send_status == "skipped"
+    assert latest.action == "oa_approval"
+    assert latest.send_status == "commented"
 
 
 def test_failed_attempt_still_exposes_the_real_sent_reply_as_prior_receipt(
@@ -10218,14 +10213,17 @@ def test_ding_approval_reminder_is_processed_by_audit_agent(
 
     worker.run_once()
 
-    assert len(agent_runner(worker).calls) == 1
-    assert "dws oa +list-pending --format json" not in agent_prompt(worker)
-    assert '"read_commands": []' in agent_prompt(worker)
+    assert len(agent_runner(worker).calls) == 0
     assert dws.oa_approval_actions == []
-    assert worker.store.count_reply_attempts() == 1
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
+    assert worker.store.count_reply_attempts() == 0
+    with worker.store._connect() as db:
+        event = db.execute(
+            "select event_kind, requires_reply from oa_notification_events "
+            "where trigger_message_id=?",
+            (trigger.open_message_id,),
+        ).fetchone()
+    assert event["event_kind"] == "chat_reminder"
+    assert event["requires_reply"] == 1
 
 
 def test_oa_approval_missing_applicant_records_failed_delivery(
@@ -10260,11 +10258,8 @@ def test_oa_approval_missing_applicant_records_failed_delivery(
     worker.run_once()
 
     assert dws.oa_approval_actions == []
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "missing_oa_applicant_user_id"
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen(trigger.open_message_id) is True
 
 
 def test_oa_reject_action_still_requires_task_id(tmp_path: Path, monkeypatch):
@@ -10303,12 +10298,8 @@ def test_oa_reject_action_still_requires_task_id(tmp_path: Path, monkeypatch):
 
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "missing_oa_approval_target"
-    assert "proc-1" in worker._test_agent_runner.calls[0][2].materials[0].reference
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen(trigger.open_message_id) is True
 
 
 def test_oa_reject_action_requires_parseable_current_user_ownership(
@@ -10349,11 +10340,8 @@ def test_oa_reject_action_requires_parseable_current_user_ownership(
 
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "oa_ownership_unverified"
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen(trigger.open_message_id) is True
     assert dws.oa_approval_actions == []
 
 
@@ -10406,11 +10394,8 @@ def test_oa_approval_does_not_execute_task_that_is_not_current_user(
     worker.run_once()
 
     assert dws.oa_approval_actions == []
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.action == "agent_run"
-    assert attempt.send_status == "skipped"
-    assert attempt.send_error == "oa_task_not_current_user"
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen(trigger.open_message_id) is True
 
 
 def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
@@ -10456,10 +10441,101 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
 
     script_no_action(worker)
     worker.run_once()
-    assert len(agent_runner(worker).calls) == 1
-    assert "dws oa +list-pending --format json" not in agent_prompt(worker)
-    assert '"read_commands": []' in agent_prompt(worker)
-    assert "试用期工作内容和转正要求" not in agent_prompt(worker)
+    assert len(agent_runner(worker).calls) == 0
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen(trigger.open_message_id) is True
+
+
+def test_confirmed_oa_result_replies_to_chat_reminder_once(
+    tmp_path: Path, monkeypatch
+):
+    oa_url = (
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    )
+    trigger = message(
+        f"[Ding]刘瑞安提醒您审批他的录用申请 {oa_url}",
+        single_chat=True,
+    )
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [trigger]},
+        send_result={"result": {"processQueryKey": "reply-query-1"}},
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+    worker.store.record_oa_notification_event(
+        kind="chat_reminder",
+        process_instance_id="proc-1",
+        task_id="task-1",
+        channel="dingtalk",
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        oa_url=oa_url,
+    )
+    task = worker.store.ensure_reply_task(
+        conversation_id="oa_pending_scan:proc-1",
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id="oa-pending:proc-1:revision-1",
+        trigger_create_time="2026-09-25 10:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办",
+        trigger_message_json="{}",
+        oa_url=oa_url,
+    )
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_url=oa_url,
+        oa_action="approve",
+        oa_remark="审批已通过并回读成功。",
+        oa_action_result_json='{"success":true}',
+        send_status="completed",
+    )
+
+    worker._deliver_oa_reminder_results(
+        task=task,
+        attempt_id=attempt_id,
+        result=SimpleNamespace(
+            audit_result=SimpleNamespace(external_result=object()),
+            summary="审批已通过并回读成功。",
+        ),
+        audit_run=_audit_run_with_receipt(),
+    )
+    worker._deliver_oa_reminder_results(
+        task=task,
+        attempt_id=attempt_id,
+        result=SimpleNamespace(
+            audit_result=SimpleNamespace(external_result=object()),
+            summary="审批已通过并回读成功。",
+        ),
+        audit_run=_audit_run_with_receipt(),
+    )
+
+    assert len(dws.reply_messages) == 1
+    assert dws.reply_messages[0][:3] == (
+        "cid-1",
+        trigger.open_message_id,
+        trigger.sender_open_dingtalk_id,
+    )
+    assert "审批结果" in dws.reply_messages[0][3]
+    assert "通过" in dws.reply_messages[0][3]
 
 
 def test_oa_approval_detail_always_includes_openapi_comments(
@@ -10514,10 +10590,9 @@ def test_oa_approval_detail_always_includes_openapi_comments(
 
     script_no_action(worker)
     worker.run_once()
-    prompt = agent_prompt(worker)
-    assert "read-oa-approval-detail --instance-id proc-1" in prompt
-    assert "dws oa approval tasks --instance-id proc-1 --format json" in prompt
-    assert "证据不严谨，需要补充模型对比结论。" not in prompt
+    assert agent_runner(worker).calls == []
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen(trigger.open_message_id) is True
 
 
 def test_oa_approval_detail_param_error_is_recovered_by_openapi(
@@ -10562,11 +10637,9 @@ def test_oa_approval_detail_param_error_is_recovered_by_openapi(
 
     script_no_action(worker)
     worker.run_once()
-    prompt = agent_prompt(worker)
-    assert "read-oa-approval-detail --instance-id proc-1" in prompt
-    assert "dws oa approval tasks --instance-id proc-1 --format json" in prompt
-    assert "recovered_by_openapi" not in prompt
-    assert "奥迪第三曲线项目" not in prompt
+    assert agent_runner(worker).calls == []
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen(trigger.open_message_id) is True
 
 
 def test_oa_approval_is_not_discovered_when_dws_gate_needs_login(
@@ -10638,15 +10711,10 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
 
     worker.run_once()
 
-    assert len(agent_runner(worker).calls) == 1
+    assert len(agent_runner(worker).calls) == 0
     assert dws.oa_approval_actions == []
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
     assert worker.store.count_reply_tasks(status="pending") == 0
-    assert worker.store.count_reply_tasks(status="done") == 1
-    assert worker.store.count_reply_attempts() == 1
+    assert worker.store.count_reply_attempts() == 0
 
 
 def test_bare_dingtalk_approval_wrapper_reaches_audit_agent(
