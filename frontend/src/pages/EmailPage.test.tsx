@@ -283,6 +283,31 @@ it("reveals unsubscribe evidence only on demand and links the verified Attempt",
   expect(screen.queryByText("Star：未知")).not.toBeInTheDocument();
   expect(screen.queryByText("Flag：未知")).not.toBeInTheDocument();
 });
+it("shows each unsubscribe record's outcome in the 退订记录 list instead of the classification status",async()=>{
+  const states=[{status:"done",outcome:"done"},{status:"done",outcome:"skipped_login_required"},{status:"failed",outcome:null},{status:"processing",outcome:null}];
+  api.listEmailClassifications.mockResolvedValue({items:states.map((state,index)=>({...row(String(index+1),"processed"),unsubscribe_state:state})),meta:{page:1,page_size:50,total:4}});
+  show("/email?tab=unsubscribe");
+  const rows=await screen.findAllByRole("button",{name:/打开邮件/});
+  expect(rows[0]).toHaveTextContent("退订成功");expect(rows[0].querySelector(".email-unsubscribe-state")).toHaveClass("success");
+  expect(rows[1]).toHaveTextContent("本次未完成退订");
+  expect(rows[2]).toHaveTextContent("退订执行失败");expect(rows[2].querySelector(".email-unsubscribe-state")).toHaveClass("failure");
+  expect(rows[3]).toHaveTextContent("正在退订");
+  for (const item of rows) expect(item).not.toHaveTextContent("已处理");
+});
+it("opens the detail on the 处理记录 tab, ahead of the original text, when the mail has records",async()=>{
+  const user=userEvent.setup();
+  api.listEmailClassifications.mockResolvedValue({items:[row("1","processed")],meta:{page:1,page_size:50,total:1}});
+  api.getEmailClassification.mockResolvedValue({item:{...row("1","processed"),message_text:"邮件正文内容"},provider_classification:null,observability:[{kind:"unsubscribe",status:"done",outcome:"done"}]});
+  show("/email?tab=all&selected=1");
+  const drawer=await screen.findByRole("region",{name:"邮件详情"});
+  const tabs=await within(drawer).findAllByRole("tab");
+  expect(tabs.map(tab=>tab.textContent)).toEqual(["处理记录 · 1","原文"]);
+  expect(tabs[0]).toHaveAttribute("aria-selected","true");
+  expect(await within(drawer).findByText("退订成功")).toBeInTheDocument();
+  expect(within(drawer).queryByText("邮件正文内容")).not.toBeInTheDocument();
+  await user.click(tabs[1]);
+  expect(await within(drawer).findByText("邮件正文内容")).toBeInTheDocument();
+});
 it("supports keyboard tabs and drawer tab traversal",async()=>{
   const user=userEvent.setup();show();
   const first=screen.getByRole("tab",{name:"待确认"});first.focus();await user.keyboard("{ArrowRight}");

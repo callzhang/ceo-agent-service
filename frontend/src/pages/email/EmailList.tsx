@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Flag, Star } from "lucide-react";
 import { confirmEmailClassification, getEmailClassification, listEmailClassifications, type EmailCategoryConfig, type EmailClassificationDetail, type EmailClassificationItem, type EmailClassificationStatus } from "../../api/console";
 import { EmailReadingPanel } from "./EmailReadingPanel";
+import { unsubscribeStateLabel } from "./Evidence";
 import { configurableCategories, errorMessage, localTime, measured, sourceLabel, statusLabel } from "./shared";
 
 export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfig[]; status:EmailClassificationStatus; onBusy:(value:boolean)=>void}) {
@@ -123,8 +124,10 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
         })()}
         <span className="email-row-sender" title={item.sender}>{item.sender || "未提供发件人"}</span>
         <span className="email-row-content"><span className="email-mobile-sender">{item.sender} · </span><strong>{item.subject || "无主题"}</strong><span className="email-row-original-text">{item.message_text || "未提供正文"}</span></span>
-        <span className="email-row-category" title={status==="unsubscribe"?"退订任务":categoryLabel(item.category)}>{status==="unsubscribe"?"退订任务":item.status==="pending_feedback"?"建议：":""}{status!=="unsubscribe"&&categoryLabel(item.category)}{status!=="unsubscribe"&&item.status==="pending_feedback"&&<small> · {measured(item.confidence)}</small>}</span>
-        <span className="email-row-status">{sourceLabel(item.classification_source)} · {statusLabel(item.status)}</span>
+        {status==="unsubscribe"
+          ? (() => {const state=unsubscribeStateLabel(item.unsubscribe_state);return <span className={`email-row-category email-unsubscribe-state ${state.tone}`} title={state.text}>{state.text}</span>;})()
+          : <span className="email-row-category" title={categoryLabel(item.category)}>{item.status==="pending_feedback"?"建议：":""}{categoryLabel(item.category)}{item.status==="pending_feedback"&&<small> · {measured(item.confidence)}</small>}</span>}
+        <span className="email-row-status">{sourceLabel(item.classification_source)}{status!=="unsubscribe"&&` · ${statusLabel(item.status)}`}</span>
         <time title={localTime(item.received_at || item.updated_at)}>{localTime(item.received_at || item.updated_at)}</time>
       </button>)}
     </div>

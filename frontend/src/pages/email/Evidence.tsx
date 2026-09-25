@@ -46,6 +46,14 @@ export function actionResultLabel(event: EmailObservabilityEvent): string {
   return event.status === "done" || event.status === "succeeded" ? `已完成：${action}` : event.status === "failed" ? `${action}失败` : `${action} · ${event.status === "processing" ? "处理中" : "待执行"}`;
 }
 
+export function unsubscribeStateLabel(state: {status: string; outcome?: string | null} | null | undefined): {text: string; tone: "success" | "failure" | "pending"} {
+  if (!state) return {text: "退订状态未知", tone: "pending"};
+  const event = {kind: "unsubscribe", operation: "unsubscribe", status: state.status, outcome: state.outcome ?? undefined};
+  const success = ["done", "already_unsubscribed"].includes(event.outcome || "");
+  const failed = event.status === "failed" || !!event.outcome?.startsWith("failed");
+  return {text: actionResultLabel(event), tone: success ? "success" : failed ? "failure" : "pending"};
+}
+
 function UnsubscribeEvidence({ event, classificationId, entry }: { event: EmailObservabilityEvent; classificationId: string; entry?: {available: boolean; reason: string | null} }) {
   const [entryUrl, setEntryUrl] = useState("");
   const [loading, setLoading] = useState(false);

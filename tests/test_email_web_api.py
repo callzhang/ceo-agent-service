@@ -115,7 +115,36 @@ def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path):
         "classification_source": "agent", "updated_at": "2026-09-14T12:00:00+00:00",
         "important": None,
         "provider_classification": {"state": "unavailable", "reason": "classification_missing"},
+        "unsubscribe_state": None,
     }]
+
+
+def test_email_unsubscribe_filter_reports_each_rows_newest_unsubscribe_state(tmp_path: Path):
+    store = EmailStore(tmp_path / "unsubscribe-state.sqlite3")
+    store.list_unsubscribe_classifications = lambda *, limit, offset: ([
+        {"id": 47, "subject": "a"}, {"id": 48, "subject": "b"},
+    ], 2)
+    events = {
+        47: [
+            {"kind": "provider_action", "status": "done"},
+            {"kind": "unsubscribe", "status": "done", "outcome": "skipped_login_required"},
+            {"kind": "unsubscribe", "status": "done", "outcome": "done"},
+        ],
+        48: [{"kind": "unsubscribe", "status": "processing"}],
+    }
+    store.list_email_classification_observability = lambda classification_id: events[classification_id]
+    app = FastAPI()
+    register_email_routes(app, lambda: store)
+
+    response = TestClient(app).get(
+        "/api/console/email/classifications?status=unsubscribe&page=1&page_size=20"
+    )
+
+    assert response.status_code == 200, response.text
+    assert [item["unsubscribe_state"] for item in response.json()["items"]] == [
+        {"status": "done", "outcome": "done"},
+        {"status": "processing", "outcome": None},
+    ]
 
 
 class _ZeroTimeoutEmailStore(EmailStore):

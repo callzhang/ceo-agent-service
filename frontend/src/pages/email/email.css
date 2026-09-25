@@ -171,3 +171,6 @@
   .email-reading-toolbar { padding: 8px; gap: 2px; }
   .email-reading-actions form { flex-wrap: wrap; }
 }
+.email-unsubscribe-state { font-weight: 600; color: #96620b; }
+.email-unsubscribe-state.success { color: #17694f; }
+.email-unsubscribe-state.failure { color: #a43030; }

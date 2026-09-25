@@ -28,7 +28,7 @@ interface Props {
 
 export function EmailReadingPanel(props: Props) {
   const {detail, saving, loading, configs} = props;
-  const [tab, setTab] = useState("body");
+  const [chosenTab, setTab] = useState<string | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const onClose = useRef(props.onClose); onClose.current = props.onClose;
   const locked = useRef(saving); locked.current = saving;
@@ -49,6 +49,7 @@ export function EmailReadingPanel(props: Props) {
   const rawSignals = Array.isArray(provider?.important_signals) ? provider.important_signals.join("、") || "无" : "未同步";
   const editable = item?.status === "pending_feedback" || item?.status === "processed";
   const events = detail?.observability || [];
+  const tab = chosenTab ?? (events.length ? "activity" : "body");
   return <section className="email-reading" role="region" aria-label="邮件详情">
     <div className="email-reading-toolbar">
       <button ref={closeRef} type="button" onClick={props.onClose} disabled={saving} aria-label="关闭详情"><X size={16}/> 返回列表</button>
@@ -77,7 +78,7 @@ export function EmailReadingPanel(props: Props) {
           <p>模型：{item.model_version || "未提供"} · 描述版本：{item.description_version || "未提供"}</p>
         </details>
       </header>
-      <div className="email-reading-tabs" role="tablist" aria-label="邮件详情分区">{[["body","原文"],["activity",`处理记录 · ${events.length}`]].map(([key,title]) => <button key={key} role="tab" aria-selected={tab === key} aria-controls={`email-reading-${key}`} id={`email-reading-tab-${key}`} tabIndex={tab === key ? 0 : -1} onClick={() => setTab(key)} onKeyDown={event => {if(event.key === "ArrowLeft" || event.key === "ArrowRight"){event.preventDefault();setTab(key === "body" ? "activity" : "body");const next = event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`#email-reading-tab-${key === "body" ? "activity" : "body"}`);next?.focus();}}}>{title}</button>)}</div>
+      <div className="email-reading-tabs" role="tablist" aria-label="邮件详情分区">{[["activity",`处理记录 · ${events.length}`],["body","原文"]].map(([key,title]) => <button key={key} role="tab" aria-selected={tab === key} aria-controls={`email-reading-${key}`} id={`email-reading-tab-${key}`} tabIndex={tab === key ? 0 : -1} onClick={() => setTab(key)} onKeyDown={event => {if(event.key === "ArrowLeft" || event.key === "ArrowRight"){event.preventDefault();setTab(key === "body" ? "activity" : "body");const next = event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`#email-reading-tab-${key === "body" ? "activity" : "body"}`);next?.focus();}}}>{title}</button>)}</div>
       {tab === "body" ? <div role="tabpanel" id="email-reading-body" aria-labelledby="email-reading-tab-body" className="email-reading-body">
         <section aria-label="邮件正文"><div className="email-body-text">{item.message_text || "这封邮件没有已保存的正文，请查看原邮件后分类。"}</div></section>
         {item.quoted_text && <details className="email-quoted"><summary>引用邮件</summary><div className="email-body-text">{item.quoted_text}</div></details>}

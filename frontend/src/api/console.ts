@@ -311,6 +311,7 @@ export interface EmailClassificationItem {
   confirmed_at: string;
   created_at: string;
   updated_at: string;
+  unsubscribe_state?: {status: string; outcome: string | null} | null;
 }
 export type EmailClassificationStatus = "all" | "pending_feedback" | "processed" | "unsubscribe";
 export interface EmailClassificationListParams {
