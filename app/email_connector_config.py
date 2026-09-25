@@ -106,6 +106,11 @@ class EmailAccountPayload(BaseModel):
         )
         # Polling cadence belongs to the internal worker, not Connector config.
         values["scan_interval_seconds"] = _INTERNAL_SCAN_INTERVAL_SECONDS
+        # The console never sends the move mode. The model's default would put
+        # "move" here on every save and overwrite a stored "copy_as_move", so an
+        # absent field stays absent and the store keeps what it already has.
+        if "imap_move_mode" not in self.model_fields_set:
+            values.pop("imap_move_mode", None)
         return values
 
 

@@ -12251,7 +12251,11 @@ class EmailStore:
                     int(bool(values["imap_tls"])),
                     values["imap_username"],
                     values["imap_secret_reference"],
-                    values.get("imap_move_mode", "move"),
+                    # A save that does not mention the move mode keeps it. The
+                    # console never sends it, and falling back to "move" turned
+                    # a server with no MOVE command into one whose every move
+                    # failed, the moment its owner flipped an unrelated switch.
+                    values.get("imap_move_mode", existing["imap_move_mode"]),
                     values["smtp_host"],
                     values["smtp_port"],
                     int(bool(values["smtp_tls"])),

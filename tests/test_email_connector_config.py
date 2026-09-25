@@ -1011,3 +1011,39 @@ def test_connectivity_cleanup_falls_back_to_local_close_without_changing_result(
     assert response.status_code == 200
     assert response.json()["ok"] is True
     assert events == ["imap.logout", "imap.shutdown"]
+
+
+def test_saving_an_account_from_the_console_keeps_its_move_mode(tmp_path: Path) -> None:
+    """A server with no MOVE command needs copy_as_move; an unrelated save reset it."""
+
+    client, store, _ = _client(tmp_path)
+    create_payload = _imap_only_account_payload() | {"imap_move_mode": "copy_as_move"}
+    assert client.post("/api/console/email/accounts", json=create_payload).status_code == 201
+
+    # What the console sends: every field except the move mode.
+    from_console = {
+        key: value
+        for key, value in _imap_only_account_payload().items()
+        if key != "imap_move_mode"
+    } | {"scan_read_state": "all"}
+    updated = client.put("/api/console/email/accounts/work_mail", json=from_console)
+
+    assert updated.status_code == 200
+    assert updated.json()["item"]["scan_read_state"] == "all"
+    assert updated.json()["item"]["imap_move_mode"] == "copy_as_move"
+    assert store.get_account("work_mail")["imap_move_mode"] == "copy_as_move"
+
+
+def test_an_explicit_move_mode_is_still_saved(tmp_path: Path) -> None:
+    client, store, _ = _client(tmp_path)
+    assert client.post(
+        "/api/console/email/accounts", json=_imap_only_account_payload()
+    ).status_code == 201
+
+    updated = client.put(
+        "/api/console/email/accounts/work_mail",
+        json=_imap_only_account_payload() | {"imap_move_mode": "copy_as_move"},
+    )
+
+    assert updated.status_code == 200
+    assert store.get_account("work_mail")["imap_move_mode"] == "copy_as_move"
