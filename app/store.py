@@ -14249,7 +14249,10 @@ class AutoReplyStore:
                               '$.lifecycle_version'
                           )
                           else null
-                      end='email_unsubscribe_consumer_direct_v1'
+                      end in (
+                          'email_unsubscribe_consumer_direct_v1',
+                          'email_unsubscribe_audited_v2'
+                      )
                 """,
                 (task_id, expected_execution_generation, expected_status),
             )
@@ -14286,7 +14289,10 @@ class AutoReplyStore:
                           when json_valid(tasks.trigger_message_json)
                           then json_extract(tasks.trigger_message_json, '$.lifecycle_version')
                           else null
-                      end='email_unsubscribe_consumer_direct_v1'
+                      end in (
+                          'email_unsubscribe_consumer_direct_v1',
+                          'email_unsubscribe_audited_v2'
+                      )
                   and not exists (
                       select 1 from agent_runs
                       where agent_runs.reply_task_id=tasks.id
