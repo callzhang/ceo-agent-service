@@ -2377,10 +2377,9 @@ def _service_component_snapshots(
         {"name": "runtime-probe", "role": "runtime route health", "cadence": "internal"},
         {"name": "service-heartbeat", "role": "component liveness", "cadence": "internal"},
     ]
-    # `task-maintenance` and `follow-up-delivery` are gone. Their work moved
-    # into scheduled tasks on 2026-09-18, and what remains reports under other
-    # names (`task_maintenance.<step>`), so those two rows could only ever
-    # read `unknown` -- indistinguishable from a component that has died.
+    # `task-maintenance` and `follow-up-delivery` are gone. Their business
+    # work is either a visible scheduled task or an explicit user action, so
+    # neither should appear as a phantom health component.
     # `meeting-memory-write` stays: the scheduled meeting task still reports
     # it by that name.
     return [
@@ -6565,7 +6564,7 @@ def render_tasks_page(
         f"{_task_tabulator_script()}"
         "<section class=\"sent-todos-section\">"
         "<div class=\"section-head\"><h2>Sent TODOs</h2>"
-        "<p class=\"muted\">DingTalk Todo and follow-up messages sent by task maintenance.</p></div>"
+        "<p class=\"muted\">DingTalk TODOs and follow-up messages sent from Task actions.</p></div>"
         f"{_sent_todos_toolbar(total_count=len(sent_todo_rows), filters=sent_todo_filter_values)}"
         "<div id=\"sent-todos-table\" class=\"tasks-tabulator sent-todos-table\"></div>"
         f"<script id=\"sent-todos-data\" type=\"application/json\">{_json_script_payload(sent_todo_rows)}</script>"

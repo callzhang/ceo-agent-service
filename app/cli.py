@@ -3593,26 +3593,6 @@ def _process_meeting_memory_writes_once(
     return int(getattr(outcome, "completed", 0) or 0)
 
 
-def _run_task_maintenance_once(
-    settings: WorkerSettings,
-    store: AutoReplyStore,
-) -> int:
-    """One maintenance pass: resolve recovered errors, free stale task locks."""
-
-    resolved = (
-        store.resolve_errors_recovered_by_reply_attempts()
-        + store.resolve_errors_recovered_by_completed_reply_tasks()
-        + store.resolve_errors_recovered_by_terminal_work_summary_inputs()
-        + store.resolve_errors_recovered_by_scheduled_service_command()
-        + store.resolve_errors_recovered_by_scheduled_reply_task()
-        + store.resolve_closed_blocked_reply_attempts()
-        + close_superseded_scheduled_reply_tasks(store)
-    )
-    del settings
-    recovered = len(store.recover_stale_processing_reply_tasks())
-    return resolved + recovered
-
-
 def run_meeting_producer_loop(
     settings: WorkerSettings,
     poll_interval_seconds: int,
@@ -3859,79 +3839,6 @@ def replay_recent_meetings_command(
         ]
     print(json.dumps(results, ensure_ascii=False), flush=True)
     return results
-
-
-def _maintenance_error_detail(exc: Exception) -> str:
-    """Project a concrete maintenance failure without exposing command internals."""
-    detail = str(exc).strip()
-    if "okr_headless_session_expired" in detail:
-        return (
-            "okr_headless_session_expired: Dedicated Dingteam OKR browser "
-            "session requires login."
-        )
-    if "okr_website_unavailable" in detail:
-        return "okr_website_unavailable: Dingteam OKR website did not render."
-    return detail
-
-
-def _maintenance_step_completed(result: object) -> bool:
-    """A scheduler no-op must not clear a prior component failure."""
-    return str(getattr(result, "status", "")).strip().casefold() != "not_due"
-
-
-def run_task_maintenance_loop(
-    settings: WorkerSettings,
-    *,
-    sleep: Callable[[int], None] = time.sleep,
-    network_ready: Callable[[], bool] = _macos_wifi_connected,
-) -> None:
-    store = AutoReplyStore(settings.db_path)
-
-    def run_step(kind: str, step: Callable[[], object]) -> None:
-        error_kind = f"task_maintenance_{kind}"
-        health_component = f"task_maintenance.{kind}"
-        try:
-            result = step()
-        except Exception as exc:
-            detail = _maintenance_error_detail(exc)
-            store.record_error("", "", error_kind, detail)
-            store.set_service_health_component(
-                health_component,
-                state="degraded",
-                detail=detail,
-            )
-        else:
-            if not _maintenance_step_completed(result):
-                return
-            store.set_service_health_component(health_component, state="healthy")
-            store.resolve_unresolved_errors_by_kind(
-                error_kind,
-                resolution="recovered by a later successful maintenance cycle",
-            )
-
-    while True:
-        if not network_ready():
-            sleep(60)
-            continue
-        run_step(
-            "resolve_recovered_errors",
-            lambda: (
-                store.resolve_errors_recovered_by_reply_attempts()
-                + store.resolve_errors_recovered_by_completed_reply_tasks()
-                + store.resolve_errors_recovered_by_terminal_work_summary_inputs()
-                + store.resolve_errors_recovered_by_scheduled_service_command()
-                + store.resolve_closed_blocked_reply_attempts()
-                + close_superseded_scheduled_reply_tasks(store)
-            ),
-        )
-        run_step(
-            # A task can keep its lock after its turn fails, and nothing
-            # between restarts noticed: reply task 384388 sat processing for 49
-            # minutes with no run and no scheduled retry.
-            "recover_stale_processing_tasks",
-            lambda: len(store.recover_stale_processing_reply_tasks()),
-        )
-        sleep(60)
 
 
 def run_oa_pending_scan_loop(
@@ -4310,11 +4217,11 @@ def run_service(
                 runtime_refresher=runtime_refresher,
             ),
         ),
-        # Derek, 2026-09-18: task-maintenance and meeting-memory-write now run
-        # inside the scheduled meeting task, and follow-up delivery is its own
-        # scheduled task, so all three are visible and switchable. Meeting
-        # delivery stays a loop: it only sends what is already approved, and a
-        # ten-second cadence is the point of it.
+        # Derek, 2026-09-18: meeting-memory-write and follow-up delivery are
+        # scheduled work, so all business decisions remain visible and
+        # switchable in the scheduler. Meeting delivery stays a loop: it only
+        # sends what is already approved, and a ten-second cadence is the point
+        # of it.
         (
             "meeting-delivery",
             lambda: run_meeting_delivery_loop(

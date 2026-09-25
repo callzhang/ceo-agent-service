@@ -27,7 +27,6 @@ from app.cli import (
     rerun_message_command,
     reset_codex_sessions_command,
     run_consumer_loop,
-    run_task_maintenance_loop,
     record_feedback_command,
     refresh_org_cache_command,
     run_loop,
@@ -6501,14 +6500,6 @@ def test_scan_meetings_once_command_writes_one_job_with_fixed_ten_minute_window(
         return 1
 
     monkeypatch.setattr(cli, "produce_meeting_alignment_jobs", produce)
-    monkeypatch.setattr(
-        cli,
-        "_run_task_maintenance_once",
-        lambda *_args, **_kwargs: pytest.fail(
-            "meeting discovery must not run reply-task maintenance"
-        ),
-    )
-
     created = cli.scan_meetings_once_command(settings, now=now)
 
     assert created == 1
@@ -6980,85 +6971,6 @@ def test_meeting_memory_write_loop_does_not_report_a_deferred_wave_as_healthy(
     ]
 
 
-def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_path):
-    calls = []
-
-    class StopLoop(Exception):
-        pass
-
-    settings = WorkerSettings(
-        db_path=tmp_path / "worker.sqlite3",
-        workspace=tmp_path / "memory",
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_work_items_command",
-        lambda received: calls.append("work-items"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_okr_reviews_command",
-        lambda received: calls.append("okr-reviews"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_task_sources_command",
-        lambda received, max_new_items=None: calls.append("scan-task-sources"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_oa_approvals_command",
-        lambda received, max_new_items=None: calls.append("scan-oa-approvals"),
-    )
-
-    def sleep(seconds):
-        calls.append(("sleep", seconds))
-        raise StopLoop
-
-    with pytest.raises(StopLoop):
-        run_task_maintenance_loop(
-            settings,
-            sleep=sleep,
-            network_ready=lambda: False,
-        )
-
-    assert calls == [("sleep", 60)]
-
-
-def test_task_maintenance_loop_does_not_preflight_codex_auth(
-    monkeypatch, tmp_path
-):
-    calls = []
-
-    class StopLoop(Exception):
-        pass
-
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
-    monkeypatch.setattr(
-        cli,
-        "process_work_items_command",
-        lambda received: calls.append("work-items"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_okr_reviews_command",
-        lambda received: calls.append("okr-reviews"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_task_sources_command",
-        lambda received, max_new_items=None: calls.append("scan-task-sources"),
-    )
-    with pytest.raises(StopLoop):
-        run_task_maintenance_loop(
-            settings,
-            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
-            network_ready=lambda: True,
-        )
-
-    assert calls == []
-
-
 def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
     calls = []
 
@@ -7131,184 +7043,6 @@ def test_meeting_producer_success_recovers_prior_service_error(monkeypatch, tmp_
         item["component"]: item for item in store.list_service_health_components()
     }
     assert health["meeting_alignment.producer"]["state"] == "healthy"
-
-
-def test_task_maintenance_loop_processes_only_internal_steps(monkeypatch, tmp_path):
-    calls = []
-
-    class StopLoop(Exception):
-        pass
-
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
-    monkeypatch.setattr(
-        cli,
-        "process_work_items_command",
-        lambda received: calls.append(("work", received.db_path)) or 2,
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_task_sources_command",
-        lambda received, max_new_items=None: calls.append(
-            ("scan", received.db_path, max_new_items)
-        )
-        or 3,
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_oa_approvals_command",
-        lambda received, max_new_items=None: calls.append(
-            ("oa-scan", received.db_path, max_new_items)
-        )
-        or 6,
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_okr_reviews_command",
-        lambda received: calls.append(("okr", received.db_path)) or 5,
-    )
-
-    def sleep(seconds):
-        calls.append(("sleep", seconds))
-        raise StopLoop
-
-    with pytest.raises(StopLoop):
-        run_task_maintenance_loop(
-            settings,
-            sleep=sleep,
-            network_ready=lambda: True,
-        )
-
-    assert calls == [
-        ("sleep", 60),
-    ]
-
-
-def test_task_maintenance_loop_isolates_failed_step_and_continues(
-    monkeypatch, tmp_path
-):
-    calls = []
-
-    class StopLoop(Exception):
-        pass
-
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
-    store = SimpleNamespace(
-        record_error=lambda *args: calls.append(("error", *args)),
-        set_service_health_component=lambda component, **kwargs: calls.append(
-            ("health", component, kwargs)
-        ),
-        resolve_unresolved_errors_by_kind=lambda kind, **kwargs: calls.append(
-            ("resolve-kind", kind, kwargs)
-        ) or 0,
-        resolve_errors_recovered_by_reply_attempts=lambda: (
-            calls.append("resolve") or 0
-        ),
-            resolve_errors_recovered_by_completed_reply_tasks=lambda: (
-                calls.append("resolve-completed-task") or 0
-            ),
-            resolve_errors_recovered_by_terminal_work_summary_inputs=lambda: (
-                calls.append("resolve-work-summary") or 0
-            ),
-            resolve_errors_recovered_by_scheduled_service_command=lambda: (
-                calls.append("resolve-scheduled-command") or 0
-            ),
-        resolve_closed_blocked_reply_attempts=lambda: (
-            calls.append("resolve-blocked") or 0
-        ),
-        recover_stale_processing_reply_tasks=lambda: (
-            calls.append("recover-stale") or []
-        ),
-    )
-    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
-    monkeypatch.setattr(
-        cli,
-        "process_work_items_command",
-        lambda received: (_ for _ in ()).throw(DwsError("bad todo field")),
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_okr_reviews_command",
-        lambda received: calls.append("okr"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "weekly_okr_report_command",
-        lambda received, quiet_not_due=False: calls.append("weekly-okr"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_task_sources_command",
-        lambda received, max_new_items=None: calls.append("scan"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_oa_approvals_command",
-        lambda received, max_new_items=None: calls.append("oa-scan"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "close_superseded_scheduled_reply_tasks",
-        lambda received: calls.append("resolve-superseded") or 0,
-    )
-
-    with pytest.raises(StopLoop):
-        run_task_maintenance_loop(
-            settings,
-            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
-            network_ready=lambda: True,
-        )
-
-    assert calls == [
-        "resolve",
-        "resolve-completed-task",
-        "resolve-work-summary",
-        "resolve-scheduled-command",
-        "resolve-blocked",
-        "resolve-superseded",
-        (
-            "health",
-            "task_maintenance.resolve_recovered_errors",
-            {"state": "healthy"},
-        ),
-        (
-            "resolve-kind",
-            "task_maintenance_resolve_recovered_errors",
-            {"resolution": "recovered by a later successful maintenance cycle"},
-        ),
-        "recover-stale",
-        (
-            "health",
-            "task_maintenance.recover_stale_processing_tasks",
-            {"state": "healthy"},
-        ),
-        (
-            "resolve-kind",
-            "task_maintenance_recover_stale_processing_tasks",
-            {"resolution": "recovered by a later successful maintenance cycle"},
-        ),
-    ]
-
-
-def test_maintenance_error_detail_hides_okr_command_and_traceback():
-    detail = cli._maintenance_error_detail(
-        RuntimeError(
-            "dws command failed; command=/private/tool --user-id 123; "
-            "stderr=Traceback: okr_headless_session_expired: dedicated session"
-        )
-    )
-
-    assert detail == (
-        "okr_headless_session_expired: Dedicated Dingteam OKR browser "
-        "session requires login."
-    )
-    assert "command=" not in detail
-    assert "Traceback" not in detail
-
-
-def test_not_due_maintenance_result_does_not_count_as_recovery():
-    assert cli._maintenance_step_completed(SimpleNamespace(status="not_due")) is False
-    assert cli._maintenance_step_completed(SimpleNamespace(status="completed")) is True
-    assert cli._maintenance_step_completed(None) is True
 
 
 def test_meeting_delivery_loop_never_sends_in_dry_run(monkeypatch, tmp_path):
@@ -7388,47 +7122,6 @@ def test_service_loop_records_only_persistent_sqlite_lock(
     [error] = store.list_errors(limit=10)
     assert error.kind == error_kind
     assert error.detail == "database is locked"
-
-
-def test_task_maintenance_loop_keeps_only_internal_recovery_checks(
-    monkeypatch, tmp_path
-):
-    calls = []
-
-    class StopLoop(Exception):
-        pass
-
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
-    monkeypatch.setattr(
-        cli,
-        "process_work_items_command",
-        lambda received: calls.append("work"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_okr_reviews_command",
-        lambda received: calls.append("okr"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_task_sources_command",
-        lambda received, max_new_items=None: calls.append("scan"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_oa_approvals_command",
-        lambda received, max_new_items=None: calls.append("oa-scan"),
-    )
-
-    with pytest.raises(StopLoop):
-        run_task_maintenance_loop(
-            settings,
-            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
-            network_ready=lambda: True,
-        )
-
-    assert calls == []
-    assert not any("completion" in key and "interval" in key for key in vars(settings))
 
 
 def test_oa_pending_scan_loop_runs_on_its_own_interval(monkeypatch, tmp_path):
@@ -7602,15 +7295,6 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         "_recover_meeting_alignment_jobs_on_service_start",
         lambda settings: calls.append(("meeting-recovery", settings.db_path)) or 0,
     )
-    def task_maintenance_loop(settings, network_ready=None):
-        calls.append(
-            (
-                "task-maintenance",
-                network_ready is gate.ready,
-            )
-        )
-        stop("task-maintenance")
-
     def oa_pending_scan_loop(
         settings,
         interval_seconds,
@@ -7627,7 +7311,6 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         )
         stop("oa-pending-scan")
 
-    monkeypatch.setattr(cli, "run_task_maintenance_loop", task_maintenance_loop)
     monkeypatch.setattr(
         cli,
         "run_meeting_delivery_loop",
