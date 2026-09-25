@@ -274,3 +274,31 @@ def test_a_batch_gives_up_after_its_last_attempt():
         _WaitAndRetryBackend(
             Backend(), attempts=2, first_wait_seconds=1, sleeper=lambda _s: None
         ).classify(task_id="t1")
+
+
+def test_labeling_calls_the_route_the_operator_names_not_a_fixed_one():
+    """No route name is special: the batch uses the endpoint of the route it names."""
+
+    import pytest
+
+    from app.agent_runtime_config import load_runtime_config
+    from app.email_training_labeler import labeling_api_backend
+
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,kksj",
+            "CEO_RUNTIME_KKSJ_KIND": "codex_api",
+            "CEO_RUNTIME_KKSJ_BASE_URL": "https://gateway.example/v1/",
+            "CEO_RUNTIME_KKSJ_MODEL": "MiniMax-M3",
+            "CEO_RUNTIME_KKSJ_API_KEY": "kksj-key",
+        }
+    )
+
+    backend = labeling_api_backend(config, "kksj")
+
+    assert backend._url == "https://gateway.example/v1/responses"
+    assert backend._model == "MiniMax-M3"
+    with pytest.raises(SystemExit, match="codex_oauth"):
+        labeling_api_backend(config, "codex_oauth")
+    with pytest.raises(SystemExit, match="missing"):
+        labeling_api_backend(config, "missing")

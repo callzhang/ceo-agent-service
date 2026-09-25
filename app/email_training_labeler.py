@@ -462,10 +462,36 @@ class _WaitAndRetryBackend:
         raise AssertionError("unreachable")
 
 
+def labeling_api_backend(runtime_config: object, route_name: str) -> object:
+    """Call the named route's provider endpoint directly for an offline batch.
+
+    The service classifies through the runtime router, which needs a running
+    classification task this command does not create. The operator therefore
+    names the route to use; only a route with its own provider endpoint and
+    key (an added Codex API route) can be called directly.
+    """
+
+    from app.email_agent_api import EmailClassifierApiBackend
+
+    route = next(
+        (item for item in runtime_config.routes if item.name == route_name), None
+    )
+    secret = runtime_config.secret_for(route_name)
+    if route is None or not route.base_url or secret is None:
+        raise SystemExit(
+            f"runtime route {route_name} must be configured with its own "
+            "provider endpoint and API key"
+        )
+    return EmailClassifierApiBackend(
+        base_url=route.base_url,
+        model=route.model,
+        api_key=secret.get_secret_value(),
+    )
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     from app.agent_runtime_config import load_runtime_config
     from app.config import load_env_file, worker_db_path, workspace_path
-    from app.email_agent_api import EmailClassifierApiBackend
     from app.email_classifier_agent import EmailClassifierAgent
     from app.email_store import EmailStore
     from app.email_worker import _build_email_source_factory, _reread_historical_candidate_message
@@ -481,6 +507,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--gmail-query", help="Gmail search (X-GM-RAW), e.g. category:purchases")
     parser.add_argument("--folder", default="INBOX", help="mailbox to search")
     parser.add_argument("--target", default="", help="with a search: the category this search aims at, for the report")
+    parser.add_argument("--route", default="", help="a configured Codex API-kind runtime route whose endpoint, model and key label the batch")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     load_env_file()
@@ -540,18 +567,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     snapshot = runtime_skill_snapshot_for_process(task_store, pid=args.service_pid)
     if snapshot is None:
         raise SystemExit("no classifier Skill snapshot is loaded by that service process")
-    runtime_config = load_runtime_config(os.environ)
-    route = next((item for item in runtime_config.routes if item.name == "codex_api"), None)
-    secret = runtime_config.secret_for("codex_api")
-    if route is None or secret is None:
-        raise SystemExit("codex_api runtime route and key are required")
+    if not args.route:
+        parser.error("--route is required to name the runtime route that labels the batch")
     agent = EmailClassifierAgent(
         _WaitAndRetryBackend(
-            EmailClassifierApiBackend(
-                base_url=runtime_config.codex_api_base_url,
-                model=route.model,
-                api_key=secret.get_secret_value(),
-            ),
+            labeling_api_backend(load_runtime_config(os.environ), args.route),
             report=lambda event: print(json.dumps(event, ensure_ascii=False)),
         ),
         runtime_skill_snapshot=snapshot,
