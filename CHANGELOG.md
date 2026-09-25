@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- 2026-09-24: The weekly CEO report now produces output. Runs 384443/384444
+  stopped because the Skill wanted the target document's link as an input the
+  trigger never had, blocked on any missing business-line report, and forbade
+  publishing. A service read command, `weekly-report-materials`, resolves the
+  upcoming Monday's 管理层周会 document and the previous one by title and lists
+  the week's meetings from the meeting queue; the report writes only 二、CEO本周判断,
+  三、公司级重点指标 and new rows of the 一、重点问题及待办跟踪 table, leaving the
+  business-line sections its owners fill in untouched; a missing business-line
+  report is a coverage note, not a block. It runs Saturday 12:00
+  America/Los_Angeles (Sunday 03:00 Beijing), authorized to publish (Derek).
+
 - 2026-09-24: Long-term memory is now named by the Consumer and written by the
   service. The Consumer result requires `durable_memories` (title, content,
   source time, source refs, optional subject; may be empty). Finishing a task

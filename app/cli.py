@@ -368,6 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
         "read-oa-approval-detail",
         "read-dingteam-okr",
         "daily-report-facts",
+        "weekly-report-materials",
         "process-follow-ups",
         "daily-task-maintenance",
         "quality-check",
@@ -516,7 +517,7 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "read-dingteam-okr":
             subparser.add_argument("--user-id", required=True)
             subparser.add_argument("--period-label", required=True)
-        if command == "daily-report-facts":
+        if command in {"daily-report-facts", "weekly-report-materials"}:
             subparser.add_argument(
                 "--scheduled-run",
                 required=True,
@@ -2611,6 +2612,27 @@ def daily_report_facts_command(
         store,
         EmailStore(settings.db_path),
         report_window_for_run(store, scheduled_run_id),
+    )
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), flush=True)
+    return payload
+
+
+def weekly_report_materials_command(
+    settings: WorkerSettings, *, scheduled_run_id: int
+) -> dict[str, object]:
+    """Print the meeting documents and the week's meetings for one weekly report."""
+    from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
+    from app.weekly_report_materials import collect_weekly_report_materials
+
+    store = AutoReplyStore(settings.db_path)
+    run = store.get_scheduled_task_run(scheduled_run_id)
+    if run is None:
+        raise ValueError(f"scheduled task run {scheduled_run_id} does not exist")
+    payload = collect_weekly_report_materials(
+        store,
+        DwsClient(),
+        settings.workspace / MINUTES_ARCHIVE_DIRECTORY,
+        run.scheduled_for,
     )
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), flush=True)
     return payload
@@ -5055,6 +5077,8 @@ def main() -> None:
         )
     elif args.command == "daily-report-facts":
         daily_report_facts_command(settings, scheduled_run_id=args.scheduled_run)
+    elif args.command == "weekly-report-materials":
+        weekly_report_materials_command(settings, scheduled_run_id=args.scheduled_run)
     elif args.command == "process-follow-ups":
         ensure_live_send_allowed(settings)
         process_follow_ups_command(settings)

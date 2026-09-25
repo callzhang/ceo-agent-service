@@ -788,12 +788,17 @@ def _seed_minutes_task(
     )
 
 
-WEEKLY_REPORT_PROMPT = (
-    "按 $ceo-weekly-report 准备本周的 CEO 管理周报：建立本期运行目录，盘点本周可访问的 "
-    "$dingtalk-minutes 听记与 $dingtalk-chat 群消息，读取四条业务线来源报告，核对上期未结问题，"
-    "起草七段式报告数据并跑通校验。发布到钉钉文档需要 Derek 明确授权，本轮只准备到可发布状态并"
-    "汇报缺失证据与需要他决策的事项，不要执行写入。"
-)
+def weekly_report_prompt() -> str:
+    materials_command = (
+        f"{shlex.quote(str(central_python()))} -m app.cli weekly-report-materials "
+        "--scheduled-run <本次触发的 scheduled_task_run_id>"
+    )
+    return (
+        "按 $ceo-weekly-report 生成并发布本周的 CEO 管理周报。"
+        f"先运行 `{materials_command}` 取得目标周会文档、上周文档和本周会议清单，"
+        "再按 skill 读取听记转写、群消息和各业务线材料，写成报告后直接写入下周一的管理层周会文档"
+        "（不存在就先建），并读回核对。业务线还没提交的报告写进覆盖说明，不阻塞发布，不要向 Derek 追问材料。"
+    )
 
 
 def _seed_weekly_report_task(
@@ -805,10 +810,10 @@ def _seed_weekly_report_task(
 ) -> ScheduledTask:
     """Seed the weekly CEO management report as an Agent task.
 
-    Unlike the minutes upkeep, this is judgement throughout: which meetings
-    matter, what the evidence supports, which deviation needs a decision. It
-    prepares and stops, because the Skill requires Derek's explicit
-    authorization before the DingTalk document is written.
+    Saturday 12:00 Pacific, which is Sunday 03:00 in Beijing (Derek
+    2026-09-24). A service command resolves the upcoming meeting's document
+    and lists the week's meetings; the run writes the report into that
+    document itself.
     """
     del working_directory
     existing = _existing_task(store, WEEKLY_REPORT_MIGRATION_KEY, now=now)
@@ -830,10 +835,10 @@ def _seed_weekly_report_task(
         migration_key=WEEKLY_REPORT_MIGRATION_KEY,
         name=_default_copy(WEEKLY_REPORT_MIGRATION_KEY).name,
         description=_default_copy(WEEKLY_REPORT_MIGRATION_KEY).description,
-        prompt=WEEKLY_REPORT_PROMPT,
+        prompt=weekly_report_prompt(),
         runtime_id=runtime_id,
         cron_expression="0 0 12 * * 6",
-        timezone_name="Asia/Shanghai",
+        timezone_name="America/Los_Angeles",
         skill_refs=skill_refs,
         enabled=False,
         now=now,

@@ -185,6 +185,26 @@ def test_describe_native_command_allows_service_owned_daily_report_facts_read():
     assert descriptor.target_identifiers == {"scheduled-run": "58148"}
 
 
+def test_describe_native_command_allows_service_owned_weekly_report_materials_read():
+    descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                str(central_python()),
+                "-m",
+                "app.cli",
+                "weekly-report-materials",
+                "--scheduled-run",
+                "58149",
+            ],
+        }
+    )
+
+    assert descriptor is not None
+    assert descriptor.effect is EffectKind.READ_ONLY
+    assert descriptor.command_path == "app.cli weekly-report-materials"
+
+
 def test_describe_native_command_rejects_local_pipeline_with_identifiers():
     descriptor = describe_native_command(
         {

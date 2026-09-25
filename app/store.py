@@ -16774,6 +16774,23 @@ class AutoReplyStore:
             ).fetchall()
         return [self._meeting_alignment_job_from_row(row) for row in rows]
 
+    def list_meeting_alignment_jobs_ended_between(
+        self, start: str, end: str
+    ) -> list[MeetingAlignmentJob]:
+        """Every discovered meeting that ended in [start, end), oldest first."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from meeting_alignment_jobs
+                where datetime(ended_at) >= datetime(?)
+                  and datetime(ended_at) < datetime(?)
+                order by datetime(ended_at), id
+                """,
+                (start, end),
+            ).fetchall()
+        return [self._meeting_alignment_job_from_row(row) for row in rows]
+
     def recurring_meeting_group_targets(self, title: str) -> list[tuple[str, str, int]]:
         with self._connect() as db:
             rows = db.execute(

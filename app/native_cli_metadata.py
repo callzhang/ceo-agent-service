@@ -18,7 +18,12 @@ from app.runtime_environment import central_python
 
 _SHELL_CONNECTORS = frozenset({"&&", "||", "|", ";"})
 _SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset(
-    {"read-oa-approval-detail", "read-dingteam-okr", "daily-report-facts"}
+    {
+        "read-oa-approval-detail",
+        "read-dingteam-okr",
+        "daily-report-facts",
+        "weekly-report-materials",
+    }
 )
 MATERIAL_OUTPUT_ROOT = Path("/tmp").resolve() / "ceo-agent-service-materials"
 _LOCAL_OUTPUT_FLAGS = frozenset(
@@ -556,7 +561,7 @@ def _is_service_read_only_python_command(argv: tuple[str, ...]) -> bool:
                 and _has_required_flag_value(argv, "--period-label")
             )
             or (
-                command == "daily-report-facts"
+                command in {"daily-report-facts", "weekly-report-materials"}
                 and len(argv) == 6
                 and argv[4] == "--scheduled-run"
                 and argv[5].isdigit()

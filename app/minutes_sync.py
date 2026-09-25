@@ -303,6 +303,17 @@ def render_archive(
     return "\n".join(lines) + "\n"
 
 
+def archive_path_for(
+    archive_dir: Path, basic: dict[str, Any], *, task_uuid: str
+) -> Path:
+    """Where the archive of one minute, described by its basic info, lives."""
+    return _archive_path(
+        archive_dir,
+        title=str(basic.get("title") or task_uuid),
+        started_at=_started_at(basic),
+    )
+
+
 def _archive_path(archive_dir: Path, *, title: str, started_at: datetime) -> Path:
     # Keep the existing "<title>/<title> <date> <time>.md" layout so new files
     # sit beside the ones already there.
@@ -584,11 +595,7 @@ def sync_minutes_once(
                     )
                 )
             continue
-        path = _archive_path(
-            archive_dir,
-            title=str(basic.get("title") or task_uuid),
-            started_at=_started_at(basic),
-        )
+        path = archive_path_for(archive_dir, basic, task_uuid=task_uuid)
         try:
             body = render_archive(
                 task_uuid=task_uuid, summary=summary, paragraphs=paragraphs

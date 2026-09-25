@@ -1002,6 +1002,8 @@ def test_every_fixed_discovery_check_is_a_service_command(
     assert "-m app.cli daily-report-facts --scheduled-run" in daily_report.prompt
     assert weekly_report.command == "" and weekly_report.runtime_id
     assert weekly_report.cron_expression == "0 0 12 * * 6"
+    assert weekly_report.timezone_name == "America/Los_Angeles"
+    assert "-m app.cli weekly-report-materials --scheduled-run" in weekly_report.prompt
     assert [ref.skill_name for ref in weekly_report.skill_refs] == [
         "ceo-weekly-report",
         "dingtalk-minutes",
