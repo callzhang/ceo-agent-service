@@ -1625,6 +1625,21 @@ def _persist_unsubscribe_result_fixture(
     return store, authorization, receipt
 
 
+def test_backfill_fills_only_an_empty_recipient_list(tmp_path: Path):
+    store = EmailStore(tmp_path / "recipients-backfill.sqlite3")
+    persisted = _persist_scan(store, _classification(status=EmailClassificationStatus.PENDING_FEEDBACK))
+    account, identity = "dingtalk-account", persisted["stable_message_identity"]
+    with store._connect() as db:
+        db.execute("update email_messages set recipients_json='[]'")
+
+    assert store.backfill_email_message_recipients(account, identity, ["a@example.com", " b@example.com "])
+    assert store.get_classification(int(persisted["id"]))["recipients"] == ["a@example.com", "b@example.com"]
+    # Saved recipients are never replaced, and an empty answer writes nothing.
+    assert not store.backfill_email_message_recipients(account, identity, ["other@example.com"])
+    assert not store.backfill_email_message_recipients(account, identity, [])
+    assert store.get_classification(int(persisted["id"]))["recipients"] == ["a@example.com", "b@example.com"]
+
+
 def test_backfill_fills_a_missing_entry_url_only_when_it_hashes_to_the_receipt(
     tmp_path: Path,
 ):

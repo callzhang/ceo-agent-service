@@ -1402,6 +1402,15 @@ class StoredEmailAction:
         )
 
 
+@dataclass(frozen=True)
+class FailedDirectAction:
+    """A terminal-failed direct action as it stands, not claimed."""
+
+    action: StoredEmailAction
+    provider_operation: str
+    error: str
+
+
 class EmailAccountConflict(RuntimeError):
     """An account ID or unshared email address conflicts with stored config."""
 
@@ -14344,6 +14353,30 @@ class EmailStore:
             "scans": scans,
         }
 
+    def backfill_email_message_recipients(
+        self,
+        account_id: str,
+        stable_message_identity: str,
+        recipients: Sequence[str],
+    ) -> bool:
+        """Save the recipients of a message stored before its path saved any.
+
+        Only an empty list is filled in; recipients already saved are never
+        replaced. Returns whether the message was updated.
+        """
+
+        values = [str(value).strip() for value in recipients if str(value).strip()]
+        if not values:
+            return False
+        with self._connect() as db:
+            cursor = db.execute(
+                "update email_messages set recipients_json=? "
+                "where account_id=? and stable_message_identity=? "
+                "and recipients_json='[]'",
+                (_json_dump(values), account_id, stable_message_identity),
+            )
+            return cursor.rowcount == 1
+
     def get_stored_email_locator(
         self, classification_id: int
     ) -> StoredEmailLocator | None:
@@ -15899,6 +15932,119 @@ class EmailStore:
                 )
             return self._claimed_direct_action(
                 row, attempt_number=attempt_number, claimed_at=claimed_at
+            )
+
+    def list_failed_direct_actions(
+        self,
+        *,
+        account_id: str,
+        action_types: Sequence[EmailAction],
+        limit: int,
+        after_action_id: str = "",
+    ) -> list[FailedDirectAction]:
+        """List failed actions of the current plan, in `action_id` order.
+
+        Read-only. Rows of a superseded plan are left out: they can no longer be
+        completed, so reconciling them would change nothing the service reads.
+        """
+
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise ValueError("account_id must be nonblank")
+        types = tuple(action.value for action in action_types)
+        if not types or limit < 1:
+            return []
+        placeholders = ",".join("?" for _ in types)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
+                       c.thread_id, c.stable_message_identity
+                from email_actions as a
+                join email_classifications as c on c.id=a.classification_id
+                where a.status='failed' and a.account_id=?
+                  and a.action_type in ({placeholders})
+                  and c.status='processed'
+                  and a.action_plan_id=c.current_action_plan_id
+                  and a.action_id>?
+                order by a.action_id
+                limit ?
+                """,
+                (account_id, *types, after_action_id, int(limit)),
+            ).fetchall()
+        return [
+            FailedDirectAction(
+                action=self._claimed_direct_action(
+                    row,
+                    attempt_number=int(row["attempt_count"]) + 1,
+                    claimed_at="",
+                ),
+                provider_operation=str(row["provider_operation"]),
+                error=str(row["error"]),
+            )
+            for row in rows
+        ]
+
+    def claim_failed_direct_action_for_reconciliation(
+        self,
+        *,
+        action_id: str,
+        expected_attempt_count: int,
+        claimed_at: str,
+    ) -> StoredEmailAction | None:
+        """Claim one failed action so a verified outcome can be recorded on it.
+
+        This is not a retry: the caller has already seen, read-only, that the
+        provider carried the action out, and completes the claim as `done`
+        without another provider call. It skips the retry schedule and the
+        predecessor checks, which gate *doing* an action, not recording one that
+        already happened. Returns None if the row is no longer that same failed
+        row of the current plan.
+        """
+
+        claimed_at = _required_utc_timestamp(claimed_at, field="claimed_at")
+        if not isinstance(action_id, str) or not action_id.strip():
+            raise ValueError("action_id must be nonblank")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                """
+                select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
+                       c.thread_id, c.stable_message_identity,
+                       c.current_action_plan_id
+                from email_actions as a
+                join email_classifications as c on c.id=a.classification_id
+                where a.action_id=? and c.status='processed'
+                """,
+                (action_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["action_plan_id"] != row["current_action_plan_id"]
+                or row["status"] != "failed"
+                or int(row["attempt_count"]) != expected_attempt_count
+            ):
+                return None
+            busy = db.execute(
+                "select 1 from email_actions "
+                "where action_plan_id=? and status='processing'",
+                (row["action_plan_id"],),
+            ).fetchone()
+            if busy is not None:
+                return None
+            db.execute(
+                """
+                update email_actions
+                set status='processing', started_at=?, finished_at='',
+                    next_attempt_at='', provider_operation='', provider_target='',
+                    provider_result_id='', error='', updated_at=?
+                where action_id=? and status='failed' and attempt_count=?
+                """,
+                (claimed_at, claimed_at, action_id, expected_attempt_count),
+            )
+            return self._claimed_direct_action(
+                row,
+                attempt_number=expected_attempt_count + 1,
+                claimed_at=claimed_at,
             )
 
     @staticmethod
