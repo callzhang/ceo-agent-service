@@ -25427,7 +25427,6 @@ class AutoReplyStore:
         return (
             "not exists (select 1 from reply_tasks as external_task "
             "where external_task.channel=attempts.channel "
-            "and external_task.channel='email' "
             "and external_task.conversation_id=attempts.conversation_id "
             "and external_task.trigger_message_id=attempts.trigger_message_id "
             f"and {external_task_error_sql('external_task.error')})"

@@ -171,12 +171,14 @@ class ScriptResult(BaseModel):
                 "label": "仅本次处理",
                 "instruction": "按已核验的规则处理本次事项。",
                 "consequence": "不修改后续同类事项的规则。",
+                "applies_to": "task_class",
             },
             {
                 "key": "skill_update",
                 "label": "更新 Skill",
                 "instruction": "把这条规则更新到适用 Skill 后继续处理。",
                 "consequence": "后续同类事项按更新后的规则自动处理。",
+                "applies_to": "task_class",
             },
         ]
     )
@@ -407,6 +409,22 @@ class FakeAgentOrchestrator:
                     "feedback": None,
                     "external_result": None,
                     "decision_options": result.decision_options,
+                    # A human decision must now explain itself: a reason and
+                    # the evidence chain (typed result contract, 2026-09-22).
+                    "needs_human_reason": result.summary,
+                    "decision_basis": {
+                        "verified_facts": [
+                            {"assertion": "The current facts were verified.", "references": ["record:current"]}
+                        ],
+                        "rule_evidence": [
+                            {"assertion": result.summary, "references": ["policy:current"]}
+                        ],
+                        "quality_explanation": "The decision needs a person's choice.",
+                        "no_external_action_evidence": [
+                            {"assertion": "No external action was performed.", "references": ["receipt:none"]}
+                        ],
+                        "conclusion": result.summary,
+                    },
                     "error": result.error.model_dump(mode="json"),
                 }
             )
@@ -14053,7 +14071,7 @@ def test_okr_review_live_source_error_fails_after_agent_queue_action(
     assert final_sent(dws) == []
 
 
-def test_okr_review_dingteam_auth_error_blocks_after_agent_queue_action(
+def test_okr_review_dingteam_login_expiry_is_a_failure_not_a_human_decision(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
@@ -14088,10 +14106,13 @@ def test_okr_review_dingteam_auth_error_blocks_after_agent_queue_action(
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "okr_authorization_required"
-    assert worker.store.count_reply_tasks(status="failed") == 0
-    assert worker.store.count_reply_tasks(status="done") == 1
+    # Derek, 2026-09-25: an expired Dingteam login is a technical, external
+    # failure, not a decision for a person. Only the standard
+    # `authorization_required` code may carry an authorization needs_human, so
+    # this OKR-specific code is rejected as a human projection and the run
+    # ends failed (kept out of Attention as an external cause).
+    assert attempt.send_status == "failed"
+    assert worker.store.count_reply_tasks(status="failed") == 1
     assert worker.store.claim_okr_review_requests(1) == []
     assert final_sent(dws) == []
 

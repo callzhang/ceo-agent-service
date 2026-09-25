@@ -11495,3 +11495,32 @@ def test_attention_skips_unsubscribe_failures_caused_by_the_external_page(tmp_pa
         assert db.execute(
             "select count(*) from reply_tasks where status='failed'"
         ).fetchone()[0] == 5
+
+
+def test_attention_skips_an_expired_dingteam_okr_login(tmp_path: Path):
+    # Derek, 2026-09-25: only a person can log in again; it is not an Attention item.
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="cid-okr",
+        conversation_title="OKR",
+        single_chat=True,
+        trigger_message_id="msg-okr",
+        trigger_create_time="2026-09-25 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="帮我审核 OKR",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='failed', "
+            "error='okr_headless_session_expired: dedicated Dingteam session requires login' "
+            "where id=?",
+            (task.id,),
+        )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert not any(row["category"] in {"Reply task", "Reply"} for row in rows)
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from reply_tasks where status='failed'"
+        ).fetchone()[0] == 1

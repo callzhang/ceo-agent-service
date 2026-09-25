@@ -37,7 +37,20 @@ EXTERNAL_TASK_ERRORS = (
 )
 
 
+# Error texts that start with one of these: the Dingteam OKR session expired or
+# needs a login. Only a person can log in again, and a rerun reads the same
+# expired session (Derek 2026-09-25).
+EXTERNAL_TASK_ERROR_PREFIXES = (
+    "okr_headless_session_expired",
+    "okr_authorization_required",
+)
+
+
 def external_task_error_sql(column: str = "reply_tasks.error") -> str:
-    """SQL condition true when ``column`` holds one of the external error texts."""
+    """SQL condition true when ``column`` holds an external-cause error text."""
     quoted = ", ".join("'" + error.replace("'", "''") + "'" for error in EXTERNAL_TASK_ERRORS)
-    return f"{column} in ({quoted})"
+    prefixes = " or ".join(
+        f"{column} like '{prefix.replace(chr(39), chr(39) * 2)}%'"
+        for prefix in EXTERNAL_TASK_ERROR_PREFIXES
+    )
+    return f"({column} in ({quoted}) or {prefixes})"

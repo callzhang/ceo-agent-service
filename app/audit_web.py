@@ -3222,7 +3222,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   )
                   -- Failed for a reason outside this service: History keeps it,
                   -- Attention does not (Derek 2026-09-25).
-                  and not (reply_tasks.channel='email' and """ + external_task_error_sql() + """)
+                  and not """ + external_task_error_sql() + """
                 order by
                     reply_tasks.updated_at desc,
                     reply_tasks.id desc
@@ -3263,6 +3263,11 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 if table == "wechat_deliveries"
                 else ""
             )
+            if table == "okr_review_requests":
+                # An expired Dingteam OKR login is an external cause (Derek 2026-09-25).
+                current_generation_filter = (
+                    f"and not {external_task_error_sql(error_column)}"
+                )
             sql = f"""
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
