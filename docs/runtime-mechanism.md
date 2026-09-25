@@ -650,7 +650,7 @@ Provider 训练观察按有界批次运行。观察缓存与请求队列使用�
 扫描不得阻塞实时扫描、分类结果落库或确定性邮箱动作。Email worker 只有在扫描/动作、Agent
 consumer、训练三个组件都至少成功完成一轮后才发布 `ready`。
 
-业务类别移动完成后在变更后的 locator 上执行 flag/read 动作并回读；用户在 provider 中再次移动
+业务类别移动完成后在变更后的 locator 上执行 flag/read 动作，以服务器应答为结果；用户在 provider 中再次移动
 邮件时，下一份 snapshot 立即以该文件夹作为训练标签。旧的 staged/manual 历史评测入口仍用于候选
 验证；生产历史整理由上述定时模型窗口自动、小批量、可恢复地推进，不会一次性读取整个邮箱。
 `junk` 先由代码发现标准退订候选；只有 unsubscribe 进入 Consumer/Audit

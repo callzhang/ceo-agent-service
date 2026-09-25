@@ -129,32 +129,35 @@ def _action(
     )
 
 
-def test_label_reads_before_write_and_requires_matching_readback() -> None:
+def test_label_reads_before_write_and_trusts_the_servers_reply() -> None:
     module = import_module("app.email_provider_actions")
     action = _action(EmailAction.LABEL, {"labels": ("work",)})
     provider = StatefulFakeImapProvider()
 
     result = module.DeterministicEmailActionExecutor(provider).execute(action)
 
+    # The server accepted the STORE: that is the result. No second read.
     assert result == module.ProviderActionResult(
         status="done",
         provider_operation="STORE LABELS",
         provider_target=action.locator.stable_message_identity,
-        provider_result_id="revision-1",
+        provider_result_id=f"server-reply:label:{action.locator.uid}",
     )
-    assert provider.command_log == ["READ", "STORE LABELS", "READ"]
+    assert provider.command_log == ["READ", "STORE LABELS"]
 
 
-def test_mark_read_archive_move_and_trash_use_verified_provider_state() -> None:
+def test_mark_read_trusts_the_reply_and_a_move_without_a_new_location_is_read_back() -> None:
     module = import_module("app.email_provider_actions")
     cases = (
-        (EmailAction.MARK_READ, {}, "STORE \\Seen", "STORE \\Seen"),
-        (EmailAction.ARCHIVE, {}, "MOVE ARCHIVE", "MOVE ARCHIVE"),
-        (EmailAction.MOVE, {"target_folder": "Projects"}, "MOVE", "MOVE"),
-        (EmailAction.TRASH, {}, "move_to_trash", "MOVE TRASH"),
+        # In place: the server's acceptance settles it.
+        (EmailAction.MARK_READ, {}, "STORE \\Seen", "STORE \\Seen", False, f"server-reply:mark_read:7"),
+        # Moves: this fake does not say where the message went, so it is looked up.
+        (EmailAction.ARCHIVE, {}, "MOVE ARCHIVE", "MOVE ARCHIVE", True, "revision-1"),
+        (EmailAction.MOVE, {"target_folder": "Projects"}, "MOVE", "MOVE", True, "revision-1"),
+        (EmailAction.TRASH, {}, "move_to_trash", "MOVE TRASH", True, "revision-1"),
     )
 
-    for action_type, parameters, receipt_operation, provider_command in cases:
+    for action_type, parameters, receipt_operation, provider_command, read_back, result_id in cases:
         provider = StatefulFakeImapProvider()
         action = _action(action_type, parameters)
 
@@ -162,8 +165,10 @@ def test_mark_read_archive_move_and_trash_use_verified_provider_state() -> None:
 
         assert result.status == "done"
         assert result.provider_operation == receipt_operation
-        assert result.provider_result_id == "revision-1"
-        assert provider.command_log == ["READ", provider_command, "READ"]
+        assert result.provider_result_id == result_id
+        assert provider.command_log == (
+            ["READ", provider_command, "READ"] if read_back else ["READ", provider_command]
+        )
 
 
 def test_already_satisfied_actions_are_readback_noops() -> None:
@@ -327,16 +332,16 @@ def test_readback_failure_is_reconciled_by_retry_without_duplicate_write() -> No
     module = import_module("app.email_provider_actions")
     provider = StatefulFakeImapProvider(fail_reads={2})
     executor = module.DeterministicEmailActionExecutor(provider)
-    first = _action(EmailAction.MARK_READ, {})
+    # A move whose new location the server did not report is the case that is
+    # still read back.
+    first = _action(EmailAction.ARCHIVE, {})
 
     failed = executor.execute(first)
-    retried = executor.execute(
-        _action(EmailAction.MARK_READ, {}, attempt_number=2)
-    )
+    retried = executor.execute(_action(EmailAction.ARCHIVE, {}, attempt_number=2))
 
     assert failed == module.ProviderActionResult(
         status="failed",
-        provider_operation="STORE \\Seen",
+        provider_operation="MOVE ARCHIVE",
         provider_target=first.locator.stable_message_identity,
         provider_result_id="",
         error="provider_readback_failed:TimeoutError",
@@ -344,7 +349,7 @@ def test_readback_failure_is_reconciled_by_retry_without_duplicate_write() -> No
     assert retried.status == "done"
     assert retried.provider_operation == "readback_noop"
     assert retried.provider_result_id == "revision-1"
-    assert provider.command_log == ["READ", "STORE \\Seen", "READ", "READ"]
+    assert provider.command_log == ["READ", "MOVE ARCHIVE", "READ", "READ"]
 
 
 def test_trash_never_uses_expunge_or_permanent_delete() -> None:
@@ -1101,29 +1106,45 @@ def test_production_imap_absent_permanentflags_timeout_retries_by_readback() -> 
     assert [call[1] for call in session.calls if call[0] == "uid"].count("STORE") == 1
 
 
-def test_production_imap_store_uses_new_connection_for_durable_readback() -> None:
+def test_production_imap_store_is_settled_by_the_server_reply_without_a_second_login() -> None:
     module = import_module("app.email_provider_actions")
     write_session = FakeWritableImapSession()
-    readback_session = FakeWritableImapSession()
+    opened = []
 
     def fresh_provider():
-        assert write_session.logged_out is True
-        return module.ImapDeterministicProvider(
-            readback_session,
-            account_id="account-1",
-        )
+        opened.append(True)
+        raise AssertionError("an in-place change must not open a read-back connection")
 
     result = module.DeterministicEmailActionExecutor(
         module.ImapDeterministicProvider(write_session, account_id="account-1"),
         readback_provider_factory=fresh_provider,
     ).execute(_action(EmailAction.LABEL, {"labels": ("work",)}))
 
-    assert result.status == "failed"
-    assert result.error == "provider_readback_mismatch"
+    assert result.status == "done"
+    assert opened == []
     assert "work" in write_session.messages["INBOX"][7][1]
-    assert "work" not in readback_session.messages["INBOX"][7][1]
     assert write_session.logged_out is True
-    assert readback_session.logged_out is True
+
+
+def test_a_move_the_server_did_not_locate_is_read_back_on_a_new_connection() -> None:
+    module = import_module("app.email_provider_actions")
+    write_session = FakeWritableImapSession(include_copyuid=False)
+    readback_sessions = []
+
+    def fresh_provider():
+        assert write_session.logged_out is True
+        session = FakeWritableImapSession(messages=write_session.messages)
+        readback_sessions.append(session)
+        return module.ImapDeterministicProvider(session, account_id="account-1")
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(write_session, account_id="account-1"),
+        readback_provider_factory=fresh_provider,
+    ).execute(_action(EmailAction.ARCHIVE, {}))
+
+    assert result.status == "done"
+    assert len(readback_sessions) == 1
+    assert readback_sessions[0].logged_out is True
 
 
 @pytest.mark.parametrize(
@@ -1292,8 +1313,8 @@ def test_production_imap_move_without_message_id_uses_uidplus_copyuid_response()
     assert result.updated_locator.uid == 19
     assert ("response", "COPYUID") in session.calls
     assert session.logged_out is True
-    assert len(readback_sessions) == 1
-    assert readback_sessions[0].logged_out is True
+    # The server said where the message went, so there is nothing to read back.
+    assert readback_sessions == []
 
 
 def test_production_imap_move_accepts_singleton_uid_ranges_in_copyuid() -> None:
@@ -1660,11 +1681,31 @@ def test_a_gone_message_still_completes_a_trash_action() -> None:
     assert result.provider_result_id.startswith("message-unavailable:")
 
 
-def test_a_verifying_connection_is_handed_on_instead_of_closed() -> None:
-    """One login per action: the read-back connection becomes the next writer."""
+def test_the_write_connection_is_handed_on_when_the_servers_reply_settles_the_action() -> None:
+    """An action costs no login of its own: the connection it used is reused."""
 
     module = import_module("app.email_provider_actions")
     write_session = FakeWritableImapSession()
+    handed_over = []
+
+    def no_readback():
+        raise AssertionError("the server's reply was enough")
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(write_session, account_id="account-1"),
+        readback_provider_factory=no_readback,
+        hand_over_session=handed_over.append,
+    ).execute(_action(EmailAction.ARCHIVE, {}))
+
+    assert result.status == "done"
+    assert len(handed_over) == 1
+    assert handed_over[0].session is write_session
+    assert write_session.logged_out is False
+
+
+def test_a_verifying_connection_is_handed_on_when_a_read_back_was_needed() -> None:
+    module = import_module("app.email_provider_actions")
+    write_session = FakeWritableImapSession(include_copyuid=False)
     readback_sessions = []
     handed_over = []
 
@@ -1677,12 +1718,12 @@ def test_a_verifying_connection_is_handed_on_instead_of_closed() -> None:
     result = module.DeterministicEmailActionExecutor(
         module.ImapDeterministicProvider(write_session, account_id="account-1"),
         readback_provider_factory=fresh_provider,
-        hand_over_verified_session=handed_over.append,
+        hand_over_session=handed_over.append,
     ).execute(_action(EmailAction.ARCHIVE, {}))
 
     assert result.status == "done"
     assert write_session.logged_out is True
-    # The verifying connection is not the one that wrote, and it is still open.
+    # The connection that verified is a different one, and it is still open.
     assert len(handed_over) == 1
     assert handed_over[0].session is readback_sessions[0]
     assert readback_sessions[0].logged_out is False
@@ -1690,39 +1731,19 @@ def test_a_verifying_connection_is_handed_on_instead_of_closed() -> None:
 
 def test_a_connection_that_did_not_verify_is_closed_not_handed_on() -> None:
     module = import_module("app.email_provider_actions")
-    write_session = FakeWritableImapSession()
+    write_session = FakeWritableImapSession(include_copyuid=False)
     readback_session = FakeWritableImapSession()
     handed_over = []
 
-    # The read-back does not see the write, so verification fails.
+    # This read-back does not see the write, so verification fails.
     result = module.DeterministicEmailActionExecutor(
         module.ImapDeterministicProvider(write_session, account_id="account-1"),
         readback_provider_factory=lambda: module.ImapDeterministicProvider(
             readback_session, account_id="account-1"
         ),
-        hand_over_verified_session=handed_over.append,
-    ).execute(_action(EmailAction.LABEL, {"labels": ("work",)}))
+        hand_over_session=handed_over.append,
+    ).execute(_action(EmailAction.ARCHIVE, {}))
 
     assert result.error == "provider_readback_mismatch"
     assert handed_over == []
     assert readback_session.logged_out is True
-
-
-def test_the_folder_list_travels_with_the_handed_on_connection() -> None:
-    module = import_module("app.email_provider_actions")
-    write_session = FakeWritableImapSession()
-    write = module.ImapDeterministicProvider(write_session, account_id="account-1")
-    handed_over = []
-
-    result = module.DeterministicEmailActionExecutor(
-        write,
-        readback_provider_factory=lambda: module.ImapDeterministicProvider(
-            FakeWritableImapSession(messages=write_session.messages),
-            account_id="account-1",
-        ),
-        hand_over_verified_session=handed_over.append,
-    ).execute(_action(EmailAction.ARCHIVE, {}))
-
-    assert result.status == "done"
-    assert write._mailbox_cache is not None
-    assert handed_over[0]._mailbox_cache is write._mailbox_cache

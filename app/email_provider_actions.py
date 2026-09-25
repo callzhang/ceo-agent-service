@@ -138,21 +138,22 @@ class DeterministicEmailActionExecutor:
         provider: DeterministicEmailProvider,
         *,
         readback_provider_factory: Callable[[], DeterministicEmailProvider] | None = None,
-        hand_over_verified_session: Callable[[DeterministicEmailProvider], object] | None = None,
+        hand_over_session: Callable[[DeterministicEmailProvider], object] | None = None,
     ):
         self.provider = provider
         self._readback_provider_factory = readback_provider_factory
-        # Called with the connection that just verified an action, instead of
-        # closing it, so the next action on the account can write through it. It
-        # is still a different connection from the one that wrote this action,
-        # which is what makes the read-back independent.
-        self._hand_over_verified_session = hand_over_verified_session
+        # Called with the connection an action finished on, instead of closing
+        # it, so the next action on the account can write through it. That is
+        # the write connection when the server's own reply was enough, and the
+        # read-back connection when a read-back was needed.
+        self._hand_over_session = hand_over_session
 
     def execute(self, action: StoredEmailAction) -> ProviderActionResult:
         operation = _provider_operation(action.action_type)
         readback_provider: DeterministicEmailProvider | None = None
         provider_closed = False
         keep_readback_session = False
+        keep_write_session = False
         try:
             destination = self._resolve_destination(action)
             try:
@@ -202,6 +203,18 @@ class DeterministicEmailActionExecutor:
                 )
             except Exception as exc:
                 return self._failed(action, operation, "provider_apply_failed", exc)
+            if self._server_reply_is_enough(action, applied_locator):
+                # The server accepted the command, and for a move it told us
+                # where the message went. That reply is the result: reading it
+                # back on a new connection would cost a login to learn nothing.
+                keep_write_session = True
+                return ProviderActionResult(
+                    status="done",
+                    provider_operation=operation,
+                    provider_target=action.locator.stable_message_identity,
+                    provider_result_id=_server_reply_result_id(action, applied_locator),
+                    updated_locator=_changed_locator(action.locator, applied_locator),
+                )
             readback_locator = applied_locator or current_locator
             try:
                 if self._readback_provider_factory is not None:
@@ -249,20 +262,34 @@ class DeterministicEmailActionExecutor:
             )
         finally:
             if readback_provider is not None:
-                if keep_readback_session and self._hand_over_verified_session is not None:
-                    self._pass_on_folder_list(readback_provider)
-                    self._hand_over_verified_session(readback_provider)
+                if keep_readback_session and self._hand_over_session is not None:
+                    self._hand_over_session(readback_provider)
                 else:
                     _close_provider(readback_provider)
             if not provider_closed:
-                _close_provider(self.provider)
+                if keep_write_session and self._hand_over_session is not None:
+                    self._hand_over_session(self.provider)
+                else:
+                    _close_provider(self.provider)
 
-    def _pass_on_folder_list(self, session_provider: DeterministicEmailProvider) -> None:
-        """Let the next action skip the folder listing this one already paid for."""
+    @staticmethod
+    def _server_reply_is_enough(
+        action: StoredEmailAction, applied_locator: StoredEmailLocator | None
+    ) -> bool:
+        """Say whether the server's answer already settles this action.
 
-        listing = getattr(self.provider, "_mailbox_cache", None)
-        if listing is not None and getattr(session_provider, "_mailbox_cache", None) is None:
-            session_provider._mailbox_cache = listing
+        A change to the message's own flags is settled by the server accepting
+        the STORE. A move is settled when the server also said where the message
+        now is (COPYUID); without that, the new location has to be looked up.
+        """
+
+        if action.action_type in {
+            EmailAction.LABEL,
+            EmailAction.MARK_READ,
+            EmailAction.FLAG_IMPORTANT,
+        }:
+            return True
+        return applied_locator is not None
 
     def _resolve_destination(self, action: StoredEmailAction) -> str | None:
         if action.action_type not in {
@@ -291,6 +318,19 @@ class DeterministicEmailActionExecutor:
             error=f"{prefix}:{type(exc).__name__}",
             retryable=not isinstance(exc, ImapPermanentProviderError),
         )
+
+
+def _server_reply_result_id(
+    action: StoredEmailAction, applied_locator: StoredEmailLocator | None
+) -> str:
+    """A non-empty, checkable token for a result the server itself reported."""
+
+    if applied_locator is not None:
+        return (
+            f"server-reply:{applied_locator.folder}:"
+            f"{applied_locator.uidvalidity}:{applied_locator.uid}"
+        )
+    return f"server-reply:{action.action_type.value}:{action.locator.uid}"
 
 
 def _changed_locator(

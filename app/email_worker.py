@@ -4115,8 +4115,8 @@ def _active_description_set_version(email_store: object) -> str:
     )
 
 
-# A connection that verified one action is kept for the next action on the same
-# account, so each action logs in once instead of twice. It is dropped after a
+# The connection an action finished on is kept for the next action on the same
+# account, so an action costs no login of its own. It is dropped after a
 # short idle, and after a while regardless, so the cached folder list and the
 # session itself never get old.
 WARM_SESSION_MAX_IDLE_SECONDS = 45.0
@@ -4198,7 +4198,7 @@ def _build_imap_direct_action_executor_factory(
         return DeterministicEmailActionExecutor(
             provider,
             readback_provider_factory=connect_provider,
-            hand_over_verified_session=keep_for_next_action,
+            hand_over_session=keep_for_next_action,
         )
 
     return executor_factory

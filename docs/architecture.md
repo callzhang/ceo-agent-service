@@ -334,17 +334,20 @@ provider 文件夹”绑定并单向创建/校验目标文件夹；分类结果�
 而是独立注意信号：兼容 provider 的 Starred/Important/Flagged 信号与成熟模型信号取并集，
 但 junk 始终抑制 important。控制台详情页的 Star / Flag 图标是主人本人的手动点击，直接让服务连上邮箱增删 `\Flagged` / `$Important` 这一个关键字并读回确认，不经过 ActionPlan；观察到的状态随后更新，下一轮扫描再对账。分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。确定性动作清单是
 `label`、`mark_read`、`archive`、`move`、`trash`；它们属于 Email 子系统，由独立
-Email worker 领取、执行并通过 provider readback 验证结果。回读永远用一条与写入不同的、新登录的
-IMAP 连接；这条验证过的连接不关闭，交给同一账号的下一个动作当写连接，所以每个动作只登录一次，
-文件夹列表也随连接带过去（Derek, 2026-09-25）。闲置超过 45 秒、连续复用超过 300 秒或探活
-（NOOP）失败就丢弃重连，验证失败的连接不复用。这些确定性动作
+Email worker 领取、执行动作，并以服务器的应答为结果（Derek, 2026-09-25：不需要回读，服务器接受就够了）。
+执行前仍先读一次当前状态，已满足就不写。改标记的动作（标已读、标星、贴标签）在服务器接受 STORE 后即完成；
+移动、归档、删除在服务器回了 `COPYUID`（新位置已知）时同样即完成。只有服务器没说邮件去了哪里时，
+才保留一次回读，用一条新登录的连接去找新位置并确认。动作结束时的连接不关闭，交给同一账号的下一个
+动作当写连接，文件夹列表随之保留，所以一个动作不再有自己的登录。闲置超过 45 秒、连续复用超过 300 秒
+或探活（NOOP）失败就丢弃重连，失败的连接不复用。这些确定性动作
 不创建 CEO Agent task，也不创建 Consumer/Audit run。`trash` 只允许可恢复的 move-to-Trash；
 永久删除、IMAP `EXPUNGE` 和清空 Trash 在所有配置与执行入口都不可达。
 
 标准 IMAP 账号使用 `UID MOVE`。若 provider 未声明 MOVE capability，但其官方协议明确规定
 `UID COPY` 本身就是移动语义，账号可显式配置 `imap_move_mode=copy_as_move`；服务不会按主机名
-猜测，也不会把普通 IMAP 的 COPY 当作移动。两种模式都必须用稳定 Message-ID 重新定位并确认
-目标文件夹，且都不得通过 `STORE \\Deleted` 或 `EXPUNGE` 模拟移动。
+猜测，也不会把普通 IMAP 的 COPY 当作移动。两种模式都以服务器回的 `COPYUID` 得到新位置；
+服务器没回 `COPYUID` 时，才用稳定 Message-ID 重新定位并确认目标文件夹。都不得通过 `STORE \\Deleted` 或
+`EXPUNGE` 模拟移动。
 
 只有不可变 `ActionPlan` 明确授权的 `unsubscribe` 会创建 `channel=email` 的
 `pending` task；持久化生命周期标识仍为 `email_unsubscribe_audited_v2`，以兼容既有
@@ -417,8 +420,8 @@ provider-folder snapshot 上离线、分阶段执行，shadow 模型不进入实
 旧的显式实时调用接口仍保留顺序 fallback 契约，定时收信与历史回填统一使用上述模式互斥路由；
 模型上线后，模型不确定的结果同样先交给 Agent。
 
-历史和实时移动都先读取 provider 当前状态，写入后再按新 locator 回读；important flag 在移动后的
-locator 上执行。用户随后在邮箱中移动邮件时，下一份冻结 snapshot 直接采用新文件夹标签。
+历史和实时移动都先读取 provider 当前状态，写入后以服务器应答给出的新 locator 为准（没给才回读）；
+important flag 在移动后的 locator 上执行。用户随后在邮箱中移动邮件时，下一份冻结 snapshot 直接采用新文件夹标签。
 `junk` 的退订候选由代码从标准 header/body 链接中发现，Agent 只在已审计的退订任务里决定和执行
 后续网页步骤；成功或无需继续后再移动到系统 Trash。连接邮箱的邮件 OTP 只在站点、收件人和有限
 时间窗同时匹配时临时读取；普通 CAPTCHA 可在隔离 profile 中尝试，密码/MFA/CAPTCHA 无法完成时

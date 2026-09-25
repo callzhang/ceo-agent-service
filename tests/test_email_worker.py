@@ -10160,7 +10160,7 @@ def test_the_verifying_connection_becomes_the_next_actions_writer(monkeypatch) -
     first = factory("account-1")
     assert [c.name for c in connections] == ["login-1"]
     verifier = _StubImapProvider("verifier")
-    first._hand_over_verified_session(verifier)
+    first._hand_over_session(verifier)
 
     second = factory("account-1")
 
@@ -10173,7 +10173,7 @@ def test_the_verifying_connection_becomes_the_next_actions_writer(monkeypatch) -
 
 def test_a_warm_connection_is_per_account(monkeypatch) -> None:
     factory, connections = _warm_session_factory(monkeypatch, lambda: 1000.0)
-    factory("account-1")._hand_over_verified_session(_StubImapProvider("verifier"))
+    factory("account-1")._hand_over_session(_StubImapProvider("verifier"))
 
     other = factory("account-2")
 
@@ -10185,7 +10185,7 @@ def test_a_warm_connection_that_sat_idle_is_replaced(monkeypatch) -> None:
     now = [1000.0]
     factory, connections = _warm_session_factory(monkeypatch, lambda: now[0])
     stale = _StubImapProvider("stale")
-    factory("account-1")._hand_over_verified_session(stale)
+    factory("account-1")._hand_over_session(stale)
     now[0] += 46.0
 
     executor = factory("account-1")
@@ -10201,7 +10201,7 @@ def test_a_warm_connection_older_than_its_chain_limit_is_replaced(monkeypatch) -
     executor = factory("account-1")
     for _ in range(7):
         now[0] += 44.0
-        executor._hand_over_verified_session(_StubImapProvider("kept"))
+        executor._hand_over_session(_StubImapProvider("kept"))
         executor = factory("account-1")
 
     # Each hand-over was fresh, but the chain began over 300 seconds ago.
@@ -10211,7 +10211,7 @@ def test_a_warm_connection_older_than_its_chain_limit_is_replaced(monkeypatch) -
 def test_a_dead_warm_connection_is_replaced(monkeypatch) -> None:
     factory, connections = _warm_session_factory(monkeypatch, lambda: 1000.0)
     dead = _StubImapProvider("dead", dead=True)
-    factory("account-1")._hand_over_verified_session(dead)
+    factory("account-1")._hand_over_session(dead)
 
     executor = factory("account-1")
 
