@@ -25216,6 +25216,24 @@ class AutoReplyStore:
                 return None
             return ReplyAttempt.model_validate(dict(row))
 
+    @staticmethod
+    def _not_external_failure_sql() -> str:
+        """SQL: this Attempt's task did not fail for a reason outside the service.
+
+        Derek, 2026-09-25: such a failure stays failed, and History lists it,
+        but it is not an Attention item (see app/external_failures.py).
+        """
+        from app.external_failures import external_task_error_sql
+
+        return (
+            "not exists (select 1 from reply_tasks as external_task "
+            "where external_task.channel=attempts.channel "
+            "and external_task.channel='email' "
+            "and external_task.conversation_id=attempts.conversation_id "
+            "and external_task.trigger_message_id=attempts.trigger_message_id "
+            f"and {external_task_error_sql('external_task.error')})"
+        )
+
     def list_current_unresolved_problem_attempts(
         self, *, limit: int = 50
     ) -> list[ReplyAttempt]:
@@ -25227,6 +25245,7 @@ class AutoReplyStore:
                 from reply_attempts as attempts
                 left join agent_runs as runs on runs.id=attempts.agent_run_id
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
+                  and __NOT_EXTERNAL__
                   and not exists (
                       select 1 from agent_runs as attempt_run
                       join reply_tasks as current_task
@@ -25309,7 +25328,9 @@ class AutoReplyStore:
                   )
                 order by attempts.id desc
                 limit ?
-                """,
+                """.replace(
+                    "__NOT_EXTERNAL__", self._not_external_failure_sql()
+                ),
                 (max(1, limit),),
             ).fetchall()
             attempts: list[ReplyAttempt] = []
@@ -25338,6 +25359,7 @@ class AutoReplyStore:
                        attempts.updated_at, attempts.send_error
                 from reply_attempts as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
+                  and __NOT_EXTERNAL__
                   and not exists (
                       select 1 from agent_runs as attempt_run
                       join reply_tasks as current_task
@@ -25417,7 +25439,9 @@ class AutoReplyStore:
                         and latest.trigger_message_id=attempts.trigger_message_id
                 )
                 order by attempts.id desc
-            """
+            """.replace(
+                    "__NOT_EXTERNAL__", self._not_external_failure_sql()
+                )
             params: tuple[object, ...] = ()
             if limit is not None:
                 sql += " limit ?"
@@ -25445,6 +25469,7 @@ class AutoReplyStore:
                 select count(*) as count
                 from reply_attempts as attempts
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
+                  and __NOT_EXTERNAL__
                   and not exists (
                       select 1 from agent_runs as attempt_run
                       join reply_tasks as current_task
@@ -25525,7 +25550,9 @@ class AutoReplyStore:
                       where latest.conversation_id=attempts.conversation_id
                         and latest.trigger_message_id=attempts.trigger_message_id
                   )
-                """,
+                """.replace(
+                    "__NOT_EXTERNAL__", self._not_external_failure_sql()
+                ),
             ).fetchone()
             return int(row["count"])
 

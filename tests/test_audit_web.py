@@ -11468,11 +11468,29 @@ def test_attention_skips_unsubscribe_failures_caused_by_the_external_page(tmp_pa
                 (error, task.id),
             )
         ids[name] = str(task.id)
+        # The direct unsubscribe path also records a failed Attempt for the run.
+        store.record_reply_attempt(
+            conversation_id=f"email-thread:{name}",
+            conversation_title="Email unsubscribe",
+            trigger_message_id=f"email-action:{name}",
+            trigger_sender="sender@example.com",
+            trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+            action="direct_unsubscribe",
+            sensitivity_kind="email",
+            audit_summary="failed_browser",
+            send_status="failed",
+            channel="email",
+        )
 
     rows = audit_web_module._queue_attention_rows(store)
     listed = {row["id"] for row in rows if row["category"] == "Reply task"}
+    attempt_titles = [row for row in rows if row["category"] == "Reply"]
 
     assert listed == {ids["ours-runtime"], ids["ours-unknown"]}
+    # Our own failures show as their Reply task row (the Attempt collapses into
+    # it); the external ones show as neither the task nor the Attempt.
+    assert attempt_titles == []
+    assert store.count_current_unresolved_problem_attempts() == 2
     with store._connect() as db:
         assert db.execute(
             "select count(*) from reply_tasks where status='failed'"
