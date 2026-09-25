@@ -2693,17 +2693,15 @@ class DingTalkAutoReplyWorker:
 
         for target in self.store.list_pending_oa_reminder_targets():
             process_id = str(target["process_instance_id"] or "").strip()
-            if not process_id:
+            target_task_id = str(target["task_id"] or "").strip()
+            if not process_id or not target_task_id:
                 continue
             attempt = next(
                 (
                     item
                     for item in self.store.list_oa_attempt_history(process_id)
                     if item.send_status in {"completed", "commented"}
-                    and (
-                        not str(target["task_id"] or "").strip()
-                        or item.oa_task_id.strip() == str(target["task_id"]).strip()
-                    )
+                    and item.oa_task_id.strip() == target_task_id
                     and item.agent_run_id is not None
                 ),
                 None,

@@ -136,10 +136,13 @@ def test_oa_notification_event_is_idempotent_and_can_be_adopted(tmp_path: Path):
         trigger_message_json=payload.model_dump_json(),
         oa_url="https://aflow.dingtalk.com/dingflow?procInstId=proc-5",
     ) == event_id
+    # A case-level reminder must not inherit a prior node's completed result.
+    assert store.list_pending_oa_reminder_targets("proc-5", "task-old") == []
     assert store.adopt_oa_notification_events("proc-5", "task-5") == 1
     targets = store.list_pending_oa_reminder_targets("proc-5", "task-5")
     assert len(targets) == 1
     assert targets[0]["task_id"] == "task-5"
+    assert store.list_pending_oa_reminder_targets("proc-5", "task-old") == []
 
 
 def test_oa_reminder_claim_and_sent_transition_is_idempotent(tmp_path: Path):

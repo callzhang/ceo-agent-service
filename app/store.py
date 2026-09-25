@@ -10438,7 +10438,6 @@ class AutoReplyStore:
             )
 
     @staticmethod
-    @staticmethod
     def _migrate_oa_notification_events(db: sqlite3.Connection) -> None:
         db.executescript(
             """
@@ -10989,7 +10988,7 @@ class AutoReplyStore:
                     select * from oa_notification_events
                     where requires_reply=1 and process_instance_id=?
                       and status in ('pending', 'adopted')
-                      and (task_id='' or task_id=? )
+                      and task_id=?
                     order by id
                     """,
                     (process_id, node_id),
