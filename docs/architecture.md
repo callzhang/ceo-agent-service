@@ -397,7 +397,9 @@ receipt 另外保存 `entry_url`，即这次实际打开的完整私密 URL。`e
 日期保留近期邮件给 Agent，也不在同一轮运行 Agent 扫描。模型高置信度结果沿现有不可变 ActionPlan 和
 provider action 队列整理邮件；低置信度、`others` 或未晋升类别不由模型决定，进入 Agent 分类队列，
 Agent 明确判定的照常处理，Agent 自己也不确定的才存为 `pending_feedback`，进入 Console“待确认”
-并等待人工标注（Derek, 2026-09-25：先回退 Agent，Agent 不确定再问人）。模型/Embedding 技术失败则
+并等待人工标注（Derek, 2026-09-25：先回退 Agent，Agent 不确定再问人）。Agent 只接账户允许它接的邮件
+（未读，或账户设为“全部”）；模型拒绝的已读邮件 Agent 会跳过且不留分类记录，所以它们直接存为
+`pending_feedback`，不入 Agent 队列。模型/Embedding 技术失败则
 保留邮件下轮重试，不伪装成待确认，也不当作模型拒绝交给 Agent。历史批处理允许 120 秒的 Embedding 请求期限；实时调用仍保持
 2 秒期限，历史回填不会因为实时低延迟预算而永久卡在同一封邮件。分类过程不擅自改变邮件原有已读状态。训练只在冻结的
 provider-folder snapshot 上离线、分阶段执行，shadow 模型不进入实时扫描。晋升只看最新一个候选自己携带的证据：

@@ -346,6 +346,10 @@ def scan_model_classification_batch(
         [Mapping[str, object], object, Sequence[object], str, str], object
     ],
     enqueue_agent: Callable[[Mapping[str, object], Sequence[object]], object],
+    request_feedback: Callable[
+        [Mapping[str, object], object, Sequence[object], str, str], object
+    ],
+    include_read: bool = False,
     agent_task_adapter: object | None = None,
     limit: int = 50,
     today: Callable[[], date] | None = None,
@@ -357,6 +361,11 @@ def scan_model_classification_batch(
     for the owner. This path used to save a model rejection straight as
     "waiting for feedback", so the Agent never saw it: from 2026-09-25 about a
     fifth of new mail sat unclassified until the owner labelled it.
+
+    The Agent takes only what the account lets it take: unread mail, or all
+    mail when the account is set to "all". A rejected message the Agent would
+    skip waits for the owner instead. Queuing it anyway ended the task as
+    "skipped" with no classification at all, so the message vanished from both.
     """
 
     from app.email_classifier_runtime import (
@@ -432,6 +441,7 @@ def scan_model_classification_batch(
 
     persisted = 0
     processed = 0
+    pending = 0
     highest_uid = 0 if cursor is None else int(cursor["last_seen_uid"])
     for message in batch.messages:
         locator = _provider_locator(message)
@@ -467,7 +477,23 @@ def scan_model_classification_batch(
             "model_others",
             "model_category_not_promoted",
         }:
-            enqueue_agent(message, entries)
+            if should_enqueue_agent_classification(
+                provider_unread=message.get("providerUnread"),
+                folder_role=folder_role,
+                configured_unclassified_source=configured_unclassified_source,
+                has_stable_record=False,
+                include_read=include_read,
+            ):
+                enqueue_agent(message, entries)
+            elif result.review_value is not None:
+                request_feedback(
+                    message, result.review_value, entries, model_text, model_id
+                )
+                pending += 1
+            else:
+                raise RuntimeError(
+                    f"model history classification failed: {result.fallback_reason}"
+                )
         else:
             raise RuntimeError(
                 f"model history classification failed: {result.fallback_reason}"
@@ -486,7 +512,7 @@ def scan_model_classification_batch(
                 else None
             ),
         )
-    return EmailScanResult(len(batch.messages), persisted, processed, 0)
+    return EmailScanResult(len(batch.messages), persisted, processed, pending)
 
 
 @dataclass(frozen=True)

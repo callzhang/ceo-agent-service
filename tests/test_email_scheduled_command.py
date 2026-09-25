@@ -378,8 +378,9 @@ def test_discovery_uses_model_window_exclusively_after_model_promotion(
     assert calls == [("agent", 30, False)]
 
 
-def test_scheduled_model_rejection_goes_to_the_agent_not_to_the_owner(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("unread", (True, False))
+def test_scheduled_model_rejection_goes_to_the_agent_only_when_the_agent_would_take_it(
+    tmp_path, monkeypatch, unread
 ) -> None:
     message = {
         "messageId": "<scheduled-history-review@example.com>",
@@ -387,7 +388,7 @@ def test_scheduled_model_rejection_goes_to_the_agent_not_to_the_owner(
         "folder": "INBOX",
         "uidValidity": 42,
         "uid": 7,
-        "providerUnread": False,
+        "providerUnread": unread,
         "from": {"email": "sender@example.com"},
         "subject": "Historical contract",
         "textBody": "Please review the old contract.",
@@ -475,12 +476,24 @@ def test_scheduled_model_rejection_goes_to_the_agent_not_to_the_owner(
         runtime,
     )
 
-    # The model would not decide it, so the Agent gets it. Nothing waits for
-    # the owner yet: only an Agent that is itself unsure asks for a label.
-    assert bootstrap.email_store.get_classification_by_stable_identity(
+    stored = bootstrap.email_store.get_classification_by_stable_identity(
         "account-1:message-id:<scheduled-history-review@example.com>"
-    ) is None
+    )
     with sqlite3.connect(tmp_path / "scheduled-model-review.sqlite3") as db:
-        assert db.execute(
+        tasks = db.execute(
             "select count(*) from email_agent_classification_tasks"
-        ).fetchone()[0] == 1
+        ).fetchone()[0]
+    if unread:
+        # The model would not decide it, so the Agent gets it. Nothing waits
+        # for the owner yet: only an Agent that is itself unsure asks for a label.
+        assert stored is None
+        assert tasks == 1
+    else:
+        # This account's Agent skips read mail, so a queued task would end as
+        # "skipped" with no classification and the message would vanish. It
+        # waits for the owner instead.
+        assert stored is not None
+        assert stored["status"] == "pending_feedback"
+        assert stored["classification_source"] == "model"
+        assert stored["action_plan"] is None
+        assert tasks == 0

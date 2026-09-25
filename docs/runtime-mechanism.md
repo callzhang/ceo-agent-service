@@ -607,9 +607,11 @@ Consumer→Audit 往返——退订在真实世界本来就是幂等的。同理
 设置；模型上线后只运行模型窗口，优先覆盖全部尚无稳定记录的已读和未读 Inbox/未绑定来源邮件，不
 按日期把近期邮件留给 Agent，也不在同一轮创建 Agent 分类任务。模型路径以每文件夹固定批量
 在后续定时轮次继续向历史推进。模型 accepted 结果进入现有不可变 ActionPlan 和 provider action
-队列；`model_rejected`、`model_others` 与 `model_category_not_promoted` 创建 Agent 分类任务，
-由 Agent 判定；Agent 结果 `certainty` 不是 `certain` 时才存为 `pending_feedback` 等待人工标注
-（Derek, 2026-09-25：模型不确定先回退 Agent，Agent 不确定再问人）。Embedding、runtime 或持久化技术失败使本轮
+队列；`model_rejected`、`model_others` 与 `model_category_not_promoted` 对 Agent 能接的邮件（未读，或账户设为
+“全部”，与 Agent 消费时的资格判断一致）创建 Agent 分类任务，由 Agent 判定；Agent 结果 `certainty` 不是
+`certain` 时才存为 `pending_feedback` 等待人工标注（Derek, 2026-09-25：模型不确定先回退 Agent，Agent 不确定再问人）。
+Agent 会以 `provider_message_no_longer_eligible` 跳过的已读邮件不入队，直接存为 `pending_feedback`，
+否则任务以 skipped 结束且没有任何分类记录，邮件同时从 Agent 和待确认里消失。Embedding、runtime 或持久化技术失败使本轮
 失败并在下轮重试，既不写人工待确认，也不当作模型拒绝交给 Agent。定时历史模型 runtime 的 Embedding 请求期限为 120 秒，实时
 调用仍是 2 秒，避免批处理复用实时延迟预算后在同一封历史邮件上永久超时。冻结训练 snapshot 直接采用 provider 文件夹和 important 信号，
 训练与 shadow 评估均为离线、阶段性作业，不在收信路径实时训练或并行推理；晋升只看最新候选自己的证据，
@@ -921,6 +923,8 @@ estimate、requester/external deadline 和 next check 均不能充当镜像期�
 结果未知且没有 ID，不自动重复调用或排入另一创建键。同一 Task 存在未收口创建 intent 时不会再排新的
 创建。`failed` outbox 在有界 `next_attempt_at` 退避后才可再次领取。外部 TODO 状态轮询只按其 Task
 链接关闭 Task，写入完成来源证据、事件，并关闭该 Task 的 follow-up；关联 Project 或同聚类 Task 不随之完成。
+
+**候选 Task 可在控制台忽略或恢复**（Derek 2026-09-25）：Tasks 页「全部任务」的候选任务行和候选 Task 详情页有一个忽略按钮，点击调用 `POST /api/console/tasks/items/{task_id}/candidate-decision`（`action` 为 `ignore` 或 `restore`，实现在 `app/task_console_actions.py`）。忽略把 Task 状态改为 `cancelled`（阶段仍是 `candidate`），恢复改回 `open`；走普通的 `TaskSemanticService.update_task`，所以留下与其他变更相同的痕迹：一条 Derek 署名的 `console` 来源信号（`author_kind=human`）、`correction` 证据链接和 `status_changed` 事件，原发现证据不动，什么都不删除。信号的来源引用带上一次的 `updated_at`，同一状态下重复点击被拒绝（409 `not_applicable`）而不是重复记录；提交后照 Task Agent 的做法重算受影响的关注成员。只有候选可以忽略：正式 Task 有负责人和来源引文，它的状态只能由证据推动。控制台**不提供**「确认为正式任务」——晋升要求已识别的负责人和来自来源的负责人原话，点击给不出这两样，见 `docs/task-semantic-storage.md`。`GET /api/console/tasks/all` 另接受 `owner=assigned|unassigned` 和 `sort=updated|created`，非法取值返回 400。服务写入的固定事件原因（如“根据来源证据记录为候选任务”）现在是中文；此前写入的英文原因是历史记录，不改写。
 
 **催办由 Derek 点按钮发送**（Derek 2026-09-25：「催办应该变成 UI 上的一个按钮，让用户决定是否要发送催办（点击一键发送），如果后面有新的信息更新了 task，应该取消可催办状态」）：Task 详情页「催办」区列出该 Task 的全部 follow-up；待发送（`draft`/`approved`）和发送失败（`failed`）的每条带一个发送按钮，点击调用 `POST /api/console/tasks/items/{task_id}/follow-ups/{follow_up_id}/send`（带当前 `revision`），由 `send_business_task_follow_up` 当场发送：不看工作时间、不经 Agent 审核，点击就是决定。失败或结果未知的发送保持 `failed` 并把结果留在该行上，不排 Agent 修复；再点一次作为新 revision 发送，原 attempt 不改。Task Agent 把新信息应用到已有 Task 时，在同一事务里用 `cancel_pending_business_task_follow_ups` 撤回该 Task 其余未发出的 follow-up（`cancelled`，原因写明被哪条来源更新），同一来源信号新建的 follow-up 保留，正在发送的不动。
 

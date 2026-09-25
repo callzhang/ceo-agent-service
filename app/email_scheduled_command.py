@@ -26,6 +26,7 @@ from app.email_worker import (
     _build_email_source_factory,
     _close_email_source,
     _email_worker_health_recorder,
+    persist_model_pending_feedback,
     persist_model_primary_classification,
     run_email_discovery_once,
 )
@@ -180,6 +181,19 @@ def build_email_discovery_dependencies(
                                     preserve_read=(
                                         message.get("providerUnread") is False
                                     ),
+                                )
+                            )
+                        ),
+                        include_read=account.get("scan_read_state") == "all",
+                        request_feedback=(
+                            lambda message, prediction, _entries, model_text, model_id: (
+                                persist_model_pending_feedback(
+                                    email_store,
+                                    message=message,
+                                    prediction=prediction,
+                                    context=context,
+                                    model_id=model_id,
+                                    model_text=model_text,
                                 )
                             )
                         ),
