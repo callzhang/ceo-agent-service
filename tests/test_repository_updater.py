@@ -359,3 +359,18 @@ def test_tests_refuse_to_run_in_the_production_checkout(tmp_path: Path, monkeypa
     monkeypatch.setenv("CEO_SERVICE_ROOT", str(tmp_path / "Services" / "ceo-agent-service"))
     assert is_production_checkout(tmp_path / "Services" / "ceo-agent-service")
     assert not is_production_checkout(tmp_path / "Projects" / "ceo-agent-service")
+
+
+def test_restart_only_waits_for_quiet_then_restarts_and_checks_health(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+
+    events: list[str] = []
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db: events.append("quiet"))
+    monkeypatch.setattr(deploy_module, "wait_for_health", lambda: events.append("health") or True)
+
+    assert deploy_module.restart_only(tmp_path / "db", restart=lambda: events.append("restart")) == "restarted"
+    assert events == ["quiet", "restart", "health"]
+
+    monkeypatch.setattr(deploy_module, "wait_for_health", lambda: False)
+    with pytest.raises(SystemExit, match="did not become healthy"):
+        deploy_module.restart_only(tmp_path / "db", restart=lambda: None)

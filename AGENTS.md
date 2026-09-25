@@ -74,6 +74,9 @@ it was not built from the checkout's current `frontend/` (a stamp, not this depl
 minutes for health. If any step after the fast-forward fails, it rolls back.
 Two deploys at once are serialized by the repository lock.
 
+When only a setting changed and there is no commit (some settings, such as an email
+account's, are read when a worker starts), restart with `python -m app.deploy --restart`;
+it waits for no work in flight, restarts through launchd and waits for health.
 Do not run `launchctl kickstart` or `kill` on the job by hand. Do not edit,
 build in, or run tests in `~/Services/ceo-agent-service`. Both are enforced:
 the deploy installs git hooks there that refuse any commit, merge commit or

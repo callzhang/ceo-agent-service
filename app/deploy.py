@@ -24,6 +24,7 @@ from app.repository_updater import (
     RepositoryUpdater,
     UpgradePreconditionError,
     UpgradeOperation,
+    _default_restart,
     build_frontend,
     verify_imports,
     wait_for_health,
@@ -122,11 +123,34 @@ def deploy(root: Path, database_path: Path) -> str:
     return f"deployed {current[:8]} -> {result.installed_commit[:8]}"
 
 
+def restart_only(database_path: Path, *, restart=_default_restart) -> str:
+    """Restart the service on its current code, when only its settings changed.
+
+    Some settings (an email account's, for one) are read when a worker starts,
+    so a settings change needs a restart with no commit to deploy. Same rules
+    as a deploy: wait until no work is in flight, restart through launchd,
+    wait for health.
+    """
+    wait_until_quiet(database_path)
+    restart()
+    if not wait_for_health():
+        raise SystemExit("restarted, but the service did not become healthy")
+    return "restarted"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="python -m app.deploy")
     parser.add_argument("--root", type=Path, default=None, help="production checkout (default: CEO_SERVICE_ROOT)")
     parser.add_argument("--db", type=Path, default=None, help="service database (default: CEO_WORKER_DB)")
+    parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="restart on the current code (a setting changed), instead of deploying a commit",
+    )
     args = parser.parse_args()
+    if args.restart:
+        print(restart_only(args.db or worker_db_path()), flush=True)
+        return 0
     print(deploy(args.root or service_root(), args.db or worker_db_path()), flush=True)
     return 0
 

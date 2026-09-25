@@ -176,7 +176,8 @@ OA 定时任务冻结传入通用 `dingtalk-oa-approval` 与 Stardust 财务、�
 `rule_coverage` 才能为 1.0；否则低于 1.0，规则缺口进入 `needs_human`，不得自动批准或拒绝。
 申请人可以补足事实或材料，Consumer 应在原审批评论明确缺口；若同时存在政策缺口，须另行
 进入 `needs_human`，申请人回复不能关闭政策升级。两者在同一结果中表达：proposal 携带评论或
-退回，并同时带 `needs_human_reason`、`decision_basis` 和 2--4 个选项；Audit 执行动作后任务以
+退回，并同时带 `needs_human_reason`、`decision_basis` 和 2--4 个带 `applies_to=task_class` 的规则选项；
+选项只能描述以后如何处理这一类审批，不能要求 Derek 直接批准或拒绝当前实例；Audit 执行动作后任务以
 `needs_human` 收口（Derek 2026-09-23）。此前结果只能二选一，总会丢掉一半。个人审批偏好只存在于定时任务 Prompt，不是
 公司通用规则。
 
@@ -457,7 +458,7 @@ launchd 后验证新 PID、HTTP 健康与 Store 可读性。
 复用上面的 updater，先等没有进行中的 Agent 回合和已领取的条目（30 分钟内不空闲就什么都不改），
 再备份数据库、fast-forward、控制台不是从检出当前的 `frontend/` 构建的时重建（比较构建戳 `app/static/workbench/.built-from` 与 `HEAD:frontend` 的树，而不是看本次部署的差异——中途停下的部署或别的会话插进来的部署会让下一次差异里没有前端改动，控制台就停在旧版本）、检查 import、重启，并轮询健康最多
 15 分钟（重启要重读数 GB 的数据库，负载高时曾用 8 分钟，只探一次会把正常升级误判回滚）。
-两个会话同时部署由仓库锁串行，后到的发现检出已前进就停止。生产检出里不能提交也不能跑测试（Derek 2026-09-25，此前有会话在那里跑测试并就地提交，检出与 main 分叉，之后所有部署都停下）：部署时装上 `pre-commit` / `pre-merge-commit` / `pre-rebase` 钩子，一律拒绝并提示去开发树改；`tests/conftest.py` 发现自己在生产检出里就退出。部署只做 fast-forward，不触发这些钩子。检出若已分叉，部署停下并列出只在生产里的提交，不会自动丢弃。
+两个会话同时部署由仓库锁串行，后到的发现检出已前进就停止。只改了设置、没有提交要部署时（有些设置，比如邮箱账号，是 worker 启动时才读），用 `python -m app.deploy --restart`：同样先等没有进行中的工作，再经 launchd 重启并等健康，不手动 `launchctl kickstart`。生产检出里不能提交也不能跑测试（Derek 2026-09-25，此前有会话在那里跑测试并就地提交，检出与 main 分叉，之后所有部署都停下）：部署时装上 `pre-commit` / `pre-merge-commit` / `pre-rebase` 钩子，一律拒绝并提示去开发树改；`tests/conftest.py` 发现自己在生产检出里就退出。部署只做 fast-forward，不触发这些钩子。检出若已分叉，部署停下并列出只在生产里的提交，不会自动丢弃。
 
 ### 会议投递目标
 
