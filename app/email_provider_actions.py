@@ -9,7 +9,7 @@ import imaplib
 import re
 import ssl
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Mapping, Protocol
+from typing import Any, Callable, Collection, Literal, Mapping, Protocol
 
 from app.email_classifier_contracts import (
     DIRECT_ACTIONS,
@@ -433,6 +433,15 @@ class ImapDeterministicProvider:
             raise ImapMoveUnsupported("IMAP UID MOVE is unavailable")
         if locator.rfc_message_id is None and "UIDPLUS" not in capabilities:
             raise ImapReadbackUnsupported("move locator readback is unavailable")
+        return self.destination_folder(action_type, parameters)
+
+    def destination_folder(
+        self,
+        action_type: EmailAction,
+        parameters: Mapping[str, object],
+    ) -> str:
+        """Name the one folder an archive, move or trash lands in (LIST only)."""
+
         mailboxes = self._mailboxes()
         if action_type is EmailAction.MOVE:
             target = str(parameters["target_folder"]).strip()
@@ -491,8 +500,33 @@ class ImapDeterministicProvider:
                 return state
         if locator.rfc_message_id is None:
             raise ImapReadbackUnsupported("stable Message-ID readback is unavailable")
+        matches = self.find_states(locator, action_type=action_type)
+        if not matches:
+            raise ImapMessageUnavailable("message lookup was missing")
+        if len(matches) > 1:
+            raise ImapMessageUnavailable("message lookup was ambiguous")
+        return matches[0]
+
+    def find_states(
+        self,
+        locator: StoredEmailLocator,
+        *,
+        action_type: EmailAction,
+        folders: Collection[str] | None = None,
+    ) -> list[ProviderMessageState]:
+        """Every placement of the message with this Message-ID (read-only).
+
+        Only EXAMINE, UID SEARCH and UID FETCH of the headers are issued.
+        `folders` narrows the search to those mailbox names.
+        """
+
+        self._validate_locator(locator)
+        if locator.rfc_message_id is None:
+            raise ImapReadbackUnsupported("stable Message-ID readback is unavailable")
         matches: list[ProviderMessageState] = []
         for mailbox in self._mailboxes():
+            if folders is not None and mailbox.name not in folders:
+                continue
             _uidvalidity = self._select(mailbox.name, readonly=True)
             status, data = self.session.uid(
                 "SEARCH",
@@ -518,11 +552,23 @@ class ImapDeterministicProvider:
                 )
                 if state is not None:
                     matches.append(state)
-        if not matches:
-            raise ImapMessageUnavailable("message lookup was missing")
-        if len(matches) > 1:
-            raise ImapMessageUnavailable("message lookup was ambiguous")
-        return matches[0]
+        return matches
+
+    def read_state_at(
+        self,
+        locator: StoredEmailLocator,
+        *,
+        action_type: EmailAction,
+    ) -> ProviderMessageState | None:
+        """The message at exactly these coordinates, or None (read-only)."""
+
+        self._validate_locator(locator)
+        self._mailboxes()
+        return self._read_exact(
+            locator,
+            expected_message_id=locator.rfc_message_id,
+            action_type=action_type,
+        )
 
     def apply(
         self,

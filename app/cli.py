@@ -354,6 +354,7 @@ def build_parser() -> argparse.ArgumentParser:
         "process-work-items",
         "retry-work-summary-input",
         "release-failed-email-unsubscribe",
+        "reconcile-email-actions",
         "reconcile-failed-agent-message",
         "skip-stale-wechat-delivery",
         "backfill-task-memory-context",
@@ -549,6 +550,25 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--action-identity", type=_non_blank, required=True)
             subparser.add_argument(
                 "--audit-agent-run-id", type=_positive_int, required=True
+            )
+        if command == "reconcile-email-actions":
+            subparser.add_argument("--account", type=_non_blank, required=True)
+            subparser.add_argument(
+                "--apply",
+                action="store_true",
+                help=(
+                    "record verified actions as done; without it nothing is "
+                    "written (the mailbox is never written either way)"
+                ),
+            )
+            subparser.add_argument("--limit", type=_positive_int, default=100)
+            subparser.add_argument("--after", default="", help="resume after this action id")
+            subparser.add_argument("--pause-seconds", type=_non_negative_float, default=0.5)
+            subparser.add_argument(
+                "--message-timeout-seconds",
+                type=_non_negative_float,
+                default=60.0,
+                help="wall-clock allowance for one message, connect included",
             )
         if command == "reconcile-failed-agent-message":
             subparser.add_argument("--send-run-id", type=_positive_int, required=True)
@@ -1816,6 +1836,43 @@ def release_failed_email_unsubscribe_command(
         audit_agent_run_id=audit_agent_run_id,
     )
     print("failed email unsubscribe released for explicit retry", flush=True)
+
+
+def reconcile_email_actions_command(
+    settings: WorkerSettings,
+    *,
+    account_id: str,
+    apply: bool,
+    limit: int,
+    after_action_id: str,
+    pause_seconds: float,
+    message_timeout_seconds: float = 60.0,
+) -> None:
+    """Match failed Gmail move/trash rows to the mailbox, reading it only."""
+
+    from app.email_action_reconcile import (
+        build_gmail_read_only_provider_factory,
+        reconcile_email_actions,
+    )
+    from app.email_store import EmailStore
+
+    store = EmailStore(settings.db_path)
+    report = reconcile_email_actions(
+        store,
+        account_id=account_id,
+        provider_factory=build_gmail_read_only_provider_factory(
+            store, account_id, os.environ
+        ),
+        apply=apply,
+        limit=limit,
+        after_action_id=after_action_id,
+        pause_seconds=pause_seconds,
+        message_timeout_seconds=message_timeout_seconds,
+        progress=lambda running: print(
+            f"reconcile-email-actions progress {running.summary()}", flush=True
+        ),
+    )
+    print(f"reconcile-email-actions account={account_id} {report.summary()}", flush=True)
 
 
 def skip_stale_wechat_delivery_command(
@@ -4817,6 +4874,21 @@ def main() -> None:
             settings,
             action_identity=args.action_identity,
             audit_agent_run_id=args.audit_agent_run_id,
+        )
+    elif args.command == "reconcile-email-actions":
+        if args.apply and settings.dry_run:
+            raise SystemExit(
+                "--apply refused: dry-run is on (--dry-run, CEO_DRY_RUN or "
+                "CEO_NOT_SEND_MESSAGE)"
+            )
+        reconcile_email_actions_command(
+            settings,
+            account_id=args.account,
+            apply=args.apply,
+            limit=args.limit,
+            after_action_id=args.after,
+            pause_seconds=args.pause_seconds,
+            message_timeout_seconds=args.message_timeout_seconds,
         )
     elif args.command == "reconcile-failed-agent-message":
         reconcile_failed_agent_message_command(

@@ -566,6 +566,30 @@ IMAP 移动模式是账号级显式配置：默认 `imap_move_mode=move` 并要�
 自动推断，不对普通 COPY 执行 `\\Deleted`/`EXPUNGE` 补偿；动作完成后统一用稳定 Message-ID
 重新定位，确认邮件只存在于目标文件夹并读取新的 UID/UIDVALIDITY。
 
+**对账已失败的 move/trash 动作**（2026-09-25）：Gmail 被限流后会在 COPYUID 响应后追加自己的文字
+（`[THROTTLED]`），旧解析器因此把 Gmail 已经完成的移动记成 `failed`（`provider_apply_failed:
+ImapReadbackUnsupported`），而这类失败是终态（`attempt_count=1`、`next_attempt_at` 为空），修好解析器
+也不会自动清掉，盲目重试又可能把邮件移动两次。`python -m app.cli reconcile-email-actions --account <id>
+[--apply] [--limit N] [--after ACTION_ID] [--pause-seconds S]`（`app/email_action_reconcile.py`）
+只**读**邮箱来对账：对当前计划里每条 `failed` 的 move/trash，先看原位置（原 UID 还在则没移动，
+留 `failed`），再按稳定 Message-ID 在目标文件夹（move 的 `target_folder`、trash 的 `\Trash` 文件夹）
+里找，最后才扫全部文件夹。目标里恰好一份、且满足动作时，`--apply` 才把它经由现有状态机
+（`claim_failed_direct_action_for_reconciliation` → `complete_direct_action_attempt`）追加一次 `done`
+尝试，`provider_operation=reconciled_readback`、`provider_result_id` 以 `reconciled:` 开头，明示这是
+事后对账而不是动作当时的回读，同时把分类与邮件的定位更新到新的 UID；原来的 `failed` 尝试原样保留。
+其余一律不动、不写库：原位置还在（`in_source`）、在别的文件夹（`elsewhere`）、哪都找不到
+（`not_found`，包括 Message-ID 缺失）、重复 Message-ID（`ambiguous`）。命令**不会把任何行改回
+`pending` 或重新排队**：`pending` 必须 `attempt_count=0` 且没有尝试记录，`failed` 行没有受支持的
+保持不变式的重试入口，仍在原位置的行要重试须另行决定。默认不写库，只有显式 `--apply` 才记 `done`
+（若全局 `--dry-run`/`CEO_NOT_SEND_MESSAGE` 生效则拒绝 `--apply`）。**命令永远不改邮箱**：会话被
+`ReadOnlyImapSession` 包住，只放行 LIST、EXAMINE（只读 SELECT）、UID SEARCH、UID FETCH（头部与
+标志）、CAPABILITY、LOGOUT，其余（STORE、MOVE、COPY、EXPUNGE、APPEND、CREATE 等）在发出前抛
+`ReadOnlyViolation`。可重复运行（记成 `done` 的行不再是 `failed`）、每次最多 `--limit` 行（默认 100，
+按 action id 排序，输出的 `next_after` 可接着 `--after` 续跑）、行间停 `--pause-seconds`（默认 0.5 秒）；
+单封超时或被限流只记为 `error`、丢弃并重连会话、指数退避后继续，连续 5 次错误才停下（`aborted=true`）；每封（含连接）有 `--message-timeout-seconds`（默认 60 秒）的墙钟上限，超时就从外部关掉该连接并记 `error`，不依赖套接字读超时——曾有一次读取卡住 30 分钟；每 25 封输出一行计数进度，Ctrl-C 会带着已有计数正常结束（`interrupted=true`）。
+输出只有计数（按 move/trash 分：verified、in_source、elsewhere、not_found、ambiguous、error），
+不含邮件内容。
+
 只有确认后不可变 `ActionPlan` 中授权的 `unsubscribe` 创建 `channel=email` 的
 `reply_task`，生命周期固定为 `email_unsubscribe_audited_v2`；其他动作和零动作计划不创建
 task。`auto_reply`、SMTP 和 `mailto` 发送全部禁用，不能由配置、分类结果、人工确认或 Agent
