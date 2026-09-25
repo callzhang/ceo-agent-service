@@ -193,6 +193,24 @@ it("keeps the runtime header visible and opens compact setup and promotion dialo
   );
 });
 
+it("shows a family by the name the catalog gives it, not by its stored key", () => {
+  render(
+    <ModelTraining
+      learning={learning}
+      configs={[]}
+      reload={async () => learning}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("option", { name: "Linear" })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "linear" })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("cell", { name: "Linear" }).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("cell", { name: "linear" })).not.toBeInTheDocument();
+});
+
 it("uses measurable historical registry models when no staged model is available", () => {
   const historical = {
     model_id: "email-tfidf-lr-history",

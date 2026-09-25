@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Line,
   LineChart,
@@ -39,6 +39,20 @@ import {
 import "./training.css";
 
 type RefreshLearning = () => Promise<EmailLearningEvidence | undefined>;
+// A family is stored under its key ("embedding-mlp"); the catalog says what it
+// is called. Showing the key told the owner nothing, and this one no longer
+// describes the model. A run carries several keys joined with "、".
+const FamilyNames = createContext<Record<string, string>>({});
+
+function useFamilyLabel() {
+  const names = useContext(FamilyNames);
+  return (value: string) =>
+    value
+      .split("、")
+      .map((key) => names[key] || key)
+      .join("、");
+}
+
 export function ModelTraining({
   learning,
   configs,
@@ -272,7 +286,16 @@ export function ModelTraining({
       onBusy(false);
     }
   }
+  const familyNames = Object.fromEntries(
+    (learning.model_families || []).map((row) => [row.family, row.display_name || row.family]),
+  );
+  const familyLabel = (value: string) =>
+    value
+      .split("、")
+      .map((key) => familyNames[key] || key)
+      .join("、");
   return (
+    <FamilyNames.Provider value={familyNames}>
     <section className="email-training training-shell">
       <header className="training-runtime-banner">
         <div className="training-runtime-copy">
@@ -453,7 +476,7 @@ export function ModelTraining({
                 <option value="all">全部家族</option>
                 {families.map((value) => (
                   <option key={value} value={value}>
-                    {value}
+                    {familyLabel(value)}
                   </option>
                 ))}
               </select>
@@ -501,9 +524,11 @@ export function ModelTraining({
                       {shortModelId(item.model.model_id)}
                     </td>
                     <td>
-                      {item.kind === "run"
-                        ? item.model.model_family || "—"
-                        : item.model.model_family || "未提供"}
+                      {familyLabel(
+                        item.kind === "run"
+                          ? item.model.model_family || "—"
+                          : item.model.model_family || "未提供",
+                      )}
                     </td>
                     <td>
                       {item.kind === "run"
@@ -746,6 +771,7 @@ export function ModelTraining({
         <LegacyDetails model={legacy} onClose={() => setLegacy(null)} />
       )}
     </section>
+    </FamilyNames.Provider>
   );
 }
 function Stat({
@@ -833,6 +859,7 @@ function ModelTrend({
   models: EmailStagedModel[];
   config?: EmailPromotionConfig;
 }) {
+  const familyLabel = useFamilyLabel();
   const [metric, setMetric] = useState<TrendMetric>("micro_f1");
   const [category, setCategory] = useState("");
   const categories = Array.from(
@@ -941,7 +968,7 @@ function ModelTrend({
                 <Line
                   key={family}
                   dataKey={`family:${family}`}
-                  name={family}
+                  name={familyLabel(family)}
                   type="linear"
                   stroke={familyColor(family)}
                   connectNulls
@@ -960,7 +987,7 @@ function ModelTrend({
           {trendFamilies.map((family) => (
             <span key={family}>
               <i style={{ background: familyColor(family) }} />
-              {family}
+              {familyLabel(family)}
             </span>
           ))}
         </div>
@@ -1144,6 +1171,7 @@ function DataDetails({ model }: { model: EmailStagedModel }) {
   );
 }
 function TechnicalDetails({ model }: { model: EmailStagedModel }) {
+  const familyLabel = useFamilyLabel();
   return (
     <section aria-label="技术信息">
       <h4>模型版本与评测</h4>
@@ -1152,7 +1180,11 @@ function TechnicalDetails({ model }: { model: EmailStagedModel }) {
         <Detail
           label="模型家族"
           value={
-            model.model_family || model.compatibility?.head_format || "未提供"
+            familyLabel(
+              String(
+                model.model_family || model.compatibility?.head_format || "未提供",
+              ),
+            )
           }
         />
         <Detail
@@ -1258,12 +1290,13 @@ function LegacyDetails({
   model: EmailLearningEvidence["models"][number];
   onClose: () => void;
 }) {
+  const familyLabel = useFamilyLabel();
   return (
     <EmailDrawer title="历史模型证据" onClose={onClose}>
       <div className="email-drawer-content">
         <h3>{model.model_id}</h3>
         <p>
-          模型家族：{model.model_family || "未提供"} · 历史登记状态：
+          模型家族：{familyLabel(model.model_family || "未提供")} · 历史登记状态：
           {model.status}
         </p>
         <p>
