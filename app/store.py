@@ -82,6 +82,7 @@ from app.feedback_spike import (
     extract_configured_feedback_link_context,
     message_body_without_feedback_callbacks,
 )
+from app import history_types
 from app.history import HistoryItem
 from app.legacy_receipt import legacy_receipt_has_explicit_failure
 from app.managed_skills import (
@@ -30037,10 +30038,24 @@ class AutoReplyStore:
             ).fetchone()
             return int(row["count"] or 0)
 
+    def _email_actions_history_available(self) -> bool:
+        """Whether EmailStore's action tables exist in this database yet."""
+        if getattr(self, "_email_actions_history_tables_seen", False):
+            return True
+        with self._connect() as db:
+            found = db.execute(
+                "select count(*) from sqlite_master where type='table' "
+                "and name in ('email_actions', 'email_classifications')"
+            ).fetchone()[0]
+        if int(found) == 2:
+            self._email_actions_history_tables_seen = True
+            return True
+        return False
+
     def _operation_logs_base_query(
         self, source_tables: tuple[str, ...] | None = None
     ) -> str:
-        query = """
+        query = f"""
             select
                     'error:' || id as id,
                     'errors' as source_table,
@@ -30053,7 +30068,7 @@ class AutoReplyStore:
                             'resolved: ' || coalesce(nullif(resolution, ''), 'verified recovery')
                         else 'active'
                     end as status,
-                    'replay' as history_type,
+                    '{history_types.SERVICE_ERROR}' as history_type,
                     'Service error' as source_actor,
                     coalesce(conversation_id, '') as context,
                     detail as summary,
@@ -30074,7 +30089,7 @@ class AutoReplyStore:
                     'Reply task' as category,
                     status as action,
                     status as status,
-                    'replay' as history_type,
+                    '{history_types.QUEUE}' as history_type,
                     'Reply task' as source_actor,
                     conversation_title as context,
                     trigger_text as summary,
@@ -30175,18 +30190,7 @@ class AutoReplyStore:
                         ) then 'recovered'
                         else send_status
                     end as status,
-                    case
-                        when action='oa_approval' or oa_process_instance_id<>'' then 'approval'
-                        when channel='wechat' then 'wechat'
-                        when channel='email' and (
-                            action='direct_unsubscribe'
-                            or (
-                                conversation_title='Email unsubscribe'
-                                and trigger_text='Immutable ActionPlan authorizes unsubscribe.'
-                            )
-                        ) then 'email_unsubscribe'
-                        else 'replay'
-                    end as history_type,
+                    {history_types.reply_attempt_history_type_sql()} as history_type,
                     trigger_sender as source_actor,
                     conversation_title as context,
                     trigger_text as summary,
@@ -30249,7 +30253,7 @@ class AutoReplyStore:
                         when runs.status='ready_to_send' and jobs.status in ('retry', 'failed') then 'failed'
                         else runs.status
                     end as status,
-                    'meeting' as history_type,
+                    '{history_types.MEETING}' as history_type,
                     'Meeting Alignment Agent' as source_actor,
                     jobs.title as context,
                     coalesce(nullif(jobs.final_message, ''), runs.audit_summary) as summary,
@@ -30270,7 +30274,7 @@ class AutoReplyStore:
                     'Task input' as category,
                     source_type || ':' || source_ref as action,
                     status as status,
-                    'task' as history_type,
+                    '{history_types.TASK}' as history_type,
                     'Task input' as source_actor,
                     source_type || ':' || source_ref as context,
                     payload_json as summary,
@@ -30290,7 +30294,7 @@ class AutoReplyStore:
                     'Task update' as category,
                     updates.source_type || ':' || updates.source_ref as action,
                     'done' as status,
-                    'task' as history_type,
+                    '{history_types.TASK}' as history_type,
                     'Task Agent' as source_actor,
                     projects.title as context,
                     updates.summary as summary,
@@ -30311,7 +30315,7 @@ class AutoReplyStore:
                     'TODO completion evidence' as category,
                     candidates.source_type || ':' || candidates.source_ref as action,
                     candidates.status as status,
-                    'task' as history_type,
+                    '{history_types.TASK}' as history_type,
                     'Task Agent' as source_actor,
                     coalesce(nullif(todos.title, ''), projects.title) as context,
                     candidates.evidence_text as summary,
@@ -30333,7 +30337,7 @@ class AutoReplyStore:
                     'Follow-up' as category,
                     drafts.target_kind as action,
                     drafts.status as status,
-                    'task' as history_type,
+                    '{history_types.TASK}' as history_type,
                     'Follow-up' as source_actor,
                     coalesce(nullif(todos.title, ''), drafts.owner_name, projects.title) as context,
                     drafts.question_text as summary,
@@ -30355,7 +30359,7 @@ class AutoReplyStore:
                     'DingTalk Todo' as category,
                     links.dingtalk_task_id as action,
                     links.status as status,
-                    'task' as history_type,
+                    '{history_types.TASK}' as history_type,
                     'DingTalk Todo' as source_actor,
                     coalesce(nullif(projects.title, ''), title_snapshot) as context,
                     links.title_snapshot as summary,
@@ -30368,7 +30372,119 @@ class AutoReplyStore:
                 from work_todo_dingtalk_links as links
                 left join work_todos as todos on todos.id=links.work_todo_id
                 left join work_projects as projects on projects.id=todos.project_id
+                union all
+                select
+                    'scheduled-run:' || runs.id as id,
+                    'scheduled_task_runs' as source_table,
+                    runs.id as source_id,
+                    -- These tables write ISO-8601 with a 'T'; History sorts
+                    -- the text, so it is put in the other sources' form.
+                    coalesce(
+                        datetime(coalesce(nullif(runs.dispatched_at, ''), runs.created_at)),
+                        runs.created_at
+                    ) as occurred_at,
+                    'Scheduled task' as category,
+                    coalesce(nullif(runs.execution_id, ''), runs.trigger_kind) as action,
+                    case
+                        when runs.dispatch_status='dispatched' then 'done'
+                        when runs.dispatch_status='skipped' then 'skipped'
+                        -- A later trigger of the same task that ran is the
+                        -- recovery: the service resolves this failure's
+                        -- Attention entry on that success.
+                        when exists (
+                            select 1 from scheduled_task_runs as later_runs
+                            where later_runs.scheduled_task_id=runs.scheduled_task_id
+                              and later_runs.id>runs.id
+                              and later_runs.dispatch_status='dispatched'
+                        ) then 'recovered'
+                        else 'failed'
+                    end as status,
+                    case
+                        when coalesce(json_extract(runs.snapshot_json, '$.command'), '')<>''
+                            then '{history_types.SCHEDULED_COMMAND}'
+                        else '{history_types.SCHEDULED_AGENT}'
+                    end as history_type,
+                    case runs.trigger_kind
+                        when 'manual' then 'Manual run'
+                        else 'Scheduled task'
+                    end as source_actor,
+                    coalesce(
+                        nullif(json_extract(runs.snapshot_json, '$.name'), ''),
+                        'Scheduled task ' || runs.scheduled_task_id
+                    ) as context,
+                    coalesce(
+                        nullif(runs.result_summary, ''),
+                        nullif(runs.skip_or_error_reason, ''),
+                        runs.dispatch_status
+                    ) as summary,
+                    runs.skip_or_error_reason as detail,
+                    'scheduled-task:' || runs.scheduled_task_id as conversation_id,
+                    runs.event_id as message_id,
+                    0 as project_id,
+                    0 as todo_id,
+                    0 as follow_up_id
+                from scheduled_task_runs as runs
+                where {history_types.scheduled_run_filter_sql("runs")}
         """
+        if self._email_actions_history_available():
+            # The email tables belong to EmailStore, which the service opens
+            # on this same SQLite file; a store opened alone has none.
+            from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS
+
+            query += f"""
+                union all
+                select
+                    'email-action:' || actions.rowid as id,
+                    'email_actions' as source_table,
+                    actions.rowid as source_id,
+                    coalesce(datetime(actions.updated_at), actions.updated_at) as occurred_at,
+                    'Email action' as category,
+                    actions.action_type as action,
+                    case
+                        -- Only the current plan of a processed message is
+                        -- still executed; anything else it left unfinished
+                        -- never will be.
+                        when actions.action_plan_id<>coalesce(messages.current_action_plan_id, '')
+                             or messages.status<>'processed' then
+                            case when actions.status in ('done', 'skipped')
+                                 then actions.status else 'skipped' end
+                        -- The same retry window as Attention and the status
+                        -- page: a failure the worker will retry is pending.
+                        when actions.status='failed'
+                             and actions.attempt_count<{DIRECT_ACTION_MAX_ATTEMPTS}
+                             and trim(actions.next_attempt_at)<>''
+                             and datetime(actions.next_attempt_at) is not null
+                            then 'pending'
+                        else actions.status
+                    end as status,
+                    '{history_types.EMAIL_ACTION}' as history_type,
+                    coalesce(nullif(messages.sender, ''), actions.account_id) as source_actor,
+                    coalesce(
+                        nullif(messages.subject, ''),
+                        nullif(actions.provider_target, ''),
+                        actions.action_type
+                    ) as context,
+                    case actions.action_type
+                        when 'move' then '移动到「'
+                            || coalesce(json_extract(actions.parameters_json, '$.target_folder'), '')
+                            || '」'
+                        when 'archive' then '归档'
+                        when 'trash' then '移到垃圾箱'
+                        when 'flag_important' then '标为重要'
+                        when 'mark_read' then '标为已读'
+                        when 'label' then '打标签'
+                        else actions.action_type
+                    end as summary,
+                    actions.error as detail,
+                    cast(actions.classification_id as text) as conversation_id,
+                    '' as message_id,
+                    0 as project_id,
+                    0 as todo_id,
+                    0 as follow_up_id
+                from email_actions as actions
+                join email_classifications as messages
+                  on messages.id=actions.classification_id
+            """
         if not source_tables:
             return query
         requested = set(source_tables)

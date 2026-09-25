@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, renameRuntimeRoute } from "./console";
+import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, listHistoryTypes, renameRuntimeRoute } from "./console";
 
 function statusEnvelope() {
   return {
@@ -71,6 +71,22 @@ describe("console API helpers", () => {
     try {
       await renameRuntimeRoute("codex_api", "kksj");
       expect(calls).toEqual([{ url: "/api/console/settings/agent-runtime/routes/codex_api/rename", body: JSON.stringify({ new_name: "kksj" }) }]);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+  it("reads the History types the service lists, and rejects a malformed one", async () => {
+    const originalFetch = globalThis.fetch;
+    const meta = { page: 1, page_size: 2, total: 2, next_cursor: "", has_more: false, snapshot_at: "now" };
+    const urls: string[] = [];
+    let items: unknown[] = [{ value: "dingtalk", label: "钉钉消息" }, { value: "calendar", label: "日历邀请" }];
+    globalThis.fetch = (async (url: RequestInfo | URL) => {
+      urls.push(String(url));
+      return new Response(JSON.stringify({ items, meta }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      await expect(listHistoryTypes()).resolves.toEqual([{ value: "dingtalk", label: "钉钉消息" }, { value: "calendar", label: "日历邀请" }]);
+      expect(urls).toEqual(["/api/console/history/types"]);
+      items = [{ value: "dingtalk" }];
+      await expect(listHistoryTypes()).rejects.toThrow("invalid History type");
     } finally { globalThis.fetch = originalFetch; }
   });
   it("normalizes arbitrary values before display", () => {

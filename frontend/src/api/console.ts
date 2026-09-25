@@ -163,6 +163,8 @@ export interface TaskFilters { categories: string[]; task_states: string[]; }
 export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
 export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; }
+/** One History type as the service names it (Derek 2026-09-25: the filter lists every kind of work the service runs). */
+export interface HistoryTypeOption { value: string; label: string; }
 export interface HistoryChart { labels: string[]; series: Array<{ name: string; data: number[] }>; total: number; range: string; }
 export interface AttentionItem { id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; detail_label: string; detail: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
 export interface FeedbackReference { label: string; route: string; }
@@ -968,6 +970,17 @@ export function saveEmailRuntimeMode(payload: {mode: EmailRuntime["mode"]; model
 }
 export function saveEmailPromotionConfig(payload: Omit<EmailPromotionConfig, "config_version"> & {expected_current_version: string}) {
   return request<{ok: boolean; config: EmailPromotionConfig}>("/api/console/email/promotion-config", {method:"PUT",body:JSON.stringify(payload)});
+}
+
+/** The History type filter, in the service's order; the page's badges use the same labels. */
+export function listHistoryTypes(signal?: AbortSignal): Promise<HistoryTypeOption[]> {
+  return request<unknown>("/api/console/history/types", { signal }).then((value) => {
+    const page = parseConsoleList<unknown>(value);
+    return page.items.map((item) => {
+      if (!isRecord(item) || !isString(item.value) || !item.value || !isString(item.label) || !item.label) throw new Error("invalid History type");
+      return { value: item.value, label: item.label };
+    });
+  });
 }
 
 export function getHistoryChart(range = "24h", signal?: AbortSignal) {

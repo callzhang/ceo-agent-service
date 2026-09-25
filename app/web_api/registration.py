@@ -47,6 +47,7 @@ from app.web_api.status import StatusEnvelope, StatusMeta, WorkerStatus
 from app.web_api.email import register_email_routes
 from app.web_api.scheduled_tasks import register_scheduled_task_routes
 from app.agent_cron.options import ScheduledTaskOptionService
+from app import history_types
 from app.skill_features import FeatureRegistry
 from app.skill_files import (
     SkillFileService,
@@ -140,6 +141,16 @@ def register_console_routes(
                 return f"/tasks/legacy-project/{project_id}"
         if source_table == "reply_attempts":
             return f"/attempts/{source_id}"
+        if source_table == "scheduled_task_runs":
+            # There is no page per trigger; the task's page lists its runs.
+            conversation_id = str(getattr(log, "conversation_id", "") or "")
+            task_id = conversation_id.removeprefix("scheduled-task:")
+            return f"/scheduled-tasks?id={task_id}" if task_id.isdigit() else "/scheduled-tasks"
+        if source_table == "email_actions":
+            classification_id = str(getattr(log, "conversation_id", "") or "")
+            if classification_id.isdigit():
+                return f"/email?tab=all&selected={classification_id}"
+            return "/email?tab=all"
         return ""
 
     def first_line(text: str) -> str:
@@ -174,6 +185,10 @@ def register_console_routes(
             kind = "meeting"
         elif source_table in {"work_updates", "todo_evidence_candidates", "follow_up_drafts", "work_todo_dingtalk_links"}:
             kind = "task"
+        elif source_table == "scheduled_task_runs":
+            kind = "scheduled_run"
+        elif source_table == "email_actions":
+            kind = "email_action"
         else:
             kind = "reply"
         title = normalize_display_value(getattr(log, "context", "") or getattr(log, "summary", "") or getattr(log, "category", ""))
@@ -194,6 +209,13 @@ def register_console_routes(
         elif source_table == "work_todo_dingtalk_links":
             input_text = summary
             output_text = detail
+        elif source_table in {"scheduled_task_runs", "email_actions"}:
+            # No question and answer here: one result line (the command's
+            # summary or error, the email action and its error).
+            input_text = ""
+            output_text = ""
+            if source_table == "email_actions" and detail:
+                summary = f"{summary}：{detail}"
         else:
             input_text = summary
             output_text = detail or summary
@@ -508,26 +530,24 @@ def register_console_routes(
         status_key = status.strip().lower()
         statuses = ("done", "sent") if status_key == "done" else ((status_key,) if status_key else None)
         object_type_key = object_type.strip().lower()
-        history_types = (
+        # A value that is no longer a History type (the retired `replay`, or
+        # a typo) filters nothing, so an old link opens the whole list rather
+        # than an empty page the filter menu cannot name.
+        if object_type_key not in history_types.HISTORY_TYPE_VALUES:
+            object_type_key = ""
+        selected_history_types = (
             (object_type_key,)
-            if object_type_key and object_type_key != "queue"
+            if object_type_key and object_type_key != history_types.QUEUE
             else None
         )
-        visible_source_tables = (
-            "reply_attempts",
-            "meeting_alignment_runs",
-            "work_updates",
-            "todo_evidence_candidates",
-            "follow_up_drafts",
-            "work_todo_dingtalk_links",
-        )
+        visible_source_tables = history_types.HISTORY_SOURCE_TABLES
         queue_items = (
             [
                 queue_history_item(task)
                 for task in store.list_reply_tasks(statuses=("pending", "processing"))
                 if queue_history_matches(task, query=q, status=status_key)
             ]
-            if object_type_key in {"", "queue"}
+            if object_type_key in {"", history_types.QUEUE}
             else []
         )
         log_total, rows = store.list_operation_logs_with_count(
@@ -537,7 +557,7 @@ def register_console_routes(
             offset=0,
             query=q,
             statuses=statuses,
-            history_types=history_types,
+            history_types=selected_history_types,
             source_tables=visible_source_tables,
         )
         all_items = [*queue_items, *(history_log_item(row) for row in rows)]
@@ -573,6 +593,15 @@ def register_console_routes(
             return {"chart": {}}
         chart_hours = {"24h": 24, "1w": 24 * 7, "1m": 24 * 30}.get(range.strip().lower(), 24)
         return {"chart": json_safe(history_chart_factory(chart_hours)), "meta": {"snapshot_at": snapshot_at()}}
+
+    @app.get("/api/console/history/types")
+    def console_history_types():
+        """The History type filter, in order, with the label the page shows."""
+        items = [
+            {"value": item.value, "label": item.label}
+            for item in history_types.HISTORY_TYPES
+        ]
+        return list_envelope(items, page=1, page_size=len(items), total=len(items))
 
     @app.get("/api/console/history/errors/{error_id}")
     def console_error_detail(error_id: int):

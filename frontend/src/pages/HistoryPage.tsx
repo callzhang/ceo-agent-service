@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { displayValue, getHistoryChart, listHistory, type HistoryChart as HistoryChartData, type HistoryItem } from "../api/console";
+import { displayValue, getHistoryChart, listHistory, listHistoryTypes, type HistoryChart as HistoryChartData, type HistoryItem, type HistoryTypeOption } from "../api/console";
 import { FilterBar } from "../components/filters/FilterBar";
 import { FilterChip } from "../components/filters/FilterChip";
 import { StackedBarChart } from "../components/charts/StackedBarChart";
@@ -56,15 +56,6 @@ function HistoryChart({ chart, loading }: { chart?: HistoryChartData; loading?: 
 }
 
 const statusFilters = ["pending", "processing", "sent", "reacted", "skipped", "recovered", "needs_human", "blocked", "failed", "done"];
-const objectFilterOptions = [
-  { value: "queue", label: "Queue" },
-  { value: "replay", label: "Reply" },
-  { value: "email_unsubscribe", label: "Email unsubscribe" },
-  { value: "wechat", label: "WeChat" },
-  { value: "approval", label: "Approval" },
-  { value: "task", label: "Task" },
-  { value: "meeting", label: "Meeting" },
-];
 const pageSizes = [20, 50, 100];
 const HISTORY_REFRESH_INTERVAL_MS = 10_000;
 
@@ -91,6 +82,9 @@ export function HistoryPage() {
   const [snapshot, setSnapshot] = useState("");
   const [pendingStatus, setPendingStatus] = useState<string | null>(null);
   const [refreshEpoch, setRefreshEpoch] = useState(0);
+  // The service owns the type list (Derek 2026-09-25); if it cannot be read,
+  // the filter offers only 全部 rather than a stale copy.
+  const [typeOptions, setTypeOptions] = useState<HistoryTypeOption[]>([]);
   const requestGeneration = useRef(0);
   const query = searchParams.get("q") || "";
   const status = searchParams.get("status") || searchParams.get("type") || "";
@@ -108,6 +102,12 @@ export function HistoryPage() {
     listHistory({ q: query, status, object_type: objectType, page, page_size: pageSize, include_chart: 0 }, controller.signal).then((result) => { if (generation !== requestGeneration.current) return; setRows(result.items); setTotalCount(result.meta.total || 0); setSnapshot(result.meta.snapshot_at); setPendingStatus(null); setState("ready"); }).catch((reason: unknown) => { if (controller.signal.aborted || generation !== requestGeneration.current) return; setError(reason instanceof Error ? reason.message : "加载失败"); setPendingStatus(null); setState("error"); });
     return () => controller.abort();
   }, [query, status, objectType, page, pageSize, refreshEpoch]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    listHistoryTypes(controller.signal).then((items) => { if (!controller.signal.aborted) setTypeOptions(items); }).catch(() => { if (!controller.signal.aborted) setTypeOptions([]); });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const refreshTimer = window.setInterval(() => {
@@ -129,6 +129,9 @@ export function HistoryPage() {
   const updateStatus = (value: string) => { setPendingStatus(value || "all"); update("status", value); };
   const displayedStatus = pendingStatus === "all" ? "" : pendingStatus || status;
   const total = totalCount;
+  const typeLabels = new Map(typeOptions.map((option) => [option.value, option.label]));
+  // A value the service no longer lists (the retired `replay`) filters nothing there, so the menu says 全部 too.
+  const selectedType = typeLabels.has(objectType) ? objectType : "";
 
-  return <ConsolePageLayout showHeader={false} title="History" actions={<SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />}><div className="history-page" role="region" aria-label="History workspace"><HistoryChart chart={chart} loading={chartState === "loading"} /><section className="card history-workspace-card"><FilterBar><div className="filter-bar-main"><SearchField id="history-search-input" label="搜索历史" value={query} placeholder="搜索标题、内容或来源" onChange={(value) => update("q", value)} onClear={() => update("q", "")} /><SelectField id="history-status-filter" label="状态" value={status} options={[{ value: "", label: "全部状态" }, ...statusFilters.map((value) => ({ value, label: value }))]} onChange={(value) => updateStatus(value)} /><SelectField id="history-object-filter" label="对象" value={objectType} options={[{ value: "", label: "全部对象" }, ...objectFilterOptions.map((option) => ({ value: option.value, label: option.label }))]} onChange={(value) => update("object_type", value)} /></div><div className="filter-bar-side"><SelectField id="history-page-size" label="每页" value={String(pageSize)} options={pageSizes.map((size) => ({ value: String(size), label: `${size} 条` }))} onChange={(value) => update("page_size", value)} /><span className="table-toolbar-total">共 {total} 条</span></div></FilterBar><div className="filter-chip-list" aria-label="快速状态筛选"><FilterChip label="全部" active={!displayedStatus} busy={pendingStatus === "all"} onClick={() => updateStatus("")} /><FilterChip label="待执行" active={displayedStatus === "pending"} busy={pendingStatus === "pending"} onClick={() => updateStatus("pending")} /><FilterChip label="执行中" active={displayedStatus === "processing"} busy={pendingStatus === "processing"} onClick={() => updateStatus("processing")} /><FilterChip label="失败" active={displayedStatus === "failed"} busy={pendingStatus === "failed"} onClick={() => updateStatus("failed")} /><FilterChip label="已恢复" active={displayedStatus === "recovered"} busy={pendingStatus === "recovered"} onClick={() => updateStatus("recovered")} /><FilterChip label="待人工" active={displayedStatus === "needs_human"} busy={pendingStatus === "needs_human"} onClick={() => updateStatus("needs_human")} /><FilterChip label="已完成" active={displayedStatus === "done" || displayedStatus === "sent"} busy={pendingStatus === "done"} onClick={() => updateStatus("done")} />{pendingStatus && <span className="filter-chip-loading" role="status">正在应用筛选…</span>}</div>{state === "error" ? <div className="page-state page-state-error" role="alert">{error}</div> : state === "loading" && !rows.length ? <div className="page-state" role="status">正在加载…</div> : !rows.length ? <div className="page-state">No reply attempts recorded.</div> : <><section className="attempt-feed" aria-label="执行历史">{rows.map((row) => <article className={`attempt-item history-kind-${row.kind || row.type}`} role="article" aria-label={row.title} key={`${row.kind || row.type}-${row.id}`}><div className="attempt-head"><div className="attempt-title"><Link className="attempt-id" to={row.detail_url || `/attempts/${row.id}`}>#{row.id}</Link><span className={`history-type-badge history-type-${row.kind || row.type}`}>{row.type || row.kind || "History"}</span><StatusBadge value={row.status} /><div className="attempt-main">{row.title}</div><div className="attempt-meta">{row.actor || "未提供"}</div></div><div className="attempt-side"><time className="attempt-time">{localTime(row.occurred_at)}</time><div className="attempt-actions"><Link className="review-link" to={row.detail_url || `/attempts/${row.id}`}>查看详情</Link></div></div></div><div className="attempt-lines">{row.input && <AttemptLine label="问" value={row.input} />}{row.output && <AttemptLine label="答" value={row.output} />}{!row.output && <AttemptLine label="结果" value={row.summary} />}</div></article>)}</section><Pagination page={page} pageSize={pageSize} total={total} onPageChange={(nextPage) => update("page", nextPage)} /></>}</section></div></ConsolePageLayout>;
+  return <ConsolePageLayout showHeader={false} title="History" actions={<SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />}><div className="history-page" role="region" aria-label="History workspace"><HistoryChart chart={chart} loading={chartState === "loading"} /><section className="card history-workspace-card"><FilterBar><div className="filter-bar-main"><SearchField id="history-search-input" label="搜索历史" value={query} placeholder="搜索标题、内容或来源" onChange={(value) => update("q", value)} onClear={() => update("q", "")} /><SelectField id="history-status-filter" label="状态" value={status} options={[{ value: "", label: "全部状态" }, ...statusFilters.map((value) => ({ value, label: value }))]} onChange={(value) => updateStatus(value)} /><SelectField id="history-object-filter" label="对象" value={selectedType} options={[{ value: "", label: "全部对象" }, ...typeOptions.map((option) => ({ value: option.value, label: option.label }))]} onChange={(value) => update("object_type", value)} /></div><div className="filter-bar-side"><SelectField id="history-page-size" label="每页" value={String(pageSize)} options={pageSizes.map((size) => ({ value: String(size), label: `${size} 条` }))} onChange={(value) => update("page_size", value)} /><span className="table-toolbar-total">共 {total} 条</span></div></FilterBar><div className="filter-chip-list" aria-label="快速状态筛选"><FilterChip label="全部" active={!displayedStatus} busy={pendingStatus === "all"} onClick={() => updateStatus("")} /><FilterChip label="待执行" active={displayedStatus === "pending"} busy={pendingStatus === "pending"} onClick={() => updateStatus("pending")} /><FilterChip label="执行中" active={displayedStatus === "processing"} busy={pendingStatus === "processing"} onClick={() => updateStatus("processing")} /><FilterChip label="失败" active={displayedStatus === "failed"} busy={pendingStatus === "failed"} onClick={() => updateStatus("failed")} /><FilterChip label="已恢复" active={displayedStatus === "recovered"} busy={pendingStatus === "recovered"} onClick={() => updateStatus("recovered")} /><FilterChip label="待人工" active={displayedStatus === "needs_human"} busy={pendingStatus === "needs_human"} onClick={() => updateStatus("needs_human")} /><FilterChip label="已完成" active={displayedStatus === "done" || displayedStatus === "sent"} busy={pendingStatus === "done"} onClick={() => updateStatus("done")} />{pendingStatus && <span className="filter-chip-loading" role="status">正在应用筛选…</span>}</div>{state === "error" ? <div className="page-state page-state-error" role="alert">{error}</div> : state === "loading" && !rows.length ? <div className="page-state" role="status">正在加载…</div> : !rows.length ? <div className="page-state">No reply attempts recorded.</div> : <><section className="attempt-feed" aria-label="执行历史">{rows.map((row) => <article className={`attempt-item history-kind-${row.kind || row.type}`} role="article" aria-label={row.title} key={`${row.kind || row.type}-${row.id}`}><div className="attempt-head"><div className="attempt-title"><Link className="attempt-id" to={row.detail_url || `/attempts/${row.id}`}>#{row.id}</Link><span className={`history-type-badge history-type-${row.kind || row.type}`}>{typeLabels.get(row.type) || row.type || row.kind || "History"}</span><StatusBadge value={row.status} /><div className="attempt-main">{row.title}</div><div className="attempt-meta">{row.actor || "未提供"}</div></div><div className="attempt-side"><time className="attempt-time">{localTime(row.occurred_at)}</time><div className="attempt-actions"><Link className="review-link" to={row.detail_url || `/attempts/${row.id}`}>查看详情</Link></div></div></div><div className="attempt-lines">{row.input && <AttemptLine label="问" value={row.input} />}{row.output && <AttemptLine label="答" value={row.output} />}{!row.output && <AttemptLine label="结果" value={row.summary} />}</div></article>)}</section><Pagination page={page} pageSize={pageSize} total={total} onPageChange={(nextPage) => update("page", nextPage)} /></>}</section></div></ConsolePageLayout>;
 }

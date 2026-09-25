@@ -91,6 +91,7 @@ from app.config import (
 )
 from app.quality_gate import scan_hourly_quality
 from app.embedding import EmbeddingClient
+from app import history_types
 from app.history import safe_observability_error
 from app.history_actions import (
     HistoryAttention,
@@ -10127,14 +10128,7 @@ def create_audit_app(
             # first request; subsequent reads are served from the short-lived
             # store cache and still refresh after its TTL.
             audit_store.warm_history_page_cache(
-                source_tables=(
-                    "reply_attempts",
-                    "meeting_alignment_runs",
-                    "work_updates",
-                    "todo_evidence_candidates",
-                    "follow_up_drafts",
-                    "work_todo_dingtalk_links",
-                )
+                source_tables=history_types.HISTORY_SOURCE_TABLES
             )
             # The chart is requested immediately after the list on a History
             # navigation. Precompute the supported ranges while the service is

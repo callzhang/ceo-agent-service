@@ -799,7 +799,7 @@ def test_console_history_separates_email_unsubscribe_from_reply(tmp_path: Path):
 
     with _client(tmp_path) as client:
         unsubscribe = client.get("/api/console/history?object_type=email_unsubscribe")
-        reply = client.get("/api/console/history?object_type=replay")
+        reply = client.get("/api/console/history?object_type=email")
 
     assert unsubscribe.status_code == 200
     unsubscribe_payload = unsubscribe.json()

@@ -4,9 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const listHistory = vi.hoisted(() => vi.fn());
 const getHistoryChart = vi.hoisted(() => vi.fn());
+const listHistoryTypes = vi.hoisted(() => vi.fn());
 vi.mock("../api/console", () => ({
   listHistory,
   getHistoryChart,
+  listHistoryTypes,
   displayValue: (value: unknown) => typeof value === "string" ? value : JSON.stringify(value),
 }));
 
@@ -59,6 +61,16 @@ describe("HistoryPage", () => {
   beforeEach(() => {
     listHistory.mockReset();
     getHistoryChart.mockReset();
+    listHistoryTypes.mockReset();
+    listHistoryTypes.mockResolvedValue([
+      { value: "queue", label: "队列" },
+      { value: "dingtalk", label: "钉钉消息" },
+      { value: "calendar", label: "日历邀请" },
+      { value: "email_unsubscribe", label: "邮件退订" },
+      { value: "email_action", label: "邮件动作" },
+      { value: "task", label: "Task" },
+      { value: "scheduled_command", label: "定时命令" },
+    ]);
     listHistory.mockResolvedValue({
       items: [{
         id: "836",
@@ -123,13 +135,14 @@ describe("HistoryPage", () => {
     expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ status: "processing" }), expect.anything());
   });
 
-  it("keeps email unsubscribe as its own history object filter", async () => {
+  it("offers the service's History types and filters by the chosen one", async () => {
     const user = (await import("@testing-library/user-event")).default.setup();
     render(<MemoryRouter><HistoryPage /></MemoryRouter>);
 
     const objectFilter = await screen.findByRole("combobox", { name: "对象" });
-    expect(screen.getByRole("option", { name: "Reply" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Email unsubscribe" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "日历邀请" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "邮件动作" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Reply" })).not.toBeInTheDocument();
 
     await user.selectOptions(objectFilter, "email_unsubscribe");
 
@@ -137,6 +150,40 @@ describe("HistoryPage", () => {
       expect.objectContaining({ object_type: "email_unsubscribe" }),
       expect.anything(),
     );
+  });
+
+  it("offers only 全部 when the type list cannot be read", async () => {
+    listHistoryTypes.mockRejectedValue(new Error("unavailable"));
+    render(<MemoryRouter><HistoryPage /></MemoryRouter>);
+
+    const objectFilter = await screen.findByRole("combobox", { name: "对象" });
+    expect(await screen.findByRole("article", { name: /客户项目/ })).toBeInTheDocument();
+    expect(Array.from(objectFilter.querySelectorAll("option")).map((option) => option.textContent)).toEqual(["全部对象"]);
+  });
+
+  it("names each row's type with the service's label", async () => {
+    listHistory.mockResolvedValue({
+      items: [
+        { id: "85117", occurred_at: "2026-09-25 08:09:21", title: "分类新邮件", type: "scheduled_command", status: "failed", summary: "scheduled_task_service_command_failed: imap timeout", actor: "Scheduled task", detail_url: "/scheduled-tasks?id=10", kind: "scheduled_run", input: "", output: "" },
+        { id: "3", occurred_at: "2026-09-25 08:09:00", title: "季度复盘", type: "email_action", status: "done", summary: "移动到「工作」", actor: "a@example.com", detail_url: "/email?tab=all&selected=9001", kind: "email_action", input: "", output: "" },
+      ],
+      meta: { page: 1, page_size: 20, total: 2, next_cursor: "", has_more: false, snapshot_at: "2026-09-25T08:10:00Z" },
+    });
+    render(<MemoryRouter><HistoryPage /></MemoryRouter>);
+
+    const run = await screen.findByRole("article", { name: "分类新邮件" });
+    expect(run).toHaveTextContent("定时命令");
+    expect(run).toHaveTextContent("结果");
+    expect(screen.getByRole("article", { name: "季度复盘" })).toHaveTextContent("邮件动作");
+    expect(screen.getByRole("article", { name: "季度复盘" })).toHaveTextContent("移动到「工作」");
+  });
+
+  it("shows 全部 for a retired type in the address", async () => {
+    render(<MemoryRouter initialEntries={["/history?object_type=replay"]}><HistoryPage /></MemoryRouter>);
+
+    const objectFilter = await screen.findByRole("combobox", { name: "对象" });
+    await screen.findByRole("option", { name: "日历邀请" });
+    expect(objectFilter).toHaveValue("");
   });
 
   it("offers recovered history separately from current failures", async () => {

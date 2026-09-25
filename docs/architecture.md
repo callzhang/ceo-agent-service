@@ -492,11 +492,46 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
 队列任务与执行记录都必须保留各自真实状态。筛选条件的业务含义固定如下：
 
 - `status` 只筛选执行状态；不再使用含糊的 `type` 名称。
-- `task_type` 只筛选任务类型；多选通过重复的 `task_type` 参数表达，不再使用
-  `object_type` 名称。
-- 任务类型包括 `replay`、`wechat`、`approval`、`task`、`meeting` 和
-  `okr_review`。OKR 评审优先依据明确的 `action='okr_review'` 识别，其次依据与
-  `okr_review_requests` 的会话和触发消息关联识别；同一执行记录只能归入一个类型。
+- `object_type` 只筛选任务类型，一次一个值。类型只有一份定义：服务端注册表
+  `app/history_types.py`（值、中文名、顺序）。History 联合查询写出的 `history_type`
+  取自它，页面从 `GET /api/console/history/types` 读取筛选项，行上的类型徽标用同一个
+  中文名；读不到类型表时页面只提供「全部」。不在注册表里的值（包括已退役的
+  `replay`）不做筛选，按「全部」返回，页面筛选框也显示「全部」（Derek 2026-09-25）。
+- 类型按顺序为：队列 `queue`、钉钉消息 `dingtalk`、日历邀请 `calendar`、OA 审批
+  `approval`、邮件 `email`、邮件退订 `email_unsubscribe`、邮件动作 `email_action`、
+  微信 `wechat`、会议跟进 `meeting`、Task `task`、定时任务 `scheduled_agent`、
+  定时命令 `scheduled_command`。同一执行记录只能归入一个类型。`reply_attempts`
+  依次判定：OA（`action='oa_approval'` 或带审批实例）→ 微信渠道 → 邮件退订 → 其余邮件
+  渠道 → `channel='scheduled'` 的 Agent 形式定时任务（每日总结、周报等）→ 日历邀请 →
+  钉钉消息。日历邀请用的是邀请生产者自己的判定
+  （`DingTalkAutoReplyWorker._is_calendar_message`：`[日程]` 开头，或内容含
+  `newCalendar=1` / `calendarDetail` / `uniqueId=`，含 URL 编码形式），另加 attempt 上的
+  `calendar_response` / `calendar_reconciliation` 动作或 `calendar_event_id`；测试把两处
+  判定绑在一起。OKR 评审 attempt（`action='okr_review'`）归入钉钉消息。
+- History 的来源表是 `HISTORY_SOURCE_TABLES`：`reply_attempts`、会议、Task 各表，
+  以及两类新来源。启动时的缓存预热和 History 接口传同一个元组（页面缓存以它为键）。
+  `errors` 不是 History 来源，其分支的 `service_error` 类型只出现在旧 `/logs` 页。
+- 定时命令（`scheduled_task_runs`）：失败的触发一律显示；同一定时任务之后有一次成功
+  运行的，失败显示为 `recovered`（服务在那次成功时解决它的 Attention 条目），否则为
+  `failed`。成功的运行只显示结果不会出现在别处的命令（`consumer_prompt_enabled=False`：
+  听记同步、听记权限申请、OKR 周报），显示为 `done`，结果行是命令的一行摘要；把结果
+  交给 Agent 的生产命令（读取新钉钉消息、日历邀请、邮件等，每天数千次且几乎都是
+  「没找到」）成功时不显示，它们排入的每一项自己就是一条 History。Agent 形式任务因
+  运行时或 Skill 不可用而跳过的触发显示为 `skipped`；上一次还在运行而跳过
+  （`scheduled_task_previous_execution_active`）是调度的防重叠记录，不显示。Agent
+  形式任务的失败触发归入「定时任务」，其余归入「定时命令」。详情链接到
+  `/scheduled-tasks?id=<任务>`（没有单次运行的页面）。
+- 邮件动作（EmailStore 在同一 SQLite 文件里的 `email_actions`）：每个动作一行，标题是
+  邮件主题，来源是发件人，结果是动作（移动到「文件夹」、归档、移到垃圾箱、标为重要、
+  标为已读、打标签）及错误。状态沿用 Attention 和状态页的口径：只有当前计划、已处理
+  邮件上用尽重试的失败才是 `failed`；还在重试窗口里的失败是 `pending`；被新计划取代
+  或邮件不再处理时，未完成的动作是 `skipped`。所以 History 的失败数不会多出 Attention
+  没有的邮件动作；定时命令的失败与 Attention 的 `scheduled-task:<id>` 条目同样一一对应，
+  唯一的差别是依赖短暂不可达时，服务要等故障持续 15 分钟才写 Attention，这段时间里
+  最近一次失败只在 History 里。详情链接到 `/email?tab=all&selected=<邮件>`。
+- 这两类来源与 `reply_attempts` 一样按 `occurred_at` 排序，时间统一成
+  `YYYY-MM-DD HH:MM:SS`（UTC）。History 图表仍只统计回复 attempt、会议和 Task，不含
+  定时命令和邮件动作。
 - `reply_tasks` 的 `pending` 和 `processing` 是当前队列任务，必须在 History 中按真实
   状态展示、筛选和计数；它们不属于 Attention。
 - History 在页面可见时每十秒读取当前快照；已经进入终态的队列任务不得因页面保持打开而继续
@@ -508,7 +543,7 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
   当前队列记录，列表以这条队列记录承载 `pending` 或 `processing`，不再制造重复的当前状态行。
 
 History 不承诺旧查询参数或旧 URL 的兼容别名；接口和页面使用当前语义，历史数据只
-通过当前代码的分类规则重新解释。
+通过当前代码的分类规则重新解释。旧值不会报错，只是不再筛选。
 
 “待处理服务修复”不是运行时能力：它没有生产者、处理动作、修复执行器或闭环，不能
 作为服务健康状态或执行队列的一部分。移除该死入口时，范围包括导航、History 卡片、
