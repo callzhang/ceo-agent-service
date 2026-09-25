@@ -267,7 +267,7 @@ def test_group_delivery_uses_first_candidate_and_real_mentions(tmp_path):
     # The DingTalk `title` above only reaches the push banner and the
     # conversation list; the body has to name the meeting itself.
     assert dws.sent[0]["text"].startswith(
-        "# 上线评审\n*时间：2026-07-14 09:00-10:00*\n\n"
+        "# 上线评审\n*时间：2026-07-14 09:00-10:00*\n\n---\n\n"
     )
     assert send_decision().final_message in dws.sent[0]["text"]
     assert dws.sent[0]["text"].endswith("（by明哥分身）")

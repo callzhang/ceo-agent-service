@@ -75,7 +75,10 @@ def meeting_followup_message(
     final_message: str | None = None,
 ) -> str:
     content = final_message if final_message is not None else decision.final_message
-    return f"{_meeting_followup_header(source)}\n\n{content.strip()}"
+    # A horizontal rule separates the title/time header from the body. The blank
+    # line before "---" is required: without it Markdown reads the rule as a
+    # setext underline and turns the time line into a heading.
+    return f"{_meeting_followup_header(source)}\n\n---\n\n{content.strip()}"
 
 
 class MeetingDeliveryDws(Protocol):
