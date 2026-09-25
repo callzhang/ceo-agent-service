@@ -7390,6 +7390,10 @@ def test_rule_decision_attention_uses_attempt_linked_run_not_unrelated_latest_ru
             "update reply_attempts set trigger_message_id=? where id=?",
             ("derived-oa-trigger", attempt_id),
         )
+        db.execute(
+            "update reply_tasks set execution_generation=? where id=?",
+            ("newer-task-generation", task.id),
+        )
 
     decisions = audit_web_module._human_decision_attention_rows(store)
 

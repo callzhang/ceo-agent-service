@@ -3526,7 +3526,6 @@ def _human_decision_attention_rows(
         join reply_tasks as tasks
           on tasks.id=runs.reply_task_id
          and runs.reply_task_id=tasks.id
-         and runs.execution_generation=tasks.execution_generation
          and runs.status='completed'
         join business_object_tasks as current_object
           on current_object.business_object_key=tasks.business_object_key
