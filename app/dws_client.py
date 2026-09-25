@@ -257,25 +257,6 @@ class DwsOaApprovalCandidate(BaseModel):
 
 _MARKDOWN_LINE_MARKER = re.compile(r"^(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)")
 
-#: How much of the original message a reply quotes (Derek, 2026-09-24).
-REPLY_QUOTE_CHARS = 50
-
-
-def reply_quote_block(content: str | None, sender_name: str = "") -> str:
-    """The Markdown quote a reply carries in place of DingTalk's quote reply.
-
-    `> Sender: excerpt` is the shape the send title already skips over.
-    """
-    text = " ".join(str(content or "").split())
-    if not text:
-        return ""
-    excerpt = text[:REPLY_QUOTE_CHARS]
-    if len(text) > REPLY_QUOTE_CHARS:
-        excerpt += "…"
-    speaker = " ".join(str(sender_name or "").split())
-    return f"> {speaker}: {excerpt}\n\n" if speaker else f"> {excerpt}\n\n"
-
-
 class DwsClient:
     IDEMPOTENCY_DUPLICATE_MARKER = "request is repeated with uuid"
     # DWS returns generic code 6 for transient discovery/network failures such as
@@ -3079,53 +3060,17 @@ class DwsClient:
         at_users: list[str] | None = None,
         at_open_dingtalk_ids: list[str] | None = None,
         at_open_dingtalk_names: list[str] | None = None,
-        *,
-        quote: bool = True,
-        idempotency_uuid: str | None = None,
     ) -> dict[str, Any]:
-        """Answer a message with a Markdown message that quotes it.
-
-        Derek, 2026-09-24: every outbound message is Markdown-structured. A
-        DingTalk quote reply (`+messages-reply`) always renders as plain text,
-        so a reply is sent as an ordinary Markdown message whose first line
-        quotes the original, and in a group it @-mentions the asker, who the
-        quote reply used to notify.
-        """
         if not trigger.sender_open_dingtalk_id:
-            raise DwsError("missing trigger senderOpenDingTalkId for reply")
-        body = (reply_quote_block(trigger.content, trigger.sender_name) if quote else "") + text
-        if conversation.single_chat or trigger.single_chat:
-            recipient = (
-                conversation.direct_open_dingtalk_id or trigger.sender_open_dingtalk_id
-            )
-            return self.send_message(
-                None,
-                body,
-                open_dingtalk_id=recipient,
-                idempotency_uuid=idempotency_uuid,
-            )
-        mention_ids = list(at_open_dingtalk_ids or [])
-        mention_names = list(at_open_dingtalk_names or [])
-        asker_name = (trigger.sender_name or "").strip()
-        if (
-            asker_name
-            and trigger.sender_open_dingtalk_id not in mention_ids
-            and len(mention_names) == len(mention_ids)
-        ):
-            mention_ids.insert(0, trigger.sender_open_dingtalk_id)
-            mention_names.insert(0, asker_name)
-            body = (
-                (reply_quote_block(trigger.content, trigger.sender_name) if quote else "")
-                + f"@{asker_name} "
-                + text
-            )
-        return self.send_message(
+            raise DwsError("missing trigger senderOpenDingTalkId for native reply")
+        return self.reply_message(
             conversation.open_conversation_id,
-            body,
+            trigger.open_message_id,
+            trigger.sender_open_dingtalk_id,
+            text,
             at_users=at_users,
-            at_open_dingtalk_ids=mention_ids,
-            at_open_dingtalk_names=mention_names,
-            idempotency_uuid=idempotency_uuid,
+            at_open_dingtalk_ids=at_open_dingtalk_ids,
+            at_open_dingtalk_names=at_open_dingtalk_names,
         )
 
     def send_reply_to_trigger_chunks(
@@ -3154,7 +3099,6 @@ class DwsClient:
                     at_users=chunk_at_users,
                     at_open_dingtalk_ids=chunk_at_open_dingtalk_ids,
                     at_open_dingtalk_names=chunk_at_open_dingtalk_names,
-                    quote=index == 0,
                 )
             )
         return {
