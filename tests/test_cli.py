@@ -8925,7 +8925,6 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
         "sync-minutes-once",
         "weekly-okr-report",
         "process-follow-ups",
-        "write-task-memories",
     }
     assert registry.run("produce-once") == "produce-once queued=3"
     assert registry.run("calendar-invites-once") == "calendar-invites-once queued=3"

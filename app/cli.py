@@ -368,7 +368,6 @@ def build_parser() -> argparse.ArgumentParser:
         "read-oa-approval-detail",
         "read-dingteam-okr",
         "daily-report-facts",
-        "write-task-memories",
         "process-follow-ups",
         "check-follow-up-completions",
         "daily-task-maintenance",
@@ -1041,9 +1040,6 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
                 "process-follow-ups "
                 f"sent={process_follow_ups_command(settings, refresh_evidence=False, limit=50)}"
             ),
-            "write-task-memories": lambda: (
-                f"write-task-memories {write_task_memories_command(settings)}"
-            ),
             "request-minutes-access": lambda: (
                 f"request-minutes-access {request_minutes_access_command(settings)}"
             ),
@@ -1131,6 +1127,7 @@ def run_agent_cron_dispatcher_loop(
     from app.agent_runtime_production import build_production_agent_runtime
     from app.dispatcher.adapters import (
         BusinessTaskTodoSyncOutboxQueueAdapter,
+        TaskMemoryWriteQueueAdapter,
         MeetingQueueAdapter,
         OkrReviewQueueAdapter,
         ReplyQueueAdapter,
@@ -1312,6 +1309,15 @@ def run_agent_cron_dispatcher_loop(
         if not guard.resolved:
             guard.finish_source(now, status=status)
 
+    def consume_task_memory_write(envelope, guard) -> None:
+        from app.task_memory_write import write_claimed_task_memories
+
+        status = write_claimed_task_memories(
+            store, int(envelope.source_id), owner=guard.token.owner
+        )
+        if not guard.resolved:
+            guard.finish_source(datetime.now(timezone.utc), status=status)
+
     adapters = (
         ScheduledTaskQueueAdapter(store),
         ScheduledExecutionQueueAdapter(store),
@@ -1322,6 +1328,7 @@ def run_agent_cron_dispatcher_loop(
     ) + (() if settings.dry_run else (
         TaskTodoSyncOutboxQueueAdapter(store),
         BusinessTaskTodoSyncOutboxQueueAdapter(store),
+        TaskMemoryWriteQueueAdapter(store),
     ))
     consumers = {
         "scheduled": trigger_consumer,
@@ -1334,6 +1341,7 @@ def run_agent_cron_dispatcher_loop(
     if not settings.dry_run:
         consumers["task_todo_sync_outbox"] = consume_task_todo_sync_outbox
         consumers["business_task_todo_sync_outbox"] = consume_business_task_todo_sync_outbox
+        consumers["task_memory_write"] = consume_task_memory_write
     agent_adapters = frozenset(
         {
             "scheduled_execution",
@@ -2589,13 +2597,6 @@ def read_oa_approval_detail_command(
     payload = dws.read_oa_process_instance_openapi(process_id)
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
     return payload
-
-
-def write_task_memories_command(settings: WorkerSettings) -> str:
-    """Write the durable memories finished tasks queued; one line of counts."""
-    from app.task_memory_write import process_task_memory_writes
-
-    return process_task_memory_writes(AutoReplyStore(settings.db_path))
 
 
 def daily_report_facts_command(
@@ -5071,8 +5072,6 @@ def main() -> None:
             user_id=args.user_id,
             period_label=args.period_label,
         )
-    elif args.command == "write-task-memories":
-        print(write_task_memories_command(settings), flush=True)
     elif args.command == "daily-report-facts":
         daily_report_facts_command(settings, scheduled_run_id=args.scheduled_run)
     elif args.command == "process-follow-ups":

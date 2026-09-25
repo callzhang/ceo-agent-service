@@ -1412,6 +1412,126 @@ class TaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
             )
 
 
+class TaskMemoryWriteQueueAdapter(_LedgerClaimLifecycle):
+    """Write a finished task's durable memories as soon as it is queued.
+
+    Derek 2026-09-24: writing memory is automatic system behaviour, not a
+    scheduled task. Finishing a task queues the row; the dispatcher claims it
+    like any other outbox, and a failed write waits for its backoff.
+    """
+
+    name = "task_memory_write"
+
+    def __init__(self, store: AutoReplyStore) -> None:
+        self.store = store
+
+    def metrics(self, now: datetime) -> QueueMetrics:
+        now_text = _sqlite_time(now)
+        due_clause = (
+            "status='pending' and (available_at='' "
+            "or datetime(available_at)<=datetime(?))"
+        )
+        with self.store._connect() as db:
+            pending = db.execute(
+                "select count(*) from task_memory_write_events where status='pending'"
+            ).fetchone()[0]
+            due = db.execute(
+                f"select count(*) from task_memory_write_events where {due_clause}",
+                (now_text,),
+            ).fetchone()[0]
+            running = db.execute(
+                "select count(*) from task_memory_write_events where status='processing'"
+            ).fetchone()[0]
+            oldest = db.execute(
+                f"select min(created_at) from task_memory_write_events where {due_clause}",
+                (now_text,),
+            ).fetchone()[0]
+            latest_error = db.execute(
+                "select error from task_memory_write_events where status='failed' "
+                "order by updated_at desc, id desc limit 1"
+            ).fetchone()
+        return QueueMetrics(
+            pending=int(pending), due=int(due), running=int(running),
+            oldest_available_at=_source_time(str(oldest), fallback=now) if oldest else None,
+            latest_error=str(latest_error[0]) if latest_error else "",
+        )
+
+    def claim(
+        self, now: datetime, *, owner: str, owner_pid: int | None = None, lease: timedelta
+    ) -> DispatchEnvelope | None:
+        owner_pid = os.getpid() if owner_pid is None else owner_pid
+        _validate_claim(owner, lease)
+        now_text = _sqlite_time(now)
+        lease_text = _lease_expiry(now, lease)
+        with self.store._immediate_write_transaction() as db:
+            row = db.execute(
+                "select id, attempts from task_memory_write_events "
+                "where (status='pending' and (available_at='' "
+                "or datetime(available_at)<=datetime(?))) "
+                "or (status='processing' and datetime(lease_expires_at)<=datetime(?)) "
+                "order by id limit 1",
+                (now_text, now_text),
+            ).fetchone()
+            if row is None:
+                return None
+            db.execute(
+                "update task_memory_write_events set status='processing', lease_owner=?, "
+                "lease_expires_at=?, started_at=?, updated_at=current_timestamp where id=?",
+                (owner, lease_text, now_text, row["id"]),
+            )
+            generation = _acquire_lease(
+                db, adapter_name=self.name, source_id=str(row["id"]), owner=owner,
+                owner_pid=owner_pid, lease_expires_at=lease_text, now=now_text,
+            )
+        return DispatchEnvelope(
+            adapter_name=self.name, source_id=str(row["id"]), available_at=now,
+            priority=0, attempt=int(row["attempts"]) + 1, generation=generation,
+        )
+
+    def release(self, envelope: DispatchEnvelope, *, owner: str, now: datetime) -> None:
+        _validate_release(self.name, envelope, owner, now)
+        now_text = _sqlite_time(now)
+        with self.store._immediate_write_transaction() as db:
+            _release_lease(db, envelope=envelope, owner=owner, now=now_text)
+            changed = db.execute(
+                "update task_memory_write_events set status='pending', lease_owner='', "
+                "lease_expires_at='', updated_at=current_timestamp "
+                "where id=? and status='processing' and lease_owner=?",
+                (int(envelope.source_id), owner),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("task Memory write claim is no longer owned")
+
+    def renew(
+        self, envelope: DispatchEnvelope, *, owner: str, now: datetime, lease: timedelta
+    ) -> None:
+        _validate_release(self.name, envelope, owner, now)
+        now_text = _sqlite_time(now)
+        lease_text = _lease_expiry(now, lease)
+        with self.store._immediate_write_transaction() as db:
+            _renew_lease_in_db(
+                db, envelope=envelope, owner=owner, now=now_text, lease_expires_at=lease_text
+            )
+            changed = db.execute(
+                "update task_memory_write_events set lease_expires_at=?, "
+                "updated_at=current_timestamp where id=? and status='processing' "
+                "and lease_owner=?",
+                (lease_text, int(envelope.source_id), owner),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("task Memory write claim is no longer owned")
+
+    def finish(
+        self, envelope: DispatchEnvelope, *, owner: str, now: datetime, status: str,
+        reason: str = "",
+    ) -> None:
+        del reason
+        event = self.store.get_task_memory_write_event(int(envelope.source_id))
+        if event is None or event.status != status:
+            raise ValueError("task Memory write status was not persisted")
+        _complete_ledger(self.store, envelope=envelope, owner=owner, now=now)
+
+
 class BusinessTaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
     """Dispatch Task-keyed DingTalk effects with the normal receipt lease."""
 

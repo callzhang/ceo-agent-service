@@ -83,7 +83,8 @@ Consumer 运行的结果。审核打回之前的版本已被修订取代，不�
   加 `payload_json` 列保存上表组好的完整参数（入队时就定下，重试不重新组装）；没有记忆的任务写一行 `skipped` 占位，保证「每个结束的任务都有一个记忆结论」
   （`count_finished_tasks_without_memory_decision` 这个检查继续成立）。
 - 排队：任务进入终态的同一处把这些行写入（沿用 `enqueue_finished_task_memory_write_events` 的防重复写法）。
-- 写入：新增服务命令定时任务「写入任务长期记忆」，领取到期行，按 `payload_json` 调用现有的
+- 写入：系统自动完成，不是定时任务（Derek 2026-09-24）。统一 Dispatcher 的 `task_memory_write`
+  adapter 一入队就领取，调用现有的
   `app/memory_connector_client.py`（会议结论也用它，直接走 MCP，不经 Agent）。成功记 `memory_id`，失败按会议写入同样的退避重试，
   重试上限后记 `failed` 进 Attention。
 - 不经审核 Agent（Derek 2026-09-24）。

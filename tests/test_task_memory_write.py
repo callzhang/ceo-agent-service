@@ -11,10 +11,11 @@ from app.store import AgentRole
 from app.memory_connector_client import MemoryConnectorError, MemoryWriteReceipt
 from app import store as store_module
 from app.store import AutoReplyStore
+from app.dispatcher.adapters import TaskMemoryWriteQueueAdapter
 from app.task_memory_write import (
     TASK_MEMORY_WRITE_MAX_ATTEMPTS,
     memory_write_arguments,
-    process_task_memory_writes,
+    write_claimed_task_memories,
 )
 
 
@@ -64,6 +65,20 @@ def _finished_task(store: AutoReplyStore, durable_memories_json: str | None):
         durable_memories_json=durable_memories_json,
     )
     return task, consumer
+
+
+def _dispatch(store: AutoReplyStore, *, now: datetime, writer) -> str | None:
+    """Claim the next due row as the dispatcher would, write it, finish the claim."""
+    adapter = TaskMemoryWriteQueueAdapter(store)
+    envelope = adapter.claim(now, owner="dispatcher", lease=timedelta(minutes=10))
+    if envelope is None:
+        return None
+    status = write_claimed_task_memories(
+        store, int(envelope.source_id), owner="dispatcher", now=lambda: now,
+        memory_writer=writer,
+    )
+    adapter.finish(envelope, owner="dispatcher", now=now, status=status)
+    return status
 
 
 def _rows(store: AutoReplyStore):
@@ -116,9 +131,7 @@ def test_writes_carry_the_agents_content_and_the_services_own_provenance(tmp_pat
     task, consumer = _finished_task(store, json.dumps([MEMORY, OTHER]))
     writer = _Writer()
 
-    summary = process_task_memory_writes(store, now=lambda: NOW, memory_writer=writer)
-
-    assert summary == "claimed=1 written=1 retry=0 failed=0"
+    assert _dispatch(store, now=NOW, writer=writer) == "written"
     first, second = writer.calls
     assert first["data"] == f"{MEMORY['title']}\n\n{MEMORY['content']}"
     assert first["created_at"] == MEMORY["source_time"]
@@ -142,19 +155,15 @@ def test_a_retry_writes_only_the_memories_not_yet_written(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "memory.sqlite3")
     _finished_task(store, json.dumps([MEMORY, OTHER]))
 
-    first_pass = process_task_memory_writes(
-        store, now=lambda: NOW, memory_writer=_Writer(fail_after=1)
-    )
-    assert first_pass == "claimed=1 written=0 retry=1 failed=0"
+    assert _dispatch(store, now=NOW, writer=_Writer(fail_after=1)) == "pending"
     [row] = _rows(store)
     assert row["status"] == "pending"
     assert json.loads(row["written_memory_ids_json"]) == ["episode-1"]
 
+    # Not due again until its backoff has passed.
+    assert _dispatch(store, now=NOW, writer=_Writer()) is None
     writer = _Writer()
-    later = NOW + timedelta(hours=1)
-    assert process_task_memory_writes(
-        store, now=lambda: later, memory_writer=writer
-    ) == "claimed=1 written=1 retry=0 failed=0"
+    assert _dispatch(store, now=NOW + timedelta(hours=1), writer=writer) == "written"
     assert [call["source_description"] for call in writer.calls] == [OTHER["title"]]
 
 
@@ -167,11 +176,7 @@ def test_a_write_that_keeps_failing_becomes_visible(tmp_path: Path):
             (TASK_MEMORY_WRITE_MAX_ATTEMPTS - 1,),
         )
 
-    summary = process_task_memory_writes(
-        store, now=lambda: NOW, memory_writer=_Writer(fail_after=0)
-    )
-
-    assert summary == "claimed=1 written=0 retry=0 failed=1"
+    assert _dispatch(store, now=NOW, writer=_Writer(fail_after=0)) == "failed"
     [failed] = store.list_failed_task_memory_write_events()
     assert failed.error == "connector unavailable"
 
@@ -199,9 +204,10 @@ def test_the_retired_never_written_queue_shape_is_rebuilt(tmp_path: Path):
 def test_memory_write_arguments_leave_out_an_absent_subject(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "memory.sqlite3")
     task, _consumer = _finished_task(store, json.dumps([OTHER]))
-    [event] = store.claim_due_task_memory_write_events(
-        now=NOW, limit=1, owner="test", lease_seconds=60
+    envelope = TaskMemoryWriteQueueAdapter(store).claim(
+        NOW, owner="test", lease=timedelta(minutes=1)
     )
+    event = store.get_task_memory_write_event(int(envelope.source_id))
 
     arguments = memory_write_arguments(
         OTHER, task=task, event=event, route="codex_oauth", model="gpt-5.6-sol"
@@ -209,3 +215,12 @@ def test_memory_write_arguments_leave_out_an_absent_subject(tmp_path: Path):
 
     assert "entity_type" not in arguments and "entity_attributes" not in arguments
     assert arguments["provenance_metadata"]["payload"]["route"] == "codex_oauth"
+
+
+def test_skipped_rows_are_never_claimed(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "memory.sqlite3")
+    _finished_task(store, "[]")
+
+    assert TaskMemoryWriteQueueAdapter(store).claim(
+        NOW, owner="dispatcher", lease=timedelta(minutes=1)
+    ) is None

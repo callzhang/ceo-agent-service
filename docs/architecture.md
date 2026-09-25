@@ -120,8 +120,8 @@ model、thinking 只作用于首选线路。managed Skill 必须绑定精确、�
 派发后的执行可用性失败记录在 execution source，trigger 仍只表示已经派发。
 
 统一 Consumer Dispatcher 不建立第二套业务队列表。各 Queue Adapter 直接领取现有事实来源：
-scheduled trigger、scheduled execution、普通 reply、meeting、work summary、OKR review 和
-DingTalk Todo outbox。统一层只处理唤醒、公平领取、租约、全局 Agent 容量和分发；领域 Consumer
+scheduled trigger、scheduled execution、普通 reply、meeting、work summary、OKR review、
+DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。统一层只处理唤醒、公平领取、租约、全局 Agent 容量和分发；领域 Consumer
 继续负责自己的生命周期和外部事实。Dispatcher 的有界等待是跨进程恢复机制，不是用户 Cron，
 也没有用户可编辑的 polling/settle 设置。空队列只显示零指标，不生成 run。
 
@@ -744,8 +744,10 @@ Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写�
   结果的这个字段写进 `task_memory_write_events`：每个任务执行代一行（键为 `reply_task_id +
   execution_generation`），`pending` 带待写条目；没有条目记 `skipped / no_durable_memories`，
   没有 Consumer 结果记 `skipped / no_consumer_result`。所以每个经编排结束的任务都有一个记忆结论。
-- 服务命令定时任务「写入任务长期记忆」（`write-task-memories`，每 5 分钟，`app/task_memory_write.py`）
-  领取到期行，用服务自己的 memory-connector 客户端逐条调用 `memory_write`（与会议结论同一客户端）。
+- 写入是系统自动行为，不是定时任务（Derek 2026-09-24）：统一 Dispatcher 的 `task_memory_write`
+  adapter（`TaskMemoryWriteQueueAdapter`）像 DingTalk Todo outbox 一样，一入队就领取，
+  `app/task_memory_write.py` 用服务自己的 memory-connector 客户端逐条调用 `memory_write`（与会议结论同一客户端）。
+  dry-run 不注册该 adapter。
   正文与时间来自 Agent；`thread_id`（会话标识）、`source_metadata`（渠道、会话、触发消息、任务 id，
   外加 Agent 指认的 `source_refs`）和 `provenance_metadata`（执行者、Consumer run、执行代、线路、
   模型、用途 `task_durable_memory`）由服务从记录里填。每写成一条就记下它的 id，重试只写剩下的；

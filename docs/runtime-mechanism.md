@@ -757,9 +757,10 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 - 并入定时任务「同步会议结论与管理者视角」：会议 Memory 写入的**执行**（入队本来就在这里），
   以及内部维护（错误自动收口、僵死任务锁回收、待办完成核查）。
 - 独立定时任务「投递到期的跟进事项」（每 5 分钟）：原先是每 60 秒的隐藏循环。
-- 独立定时任务「写入任务长期记忆」（每 5 分钟，`write-task-memories`）：把任务结束时排队的
-  `durable_memories` 写进 Memory（Derek 2026-09-24，见 `docs/architecture.md`「任务长期记忆」）。
-  入队在 `finalize_orchestrated_reply_task` 的同一事务里完成，这里只做写入、退避重试和失败收口。
+- 任务长期记忆写入**不是**定时任务（Derek 2026-09-24：「写入记忆不应该是个定时任务，而是系统层
+  自动的」）：任务结束时在 `finalize_orchestrated_reply_task` 同一事务里入队，由统一 Dispatcher 的
+  `task_memory_write` adapter 立即领取写入；退避重试的行到点再被领取，重试上限后进 Attention。
+  见 `docs/architecture.md`「任务长期记忆」。
 - 仍为常驻循环的只有 `meeting-delivery`：它只投递已审核通过的会议结论，10 秒一轮就是它的意义；
   以及备份、cron 调度/派发、探针等不产生业务判断的基础设施。
 
@@ -838,8 +839,8 @@ Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
 `wechat_reader_unavailable`；App Data 权限缺失只记录一条 `wechat_data_permission_required`；
 下一次成功读取恢复 healthy 并清除上述报告。其他异常才是命令失败，trigger 记 `failed`。
 
-同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review 和
-DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
+同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review、
+DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
 公平性和容量；Consumer 保持领域边界。主动唤醒之外的有界等待只用于跨进程写入和异常恢复，不是
 用户配置。Status 为每个实际 adapter 展示 pending、oldest、running 和 latest error；scheduler
 进程/扫描健康与 scheduled run 的业务结果分别展示，空队列不会制造 Agent run。

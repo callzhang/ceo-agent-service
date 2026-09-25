@@ -9267,10 +9267,13 @@ def test_worker_attention_includes_failed_task_memory_writes(tmp_path: Path):
                   "source_refs": ["msg-memory"], "subject": None}]
             ),
         )
-    [event] = store.claim_due_task_memory_write_events(
-        now=datetime.fromisoformat("2026-09-25T10:00:00+00:00"),
-        limit=1, owner="test-task-memory-attention", lease_seconds=30,
+    from app.dispatcher.adapters import TaskMemoryWriteQueueAdapter
+
+    envelope = TaskMemoryWriteQueueAdapter(store).claim(
+        datetime.fromisoformat("2026-09-25T10:00:00+00:00"),
+        owner="test-task-memory-attention", lease=timedelta(seconds=30),
     )
+    event = store.get_task_memory_write_event(int(envelope.source_id))
     assert store.fail_task_memory_write_event(
         event.id, owner="test-task-memory-attention", error="provider unavailable"
     )

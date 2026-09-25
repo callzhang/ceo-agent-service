@@ -162,10 +162,6 @@ FIXED_DISCOVERY_KEYS = frozenset(
 
 
 READABLE_BUILTIN_COPY = {
-    "task-memory-write-v1": (
-        "写入任务长期记忆",
-        "把已结束任务的执行结果里指明的长期信息写入 Memory。Derek 2026-09-24：由执行 Agent 给出、系统写入、不再审核；失败按退避重试，重试上限后进 Attention。",
-    ),
     "ceo-daily-report-daily-v1": (
         "发送 CEO 每日总结",
         "每晚汇总当天的会议、Tasks 项目变化、已处理和等你处理的事项，并扫描当天群消息，写成重要进展、风险、需介入、需关注和管理建议；发布为钉钉文档，由机器人单聊把要点和链接发给 Derek。",
@@ -1503,9 +1499,6 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
                 "process-follow-ups": (
                     lambda: produced.append("process-follow-ups") or "sent=0"
                 ),
-                "write-task-memories": (
-                    lambda: produced.append("write-task-memories") or "claimed=0"
-                ),
             }
         ),
     )
@@ -1532,7 +1525,6 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         "sync-minutes-once",
         "wechat-produce-once",
         "weekly-okr-report",
-        "write-task-memories",
     ]
     for task in tasks:
         runs = store.list_scheduled_task_runs(task.id)
@@ -1607,7 +1599,7 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
         store=store, options=options, working_directory=tmp_path, now=NOW
     )
 
-    assert len(tasks) == 15
+    assert len(tasks) == 14
     agent_tasks = {"ceo-weekly-report-saturday-v1", "ceo-daily-report-daily-v1"}
     for task in tasks:
         assert task.enabled is False
@@ -1619,7 +1611,6 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
             "request-minutes-access",
             "weekly-okr-report",
             "process-follow-ups",
-            "write-task-memories",
         }:
             assert task.prompt == "" and task.skill_refs == ()
         else:

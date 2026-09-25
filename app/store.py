@@ -16894,40 +16894,12 @@ class AutoReplyStore:
             ),
         )
 
-    def claim_due_task_memory_write_events(
-        self, *, now: datetime, limit: int, owner: str, lease_seconds: int
-    ) -> list[TaskMemoryWriteEvent]:
-        """Claim due writes, reclaiming only processing rows whose lease expired."""
-        if limit <= 0:
-            return []
-        if not owner.strip():
-            raise ValueError("task Memory lease owner is required")
-        claimed_at = ensure_utc_datetime(now, field="task Memory claim time")
-        lease_expires_at = (claimed_at + timedelta(seconds=lease_seconds)).isoformat()
-        instant = claimed_at.isoformat()
-        with self._immediate_write_transaction() as db:
-            rows = db.execute(
-                """
-                update task_memory_write_events
-                set status='processing', lease_owner=?, lease_expires_at=?,
-                    started_at=?, updated_at=current_timestamp
-                where id in (
-                    select id from task_memory_write_events
-                    where (
-                        status='pending'
-                        and (available_at='' or datetime(available_at)<=datetime(?))
-                    ) or (
-                        status='processing'
-                        and datetime(lease_expires_at)<=datetime(?)
-                    )
-                    order by id
-                    limit ?
-                )
-                returning *
-                """,
-                (owner, lease_expires_at, instant, instant, instant, limit),
-            ).fetchall()
-        return [TaskMemoryWriteEvent.model_validate(dict(row)) for row in rows]
+    def get_task_memory_write_event(self, event_id: int) -> TaskMemoryWriteEvent | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from task_memory_write_events where id=?", (event_id,)
+            ).fetchone()
+        return None if row is None else TaskMemoryWriteEvent.model_validate(dict(row))
 
     def record_task_memory_written_ids(
         self, event_id: int, *, owner: str, written_memory_ids: list[str]

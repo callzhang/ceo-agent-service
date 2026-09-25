@@ -1,11 +1,12 @@
 """Write the durable memories finished tasks named to Memory.
 
 The Consumer names what should outlive the turn (``durable_memories`` in its
-result); finishing the task queues it (``task_memory_write_events``); this
-pass writes each one through the service's own connector client, the same way
-delivered meeting conclusions are written. Nothing reviews them first
-(Derek 2026-09-24). Every step is a fixed rule, so this is a service command,
-not an Agent turn.
+result); finishing the task queues it (``task_memory_write_events``); the
+dispatcher claims the row straight away (``TaskMemoryWriteQueueAdapter``) and
+this module writes each item through the service's own connector client, the
+same way delivered meeting conclusions are written. Nothing reviews them
+first, and it is automatic system behaviour rather than a scheduled task
+(Derek 2026-09-24).
 """
 from __future__ import annotations
 
@@ -13,7 +14,6 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 import json
 from typing import Any
-from uuid import uuid4
 
 from app.external_retry import retry_delay_seconds
 from app.memory_connector_client import MemoryConnectorError, write_memory
@@ -25,10 +25,6 @@ TASK_MEMORY_WRITE_MAX_DELAY_SECONDS = 15 * 60
 # About five hours of retrying at the delay ceiling before the row becomes a
 # visible `failed` entry, the same bound the meeting writes use.
 TASK_MEMORY_WRITE_MAX_ATTEMPTS = 20
-# One connector write measured 74-95 seconds for meetings; a task names a
-# handful at most.
-TASK_MEMORY_WRITE_LEASE_SECONDS = 2700
-TASK_MEMORY_WRITE_PASS_LIMIT = 50
 
 
 def memory_write_arguments(
@@ -78,38 +74,19 @@ def memory_write_arguments(
     return arguments
 
 
-def process_task_memory_writes(
+def write_claimed_task_memories(
     store: AutoReplyStore,
-    *,
-    now: Callable[[], datetime] | None = None,
-    memory_writer: Callable[..., Any] | None = None,
-    limit: int = TASK_MEMORY_WRITE_PASS_LIMIT,
-) -> str:
-    """Write every due queued memory once; return a one-line summary."""
-    clock = now or (lambda: datetime.now(timezone.utc))
-    owner = f"task-memory-write:{uuid4().hex}"
-    events = store.claim_due_task_memory_write_events(
-        now=clock(), limit=limit, owner=owner,
-        lease_seconds=TASK_MEMORY_WRITE_LEASE_SECONDS,
-    )
-    counts = {"written": 0, "retry": 0, "failed": 0}
-    for event in events:
-        counts[_write_event(store, event, owner=owner, clock=clock,
-                            memory_writer=memory_writer)] += 1
-    return (
-        f"claimed={len(events)} written={counts['written']} "
-        f"retry={counts['retry']} failed={counts['failed']}"
-    )
-
-
-def _write_event(
-    store: AutoReplyStore,
-    event: TaskMemoryWriteEvent,
+    event_id: int,
     *,
     owner: str,
-    clock: Callable[[], datetime],
-    memory_writer: Callable[..., Any] | None,
+    now: Callable[[], datetime] | None = None,
+    memory_writer: Callable[..., Any] | None = None,
 ) -> str:
+    """Write one claimed row's remaining memories; return the status it now has."""
+    clock = now or (lambda: datetime.now(timezone.utc))
+    event = store.get_task_memory_write_event(event_id)
+    if event is None:
+        raise ValueError(f"task Memory write event {event_id} does not exist")
     # Resolved per call, not bound as a default, so a test stubbing this
     # module's ``write_memory`` is honoured.
     writer = memory_writer or write_memory
@@ -148,6 +125,6 @@ def _write_event(
             event.id, owner=owner, error=str(exc),
             available_at=(clock() + timedelta(seconds=delay)).isoformat(),
         )
-        return "retry"
+        return "pending"
     store.complete_task_memory_write_event(event.id, owner=owner)
     return "written"

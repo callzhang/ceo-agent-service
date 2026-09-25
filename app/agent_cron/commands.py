@@ -171,13 +171,6 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
         consumer_prompt_enabled=False,
     ),
     ServiceCommandOption(
-        name="write-task-memories",
-        display_name="写入任务长期记忆",
-        description="把已结束任务在执行结果里指明的长期信息写入 Memory；只写已排队的内容，不做新的判断，失败按退避重试。",
-        channel="work_summary",
-        consumer_prompt_enabled=False,
-    ),
-    ServiceCommandOption(
         name="request-minutes-access",
         display_name="申请没有权限的听记",
         description="读取听记管理后台，对本账号读不到的听记逐条在其页面提交查看权限申请，并以页面读回的申请状态为准。",
