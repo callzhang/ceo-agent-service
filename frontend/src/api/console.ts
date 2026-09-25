@@ -488,7 +488,23 @@ export interface EmailModelEvidence {
   prediction_latency_p95_ms: number;
   artifact_sha256: string;
 }
+export interface EmailRuntimeRate {
+  window_seconds: number;
+  evaluated: number;
+  per_minute: number;
+  latest_at: string | null;
+}
+export interface EmailModelScanProgress {
+  remaining: number;
+  total: number;
+  done: number;
+  updated_at: string;
+}
 export interface EmailLearningEvidence {
+  /** Messages the live model judged lately; the real throughput. */
+  runtime_rate?: EmailRuntimeRate | null;
+  /** How far the model's sweep of the mailbox has got. */
+  model_scan_progress?: EmailModelScanProgress | null;
   runtime: EmailRuntime;
   promotion_gate: {
     config: EmailPromotionConfig;
@@ -894,6 +910,33 @@ export function setEmailProviderSignal(id: string, signal: "star" | "flag", valu
     starred: payload.starred === true,
     important_flag: payload.important_flag === true,
   }));
+}
+
+export interface EmailProcessingProgress {
+  window_hours: number;
+  provider_actions: {done: number; pending: number; processing: number; failed: number; skipped: number};
+  classification_queue: {pending: number; processing: number};
+  unsubscribe_queue: {pending: number; processing: number};
+  waiting_for_owner: number;
+  scans: {account: string; folder: string; last_seen_uid: number; last_success_at: string; last_error: string}[];
+}
+
+export function getEmailProcessingProgress(signal?: AbortSignal) {
+  return request<Record<string, unknown>>("/api/console/email/processing-progress", { signal }).then((payload) => {
+    const counts = (value: unknown, keys: string[]) => Object.fromEntries(keys.map((key) => [key, isRecord(value) && typeof value[key] === "number" ? value[key] : 0]));
+    return {
+      window_hours: typeof payload.window_hours === "number" ? payload.window_hours : 24,
+      provider_actions: counts(payload.provider_actions, ["done", "pending", "processing", "failed", "skipped"]),
+      classification_queue: counts(payload.classification_queue, ["pending", "processing"]),
+      unsubscribe_queue: counts(payload.unsubscribe_queue, ["pending", "processing"]),
+      waiting_for_owner: typeof payload.waiting_for_owner === "number" ? payload.waiting_for_owner : 0,
+      scans: Array.isArray(payload.scans) ? payload.scans.filter(isRecord).map((scan) => ({
+        account: emailText(scan.account), folder: emailText(scan.folder),
+        last_seen_uid: typeof scan.last_seen_uid === "number" ? scan.last_seen_uid : 0,
+        last_success_at: emailText(scan.last_success_at), last_error: emailText(scan.last_error),
+      })) : [],
+    } as EmailProcessingProgress;
+  });
 }
 
 export function listEmailConfigs(signal?: AbortSignal) {

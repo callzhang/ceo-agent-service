@@ -1296,6 +1296,13 @@ def register_email_routes(
             )
         return result
 
+    @app.get("/api/console/email/processing-progress")
+    def email_processing_progress():
+        return {
+            "ok": True,
+            **require_store().email_processing_progress(now=datetime.now(timezone.utc)),
+        }
+
     @app.get("/api/console/email/classifications")
     def email_classifications(
         status: str = Query(default=EmailClassificationStatus.PROCESSED.value),
@@ -2253,6 +2260,16 @@ def register_email_routes(
                     }
                 ),
                 "runtime_timing": runtime_timing,
+                "runtime_rate": (
+                    email_store.classifier_runtime_rate()
+                    if hasattr(email_store, "classifier_runtime_rate")
+                    else None
+                ),
+                "model_scan_progress": (
+                    email_store.model_scan_progress()
+                    if hasattr(email_store, "model_scan_progress")
+                    else None
+                ),
                 "fallback_counts": fallback_counts,
                 "registry_issues": registry_issues,
                 "category_thresholds": {

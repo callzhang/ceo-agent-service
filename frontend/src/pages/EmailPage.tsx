@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "re
 import { useSearchParams } from "react-router-dom";
 import { listEmailConfigs, listEmailLearning, type EmailCategoryConfig, type EmailLearningEvidence } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
+import { EmailProcessingProgress } from "./email/EmailProcessingProgress";
 import { EmailList } from "./email/EmailList";
 import { EmailConfig } from "./email/EmailConfig";
 import { ModelTraining } from "./email/ModelTraining";
@@ -50,6 +51,7 @@ export function EmailPage() {
     if(next===null)return;event.preventDefault();selectTab(tabs[next][0]);refs.current[next]?.focus();
   }
   return <ConsolePageLayout title="Email" description="确认 Agent 的邮件分类、查看退订执行记录，并维护分类配置与分类模型。">
+    <EmailProcessingProgress/>
     <div className="settings-pill-row email-tabs" role="tablist" aria-label="邮件页面分区">{tabs.map(([key,label],index)=><button type="button" role="tab" id={"email-tab-"+key} aria-controls={"email-panel-"+key} key={key} disabled={busy} aria-selected={key===tab} tabIndex={key===tab?0:-1} ref={element=>{refs.current[index]=element;}} onClick={()=>selectTab(key)} onKeyDown={event=>keyDown(event,index)}>{label}{key==="learning"&&runtimeVerified&&learning?.runtime?.candidate_ready&&<span className="email-ready-dot" aria-label="候选模型已达标"/>}</button>)}</div>
     <div role="tabpanel" id={"email-panel-"+tab} aria-labelledby={"email-tab-"+tab}>
       {configError&&tab!=="learning"&&<p role="alert">邮件配置加载失败：{configError} <button onClick={()=>setRetry(value=>value+1)}>重新加载配置</button></p>}

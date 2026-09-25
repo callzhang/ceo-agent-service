@@ -189,6 +189,21 @@ def test_a_moved_message_is_reported_instead_of_pretending_to_toggle(tmp_path: P
     assert provider.closed
 
 
+def test_processing_progress_reports_exact_queue_counts_and_scan_cursors(tmp_path: Path):
+    client, store, _identity = _signal_client(tmp_path, _FakeSignalProvider(set()))
+    store.record_scan_cursor(account_id="account-1", folder="INBOX", uidvalidity=1, last_seen_uid=77)
+
+    payload = client.get("/api/console/email/processing-progress").json()
+
+    assert payload["ok"] is True
+    assert payload["waiting_for_owner"] == 1
+    assert payload["provider_actions"] == {"done": 0, "pending": 0, "processing": 0, "failed": 0, "skipped": 0}
+    assert payload["classification_queue"] == {"pending": 0, "processing": 0}
+    assert payload["unsubscribe_queue"] == {"pending": 0, "processing": 0}
+    assert [(scan["account"], scan["folder"], scan["last_seen_uid"], scan["last_error"]) for scan in payload["scans"]] == [("Mail", "INBOX", 77, "")]
+    assert payload["scans"][0]["last_success_at"]
+
+
 def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path):
     store = EmailStore(tmp_path / "unsubscribe-filter.sqlite3")
     store.list_unsubscribe_classifications = lambda *, limit, offset: ([{

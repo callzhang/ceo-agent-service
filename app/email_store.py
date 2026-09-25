@@ -13964,6 +13964,74 @@ class EmailStore:
             total_ms=0.0,
         )
 
+    def model_scan_progress(self) -> dict[str, object] | None:
+        """Sum how far the model's sweep has got across every account and folder.
+
+        Each scanned batch leaves the backlog it saw and the most that was
+        waiting in this sweep; the bar is how much of that peak is worked off.
+        """
+
+        try:
+            with self._connect() as db:
+                rows = db.execute(
+                    "select value from service_state "
+                    "where key like 'email_model_scan_progress:%'"
+                ).fetchall()
+        except sqlite3.Error:
+            return None
+        remaining = peak = 0
+        latest = ""
+        for row in rows:
+            try:
+                state = json.loads(str(row["value"]))
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(state, dict):
+                continue
+            row_remaining, row_peak = state.get("remaining"), state.get("peak")
+            if type(row_remaining) is not int or type(row_peak) is not int:
+                continue
+            remaining += max(0, row_remaining)
+            peak += max(row_remaining, row_peak, 0)
+            latest = max(latest, str(state.get("at") or ""))
+        if not peak and not latest:
+            return None
+        return {
+            "remaining": remaining,
+            "total": peak,
+            "done": max(0, peak - remaining),
+            "updated_at": latest,
+        }
+
+    def classifier_runtime_rate(self, *, window_seconds: int = 600) -> dict[str, object]:
+        """How many messages the live model has judged lately, per minute.
+
+        Every runtime sample is one message the model was asked about, whatever
+        it answered, so the count over a window is the real throughput.
+        """
+
+        if type(window_seconds) is not int or window_seconds <= 0:
+            raise ValueError("window_seconds must be a positive integer")
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        ).isoformat()
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select count(*) as evaluated, max(recorded_at) as latest_at
+                from email_classifier_runtime_samples
+                where recorded_at >= ?
+                """,
+                (cutoff,),
+            ).fetchone()
+        evaluated = int(row["evaluated"] or 0)
+        return {
+            "window_seconds": window_seconds,
+            "evaluated": evaluated,
+            "per_minute": round(evaluated / (window_seconds / 60), 1),
+            "latest_at": row["latest_at"],
+        }
+
     def classifier_runtime_observability(
         self, *, model_id: str
     ) -> dict[str, object]:
@@ -14187,6 +14255,94 @@ class EmailStore:
                 "category_sample_counts": latest_category_counts,
                 "category_group_counts": latest_category_group_counts,
             }
+
+    def email_processing_progress(self, *, now: datetime) -> dict[str, Any]:
+        """Exact counts of where mail processing stands, in one read.
+
+        There is no separate history job to measure: the scan advances one
+        cursor per folder and everything it finds flows through the same
+        queues. So progress is what those queues hold: provider actions over
+        the last 24 hours (done against everything planned), the Agent
+        classification queue, unsubscribe tasks, and mail waiting for the
+        owner, plus where each folder's scan last got to.
+        """
+
+        since = (now - timedelta(days=1)).astimezone(timezone.utc).isoformat(
+            timespec="seconds"
+        )
+        with self._connect() as db:
+            actions = {
+                str(row["status"]): int(row["n"])
+                for row in db.execute(
+                    "select status, count(*) as n from email_actions "
+                    "where created_at>=? group by status",
+                    (since,),
+                )
+            }
+            classification_queue = {
+                str(row["status"]): int(row["n"])
+                for row in db.execute(
+                    "select status, count(*) as n from email_agent_classification_tasks "
+                    "where status in ('pending','processing') group by status"
+                )
+            }
+            has_tasks = db.execute(
+                "select count(*) from sqlite_master where type='table' and name='reply_tasks'"
+            ).fetchone()[0]
+            unsubscribe_queue = (
+                {
+                    str(row["status"]): int(row["n"])
+                    for row in db.execute(
+                        "select status, count(*) as n from reply_tasks "
+                        "where channel='email' and status in ('pending','processing') "
+                        "group by status"
+                    )
+                }
+                if has_tasks
+                else {}
+            )
+            waiting = int(
+                db.execute(
+                    "select count(*) from email_classifications "
+                    "where status='pending_feedback'"
+                ).fetchone()[0]
+            )
+            scans = [
+                {
+                    "account": row["display_name"] or row["account_id"],
+                    "folder": row["folder"],
+                    "last_seen_uid": row["last_seen_uid"],
+                    "last_success_at": row["last_success_at"],
+                    "last_error": row["last_error"],
+                }
+                for row in db.execute(
+                    """
+                    select cursors.account_id, cursors.folder,
+                           cursors.last_seen_uid, cursors.last_success_at,
+                           cursors.last_error, accounts.display_name
+                    from email_scan_cursors as cursors
+                    left join email_accounts as accounts
+                      on accounts.account_id=cursors.account_id
+                    order by cursors.account_id, cursors.folder
+                    """
+                )
+            ]
+        return {
+            "window_hours": 24,
+            "provider_actions": {
+                key: actions.get(key, 0)
+                for key in ("done", "pending", "processing", "failed", "skipped")
+            },
+            "classification_queue": {
+                key: classification_queue.get(key, 0)
+                for key in ("pending", "processing")
+            },
+            "unsubscribe_queue": {
+                key: unsubscribe_queue.get(key, 0) for key in ("pending", "processing")
+            },
+            "waiting_for_owner": waiting,
+            "scans": scans,
+        }
 
     def get_stored_email_locator(
         self, classification_id: int

@@ -194,3 +194,13 @@
 .email-row-wrap.is-checked .email-dense-row { background: var(--accent-soft, #e9efff); }
 .email-bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .email-bulk-all { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
+.email-progress { min-height: 44px; margin: 0 0 8px; padding: 0 0 12px; border-bottom: 1px solid var(--line); color: var(--ink-soft); font-size: 12px; }
+.email-progress > p { margin: 0; }
+.email-progress-heading, .email-progress-counts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; }
+.email-progress-heading strong { color: var(--ink); font-size: 13px; }
+.email-progress-track { height: 4px; margin: 8px 0; overflow: hidden; border-radius: 999px; background: var(--line); }
+.email-progress-track > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
+.email-progress-counts span { white-space: nowrap; }
+.email-progress-warning, .email-progress-inline-error { color: #a43030; }
+.email-progress-inline-error { margin: 6px 0 0; }

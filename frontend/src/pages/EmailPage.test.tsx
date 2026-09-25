@@ -3,9 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { EmailClassificationListParams } from "../api/console";
-const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "previewEmailTraining", "getEmailClassification", "getEmailUnsubscribeEntryUrl", "setEmailProviderSignal", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
+const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "previewEmailTraining", "getEmailClassification", "getEmailUnsubscribeEntryUrl", "setEmailProviderSignal", "getEmailProcessingProgress", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory"].map(key => [key, vi.fn()])));
 vi.mock("../api/console", async importOriginal => ({ ...await importOriginal<object>(), ...api }));
 import { EmailPage } from "./EmailPage";
+const idleProgress = { window_hours: 24, provider_actions: {done: 0, pending: 0, processing: 0, failed: 0, skipped: 0}, classification_queue: {pending: 0, processing: 0}, unsubscribe_queue: {pending: 0, processing: 0}, waiting_for_owner: 0, scans: [] };
 const config = { category_key: "work", display_name: "工作", core_description: "工作定义", include: ["项目"], exclude: ["私人"], threshold: .9, actions: ["move"], action_parameters: {}, enabled: true, config_version: "c1", description_version: "d1", updated_at: "", bindings: [] };
 const row = (id: string, status = "pending_feedback") => ({ id, sender: "sender@example.com", subject: "邮件" + id, preview: "生成的摘要不应出现在列表", message_text: "原始邮件正文前段 " + id, category: "work", confidence: .7, margin: .2, probabilities: {work:.7}, status, classification_source: "agent", model_version: "model-full-v1", config_version: "c1", attachment_metadata: [], action_plan: {}, current_action_plan_id: null, received_at: "", updated_at: "" });
 const runtime = {mode:"agent_primary", active_model_id:null, candidate_model_id:"model-v2", candidate_ready:true, toggle_enabled:true};
@@ -45,6 +46,7 @@ it("waits for Chinese composition and distinguishes empty search results from er
 });
 beforeEach(() => {
   vi.resetAllMocks();
+  api.getEmailProcessingProgress.mockResolvedValue(idleProgress);
   api.listEmailConfigs.mockResolvedValue({items:[config]});
   api.listEmailClassifications.mockResolvedValue({items:[row("1"),row("2")], meta:{total:55,page:1,page_size:50,snapshot_at:""}});
   api.getEmailClassification.mockImplementation(async (id:string)=>({item:{...row(id),message_text:"完整正文\n> 引用邮件",recipients:["to@example.com"],cc:"cc@example.com",attachment_metadata:[{filename:"a.pdf",size_bytes:1024,mime_type:"application/pdf",content:"SECRET"}]},observability:[]}));
@@ -389,6 +391,25 @@ it("selects the whole page at once",async()=>{
   expect(screen.getByText("已选 2 封")).toBeInTheDocument();
   await user.click(screen.getByRole("button",{name:"取消选择"}));
   expect(screen.getByText("已选 0 封")).toBeInTheDocument();
+});
+it("shows how far mail processing has got, above the tabs",async()=>{
+  api.getEmailProcessingProgress.mockResolvedValue({window_hours:24,provider_actions:{done:1249,pending:478,processing:1,failed:252,skipped:1},classification_queue:{pending:2,processing:0},unsubscribe_queue:{pending:0,processing:1},waiting_for_owner:141,scans:[{account:"DingTalk 企业邮箱",folder:"INBOX",last_seen_uid:32909,last_success_at:"2026-09-25T09:34:24+00:00",last_error:""},{account:"Gmail",folder:"INBOX",last_seen_uid:9,last_success_at:"",last_error:"登录失败"}]});
+  show("/email?tab=all");
+  const progress=await screen.findByRole("region",{name:"邮件处理进度"});
+  expect(await within(progress).findByText(/邮件处理中 · 还有 482 项在排队/)).toBeInTheDocument();
+  expect(progress).toHaveTextContent("近 24 小时邮箱动作 1250/1981");
+  expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuenow","63");
+  expect(progress).toHaveTextContent("邮箱动作失败 252");
+  expect(progress).toHaveTextContent("Agent 分类排队 2");
+  expect(progress).toHaveTextContent("退订任务排队 1");
+  expect(progress).toHaveTextContent("待你确认 141");
+  expect(within(progress).getByRole("alert")).toHaveTextContent("Gmail INBOX 扫描出错：登录失败");
+  const tabs=screen.getByRole("tablist",{name:"邮件页面分区"});
+  expect(progress.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+it("says the queues are empty when nothing is waiting",async()=>{
+  show("/email?tab=all");
+  expect(await screen.findByText("邮件已处理完，队列为空")).toBeInTheDocument();
 });
 it("supports keyboard tabs and drawer tab traversal",async()=>{
   const user=userEvent.setup();show();
