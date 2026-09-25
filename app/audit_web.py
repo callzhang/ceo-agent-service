@@ -1825,6 +1825,9 @@ async function handleNotificationClick(data) {
       // Ignore malformed client URLs.
     }
   }
+  if (data.detailUrl && self.clients.openWindow) {
+    await self.clients.openWindow(data.detailUrl);
+  }
 }
 """
 

@@ -6121,7 +6121,7 @@ def test_dingtalk_bridge_status_records_events(tmp_path: Path):
     }
 
 
-def test_notification_service_worker_fetches_bridge_without_opening_window(
+def test_notification_service_worker_opens_attempt_when_no_ceo_window_is_open(
     tmp_path: Path,
 ):
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
@@ -6141,8 +6141,8 @@ def test_notification_service_worker_fetches_bridge_without_opening_window(
     assert "client.focus" in response.text
     assert "client.postMessage" in response.text
     assert "ceo-agent-service:navigate" in response.text
-    assert "clients.openWindow" not in response.text
-    assert "window.open" not in response.text
+    assert "clients.openWindow" in response.text
+    assert "data.detailUrl" in response.text
 
 
 def test_browser_notifications_page_is_available(tmp_path: Path):
