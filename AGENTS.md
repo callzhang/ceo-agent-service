@@ -22,9 +22,7 @@ Several agents edit this repository at the same time (Claude Code sessions and
 Codex). Before editing, read `docs/agent-claims.md`, claim the files you are
 about to change, and stage only your own hunks. Never revert or rewrite a
 commit you did not author: build on top of it, or record the disagreement in
-your claim row. Restarting the service deploys the entire working tree,
-including other agents' unfinished edits, so verify the tree imports and tell
-the other owners before you restart.
+your claim row.
 
 ## Keep the documents true
 
@@ -54,32 +52,35 @@ console answering in 80 seconds. Run the test files that cover your change.
 If a full run is really needed, run it in parallel (`pytest -q -n 6`, about
 3 minutes) and not while a restart is in progress.
 
-## Who restarts the service
+## Production checkout and deploys
 
-Derek, 2026-09-17, reaffirmed 2026-09-18: restarting
-`com.ceo-agent-service.main` is the heartbeat session's job
-(`CEO 服务错误检查与修复`). No other session runs `launchctl kickstart`,
-`launchctl kill` or any other restart of that label. After you commit, send
-that session a message naming your commit and the files that need the
-restart; it checks the queue is idle and the tree imports, restarts, and
-reads back the new PID, healthz, queues, Attention and History.
+Derek, 2026-09-25: the service does not run from this development tree. launchd
+runs `com.ceo-agent-service.main` from its own checkout, `~/Services/ceo-agent-service`
+(set by `CEO_SERVICE_ROOT` in the installed job; `app.config.service_root()`).
+Nobody edits that checkout. It only moves to pushed `origin/main` commits, so
+what goes live is always a complete commit, and any session may deploy.
 
-Three things go wrong when a session restarts on its own:
+After you push a change to runtime code, prompts, routing, launchd config or
+service behaviour, deploy it:
 
-- A restart deploys the entire working tree, including another session's
-  half-written edits, under your commit.
-- A restart kills whatever Agent turn is running. Reply task 98194 lost a
-  turn that way on 2026-09-17, and there were 558 queued work-summary items
-  the following night, each one a turn that a restart would discard.
-- Nobody can tell afterwards who restarted. Two restarts on the night of
-  2026-09-17 cost real time to trace, and all three sessions asked had to
-  deny them in turn.
+```sh
+python -m app.deploy
+```
 
-If the heartbeat session does not answer and the restart cannot wait, tell
-Derek and let him decide, rather than restarting yourself. Restarts go
-through `launchctl kickstart`; there is no Friday runtime restart path.
+The deploy waits until no Agent turn or claimed item is in flight (it changes
+nothing if the service never goes quiet within 30 minutes). It then backs up
+the database, fast-forwards the production checkout, rebuilds the console when
+`frontend/` changed, checks the imports, restarts the job, and waits up to 15
+minutes for health. If any step after the fast-forward fails, it rolls back.
+Two deploys at once are serialized by the repository lock.
 
-## Local Service Reload
+Do not run `launchctl kickstart` or `kill` on the job by hand. Do not edit,
+build in, or run tests in `~/Services/ceo-agent-service`. Committed-but-unpushed
+work never goes live, so a restart no longer carries another session's
+half-written edits.
+
+After a deploy, read back the new PID, healthz, queues, Attention and History
+before reporting completion. Never paste the settings API's secret fields.
 
 ## Current runtime contract
 
@@ -96,22 +97,5 @@ feedback cycle cannot resolve the issue. Never overwrite an original run;
 corrections create a new revision and preserve the relation to the original
 run and audit feedback.
 
-This project is normally run by launchd as `com.ceo-agent-service.main`. Python code changes are not hot-reloaded by the running service process.
-
-After every commit that changes runtime code, prompt rendering, routing logic, launchd config, or service behavior:
-
-1. Restart the main service:
-
-   ```sh
-   launchctl kickstart -k gui/$(id -u)/com.ceo-agent-service.main
-   ```
-
-2. Verify the service is running on a new process:
-
-   ```sh
-   launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'
-   ```
-
-3. Check that there is no unresolved `failed` or `processing` backlog before reporting completion.
-
-Do not assume a committed fix is live until the launchd service has been restarted and verified.
+Python code changes are not hot-reloaded: a pushed change is live only after
+`python -m app.deploy` has finished and the readback above is clean.

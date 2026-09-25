@@ -190,3 +190,74 @@ def test_upgrade_backups_keep_only_one_snapshot(tmp_path: Path):
     snapshots = sorted((tmp_path / "backups").glob("*.sqlite3"))
     assert first != second
     assert snapshots == [second]
+
+
+def test_busy_service_is_never_updated_or_restarted(tmp_path: Path):
+    # Derek, 2026-09-25: a restart over running work killed Agent turns and let
+    # a supervisor child load new code beside old ones. Wait first; if the
+    # service never goes quiet, change nothing.
+    from app.repository_updater import wait_until_quiet
+
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    calls: list[str] = []
+    ticks = iter(range(0, 10_000, 10))
+    updater = RepositoryUpdater(
+        local,
+        StateStore(),
+        database_path=tmp_path / "missing.sqlite3",
+        wait_for_quiet=lambda: wait_until_quiet(
+            tmp_path / "db", timeout_seconds=30, count=lambda _path: 1,
+            sleep=lambda _seconds: None, clock=lambda: next(ticks),
+        ),
+        restart=lambda: calls.append("restart"),
+        health=lambda: True,
+    )
+
+    with pytest.raises(UpgradePreconditionError, match="did not become idle"):
+        updater.execute(op)
+
+    assert git(local, "rev-parse", "HEAD") == op.original_commit
+    assert calls == []
+
+
+def test_quiet_wait_returns_once_work_drains():
+    from app.repository_updater import wait_until_quiet
+
+    counts = iter([2, 1, 0])
+    wait_until_quiet(
+        Path("db"), count=lambda _path: next(counts),
+        sleep=lambda _seconds: None, clock=lambda: 0.0,
+    )
+
+
+def test_health_waits_for_a_slow_start_instead_of_rolling_back():
+    from app.repository_updater import wait_for_health
+
+    answers = iter([False, False, True])
+    assert wait_for_health(lambda: next(answers), sleep=lambda _s: None, clock=lambda: 0.0)
+    ticks = iter([0.0, 5.0, 11.0])
+    assert not wait_for_health(
+        lambda: False, timeout_seconds=10, sleep=lambda _s: None, clock=lambda: next(ticks)
+    )
+
+
+def test_console_is_rebuilt_only_when_frontend_changed_or_missing(tmp_path: Path):
+    from app.repository_updater import frontend_needs_build
+
+    assert frontend_needs_build(["app/cli.py"], tmp_path)  # nothing built yet
+    built = tmp_path / "app" / "static" / "workbench"
+    built.mkdir(parents=True)
+    (built / "index.html").write_text("<html></html>", encoding="utf-8")
+    assert not frontend_needs_build(["app/cli.py", "docs/x.md"], tmp_path)
+    assert frontend_needs_build(["frontend/src/app.tsx"], tmp_path)
+
+
+def test_service_root_defaults_to_the_services_checkout(monkeypatch, tmp_path: Path):
+    from app.config import service_root
+
+    monkeypatch.delenv("CEO_SERVICE_ROOT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert service_root() == tmp_path / "Services" / "ceo-agent-service"
+    monkeypatch.setenv("CEO_SERVICE_ROOT", str(tmp_path / "elsewhere"))
+    assert service_root() == tmp_path / "elsewhere"

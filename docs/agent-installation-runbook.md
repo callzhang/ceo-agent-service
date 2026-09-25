@@ -32,7 +32,7 @@ the local machine first and ask only when inspection cannot answer it.
 
 | Parameter | Default | Notes |
 | --- | --- | --- |
-| Repository path | `~/Documents/Projects/ceo-agent-service` | Must be the service checkout. |
+| Repository path | `~/Services/ceo-agent-service` | The production checkout launchd runs. Nobody edits it; develop in a separate clone and deploy pushed commits with `python -m app.deploy`. |
 | Workspace path | `~/Documents/memory` | Local knowledge corpus, AI minutes, SOPs, and source docs. |
 | Database path | `~/Library/Application Support/ceo-agent-service/auto-reply.sqlite3` | Local SQLite runtime state, kept outside iCloud-managed Documents. |
 | Corpus path | `./data/corpus` | Ignored by Git; contains style corpus. |
@@ -59,7 +59,7 @@ Write chosen values to `.env` from `.env.example`. Keep user-specific values in
 2. Inspect repository state and avoid unrelated changes:
 
    ```sh
-   cd ~/Documents/Projects/ceo-agent-service
+   cd ~/Services/ceo-agent-service
    git status --short --branch
    ```
 
@@ -579,10 +579,10 @@ Install launchd only after dry-run behavior and configuration are reviewed.
    workspace, DB, corpus path, principal/persona variables, and live-send
    defaults match the deployment.
 
-   For the local production installation, `CEO_SERVICE_ROOT` must resolve to
-   `/Users/derek/Projects/ceo-agent-service` (the clean `main`
-   checkout). Do not point the installed job at a `.worktrees/*` checkout;
-   worktrees are for development or temporary recovery only.
+   `scripts/install-auto-reply-agents.sh` writes `CEO_SERVICE_ROOT` as the
+   checkout it runs from, so run it from the production checkout
+   (`~/Services/ceo-agent-service`, a clean `main` clone), never from a
+   development tree or a `.worktrees/*` checkout.
 
 2. If launchd should start in dry-run, edit the plist or environment before
    installation. The current template sets `CEO_NOT_SEND_MESSAGE=0`, so do not

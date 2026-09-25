@@ -36,6 +36,7 @@ from app.config import (
     repository_upgrade_remote,
     profile_evidence_dir,
     minutes_console_storage_state,
+    service_mcp_config_path,
     worker_db_path,
     work_profile_path,
 )
@@ -637,7 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "doctor-mcp":
             subparser.add_argument(
                 "--service-mcp-config",
-                default=os.getenv("CEO_SERVICE_MCP_CONFIG_PATH", ""),
+                default=service_mcp_config_path(),
                 help="service-owned MCP manifest JSON path",
             )
             subparser.add_argument(
@@ -4275,7 +4276,7 @@ def run_service(
     _resolve_recovered_errors_on_service_start(settings)
     doctor_mcp_command(
         settings,
-        service_mcp_config=os.getenv("CEO_SERVICE_MCP_CONFIG_PATH", ""),
+        service_mcp_config=service_mcp_config_path(),
         notify=True,
     )
     dependency_gate = NetworkDependencyGate()

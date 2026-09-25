@@ -125,12 +125,14 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert "HTTPS_PROXY" not in env
     assert "ALL_PROXY" not in env
     assert "dingokr.dingteam.com" in env["NO_PROXY"]
-    assert env["CEO_SERVICE_ROOT"] == "/Users/derek/Projects/ceo-agent-service"
-    assert env["CEO_OKR_BROWSER_STORAGE_STATE"] == (
-        "/Users/derek/Documents/memory/AI听记/.storage_state.json"
-    )
+    # Derek, 2026-09-25: no machine paths in the template. The service root
+    # defaults to ~/Services/ceo-agent-service (the production checkout), the
+    # conda prefix to ~/miniforge3, both from $HOME inside the command.
+    assert not any("/Users/" in value for value in env.values())
+    assert "CEO_SERVICE_ROOT" not in env
+    assert "CEO_CONDA_PREFIX" not in env
+    assert "${HOME:?HOME must be set}/Services/ceo-agent-service" in command[2]
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
-    assert env["CEO_CONDA_PREFIX"] == "/Users/derek/miniforge3"
     # The production launchd job must preserve the explicitly enabled WeChat
     # channel. The app-level defaults remain disabled for safety in other runs.
     assert env["CEO_WECHAT_READER_ENABLED"] == "1"

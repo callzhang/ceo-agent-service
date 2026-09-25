@@ -444,6 +444,15 @@ launchd 后验证新 PID、HTTP 健康与 Store 可读性。
 操作所有时进入 `needs_manual`，不执行破坏性 Git 操作。MCP 配置不由该流程探测、禁用或覆盖，
 直接沿用用户当前 Codex 配置。
 
+**生产检出与部署**（Derek 2026-09-25）：服务不从开发树运行。launchd 运行独立检出
+`~/Services/ceo-agent-service`（安装脚本把 `CEO_SERVICE_ROOT` 写成它所在的检出；代码里是
+`app.config.service_root()`，模板和代码都不写机器路径）。这个检出没人编辑，只会前进到已推送的
+`origin/main` 提交，所以上线的永远是完整提交，任何会话都可以部署：`python -m app.deploy`
+复用上面的 updater，先等没有进行中的 Agent 回合和已领取的条目（30 分钟内不空闲就什么都不改），
+再备份数据库、fast-forward、`frontend/` 有变动时重建控制台、检查 import、重启，并轮询健康最多
+15 分钟（重启要重读数 GB 的数据库，负载高时曾用 8 分钟，只探一次会把正常升级误判回滚）。
+两个会话同时部署由仓库锁串行，后到的发现检出已前进就停止。
+
 ### 会议投递目标
 
 会议跟进先由内容决定范围，日历只用于证明参会名单。客户、项目、产品、需求、交付、排期、
@@ -892,7 +901,7 @@ MODEL 缺省取 `CEO_CODEX_MODEL`）和 `CEO_RUNTIME_CLAUDE_API_*`（KIND=claude
 `.env` 写失败时原样重试同一次改名即可补完；反过来先写 `.env`，数据库失败时 `.env` 已经没有旧名，
 重试会被「旧名不在已配置线路里」拒绝，引用就永久分裂了。运行中的服务不重读配置，新名字在下次
 重启后生效（与其他设置保存一样）；改名到重启之间，到点的定时任务会因为「首选线路未配置」被跳过并进
-Attention，所以改名后应尽快让心跳会话重启。
+Attention，所以改名后应尽快部署（`python -m app.deploy`）。
 保存只有一个入口：React 设置页提交到 `POST /api/console/settings/agent-runtime`，字段用 `.env`
 键名，由 `app/web_api/agent_runtime_settings.py` 校验并写入。读取同一接口时，凭据类字段（`*_API_KEY`、Friday 的 ticket / session token）只返回部分遮蔽值（12 位及以上保留前 3 后 4，其余 `****`；更短的整体 `****`），服务从不把完整凭据发给控制台（Derek 2026-09-25）；页面把遮蔽值原样存回，服务认出它等于已存凭据的遮蔽值，就保持已存凭据不变，输入新值才替换。旧的服务端渲染页
 （`/config?tab=agent-runtime` 与表单 `POST /config/agent-runtime`）已删除——React 设置页

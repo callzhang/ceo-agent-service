@@ -3,8 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
+import sqlite3
 import subprocess
+import sys
+import time
 from typing import Callable, Protocol
 from urllib.request import urlopen
 
@@ -117,6 +121,87 @@ def _default_health() -> bool:
         return False
 
 
+#: A restart re-reads a multi-gigabyte database before the console listens;
+#: under load that took eight minutes on 2026-09-25, so one ten-second probe
+#: would roll back a healthy upgrade.
+HEALTH_WAIT_SECONDS = 15 * 60
+QUIET_WAIT_SECONDS = 30 * 60
+POLL_SECONDS = 5.0
+
+
+def wait_for_health(
+    probe: Callable[[], bool] = _default_health,
+    *,
+    timeout_seconds: float = HEALTH_WAIT_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    deadline = clock() + timeout_seconds
+    while True:
+        if probe():
+            return True
+        if clock() >= deadline:
+            return False
+        sleep(POLL_SECONDS)
+
+
+def in_flight_work(database_path: Path) -> int:
+    """Count work a restart would cut off: running turns and claimed items."""
+    with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True, timeout=30) as db:
+        return int(db.execute(
+            "select (select count(*) from agent_runtime_attempts "
+            "        where status not in ('completed','failed','superseded'))"
+            " + (select count(*) from reply_tasks where status='processing')"
+            " + (select count(*) from work_summary_inputs where status='processing')"
+            " + (select count(*) from scheduled_task_runs where dispatch_status='pending'"
+            "    and lease_owner<>'' and lease_expires_at>strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))"
+        ).fetchone()[0])
+
+
+def wait_until_quiet(
+    database_path: Path,
+    *,
+    timeout_seconds: float = QUIET_WAIT_SECONDS,
+    count: Callable[[Path], int] = in_flight_work,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Wait for no in-flight work before the code changes; never restart over it.
+
+    A restart kills the running Agent turn, and a supervisor child restarted
+    later would load the new code beside the old ones.
+    """
+    deadline = clock() + timeout_seconds
+    while count(database_path) > 0:
+        if clock() >= deadline:
+            raise UpgradePreconditionError("service did not become idle; nothing was changed")
+        sleep(POLL_SECONDS)
+
+
+def frontend_needs_build(changed_paths: list[str], repository_root: Path) -> bool:
+    built = repository_root / "app" / "static" / "workbench" / "index.html"
+    return not built.exists() or any(path.startswith("frontend/") for path in changed_paths)
+
+
+def build_frontend(repository_root: Path, changed_paths: list[str]) -> None:
+    """Build the console the checkout serves; the build output is not tracked."""
+    if not frontend_needs_build(changed_paths, repository_root):
+        return
+    frontend = repository_root / "frontend"
+    if not (frontend / "node_modules").exists() or "frontend/package-lock.json" in changed_paths:
+        subprocess.run(["npm", "ci"], cwd=frontend, check=True, timeout=900)
+    subprocess.run(["npm", "run", "build"], cwd=frontend, check=True, timeout=900)
+
+
+def verify_imports(repository_root: Path) -> None:
+    subprocess.run(
+        [sys.executable, "-c",
+         "import app.cli, app.audit_web, app.service_supervisor, app.email_worker"],
+        cwd=repository_root, check=True, timeout=300,
+        env={**os.environ, "PYTHONPATH": str(repository_root)},
+    )
+
+
 class RepositoryUpdater:
     """Execute one verified, fast-forward-only repository upgrade.
 
@@ -138,6 +223,7 @@ class RepositoryUpdater:
         verification: Callable[[], None] | None = None,
         restart: Callable[[], None] = _default_restart,
         health: Callable[[], bool] = _default_health,
+        wait_for_quiet: Callable[[], None] = lambda: None,
     ) -> None:
         self.repository = GitRepository(repository_root)
         self.store = store
@@ -148,6 +234,7 @@ class RepositoryUpdater:
         self.verification = verification or (lambda: None)
         self.restart = restart
         self.health = health
+        self.wait_for_quiet = wait_for_quiet
 
     @property
     def target_ref(self) -> str:
@@ -165,6 +252,8 @@ class RepositoryUpdater:
             backup_path = self._backup(operation)
             if records:
                 self._preserve_local_changes(operation)
+            self._persist(operation, "waiting_for_idle", backup_path=backup_path)
+            self.wait_for_quiet()
             self._persist(operation, "updating", backup_path=backup_path)
             try:
                 self.repository._run(
@@ -342,10 +431,25 @@ def main() -> int:
 
     store = AutoReplyStore(Path(args.db))
     operation = load_persisted_operation(store, args.operation_id)
+    repository_root = Path(args.repo)
+    repository = GitRepository(repository_root)
+
+    def changed_paths() -> list[str]:
+        output = repository._run(
+            ["diff", "--name-only", operation.original_commit, operation.target_commit],
+            category="upgrade_changed_paths",
+        ).stdout
+        text = output.decode() if isinstance(output, bytes) else str(output)
+        return [line.strip() for line in text.splitlines() if line.strip()]
+
     result = RepositoryUpdater(
-        Path(args.repo),
+        repository_root,
         store,
         database_path=Path(args.db),
+        wait_for_quiet=lambda: wait_until_quiet(Path(args.db)),
+        dependency_sync=lambda: build_frontend(repository_root, changed_paths()),
+        verification=lambda: verify_imports(repository_root),
+        health=lambda: wait_for_health(),
     ).execute(operation)
     print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
     return 0

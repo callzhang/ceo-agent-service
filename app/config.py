@@ -27,6 +27,25 @@ def env_path(name: str, default: Path | str) -> Path:
     return Path(os.path.expandvars(os.getenv(name, str(default)))).expanduser()
 
 
+def service_root() -> Path:
+    """The production checkout launchd runs, apart from the development tree.
+
+    Derek, 2026-09-25: the service runs from its own checkout under
+    ``~/Services`` that nobody edits, so a deploy is always a complete,
+    pushed commit rather than whatever the development tree holds.
+    """
+    return env_path("CEO_SERVICE_ROOT", Path.home() / "Services" / "ceo-agent-service")
+
+
+def service_mcp_config_path() -> str:
+    """The service's MCP config: the setting if given, else the checkout's own file."""
+    configured = os.getenv("CEO_SERVICE_MCP_CONFIG_PATH", "").strip()
+    if configured:
+        return configured
+    default = repo_root() / "data" / "config" / "service-mcp.json"
+    return str(default) if default.exists() else ""
+
+
 def env_file_path() -> Path:
     return env_path("CEO_ENV_FILE", repo_root() / ".env")
 

@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+from pathlib import Path
+import sys
 import hashlib
 import re
 
 _ZSTD = None
 for _cand in (
-    "/Users/derek/miniforge3/lib/libzstd.dylib",
+    str(Path(sys.prefix) / "lib" / "libzstd.dylib"),
     "/opt/homebrew/lib/libzstd.dylib",
     ctypes.util.find_library("zstd"),
 ):

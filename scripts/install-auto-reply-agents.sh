@@ -152,6 +152,9 @@ for plist_name in "${plist_names[@]}"; do
   target_plist="${target_dir}/${plist_name}"
 
   cp "${source_plist}" "${target_plist}"
+  # The installed job runs the checkout this script belongs to; the template
+  # names no machine path of its own.
+  plutil -replace EnvironmentVariables.CEO_SERVICE_ROOT -string "${repo_root}" "${target_plist}"
 
   launchctl bootout "${domain}/${label}" 2>/dev/null || true
   launchctl bootout "${domain}" "${target_plist}" 2>/dev/null || true
