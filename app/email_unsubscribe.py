@@ -484,7 +484,12 @@ def _browser_failure_detail(error: Exception) -> str:
     """
 
     if isinstance(error, UnsubscribeBrowserError):
-        return ""
+        # A recognised failure: its category is a fixed enum member, safe to
+        # persist. Categories without a code of their own share the generic
+        # email_unsubscribe_browser_failed, so this is the only place that
+        # says which condition it was (six failures on 2026-09-25 showed the
+        # generic code and nothing else).
+        return f"category={error.category.value}"
     message = " ".join(str(error).split())
     message = _DETAIL_URL.sub("[url]", message)
     message = _DETAIL_SECRET_FIELD.sub(lambda match: f"{match.group(1)}=[redacted]", message)
@@ -1225,9 +1230,9 @@ class UnsubscribeExecutionResult:
     # Fixed internal category of the browser failure the code came from. It
     # never replaces the code, which other modules match on exactly.
     error_category: str = ""
-    # What an unexpected exception said: its class name and a bounded message
-    # with URLs and token-like strings removed. Empty for UnsubscribeBrowserError,
-    # whose category already names the condition.
+    # What the failure was: for a recognised browser failure its fixed category
+    # (`category=<name>`); for an unexpected exception its class name and a
+    # bounded message with URLs and token-like strings removed.
     error_detail: str = ""
     result_text: str = ""
     observation_digest: str = ""

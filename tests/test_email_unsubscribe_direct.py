@@ -668,7 +668,7 @@ def test_an_unexpected_browser_exception_leaves_its_class_in_the_evidence(
     assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
 
 
-def test_a_modelled_browser_failure_adds_no_exception_detail() -> None:
+def test_a_modelled_browser_failure_names_its_category_as_the_detail() -> None:
     browser = ScriptedBrowser(
         [
             UnsubscribeBrowserError(
@@ -681,7 +681,23 @@ def test_a_modelled_browser_failure_adds_no_exception_detail() -> None:
     result = run_direct_unsubscribe(browser, _effect(), ENTRY)
 
     assert result.error_code == "email_unsubscribe_browser_timeout"
-    assert result.error_detail == ""
+    assert result.error_detail == "category=operation_timeout"
+
+
+def test_a_category_without_its_own_code_still_says_which_it_was() -> None:
+    browser = ScriptedBrowser(
+        [
+            UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                "the control could not be clicked",
+            )
+        ]
+    )
+
+    result = run_direct_unsubscribe(browser, _effect(), ENTRY)
+
+    assert result.error_code == "email_unsubscribe_browser_failed"
+    assert result.error_detail == "category=control_unavailable"
 
 
 def test_a_missing_task_fails_closed(tmp_path: Path) -> None:
