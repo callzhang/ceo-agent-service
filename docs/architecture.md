@@ -894,7 +894,7 @@ MODEL 缺省取 `CEO_CODEX_MODEL`）和 `CEO_RUNTIME_CLAUDE_API_*`（KIND=claude
 重启后生效（与其他设置保存一样）；改名到重启之间，到点的定时任务会因为「首选线路未配置」被跳过并进
 Attention，所以改名后应尽快让心跳会话重启。
 保存只有一个入口：React 设置页提交到 `POST /api/console/settings/agent-runtime`，字段用 `.env`
-键名，由 `app/web_api/agent_runtime_settings.py` 校验并写入。旧的服务端渲染页
+键名，由 `app/web_api/agent_runtime_settings.py` 校验并写入。读取同一接口时，凭据类字段（`*_API_KEY`、Friday 的 ticket / session token）只返回部分遮蔽值（12 位及以上保留前 3 后 4，其余 `****`；更短的整体 `****`），服务从不把完整凭据发给控制台（Derek 2026-09-25）；页面把遮蔽值原样存回，服务认出它等于已存凭据的遮蔽值，就保持已存凭据不变，输入新值才替换。旧的服务端渲染页
 （`/config?tab=agent-runtime` 与表单 `POST /config/agent-runtime`）已删除——React 设置页
 上线（2026-08-29）后浏览器访问页面时拿到的一直是 SPA，那套页面只剩测试在用。
 

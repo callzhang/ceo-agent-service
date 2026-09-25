@@ -220,3 +220,67 @@ def test_the_legacy_form_route_is_gone(tmp_path: Path, env_path: Path):
 
     assert response.status_code in {404, 405}
     assert env_path.read_text(encoding="utf-8") == "CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n"
+
+
+LONG_KEY = "sk-abcdefghijklmnopqrstuvwxyz0123456789"
+ADDED_ROUTE = {
+    "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,kksj",
+    "CEO_RUNTIME_KKSJ_KIND": "codex_api",
+    "CEO_RUNTIME_KKSJ_BASE_URL": "https://gateway.example/v1",
+    "CEO_RUNTIME_KKSJ_MODEL": "MiniMax-M3",
+}
+
+
+def _seed_route(env_path: Path, key: str = LONG_KEY) -> None:
+    lines = [f"{name}={value}" for name, value in ADDED_ROUTE.items()]
+    env_path.write_text(
+        "\n".join([*lines, f"CEO_RUNTIME_KKSJ_API_KEY={key}"]) + "\n", encoding="utf-8"
+    )
+
+
+def test_the_console_receives_a_partially_masked_token_never_the_token(
+    tmp_path: Path, env_path: Path
+):
+    _seed_route(env_path)
+
+    with _client(tmp_path) as client:
+        body = client.get(ENDPOINT).json()
+
+    shown = body["item"]["fields"]["CEO_RUNTIME_KKSJ_API_KEY"]
+    assert shown == "sk-****6789"
+    assert LONG_KEY not in str(body)
+    assert "CEO_RUNTIME_KKSJ_API_KEY" in body["item"]["secrets"]
+
+
+def test_a_short_token_is_shown_fully_masked(tmp_path: Path, env_path: Path):
+    _seed_route(env_path, key="short-key")
+
+    with _client(tmp_path) as client:
+        shown = client.get(ENDPOINT).json()["item"]["fields"]["CEO_RUNTIME_KKSJ_API_KEY"]
+
+    assert shown == "****"
+
+
+def test_saving_the_mask_back_keeps_the_stored_token(tmp_path: Path, env_path: Path):
+    _seed_route(env_path)
+
+    with _client(tmp_path) as client:
+        fields = client.get(ENDPOINT).json()["item"]["fields"]
+        saved = client.post(ENDPOINT, json={"fields": {**fields, **BASE_FIELDS}})
+
+    assert saved.status_code == 200, saved.json()
+    assert f"CEO_RUNTIME_KKSJ_API_KEY={LONG_KEY}" in env_path.read_text(encoding="utf-8")
+
+
+def test_a_newly_typed_token_replaces_the_stored_one(tmp_path: Path, env_path: Path):
+    _seed_route(env_path)
+
+    with _client(tmp_path) as client:
+        fields = client.get(ENDPOINT).json()["item"]["fields"]
+        fields["CEO_RUNTIME_KKSJ_API_KEY"] = "sk-a-brand-new-token-0000"
+        saved = client.post(ENDPOINT, json={"fields": {**fields, **BASE_FIELDS}})
+
+    assert saved.status_code == 200, saved.json()
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_RUNTIME_KKSJ_API_KEY=sk-a-brand-new-token-0000" in env_text
+    assert LONG_KEY not in env_text

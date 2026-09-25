@@ -1832,7 +1832,13 @@ def register_console_routes(
                     "available": bool(friday_cli),
                     "path": friday_cli,
                 }
-            payload["secrets"] = ["CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN", *added_secrets] if section == "agent-runtime" else []
+            if section == "agent-runtime":
+                from app.web_api.agent_runtime_settings import masked_settings
+
+                # The console never receives a stored token: it gets a partial
+                # mask, and saving that mask back leaves the token unchanged.
+                payload["fields"] = masked_settings(payload["fields"])
+            payload["secrets"] = ["CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN", "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", *added_secrets] if section == "agent-runtime" else []
         return item_envelope(payload)
 
     @app.get("/api/console/tutorial")

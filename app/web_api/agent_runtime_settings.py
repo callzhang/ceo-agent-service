@@ -32,13 +32,49 @@ class AgentRuntimeSettingsError(ValueError):
     """A submission the service refuses, with the reason shown to the operator."""
 
 
+_SECRET_SUFFIXES = ("_API_KEY",)
+_SECRET_KEYS = frozenset({"CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"})
+
+
+def is_secret_key(key: str) -> bool:
+    return key in _SECRET_KEYS or key.endswith(_SECRET_SUFFIXES)
+
+
+def mask_secret(value: str) -> str:
+    """Show enough of a stored token to recognise it, never the token itself."""
+
+    value = value.strip()
+    if not value:
+        return ""
+    if len(value) < 12:
+        return "****"
+    return f"{value[:3]}****{value[-4:]}"
+
+
+def masked_settings(fields: Mapping[str, str]) -> dict[str, str]:
+    """The settings as the console receives them: secrets partially masked."""
+
+    return {
+        key: mask_secret(value) if is_secret_key(key) else value
+        for key, value in fields.items()
+    }
+
+
+def _unchanged(persisted: Mapping[str, str], key: str, value: str) -> bool:
+    """A submitted secret that is just the mask the console was shown."""
+
+    return bool(value) and value == mask_secret(persisted.get(key, ""))
+
+
 def save_agent_runtime_settings(fields: Mapping[str, object]) -> None:
     """Validate a console submission and write it to `.env`."""
 
     persisted = app_config.read_env_file()
 
     def submitted(key: str) -> str:
-        return str(fields.get(key) or "").strip()
+        value = str(fields.get(key) or "").strip()
+        # Echoing back the mask the console showed leaves the stored secret as is.
+        return "" if is_secret_key(key) and _unchanged(persisted, key, value) else value
 
     def current(key: str, default: str = "") -> str:
         """The submitted value, or the configured one when the field is blank."""
@@ -221,7 +257,12 @@ def _added_routes(
         prefix = added_route_settings_prefix(name)
 
         def submitted(suffix: str) -> str:
-            return str(fields.get(f"{prefix}{suffix}") or "").strip()
+            value = str(fields.get(f"{prefix}{suffix}") or "").strip()
+            if is_secret_key(f"{prefix}{suffix}") and _unchanged(
+                persisted, f"{prefix}{suffix}", value
+            ):
+                return ""
+            return value
 
         kind = submitted("KIND")
         if kind not in ADDED_ROUTE_KINDS:

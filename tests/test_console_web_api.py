@@ -1803,7 +1803,7 @@ def test_console_prompts_expose_and_update_the_work_profile_runtime_injection(
     assert retired.status_code == 404
 
 
-def test_console_agent_runtime_returns_saved_credentials_for_prefill(monkeypatch, tmp_path: Path):
+def test_console_agent_runtime_returns_masked_credentials_for_prefill(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         app_config_module,
         "read_env_file",
@@ -1823,10 +1823,14 @@ def test_console_agent_runtime_returns_saved_credentials_for_prefill(monkeypatch
     assert response.status_code == 200
     item = response.json()["item"]
     fields = item["fields"]
-    assert fields["CEO_RUNTIME_CODEX_API_API_KEY"] == "codex-token"
-    assert fields["CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"] == "provider-token"
-    assert fields["CEO_FRIDAY_RUNTIME_TICKET"] == "runtime-ticket"
-    assert fields["CEO_FRIDAY_SESSION_TOKEN"] == "session-token"
+    # The console gets a mask of each stored secret, never the secret (Derek
+    # 2026-09-25): 12+ characters keep 3 leading and 4 trailing, shorter ones are fully masked.
+    assert fields["CEO_RUNTIME_CODEX_API_API_KEY"] == "****"
+    assert fields["CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"] == "pro****oken"
+    assert fields["CEO_FRIDAY_RUNTIME_TICKET"] == "run****cket"
+    assert fields["CEO_FRIDAY_SESSION_TOKEN"] == "ses****oken"
+    for stored in ("codex-token", "provider-token", "runtime-ticket", "session-token"):
+        assert stored not in response.text
     # The retired built-in API settings are no longer part of the page.
     assert "CEO_CODEX_API_KEY" not in fields
     assert "CEO_CLAUDE_API_KEY" not in fields
@@ -1911,7 +1915,8 @@ def test_console_agent_runtime_adds_a_runtime_and_keeps_its_order(
     assert "CEO_RUNTIME_QWEN_GPU4_MODEL=qwen3.8-27b" in env_text
     assert "CEO_RUNTIME_QWEN_GPU4_BASE_URL=http://100.93.145.69:8900/v1" in env_text
     fields = reloaded.json()["item"]["fields"]
-    assert fields["CEO_RUNTIME_QWEN_GPU4_API_KEY"] == "gateway-key"
+    assert fields["CEO_RUNTIME_QWEN_GPU4_API_KEY"] == "****"
+    assert "gateway-key" not in response.text
     assert "CEO_RUNTIME_QWEN_GPU4_API_KEY" in reloaded.json()["item"]["secrets"]
 
 
