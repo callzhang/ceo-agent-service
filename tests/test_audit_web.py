@@ -3826,7 +3826,7 @@ def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp
     def render_slowly(*args, **kwargs):
         del args, kwargs
         render_started.set()
-        release_render.wait(timeout=2.0)
+        release_render.wait(timeout=30.0)
         return "ready"
 
     monkeypatch.setattr(audit_web_module, "render_attempt_list", render_slowly)
@@ -3835,10 +3835,12 @@ def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp
         complete_setup_wizard(AutoReplyStore(db_path))
         started_at = time.monotonic()
         with TestClient(create_audit_app(db_path)) as client:
-            # TestClient startup has fixed framework overhead; this only proves
-            # that startup does not wait for the deliberately blocked render.
-            assert time.monotonic() - started_at < 1.0
-            assert render_started.wait(timeout=1)
+            # The blocked render holds for 30 s. Startup on a loaded machine
+            # can take seconds, so the bound is well under the block, not a
+            # fixed second: it only proves startup does not wait for the render.
+            assert time.monotonic() - started_at < 15.0
+            assert not release_render.is_set()
+            assert render_started.wait(timeout=5)
             response = client.get("/history")
             assert "History is temporarily busy" in response.text
     finally:
@@ -5311,9 +5313,10 @@ def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch
 def test_open_attempt_bridge_opens_generic_attempt_detail(tmp_path: Path, monkeypatch):
     commands = []
 
-    def fake_run(command, check):
+    def fake_run(command, check=False, **kwargs):
         commands.append((command, check))
-        return subprocess.CompletedProcess(command, 0)
+        # No browser has a console tab open, so focusing one reports nothing.
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr("app.audit_web.subprocess.run", fake_run)
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
@@ -5326,10 +5329,13 @@ def test_open_attempt_bridge_opens_generic_attempt_detail(tmp_path: Path, monkey
         "attempt_id": 123,
         "detail_url": "http://testserver/attempts/123",
         "open_returncode": 0,
+        "reused_tab": False,
     }
-    assert commands == [
-        (["/usr/bin/open", "http://testserver/attempts/123"], False),
-    ]
+    # A console tab that is already open is reused (Derek 2026-09-25); only
+    # when none is found does the bridge open a new window.
+    assert commands[-1] == (["/usr/bin/open", "http://testserver/attempts/123"], False)
+    assert commands[:-1]
+    assert all(command[0][0] == "osascript" for command in commands[:-1])
 
 
 def test_open_dingtalk_bridge_opens_pc_jsapi_bridge_for_open_conversation_id(
@@ -7241,12 +7247,14 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
                     "label": "同意当前方案",
                     "instruction": "同意已核验方案并发布。",
                     "consequence": "会执行已审计的外部动作。",
+                    "applies_to": "task_class",
                 },
                 {
                     "key": "B",
                     "label": "要求补充材料",
                     "instruction": "要求补充材料并发布。",
                     "consequence": "当前外部动作不会执行。",
+                    "applies_to": "task_class",
                 },
             ],
             "error": {
@@ -7327,8 +7335,8 @@ def test_rule_decision_attention_uses_attempt_linked_run_not_unrelated_latest_ru
                 "conclusion": "A reusable rule is required.",
             },
             "decision_options": [
-                {"key": "A", "label": "采用规则 A", "instruction": "以后按规则 A 处理。", "consequence": "允许执行已核验动作。"},
-                {"key": "B", "label": "采用规则 B", "instruction": "以后按规则 B 处理。", "consequence": "保持外部动作不执行。"},
+                {"key": "A", "label": "采用规则 A", "instruction": "以后按规则 A 处理。", "consequence": "允许执行已核验动作。", "applies_to": "task_class"},
+                {"key": "B", "label": "采用规则 B", "instruction": "以后按规则 B 处理。", "consequence": "保持外部动作不执行。", "applies_to": "task_class"},
             ],
             "error": {"code": "", "retryable": False, "authorization_required": False},
             "risk": "high",
@@ -10623,12 +10631,14 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
                             "label": "同意当前方案",
                             "instruction": "同意已核验方案并发布。",
                             "consequence": "会执行已审计的外部动作。",
+                            "applies_to": "task_class",
                         },
                         {
                             "key": "B",
                             "label": "要求补充材料",
                             "instruction": "要求补充材料并发布。",
                             "consequence": "当前外部动作不会执行。",
+                            "applies_to": "task_class",
                         },
                     ],
                     "error": {
