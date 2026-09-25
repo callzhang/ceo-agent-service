@@ -796,7 +796,8 @@ def weekly_report_prompt() -> str:
     return (
         "按 $ceo-weekly-report 生成并发布本周的 CEO 管理周报。"
         f"先运行 `{materials_command}` 取得目标周会文档、上周文档和本周会议清单，"
-        "再按 skill 读取听记转写、群消息和各业务线材料，写成报告后直接写入下周一的管理层周会文档"
+        "再按 skill 用 $dingtalk-minutes、$dingtalk-chat 读取听记转写、群消息和各业务线材料，"
+        "写成报告后用 $dingtalk-wiki 与 $dingtalk-doc 直接写入下周一的管理层周会文档"
         "（不存在就先建），并读回核对。业务线还没提交的报告写进覆盖说明，不阻塞发布，不要向 Derek 追问材料。"
     )
 
@@ -822,7 +823,7 @@ def _seed_weekly_report_task(
     skill_refs = _consumer_skill_refs(
         options,
         managed=("ceo-weekly-report",),
-        operation=("dingtalk-minutes", "dingtalk-chat"),
+        operation=("dingtalk-minutes", "dingtalk-chat", "dingtalk-wiki", "dingtalk-doc"),
     )
     runtime_options = options.list_runtime_options()
     if not runtime_options:

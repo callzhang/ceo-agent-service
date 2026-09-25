@@ -1008,6 +1008,8 @@ def test_every_fixed_discovery_check_is_a_service_command(
         "ceo-weekly-report",
         "dingtalk-minutes",
         "dingtalk-chat",
+        "dingtalk-wiki",
+        "dingtalk-doc",
     ]
     minutes = _task_by_key(tasks, "ceo-minutes-sync-daily-v1")
     assert minutes.command == "sync-minutes-once"
