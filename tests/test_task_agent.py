@@ -2216,12 +2216,14 @@ def test_earlier_evidence_does_not_stand_in_for_the_current_sources_authority_or
         TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(1, item, **extra)]})
 
 
-def test_earlier_evidence_needs_a_link_or_the_group_and_the_person():
+def test_earlier_evidence_needs_its_link_or_else_a_description_of_where_it_is():
+    """A link whenever there is one; without a link, words (a DingTalk message is its group and person)."""
     item = _work_item()
     for missing in ({"source_link": ""}, {"source_link": "", "source_group": "产品群"}, {"source_link": "", "source_person": "Zoey"}):
-        with pytest.raises(ValidationError, match="link, or the group and the person"):
+        with pytest.raises(ValidationError, match="its source link, or, when there is none, a description"):
             TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(1, item, **missing)]})
-    TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(1, item, source_link="", source_group="产品群", source_person="Zoey")]})
+    for given in ({"source_link": "", "source_description": "产品群里 Zoey 的消息"}, {"source_link": "", "source_group": "产品群", "source_person": "Zoey"}):
+        TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(1, item, **given)]})
 
 
 def test_the_current_sources_link_or_group_and_person_are_recorded_and_the_excerpt_may_be_an_extract(tmp_path):

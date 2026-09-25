@@ -315,7 +315,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         f"Problems in the previous output:\n{detail}\n\n"
         "Rules that must hold:\n"
         "- Return the TaskAgentDecision envelope with task_decisions (0..N); "
-        "every non-skip item needs a source_excerpt (a sentence of the source), source_ref and a locator (source_link, or source_group and source_person) "
+        "every non-skip item needs a source_excerpt (a sentence of the source), source_ref and a locator (source_link when there is one, otherwise source_description) "
         "(evidence_origin says whether it is the current Work Item, an earlier session turn, or memory provenance).\n"
         "- A formal assignment requires an explicit owner and authorized "
         "assignment source. Owner evidence alone does not prove authority.\n"
@@ -418,10 +418,11 @@ still need current, identified source evidence.
 Extract every distinct source-backed deliverable, or return an empty list.
 One source may yield multiple decisions. Each non-skip item cites its source: the
 source_ref, a sentence of the original text as source_excerpt (an extract is fine;
-it need not be word for word), and where a reader can find it: source_link, or
-source_group and source_person when there is no link. For the current Work Item
-the service fills in what it knows, but state them whenever you can, and always
-for earlier or remembered evidence.
+it need not be word for word), and where a reader can find it: source_link
+whenever the source has a link (always give it then); when it has none, describe
+where it is in source_description (a DingTalk message: its group and the person
+who sent it). For the current Work Item the service fills in what it knows, but
+state them whenever you can, and always for earlier or remembered evidence.
 Never invent a task, owner, assignment, acceptance, date, relevance, or
 authority. An owner must be explicit in source text or authoritative source
 metadata; an ownerless assignment stays candidate/unmatched evidence.
@@ -624,8 +625,9 @@ def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
     )
 
 
-def _source_locator(work_item: WorkItem, item: TaskDecision) -> tuple[str, str, str]:
-    """Where a reader can find the source: a link, or the group and the person (Derek 2026-09-25).
+def _source_locator(work_item: WorkItem, item: TaskDecision) -> tuple[str, str, str, str]:
+    """Where a reader can find the source (Derek 2026-09-25): its link when it has one; otherwise a
+    description of where it is (a DingTalk message is its group and the person who sent it).
 
     What the decision states wins. For the current Work Item the service fills in what it
     already knows: a URL reference, the meeting page link inside an AI-minutes summary, or
@@ -634,18 +636,19 @@ def _source_locator(work_item: WorkItem, item: TaskDecision) -> tuple[str, str, 
     (the decision model requires it).
     """
     link, group, person = item.source_link.strip(), item.source_group.strip(), item.source_person.strip()
-    if item.evidence_origin != "current" or link or (group and person):
-        return link, group, person
+    description = item.source_description.strip()
+    if item.evidence_origin != "current" or link or description or (group and person):
+        return link, group, person, description
     if work_item.source.ref.startswith(("http://", "https://")):
-        return work_item.source.ref, group, person
+        return work_item.source.ref, group, person, description
     try:
         meeting = json.loads(work_item.summary).get("meeting")
     except (ValueError, AttributeError):
         meeting = None
     share_url = meeting.get("shareUrl") if isinstance(meeting, dict) else None
     if isinstance(share_url, str) and share_url.strip():
-        return share_url.strip(), group, person
-    return link, group or work_item.source.conversation_title, person or work_item.context.sender
+        return share_url.strip(), group, person, description
+    return link, group or work_item.source.conversation_title, person or work_item.context.sender, description
 
 
 def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal:
@@ -656,7 +659,7 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
             raise ValueError("task decision source_ref must match the Work Item source")
         if not item.source_excerpt.strip():
             raise ValueError("task decision needs a source_excerpt")
-    link, group, person = _source_locator(work_item, item)
+    link, group, person, description = _source_locator(work_item, item)
     def normalized(value: str) -> str:
         return " ".join(value.split()).casefold()
     date_effects = sorted(
@@ -754,7 +757,8 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
             author_name=person,
             context_json=json.dumps(
                 {"evidence_origin": item.evidence_origin, "cited_while_processing": work_item.source.ref,
-                 **({"source_link": link} if link else {})},
+                 **({"source_link": link} if link else {}),
+                 **({"source_description": description} if description else {})},
                 ensure_ascii=False, sort_keys=True,
             ),
         )
@@ -774,6 +778,7 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
                 "work_item_title": work_item.source.title,
                 "assignment_authorized": work_item.context.assignment_authorized,
                 **({"source_link": link} if link else {}),
+                **({"source_description": description} if description else {}),
                 **({"reply_to_source_ref": work_item.context.reply_to_source_ref}
                    if work_item.context.reply_to_source_ref else {}),
                 **({"external_task_id": work_item.context.external_task_id}

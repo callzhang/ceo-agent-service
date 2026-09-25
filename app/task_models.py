@@ -378,9 +378,10 @@ class TaskDecision(StrictTaskModel):
     target_task_id: int | None = Field(default=None, gt=0)
     source_excerpt: str = ""
     source_ref: str = ""
-    source_link: str = Field(default="", description="A link to the source (a document, minutes page, message or thread URL).")
-    source_group: str = Field(default="", description="The group or conversation the source was said in, when there is no link.")
-    source_person: str = Field(default="", description="Who said it, when there is no link.")
+    source_link: str = Field(default="", description="A link to the source (a document, minutes page, message or thread URL). Required whenever the source has one.")
+    source_description: str = Field(default="", description="Where a reader can find the source when there is no link, in words: e.g. a DingTalk message is its group and the person who sent it.")
+    source_group: str = Field(default="", description="The group or conversation the source was said in.")
+    source_person: str = Field(default="", description="Who said it.")
     evidence_origin: Literal["current", "session", "memory"] = Field(
         default="current",
         description=(
@@ -445,9 +446,10 @@ class TaskDecision(StrictTaskModel):
                 "formal creation, promotion, acceptance and merges need the current Work Item's authority"
             )
         if self.action != "skip" and self.evidence_origin != "current" and not (
-            self.source_link.strip() or (self.source_group.strip() and self.source_person.strip())
+            self.source_link.strip() or self.source_description.strip()
+            or (self.source_group.strip() and self.source_person.strip())
         ):
-            raise ValueError("earlier or remembered evidence needs a source link, or the group and the person")
+            raise ValueError("earlier or remembered evidence needs its source link, or, when there is none, a description of where it is (e.g. group and person)")
         if self.evidence_origin != "current" and self.date_evidence:
             raise ValueError("date evidence must come from the current Work Item")
         if self.action == "create_task" and self.formal_basis is None:
