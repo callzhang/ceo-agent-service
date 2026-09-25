@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from app.notification import attempt_notification_url, send_macos_notification
 
 
@@ -156,3 +157,38 @@ def test_notification_falls_back_to_browser_when_terminal_notifier_fails(monkeyp
             "url": "http://127.0.0.1:8765/open-dingtalk?cid=75217569357",
         }
     ]
+
+
+def test_a_notification_click_reuses_the_open_console_tab(monkeypatch):
+    """Derek, 2026-09-25: show the attempt in the tab he has open, not a new one."""
+    from app import notification
+
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="focused\n")
+
+    monkeypatch.setattr(notification.subprocess, "run", fake_run)
+
+    assert notification.focus_console_tab(
+        "http://127.0.0.1:8765", "http://127.0.0.1:8765/attempts/9997"
+    )
+    script = calls[0][2]
+    assert '"http://127.0.0.1:8765/attempts/9997"' in script
+    assert "Google Chrome" in script
+    assert len(calls) == 1
+
+
+def test_no_open_console_tab_falls_back_to_opening_one(monkeypatch):
+    from app import notification
+
+    monkeypatch.setattr(
+        notification.subprocess,
+        "run",
+        lambda command, **kwargs: SimpleNamespace(returncode=0, stdout="none\n"),
+    )
+
+    assert not notification.focus_console_tab(
+        "http://127.0.0.1:8765", "http://127.0.0.1:8765/attempts/9997"
+    )

@@ -11545,13 +11545,22 @@ def create_audit_app(
     def open_attempt(request: Request, attempt_id: int) -> JSONResponse:
         if attempt_id <= 0:
             return JSONResponse({"ok": False, "error": "invalid attempt_id"}, status_code=400)
-        detail_url = f"{request.url.scheme}://{request.url.netloc}/attempts/{attempt_id}"
+        origin = f"{request.url.scheme}://{request.url.netloc}"
+        detail_url = f"{origin}/attempts/{attempt_id}"
+        from app.notification import focus_console_tab
+
+        # Reuse the console tab he already has open; a new one only if none.
+        if focus_console_tab(origin, detail_url):
+            return JSONResponse(
+                {"ok": True, "attempt_id": attempt_id, "detail_url": detail_url, "reused_tab": True}
+            )
         completed = subprocess.run(["/usr/bin/open", detail_url], check=False)
         return JSONResponse(
             {
                 "ok": completed.returncode == 0,
                 "attempt_id": attempt_id,
                 "detail_url": detail_url,
+                "reused_tab": False,
                 "open_returncode": completed.returncode,
             }
         )

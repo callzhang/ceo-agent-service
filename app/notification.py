@@ -30,6 +30,74 @@ def attempt_notification_url(attempt_id: int) -> str:
     return f"{notification_bridge_base_url()}/open-attempt?attempt_id={int(attempt_id)}"
 
 
+_FOCUS_TAB_SCRIPTS = {
+    "Google Chrome": """
+tell application "System Events" to set isRunning to (exists process "Google Chrome")
+if not isRunning then return "none"
+tell application "Google Chrome"
+  repeat with w in windows
+    set i to 0
+    repeat with t in tabs of w
+      set i to i + 1
+      if (URL of t) starts with ORIGIN then
+        set URL of t to TARGET
+        set active tab index of w to i
+        set index of w to 1
+        activate
+        return "focused"
+      end if
+    end repeat
+  end repeat
+end tell
+return "none"
+""",
+    "Safari": """
+tell application "System Events" to set isRunning to (exists process "Safari")
+if not isRunning then return "none"
+tell application "Safari"
+  repeat with w in windows
+    repeat with t in tabs of w
+      if (URL of t) starts with ORIGIN then
+        set URL of t to TARGET
+        set current tab of w to t
+        set index of w to 1
+        activate
+        return "focused"
+      end if
+    end repeat
+  end repeat
+end tell
+return "none"
+""",
+}
+
+
+def focus_console_tab(origin: str, target_url: str) -> bool:
+    """Show `target_url` in a console tab that is already open.
+
+    Derek, 2026-09-25: clicking a notification should bring up the attempt in
+    the console tab he already has open, not a new tab or window. Returns
+    False when no browser has a console tab, and the caller opens one.
+    """
+    for browser, template in _FOCUS_TAB_SCRIPTS.items():
+        script = template.replace("ORIGIN", _applescript_string(origin)).replace(
+            "TARGET", _applescript_string(target_url)
+        )
+        try:
+            completed = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if completed.returncode == 0 and completed.stdout.strip() == "focused":
+            return True
+    return False
+
+
 def send_macos_notification(title: str, message: str, url: str | None = None) -> None:
     if _send_terminal_notifier_notification(title=title, message=message, url=url):
         return
