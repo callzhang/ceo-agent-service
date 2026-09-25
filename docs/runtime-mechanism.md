@@ -607,16 +607,16 @@ Consumer→Audit 往返——退订在真实世界本来就是幂等的。同理
 设置；模型上线后只运行模型窗口，优先覆盖全部尚无稳定记录的已读和未读 Inbox/未绑定来源邮件，不
 按日期把近期邮件留给 Agent，也不在同一轮创建 Agent 分类任务。模型路径以每文件夹固定批量
 在后续定时轮次继续向历史推进。模型 accepted 结果进入现有不可变 ActionPlan 和 provider action
-队列；`model_rejected`、`model_others` 与 `model_category_not_promoted` 保存完整预测证据为
-`pending_feedback`，不创建 Agent 分类任务和动作计划。Embedding、runtime 或持久化技术失败使本轮
-失败并在下轮重试，不写人工待确认。定时历史模型 runtime 的 Embedding 请求期限为 120 秒，实时
+队列；`model_rejected`、`model_others` 与 `model_category_not_promoted` 创建 Agent 分类任务，
+由 Agent 判定；Agent 结果 `certainty` 不是 `certain` 时才存为 `pending_feedback` 等待人工标注
+（Derek, 2026-09-25：模型不确定先回退 Agent，Agent 不确定再问人）。Embedding、runtime 或持久化技术失败使本轮
+失败并在下轮重试，既不写人工待确认，也不当作模型拒绝交给 Agent。定时历史模型 runtime 的 Embedding 请求期限为 120 秒，实时
 调用仍是 2 秒，避免批处理复用实时延迟预算后在同一封历史邮件上永久超时。冻结训练 snapshot 直接采用 provider 文件夹和 important 信号，
-训练与 shadow 评估均为离线、阶段性作业，不在收信路径实时训练或并行推理；全量线上模型仍需连续两个兼容版本对
-全部类别和 important 都达标且没有未解决的系统性错误。整个模型晋升后，实时新邮件主路径严格按
-`model -> Agent fallback` 顺序执行；该旧接口不用于定时收信和历史回填。定时路径中的模型拒绝直接
-进入待确认，技术失败则重试，不调用 Agent。两个连续候选必须分别绑定不同且时间递增的冻结 snapshot；snapshot digest 必须不同，
-folder/important 累计标签水位以及至少一项独立评估样本或组证据必须前进。同一 snapshot 的重复训练
-不能满足晋升。
+训练与 shadow 评估均为离线、阶段性作业，不在收信路径实时训练或并行推理；晋升只看最新候选自己的证据，
+按类别逐个判断，达标类别由模型决定、其余仍由 Agent 决定，不再要求连续两个候选或标签水位前进。
+已上线模型只对照它自己的证据保持生效：后训练的新候选无论达标与否都不会让它下线，候选目录里有无法读取
+的文件仍 fail-closed。实时新邮件主路径严格按 `model -> Agent fallback` 顺序执行；定时路径同样如此：模型拒绝
+进入 Agent 分类队列，Agent 不确定才进入待确认，技术失败则重试，不调用 Agent。
 
 Provider 训练观察按有界批次运行。观察缓存与请求队列使用各自独立的进程锁和文件锁；长时间 IMAP
 扫描不得阻塞实时扫描、分类结果落库或确定性邮箱动作。Email worker 只有在扫描/动作、Agent

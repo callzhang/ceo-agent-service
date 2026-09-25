@@ -345,14 +345,19 @@ def scan_model_classification_batch(
     accept_model: Callable[
         [Mapping[str, object], object, Sequence[object], str, str], object
     ],
-    request_feedback: Callable[
-        [Mapping[str, object], object, Sequence[object], str, str], object
-    ],
+    enqueue_agent: Callable[[Mapping[str, object], Sequence[object]], object],
     agent_task_adapter: object | None = None,
     limit: int = 50,
     today: Callable[[], date] | None = None,
 ) -> EmailScanResult:
-    """Classify a bounded historical page without ever invoking the Agent."""
+    """Classify a bounded page with the model, handing what it will not decide to the Agent.
+
+    The model decides what it is sure of. Anything it rejects goes to the Agent
+    queue, and only an Agent that is itself unsure leaves the message waiting
+    for the owner. This path used to save a model rejection straight as
+    "waiting for feedback", so the Agent never saw it: from 2026-09-25 about a
+    fifth of new mail sat unclassified until the owner labelled it.
+    """
 
     from app.email_classifier_runtime import (
         EmailClassifierRuntimeMode,
@@ -427,7 +432,6 @@ def scan_model_classification_batch(
 
     persisted = 0
     processed = 0
-    pending = 0
     highest_uid = 0 if cursor is None else int(cursor["last_seen_uid"])
     for message in batch.messages:
         locator = _provider_locator(message)
@@ -458,15 +462,12 @@ def scan_model_classification_batch(
         if result.value is not None and not result.fallback_reason:
             accept_model(message, result.value, entries, model_text, model_id)
             processed += 1
-        elif result.review_value is not None and result.fallback_reason in {
+        elif result.fallback_reason in {
             "model_rejected",
             "model_others",
             "model_category_not_promoted",
         }:
-            request_feedback(
-                message, result.review_value, entries, model_text, model_id
-            )
-            pending += 1
+            enqueue_agent(message, entries)
         else:
             raise RuntimeError(
                 f"model history classification failed: {result.fallback_reason}"
@@ -485,7 +486,7 @@ def scan_model_classification_batch(
                 else None
             ),
         )
-    return EmailScanResult(len(batch.messages), persisted, processed, pending)
+    return EmailScanResult(len(batch.messages), persisted, processed, 0)
 
 
 @dataclass(frozen=True)

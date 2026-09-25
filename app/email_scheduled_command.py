@@ -26,7 +26,6 @@ from app.email_worker import (
     _build_email_source_factory,
     _close_email_source,
     _email_worker_health_recorder,
-    persist_model_pending_feedback,
     persist_model_primary_classification,
     run_email_discovery_once,
 )
@@ -184,16 +183,14 @@ def build_email_discovery_dependencies(
                                 )
                             )
                         ),
-                        request_feedback=(
-                            lambda message, prediction, _entries, model_text, model_id: (
-                                persist_model_pending_feedback(
-                                    email_store,
-                                    message=message,
-                                    prediction=prediction,
-                                    context=context,
-                                    model_id=model_id,
-                                    model_text=model_text,
-                                )
+                        enqueue_agent=lambda message, entries: (
+                            classification_task_producer.produce(
+                                message,
+                                allowed_category_keys=context.allowed_category_keys,
+                                category_descriptions=context.category_descriptions,
+                                folder_targets=context.folder_targets,
+                                config_version=context.config_version,
+                                unsubscribe_candidates=entries,
                             )
                         ),
                     )

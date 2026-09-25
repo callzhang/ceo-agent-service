@@ -378,7 +378,7 @@ def test_discovery_uses_model_window_exclusively_after_model_promotion(
     assert calls == [("agent", 30, False)]
 
 
-def test_scheduled_model_rejection_persists_pending_feedback_not_agent_work(
+def test_scheduled_model_rejection_goes_to_the_agent_not_to_the_owner(
     tmp_path, monkeypatch
 ) -> None:
     message = {
@@ -475,14 +475,12 @@ def test_scheduled_model_rejection_persists_pending_feedback_not_agent_work(
         runtime,
     )
 
-    pending = bootstrap.email_store.get_classification_by_stable_identity(
+    # The model would not decide it, so the Agent gets it. Nothing waits for
+    # the owner yet: only an Agent that is itself unsure asks for a label.
+    assert bootstrap.email_store.get_classification_by_stable_identity(
         "account-1:message-id:<scheduled-history-review@example.com>"
-    )
-    assert pending is not None
-    assert pending["status"] == "pending_feedback"
-    assert pending["classification_source"] == "model"
-    assert pending["action_plan"] is None
+    ) is None
     with sqlite3.connect(tmp_path / "scheduled-model-review.sqlite3") as db:
         assert db.execute(
             "select count(*) from email_agent_classification_tasks"
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == 1

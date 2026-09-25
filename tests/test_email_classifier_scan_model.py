@@ -448,7 +448,7 @@ def test_model_history_scan_accepts_or_requests_feedback_without_agent_fallback(
         )
     )
     accepted = []
-    pending = []
+    handed_to_agent = []
 
     result = scan_model_classification_batch(
         HistorySource(),
@@ -466,22 +466,23 @@ def test_model_history_scan_accepts_or_requests_feedback_without_agent_fallback(
         today=lambda: date(2026, 9, 21),
         online_runtime=runtime,
         accept_model=lambda *args: accepted.append(args),
-        request_feedback=lambda *args: pending.append(args),
+        enqueue_agent=lambda *args: handed_to_agent.append(args),
     )
 
-    assert result == EmailScanResult(3, 3, 1, 2)
+    # The model decides one; the two it rejects go to the Agent, not to the
+    # owner. Only an Agent that is itself unsure leaves mail waiting for a label.
+    assert result == EmailScanResult(3, 3, 1, 0)
     assert len(accepted) == 1
-    assert len(pending) == 2
+    assert len(handed_to_agent) == 2
     assert accepted[0][1] is accepted_prediction
-    assert pending[0][1] is review_prediction
-    assert accepted[0][4] == pending[0][4] == "email-embedding-mlp-ready"
+    assert accepted[0][4] == "email-embedding-mlp-ready"
     [(_mailbox, search)] = calls
     assert search["since"] == date(2025, 9, 21)
     assert search["unread_only"] is False
     assert search["last_seen_uid"] == 0
 
 
-def test_model_history_scan_does_not_turn_technical_failure_into_feedback(tmp_path):
+def test_model_history_scan_does_not_turn_technical_failure_into_an_agent_handoff(tmp_path):
     message = _message() | {
         "providerUnread": False,
         "date": "2025-10-01T12:00:00+00:00",
@@ -509,7 +510,7 @@ def test_model_history_scan_does_not_turn_technical_failure_into_feedback(tmp_pa
             compatibility={"embedding_revision": "r1"},
         )
     )
-    pending = []
+    handed_to_agent = []
     store = EmailStore(tmp_path / "model-history-failure.sqlite3")
 
     with pytest.raises(TimeoutError, match="embedding unavailable"):
@@ -528,10 +529,11 @@ def test_model_history_scan_does_not_turn_technical_failure_into_feedback(tmp_pa
             lookback_days=365,
             online_runtime=runtime,
             accept_model=lambda *_args: pytest.fail("unexpected acceptance"),
-            request_feedback=lambda *args: pending.append(args),
+            enqueue_agent=lambda *args: handed_to_agent.append(args),
         )
 
-    assert pending == []
+    # A technical failure is neither a model decision nor a rejection.
+    assert handed_to_agent == []
     assert store.get_scan_cursor("dingtalk-account", "INBOX") is None
 
 
