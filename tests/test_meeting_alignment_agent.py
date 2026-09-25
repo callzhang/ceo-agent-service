@@ -316,8 +316,8 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "内容优先于参会人数" in prompt
     assert "final_message 只写正文" in prompt
     assert "不要重复会议标题或时间" in prompt
-    assert "不要使用 Markdown 标题或列表符号" in prompt
-    assert "空行分隔" in prompt
+    assert "用 Markdown 把正文结构化" in prompt
+    assert "`- ` 列表" in prompt
 
 
 def test_prompt_allows_shared_sensitive_content_for_an_automatically_matched_hr_group():
