@@ -42,6 +42,7 @@ const labels: Record<string, string> = {
   canceled: "已取消",
   executed: "已执行",
   skipped: "已跳过",
+  reacted: "已表态",
   not_started: "未开始",
   over_due: "已逾期",
   stale: "数据过期",
@@ -128,6 +129,12 @@ const tones: Record<string, "success" | "progress" | "warning" | "danger" | "neu
   refreshing: "progress",
   unknown: "neutral",
 };
+
+/** The Chinese name of a status value, for menus as well as badges. */
+export function statusLabel(value: string) {
+  const key = value.trim().toLowerCase().replace(/\s+/g, "_");
+  return labels[key] || value || "未提供";
+}
 
 export function StatusBadge({ value }: { value: string }) {
   const key = value.trim().toLowerCase().replace(/\s+/g, "_");

@@ -101,8 +101,10 @@ describe("HistoryPage", () => {
 
     expect(await screen.findByRole("region", { name: "History workspace" })).toBeInTheDocument();
     expect(screen.queryByText("CEO AGENT CONSOLE")).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "状态" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "对象" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "状态：全部状态" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "任务类型：全部类型" })).toBeInTheDocument();
+    // Derek 2026-09-25: the quick status chips are gone; the menus do the filtering.
+    expect(screen.queryByLabelText("快速状态筛选")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Recent 24 hour events" })).toBeInTheDocument();
     expect(screen.getByRole("article", { name: /客户项目/ })).toBeInTheDocument();
     expect(screen.getByText("问")).toBeInTheDocument();
@@ -118,47 +120,46 @@ describe("HistoryPage", () => {
     expect(getHistoryChart).toHaveBeenLastCalledWith("1w", expect.anything());
   });
 
-  it("maps the completed quick filter to the completed history statuses", async () => {
+  it("names statuses in Chinese and filters by several at once", async () => {
     const user = (await import("@testing-library/user-event")).default.setup();
     render(<MemoryRouter><HistoryPage /></MemoryRouter>);
 
-    await user.click(await screen.findByRole("button", { name: "已完成" }));
-    expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ status: "done" }), expect.anything());
+    await user.click(await screen.findByRole("button", { name: "状态：全部状态" }));
+    const menu = screen.getByRole("group", { name: "状态" });
+    expect(menu).toHaveTextContent("需要人工处理");
+    expect(menu).not.toHaveTextContent("needs_human");
+    await user.click(screen.getByRole("checkbox", { name: "失败" }));
+    await user.click(screen.getByRole("checkbox", { name: "需要人工处理" }));
+
+    expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ status: "failed,needs_human" }), expect.anything());
+    expect(screen.getByRole("button", { name: "状态：失败、需要人工处理" })).toBeInTheDocument();
   });
 
-  it("filters the live queue by its real processing status", async () => {
+  it("offers the service's History types as checkboxes and filters by several", async () => {
     const user = (await import("@testing-library/user-event")).default.setup();
     render(<MemoryRouter><HistoryPage /></MemoryRouter>);
 
-    await user.click(await screen.findByRole("button", { name: "执行中" }));
-
-    expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ status: "processing" }), expect.anything());
-  });
-
-  it("offers the service's History types and filters by the chosen one", async () => {
-    const user = (await import("@testing-library/user-event")).default.setup();
-    render(<MemoryRouter><HistoryPage /></MemoryRouter>);
-
-    const objectFilter = await screen.findByRole("combobox", { name: "对象" });
-    expect(await screen.findByRole("option", { name: "日历邀请" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "邮件动作" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Reply" })).not.toBeInTheDocument();
-
-    await user.selectOptions(objectFilter, "email_unsubscribe");
+    await screen.findByRole("article", { name: /客户项目/ });
+    await user.click(screen.getByRole("button", { name: "任务类型：全部类型" }));
+    expect(screen.getByRole("checkbox", { name: "日历邀请" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Reply" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "邮件退订" }));
+    await user.click(screen.getByRole("checkbox", { name: "日历邀请" }));
 
     expect(listHistory).toHaveBeenLastCalledWith(
-      expect.objectContaining({ object_type: "email_unsubscribe" }),
+      expect.objectContaining({ object_type: "email_unsubscribe,calendar" }),
       expect.anything(),
     );
   });
 
-  it("offers only 全部 when the type list cannot be read", async () => {
+  it("offers no type to tick when the type list cannot be read", async () => {
+    const user = (await import("@testing-library/user-event")).default.setup();
     listHistoryTypes.mockRejectedValue(new Error("unavailable"));
     render(<MemoryRouter><HistoryPage /></MemoryRouter>);
 
-    const objectFilter = await screen.findByRole("combobox", { name: "对象" });
     expect(await screen.findByRole("article", { name: /客户项目/ })).toBeInTheDocument();
-    expect(Array.from(objectFilter.querySelectorAll("option")).map((option) => option.textContent)).toEqual(["全部对象"]);
+    await user.click(screen.getByRole("button", { name: "任务类型：全部类型" }));
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
   });
 
   it("names each row's type with the service's label", async () => {
@@ -181,18 +182,8 @@ describe("HistoryPage", () => {
   it("shows 全部 for a retired type in the address", async () => {
     render(<MemoryRouter initialEntries={["/history?object_type=replay"]}><HistoryPage /></MemoryRouter>);
 
-    const objectFilter = await screen.findByRole("combobox", { name: "对象" });
-    await screen.findByRole("option", { name: "日历邀请" });
-    expect(objectFilter).toHaveValue("");
-  });
-
-  it("offers recovered history separately from current failures", async () => {
-    const user = (await import("@testing-library/user-event")).default.setup();
-    render(<MemoryRouter><HistoryPage /></MemoryRouter>);
-
-    await user.click(await screen.findByRole("button", { name: "已恢复" }));
-
-    expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ status: "recovered" }), expect.anything());
+    await screen.findByRole("article", { name: /客户项目/ });
+    expect(await screen.findByRole("button", { name: "任务类型：全部类型" })).toBeInTheDocument();
   });
 
   it("shows an explicit zero when the current failure filter is empty", async () => {
@@ -227,21 +218,5 @@ describe("HistoryPage", () => {
     expect(screen.getByRole("article", { name: "已完成的任务" })).toBeInTheDocument();
     expect(screen.queryByRole("article", { name: "正在执行的任务" })).not.toBeInTheDocument();
     expect(listHistory).toHaveBeenCalledTimes(2);
-  });
-
-  it("gives immediate visual feedback while a status filter is loading", async () => {
-    const user = (await import("@testing-library/user-event")).default.setup();
-    let resolveRequest!: (value: unknown) => void;
-    const pendingRequest = new Promise((resolve) => { resolveRequest = resolve; });
-    render(<MemoryRouter><HistoryPage /></MemoryRouter>);
-    expect(await screen.findByRole("article", { name: /客户项目/ })).toBeInTheDocument();
-    listHistory.mockImplementationOnce(() => pendingRequest);
-
-    await user.click(screen.getByRole("button", { name: "失败" }));
-
-    expect(screen.getByRole("button", { name: "失败" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "失败" })).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByText("正在应用筛选…")).toBeInTheDocument();
-    resolveRequest({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "" } });
   });
 });

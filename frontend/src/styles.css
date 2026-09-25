@@ -188,6 +188,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .filter-select .filter-control-shell::after { content: "⌄"; position: absolute; right: 10px; color: var(--ink-soft); font-size: 16px; pointer-events: none; }
 .filter-select select { width: 100%; height: 38px; min-width: 0; border: 0; outline: 0; appearance: none; color: var(--ink); background: transparent; font-size: .8rem; cursor: pointer; }
 .filter-select select:disabled { cursor: not-allowed; opacity: .55; }
+.filter-multiselect { position: relative; }
+.filter-multiselect-trigger { width: 100%; height: 38px; min-width: 0; border: 0; outline: 0; padding: 0; color: var(--ink); background: transparent; font-size: .8rem; text-align: left; text-transform: none; letter-spacing: normal; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.filter-multiselect-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; display: grid; gap: 2px; min-width: 100%; max-height: 320px; overflow-y: auto; padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 8px 24px rgb(0 0 0 / 14%); text-transform: none; letter-spacing: normal; font-weight: 500; }
+.filter-multiselect-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--ink); font-size: .8rem; white-space: nowrap; cursor: pointer; }
+.filter-multiselect-option:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.filter-multiselect-clear { justify-self: start; margin-top: 4px; padding: 4px 8px; border: 0; border-radius: 6px; color: var(--ink-soft); background: transparent; font-size: .75rem; cursor: pointer; }
+.filter-multiselect-clear:hover { color: var(--ink); }
 .filter-chip-list { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
 .filter-chip { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; gap: 5px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--ink-soft); background: var(--surface); font-size: .76rem; font-weight: 700; cursor: pointer; }
 .filter-chip:hover { border-color: var(--accent); color: var(--accent); }

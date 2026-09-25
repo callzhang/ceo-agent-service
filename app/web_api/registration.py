@@ -266,9 +266,9 @@ def register_console_routes(
             "action": "reply_task",
         }
 
-    def queue_history_matches(task: Any, *, query: str, status: str) -> bool:
+    def queue_history_matches(task: Any, *, query: str, statuses: tuple[str, ...] = ()) -> bool:
         task_status = str(getattr(task, "status", "") or "").strip().lower()
-        if status and task_status != status:
+        if statuses and task_status not in statuses:
             return False
         query_text = query.strip().casefold()
         if not query_text:
@@ -527,39 +527,49 @@ def register_console_routes(
         include_chart: bool | None = Query(default=None),
     ):
         store = store_factory()
-        status_key = status.strip().lower()
-        statuses = ("done", "sent") if status_key == "done" else ((status_key,) if status_key else None)
-        object_type_key = object_type.strip().lower()
+        # Both filters take several comma-separated values (Derek 2026-09-25:
+        # the History menus are checkbox lists).
+        status_keys = tuple(dict.fromkeys(
+            value.strip().lower() for value in status.split(",") if value.strip()
+        ))
+        statuses = tuple(dict.fromkeys(
+            expanded
+            for value in status_keys
+            for expanded in (("done", "sent") if value == "done" else (value,))
+        )) or None
         # A value that is no longer a History type (the retired `replay`, or
         # a typo) filters nothing, so an old link opens the whole list rather
         # than an empty page the filter menu cannot name.
-        if object_type_key not in history_types.HISTORY_TYPE_VALUES:
-            object_type_key = ""
-        selected_history_types = (
-            (object_type_key,)
-            if object_type_key and object_type_key != history_types.QUEUE
-            else None
-        )
+        type_keys = tuple(dict.fromkeys(
+            value.strip().lower()
+            for value in object_type.split(",")
+            if value.strip().lower() in history_types.HISTORY_TYPE_VALUES
+        ))
+        log_types = tuple(value for value in type_keys if value != history_types.QUEUE)
+        selected_history_types = log_types or None
         visible_source_tables = history_types.HISTORY_SOURCE_TABLES
         queue_items = (
             [
                 queue_history_item(task)
                 for task in store.list_reply_tasks(statuses=("pending", "processing"))
-                if queue_history_matches(task, query=q, status=status_key)
+                if queue_history_matches(task, query=q, statuses=status_keys)
             ]
-            if object_type_key in {"", history_types.QUEUE}
+            if not type_keys or history_types.QUEUE in type_keys
             else []
         )
-        log_total, rows = store.list_operation_logs_with_count(
-            # Queue rows can only displace log rows from the requested page.
-            # Fetch through that page before merging both ordered sources.
-            limit=page * page_size,
-            offset=0,
-            query=q,
-            statuses=statuses,
-            history_types=selected_history_types,
-            source_tables=visible_source_tables,
-        )
+        if type_keys == (history_types.QUEUE,):
+            log_total, rows = 0, []
+        else:
+            log_total, rows = store.list_operation_logs_with_count(
+                # Queue rows can only displace log rows from the requested page.
+                # Fetch through that page before merging both ordered sources.
+                limit=page * page_size,
+                offset=0,
+                query=q,
+                statuses=statuses,
+                history_types=selected_history_types,
+                source_tables=visible_source_tables,
+            )
         all_items = [*queue_items, *(history_log_item(row) for row in rows)]
         # Anything waiting on Derek sits at the top, newest first within that.
         # Sorted by time alone it slides down the page as ordinary work lands
@@ -580,7 +590,7 @@ def register_console_routes(
         render_chart = (
             include_chart
             if include_chart is not None
-            else status_key != "failed"
+            else status_keys != ("failed",)
         )
         if render_chart and history_chart_factory is not None:
             chart_hours = {"24h": 24, "1w": 24 * 7, "1m": 24 * 30}.get(chart_range.strip().lower(), 24)

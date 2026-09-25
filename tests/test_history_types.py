@@ -452,3 +452,25 @@ def test_history_without_email_tables_still_answers(tmp_path: Path):
         _skip_history_cache=True,
     )
     assert total == 1
+
+
+def test_history_filters_take_several_types_and_statuses(tmp_path: Path):
+    # Derek, 2026-09-25: both History menus are checkbox lists.
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    _attempt(store, message_id="plain", trigger_text="磊哥，明天的评审能参加吗？")
+    _attempt(store, message_id="failed", trigger_text="另一条消息", send_status="failed")
+    _attempt(store, message_id="wechat", trigger_text="hi", channel="wechat")
+    _attempt(
+        store, message_id="scheduled-run", trigger_text="生成今天的 CEO 每日总结",
+        channel="scheduled",
+    )
+
+    with _client(tmp_path) as client:
+        two_types = _history(client, object_type="wechat,scheduled_agent")
+        with_retired = _history(client, object_type="wechat,replay")
+        two_statuses = _history(client, status="failed,completed", object_type="dingtalk")
+
+    assert {item["type"] for item in two_types["items"]} == {"wechat", "scheduled_agent"}
+    assert two_types["meta"]["total"] == 2
+    assert with_retired["meta"]["total"] == 1
+    assert {item["status"] for item in two_statuses["items"]} == {"failed", "completed"}
