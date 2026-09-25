@@ -21,6 +21,7 @@ from uuid import uuid4
 from app.config import service_root, worker_db_path
 from app.repository_updater import (
     RepositoryUpdater,
+    UpgradePreconditionError,
     UpgradeOperation,
     build_frontend,
     verify_imports,
@@ -58,7 +59,7 @@ def deploy(root: Path, database_path: Path) -> str:
     changed = repository._run(
         ["diff", "--name-only", current, target], category="deploy_changed_paths"
     ).stdout.decode().split()
-    result = RepositoryUpdater(
+    updater = RepositoryUpdater(
         root,
         AutoReplyStore(database_path),
         remote=REMOTE,
@@ -68,7 +69,15 @@ def deploy(root: Path, database_path: Path) -> str:
         dependency_sync=lambda: build_frontend(root, changed),
         verification=lambda: verify_imports(root),
         health=wait_for_health,
-    ).execute(operation)
+    )
+    try:
+        result = updater.execute(operation)
+    except UpgradePreconditionError as exc:
+        moved = repository.resolve_ref(f"refs/heads/{BRANCH}")
+        if moved != current:
+            # Another session deployed while this one waited for the lock.
+            return f"another deploy got there first; production is at {moved[:8]}"
+        raise SystemExit(f"nothing was deployed: {exc}") from None
     return f"deployed {current[:8]} -> {result.installed_commit[:8]}"
 
 

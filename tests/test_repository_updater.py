@@ -286,3 +286,28 @@ def test_service_root_defaults_to_the_services_checkout(monkeypatch, tmp_path: P
     assert service_root() == tmp_path / "Services" / "ceo-agent-service"
     monkeypatch.setenv("CEO_SERVICE_ROOT", str(tmp_path / "elsewhere"))
     assert service_root() == tmp_path / "elsewhere"
+
+
+def test_deploy_that_loses_the_race_reports_the_winner(tmp_path: Path, monkeypatch):
+    # Two sessions deployed at once on 2026-09-25; the second printed a
+    # traceback although nothing was wrong.
+    import app.deploy as deploy_module
+
+    local, _ = fixture_repo(tmp_path)
+    moved_to: list[str] = []
+
+    class RacingUpdater:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def execute(self, operation):
+            git(local, "merge", "--ff-only", "origin/main")
+            moved_to.append(git(local, "rev-parse", "HEAD"))
+            raise UpgradePreconditionError("repository revision changed")
+
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", RacingUpdater)
+    monkeypatch.setattr("app.store.AutoReplyStore", lambda _path: StateStore())
+
+    message = deploy_module.deploy(local, tmp_path / "db.sqlite3")
+
+    assert message == f"another deploy got there first; production is at {moved_to[0][:8]}"
