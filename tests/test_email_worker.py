@@ -10107,3 +10107,114 @@ def test_the_operation_still_runs_when_the_effect_ignores_executed(tmp_path):
     )
     bound.apply_defaults()
     assert bound.arguments["executed"] is None
+
+
+class _StubImapProvider:
+    def __init__(self, name: str, *, dead: bool = False) -> None:
+        self.name = name
+        self.closed = False
+        self._dead = dead
+        outer = self
+
+        class _Session:
+            def noop(self):
+                if outer._dead:
+                    raise OSError("connection reset")
+                return "OK", [b"done"]
+
+        self.session = _Session()
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _warm_session_factory(monkeypatch, clock):
+    import app.email_worker as worker
+    from app import email_provider_actions
+
+    connections: list[_StubImapProvider] = []
+
+    def connect(*_args, **_kwargs):
+        provider = _StubImapProvider(f"login-{len(connections) + 1}")
+        connections.append(provider)
+        return provider
+
+    monkeypatch.setattr(email_provider_actions.ImapDeterministicProvider, "connect", connect)
+    monkeypatch.setenv("CEO_EMAIL_WARM_TEST_IMAP_SECRET", "secret")
+
+    class Store:
+        def get_account(self, account_id):
+            return {
+                "account_id": account_id, "enabled": True, "imap_tls": True,
+                "imap_secret_reference": "CEO_EMAIL_WARM_TEST_IMAP_SECRET", "imap_host": "imap.example.test",
+                "imap_username": "u", "imap_port": 993, "imap_move_mode": "move",
+            }
+
+    return worker._build_imap_direct_action_executor_factory(Store(), clock=clock), connections
+
+
+def test_the_verifying_connection_becomes_the_next_actions_writer(monkeypatch) -> None:
+    now = [1000.0]
+    factory, connections = _warm_session_factory(monkeypatch, lambda: now[0])
+
+    first = factory("account-1")
+    assert [c.name for c in connections] == ["login-1"]
+    verifier = _StubImapProvider("verifier")
+    first._hand_over_verified_session(verifier)
+
+    second = factory("account-1")
+
+    # No second login for the write: the connection that verified the first
+    # action is the one that writes the second.
+    assert second.provider is verifier
+    assert [c.name for c in connections] == ["login-1"]
+    assert verifier.closed is False
+
+
+def test_a_warm_connection_is_per_account(monkeypatch) -> None:
+    factory, connections = _warm_session_factory(monkeypatch, lambda: 1000.0)
+    factory("account-1")._hand_over_verified_session(_StubImapProvider("verifier"))
+
+    other = factory("account-2")
+
+    assert other.provider is connections[-1]
+    assert len(connections) == 2
+
+
+def test_a_warm_connection_that_sat_idle_is_replaced(monkeypatch) -> None:
+    now = [1000.0]
+    factory, connections = _warm_session_factory(monkeypatch, lambda: now[0])
+    stale = _StubImapProvider("stale")
+    factory("account-1")._hand_over_verified_session(stale)
+    now[0] += 46.0
+
+    executor = factory("account-1")
+
+    assert stale.closed is True
+    assert executor.provider is connections[-1]
+    assert len(connections) == 2
+
+
+def test_a_warm_connection_older_than_its_chain_limit_is_replaced(monkeypatch) -> None:
+    now = [1000.0]
+    factory, connections = _warm_session_factory(monkeypatch, lambda: now[0])
+    executor = factory("account-1")
+    for _ in range(7):
+        now[0] += 44.0
+        executor._hand_over_verified_session(_StubImapProvider("kept"))
+        executor = factory("account-1")
+
+    # Each hand-over was fresh, but the chain began over 300 seconds ago.
+    assert len(connections) == 2
+
+
+def test_a_dead_warm_connection_is_replaced(monkeypatch) -> None:
+    factory, connections = _warm_session_factory(monkeypatch, lambda: 1000.0)
+    dead = _StubImapProvider("dead", dead=True)
+    factory("account-1")._hand_over_verified_session(dead)
+
+    executor = factory("account-1")
+
+    assert dead.closed is True
+    assert executor.provider is connections[-1]
+    assert len(connections) == 2

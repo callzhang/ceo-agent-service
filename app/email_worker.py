@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -4114,12 +4115,51 @@ def _active_description_set_version(email_store: object) -> str:
     )
 
 
-def _build_imap_direct_action_executor_factory(email_store: object):
+# A connection that verified one action is kept for the next action on the same
+# account, so each action logs in once instead of twice. It is dropped after a
+# short idle, and after a while regardless, so the cached folder list and the
+# session itself never get old.
+WARM_SESSION_MAX_IDLE_SECONDS = 45.0
+WARM_SESSION_MAX_AGE_SECONDS = 300.0
+
+
+def _build_imap_direct_action_executor_factory(
+    email_store: object,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+):
     from app.email_connector_config import resolve_secret
     from app.email_provider_actions import (
         DeterministicEmailActionExecutor,
         ImapDeterministicProvider,
+        _close_provider,
     )
+
+    warm_lock = threading.Lock()
+    # account id -> (connection, when it was kept, when its chain of reuse began)
+    warm_sessions: dict[str, tuple[object, float, float]] = {}
+
+    def take_warm_session(account_id: str) -> tuple[object, float] | None:
+        with warm_lock:
+            entry = warm_sessions.pop(account_id, None)
+        if entry is None:
+            return None
+        session_provider, kept_at, chain_began = entry
+        now = clock()
+        alive = False
+        if (
+            now - kept_at <= WARM_SESSION_MAX_IDLE_SECONDS
+            and now - chain_began <= WARM_SESSION_MAX_AGE_SECONDS
+        ):
+            try:
+                status, _ = session_provider.session.noop()
+                alive = status == "OK"
+            except Exception:  # noqa: BLE001 - a dead connection is simply replaced
+                alive = False
+        if not alive:
+            _close_provider(session_provider)
+            return None
+        return session_provider, chain_began
 
     def executor_factory(account_id: str):
         account = email_store.get_account(account_id)
@@ -4145,9 +4185,20 @@ def _build_imap_direct_action_executor_factory(email_store: object):
                 move_mode=str(account.get("imap_move_mode") or "move"),
             )
 
+        warm = take_warm_session(account_id)
+        provider, chain_began = warm if warm is not None else (connect_provider(), clock())
+
+        def keep_for_next_action(verified_provider: object) -> None:
+            with warm_lock:
+                previous = warm_sessions.pop(account_id, None)
+                warm_sessions[account_id] = (verified_provider, clock(), chain_began)
+            if previous is not None:
+                _close_provider(previous[0])
+
         return DeterministicEmailActionExecutor(
-            connect_provider(),
+            provider,
             readback_provider_factory=connect_provider,
+            hand_over_verified_session=keep_for_next_action,
         )
 
     return executor_factory

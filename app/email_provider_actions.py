@@ -138,14 +138,21 @@ class DeterministicEmailActionExecutor:
         provider: DeterministicEmailProvider,
         *,
         readback_provider_factory: Callable[[], DeterministicEmailProvider] | None = None,
+        hand_over_verified_session: Callable[[DeterministicEmailProvider], object] | None = None,
     ):
         self.provider = provider
         self._readback_provider_factory = readback_provider_factory
+        # Called with the connection that just verified an action, instead of
+        # closing it, so the next action on the account can write through it. It
+        # is still a different connection from the one that wrote this action,
+        # which is what makes the read-back independent.
+        self._hand_over_verified_session = hand_over_verified_session
 
     def execute(self, action: StoredEmailAction) -> ProviderActionResult:
         operation = _provider_operation(action.action_type)
         readback_provider: DeterministicEmailProvider | None = None
         provider_closed = False
+        keep_readback_session = False
         try:
             destination = self._resolve_destination(action)
             try:
@@ -218,6 +225,7 @@ class DeterministicEmailActionExecutor:
                 action.parameters,
                 destination_folder=destination,
             ):
+                keep_readback_session = readback_provider is not None
                 return ProviderActionResult(
                     status="done",
                     provider_operation=operation,
@@ -241,9 +249,20 @@ class DeterministicEmailActionExecutor:
             )
         finally:
             if readback_provider is not None:
-                _close_provider(readback_provider)
+                if keep_readback_session and self._hand_over_verified_session is not None:
+                    self._pass_on_folder_list(readback_provider)
+                    self._hand_over_verified_session(readback_provider)
+                else:
+                    _close_provider(readback_provider)
             if not provider_closed:
                 _close_provider(self.provider)
+
+    def _pass_on_folder_list(self, session_provider: DeterministicEmailProvider) -> None:
+        """Let the next action skip the folder listing this one already paid for."""
+
+        listing = getattr(self.provider, "_mailbox_cache", None)
+        if listing is not None and getattr(session_provider, "_mailbox_cache", None) is None:
+            session_provider._mailbox_cache = listing
 
     def _resolve_destination(self, action: StoredEmailAction) -> str | None:
         if action.action_type not in {

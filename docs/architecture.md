@@ -334,7 +334,10 @@ provider 文件夹”绑定并单向创建/校验目标文件夹；分类结果�
 而是独立注意信号：兼容 provider 的 Starred/Important/Flagged 信号与成熟模型信号取并集，
 但 junk 始终抑制 important。控制台详情页的 Star / Flag 图标是主人本人的手动点击，直接让服务连上邮箱增删 `\Flagged` / `$Important` 这一个关键字并读回确认，不经过 ActionPlan；观察到的状态随后更新，下一轮扫描再对账。分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。确定性动作清单是
 `label`、`mark_read`、`archive`、`move`、`trash`；它们属于 Email 子系统，由独立
-Email worker 领取、执行并通过 provider readback 验证结果。这些确定性动作
+Email worker 领取、执行并通过 provider readback 验证结果。回读永远用一条与写入不同的、新登录的
+IMAP 连接；这条验证过的连接不关闭，交给同一账号的下一个动作当写连接，所以每个动作只登录一次，
+文件夹列表也随连接带过去（Derek, 2026-09-25）。闲置超过 45 秒、连续复用超过 300 秒或探活
+（NOOP）失败就丢弃重连，验证失败的连接不复用。这些确定性动作
 不创建 CEO Agent task，也不创建 Consumer/Audit run。`trash` 只允许可恢复的 move-to-Trash；
 永久删除、IMAP `EXPUNGE` 和清空 Trash 在所有配置与执行入口都不可达。
 

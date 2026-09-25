@@ -1658,3 +1658,71 @@ def test_a_gone_message_still_completes_a_trash_action() -> None:
     assert result.status == "done"
     assert result.provider_operation == "readback_noop"
     assert result.provider_result_id.startswith("message-unavailable:")
+
+
+def test_a_verifying_connection_is_handed_on_instead_of_closed() -> None:
+    """One login per action: the read-back connection becomes the next writer."""
+
+    module = import_module("app.email_provider_actions")
+    write_session = FakeWritableImapSession()
+    readback_sessions = []
+    handed_over = []
+
+    def fresh_provider():
+        # Opened after the write, so it sees what the write did.
+        session = FakeWritableImapSession(messages=write_session.messages)
+        readback_sessions.append(session)
+        return module.ImapDeterministicProvider(session, account_id="account-1")
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(write_session, account_id="account-1"),
+        readback_provider_factory=fresh_provider,
+        hand_over_verified_session=handed_over.append,
+    ).execute(_action(EmailAction.ARCHIVE, {}))
+
+    assert result.status == "done"
+    assert write_session.logged_out is True
+    # The verifying connection is not the one that wrote, and it is still open.
+    assert len(handed_over) == 1
+    assert handed_over[0].session is readback_sessions[0]
+    assert readback_sessions[0].logged_out is False
+
+
+def test_a_connection_that_did_not_verify_is_closed_not_handed_on() -> None:
+    module = import_module("app.email_provider_actions")
+    write_session = FakeWritableImapSession()
+    readback_session = FakeWritableImapSession()
+    handed_over = []
+
+    # The read-back does not see the write, so verification fails.
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(write_session, account_id="account-1"),
+        readback_provider_factory=lambda: module.ImapDeterministicProvider(
+            readback_session, account_id="account-1"
+        ),
+        hand_over_verified_session=handed_over.append,
+    ).execute(_action(EmailAction.LABEL, {"labels": ("work",)}))
+
+    assert result.error == "provider_readback_mismatch"
+    assert handed_over == []
+    assert readback_session.logged_out is True
+
+
+def test_the_folder_list_travels_with_the_handed_on_connection() -> None:
+    module = import_module("app.email_provider_actions")
+    write_session = FakeWritableImapSession()
+    write = module.ImapDeterministicProvider(write_session, account_id="account-1")
+    handed_over = []
+
+    result = module.DeterministicEmailActionExecutor(
+        write,
+        readback_provider_factory=lambda: module.ImapDeterministicProvider(
+            FakeWritableImapSession(messages=write_session.messages),
+            account_id="account-1",
+        ),
+        hand_over_verified_session=handed_over.append,
+    ).execute(_action(EmailAction.ARCHIVE, {}))
+
+    assert result.status == "done"
+    assert write._mailbox_cache is not None
+    assert handed_over[0]._mailbox_cache is write._mailbox_cache
