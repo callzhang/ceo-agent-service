@@ -2559,6 +2559,29 @@ def test_email_unsubscribe_entry_url_requires_explicit_verified_receipt(
     assert "fixture-entry" not in unavailable.text
 
 
+def test_a_direct_receipt_without_agent_runs_still_shows_its_unsubscribe_address(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    with sqlite3.connect(fixture.database) as db:
+        db.execute(
+            "update email_unsubscribe_effects set audit_agent_run_id=null "
+            "where action_identity=?",
+            (fixture.action_identity,),
+        )
+        db.execute("delete from agent_runs")
+
+    detail = fixture.client.get(
+        f"/api/console/email/classifications/{fixture.classification_id}"
+    ).json()
+    entry = fixture.client.get(
+        f"/api/console/email/classifications/{fixture.classification_id}/unsubscribe-entry"
+    )
+
+    assert detail["unsubscribe_entry"] == {"available": True, "reason": None}
+    assert entry.json() == {"ok": True, "entry_url": fixture.entry_url}
+
+
 def test_email_detail_projects_verified_attempt_for_legacy_receipt_without_audit_run(
     tmp_path: Path,
 ) -> None:

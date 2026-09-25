@@ -13110,10 +13110,11 @@ class EmailStore:
                 (classification_id,),
             ).fetchall()
             for receipt in receipts:
-                if _audited_unsubscribe_lineage(
-                    db, receipt=receipt, classification=classification
-                ) is None:
-                    continue
+                # The address is bound to its receipt by its own hash, and the
+                # receipt to this classification by the query. The audited
+                # lifecycle's Agent-run lineage is not required: a direct
+                # unsubscribe has no Agent run, so demanding one hid the
+                # address of every receipt the live service writes.
                 try:
                     return _validate_unsubscribe_entry_url(
                         receipt["entry_url"],
