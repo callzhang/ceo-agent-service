@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest",
     "test:viewport-script": "node --test scripts/scheduled-tasks-viewport-lib.node-test.mjs",
-    "verify:scheduled-tasks-viewport": "node scripts/verify-scheduled-tasks-viewport.mjs"
+    "verify:scheduled-tasks-viewport": "node scripts/verify-scheduled-tasks-viewport.mjs",
+    "dev:mock": "vite --config vite.mock.config.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
