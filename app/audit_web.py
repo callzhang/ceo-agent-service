@@ -32,6 +32,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
+from app.external_failures import external_task_error_sql
 from app.agent_contracts import (
     ConsumerAgentResult,
     DecisionOption,
@@ -3219,6 +3220,9 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     current_business_object.reply_task_id is null
                     or current_business_object.reply_task_id=reply_tasks.id
                   )
+                  -- Failed for a reason outside this service: History keeps it,
+                  -- Attention does not (Derek 2026-09-25).
+                  and not (reply_tasks.channel='email' and """ + external_task_error_sql() + """)
                 order by
                     reply_tasks.updated_at desc,
                     reply_tasks.id desc

@@ -11427,3 +11427,43 @@ def test_status_lists_the_outbox_and_memory_write_queues(tmp_path: Path):
 
     assert "business_task_todo_sync_outbox" in names
     assert "task_memory_write" in names
+
+
+def test_attention_skips_unsubscribe_failures_caused_by_the_external_page(tmp_path: Path):
+    # Derek, 2026-09-25: a failure whose cause is a third party's page stays
+    # failed (History keeps it) but is not an Attention item.
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    errors = {
+        "external-form": "email_unsubscribe_browser_failed: category=form_response_rejected",
+        "external-op": "email_unsubscribe_browser_failed: category=operation_failed",
+        "external-timeout": "unsubscribe_operation_rejected:TimeoutError",
+        "ours-runtime": "email_unsubscribe_browser_failed: category=runtime_unavailable",
+        "ours-unknown": "email_unsubscribe_browser_failed",
+    }
+    ids = {}
+    for name, error in errors.items():
+        task = store.ensure_reply_task(
+            conversation_id=f"email-thread:{name}",
+            conversation_title="Email unsubscribe",
+            single_chat=False,
+            trigger_message_id=f"email-action:{name}",
+            trigger_create_time="2026-09-25 10:00:00",
+            trigger_sender="sender@example.com",
+            trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+            channel="email",
+        )
+        with store._connect() as db:
+            db.execute(
+                "update reply_tasks set status='failed', error=? where id=?",
+                (error, task.id),
+            )
+        ids[name] = str(task.id)
+
+    rows = audit_web_module._queue_attention_rows(store)
+    listed = {row["id"] for row in rows if row["category"] == "Reply task"}
+
+    assert listed == {ids["ours-runtime"], ids["ours-unknown"]}
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from reply_tasks where status='failed'"
+        ).fetchone()[0] == 5
