@@ -12,6 +12,7 @@ from app.agent_cron.commands import (
 )
 from app.dingtalk_models import DingTalkMessage
 from app.dws_client import OA_PENDING_PAGE_SIZE_MAX
+from app.minutes_todo_context import todo_transcript_excerpts
 from app.store import AutoReplyStore
 from app.task_models import WorkItem
 from app.skill_features import FeatureRegistry
@@ -197,29 +198,34 @@ def _minutes_todo_actions(payload: Any) -> list[Any] | None:
     return None
 
 
-def _canonical_minutes_todos_payload(
-    *,
-    minutes: dict[str, Any],
-    todos_payload: dict[str, Any],
-    actions: list[Any],
-) -> tuple[str, str]:
-    payload = {
-        "meeting": minutes,
-        "todos": todos_payload,
-    }
-    canonical = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+def _actions_digest(actions: list[Any]) -> str:
+    """Identity of a meeting's action items; a meeting is queued again when this changes."""
     canonical_actions = json.dumps(
         actions,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     )
-    return canonical, hashlib.sha256(canonical_actions.encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_actions.encode("utf-8")).hexdigest()
+
+
+def _canonical_minutes_todos_payload(
+    *,
+    minutes: dict[str, Any],
+    todos_payload: dict[str, Any],
+    transcript_excerpts: list[dict[str, Any]],
+) -> str:
+    payload = {
+        "meeting": minutes,
+        "todos": todos_payload,
+        **({"transcript_excerpts": transcript_excerpts} if transcript_excerpts else {}),
+    }
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def scan_meeting_todos(
@@ -234,9 +240,12 @@ def scan_meeting_todos(
         return 0
     list_minutes = getattr(dws, "list_minutes", None)
     get_minutes_todos = getattr(dws, "get_minutes_todos", None)
-    if list_minutes is None or get_minutes_todos is None:
+    get_minutes_transcript = getattr(dws, "get_all_minutes_transcription", None)
+    if list_minutes is None or get_minutes_todos is None or get_minutes_transcript is None:
         missing = (
-            "list_minutes" if list_minutes is None else "get_minutes_todos"
+            "list_minutes" if list_minutes is None
+            else "get_minutes_todos" if get_minutes_todos is None
+            else "get_all_minutes_transcription"
         )
         store.set_daily_scan_state(
             MEETING_TODO_SCANNER,
@@ -288,11 +297,7 @@ def scan_meeting_todos(
         if actions is None:
             errors.append(f"{minutes_id}: unrecognized minutes todos response")
             continue
-        canonical, digest = _canonical_minutes_todos_payload(
-            minutes=minutes,
-            todos_payload=todos_payload,
-            actions=actions,
-        )
+        digest = _actions_digest(actions)
         if previous_digests.get(minutes_id) == digest:
             continue
         if not actions:
@@ -300,6 +305,19 @@ def scan_meeting_todos(
             continue
         if max_new_items is not None and count >= max_new_items:
             continue
+        # Who is asked to do each action item is in the conversation around it,
+        # not in the action item (its executor list is empty). A transcript that
+        # cannot be read is retried next scan rather than queued without it.
+        try:
+            paragraphs = get_minutes_transcript(minutes_id)["paragraphs"]
+        except Exception as exc:
+            errors.append(f"{minutes_id}: transcript: {exc}")
+            continue
+        canonical = _canonical_minutes_todos_payload(
+            minutes=minutes,
+            todos_payload=todos_payload,
+            transcript_excerpts=todo_transcript_excerpts(todos_payload, paragraphs),
+        )
 
         title = str(minutes.get("title") or f"AI minutes {minutes_id}").strip()
         source_ref = f"{minutes_id}#todos-sha256={digest}"

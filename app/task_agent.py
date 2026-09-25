@@ -412,6 +412,20 @@ Never invent a task, owner, assignment, acceptance, date, relevance, or
 authority. An owner must be explicit in source text or authoritative source
 metadata; an ownerless assignment stays candidate/unmatched evidence.
 
+For AI Minutes, DingTalk leaves each action item's own executor empty, and the
+Work Item's transcript_excerpts hold the conversation around it, one line per
+paragraph as “speaker：text”. Decide the owner from those lines: it is whoever
+the conversation gives the work to or who takes it on, not automatically the
+speaker (“你写下来” from one person assigns the work to the person addressed).
+Set owner_evidence with two keys: "source_ref" (the Work Item source reference)
+and "excerpt" (one exact line, speaker label included, that contains the
+owner's name). That line is often not the item's own source_excerpt: when one person
+hands the work to another (“你写下来”), quote the line in which the person who
+takes it on speaks, and keep the assigning line as the decision's source_excerpt. A generic label such as “发言人 N” is DingTalk's placeholder for a
+speaker it could not name; it is not a person and never an owner. When the lines
+do not settle who owns it, or an action item has no excerpt, leave the owner
+empty.
+
 An assignment creates an assigned_unaccepted Task. Only explicit evidence from
 that identified owner may apply_acceptance to exactly one existing formal Task;
 “收到” and external TODO existence are not acceptance. Use explicit
@@ -443,7 +457,8 @@ source timestamp metadata. An estimate keeps the identified source actor who
 made it; the extracting Agent is not its actor. Only next_check_at is
 Agent-authored, not an owner commitment. Other date facts need an identified source actor. AI Minutes
 has no trusted speaker-to-identity mapping yet, so do not attribute a quoted
-speaker's date to the meeting host or to a model-selected identity. Only owner
+speaker's date to the meeting host or to a model-selected identity (this limit
+is for dates; owners come from transcript_excerpts as above). Only owner
 acceptance can establish committed_deadline_at. No date is required to retain a Task.
 Attention requires a registered anchor plus a material trigger: threatened
 accepted commitment, material change/dispute, CEO decision/push, required Gate,

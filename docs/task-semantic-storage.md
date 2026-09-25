@@ -212,6 +212,8 @@ acceptance signal and role commit together. Generic `UpdateBusinessTask`
 cannot set commitment status or write the old untyped deadline; date inputs
 create typed evidence rows instead.
 
+For AI-minutes action items the owner comes from the conversation around the item, not from the item: DingTalk leaves `executorList` empty, so the scanner attaches `transcript_excerpts` (lines “speaker：text” around the item's `createdTime`) to the source summary, and an owner excerpt is a line quoted with its speaker label. The source-backed owner check is unchanged: a name that appears in the exact excerpt is kept without a verified ID. A generic “发言人 N” label is never an owner.
+
 The console may set a candidate aside or take that back (Derek, 2026-09-25) through this same `update_task` path: the click is a `console` source signal authored by the principal (`author_kind=human`), the status moves between `open` and `cancelled` while the stage stays `candidate`, and the discovery evidence is untouched (`app/task_console_actions.py`). The console has no promotion action: promotion needs an identified owner and an owner excerpt, and a click supplies neither.
 
 Same-deliverable merging requires structured `IdentityEvidence`. The service

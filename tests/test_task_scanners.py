@@ -43,6 +43,9 @@ def test_scan_meeting_todos_carries_scheduled_consumer_context(tmp_path):
         def get_minutes_todos(self, task_uuid):
             return {"result": {"actions": ['{"value":"确认发布范围"}']}}
 
+        def get_all_minutes_transcription(self, task_uuid):
+            return {"paragraphs": []}
+
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     context = ServiceCommandConsumerContext(
         scheduled_task_id=7,
@@ -425,6 +428,9 @@ def test_scan_meeting_todos_enqueues_only_meetings_with_action_items(tmp_path):
                 }
             return {"result": {"actions": []}}
 
+        def get_all_minutes_transcription(self, task_uuid):
+            return {"paragraphs": []}
+
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
     assert scan_meeting_todos(store, FakeDws()) == 1
@@ -449,6 +455,9 @@ def test_scan_meeting_todos_requeues_only_when_todos_change(tmp_path):
         def list_minutes(self, *, limit):
             assert limit == 50
             return [{"taskUuid": "minutes-1", "title": self.title}]
+
+        def get_all_minutes_transcription(self, task_uuid):
+            return {"paragraphs": []}
 
         def get_minutes_todos(self, task_uuid):
             assert task_uuid == "minutes-1"
@@ -492,6 +501,9 @@ def test_scan_meeting_todos_does_not_advance_failed_or_deferred_items(tmp_path):
                 {"taskUuid": "minutes-1", "title": "读取失败"},
                 {"taskUuid": "minutes-2", "title": "超过本轮上限"},
             ]
+
+        def get_all_minutes_transcription(self, task_uuid):
+            return {"paragraphs": []}
 
         def get_minutes_todos(self, task_uuid):
             if task_uuid == "minutes-1" and self.fail_first:
@@ -1617,3 +1629,66 @@ def test_scan_pending_oa_approvals_names_the_principal_to_the_turn(tmp_path):
     assert "originatorUserid 是申请人" in task.trigger_text
     payload = json.loads(task.trigger_message_json)["raw_payload"]
     assert payload["principalUserid"] == "principal-user-1"
+
+
+FRIDAY_TODOS = {"result": {"actions": ['{"value":"整理访谈问题清单并发给磊哥确认"}'], "dingtalkTodoList": [
+    {"title": "整理访谈问题清单并发给磊哥确认", "createdTime": 738480, "executorList": []},
+]}}
+FRIDAY_PARAGRAPHS = [
+    {"nickName": "磊哥", "paragraph": "呃，框架啊。", "startTime": "736000", "endTime": "738000"},
+    {"nickName": "Zoey", "paragraph": "那这个我们可以先列一个list吧，给你看一下。", "startTime": "738500", "endTime": "748400"},
+    {"nickName": "磊哥", "paragraph": "行啊。你可以让AI辅助你一下。", "startTime": "750300", "endTime": "756500"},
+]
+
+
+def _friday_dws(paragraphs=None, *, transcript_error=None):
+    class FakeDws:
+        def list_minutes(self, *, limit):
+            return [{"taskUuid": "minutes-1", "title": "每周内容同步"}]
+
+        def get_minutes_todos(self, task_uuid):
+            return FRIDAY_TODOS
+
+        def get_all_minutes_transcription(self, task_uuid):
+            if transcript_error:
+                raise transcript_error
+            return {"paragraphs": FRIDAY_PARAGRAPHS if paragraphs is None else paragraphs}
+
+    return FakeDws()
+
+
+def test_scan_meeting_todos_hands_over_the_conversation_around_each_action_item(tmp_path):
+    """DingTalk leaves executorList empty; the owner is in what was said when the item was extracted."""
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_meeting_todos(store, _friday_dws()) == 1
+
+    [claimed] = store.claim_work_summary_inputs(limit=10)
+    summary = json.loads(json.loads(claimed.payload_json)["summary"])
+    [excerpt] = summary["transcript_excerpts"]
+    assert excerpt["todo"] == "整理访谈问题清单并发给磊哥确认"
+    assert "Zoey：那这个我们可以先列一个list吧，给你看一下。" in excerpt["lines"]
+    assert excerpt["lines"][0].startswith("磊哥：")
+
+
+def test_scan_meeting_todos_queues_a_meeting_without_a_transcript_and_keeps_its_digest(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_meeting_todos(store, _friday_dws(paragraphs=[])) == 1
+    [claimed] = store.claim_work_summary_inputs(limit=10)
+    assert "transcript_excerpts" not in json.loads(json.loads(claimed.payload_json)["summary"])
+    # the digest covers the action items only: reading a transcript later does not queue it again
+    assert scan_meeting_todos(store, _friday_dws()) == 0
+
+
+def test_scan_meeting_todos_retries_when_the_transcript_cannot_be_read(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_meeting_todos(store, _friday_dws(transcript_error=RuntimeError("transcript unavailable"))) == 0
+    assert store.claim_work_summary_inputs(limit=10) == []
+    from app.task_scanners import MEETING_TODO_SCANNER
+
+    state = store.get_daily_scan_state(MEETING_TODO_SCANNER)
+    assert "transcript unavailable" in state["last_error"]
+    # nothing was recorded as seen, so the next scan reads it again
+    assert scan_meeting_todos(store, _friday_dws()) == 1

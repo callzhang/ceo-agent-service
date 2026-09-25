@@ -2036,3 +2036,13 @@ def test_acceptance_with_wrong_conversation_or_reply_reference_is_not_applied(tm
     assert result.skipped_reasons
     assert store.get_business_task(assigned.task_id).commitment_status.value == "assigned_unaccepted"
     assert store.list_business_task_date_evidence(assigned.task_id) == ()
+
+
+def test_task_agent_prompt_reads_minutes_owners_from_the_conversation_around_each_item():
+    """DingTalk leaves an action item's executor empty; the scanner attaches the conversation, and the prompt says how to use it."""
+    prompt = build_task_agent_prompt(_work_item(), "context")
+
+    assert "transcript_excerpts" in prompt
+    assert "speaker label included" in prompt
+    assert '"excerpt"' in prompt  # the owner_evidence key the service reads
+    assert "发言人 N" in prompt  # DingTalk's placeholder for an unnamed speaker is not an owner
