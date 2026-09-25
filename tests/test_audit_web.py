@@ -7383,6 +7383,13 @@ def test_rule_decision_attention_uses_attempt_linked_run_not_unrelated_latest_ru
         send_error="needs_human",
         channel="dingtalk",
     )
+    # OA scan attempts can use a derived trigger identity that differs from
+    # the reply task's original trigger. The linked run remains authoritative.
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set trigger_message_id=? where id=?",
+            ("derived-oa-trigger", attempt_id),
+        )
 
     decisions = audit_web_module._human_decision_attention_rows(store)
 

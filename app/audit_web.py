@@ -3521,18 +3521,16 @@ def _human_decision_attention_rows(
         select attempts.id, attempts.conversation_title, attempts.updated_at,
                attempts.agent_run_id, runs.final_result_json
         from reply_attempts as attempts
-        join reply_tasks as tasks
-          on tasks.channel=attempts.channel
-         and tasks.conversation_id=attempts.conversation_id
-         and tasks.trigger_message_id=attempts.trigger_message_id
-        join business_object_tasks as current_object
-          on current_object.business_object_key=tasks.business_object_key
-         and current_object.reply_task_id=tasks.id
         join agent_runs as runs
           on runs.id=attempts.agent_run_id
+        join reply_tasks as tasks
+          on tasks.id=runs.reply_task_id
          and runs.reply_task_id=tasks.id
          and runs.execution_generation=tasks.execution_generation
          and runs.status='completed'
+        join business_object_tasks as current_object
+          on current_object.business_object_key=tasks.business_object_key
+         and current_object.reply_task_id=tasks.id
         -- The current Attempt projection explicitly points to its run. Do not
         -- replace that link with an unrelated later audit turn: a completed
         -- audit run can be newer in turn order while the Attempt still
