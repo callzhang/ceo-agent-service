@@ -82,7 +82,7 @@
 /* Reading workspace: scoped to Email, with the existing Console navigation. */
 .email-list-controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 14px 12px; }
 .email-workspace .email-list-controls .email-list-toolbar { flex:0 1 auto; margin:0; }
-.email-search { display:flex; flex:0 1 280px; margin-left:auto; min-width:0; align-items:center; border:1px solid var(--line); border-radius:6px; background:var(--panel,#fff); }
+.email-search { display:flex; flex:1 1 240px; max-width:360px; margin-left:auto; min-width:0; align-items:center; border:1px solid var(--line); border-radius:6px; background:var(--panel,#fff); }
 .email-search input { flex:1; width:100%; min-width:0; padding:9px 10px; border:0; background:transparent; color:var(--ink); font:inherit; font-size:13px; }
 .email-search button { border:0; background:none; color:var(--ink-soft); padding:6px 10px; cursor:pointer; }
 .email-search:focus-within { outline:2px solid var(--accent); outline-offset:1px; }
@@ -258,7 +258,7 @@ a.email-unsubscribe-url:hover { text-decoration: underline; }
 
 .email-list-filters { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:12px; }
 .email-multi-filter { position:relative; }
-.email-multi-filter summary { list-style:none; cursor:pointer; padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:var(--panel,#fff); white-space:nowrap; }
+.email-multi-filter summary { list-style:none; font:inherit; box-sizing:border-box; height:30px; display:flex; align-items:center; cursor:pointer; padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:var(--panel,#fff); white-space:nowrap; }
 .email-multi-filter summary::-webkit-details-marker { display:none; }
 .email-multi-filter summary::after { content:" ▾"; color:var(--ink-soft); }
 .email-multi-filter summary.is-active { border-color:var(--accent); }
