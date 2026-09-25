@@ -6,6 +6,7 @@ from app.meeting_alignment_agent import _encode_meeting_alignment_result
 from app.agent_runtime_router import RoutedResultCodec, RoutedResultValidationError
 from app.structured_agent import _encode_structured_result
 from app.task_agent import _encode_task_agent_result
+from app.routed_result_privacy import audit_references_from_full_events
 
 
 def _raw_with_sensitive_audit_event(result: dict) -> str:
@@ -178,6 +179,18 @@ def test_task_result_codec_allows_only_evidence_source_reference_paths(monkeypat
                 ensure_ascii=False,
             )
         )
+
+
+def test_task_audit_reference_keeps_explicit_source_ref_but_not_tool_output():
+    refs = audit_references_from_full_events(
+        [{
+            "tool": "dws_search",
+            "call_id": "call-1",
+            "item": {"result": {"source_ref": "dws_message:msg-1", "body": "private"}},
+        }],
+        limit=8,
+    )
+    assert refs == [{"tool": "dws_search", "call_id": "call-1", "source_refs": "dws_message:msg-1"}]
 
 
 def test_generic_result_codec_still_rejects_evidence_paths(monkeypatch):

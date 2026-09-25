@@ -755,7 +755,8 @@ def _receipt_ids_for_source(source_ref: str, events: list[dict[str, str]]) -> li
         if not call_id or not str(event.get("tool") or "").strip():
             continue
         evidence = "\n".join(
-            str(event.get(key) or "") for key in ("output", "result")
+            str(event.get(key) or "")
+            for key in ("output", "result", "source_refs")
         ).casefold()
         if needle in evidence:
             matches.add(call_id)
