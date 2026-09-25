@@ -78,6 +78,25 @@ describe("SettingsPage", () => {
     expect(badge).toHaveTextContent("5");
   });
 
+  it("ends a settings request the server never answers with a message, not a spinner", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      getSettings.mockImplementationOnce((_section: string, signal?: AbortSignal) => new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      }));
+
+      renderSettings("/settings?tab=connectors");
+      expect(await screen.findByText("正在加载…")).toBeInTheDocument();
+
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("加载超过 30 秒没有返回");
+      expect(screen.queryByText("正在加载…")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restores the explanatory producer routing sections on Info", async () => {
     getSettings.mockResolvedValueOnce({ item: { section: "info", fields: { principal: "磊哥" }, notes: ["Producer 负责发现候选消息，Consumer 负责执行 reply task。"], sections: [{ title: "快路径", items: [{ label: "入口", description: "扫描未读会话并进入队列。" }] }] }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
     renderSettings("/settings?tab=info");

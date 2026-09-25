@@ -313,6 +313,7 @@ interface EmailAccountDraft {
   scan_read_state: "unread" | "all";
 }
 
+const SETTINGS_LOAD_TIMEOUT_SECONDS = 30;
 const DEFAULT_AGENT_LOOKBACK_DAYS = 30;
 const DEFAULT_MODEL_LOOKBACK_DAYS = 365;
 
@@ -1036,8 +1037,11 @@ export function SettingsPage() {
     if (section === "skills" || section === "mcp") { setState("ready"); setPayload(null); setError(""); return; }
     if (section === "status" || section === "attention") return;
     const controller = new AbortController(); setState("loading"); setSaveState("idle"); setSaveError("");
-    getSettings(section, controller.signal).then((response) => { setPayload(response.item); setDraft(fieldsOf(response.item)); setState("ready"); setError(""); }).catch((reason: unknown) => { if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
-    return () => controller.abort();
+    // A request the server never answers (a restart in progress, a cold cache
+    // on a busy machine) must end in a message, not an endless spinner.
+    const timer = setTimeout(() => { controller.abort(); setError(`加载超过 ${SETTINGS_LOAD_TIMEOUT_SECONDS} 秒没有返回。服务可能刚重启或正忙，请稍后刷新页面重试。`); setState("error"); }, SETTINGS_LOAD_TIMEOUT_SECONDS * 1000);
+    getSettings(section, controller.signal).then((response) => { clearTimeout(timer); setPayload(response.item); setDraft(fieldsOf(response.item)); setState("ready"); setError(""); }).catch((reason: unknown) => { clearTimeout(timer); if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [section]);
   async function save() { if (!payload) return; setSaveState("saving"); setSaveError(""); try { const promptKey = prompt === "profile" ? "profile" : `${prompt}_template`; const rawPrompt = draft[promptKey] ?? fieldsOf(payload)[promptKey]; const fields = section === "prompts" ? { template: typeof rawPrompt === "string" ? rawPrompt : displayValue(rawPrompt) } : section === "audit-rules" ? { template: displayValue(draft.template) } : draft; await saveSettings(section, fields, section === "prompts" ? { prompt } : {}); setSaveState("saved"); } catch (reason: unknown) { setSaveState("error"); setSaveError(reason instanceof Error && reason.message ? reason.message : "保存失败，草稿仍保留"); } }
   const content = state === "error" ? <SettingsCard><div className="page-state page-state-error" role="alert">{error}</div></SettingsCard> : state === "loading" && !payload && section !== "status" && section !== "attention" && section !== "skills" && section !== "mcp" ? <SettingsCard><div className="page-state" role="status">正在加载…</div></SettingsCard> : <SettingsContent section={section} payload={payload || {}} draft={draft} setDraft={setDraft} prompt={prompt} view={view} connector={connector} auditRule={auditRule} saveState={saveState} saveError={saveError} onAttentionCountChange={setAttentionCount} />;
