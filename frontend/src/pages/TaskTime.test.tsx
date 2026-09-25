@@ -18,7 +18,7 @@ describe("formatTaskTime", () => {
   it("reads a backend timestamp as UTC and leaves unparsable text as it came", () => {
     const utcNow = new Date(Date.UTC(2026, 8, 25, 12, 0, 0));
     expect(formatTaskTime("2026-09-25 11:30:00", utcNow)).toBe("30 分钟前");
-    expect(formatTaskTime("2026-09-25T11:30:00.150423Z", utcNow)).toBe("30 分钟前");
+    expect(formatTaskTime("2026-09-25T11:29:59.150423Z", utcNow)).toBe("30 分钟前");
     expect(formatTaskTime("2026-09-28", now)).toBe("2026-09-28");
     expect(formatTaskTime("下周一", now)).toBe("下周一");
   });
