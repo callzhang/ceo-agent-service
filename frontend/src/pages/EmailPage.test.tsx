@@ -283,7 +283,7 @@ it("shows the unsubscribe link and evidence without opening anything, and links 
   expect(within(drawer).getByRole("region",{name:"邮箱观察事实"})).toHaveTextContent("legal");
   expect(within(drawer).getByText("Star：未同步")).toBeInTheDocument();
   expect(within(drawer).getByText("Flag：未同步")).toBeInTheDocument();
-  expect(screen.getAllByLabelText("重要状态未同步").length).toBeGreaterThan(0);
+  expect(screen.getAllByRole("button",{name:/^标记 Star：/}).length).toBeGreaterThan(0);
   expect(screen.queryByText("Star：未知")).not.toBeInTheDocument();
   expect(screen.queryByText("Flag：未知")).not.toBeInTheDocument();
 });
@@ -340,6 +340,55 @@ it("toggles Star and Flag from their icons, showing only what the mailbox confir
   expect(api.setEmailProviderSignal).toHaveBeenLastCalledWith("1","star",false);
   expect(await within(drawer).findByRole("alert")).toHaveTextContent("邮箱拒绝了这次修改");
   expect(within(drawer).getByText("Star：已标星")).toBeInTheDocument();
+});
+it("highlights mail waiting for confirmation in 全部, and only there",async()=>{
+  api.listEmailClassifications.mockResolvedValue({items:[row("1","pending_feedback"),row("2","processed")],meta:{page:1,page_size:50,total:2}});
+  show("/email?tab=all");
+  const waiting=(await screen.findByRole("button",{name:"打开邮件 邮件1"})).closest(".email-row-wrap")!;
+  const done=screen.getByRole("button",{name:"打开邮件 邮件2"}).closest(".email-row-wrap")!;
+  expect(waiting).toHaveClass("is-pending");
+  expect(done).not.toHaveClass("is-pending");
+});
+it("toggles Star and Flag from the list row without opening the mail",async()=>{
+  const user=userEvent.setup();
+  api.listEmailClassifications.mockResolvedValue({items:[{...row("1","processed"),provider_classification:{state:"available",category_key:"work",important:false,starred:false,important_flag:true}}],meta:{page:1,page_size:50,total:1}});
+  api.setEmailProviderSignal.mockResolvedValueOnce({ok:true,starred:true,important_flag:true}).mockResolvedValueOnce({ok:true,starred:true,important_flag:false});
+  show("/email?tab=all");
+  await user.click(await screen.findByRole("button",{name:"标记 Star：邮件1"}));
+  expect(api.setEmailProviderSignal).toHaveBeenLastCalledWith("1","star",true);
+  expect(await screen.findByRole("button",{name:"取消 Star：邮件1"})).toHaveAttribute("aria-pressed","true");
+  await user.click(screen.getByRole("button",{name:"取消 Flag：邮件1"}));
+  expect(api.setEmailProviderSignal).toHaveBeenLastCalledWith("1","flag",false);
+  expect(await screen.findByRole("button",{name:"标记 Flag：邮件1"})).toHaveAttribute("aria-pressed","false");
+  expect(screen.queryByRole("region",{name:"邮件详情"})).not.toBeInTheDocument();
+});
+it("labels every selected mail with one category and keeps the rest selected when one fails",async()=>{
+  const user=userEvent.setup();
+  api.listEmailClassifications.mockResolvedValue({items:[row("1"),row("2"),row("3")],meta:{page:1,page_size:50,total:3}});
+  api.listEmailConfigs.mockResolvedValue({items:[config],meta:{snapshot_at:""}});
+  api.confirmEmailClassification.mockResolvedValueOnce({ok:true,message:"已保存"}).mockRejectedValueOnce(new Error("服务拒绝"));
+  show("/email?tab=pending");
+  await user.click(await screen.findByRole("checkbox",{name:"选择邮件 邮件1"}));
+  await user.click(screen.getByRole("checkbox",{name:"选择邮件 邮件2"}));
+  expect(screen.getByText("已选 2 封")).toBeInTheDocument();
+  await user.selectOptions(screen.getByRole("combobox",{name:"统一标注类别"}),"work");
+  await user.click(screen.getByRole("button",{name:"统一标注"}));
+  await waitFor(()=>expect(api.confirmEmailClassification).toHaveBeenCalledTimes(2));
+  expect(api.confirmEmailClassification).toHaveBeenNthCalledWith(1,"1","work","email-feedback:1:work:initial",null);
+  expect(api.confirmEmailClassification).toHaveBeenNthCalledWith(2,"2","work","email-feedback:2:work:initial",null);
+  expect(await screen.findByRole("alert")).toHaveTextContent("已标注 1 封，第 2 封失败：服务拒绝");
+  expect(screen.getByRole("checkbox",{name:"选择邮件 邮件2"})).toBeChecked();
+  expect(screen.getByRole("checkbox",{name:"选择邮件 邮件1"})).not.toBeChecked();
+  expect(screen.queryByRole("checkbox",{name:"选择邮件 邮件3"})).toBeInTheDocument();
+});
+it("selects the whole page at once",async()=>{
+  const user=userEvent.setup();
+  api.listEmailClassifications.mockResolvedValue({items:[row("1"),row("2")],meta:{page:1,page_size:50,total:2}});
+  show("/email?tab=pending");
+  await user.click(await screen.findByRole("checkbox",{name:"全选本页"}));
+  expect(screen.getByText("已选 2 封")).toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:"取消选择"}));
+  expect(screen.getByText("已选 0 封")).toBeInTheDocument();
 });
 it("supports keyboard tabs and drawer tab traversal",async()=>{
   const user=userEvent.setup();show();
