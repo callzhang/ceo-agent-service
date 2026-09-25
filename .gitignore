@@ -51,3 +51,6 @@ data/corpus/
 .vercel/output/
 outputs/
 downloads/
+# Drafts an Agent turn writes in its working directory (the checkout) while it works;
+# an untracked file there makes python -m app.deploy refuse (2026-09-25).
+.audit-*.md
