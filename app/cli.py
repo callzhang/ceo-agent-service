@@ -3536,14 +3536,13 @@ def scan_meetings_once_command(
     )
     memory_writes_queued = enqueue_sent_meeting_memory_writes(store)
     # Derek, 2026-09-18: queueing a Memory write and performing it are one
-    # task, not two, and internal maintenance belongs to the same scheduled
-    # run rather than to a loop nobody can see or switch off.
+    # task, not two. Reply-queue recovery is infrastructure-owned and does
+    # not belong in this evidence discovery command.
     memory_writes_done = _process_meeting_memory_writes_once(settings, store)
-    maintained = _run_task_maintenance_once(settings, store)
     print(
         "scan-meetings-once "
         f"queued={created} memory_writes_queued={memory_writes_queued} "
-        f"memory_writes_done={memory_writes_done} maintained={maintained}",
+        f"memory_writes_done={memory_writes_done}",
         flush=True,
     )
     return created

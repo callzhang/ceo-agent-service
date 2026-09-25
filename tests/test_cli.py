@@ -6501,6 +6501,13 @@ def test_scan_meetings_once_command_writes_one_job_with_fixed_ten_minute_window(
         return 1
 
     monkeypatch.setattr(cli, "produce_meeting_alignment_jobs", produce)
+    monkeypatch.setattr(
+        cli,
+        "_run_task_maintenance_once",
+        lambda *_args, **_kwargs: pytest.fail(
+            "meeting discovery must not run reply-task maintenance"
+        ),
+    )
 
     created = cli.scan_meetings_once_command(settings, now=now)
 
