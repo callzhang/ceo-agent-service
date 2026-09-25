@@ -267,7 +267,7 @@ def test_group_delivery_uses_first_candidate_and_real_mentions(tmp_path):
     # The DingTalk `title` above only reaches the push banner and the
     # conversation list; the body has to name the meeting itself.
     assert dws.sent[0]["text"].startswith(
-        "上线评审\n时间：2026-07-14 09:00-10:00\n\n"
+        "# 上线评审\n*时间：2026-07-14 09:00-10:00*\n\n"
     )
     assert send_decision().final_message in dws.sent[0]["text"]
     assert dws.sent[0]["text"].endswith("（by明哥分身）")
@@ -1044,8 +1044,8 @@ def test_followup_header_says_when_a_meeting_is_summarised_again():
         meeting_source().model_copy(update={"resummary": True})
     )
 
-    assert first == "上线评审\n时间：2026-07-14 09:00-10:00"
-    assert again == first + "\n说明：第二次总结，已合并后续录制内容"
+    assert first == "# 上线评审\n*时间：2026-07-14 09:00-10:00*"
+    assert again == first + "\n*说明：第二次总结，已合并后续录制内容*"
 
 
 def test_followup_header_names_the_meeting_it_came_from():
@@ -1059,7 +1059,7 @@ def test_followup_header_names_the_meeting_it_came_from():
         meeting_source().model_copy(update={"title": "唐总Boehringer Ingelheim  friday试用"})
     )
 
-    assert header.splitlines()[0] == "唐总Boehringer Ingelheim friday试用"
+    assert header.splitlines()[0] == "# 唐总Boehringer Ingelheim friday试用"
 
 
 def test_followup_header_prints_a_utc_meeting_in_beijing_time():
@@ -1078,4 +1078,4 @@ def test_followup_header_prints_a_utc_meeting_in_beijing_time():
         )
     )
 
-    assert "时间：2026-09-24 08:00-08:59" in header
+    assert "*时间：2026-09-24 08:00-08:59*" in header

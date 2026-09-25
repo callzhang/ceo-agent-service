@@ -1676,7 +1676,7 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     assert seen_statuses == ["ready_to_send"]
     assert job.status == "sent"
     expected_message = (
-        "上线评审\n时间：2026-07-14 09:00-10:00\n\n"
+        "# 上线评审\n*时间：2026-07-14 09:00-10:00*\n\n"
         f"{consumer_send_decision().final_message}（by明哥分身）"
     )
     assert job.final_message == expected_message
@@ -1698,7 +1698,7 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
             "event_id": "event-1",
             "description": (
                 "【CEO 会议总结】\n"
-                "上线评审\n时间：2026-07-14 09:00-10:00\n\n"
+                "# 上线评审\n*时间：2026-07-14 09:00-10:00*\n\n"
                 f"{consumer_send_decision().final_message}（by明哥分身）\n"
                 "【/CEO 会议总结】"
             ),
@@ -2057,7 +2057,7 @@ def test_consumer_notifies_once_after_confirmed_meeting_send(tmp_path, monkeypat
     sent_job = store.get_meeting_alignment_job(job_id)
     assert sent_job.status == "sent"
     expected_message = (
-        "上线评审\n时间：2026-07-14 09:00-10:00\n\n"
+        "# 上线评审\n*时间：2026-07-14 09:00-10:00*\n\n"
         f"{consumer_send_decision().final_message}（by明哥分身）"
     )
     assert sent_job.final_message == expected_message

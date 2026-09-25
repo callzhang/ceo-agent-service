@@ -792,13 +792,17 @@ def _meeting_followup_header(source: MeetingSource) -> str:
     lines = []
     title = " ".join(source.title.split())
     if title:
-        lines.append(title)
-    lines.append(f"时间：{time_range}")
+        # The meeting name is the message title: a Markdown heading, so DingTalk
+        # renders it larger than the body and the follow-up says which meeting it
+        # came from at a glance.
+        lines.append(f"# {title}")
+    # Time is the italic subtitle on the second line.
+    lines.append(f"*时间：{time_range}*")
     if source.resummary:
         # The people in this meeting already received a follow-up covering part of
         # it. Say plainly that this one replaces it, rather than looking like a
         # duplicate of the message they have.
-        lines.append("说明：第二次总结，已合并后续录制内容")
+        lines.append("*说明：第二次总结，已合并后续录制内容*")
     return "\n".join(lines)
 
 
