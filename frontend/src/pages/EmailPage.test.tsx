@@ -568,7 +568,7 @@ it("ignores an aborted learning rejection after a newer tab request succeeds",as
 });
 it("includes evidence summaries in drawer keyboard traversal",async()=>{
   const user=userEvent.setup();show("/email?tab=all&selected=1");await screen.findByText(/完整正文/);
-  const distribution=screen.getByRole("region",{name:"候选分布"});expect(distribution).toHaveTextContent("工作");expect(distribution).toHaveTextContent("70.0%");expect(distribution.querySelector(".email-probability-bar")).toBeTruthy();
+  const distribution=screen.getByRole("region",{name:"候选分布"});expect(distribution).toHaveTextContent("工作");expect(distribution).toHaveTextContent("70.0%");expect((distribution.querySelector(".email-probability-bar span") as HTMLElement).style.width).toBe("70%");
 });
 it("reconciles a lost switch response from server mode before claiming current state",async()=>{
   const user=userEvent.setup();api.saveEmailRuntimeMode.mockRejectedValueOnce(new Error("切换响应丢失"));show("/email?tab=learning");

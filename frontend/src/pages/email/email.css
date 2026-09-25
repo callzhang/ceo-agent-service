@@ -129,8 +129,9 @@
 .email-unsubscribe-url { display: block; margin: 4px 0; padding: 8px 10px; border-radius: 6px; background: var(--surface-muted); font-size: 12px; overflow-wrap: anywhere; word-break: break-all; user-select: all; }
 .email-classification-details .email-candidate-distribution { margin-top: 12px; padding-top: 10px; }
 .email-candidate-row { display: grid; grid-template-columns: minmax(65px, 1fr) 2fr 48px; align-items: center; gap: 8px; margin: 10px 0; }
-.email-candidate-row .email-probability-bar { border-radius: 3px; height: 7px; background: var(--line); }
-.email-candidate-row .email-probability-bar span { background: var(--accent); min-width: 0; }
+/* The fill's width is the value, so it must be a block filling the track (not a flex child with a zero basis). */
+.email-candidate-row .email-probability-bar { display: block; height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.email-candidate-row .email-probability-bar span { display: block; height: 100%; min-width: 0; border-radius: inherit; background: var(--focus); transition: width .2s ease; }
 .email-candidate-row strong { text-align: right; font-size: 11px; }
 .email-reading-body { padding: 28px 24px; min-height: 360px; }
 .email-reading-body .email-body-text { font-size: 15px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
