@@ -1483,6 +1483,22 @@ def test_a_group_reply_named_reply_to_message_is_executable() -> None:
     assert structured_dingtalk_outgoing_text_key(action) == "content"
 
 
+def test_a_direct_message_to_a_user_id_is_executable() -> None:
+    """The CEO daily report messages Derek by user id (Derek 2026-09-24)."""
+    from app.consumer_agent import structured_dingtalk_outgoing_text_key
+
+    action = ProposedAction(
+        action_identity="ceo_daily_report_notice_2026-09-25",
+        capability="dingtalk-chat",
+        operation="send_direct_message",
+        description="把日报要点和链接单聊发给磊哥",
+        target={"user_id": "derek-user"},
+        payload={"content": "CEO 每日总结 2026-09-25 已发布"},
+    )
+
+    assert structured_dingtalk_outgoing_text_key(action) == "content"
+
+
 def test_a_reply_by_any_name_still_needs_the_message_it_replies_to() -> None:
     with pytest.raises(ValidationError, match="reply target requires"):
         ProposedAction(

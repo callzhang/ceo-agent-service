@@ -1679,3 +1679,26 @@ def test_a_conclusion_sent_on_thin_material_is_corrected(setup):
         parse("{}")
 
     assert "may ask and may not conclude" in str(caught.value)
+
+
+@pytest.mark.parametrize("channel", ["dingtalk", "scheduled"])
+def test_audit_gets_the_approved_message_tool_on_dingtalk_and_scheduled_tasks(channel):
+    """A scheduled task notifies Derek through the same service-owned send path.
+
+    Without it the daily report's Audit round had no allowed way to send, fell
+    back to `dws` from its shell, and the send was rejected (run 84467).
+    """
+    from types import SimpleNamespace
+
+    task = SimpleNamespace(id=7, channel=channel, execution_generation="gen-1")
+    run = SimpleNamespace(
+        reply_task_id=7, execution_generation="gen-1",
+        role=AgentRole.AUDIT, status="running",
+    )
+
+    tools = AuditAgentRunner._dingtalk_message_tools(
+        task, run,
+        expected_actions=({"capability": "dingtalk-chat", "delivery_key": "key-1"},),
+    )
+
+    assert tools == ("send_approved_dingtalk_message",)

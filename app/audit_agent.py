@@ -8,7 +8,11 @@ from typing import Protocol
 from uuid import uuid4
 
 from app.agent_context import AuditTurnContext
-from app.agent_contracts import AuditAgentResult, AuditOutcome
+from app.agent_contracts import (
+    DINGTALK_MESSAGE_CHANNELS,
+    AuditAgentResult,
+    AuditOutcome,
+)
 from app.decision_rules import decision_violations
 from app.agent_effect_claim import (
     EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
@@ -478,7 +482,7 @@ class AuditAgentRunner:
         expected_actions: tuple[dict[str, object], ...],
     ) -> tuple[str, ...]:
         if (
-            task.channel != "dingtalk"
+            task.channel not in DINGTALK_MESSAGE_CHANNELS
             or run.reply_task_id != task.id
             or run.execution_generation != task.execution_generation
             or run.role is not AgentRole.AUDIT

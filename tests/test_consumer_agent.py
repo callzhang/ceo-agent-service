@@ -3211,3 +3211,55 @@ def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
     assert "DingTalk message body you propose" in text and "structured Markdown" in text
     assert "OA approval comments and email bodies stay plain text" in text
     assert "first the one thing he has to decide" in text
+
+
+def test_a_scheduled_task_message_to_derek_gets_a_prepared_body(tmp_path):
+    """The daily report's notice is prepared like a DingTalk reply (run 84467)."""
+    from types import SimpleNamespace
+
+    from app.agent_contracts import ConsumerAgentResult
+    from app.consumer_agent import _prepare_outgoing_dingtalk_messages
+    from app.service_message_sender import agent_message_delivery_key
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = SimpleNamespace(
+        id=1, business_object_key="scheduled-task-run:84467",
+        execution_generation="scheduled-run-84467",
+    )
+    context = SimpleNamespace(channel="scheduled", trigger_text="按 $ceo-daily-report 生成")
+    result = ConsumerAgentResult.model_validate({
+        "outcome": "proposal",
+        "summary": "Publish and notify.",
+        "proposal": {
+            "objective": "Deliver the daily report",
+            "actions": [{
+                "description": "Tell Derek the report is published.",
+                "action_identity": "daily-report-notice",
+                "capability": "dingtalk-chat",
+                "operation": "send_direct_message",
+                "effect": "external",
+                "target": {"user_id": "derek-user"},
+                "payload": {"content": "CEO 每日总结已发布"},
+            }],
+            "sourced_facts": [],
+            "authored_judgment": "Notify once.",
+        },
+        "decision_options": [],
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
+
+    _prepare_outgoing_dingtalk_messages(
+        result, store=store, task=task, context=context, proposal_revision=0
+    )
+
+    assert store.get_outbound_postfix(
+        "dingtalk",
+        agent_message_delivery_key(
+            business_object_key=task.business_object_key,
+            action_identity="daily-report-notice",
+            execution_generation=task.execution_generation,
+            proposal_revision=0,
+        ),
+    ) is not None

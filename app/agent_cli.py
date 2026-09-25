@@ -135,7 +135,11 @@ def send_approved_dingtalk_message(
     dws_client=None,
 ) -> dict[str, object]:
     """Send one prepared message from the proposal under the active Audit run."""
-    from app.agent_contracts import ConsumerAgentResult, dingtalk_chat_delivery
+    from app.agent_contracts import (
+        DINGTALK_MESSAGE_CHANNELS,
+        ConsumerAgentResult,
+        dingtalk_chat_delivery,
+    )
     from app.consumer_agent import structured_dingtalk_outgoing_text_key
     from app.dingtalk_models import DingTalkConversation, DingTalkMessage
     from app.dws_client import DwsClient
@@ -150,7 +154,7 @@ def send_approved_dingtalk_message(
         raise AgentReadOnlyViolationError("dingtalk_message_action_invalid")
     store = AutoReplyStore(db_path)
     task = store.get_reply_task(task_id)
-    if task is None or task.channel != "dingtalk":
+    if task is None or task.channel not in DINGTALK_MESSAGE_CHANNELS:
         raise AgentReadOnlyViolationError("dingtalk_message_task_invalid")
     running_audits = [
         run

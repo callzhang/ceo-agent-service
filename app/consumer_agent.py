@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from app.agent_context import _AUDIT_AGENT_RULES, _CONSUMER_AGENT_RULES, AgentTaskContext
 from app.agent_contracts import (
+    DINGTALK_MESSAGE_CHANNELS,
     AuditAgentResult,
     AuditFeedback,
     ConsumerAgentResult,
@@ -850,7 +851,7 @@ def _prepare_outgoing_dingtalk_messages(
 ) -> ConsumerAgentResult:
     """Apply the service-owned reply postfix before Audit reviews the candidate."""
     proposal = result.proposal
-    if proposal is None or context.channel != "dingtalk":
+    if proposal is None or context.channel not in DINGTALK_MESSAGE_CHANNELS:
         return result
     sender = ServiceMessageSender(store=store)
     actions = tuple(
@@ -950,6 +951,7 @@ def structured_dingtalk_outgoing_text_key(action: ProposedAction) -> str | None:
         target.get("open_dingtalk_id")
         or target.get("recipient_open_dingtalk_id")
         or target.get("sender_open_dingtalk_id")
+        or target.get("user_id")
         or ""
     ).strip()
     delivery = dingtalk_chat_delivery(action.operation)

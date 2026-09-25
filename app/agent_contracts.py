@@ -145,6 +145,12 @@ class ConsumerOutcome(StrEnum):
     FAILED = "failed"
 
 
+# Task channels whose reviewed candidates may send a DingTalk message through
+# the service-owned path: DingTalk conversations, and scheduled tasks that
+# notify Derek (the CEO daily report sends him its summary, Derek 2026-09-24).
+DINGTALK_MESSAGE_CHANNELS = frozenset({"dingtalk", "scheduled"})
+
+
 def dingtalk_chat_delivery(operation: str) -> Literal["reply", "group", "direct"]:
     """How a `dingtalk-chat` action is delivered, read from its operation name.
 

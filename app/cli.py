@@ -2612,10 +2612,6 @@ def daily_report_facts_command(
         EmailStore(settings.db_path),
         report_window_for_run(store, scheduled_run_id),
     )
-    payload["delivery"] = {
-        "robot_code": settings.ding_robot_code,
-        "robot_name": settings.ding_robot_name,
-    }
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), flush=True)
     return payload
 

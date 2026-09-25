@@ -63,14 +63,19 @@ def test_approved_dingtalk_message_tool_reaches_service_helper(monkeypatch, tmp_
 
 
 @pytest.mark.parametrize(
-    "proposal_target",
+    ("channel", "proposal_target", "sent_to"),
     [
-        {"open_dingtalk_id": "open-recipient"},
-        {"conversation_id": "cid-trigger", "open_dingtalk_id": "open-recipient"},
+        ("dingtalk", {"open_dingtalk_id": "open-recipient"},
+         ("open_dingtalk_id", "open-recipient")),
+        ("dingtalk", {"conversation_id": "cid-trigger", "open_dingtalk_id": "open-recipient"},
+         ("open_dingtalk_id", "open-recipient")),
+        # A scheduled task (the CEO daily report) messages Derek by user id
+        # from his own account (Derek 2026-09-24).
+        ("scheduled", {"user_id": "derek-user"}, ("user_id", "derek-user")),
     ],
 )
 def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(
-    tmp_path, proposal_target
+    tmp_path, channel, proposal_target, sent_to
 ):
     from app.service_message_sender import agent_message_delivery_key
     from app.store import AgentRole, AutoReplyStore
@@ -85,8 +90,11 @@ def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(
         trigger_sender="Sender",
         trigger_text="Please clarify",
         execution_generation="generation-1",
+        channel=channel,
     )
-    task = store.claim_reply_tasks(limit=1)[0]
+    # Scheduled executions are claimed by their own dispatcher adapter; the
+    # send path only needs the task and its running Audit run.
+    [task] = store.list_reply_tasks(channel=channel)
     consumer = store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -177,7 +185,7 @@ def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(
     assert result["delivery_key"] == delivery_key
     assert dws.calls[0][0] is None
     assert dws.calls[0][1] == prepared.final_body
-    assert dws.calls[0][2]["open_dingtalk_id"] == "open-recipient"
+    assert dws.calls[0][2][sent_to[0]] == sent_to[1]
     assert dws.calls[0][2]["idempotency_uuid"]
 
 
