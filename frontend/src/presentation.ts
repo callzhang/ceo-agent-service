@@ -45,7 +45,7 @@ function isBackendTimestamp(value: string): boolean {
 }
 
 // Explicit ISO years begin at 0100 to avoid Date.UTC's special handling of 0-99.
-const explicitIsoTimestamp = /^(0[1-9]\d{2}|[1-9]\d{3})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
+const explicitIsoTimestamp = /^(0[1-9]\d{2}|[1-9]\d{3})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/;
 
 function isValidDateTime(year: number, month: number, day: number, hour: number, minute: number, second: number): boolean {
   if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
@@ -69,7 +69,7 @@ function parseExplicitIsoTimestamp(value: string): Date | null {
     const offsetMinute = Number(timezone.slice(4, 6));
     if (offsetHour > 23 || offsetMinute > 59) return null;
   }
-  const milliseconds = Number((rawMilliseconds ?? "").padEnd(3, "0"));
+  const milliseconds = Number((rawMilliseconds ?? "").slice(0, 3).padEnd(3, "0"));
   const localEpoch = Date.UTC(year, month - 1, day, hour, minute, second, milliseconds);
   const offsetMinutes = timezone === "Z"
     ? 0
