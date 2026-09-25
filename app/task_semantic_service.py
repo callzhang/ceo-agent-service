@@ -791,9 +791,11 @@ class TaskSemanticService:
             if task.status is BusinessTaskStatus.MERGED:
                 raise ValueError("cannot update a merged task")
             changed = {name: value for name, value in fields.items() if value is not None}
+            # A field restated at its current value is not a transition: an Agent
+            # that adds the owner and repeats "status open" made one change, not two.
             changed = {
                 name: value for name, value in changed.items()
-                if name not in {"title", "description"}
+                if name not in {"title", "description", "status", "business_relevance"}
                 or getattr(task, name) != value
             }
             if not changed and not command.date_facts:

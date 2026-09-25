@@ -1802,3 +1802,28 @@ def test_merge_preserves_typed_date_evidence_on_surviving_task(service):
     assert target_dates[0].created_at == original_date.created_at
     service.merge_same_deliverable(merge_command)
     assert len(service.store.list_business_task_date_evidence(target.task_id)) == 1
+
+
+def test_update_that_restates_status_and_relevance_is_only_the_owner_change(service):
+    """An Agent that adds an owner and repeats the current status made one transition, not two."""
+    signal = SourceSignal(
+        source_type="ai_minutes", source_ref="minutes:1#todos-sha256=a",
+        evidence_text="Zoey：那这个我们可以先列一个list吧，给你看一下。", dedupe_key="minutes:1:candidate",
+    )
+    task = service.record_candidate(RecordCandidate(title="整理访谈问题清单", signal=signal))
+    current = service.store.get_business_task(task.task_id)
+    owner_excerpt = "Zoey：那这个我们可以先列一个list吧，给你看一下。"
+
+    service.update_task(UpdateBusinessTask(
+        task_id=task.task_id,
+        signal=replace(signal, source_ref="minutes:1#todos-sha256=b", dedupe_key="minutes:1:owner"),
+        owner_name="Zoey",
+        owner_evidence_json=json.dumps({"source_ref": "minutes:1#todos-sha256=b", "excerpt": owner_excerpt}, ensure_ascii=False),
+        status=current.status,
+        business_relevance=current.business_relevance,
+        reason="补负责人",
+    ))
+
+    updated = service.store.get_business_task(task.task_id)
+    assert updated.owner_name == "Zoey"
+    assert [event.event_type.value for event in service.events(task.task_id)] == ["created", "owner_changed"]
