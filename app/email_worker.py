@@ -4460,13 +4460,21 @@ def build_direct_email_unsubscribe_operation(settings: object) -> object:
     )
 
 
+def _service_workspace() -> Path:
+    from app.config import workspace_path
+
+    return workspace_path()
+
+
 def run_email_unsubscribe(db_path: str | Path, task_id: int) -> dict[str, object]:
     """Unsubscribe one email task and return the page's own evidence."""
 
     operation = build_direct_email_unsubscribe_operation(
         SimpleNamespace(
             db_path=Path(db_path),
-            workspace=Path(db_path).parent,
+            # The page-judging Agent runs here; Codex will not start in the
+            # database directory, so it gets the service's own workspace.
+            workspace=_service_workspace(),
         )
     )
     return operation.execute(task_id)

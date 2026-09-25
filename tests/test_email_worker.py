@@ -10218,3 +10218,26 @@ def test_a_dead_warm_connection_is_replaced(monkeypatch) -> None:
     assert dead.closed is True
     assert executor.provider is connections[-1]
     assert len(connections) == 2
+
+
+def test_the_unsubscribe_page_judge_runs_in_the_service_workspace_not_the_database_directory(
+    monkeypatch, tmp_path
+) -> None:
+    # Codex does not start in the database directory, so an Agent judge built
+    # with that as its workspace failed every page instantly.
+    from app import email_worker
+
+    seen: dict[str, object] = {}
+
+    def fake_build(settings):
+        seen["workspace"] = settings.workspace
+        return SimpleNamespace(execute=lambda task_id: {"task": task_id})
+
+    workspace = tmp_path / "memory"
+    monkeypatch.setattr(email_worker, "build_direct_email_unsubscribe_operation", fake_build)
+    monkeypatch.setattr(email_worker, "_service_workspace", lambda: workspace)
+
+    result = email_worker.run_email_unsubscribe(tmp_path / "db" / "auto-reply.sqlite3", 7)
+
+    assert result == {"task": 7}
+    assert seen["workspace"] == workspace
