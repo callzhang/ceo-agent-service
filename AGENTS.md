@@ -70,7 +70,7 @@ python -m app.deploy
 The deploy waits until no Agent turn or claimed item is in flight (it changes
 nothing if the service never goes quiet within 30 minutes). It then backs up
 the database, fast-forwards the production checkout, rebuilds the console when
-`frontend/` changed, checks the imports, restarts the job, and waits up to 15
+it was not built from the checkout's current `frontend/` (a stamp, not this deploy's diff), checks the imports, restarts the job, and waits up to 15
 minutes for health. If any step after the fast-forward fails, it rolls back.
 Two deploys at once are serialized by the repository lock.
 

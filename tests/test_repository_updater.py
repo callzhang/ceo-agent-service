@@ -242,15 +242,40 @@ def test_health_waits_for_a_slow_start_instead_of_rolling_back():
     )
 
 
-def test_console_is_rebuilt_only_when_frontend_changed_or_missing(tmp_path: Path):
-    from app.repository_updater import frontend_needs_build
+def _commit_frontend(root: Path, text: str) -> None:
+    import subprocess
 
-    assert frontend_needs_build(["app/cli.py"], tmp_path)  # nothing built yet
+    (root / "frontend").mkdir(exist_ok=True)
+    (root / "frontend" / "app.tsx").write_text(text, encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "frontend"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "x"],
+        cwd=root, check=True,
+    )
+
+
+def test_console_is_rebuilt_when_it_was_not_built_from_the_current_frontend(tmp_path: Path):
+    """The stamp, not this deploy's diff, decides: an earlier deploy may have moved the checkout."""
+    import subprocess
+
+    from app.repository_updater import _built_stamp, _frontend_tree, frontend_needs_build
+
+    _commit_frontend(tmp_path, "one")
+    assert frontend_needs_build(tmp_path)  # nothing built yet
     built = tmp_path / "app" / "static" / "workbench"
     built.mkdir(parents=True)
     (built / "index.html").write_text("<html></html>", encoding="utf-8")
-    assert not frontend_needs_build(["app/cli.py", "docs/x.md"], tmp_path)
-    assert frontend_needs_build(["frontend/src/app.tsx"], tmp_path)
+    assert frontend_needs_build(tmp_path)  # built by something that left no stamp
+    _built_stamp(tmp_path).write_text(_frontend_tree(tmp_path) + "\n", encoding="utf-8")
+    assert not frontend_needs_build(tmp_path)
+    (tmp_path / "frontend" / "app.tsx").write_text("two", encoding="utf-8")
+    subprocess.run(["git", "add", "frontend"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "y"],
+        cwd=tmp_path, check=True,
+    )
+    assert frontend_needs_build(tmp_path)  # the checkout moved on without a build
 
 
 def test_service_root_defaults_to_the_services_checkout(monkeypatch, tmp_path: Path):

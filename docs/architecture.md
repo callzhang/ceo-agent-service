@@ -453,7 +453,7 @@ launchd 后验证新 PID、HTTP 健康与 Store 可读性。
 `app.config.service_root()`，模板和代码都不写机器路径）。这个检出没人编辑，只会前进到已推送的
 `origin/main` 提交，所以上线的永远是完整提交，任何会话都可以部署：`python -m app.deploy`
 复用上面的 updater，先等没有进行中的 Agent 回合和已领取的条目（30 分钟内不空闲就什么都不改），
-再备份数据库、fast-forward、`frontend/` 有变动时重建控制台、检查 import、重启，并轮询健康最多
+再备份数据库、fast-forward、控制台不是从检出当前的 `frontend/` 构建的时重建（比较构建戳 `app/static/workbench/.built-from` 与 `HEAD:frontend` 的树，而不是看本次部署的差异——中途停下的部署或别的会话插进来的部署会让下一次差异里没有前端改动，控制台就停在旧版本）、检查 import、重启，并轮询健康最多
 15 分钟（重启要重读数 GB 的数据库，负载高时曾用 8 分钟，只探一次会把正常升级误判回滚）。
 两个会话同时部署由仓库锁串行，后到的发现检出已前进就停止。
 

@@ -178,19 +178,40 @@ def wait_until_quiet(
         sleep(POLL_SECONDS)
 
 
-def frontend_needs_build(changed_paths: list[str], repository_root: Path) -> bool:
+def _built_stamp(repository_root: Path) -> Path:
+    return repository_root / "app" / "static" / "workbench" / ".built-from"
+
+
+def _frontend_tree(repository_root: Path) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD:frontend"], cwd=repository_root, check=True,
+        capture_output=True, text=True, timeout=60,
+    ).stdout.strip()
+
+
+def frontend_needs_build(repository_root: Path) -> bool:
+    """The console is stale when it was not built from the checkout's current `frontend/`.
+
+    This compares the build stamp with the tree, not with this deploy's diff: a
+    deploy that stopped after advancing the checkout (or another session's deploy
+    that ran in between) leaves no frontend change in the next diff, and the
+    console would keep serving the old build. 2026-09-25: exactly that happened to
+    the Tasks candidate button.
+    """
+    stamp = _built_stamp(repository_root)
     built = repository_root / "app" / "static" / "workbench" / "index.html"
-    return not built.exists() or any(path.startswith("frontend/") for path in changed_paths)
+    return not built.exists() or not stamp.exists() or stamp.read_text(encoding="utf-8").strip() != _frontend_tree(repository_root)
 
 
 def build_frontend(repository_root: Path, changed_paths: list[str]) -> None:
     """Build the console the checkout serves; the build output is not tracked."""
-    if not frontend_needs_build(changed_paths, repository_root):
+    if not frontend_needs_build(repository_root):
         return
     frontend = repository_root / "frontend"
     if not (frontend / "node_modules").exists() or "frontend/package-lock.json" in changed_paths:
         subprocess.run(["npm", "ci"], cwd=frontend, check=True, timeout=900)
     subprocess.run(["npm", "run", "build"], cwd=frontend, check=True, timeout=900)
+    _built_stamp(repository_root).write_text(_frontend_tree(repository_root) + "\n", encoding="utf-8")
 
 
 def verify_imports(repository_root: Path) -> None:
