@@ -387,6 +387,43 @@ def test_completion_scan_closes_only_the_listed_business_task(tmp_path):
     assert store.list_business_task_dingtalk_links(business_task_id=first)[0]["status"] == "done"
 
 
+def test_completion_scan_keeps_legacy_rows_history_only(tmp_path):
+    store = _store(tmp_path)
+    _, legacy_todo_id = _project_and_todo(store)
+    legacy_link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=legacy_todo_id,
+        dingtalk_task_id="legacy-dt-task",
+        executor_user_id="owner-1",
+        status="active",
+    )
+    business_task_id = _formal_business_task(store)
+    store.create_business_task_dingtalk_link(
+        business_task_id=business_task_id,
+        dingtalk_task_id="business-dt-task",
+        status="active",
+    )
+    with store._connect() as db:
+        legacy_before = {
+            table: [tuple(row) for row in db.execute(f"select * from {table} order by id")]
+            for table in ("work_projects", "work_todos", "work_updates", "work_todo_dingtalk_links")
+        }
+    dws = FakeTodoDws()
+    dws.completed_task_ids = ["legacy-dt-task", "business-dt-task"]
+
+    assert scan_completed_dingtalk_todos(store, dws, now="2026-06-29 01:00:00") == 1
+
+    with store._connect() as db:
+        legacy_after = {
+            table: [tuple(row) for row in db.execute(f"select * from {table} order by id")]
+            for table in legacy_before
+        }
+    assert legacy_after == legacy_before
+    assert store.get_work_todo(legacy_todo_id).status.value == "open"
+    assert store.get_work_todo_dingtalk_link(legacy_link_id).status == "active"
+    assert store.get_business_task(business_task_id).status.value == "done"
+    assert dws.list_calls == [{"page": 1, "size": 20}]
+
+
 def test_task_todo_outbox_expired_delivery_becomes_unknown_without_replay(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)
@@ -1116,7 +1153,7 @@ def test_maybe_create_dingtalk_todo_prefers_active_link_over_failed_recovery(
     assert store.get_work_todo_dingtalk_link(active_link_id).status == "active"
 
 
-def test_completion_scan_closes_internal_todo(tmp_path):
+def test_completion_scan_keeps_legacy_todo_history_only(tmp_path):
     store = _store(tmp_path)
     project_id, todo_id = _project_and_todo(store)
     follow_up_id = store.create_follow_up_draft(
@@ -1148,21 +1185,19 @@ def test_completion_scan_closes_internal_todo(tmp_path):
         now="2026-06-27 11:00:00",
     )
 
-    assert updated == 1
+    assert updated == 0
     assert dws.get_calls == []
     todo = store.get_work_todo(todo_id)
-    assert todo.status == "done"
-    assert "dingtalk_todo:dt-task-1" in todo.completion_evidence_json
-    assert store.get_work_todo_dingtalk_link(link_id).status == "done"
+    assert todo.status == "open"
+    assert todo.completion_evidence_json == "{}"
+    assert store.get_work_todo_dingtalk_link(link_id).status == "active"
     follow_up = store.get_follow_up_draft(follow_up_id)
     assert follow_up is not None
-    assert follow_up.status == "completed"
-    check = json.loads(follow_up.evidence_check_json)
-    assert check["source"] == "dingtalk_todo:dt-task-1"
-    assert check["reason"] == "DingTalk Todo marked done by owner"
+    assert follow_up.status == "sent"
+    assert follow_up.evidence_check_json == "{}"
 
 
-def test_completion_scan_pages_until_the_linked_todo_is_found(tmp_path):
+def test_completion_scan_does_not_read_legacy_links(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)
     link_id = store.create_work_todo_dingtalk_link(
@@ -1175,9 +1210,7 @@ def test_completion_scan_pages_until_the_linked_todo_is_found(tmp_path):
         status="active",
     )
     dws = FakeTodoDws()
-    dws.completed_task_ids = [f"dt-other-{index}" for index in range(25)] + [
-        "dt-task-1"
-    ] + [f"dt-later-{index}" for index in range(40)]
+    dws.completed_task_ids = ["dt-task-1"]
 
     updated = scan_completed_dingtalk_todos(
         store,
@@ -1185,11 +1218,10 @@ def test_completion_scan_pages_until_the_linked_todo_is_found(tmp_path):
         now="2026-06-27 11:00:00",
     )
 
-    assert updated == 1
-    assert store.get_work_todo(todo_id).status == "done"
-    assert store.get_work_todo_dingtalk_link(link_id).status == "done"
-    # Stops once no active link is left to match, instead of reading every page.
-    assert [call["page"] for call in dws.list_calls] == [1, 2]
+    assert updated == 0
+    assert store.get_work_todo(todo_id).status == "open"
+    assert store.get_work_todo_dingtalk_link(link_id).status == "active"
+    assert dws.list_calls == []
 
 
 def test_completion_scan_leaves_open_todo_that_dingtalk_does_not_list(tmp_path):
@@ -1211,7 +1243,7 @@ def test_completion_scan_leaves_open_todo_that_dingtalk_does_not_list(tmp_path):
 
     assert store.get_work_todo(todo_id).status != "done"
     assert store.get_work_todo_dingtalk_link(link_id).status == "active"
-    assert [call["page"] for call in dws.list_calls] == [1]
+    assert dws.list_calls == []
 
 
 def test_completion_scan_skips_cancelled_backfill_link(tmp_path):
