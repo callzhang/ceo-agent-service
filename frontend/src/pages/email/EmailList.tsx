@@ -139,7 +139,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   return <div className={`email-workspace${open ? " has-reading" : ""}${expanded ? " reading-expanded" : ""}`}>
     <section className="console-card email-dense-list" aria-label="邮件分类列表">
     <div className="email-list-controls">
-    <nav className="email-list-toolbar" aria-label="邮件分页"><span>第 {page} / {Math.max(1,Math.ceil(total/pageSize))} 页 · 共 {total} 封</span>
+    <nav className="email-list-toolbar" aria-label="邮件分页"><label className="email-bulk-all"><input type="checkbox" checked={allChecked} disabled={!rows.length||bulkBusy||saving} onChange={()=>{setChecked(allChecked?new Set():new Set(rows.map(item=>item.id)));setBulkDone(null);setBulkError("");}}/> 全选本页</label><span>第 {page} / {Math.max(1,Math.ceil(total/pageSize))} 页 · 共 {total} 封</span>
       <label>每页邮件数 <select aria-label="每页邮件数" value={pageSize} disabled={saving||loading} onChange={event=>navigate(1,Number(event.target.value))}>{[20,50,100].map(size=><option key={size}>{size}</option>)}</select></label>
       <button className="compact-button" disabled={saving||loading||page===1} onClick={()=>navigate(page-1)}>上一页</button>
       <button className="compact-button" disabled={saving||loading||page*pageSize>=total} onClick={()=>navigate(page+1)}>下一页</button>
@@ -149,16 +149,6 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
       <input type="search" aria-label="搜索邮件" placeholder="搜索发件人、主题、正文…" maxLength={500} value={searchText} disabled={saving} onChange={event=>setSearchText(event.target.value)} onCompositionStart={()=>setComposing(true)} onCompositionEnd={()=>setComposing(false)}/>
       {searchText&&<button type="button" aria-label="清空搜索" disabled={saving} onClick={()=>{setSearchText("");applySearch("");}}>×</button>}
     </form></div>
-    <div className="email-bulk-bar" role="group" aria-label="批量标注">
-      <label className="email-bulk-all"><input type="checkbox" checked={allChecked} disabled={!rows.length||bulkBusy||saving} onChange={()=>{setChecked(allChecked?new Set():new Set(rows.map(item=>item.id)));setBulkDone(null);setBulkError("");}}/> 全选本页</label>
-      <span>已选 {checked.size} 封</span>
-      <select aria-label="统一标注类别" value={bulkCategory} disabled={!checked.size||bulkBusy} onChange={event=>setBulkCategory(event.target.value)}><option value="" disabled>选择类别</option>{options.map(option=><option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</select>
-      <button type="button" className="primary-button" disabled={!checked.size||!bulkCategory||bulkBusy||saving} onClick={()=>void applyBulk()}>{bulkBusy?`正在标注 ${bulkDone ?? 0}/${checked.size}…`:"统一标注"}</button>
-      {!!checked.size&&<button type="button" disabled={bulkBusy} onClick={()=>{setChecked(new Set());setBulkDone(null);setBulkError("");}}>取消选择</button>}
-      {!bulkBusy&&bulkDone!==null&&!bulkError&&<span role="status" className="email-saved">已标注 {bulkDone} 封</span>}
-      {bulkError&&<span role="alert" className="email-signal-error">{bulkError}</span>}
-      {signalError&&<span role="alert" className="email-signal-error">{signalError}</span>}
-    </div>
     {status==="unsubscribe"&&<p className="muted">显示已入队、处理中和已完成的退订任务；打开邮件可查看执行证据。</p>}
     {error&&<p role="alert">{error} <button onClick={()=>setRevision(value=>value+1)}>重试</button></p>}
     {!loading&&!error&&!rows.length&&<p className="page-state">{query.trim()?"未找到匹配邮件":status==="pending_feedback"?"当前没有待确认邮件":status==="unsubscribe"?"当前没有退订记录":"当前没有邮件"}</p>}
@@ -191,5 +181,15 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
       onCategory={value=>{setCategory(value);setSaved(false);setSaveError("");}} onSave={()=>void save()} onClose={closeReading} onRetry={()=>setDetailRevision(value=>value+1)} onSignalChanged={()=>setRevision(value=>value+1)} onExpand={()=>setExpanded(value=>!value)}
       onPrevious={()=>{const index=rows.findIndex(item=>item.id===selected);if(index>0){navigate(page,pageSize,rows[index-1].id);setSaved(false);}}}
       onNext={()=>{const index=rows.findIndex(item=>item.id===selected);if(index>=0&&index<rows.length-1){navigate(page,pageSize,rows[index+1].id);setSaved(false);}}}/>}
+    {(checked.size>0||bulkBusy||bulkError||bulkDone!==null||signalError)&&<div className="email-bulk-popup" role="group" aria-label="批量标注">
+      {checked.size>0&&<><span className="email-bulk-count">已选 {checked.size} 封</span>
+      <select aria-label="统一标注类别" value={bulkCategory} disabled={bulkBusy} onChange={event=>setBulkCategory(event.target.value)}><option value="" disabled>选择类别</option>{options.map(option=><option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</select>
+      <button type="button" className="primary-button" disabled={!bulkCategory||bulkBusy||saving} onClick={()=>void applyBulk()}>{bulkBusy?`正在标注 ${bulkDone ?? 0}/${checked.size}…`:"统一标注"}</button>
+      <button type="button" disabled={bulkBusy} onClick={()=>{setChecked(new Set());setBulkDone(null);setBulkError("");}}>取消选择</button></>}
+      {!bulkBusy&&bulkDone!==null&&!bulkError&&<span role="status" className="email-saved">已标注 {bulkDone} 封</span>}
+      {bulkError&&<span role="alert" className="email-signal-error">{bulkError}</span>}
+      {signalError&&<span role="alert" className="email-signal-error">{signalError}</span>}
+      {checked.size===0&&!bulkBusy&&<button type="button" onClick={()=>{setBulkDone(null);setBulkError("");setSignalError("");}}>关闭</button>}
+    </div>}
   </div>;
 }

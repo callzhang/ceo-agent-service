@@ -387,10 +387,15 @@ it("selects the whole page at once",async()=>{
   const user=userEvent.setup();
   api.listEmailClassifications.mockResolvedValue({items:[row("1"),row("2")],meta:{page:1,page_size:50,total:2}});
   show("/email?tab=pending");
-  await user.click(await screen.findByRole("checkbox",{name:"全选本页"}));
+  const selectAll=await screen.findByRole("checkbox",{name:"全选本页"});
+  expect(selectAll.closest("nav")).toHaveAccessibleName("邮件分页");
+  expect(screen.queryByRole("group",{name:"批量标注"})).not.toBeInTheDocument();
+  await user.click(selectAll);
   expect(screen.getByText("已选 2 封")).toBeInTheDocument();
+  expect(screen.getByRole("group",{name:"批量标注"})).toHaveClass("email-bulk-popup");
   await user.click(screen.getByRole("button",{name:"取消选择"}));
-  expect(screen.getByText("已选 0 封")).toBeInTheDocument();
+  expect(screen.queryByText(/已选 \d+ 封/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("group",{name:"批量标注"})).not.toBeInTheDocument();
 });
 it("shows how far mail processing has got, above the tabs",async()=>{
   api.getEmailProcessingProgress.mockResolvedValue({window_hours:24,provider_actions:{done:1249,pending:478,processing:1,failed:252,skipped:1},classification_queue:{pending:2,processing:0},unsubscribe_queue:{pending:0,processing:1},waiting_for_owner:141,scans:[{account:"DingTalk 企业邮箱",folder:"INBOX",last_seen_uid:32909,last_success_at:"2026-09-25T09:34:24+00:00",last_error:""},{account:"Gmail",folder:"INBOX",last_seen_uid:9,last_success_at:"",last_error:"登录失败"}]});
