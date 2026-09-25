@@ -959,11 +959,15 @@ def apply_task_agent_decision(
             owner_user_id = source_owner_id
             if owner_evidence:
                 owner_evidence.setdefault("source_ref", item.source_ref)
-                # The decision's exact source excerpt is the canonical evidence
-                # boundary. Model-provided owner excerpts may be paraphrases or
-                # punctuation variants, so never persist one that is not an
-                # exact substring of the source evidence.
-                owner_evidence["excerpt"] = item.source_excerpt
+                # Never persist an owner excerpt that is not an exact substring of
+                # the source: a model may paraphrase or change punctuation, and the
+                # decision's own source_excerpt is validated as exact. But an exact
+                # owner excerpt is kept: when one person hands the work to another
+                # (“你写下来”), the line that names who takes it on is not the
+                # decision's source_excerpt.
+                model_excerpt = owner_evidence.get("excerpt")
+                if not (isinstance(model_excerpt, str) and model_excerpt.strip() and model_excerpt in work_item.summary):
+                    owner_evidence["excerpt"] = item.source_excerpt
                 owner_evidence.setdefault("user_id", owner_user_id)
                 owner_evidence.setdefault("name", item.owner_name)
             formality = FormalityEvidence(

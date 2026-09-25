@@ -2105,3 +2105,25 @@ def test_update_restating_current_fields_adds_the_owner_and_an_unchanged_item_is
     assert store.get_business_task(second).owner_name == ""
     assert [event.event_type.value for event in store.list_business_task_events(second)] == ["created"]
     assert any(f"Task {second} already matches this source" in reason for reason in result.skipped_reasons)
+
+
+def test_an_exact_owner_excerpt_from_another_line_is_kept_when_the_work_was_handed_over(tmp_path):
+    """磊哥 assigns (“你写下来”) and Claire takes it on: her line, not the assigning one, names the owner."""
+    store = AutoReplyStore(tmp_path / "handover.sqlite3")
+    task = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="结构化撰写内容产出计划",
+        signal=SourceSignal(source_type="ai_minutes", source_ref="m:1#todos-sha256=old", evidence_text="结构化撰写内容产出计划", dedupe_key="seed:handover"),
+    ))
+    assigning, taking = "磊哥：你写下来，结构化的写下来。", "Claire：你认的话我就写下来呗。"
+    item = _work_item().model_copy(update={"summary": json.dumps({"lines": [assigning, taking]}, ensure_ascii=False)})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "update_fields", "task_id": task.task_id,
+        "source_excerpt": assigning, "source_ref": item.source.ref, "title": "结构化撰写内容产出计划",
+        "owner_name": "Claire", "owner_evidence": {"source_ref": item.source.ref, "excerpt": taking},
+    }]})
+
+    apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+
+    updated = store.get_business_task(task.task_id)
+    assert updated.owner_name == "Claire"
+    assert json.loads(updated.owner_evidence_json)["excerpt"] == taking
