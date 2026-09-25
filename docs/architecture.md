@@ -445,7 +445,7 @@ Email Console 的“模型训练”页读取后端统一计算的晋升资格。
 服务周期性读取配置的 `origin/main`，只识别可安全 fast-forward 的更新；分叉、状态指纹变化或
 脏工作树不会被静默覆盖。History 页面只展示状态并启动带 operation ID 的 detached updater；
 updater 在共享 Git 锁内重新校验指纹，必要时按用户确认的分支名和提交信息保存本地改动，创建
-SQLite 在线备份并只保留一个最新快照（同时清理 SQLite sidecar），执行依赖同步和测试，重启
+SQLite 在线备份并只保留一个最新快照（同时清理 SQLite sidecar；Derek 2026-09-25：备份不用临时文件，每次备份前先删掉之前所有备份，副本直接写成最终文件名，通过完整性检查后才盖上完成标记（`application_id`），失败或被打断的半成品当场或下次备份时删除，不算「今天已备份」；文件夹级别的锁让两个备份互不删除对方；此前每次备份被重启打断都会留下 2.9 GB 的隐藏临时文件，一天堆到 30 GB 写满磁盘），执行依赖同步和测试，重启
 launchd 后验证新 PID、HTTP 健康与 Store 可读性。
 升级后验证失败时只对本次安装的精确 commit 做 compare-and-swap 回滚；无法证明仓库仍归本次
 操作所有时进入 `needs_manual`，不执行破坏性 Git 操作。MCP 配置不由该流程探测、禁用或覆盖，
