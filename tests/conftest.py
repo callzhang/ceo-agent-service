@@ -1,8 +1,22 @@
 import json
 import os
+from pathlib import Path
 import sys
 
 import pytest
+
+
+# Derek, 2026-09-25: tests never run in the production checkout. A session
+# ran them there, committed a test fix in place, and every deploy stopped.
+def _refuse_the_production_checkout() -> None:
+    from app.config import PRODUCTION_CHECKOUT_MESSAGE, is_production_checkout
+
+    root = Path(__file__).resolve().parents[1]
+    if is_production_checkout(root):
+        pytest.exit(PRODUCTION_CHECKOUT_MESSAGE.format(root=root), returncode=4)
+
+
+_refuse_the_production_checkout()
 
 
 # Finder/iCloud conflict copies are local recovery artifacts, not test modules.

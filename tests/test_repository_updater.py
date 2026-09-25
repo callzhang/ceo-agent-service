@@ -327,3 +327,35 @@ def test_deploy_names_commits_made_in_the_production_checkout(tmp_path: Path):
     assert "has diverged from origin/main" in str(stopped.value)
     assert "stray production commit" in str(stopped.value)
     assert git(local, "log", "-1", "--format=%s") == "stray production commit"
+
+
+def test_production_checkout_refuses_commits_but_still_fast_forwards(tmp_path: Path):
+    from app.deploy import ensure_production_guards
+
+    local, _ = fixture_repo(tmp_path)
+    ensure_production_guards(local)
+    ensure_production_guards(local)  # a second deploy leaves one hook, unchanged
+    (local / "stray.txt").write_text("edited in production\n", encoding="utf-8")
+    git(local, "add", "stray.txt")
+
+    refused = subprocess.run(
+        ["git", "commit", "-m", "stray"], cwd=local, capture_output=True, text=True
+    )
+
+    assert refused.returncode != 0
+    assert "production checkout" in refused.stderr
+    git(local, "reset", "-q", "--hard")
+    op = operation(local)
+    result = RepositoryUpdater(
+        local, StateStore(), database_path=tmp_path / "missing.sqlite3",
+        restart=lambda: None, health=lambda: True,
+    ).execute(op)
+    assert result.status == "succeeded"
+
+
+def test_tests_refuse_to_run_in_the_production_checkout(tmp_path: Path, monkeypatch):
+    from app.config import is_production_checkout
+
+    monkeypatch.setenv("CEO_SERVICE_ROOT", str(tmp_path / "Services" / "ceo-agent-service"))
+    assert is_production_checkout(tmp_path / "Services" / "ceo-agent-service")
+    assert not is_production_checkout(tmp_path / "Projects" / "ceo-agent-service")

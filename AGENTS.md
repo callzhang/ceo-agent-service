@@ -75,7 +75,11 @@ minutes for health. If any step after the fast-forward fails, it rolls back.
 Two deploys at once are serialized by the repository lock.
 
 Do not run `launchctl kickstart` or `kill` on the job by hand. Do not edit,
-build in, or run tests in `~/Services/ceo-agent-service`. Committed-but-unpushed
+build in, or run tests in `~/Services/ceo-agent-service`. Both are enforced:
+the deploy installs git hooks there that refuse any commit, merge commit or
+rebase, and `tests/conftest.py` exits when pytest starts in that checkout. If a
+deploy reports the checkout diverged, move the listed commits to main and reset
+production to `origin/main`. Committed-but-unpushed
 work never goes live, so a restart no longer carries another session's
 half-written edits.
 

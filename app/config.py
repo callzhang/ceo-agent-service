@@ -37,6 +37,21 @@ def service_root() -> Path:
     return env_path("CEO_SERVICE_ROOT", Path.home() / "Services" / "ceo-agent-service")
 
 
+def is_production_checkout(path: Path) -> bool:
+    """Whether ``path`` is the checkout launchd runs, where nobody edits or tests."""
+    try:
+        return path.resolve() == service_root().resolve()
+    except OSError:
+        return False
+
+
+PRODUCTION_CHECKOUT_MESSAGE = (
+    "{root} is the production checkout: nobody commits, edits or runs tests here "
+    "(Derek 2026-09-25). Work in the development tree, push to main, then run "
+    "`python -m app.deploy`."
+)
+
+
 def service_mcp_config_path() -> str:
     """The service's MCP config: the setting if given, else the checkout's own file."""
     configured = os.getenv("CEO_SERVICE_MCP_CONFIG_PATH", "").strip()

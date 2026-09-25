@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import stat
 from uuid import uuid4
 
-from app.config import service_root, worker_db_path
+from app.config import PRODUCTION_CHECKOUT_MESSAGE, service_root, worker_db_path
 from app.repository_updater import (
     RepositoryUpdater,
     UpgradePreconditionError,
@@ -34,9 +35,38 @@ REMOTE = "origin"
 BRANCH = "main"
 
 
+#: Hooks that refuse a commit, merge commit or rebase in the production
+#: checkout (Derek 2026-09-25, after a test sync was committed there and every
+#: deploy stopped). A deploy only fast-forwards, which runs none of them.
+GUARD_HOOKS = ("pre-commit", "pre-merge-commit", "pre-rebase")
+
+
+def guard_hook_script(root: Path) -> str:
+    message = PRODUCTION_CHECKOUT_MESSAGE.format(root=root)
+    return f"#!/bin/sh\n# ceo-agent-service production checkout guard\necho '{message}' >&2\nexit 1\n"
+
+
+def ensure_production_guards(root: Path) -> None:
+    """Install the refusing hooks; each deploy puts back one that went missing."""
+    hooks = Path(
+        GitRepository(root)._run(["rev-parse", "--git-path", "hooks"], category="deploy_hooks_path")
+        .stdout.decode().strip()
+    )
+    if not hooks.is_absolute():
+        hooks = root / hooks
+    hooks.mkdir(parents=True, exist_ok=True)
+    script = guard_hook_script(root)
+    for name in GUARD_HOOKS:
+        hook = hooks / name
+        if not hook.exists() or hook.read_text(encoding="utf-8") != script:
+            hook.write_text(script, encoding="utf-8")
+        hook.chmod(hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
 def deploy(root: Path, database_path: Path) -> str:
     from app.store import AutoReplyStore
 
+    ensure_production_guards(root)
     repository = GitRepository(root)
     repository.fetch(REMOTE)
     current = repository.resolve_ref(f"refs/heads/{BRANCH}")
