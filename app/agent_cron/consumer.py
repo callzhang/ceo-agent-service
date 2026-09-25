@@ -224,8 +224,11 @@ class ScheduledAgentConsumer:
         if final_run is None:
             raise RuntimeError("scheduled orchestration final run was not persisted")
         decision_options = result.audit_result.decision_options if result.audit_result else ()
+        from app.agent_orchestrator import durable_memories_json
+
         self._store.finalize_orchestrated_reply_task(
             task_id=task.id, expected_execution_generation=task.execution_generation,
+            durable_memories_json=durable_memories_json(result.consumer_result),
             run_id=final_run.id, task_status=task_status, task_error=error,
             available_at="", conversation_id=task.conversation_id,
             conversation_title=task.conversation_title,

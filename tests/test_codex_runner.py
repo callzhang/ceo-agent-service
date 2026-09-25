@@ -70,7 +70,9 @@ def test_codex_command_inherits_principal_codex_config_and_skills(tmp_path: Path
 
     assert "--ignore-user-config" not in command
     assert "--ignore-rules" not in command
-    assert "hooks" not in command
+    # Everything is inherited except hooks: a plugin Stop hook can add a
+    # second typed answer after the real one (Derek 2026-09-24).
+    assert command[command.index("--disable") + 1] == "hooks"
     assert "features.plugins=false" not in command
     assert "features.apps=false" not in command
 
@@ -822,6 +824,8 @@ def test_builds_new_thread_command(tmp_path: Path):
         "codex",
         "exec",
         "--json",
+        "--disable",
+        "hooks",
         "-m",
         "gpt-5.5",
         "-c",
@@ -857,6 +861,8 @@ def test_builds_resume_command(tmp_path: Path):
         "exec",
         "resume",
         "--json",
+        "--disable",
+        "hooks",
         "-m",
         "gpt-5.5",
         "-c",

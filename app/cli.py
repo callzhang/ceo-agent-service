@@ -368,6 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
         "read-oa-approval-detail",
         "read-dingteam-okr",
         "daily-report-facts",
+        "write-task-memories",
         "process-follow-ups",
         "check-follow-up-completions",
         "daily-task-maintenance",
@@ -1039,6 +1040,9 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
             "process-follow-ups": lambda: (
                 "process-follow-ups "
                 f"sent={process_follow_ups_command(settings, refresh_evidence=False, limit=50)}"
+            ),
+            "write-task-memories": lambda: (
+                f"write-task-memories {write_task_memories_command(settings)}"
             ),
             "request-minutes-access": lambda: (
                 f"request-minutes-access {request_minutes_access_command(settings)}"
@@ -2585,6 +2589,13 @@ def read_oa_approval_detail_command(
     payload = dws.read_oa_process_instance_openapi(process_id)
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
     return payload
+
+
+def write_task_memories_command(settings: WorkerSettings) -> str:
+    """Write the durable memories finished tasks queued; one line of counts."""
+    from app.task_memory_write import process_task_memory_writes
+
+    return process_task_memory_writes(AutoReplyStore(settings.db_path))
 
 
 def daily_report_facts_command(
@@ -5060,6 +5071,8 @@ def main() -> None:
             user_id=args.user_id,
             period_label=args.period_label,
         )
+    elif args.command == "write-task-memories":
+        print(write_task_memories_command(settings), flush=True)
     elif args.command == "daily-report-facts":
         daily_report_facts_command(settings, scheduled_run_id=args.scheduled_run)
     elif args.command == "process-follow-ups":

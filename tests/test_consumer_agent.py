@@ -307,6 +307,7 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
         "error_code": error["code"],
         "error_retryable": error["retryable"],
         "error_authorization_required": error["authorization_required"],
+        "durable_memories": result.get("durable_memories", []),
     }
 
 
@@ -3047,6 +3048,7 @@ def _consumer_failure_wire(error_code: str, outcome: str = "failed") -> str:
             "error_code": error_code,
             "error_retryable": True,
             "error_authorization_required": False,
+            "durable_memories": [],
         }
     )
     return json.dumps(

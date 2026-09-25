@@ -105,8 +105,9 @@ def block_real_memory_writes_in_tests(monkeypatch):
     blocked = (
         ("app.codex_memory_write", "run_codex_memory_write"),
         ("app.meeting_memory_write", "run_codex_memory_write"),
-        ("app.meeting_memory_write", "write_meeting_memory"),
-        ("app.memory_connector_client", "write_meeting_memory"),
+        ("app.meeting_memory_write", "write_memory"),
+        ("app.task_memory_write", "write_memory"),
+        ("app.memory_connector_client", "write_memory"),
         ("app.memory_connector_client", "load_credential"),
     )
     for module_name, attribute in blocked:

@@ -23,7 +23,11 @@ from app.agent_context import (
     PriorReceipt,
 )
 from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult, DecisionOption
-from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
+from app.agent_orchestrator import (
+    AgentOrchestrator,
+    OrchestrationResult,
+    durable_memories_json,
+)
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.audit_agent import AuditAgentRunner
 from app.channel_gate import (
@@ -2559,6 +2563,7 @@ class DingTalkAutoReplyWorker:
             task_id=task.id,
             expected_execution_generation=task.execution_generation,
             run_id=decision_run_id,
+            durable_memories_json=durable_memories_json(result.consumer_result),
             task_status=task_status,
             task_error=send_error,
             available_at=available_at,

@@ -339,6 +339,7 @@ class _AuditedTurnExecutor:
                 "authored_judgment": "One reversible provider step is justified.",
             },
             "decision_options": [],
+            "durable_memories": [],
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,

@@ -9245,6 +9245,44 @@ def test_worker_attention_includes_failed_meeting_memory_writes(tmp_path: Path):
     assert row["error"] == "provider unavailable"
 
 
+def test_worker_attention_includes_failed_task_memory_writes(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-memory",
+        conversation_title="CEO 日报",
+        single_chat=True,
+        trigger_message_id="msg-memory",
+        trigger_create_time="2026-09-24 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="text",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    with store._connect() as db:
+        store._enqueue_task_memory_write_in_connection(
+            db,
+            task_id=task.id,
+            execution_generation=task.execution_generation,
+            durable_memories_json=json.dumps(
+                [{"title": "t", "content": "c", "source_time": "2026-09-24T10:00:00Z",
+                  "source_refs": ["msg-memory"], "subject": None}]
+            ),
+        )
+    [event] = store.claim_due_task_memory_write_events(
+        now=datetime.fromisoformat("2026-09-25T10:00:00+00:00"),
+        limit=1, owner="test-task-memory-attention", lease_seconds=30,
+    )
+    assert store.fail_task_memory_write_event(
+        event.id, owner="test-task-memory-attention", error="provider unavailable"
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    row = next(row for row in rows if row.get("root_cause") == "task_memory_write_failed")
+    assert row["id"] == f"task-memory-{event.id}"
+    assert row["context"] == f"Task Memory: dingtalk task {task.id}"
+    assert row["error"] == "provider unavailable"
+
+
 def test_worker_attention_uses_local_file_title_as_work_item_context(
     tmp_path: Path,
 ):

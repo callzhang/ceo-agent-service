@@ -1050,6 +1050,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "scan-oa-approvals",
         "scan-meeting-todos-once",
         "process-follow-ups",
+        "write-task-memories",
         "request-minutes-access",
         "sync-minutes-once",
         "weekly-okr-report",
@@ -1064,6 +1065,7 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "读取待审批 OA",
         "读取会议行动项",
         "投递到期的跟进事项",
+        "写入任务长期记忆",
         "申请没有权限的听记",
         "同步听记到工作区",
         "生成并发送 OKR 周报",
@@ -1213,6 +1215,7 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
         oa,
         work_sources,
         follow_ups,
+        task_memories,
         minutes_access,
         minutes,
         okr,
@@ -1240,6 +1243,10 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
         "sync-minutes-once",
         "work_summary",
     )
+    assert (task_memories["name"], task_memories["channel"]) == (
+        "write-task-memories",
+        "work_summary",
+    )
     assert (recovery["name"], recovery["channel"]) == (
         "recover-recent-messages",
         "dingtalk",
@@ -1254,6 +1261,7 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
         True,
         True,
         True,
+        False,
         False,
         False,
         False,

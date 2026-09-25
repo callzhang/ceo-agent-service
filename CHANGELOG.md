@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- 2026-09-24: Long-term memory is now named by the Consumer and written by the
+  service. The Consumer result requires `durable_memories` (title, content,
+  source time, source refs, optional subject; may be empty). Finishing a task
+  queues it in `task_memory_write_events` in the same transaction, one row per
+  task execution, and the new paused service-command task `write-task-memories`
+  writes each item through the service's memory-connector client with
+  service-filled thread, source and provenance metadata, retrying with backoff
+  and surfacing exhausted rows in Attention. Nothing reviews them (Derek).
+  Service `codex exec` turns now run with `--disable hooks`: the memory-connector
+  Stop hook made the model emit a second schema-valid result that replaced the
+  real one (daily-report runs 83977, 83997). The never-used per-task queue shape
+  and its sweep are replaced.
+
 - 2026-09-24: A scheduled Agent task's runtime route is now its first choice,
   not its only one. It starts there and, on failure, takes the same unified
   fallback as every other Agent turn: capacity retries on that route, then a

@@ -21,7 +21,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **结构化消息发现**：按会话来源、明确 @ 和稳定平台对象发现 trigger；业务类型和处理方式由 Agent 动态读取 Skill 判断，不使用关键词 router。
 - **本地任务队列**：使用 SQLite 保存 `reply_tasks`、`reply_attempts`、`seen_messages`、`sent_replies`，避免重复处理和重复发送。
 - **Consumer / Audit Agent 执行**：Consumer A 是管理者的 read-oriented representative，用原生 `codex exec` 读取材料、判断业务并提出精确候选；按角色协议不得主动执行外部写操作。Audit B 独立审阅，并且是 service 生命周期中唯一获授权发布 accepted action、执行和读回外部动作的 Agent。
-- **后台 Codex 运行环境**：Consumer/Audit 沿用当前用户配置的 provider、登录态、MCP、plugins、hooks 和 skills；角色边界由 Agent 指令与结果协议约束，外部操作只通过服务注入的受控 `agent_cli` 执行。服务不复制或改写用户凭证和 MCP 配置。
+- **后台 Codex 运行环境**：Consumer/Audit 沿用当前用户配置的 provider、登录态、MCP、plugins 和 skills（hooks 除外，服务调用固定 `--disable hooks`）；角色边界由 Agent 指令与结果协议约束，外部操作只通过服务注入的受控 `agent_cli` 执行。服务不复制或改写用户凭证和 MCP 配置。
 - **CEO 画像数据准备**：从本地工作文档、AI 听记、历史发送样例和可读钉钉知识库中提取证据，蒸馏生成 `data/work-profile/work_profile.md`；运行时只通过 `work_profile_instruction()` 消费这个结果，让 agent 学习管理者的判断顺序、追问方式、表达风格和硬边界。
 - **Skill-first 材料处理**：服务只传递材料引用、原始 ID、链接和精确读取命令；A 动态读取业务 Skill 和操作 Skill，自行决定展开哪些材料，B 按 verified Skill receipt 重读相同 Skill 并在写入前核对实时状态。
 - **安全和质量检查**：服务校验严格 A/B 结构化 result、队列 generation 和精确 revision 去重；B 的外部动作必须有实时读回。DingTalk 和 Lark 使用显式通道 gate；Codex 直接沿用本地 App/CLI 登录状态，认证失败立即落为可见失败。写入结果未知时只在原 B session 中核对，不能盲目重放。
@@ -550,7 +550,7 @@ Task Agent 创建 project 时必须提供非空标题。更新采用受保护的
 `repair-task-projects-plan` 不修改数据库。它只恢复当前为空且能由历史 task-agent 决策或指定历史快照追溯的字段，并只把“来源文件比入库时间早至少 14 天、所有业务更新均为 local_file、且没有 TODO/follow-up”的项目列为归档候选。`repair-task-projects-apply` 使用 manifest 中的数据库指纹与 expected old value 防止错库或并发覆盖，在同一事务中写入字段、归档状态和 `repair_task_projects` 审计 update；重复应用不会重复修改或重复写审计记录。生产执行前使用 SQLite 在线备份 API 创建并验证备份，不要在服务运行时直接复制 WAL 数据库文件。
 
 CEO reply agent 使用原生 `codex exec`，沿用启动服务的安装用户现有 `~/.codex` 配置、MCP、
-plugins、hooks、Skills 和认证状态。服务不会把 MCP transport、OAuth header、bearer token 或
+plugins、Skills 和认证状态；hooks 不沿用（`--disable hooks`），以免插件的收尾钩子在一轮里生成第二份结果。服务不会把 MCP transport、OAuth header、bearer token 或
 其他凭证复制到仓库、`.env` 或第二份 service-owned 配置中。A/B 运行时使用不同角色指令和结果
 协议，并可叠加 service 自有的 `agent_cli`；这不会替换安装用户的 Codex 配置，也不构成一套覆盖
 所有继承 MCP 的技术权限隔离。

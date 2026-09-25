@@ -19,6 +19,7 @@ from app.agent_contracts import (
     ConsumerProposal,
     DecisionBasis,
     DecisionOption,
+    DurableMemory,
     RiskLevel,
 )
 from app.agent_reported_error import agent_error_payload
@@ -52,7 +53,12 @@ class _WireBase(BaseModel):
         )
 
 
-class _ConsumerProposalWire(_WireBase):
+class _ConsumerWireBase(_WireBase):
+    # Required so every turn has to consider it; an empty list is an answer.
+    durable_memories: list[DurableMemory]
+
+
+class _ConsumerProposalWire(_ConsumerWireBase):
     outcome: Literal["proposal"]
     proposal: ConsumerProposal
     # Empty, or an independent question for Derek that the proposed action
@@ -64,7 +70,7 @@ class _ConsumerProposalWire(_WireBase):
     decision_basis: DecisionBasis | None = None
 
 
-class _ConsumerNeedsHumanWire(_WireBase):
+class _ConsumerNeedsHumanWire(_ConsumerWireBase):
     outcome: Literal["needs_human"]
     proposal: None
     decision_options: list[DecisionOption] = Field(
@@ -77,7 +83,7 @@ class _ConsumerNeedsHumanWire(_WireBase):
     authorization_plan: AuthorizationPlan | None = None
 
 
-class _ConsumerNoActionWire(_WireBase):
+class _ConsumerNoActionWire(_ConsumerWireBase):
     outcome: Literal["no_action"]
     proposal: None
     decision_options: list[DecisionOption] = Field(
@@ -85,7 +91,7 @@ class _ConsumerNoActionWire(_WireBase):
     )
 
 
-class _ConsumerFailedWire(_WireBase):
+class _ConsumerFailedWire(_ConsumerWireBase):
     outcome: Literal["failed"]
     proposal: None
     decision_options: list[DecisionOption] = Field(
@@ -126,6 +132,7 @@ class ConsumerAgentWireResult(RootModel[ConsumerWirePayload]):
                 "needs_human_reason": getattr(payload, "needs_human_reason", None),
                 "decision_basis": getattr(payload, "decision_basis", None),
                 "authorization_plan": getattr(payload, "authorization_plan", None),
+                "durable_memories": tuple(payload.durable_memories),
             }
         )
 

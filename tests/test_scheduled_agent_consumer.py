@@ -137,6 +137,7 @@ def commands(produce_once=lambda: "produce-once queued=0"):
         "scan-oa-approvals": lambda: "scan-oa-approvals queued=0",
         "scan-meeting-todos-once": lambda: "scan-meeting-todos-once queued=0",
         "process-follow-ups": lambda: "process-follow-ups sent=0",
+        "write-task-memories": lambda: "write-task-memories claimed=0",
         "request-minutes-access": lambda: "request-minutes-access requested=0",
         "sync-minutes-once": lambda: "sync-minutes-once queued=0",
         "weekly-okr-report": lambda: "weekly-okr-report status=sent",
@@ -600,7 +601,8 @@ def test_execution_uses_persisted_preflight_context_after_current_options_change
                 update={"operation_id": "persisted-context"})})
             store.complete_agent_run(claimed.id, result.model_dump(mode="json"), owner="fake")
             return SimpleNamespace(status="executed", final_run_id=claimed.id,
-                summary="done", error=AgentError(code="", retryable=False), audit_result=result)
+                summary="done", error=AgentError(code="", retryable=False), audit_result=result,
+                consumer_result=None)
 
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
@@ -680,7 +682,7 @@ def test_provider_failure_only_fails_execution_fact(tmp_path):
     store.fail_agent_run(claimed.id, error.model_dump(mode="json"), owner="fake")
     result = SimpleNamespace(
         status="failed_terminal", final_run_id=claimed.id, summary="provider failed",
-        error=error, audit_result=None,
+        error=error, audit_result=None, consumer_result=None,
     )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
@@ -723,7 +725,7 @@ def test_retry_reclaims_same_execution_source(tmp_path):
             if calls == 1:
                 return SimpleNamespace(status="failed_retryable", final_run_id=0,
                     summary="retry", error=AgentError(code="temporary", retryable=True),
-                    audit_result=None)
+                    audit_result=None, consumer_result=None)
             run_claim = store.claim_agent_run(
                 task.id, task.execution_generation, role=AgentRole.AUDIT,
                 proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
@@ -733,7 +735,8 @@ def test_retry_reclaims_same_execution_source(tmp_path):
                 audit("executed", 0).external_result.model_copy(update={"operation_id": "stable-operation"})})
             store.complete_agent_run(run_claim.id, result.model_dump(mode="json"), owner="fake")
             return SimpleNamespace(status="executed", final_run_id=run_claim.id,
-                summary="done", error=AgentError(code="", retryable=False), audit_result=result)
+                summary="done", error=AgentError(code="", retryable=False), audit_result=result,
+                consumer_result=None)
     consumer = ScheduledAgentConsumer(
         store=store, option_service=options,
         orchestrator_factory=lambda _built: Orchestrator(), now=lambda: NOW,

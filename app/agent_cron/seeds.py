@@ -33,6 +33,8 @@ MEETING_TODO_MIGRATION_KEY = "work-source-scan-daily-v1"
 MEETING_TODO_SERVICE_COMMAND = "scan-meeting-todos-once"
 FOLLOW_UP_DELIVERY_MIGRATION_KEY = "follow-up-delivery-v1"
 FOLLOW_UP_DELIVERY_SERVICE_COMMAND = "process-follow-ups"
+TASK_MEMORY_WRITE_MIGRATION_KEY = "task-memory-write-v1"
+TASK_MEMORY_WRITE_SERVICE_COMMAND = "write-task-memories"
 EMAIL_MESSAGE_MIGRATION_KEY = "email-message-check-v1"
 EMAIL_MESSAGE_SERVICE_COMMAND = "email-message-check-once"
 
@@ -46,6 +48,12 @@ class ScheduledTaskDefaultCopy:
 
 
 SCHEDULED_TASK_DEFAULT_COPY = {
+    TASK_MEMORY_WRITE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="写入任务长期记忆",
+        description="把已结束任务的执行结果里指明的长期信息写入 Memory。Derek 2026-09-24：由执行 Agent 给出、系统写入、不再审核；失败按退避重试，重试上限后进 Attention。",
+        old_name="",
+        old_description="",
+    ),
     FOLLOW_UP_DELIVERY_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="投递到期的跟进事项",
         description="把已到期的跟进事项按既有投递规则发出；只投递已生成的内容，不产生新的判断。Derek 2026-09-18 要求它作为定时任务可见可开关，而不是隐藏的常驻循环。",
@@ -325,6 +333,9 @@ def seed_scheduled_tasks(
         working_directory=working_directory,
         now=now,
     )
+    task_memory_write = _seed_task_memory_write_task(
+        store=store, options=options, working_directory=working_directory, now=now
+    )
     weekly_report = _seed_weekly_report_task(
         store=store, options=options, working_directory=working_directory, now=now
     )
@@ -357,6 +368,7 @@ def seed_scheduled_tasks(
             minutes_access,
             minutes,
             follow_up_delivery,
+            task_memory_write,
         )
     )
 
@@ -752,6 +764,35 @@ def _seed_follow_up_delivery_task(
         name=_default_copy(FOLLOW_UP_DELIVERY_MIGRATION_KEY).name,
         description=_default_copy(FOLLOW_UP_DELIVERY_MIGRATION_KEY).description,
         command=FOLLOW_UP_DELIVERY_SERVICE_COMMAND,
+        cron_expression="0 */5 * * * *",
+        timezone_name="Asia/Shanghai",
+        enabled=False,
+        now=now,
+    )
+
+
+def _seed_task_memory_write_task(
+    *,
+    store: AutoReplyStore,
+    options: ScheduledTaskOptionService,
+    working_directory: Path,
+    now: datetime | None,
+) -> ScheduledTask:
+    """Seed writing queued task memories as a scheduled service command.
+
+    Each write carries arguments fixed when the task finished, so there is no
+    judgement left for an Agent; like follow-up delivery it is a visible,
+    switchable task rather than a hidden loop.
+    """
+    del options, working_directory
+    existing = _existing_task(store, TASK_MEMORY_WRITE_MIGRATION_KEY, now=now)
+    if existing is not None:
+        return existing
+    return store.create_scheduled_task(
+        migration_key=TASK_MEMORY_WRITE_MIGRATION_KEY,
+        name=_default_copy(TASK_MEMORY_WRITE_MIGRATION_KEY).name,
+        description=_default_copy(TASK_MEMORY_WRITE_MIGRATION_KEY).description,
+        command=TASK_MEMORY_WRITE_SERVICE_COMMAND,
         cron_expression="0 */5 * * * *",
         timezone_name="Asia/Shanghai",
         enabled=False,

@@ -731,6 +731,28 @@ provider 返回 `confirmation_required` 同样属于运行时失败边界：外�
 服务启动时幂等修复这种 current projection，同时清空服务生成的选项。Quality gate/Attention
 只统计修复后的 current latest projection；reviewed、historical、pending recovery 排除。
 
+### 任务长期记忆
+
+Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写入 Memory、不经审核。
+
+- A 的结果协议（`ConsumerAgentWireResult`，四种 outcome 都一样）必填 `durable_memories`，可为空列表。
+  每条是 `title`、`content`、`source_time`（信息在来源里产生的时间，ISO-8601）、`source_refs`
+  （消息 id、文档链接、审批单号）和可选 `subject`（Person/Project/Customer/Organization + 名称）。
+  写什么、不写什么只由字段说明约束（`app/agent_contracts.py` 的 `DurableMemory`）。
+  旧结果读回时视为空列表。
+- 任务在 `finalize_orchestrated_reply_task` 里进入 `done` 的同一事务中，服务把最后一版 Consumer
+  结果的这个字段写进 `task_memory_write_events`：每个任务执行代一行（键为 `reply_task_id +
+  execution_generation`），`pending` 带待写条目；没有条目记 `skipped / no_durable_memories`，
+  没有 Consumer 结果记 `skipped / no_consumer_result`。所以每个经编排结束的任务都有一个记忆结论。
+- 服务命令定时任务「写入任务长期记忆」（`write-task-memories`，每 5 分钟，`app/task_memory_write.py`）
+  领取到期行，用服务自己的 memory-connector 客户端逐条调用 `memory_write`（与会议结论同一客户端）。
+  正文与时间来自 Agent；`thread_id`（会话标识）、`source_metadata`（渠道、会话、触发消息、任务 id，
+  外加 Agent 指认的 `source_refs`）和 `provenance_metadata`（执行者、Consumer run、执行代、线路、
+  模型、用途 `task_durable_memory`）由服务从记录里填。每写成一条就记下它的 id，重试只写剩下的；
+  连接器失败按退避重试（上限 20 次），之后记 `failed` 并进 Attention（`task_memory_write_failed`）。
+- 这取代了让 Agent 自己调用 memory 工具：那条路在 2026-07-26 之后衰减到一条不写；也取代了
+  memory-connector 插件的收尾钩子（服务的 `codex exec` 已固定 `--disable hooks`）。
+
 ### Audit Agent B
 
 B 不是 Derek 的第二个写作分身，而是独立审计与执行者。B 会：
@@ -793,8 +815,11 @@ transport，还用 `disabled_servers` 列出后台 Agent 不得使用的个人�
 整表 `enabled = false` 覆盖（Codex 不接受单字段覆盖，占位 transport 不会被启动）。Settings → MCP
 读取 `codex mcp list --json` 展示全局服务器与清单服务器，保存即写回清单，从下一个 Agent turn 生效。
 
-所有 Agent 直接继承安装用户的 `~/.codex/config.toml`、已安装 MCP、plugin、hook 和 skills。
-服务不复制 OAuth header、token 或 MCP transport，也不维护第二套 MCP 清单。这样同一套已登录
+所有 Agent 直接继承安装用户的 `~/.codex/config.toml`、已安装 MCP、plugin 和 skills；hooks 例外，
+`codex exec` 固定带 `--disable hooks`（Derek 2026-09-24）。原因：插件的 Stop hook（如 memory-connector
+的「结束前检查要不要写记忆」）会在一轮里让 Agent 再给出一份同样合格的结构化结果，服务取到的是后一份，
+真正的结果被覆盖（日报运行 83977、83997）。长期记忆改由执行 Agent 在结果的 `durable_memories` 里给出、
+系统写入，见「任务长期记忆」一节。服务不复制 OAuth header、token 或 MCP transport，也不维护第二套 MCP 清单。这样同一套已登录
 的 Memory、Xiaoqing、Exa、Lark 等能力既可在 Codex 桌面端使用，也可在 CEO Agent 任务中使用。
 
 Consumer A 和 Audit B 没有两阶段 MCP permission profile，也没有 service-owned technical MCP

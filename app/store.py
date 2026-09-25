@@ -222,7 +222,39 @@ SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-09-24.2"
+# One row per finished task execution: the durable memories its Consumer
+# result named, and which of them are already in Memory. Built in the
+# initialization migration so the table can be rebuilt from its earlier,
+# never-written shape (one row per task, a single memory_id).
+TASK_MEMORY_WRITE_EVENTS_DDL = """
+create table if not exists task_memory_write_events (
+    id integer primary key autoincrement,
+    reply_task_id integer not null,
+    execution_generation text not null,
+    consumer_run_id integer,
+    memories_json text not null default '[]',
+    written_memory_ids_json text not null default '[]',
+    status text not null default 'pending',
+    attempts integer not null default 0,
+    available_at text not null default '',
+    error text not null default '',
+    skip_reason text not null default '',
+    lease_owner text not null default '',
+    lease_expires_at text not null default '',
+    started_at text not null default '',
+    created_at text not null default current_timestamp,
+    updated_at text not null default current_timestamp,
+    unique(reply_task_id, execution_generation),
+    foreign key(reply_task_id) references reply_tasks(id)
+);
+create index if not exists idx_task_memory_write_events_due
+    on task_memory_write_events(status, available_at, id);
+create index if not exists idx_task_memory_write_events_lease
+    on task_memory_write_events(status, lease_expires_at, id);
+"""
+
 STORE_SCHEMA_REQUIRED_TABLES = (
+    "task_memory_write_events",
     "feedback_processing_batches",
     "feedback_processing_items",
     "feedback_processing_rounds",
@@ -332,6 +364,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
     "idx_meeting_memory_write_events_lease",
+    "idx_task_memory_write_events_lease",
     "idx_feedback_iteration_decisions_batch",
     "idx_feedback_iteration_decision_items_feedback_round",
     "idx_business_task_signals_source",
@@ -542,6 +575,14 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "lease_owner",
         "lease_expires_at",
         "started_at",
+    ),
+    "task_memory_write_events": (
+        "execution_generation",
+        "consumer_run_id",
+        "memories_json",
+        "written_memory_ids_json",
+        "lease_owner",
+        "lease_expires_at",
     ),
     "workbench_turns": (
         "lease_owner",
@@ -1137,6 +1178,27 @@ class MeetingMemoryWriteEvent(BaseModel):
     available_at: str
     error: str
     memory_id: str
+    lease_owner: str = ""
+    lease_expires_at: str = ""
+    started_at: str = ""
+    created_at: str
+    updated_at: str
+
+
+class TaskMemoryWriteEvent(BaseModel):
+    """The durable memories one finished task execution named, and their writes."""
+
+    id: int
+    reply_task_id: int
+    execution_generation: str
+    consumer_run_id: int | None
+    memories_json: str
+    written_memory_ids_json: str
+    status: str
+    attempts: int
+    available_at: str
+    error: str
+    skip_reason: str
     lease_owner: str = ""
     lease_expires_at: str = ""
     started_at: str = ""
@@ -2956,27 +3018,6 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_meeting_memory_write_events_due
                     on meeting_memory_write_events(status, available_at, id);
-                create table if not exists task_memory_write_events (
-                    id integer primary key autoincrement,
-                    reply_task_id integer not null unique,
-                    execution_generation text not null,
-                    status text not null default 'pending',
-                    attempts integer not null default 0,
-                    available_at text not null default '',
-                    error text not null default '',
-                    memory_id text not null default '',
-                    skip_reason text not null default '',
-                    lease_owner text not null default '',
-                    lease_expires_at text not null default '',
-                    started_at text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    foreign key(reply_task_id) references reply_tasks(id)
-                );
-                create index if not exists idx_task_memory_write_events_due
-                    on task_memory_write_events(status, available_at, id);
-                create index if not exists idx_task_memory_write_events_lease
-                    on task_memory_write_events(status, lease_expires_at, id);
                 create table if not exists reply_tasks (
                     id integer primary key autoincrement,
                     channel text not null default 'dingtalk',
@@ -4740,6 +4781,24 @@ class AutoReplyStore:
                 "create index if not exists idx_meeting_memory_write_events_lease "
                 "on meeting_memory_write_events(status, lease_expires_at, id)"
             )
+            task_memory_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(task_memory_write_events)"
+                ).fetchall()
+            }
+            if task_memory_columns and "memories_json" not in task_memory_columns:
+                # The first shape was never written to (no drain existed), so
+                # it is rebuilt rather than migrated; a row in it means that
+                # assumption is wrong and must not be dropped silently.
+                if db.execute("select 1 from task_memory_write_events limit 1").fetchone():
+                    raise RuntimeError(
+                        "task_memory_write_events has rows in its retired shape"
+                    )
+                db.execute("drop table task_memory_write_events")
+            for statement in TASK_MEMORY_WRITE_EVENTS_DDL.split(";"):
+                if statement.strip():
+                    db.execute(statement)
             db.execute(
                 "update meeting_memory_write_events "
                 "set execution_generation='migrated-' || id "
@@ -16782,68 +16841,162 @@ class AutoReplyStore:
     #: Task outcomes worth considering for Memory. A task that never reached a
     #: conclusion has nothing to remember; the other three all do, including a
     #: skip (why we decided not to act is the part that is forgotten first).
-    TASK_MEMORY_TERMINAL_STATES = ("done", "skipped", "needs_human")
+    def _enqueue_task_memory_write_in_connection(
+        self,
+        db: sqlite3.Connection,
+        *,
+        task_id: int,
+        execution_generation: str,
+        durable_memories_json: str | None,
+    ) -> None:
+        """Queue what a finished execution asked to remember, in its own transaction.
 
-    def enqueue_finished_task_memory_write_events(self) -> int:
-        """Queue every finished task that has not been considered for Memory.
-
-        Writing used to depend on the turn choosing to call the Memory tool,
-        and it decayed to nothing: the last agent-written memory is dated
-        2026-07-26, and over the fourteen days to 2026-09-19 no turn called the
-        tool at all, while the meeting pipeline -- which queues its work
-        instead of asking -- kept writing. Derek, 2026-09-19: writing to Memory
-        is a check the system performs when a task ends, not something an agent
-        may skip silently.
-
-        The anti-join runs inside an immediate write transaction so repeated
-        idle sweeps do not execute an ignored insert, which would still advance
-        SQLite's AUTOINCREMENT sequence.
+        Writing to Memory used to depend on the turn choosing to call the tool,
+        and it decayed to nothing (last agent-written memory 2026-07-26). Derek
+        2026-09-19: it is a check the system performs when a task ends; and
+        2026-09-24: the Consumer names what to remember, the system writes it,
+        nothing reviews it. Every finished execution gets a row, including one
+        with nothing to write, so "was this considered" always has an answer.
+        ``durable_memories_json`` is None when the execution produced no Consumer
+        result at all.
         """
-        placeholders = ", ".join("?" for _ in self.TASK_MEMORY_TERMINAL_STATES)
+        consumer_run = db.execute(
+            """
+            select id from agent_runs
+            where reply_task_id=? and execution_generation=?
+              and role='consumer' and status='completed'
+            order by id desc limit 1
+            """,
+            (task_id, execution_generation),
+        ).fetchone()
+        memories = json.loads(durable_memories_json) if durable_memories_json else []
+        if memories:
+            status, skip_reason = "pending", ""
+        elif durable_memories_json is None:
+            status, skip_reason = "skipped", "no_consumer_result"
+        else:
+            status, skip_reason = "skipped", "no_durable_memories"
+        db.execute(
+            """
+            insert into task_memory_write_events (
+                reply_task_id, execution_generation, consumer_run_id,
+                memories_json, status, skip_reason
+            ) values (?, ?, ?, ?, ?, ?)
+            on conflict(reply_task_id, execution_generation) do nothing
+            """,
+            (
+                task_id,
+                execution_generation,
+                consumer_run["id"] if consumer_run is not None else None,
+                json.dumps(memories, ensure_ascii=False),
+                status,
+                skip_reason,
+            ),
+        )
+
+    def claim_due_task_memory_write_events(
+        self, *, now: datetime, limit: int, owner: str, lease_seconds: int
+    ) -> list[TaskMemoryWriteEvent]:
+        """Claim due writes, reclaiming only processing rows whose lease expired."""
+        if limit <= 0:
+            return []
+        if not owner.strip():
+            raise ValueError("task Memory lease owner is required")
+        claimed_at = ensure_utc_datetime(now, field="task Memory claim time")
+        lease_expires_at = (claimed_at + timedelta(seconds=lease_seconds)).isoformat()
+        instant = claimed_at.isoformat()
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                f"""
-                insert into task_memory_write_events (
-                    reply_task_id, execution_generation
+            rows = db.execute(
+                """
+                update task_memory_write_events
+                set status='processing', lease_owner=?, lease_expires_at=?,
+                    started_at=?, updated_at=current_timestamp
+                where id in (
+                    select id from task_memory_write_events
+                    where (
+                        status='pending'
+                        and (available_at='' or datetime(available_at)<=datetime(?))
+                    ) or (
+                        status='processing'
+                        and datetime(lease_expires_at)<=datetime(?)
+                    )
+                    order by id
+                    limit ?
                 )
-                select tasks.id, lower(hex(randomblob(16)))
-                from reply_tasks as tasks
-                where tasks.status in ({placeholders})
-                  and not exists (
-                      select 1
-                      from task_memory_write_events as events
-                      where events.reply_task_id=tasks.id
-                  )
+                returning *
                 """,
-                self.TASK_MEMORY_TERMINAL_STATES,
+                (owner, lease_expires_at, instant, instant, instant, limit),
+            ).fetchall()
+        return [TaskMemoryWriteEvent.model_validate(dict(row)) for row in rows]
+
+    def record_task_memory_written_ids(
+        self, event_id: int, *, owner: str, written_memory_ids: list[str]
+    ) -> bool:
+        """Keep each written memory's id as it lands, so a retry skips it."""
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update task_memory_write_events
+                set written_memory_ids_json=?, updated_at=current_timestamp
+                where id=? and status='processing' and lease_owner=?
+                """,
+                (json.dumps(written_memory_ids), event_id, owner),
             )
-        return cursor.rowcount
+        return cursor.rowcount == 1
 
-    def count_finished_tasks_without_memory_decision(
-        self, *, finished_before: str
-    ) -> int:
-        """Finished tasks that still have no Memory decision recorded.
+    def complete_task_memory_write_event(self, event_id: int, *, owner: str) -> bool:
+        return self._settle_task_memory_write_event(
+            event_id, owner=owner, status="written", error="", available_at=""
+        )
 
-        This is the check itself: a task is not finished with until the system
-        has either written what it learned or said in writing why there was
-        nothing to write.
-        """
-        placeholders = ", ".join("?" for _ in self.TASK_MEMORY_TERMINAL_STATES)
+    def retry_task_memory_write_event(
+        self, event_id: int, *, owner: str, error: str, available_at: str
+    ) -> bool:
+        return self._settle_task_memory_write_event(
+            event_id, owner=owner, status="pending", error=error,
+            available_at=available_at,
+        )
+
+    def fail_task_memory_write_event(
+        self, event_id: int, *, owner: str, error: str
+    ) -> bool:
+        return self._settle_task_memory_write_event(
+            event_id, owner=owner, status="failed", error=error, available_at=""
+        )
+
+    def _settle_task_memory_write_event(
+        self, event_id: int, *, owner: str, status: str, error: str, available_at: str
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update task_memory_write_events
+                set status=?, attempts=attempts+1, available_at=?, error=?,
+                    lease_owner='', lease_expires_at='', updated_at=current_timestamp
+                where id=? and status='processing' and lease_owner=?
+                """,
+                (status, available_at, error[:500], event_id, owner),
+            )
+        return cursor.rowcount == 1
+
+    def list_failed_task_memory_write_events(self) -> list[TaskMemoryWriteEvent]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from task_memory_write_events where status='failed' order by id"
+            ).fetchall()
+        return [TaskMemoryWriteEvent.model_validate(dict(row)) for row in rows]
+
+    def latest_runtime_route_for_agent_run(self, agent_run_id: int) -> tuple[str, str]:
+        """The route and model of an Agent run's last runtime attempt."""
         with self._connect() as db:
             row = db.execute(
-                f"""
-                select count(*) from reply_tasks as tasks
-                where tasks.status in ({placeholders})
-                  and datetime(tasks.updated_at) < datetime(?)
-                  and not exists (
-                      select 1 from task_memory_write_events as events
-                      where events.reply_task_id=tasks.id
-                        and events.status in ('written', 'skipped')
-                  )
+                """
+                select route_name, model from agent_runtime_attempts
+                where agent_run_id=? order by id desc limit 1
                 """,
-                (*self.TASK_MEMORY_TERMINAL_STATES, finished_before),
+                (agent_run_id,),
             ).fetchone()
-        return int(row[0])
+        return (row["route_name"], row["model"]) if row is not None else ("", "")
 
     def enqueue_sent_meeting_memory_write_events(self) -> int:
         """Queue every delivered conclusion without conflict-writing old rows.
@@ -23251,8 +23404,14 @@ class AutoReplyStore:
         oa_action_result_json: str = "",
         sent_reply_text: str = "",
         sent_reply_result_json: str = "",
+        durable_memories_json: str | None = None,
     ) -> int:
-        """Persist one orchestration result and its task transition atomically."""
+        """Persist one orchestration result and its task transition atomically.
+
+        A task that ends ``done`` also queues the durable memories its final
+        Consumer result named (``durable_memories_json``; None when there was no
+        Consumer result) in the same transaction.
+        """
         if task_status not in {"done", "failed", "pending", "unchanged"}:
             raise ValueError("invalid reply task terminal status")
         if not expected_execution_generation.strip():
@@ -23451,6 +23610,13 @@ class AutoReplyStore:
                 )
                 if cursor.rowcount != 1:
                     raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            if task_status == "done":
+                self._enqueue_task_memory_write_in_connection(
+                    db,
+                    task_id=task_id,
+                    execution_generation=expected_execution_generation,
+                    durable_memories_json=durable_memories_json,
+                )
             if sent_reply_text:
                 db.execute(
                     """

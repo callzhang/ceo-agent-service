@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
@@ -332,6 +333,69 @@ class AuthorizationPlan(BaseModel):
         return self
 
 
+class DurableMemorySubject(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    type: Literal["Person", "Project", "Customer", "Organization"]
+    name: str = Field(min_length=1)
+
+
+class DurableMemory(BaseModel):
+    """One piece of long-lived knowledge the turn confirmed.
+
+    The service writes each one to Memory when the task ends; nothing reviews
+    them first (Derek 2026-09-24). The descriptions below are the whole
+    instruction the Agent gets about what belongs here.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        json_schema_extra={
+            "description": (
+                "Only information this turn confirmed that should outlive it: "
+                "a person's preference, a decision that was made, a reusable rule "
+                "or convention, a stable business fact, or the explicit next step "
+                "of unfinished work. Never temporary tasks, logs, code, one-off "
+                "errors, unconfirmed guesses, sensitive original text, secrets or "
+                "tokens, unauthorized document content, or anything already in "
+                "Memory. Name people by name, never 'the user'."
+            )
+        },
+    )
+
+    title: str = Field(min_length=1, description="One-line title.")
+    content: str = Field(
+        min_length=1,
+        description="One to three sentences of plain language about one thing.",
+    )
+    source_time: str = Field(
+        min_length=1,
+        description=(
+            "ISO-8601 time the information arose in its source (the message, "
+            "meeting or document), not the time of this turn."
+        ),
+    )
+    source_refs: tuple[str, ...] = Field(
+        min_length=1,
+        description="Where it came from: message ids, document links, approval ids.",
+    )
+    subject: DurableMemorySubject | None = Field(
+        default=None, description="The main person, project, customer or organization."
+    )
+
+    @field_validator("source_refs", mode="before")
+    @classmethod
+    def accept_json_source_refs(cls, value: object) -> object:
+        return tuple(value) if isinstance(value, list) else value
+
+    @field_validator("source_time")
+    @classmethod
+    def validate_source_time(cls, value: str) -> str:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return value
+
+
 class ConsumerAgentResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -351,6 +415,9 @@ class ConsumerAgentResult(BaseModel):
     needs_human_reason: str | None = None
     decision_basis: DecisionBasis | None = None
     authorization_plan: AuthorizationPlan | None = None
+    # Required on the wire the Agent answers in; results stored before the
+    # field existed read back as having none.
+    durable_memories: tuple[DurableMemory, ...] = ()
 
     @field_validator("outcome", mode="before")
     @classmethod
@@ -362,7 +429,7 @@ class ConsumerAgentResult(BaseModel):
     def accept_json_risk(cls, value: object) -> object:
         return RiskLevel(value) if isinstance(value, str) else value
 
-    @field_validator("decision_options", mode="before")
+    @field_validator("decision_options", "durable_memories", mode="before")
     @classmethod
     def accept_json_decision_options(cls, value: object) -> object:
         return tuple(value) if isinstance(value, list) else value

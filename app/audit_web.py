@@ -3410,6 +3410,41 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "error": str(row["error"] or ""),
                     }
                 )
+        if (
+            _sqlite_table_exists(db, "task_memory_write_events")
+            and _sqlite_table_exists(db, "reply_tasks")
+        ):
+            task_memory_sql = """
+                select events.id, events.status, events.reply_task_id,
+                       tasks.channel, tasks.conversation_title,
+                       events.updated_at, events.error
+                from task_memory_write_events as events
+                join reply_tasks as tasks on tasks.id=events.reply_task_id
+                where lower(events.status)='failed'
+                order by events.updated_at desc, events.id desc
+            """
+            task_memory_params: tuple[object, ...] = ()
+            if limit is not None:
+                task_memory_sql += " limit ?"
+                task_memory_params = (limit,)
+            for row in db.execute(task_memory_sql, task_memory_params).fetchall():
+                rows.append(
+                    {
+                        "category": "Service error",
+                        "id": f"task-memory-{row['id']}",
+                        "status": str(row["status"] or ""),
+                        "context": (
+                            f"Task Memory: {row['channel']} task {row['reply_task_id']}"
+                        ),
+                        "root_cause": "task_memory_write_failed",
+                        "summary": (
+                            "Memory write for a finished task's durable memories: "
+                            f"{str(row['conversation_title'] or '')}"
+                        ),
+                        "updated_at": str(row["updated_at"] or ""),
+                        "error": str(row["error"] or ""),
+                    }
+                )
         if _sqlite_table_exists(db, "errors"):
             recovered_statuses = tuple(RECOVERED_REPLY_ATTEMPT_STATUSES)
             recovered_placeholders = ",".join("?" for _ in recovered_statuses)

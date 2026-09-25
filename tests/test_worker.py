@@ -2012,6 +2012,7 @@ def test_scheduled_service_trigger_persists_consumer_context_on_new_reply_task(
                 "sync-minutes-once",
                 "weekly-okr-report",
                 "process-follow-ups",
+                "write-task-memories",
             )
         }
     )

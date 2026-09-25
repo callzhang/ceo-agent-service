@@ -396,6 +396,7 @@ def _consumer_wire_payload(**overrides: object) -> dict[str, object]:
         "confidence": 1.0,
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
+        "durable_memories": [],
     }
     payload.update(overrides)
     if payload["outcome"] == "needs_human" and "risk" not in overrides:
@@ -806,6 +807,7 @@ def test_needs_human_requires_actionable_options_and_wire_preserves_them():
             "error_authorization_required": False,
             "needs_human_reason": "A high-risk rule decision needs an explicit human choice.",
             "decision_basis": _decision_basis(),
+            "durable_memories": [],
         }
     ).to_result()
 
@@ -1091,6 +1093,7 @@ def test_wire_result_accepts_null_error_code_as_no_error():
         "confidence": 0.9,
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
+        "durable_memories": [],
     }
     raw = json.dumps(
         {
@@ -1259,6 +1262,7 @@ def test_consumer_wire_result_preserves_nested_proposal_fields():
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,
+            "durable_memories": [],
         }
     ).to_result()
 

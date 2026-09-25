@@ -785,6 +785,9 @@ def _agent_result_event(result) -> dict[str, object]:
             "error_code": error.code,
             "error_retryable": error.retryable,
             "error_authorization_required": error.authorization_required,
+            "durable_memories": [
+                memory.model_dump(mode="json") for memory in result.durable_memories
+            ],
         }
     elif isinstance(result, AuditAgentResult):
         error = result.error

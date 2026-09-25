@@ -18,7 +18,7 @@ from app.external_retry import retry_delay_seconds
 from app.memory_connector_client import (
     MemoryConnectorError,
     MemoryConnectorNotAuthorized,
-    write_meeting_memory,
+    write_memory,
 )
 from app.store import AutoReplyStore, MeetingMemoryWriteEvent
 
@@ -316,7 +316,7 @@ def _process_event(
             # Resolved here, not bound as a default: a default captures the
             # function at import time, so a test stubbing this module's name
             # would be ignored and the write would reach the real connector.
-            writer = memory_writer or write_meeting_memory
+            writer = memory_writer or write_memory
             result = writer(
                 data=_required_payload_text(payload, "data"),
                 type=_payload_type(payload),

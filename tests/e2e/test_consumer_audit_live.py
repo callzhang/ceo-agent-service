@@ -186,6 +186,7 @@ def _consumer_result_record(proposal: dict[str, object]) -> dict[str, object]:
         "error_code": "",
         "error_retryable": False,
         "error_authorization_required": False,
+        "durable_memories": [],
     }
     return {
         "type": "item.completed",

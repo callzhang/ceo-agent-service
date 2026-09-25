@@ -356,6 +356,10 @@ class MemoryConnectorClient:
         source_description: str,
         thread_id: str = "",
         type: str = "text",
+        source_metadata: dict[str, Any] | None = None,
+        provenance_metadata: dict[str, Any] | None = None,
+        entity_type: str = "",
+        entity_attributes: dict[str, Any] | None = None,
     ) -> MemoryWriteReceipt:
         """Persist one payload and return what the connector recorded."""
         self._connect()
@@ -367,6 +371,14 @@ class MemoryConnectorClient:
         }
         if thread_id:
             arguments["thread_id"] = thread_id
+        if source_metadata is not None:
+            arguments["source_metadata"] = source_metadata
+        if provenance_metadata is not None:
+            arguments["provenance_metadata"] = provenance_metadata
+        if entity_type:
+            arguments["entity_type"] = entity_type
+        if entity_attributes is not None:
+            arguments["entity_attributes"] = entity_attributes
         result = self._rpc(
             "tools/call",
             {"name": "memory_write", "arguments": arguments},
@@ -435,15 +447,10 @@ def _receipt_from_result(result: Any) -> MemoryWriteReceipt:
 _SHARED_CLIENT: MemoryConnectorClient | None = None
 
 
-def write_meeting_memory(
-    *,
-    data: str,
-    type: str,
-    created_at: str,
-    source_description: str,
-    client: MemoryConnectorClient | None = None,
+def write_memory(
+    *, client: MemoryConnectorClient | None = None, **arguments: Any
 ) -> MemoryWriteReceipt:
-    """Persist one payload, reusing one authenticated client per process.
+    """Persist one memory_write call, reusing one authenticated client per process.
 
     The access token and MCP session are worth keeping across writes: a pass
     drains a queue, and re-authenticating per item would put the cost back that
@@ -452,21 +459,11 @@ def write_meeting_memory(
     global _SHARED_CLIENT
 
     if client is not None:
-        return client.write(
-            data=data,
-            type=type,
-            created_at=created_at,
-            source_description=source_description,
-        )
+        return client.write(**arguments)
     if _SHARED_CLIENT is None:
         _SHARED_CLIENT = MemoryConnectorClient()
     try:
-        return _SHARED_CLIENT.write(
-            data=data,
-            type=type,
-            created_at=created_at,
-            source_description=source_description,
-        )
+        return _SHARED_CLIENT.write(**arguments)
     except MemoryConnectorNotAuthorized:
         # A credential replaced since this client was built is a real change,
         # not a permanent refusal: rebuild once and let the next write decide.

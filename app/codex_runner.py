@@ -300,6 +300,14 @@ class CodexRunner:
             *sandbox_options,
             *(["--skip-git-repo-check"] if skip_git_repo_check else []),
             "--json",
+            # A service turn must end with exactly one typed answer. Plugin
+            # hooks in the shared ~/.codex can add a turn after it: the
+            # memory-connector Stop hook asks "anything to remember?", the
+            # model answers with a second schema-valid result, and that one
+            # won (daily-report runs 83977, 83997). Memory is written by the
+            # service from the Consumer's durable_memories instead.
+            "--disable",
+            "hooks",
             *(["--ignore-user-config"] if ignore_user_config else []),
             # Codex always injects its own Skill catalog and has no allow-list;
             # disabling the Skills this run does not need is the only lever, and
