@@ -2066,6 +2066,22 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "validation_error", "message": "回复范围保存失败", "details": {"reason": normalize_display_value(exc)}}, status_code=422)
         return command_result(item=result, message="回复范围已保存")
 
+    @app.post("/api/console/settings/agent-runtime/routes/{name}/rename")
+    async def console_agent_runtime_route_rename(name: str, request: Request):
+        from app.web_api.agent_runtime_settings import (
+            AgentRuntimeSettingsError,
+            rename_agent_runtime_route,
+        )
+
+        payload = await json_object(request)
+        try:
+            renamed = rename_agent_runtime_route(
+                store_factory(), name, str(payload.get("new_name") or "")
+            )
+        except AgentRuntimeSettingsError as exc:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=400)
+        return command_result(item=renamed, message="已改名，重启主服务后生效")
+
     @app.post("/api/console/settings/{section}")
     async def console_settings_command(section: str, request: Request):
         payload = await json_object(request)

@@ -291,3 +291,56 @@ def _composed_route_order(
             remaining.remove(name)
     # A route the caller enabled without placing it keeps its default position.
     return ",".join(ordered + remaining)
+
+
+def rename_agent_runtime_route(
+    store: object, old_name: str, new_name: str
+) -> dict[str, object]:
+    """Rename an added route and carry every reference to it.
+
+    Only added routes can be renamed; the three built-in routes keep their
+    names. The database references move first, in one transaction, and the
+    `.env` settings second. The database step is idempotent once committed,
+    so if the `.env` write fails the operator retries the same rename and it
+    completes; the reverse order could leave `.env` naming a route that the
+    database still refers to by its old name, and a retry would be refused
+    because the old name is no longer configured. The running service keeps
+    its loaded configuration, so the new name takes effect at the next
+    restart, like every other Agent Runtime setting.
+    """
+
+    old_name = old_name.strip()
+    new_name = new_name.strip()
+    persisted = app_config.read_env_file()
+    routes = _names(persisted.get("CEO_AGENT_RUNTIME_ROUTES", ""))
+    if old_name in SUPPORTED_RUNTIME_ROUTES:
+        raise AgentRuntimeSettingsError(f"内置线路 {old_name} 不能改名。")
+    if old_name not in routes:
+        raise AgentRuntimeSettingsError(f"线路 {old_name} 不在已配置的线路里。")
+    if not ROUTE_NAME_PATTERN.match(new_name):
+        raise AgentRuntimeSettingsError(
+            "名称只能用小写字母、数字和下划线，且以字母开头。"
+        )
+    if new_name in SUPPORTED_RUNTIME_ROUTES:
+        raise AgentRuntimeSettingsError(f"{new_name} 是内置线路的名字，不能使用。")
+    if new_name in routes:
+        raise AgentRuntimeSettingsError(f"线路 {new_name} 已经存在。")
+    moved = store.rename_runtime_route(old_name, new_name)
+    old_prefix = added_route_settings_prefix(old_name)
+    new_prefix = added_route_settings_prefix(new_name)
+    updates = {
+        "CEO_AGENT_RUNTIME_ROUTES": ",".join(
+            new_name if name == old_name else name for name in routes
+        ),
+    }
+    for suffix in ADDED_ROUTE_SETTING_SUFFIXES:
+        updates[f"{new_prefix}{suffix}"] = persisted.get(f"{old_prefix}{suffix}", "")
+    app_config.write_env_values(
+        updates,
+        remove=[
+            f"{old_prefix}{suffix}"
+            for suffix in ADDED_ROUTE_SETTING_SUFFIXES
+            if f"{old_prefix}{suffix}" in persisted
+        ],
+    )
+    return {"old_name": old_name, "new_name": new_name, "moved": moved}

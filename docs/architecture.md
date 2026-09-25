@@ -879,6 +879,21 @@ MODEL 缺省取 `CEO_CODEX_MODEL`）和 `CEO_RUNTIME_CLAUDE_API_*`（KIND=claude
 里。内置卡片删除时把名字记进 `CEO_AGENT_RUNTIME_HIDDEN_ROUTES` 并只清除该路由**独有**的凭据
 （共用的设置保留），可以从「新增 runtime」恢复；添加的线路关掉或删除都会把它移出列表，保存时
 清掉它名下的 `CEO_RUNTIME_<名字>_*`。
+
+**改名**只对添加的线路开放，由服务端完成（`POST /api/console/settings/agent-runtime/routes/{名字}/rename`，
+`{"new_name": ...}`；页面上改卡片名字即调用它）。新名字须合规、不能是三个内置名、不能与已配置的线路重名；
+内置线路不能改名。一次改名先在**一个数据库事务**里把按名字引用这条线路的地方全部改过去
+（`AutoReplyStore.rename_runtime_route`）：定时任务首选线路 `scheduled_tasks.runtime_id`（版本号 +1）、
+还可能被派发或重建的定时运行快照（`scheduled_task_runs` 中 `pending`/`dispatched` 的 `snapshot_json.runtime_id`；
+`skipped`/`failed` 已是终态不改）、会话续接 `conversation_runtime_sessions`、线路暂停 `runtime_route_pauses`、
+能力快照 `service_state` 的 `agent-runtime-capability:<名字>`（连同快照里的 `route_name`）；新名字下已有的
+残留行属于一条已不存在的线路，被覆盖。历史 `agent_runtime_attempts.route_name` 不改，它记的是当时用的名字。
+数据库提交之后再改 `.env`：线路顺序里换名、`CEO_RUNTIME_<旧名>_*` 搬到 `CEO_RUNTIME_<新名>_*` 并删除旧键
+（隐藏列表只记内置名，不涉及）。先数据库后 `.env` 的理由：数据库这一步提交后再跑一次什么也不动，
+`.env` 写失败时原样重试同一次改名即可补完；反过来先写 `.env`，数据库失败时 `.env` 已经没有旧名，
+重试会被「旧名不在已配置线路里」拒绝，引用就永久分裂了。运行中的服务不重读配置，新名字在下次
+重启后生效（与其他设置保存一样）；改名到重启之间，到点的定时任务会因为「首选线路未配置」被跳过并进
+Attention，所以改名后应尽快让心跳会话重启。
 保存只有一个入口：React 设置页提交到 `POST /api/console/settings/agent-runtime`，字段用 `.env`
 键名，由 `app/web_api/agent_runtime_settings.py` 校验并写入。旧的服务端渲染页
 （`/config?tab=agent-runtime` 与表单 `POST /config/agent-runtime`）已删除——React 设置页

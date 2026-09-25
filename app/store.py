@@ -11,7 +11,7 @@ from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from types import MappingProxyType
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -18557,6 +18557,106 @@ class AutoReplyStore:
                 "delete from runtime_route_pauses where route_name=?", (route_name,)
             )
             return cursor.rowcount == 1
+
+    def rename_runtime_route(self, old_name: str, new_name: str) -> dict[str, int]:
+        """Carry every persisted reference to a route over to its new name.
+
+        One write transaction moves what decides later work: scheduled tasks'
+        preferred route, the route named by every scheduled task run that can
+        still be dispatched or rebuilt (pending and dispatched; skipped and
+        failed runs are final), resumable conversation sessions, the route
+        pause and the capability snapshot. A row already stored under the new
+        name belongs to a route that no longer exists and is replaced.
+        Attempt history (``agent_runtime_attempts.route_name``) keeps the name
+        that was in use. Once committed, running it again moves nothing, so a
+        caller may retry after a later step failed.
+        """
+
+        old_name = self._require_runtime_attempt_text(old_name, field="route_name")
+        new_name = self._require_runtime_attempt_text(new_name, field="route_name")
+        if old_name == new_name:
+            raise ValueError("a route rename needs a different name")
+        now_value, now_text = _utc_store_time(None)
+        task_time = self._scheduled_task_time_text(now_value, field="rename time")
+        old_key = self._runtime_capability_state_key(old_name)
+        new_key = self._runtime_capability_state_key(new_name)
+        with self._immediate_write_transaction() as db:
+            tasks = db.execute(
+                """
+                update scheduled_tasks
+                   set runtime_id=?, version=version + 1, updated_at=?
+                 where runtime_id=?
+                """,
+                (new_name, task_time, old_name),
+            ).rowcount
+            runs = 0
+            for row in db.execute(
+                """
+                select id, snapshot_json from scheduled_task_runs
+                 where dispatch_status in ('pending', 'dispatched')
+                   and json_valid(snapshot_json)
+                   and json_extract(snapshot_json, '$.runtime_id')=?
+                """,
+                (old_name,),
+            ).fetchall():
+                snapshot = ScheduledTaskSnapshot.from_json(str(row["snapshot_json"]))
+                db.execute(
+                    "update scheduled_task_runs set snapshot_json=? where id=?",
+                    (
+                        dataclass_replace(snapshot, runtime_id=new_name).to_json(),
+                        int(row["id"]),
+                    ),
+                )
+                runs += 1
+            sessions = db.execute(
+                """
+                update or replace conversation_runtime_sessions
+                   set route_name=?
+                 where route_name=?
+                """,
+                (new_name, old_name),
+            ).rowcount
+            pauses = db.execute(
+                """
+                update or replace runtime_route_pauses
+                   set route_name=?, updated_at=?
+                 where route_name=?
+                """,
+                (new_name, now_text, old_name),
+            ).rowcount
+            capability = db.execute(
+                "select value from service_state where key=?", (old_key,)
+            ).fetchone()
+            snapshots = 0
+            if capability is not None:
+                payload = json.loads(str(capability["value"]))
+                payload["snapshot"] = RuntimeCapabilitySnapshot.model_validate(
+                    payload["snapshot"]
+                ).model_copy(update={"route_name": new_name}).model_dump(mode="json")
+                db.execute(
+                    """
+                    insert into service_state (key, value, updated_at)
+                    values (?, ?, current_timestamp)
+                    on conflict(key) do update set
+                        value=excluded.value,
+                        updated_at=current_timestamp
+                    """,
+                    (
+                        new_key,
+                        json.dumps(
+                            payload, ensure_ascii=False, sort_keys=True
+                        ),
+                    ),
+                )
+                db.execute("delete from service_state where key=?", (old_key,))
+                snapshots = 1
+        return {
+            "scheduled_tasks": tasks,
+            "scheduled_task_runs": runs,
+            "conversation_sessions": sessions,
+            "route_pauses": pauses,
+            "capability_snapshots": snapshots,
+        }
 
     def get_codex_session_contract_hash(self, conversation_id: str) -> str:
         with self._connect() as db:

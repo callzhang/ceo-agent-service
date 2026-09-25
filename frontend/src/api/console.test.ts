@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects } from "./console";
+import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, renameRuntimeRoute } from "./console";
 
 function statusEnvelope() {
   return {
@@ -59,6 +59,18 @@ describe("console API helpers", () => {
       const saved = await confirmEmailClassification(result.items[0].id, "notification", `email-feedback:${id}`, null);
       expect(calls[1]).toBe(`/api/console/email/classifications/${id}/feedback`);
       expect(saved.item.id).toBe(id);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+  it("asks the service to rename a runtime route", async () => {
+    const calls: Array<{ url: string; body: string }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), body: String(init?.body ?? "") });
+      return new Response(JSON.stringify({ ok: true, item: {}, message: "已改名", meta: { updated_at: "now" } }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      await renameRuntimeRoute("codex_api", "kksj");
+      expect(calls).toEqual([{ url: "/api/console/settings/agent-runtime/routes/codex_api/rename", body: JSON.stringify({ new_name: "kksj" }) }]);
     } finally { globalThis.fetch = originalFetch; }
   });
   it("normalizes arbitrary values before display", () => {

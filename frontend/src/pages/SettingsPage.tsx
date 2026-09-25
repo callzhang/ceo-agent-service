@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { createEmailAccount, displayValue, getSettings, getSkillDetail, getSkillFeatures, listAttention, listEmailAccounts, listWechat, listWechatTargets, saveSettings, saveSkill as saveSkillApi, saveWechatReplyScope, startConnectorLogin, testEmailAccount, toggleSkillFeature, updateEmailAccount, type EmailAccountItem, type EmailAccountPayload, type ProjectSkill, type SkillDetail, type SkillFeature, type WechatScopeTarget } from "../api/console";
+import { createEmailAccount, displayValue, getSettings, getSkillDetail, getSkillFeatures, listAttention, listEmailAccounts, listWechat, listWechatTargets, renameRuntimeRoute, saveSettings, saveSkill as saveSkillApi, saveWechatReplyScope, startConnectorLogin, testEmailAccount, toggleSkillFeature, updateEmailAccount, type EmailAccountItem, type EmailAccountPayload, type ProjectSkill, type SkillDetail, type SkillFeature, type WechatScopeTarget } from "../api/console";
 import { TokenEditor } from "../components/editor/TokenEditor";
 import { SecretField } from "../components/forms/SecretField";
 import { SearchField } from "../components/filters/SearchField";
@@ -783,22 +783,22 @@ function AddRuntimeForm({ onAdd, onCancel, taken, restorable, onRestore }: { onA
   </section>;
 }
 
-function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailable, readOnly, onToggle, onDelete, onRename, children }: { title: string; description: string; enabled: boolean; locked?: boolean; wide?: boolean; unavailable?: string; readOnly?: boolean; onToggle?: (next: boolean) => void; onDelete?: () => void; onRename?: (next: string) => void; children?: ReactNode }) {
+function RuntimeRouteCard({ title, description, enabled, locked, wide, unavailable, readOnly, onToggle, onDelete, onRename, children }: { title: string; description: string; enabled: boolean; locked?: boolean; wide?: boolean; unavailable?: string; readOnly?: boolean; onToggle?: (next: boolean) => void; onDelete?: () => void; onRename?: (next: string) => Promise<boolean>; children?: ReactNode }) {
   const blocked = Boolean(unavailable);
   // A rename lands when the field is left, not on every keystroke: renaming
   // per character would carry the settings through every partial name.
   const [nameDraft, setNameDraft] = useState(title);
   useEffect(() => { setNameDraft(title); }, [title]);
-  const commitName = () => {
+  const commitName = async () => {
     const next = nameDraft.trim();
     if (!next || next === title) { setNameDraft(title); return; }
-    onRename?.(next);
+    if (!(await onRename?.(next))) setNameDraft(title);
   };
   return <section className={`${wide ? "runtime-card runtime-card-wide" : "runtime-card"}${blocked ? " runtime-card-unavailable" : ""}`}>
     <div className="runtime-card-head">
       <div className="runtime-card-title">
         {onRename
-          ? <input className="runtime-card-name" aria-label={`${title} 名称`} value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} onBlur={commitName} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitName(); } }} />
+          ? <input className="runtime-card-name" aria-label={`${title} 名称`} value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} onBlur={() => void commitName()} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void commitName(); } }} />
           : <h3>{onDelete && <GripVertical className="runtime-card-grip" size={14} aria-hidden="true" />}{title}</h3>}
         <p>{description}</p>
       </div>
@@ -874,19 +874,32 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [dragged, setDragged] = useState("");
-  const renameRoute = (from: string, to: string) => {
+  const [renameError, setRenameError] = useState("");
+  // A rename is done by the service, which moves the route's settings and
+  // every reference to it (scheduled tasks, sessions, pauses) at once. The
+  // draft then follows the new name so unsaved edits stay with the route.
+  const renameRoute = async (from: string, to: string) => {
+    if (!/^[a-z][a-z0-9_]*$/.test(to)) { setRenameError("名称只能用小写字母、数字和下划线，且以字母开头"); return false; }
+    if (routes.includes(to) || Object.keys(RUNTIME_ROUTE_LABELS).includes(to)) { setRenameError("这个名称已经用过了"); return false; }
+    try {
+      await renameRuntimeRoute(from, to);
+    } catch (reason: unknown) {
+      setRenameError(reason instanceof Error && reason.message ? reason.message : "改名失败");
+      return false;
+    }
+    setRenameError("");
     const before = addedRoutePrefix(from);
     const after = addedRoutePrefix(to);
-    const carried: RecordValue = {};
+    const carried: RecordValue = { ...draft };
     for (const suffix of ["KIND", "BASE_URL", "MODEL", "API_KEY"]) {
       carried[`${after}${suffix}`] = raw(`${before}${suffix}`);
-      carried[`${before}${suffix}`] = "";
+      delete carried[`${before}${suffix}`];
     }
     setDraft({
-      ...draft,
       ...carried,
       CEO_AGENT_RUNTIME_ROUTES: routes.map((route) => (route === from ? to : route)).join(","),
     });
+    return true;
   };
   const builtInCard = (name: string) => {
     const common = {
@@ -963,6 +976,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
           <AddRuntimeForm onAdd={(route) => { addRoute(route); setAdding(false); }} onCancel={() => setAdding(false)} taken={routes} restorable={hidden} onRestore={(name) => { restoreBuiltIn(name); setAdding(false); }} />
         </li>}
       </ol>
+      {renameError && <p className="field-error" role="alert">{renameError}</p>}
       <div className="runtime-save-bar"><SaveBar state={saveState} error={saveError} /></div>
     </form>
   </SettingsCard>;

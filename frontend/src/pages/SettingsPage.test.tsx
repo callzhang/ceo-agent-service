@@ -29,8 +29,9 @@ const exportManagedSkillRevision = vi.hoisted(() => vi.fn());
 const startConnectorLogin = vi.hoisted(() => vi.fn());
 const getMcpSettings = vi.hoisted(() => vi.fn());
 const saveMcpSettings = vi.hoisted(() => vi.fn());
+const renameRuntimeRoute = vi.hoisted(() => vi.fn());
 
-vi.mock("../api/console", () => ({ getMcpSettings, saveMcpSettings, getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, listEmailAccounts, createEmailAccount, updateEmailAccount, testEmailAccount, getSkillFeatures, toggleSkillFeature, startConnectorLogin, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
+vi.mock("../api/console", () => ({ getMcpSettings, saveMcpSettings, getSettings, saveSettings, renameRuntimeRoute, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, listEmailAccounts, createEmailAccount, updateEmailAccount, testEmailAccount, getSkillFeatures, toggleSkillFeature, startConnectorLogin, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
 vi.mock("../api/skills", () => ({ listManagedSkills, createManagedSkill, listManagedSkillRevisions, createManagedSkillRevision, getCurrentRuntimeSkillConfig, createRuntimeSkillConfig, listRuntimeSkillLoadReceipts, getFeedbackIterationCapability, setFeedbackIterationCapability, exportManagedSkillRevision }));
 
 import { SettingsPage } from "./SettingsPage";
@@ -262,15 +263,46 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("小写字母");
   });
 
-  it("renames an added runtime, carrying its settings to the new name", async () => {
+  it("renames an added runtime on the service, which carries every reference", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce(runtimeDto({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,codex_api",
+      CEO_RUNTIME_CODEX_API_KIND: "codex_api",
+      CEO_RUNTIME_CODEX_API_BASE_URL: "https://api.kksj.org/v1",
+      CEO_RUNTIME_CODEX_API_MODEL: "MiniMax-M3",
+      CEO_RUNTIME_CODEX_API_API_KEY: "gateway-key",
+    }));
+    renameRuntimeRoute.mockResolvedValueOnce({ ok: true, message: "已改名，重启主服务后生效", meta: { updated_at: "2026-09-24T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    await enterEditMode(user);
+    const name = screen.getByLabelText("codex_api 名称");
+    await user.clear(name);
+    await user.type(name, "kksj");
+    await user.tab();
+
+    expect(renameRuntimeRoute).toHaveBeenCalledWith("codex_api", "kksj");
+    expect(await screen.findByLabelText("kksj 名称")).toHaveValue("kksj");
+    // The draft follows the service, so a later save keeps the new name.
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    const [, fields] = saveSettings.mock.calls[0];
+    expect(fields).toEqual(expect.objectContaining({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,kksj",
+      CEO_RUNTIME_KKSJ_MODEL: "MiniMax-M3",
+      CEO_RUNTIME_KKSJ_API_KEY: "gateway-key",
+    }));
+    expect(fields).not.toHaveProperty("CEO_RUNTIME_CODEX_API_MODEL");
+  });
+
+  it("keeps the old name when the service refuses a rename", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce(runtimeDto({
       CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,qwen_gpu4",
-      CEO_RUNTIME_QWEN_GPU4_KIND: "codex_api",
-      CEO_RUNTIME_QWEN_GPU4_BASE_URL: "http://100.93.145.69:8900/v1",
-      CEO_RUNTIME_QWEN_GPU4_MODEL: "qwen3.8-27b",
-      CEO_RUNTIME_QWEN_GPU4_API_KEY: "gateway-key",
+      CEO_RUNTIME_QWEN_GPU4_KIND: "codex_oauth",
+      CEO_RUNTIME_QWEN_GPU4_MODEL: "gpt-5.5",
     }));
+    renameRuntimeRoute.mockRejectedValueOnce(new Error("线路 qwen_local 已经存在。"));
     renderSettings("/settings?tab=agent-runtime");
 
     await enterEditMode(user);
@@ -279,14 +311,28 @@ describe("SettingsPage", () => {
     await user.type(name, "qwen_local");
     await user.tab();
 
-    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
-    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
-    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({
-      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,qwen_local",
-      CEO_RUNTIME_QWEN_LOCAL_MODEL: "qwen3.8-27b",
-      CEO_RUNTIME_QWEN_LOCAL_API_KEY: "gateway-key",
-      CEO_RUNTIME_QWEN_GPU4_MODEL: "",
-    }), {});
+    expect(await screen.findByRole("alert")).toHaveTextContent("已经存在");
+    expect(screen.getByLabelText("qwen_gpu4 名称")).toHaveValue("qwen_gpu4");
+  });
+
+  it("does not ask the service to rename to a built-in or malformed name", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce(runtimeDto({
+      CEO_AGENT_RUNTIME_ROUTES: "codex_oauth,qwen_gpu4",
+      CEO_RUNTIME_QWEN_GPU4_KIND: "codex_oauth",
+      CEO_RUNTIME_QWEN_GPU4_MODEL: "gpt-5.5",
+    }));
+    renderSettings("/settings?tab=agent-runtime");
+
+    await enterEditMode(user);
+    const name = screen.getByLabelText("qwen_gpu4 名称");
+    await user.clear(name);
+    await user.type(name, "friday_runtime");
+    await user.tab();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("已经用过");
+    expect(renameRuntimeRoute).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("qwen_gpu4 名称")).toHaveValue("qwen_gpu4");
   });
 
   it("picks the Claude login's settings from lists, and an API route types its own model", async () => {
