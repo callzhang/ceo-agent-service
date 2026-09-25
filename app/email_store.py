@@ -7117,11 +7117,11 @@ class EmailStore:
 
         for stable_identity in messages:
             related = classifications_by_identity.get(stable_identity, [])
-            if not related:
-                raise EmailPersistenceCorruption(
-                    f"orphan email message {stable_identity} has no classification"
-                )
-            if len(related) != 1:
+            # A message row is the mailbox cache and may be written before the
+            # classifier creates its durable decision.  Startup validation must
+            # not turn that recoverable scan intermediate state into a worker-
+            # wide outage; duplicate ownership is still corruption.
+            if len(related) > 1:
                 raise EmailPersistenceCorruption(
                     f"email message {stable_identity} has multiple classifications"
                 )
