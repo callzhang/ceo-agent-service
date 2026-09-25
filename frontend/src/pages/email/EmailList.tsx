@@ -10,6 +10,17 @@ function ShellSelect({children, ...props}: SelectHTMLAttributes<HTMLSelectElemen
   return <span className="filter-select email-select"><span className="filter-control-shell"><select {...props}>{children}</select></span></span>;
 }
 
+const ACTION_FILTERS=[{value:"failed",text:"邮箱动作失败"},{value:"pending",text:"邮箱动作待执行"},{value:"done",text:"邮箱动作已完成"},{value:"skipped",text:"邮箱动作已跳过"},{value:"none",text:"无邮箱动作"}];
+const SOURCE_FILTERS=[{value:"model",text:"模型分类"},{value:"agent",text:"Agent 分类"},{value:"user",text:"人工确认"}];
+
+function actionBadge(item:EmailClassificationItem) {
+  const actions=item.mailbox_actions||[];
+  const failed=actions.filter(action=>action.status==="failed");
+  if(failed.length)return {tone:"failed",text:"动作失败",reason:failed[0].error};
+  if(actions.some(action=>action.status==="pending"||action.status==="processing"))return {tone:"pending",text:"动作待执行",reason:""};
+  return null;
+}
+
 export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfig[]; status:EmailClassificationStatus; onBusy:(value:boolean)=>void}) {
   const [params,setParams]=useSearchParams();
   const rawPage=Number(params.get("page"));
@@ -18,6 +29,10 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   const pageSize=[20,50,100].includes(rawSize)?rawSize:50;
   const selected=params.get("selected") || "";
   const query=params.get("q") || "";
+  const categoryFilter=params.get("category") || "";
+  const actionFilter=ACTION_FILTERS.some(item=>item.value===params.get("action_status"))?params.get("action_status") as string:"";
+  const sourceFilter=SOURCE_FILTERS.some(item=>item.value===params.get("source"))?params.get("source") as string:"";
+  const filtered=!!(categoryFilter||actionFilter||sourceFilter);
   const [searchText,setSearchText]=useState(query);
   const [composing,setComposing]=useState(false);
   const [closed,setClosed]=useState("");
@@ -48,7 +63,14 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   const offered=(key?:string|null)=>!!key && options.some(option=>option.category_key===key);
   const label=(key?:string|null)=>key ? (configs.find(item=>item.category_key===key)?.display_name || key) : "未分类（留在收件箱）";
   useEffect(()=>{setSearchText(query);},[query]);
-  useEffect(()=>{setChecked(new Set());setBulkDone(null);setBulkError("");},[status,page,pageSize,query]);
+  useEffect(()=>{setChecked(new Set());setBulkDone(null);setBulkError("");},[status,page,pageSize,query,categoryFilter,actionFilter,sourceFilter]);
+  function applyFilter(key:string,value:string) {
+    setParams(previous=>{const next=new URLSearchParams(previous);if(value)next.set(key,value);else next.delete(key);next.set("page","1");next.delete("selected");return next;},{replace:true});
+    setClosed("");setExpanded(false);
+  }
+  function clearFilters() {
+    setParams(previous=>{const next=new URLSearchParams(previous);["category","action_status","source"].forEach(key=>next.delete(key));next.set("page","1");next.delete("selected");return next;},{replace:true});
+  }
   function applySearch(value:string) {
     setParams(previous=>{const next=new URLSearchParams(previous);if(value.trim())next.set("q",value.trim());else next.delete("q");next.set("page","1");next.delete("selected");return next;},{replace:true});
     setClosed("");setExpanded(false);
@@ -64,14 +86,14 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   }
   useEffect(()=>{
     const controller=new AbortController();setLoading(true);setError("");
-    listEmailClassifications(status,{page,page_size:pageSize,...(query.trim()?{q:query.trim()}:{})},controller.signal).then(result=>{
+    listEmailClassifications(status,{page,page_size:pageSize,...(query.trim()?{q:query.trim()}:{}),...(status==="unsubscribe"?{}:{...(categoryFilter?{category:categoryFilter}:{}),...(actionFilter?{action_status:actionFilter}:{}),...(sourceFilter?{source:sourceFilter}:{})})},controller.signal).then(result=>{
       if(controller.signal.aborted)return;
       const last=Math.max(1,Math.ceil(result.meta.total/pageSize));
       if(page>last){navigate(last);return;}
       setRows(result.items);setTotal(result.meta.total);setLoading(false);
     }).catch(reason=>{if(!controller.signal.aborted){setError(errorMessage(reason));setLoading(false);}});
     return ()=>controller.abort();
-  },[status,page,pageSize,revision,query]);
+  },[status,page,pageSize,revision,query,categoryFilter,actionFilter,sourceFilter]);
   useEffect(()=>{
     setCategory("");setDetail(null);setDetailError("");setSaveError("");
     if(!open)return;
@@ -153,9 +175,15 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
       <input type="search" aria-label="搜索邮件" placeholder="搜索发件人、主题、正文…" maxLength={500} value={searchText} disabled={saving} onChange={event=>setSearchText(event.target.value)} onCompositionStart={()=>setComposing(true)} onCompositionEnd={()=>setComposing(false)}/>
       {searchText&&<button type="button" aria-label="清空搜索" disabled={saving} onClick={()=>{setSearchText("");applySearch("");}}>×</button>}
     </form></div>
+    {status!=="unsubscribe"&&<nav className="email-list-toolbar email-list-filters" aria-label="邮件筛选">
+      <label>分类 <ShellSelect aria-label="按分类筛选" value={categoryFilter} disabled={saving||loading} onChange={event=>applyFilter("category",event.target.value)}><option value="">全部分类</option>{options.map(option=><option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</ShellSelect></label>
+      <label>动作 <ShellSelect aria-label="按邮箱动作状态筛选" value={actionFilter} disabled={saving||loading} onChange={event=>applyFilter("action_status",event.target.value)}><option value="">全部动作状态</option>{ACTION_FILTERS.map(option=><option key={option.value} value={option.value}>{option.text}</option>)}</ShellSelect></label>
+      <label>判定者 <ShellSelect aria-label="按判定者筛选" value={sourceFilter} disabled={saving||loading} onChange={event=>applyFilter("source",event.target.value)}><option value="">全部判定者</option>{SOURCE_FILTERS.map(option=><option key={option.value} value={option.value}>{option.text}</option>)}</ShellSelect></label>
+      {filtered&&<button type="button" className="compact-button" disabled={saving||loading} onClick={clearFilters}>清除筛选</button>}
+    </nav>}
     {status==="unsubscribe"&&<p className="muted">显示已入队、处理中和已完成的退订任务；打开邮件可查看执行证据。</p>}
     {error&&<p role="alert">{error} <button onClick={()=>setRevision(value=>value+1)}>重试</button></p>}
-    {!loading&&!error&&!rows.length&&<p className="page-state">{query.trim()?"未找到匹配邮件":status==="pending_feedback"?"当前没有待确认邮件":status==="unsubscribe"?"当前没有退订记录":"当前没有邮件"}</p>}
+    {!loading&&!error&&!rows.length&&<p className="page-state">{query.trim()||filtered?"未找到匹配邮件":status==="pending_feedback"?"当前没有待确认邮件":status==="unsubscribe"?"当前没有退订记录":"当前没有邮件"}</p>}
     <div className="email-row-list" aria-busy={loading}>
       {rows.map(item=><div className={`email-row-wrap${status==="all"&&item.status==="pending_feedback"?" is-pending":""}${checked.has(item.id)?" is-checked":""}`} key={item.id}>
         {(() => {
@@ -176,7 +204,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
         {status==="unsubscribe"
           ? (() => {const state=unsubscribeStateLabel(item.unsubscribe_state);return <span className={`email-row-category email-unsubscribe-state ${state.tone}`} title={state.reason ? `${state.text}：${state.reason}` : state.text}>{state.text}{state.reason && <small>{state.reason.replace(/。$/,"")}</small>}</span>;})()
           : <span className="email-row-category" title={categoryLabel(item.category)}>{item.status==="pending_feedback"?"建议：":""}{categoryLabel(item.category)}{item.status==="pending_feedback"&&<small> · {measured(item.confidence)}</small>}</span>}
-        <span className="email-row-status">{sourceLabel(item.classification_source)}{status!=="unsubscribe"&&` · ${statusLabel(item.status)}`}</span>
+        <span className="email-row-status">{sourceLabel(item.classification_source)}{status!=="unsubscribe"&&` · ${statusLabel(item.status)}`}{status!=="unsubscribe"&&(()=>{const badge=actionBadge(item);return badge?<small className={`email-action-badge ${badge.tone}`} title={badge.reason||badge.text}> · {badge.text}{badge.reason&&`：${badge.reason}`}</small>:null;})()}</span>
         <time title={localTime(item.received_at || item.updated_at)}>{localTime(item.received_at || item.updated_at)}</time>
       </button></div>)}
     </div>

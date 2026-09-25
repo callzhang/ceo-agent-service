@@ -255,3 +255,7 @@
 .email-reading-activity .email-reading-empty { padding: 0; margin: 0 0 4px; font-size: 13px; }
 .email-unsubscribe-url { text-decoration: none; color: var(--accent); }
 a.email-unsubscribe-url:hover { text-decoration: underline; }
+
+.email-list-filters { font-size: 12px; }
+.email-action-badge { font-size: 11px; }
+.email-action-badge.failed { color: #a43030; }

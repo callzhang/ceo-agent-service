@@ -1309,9 +1309,41 @@ def register_email_routes(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),
         q: str = Query(default="", max_length=500),
+        category: str = Query(default="", max_length=64),
+        action_status: str = Query(default="", max_length=16),
+        source: str = Query(default="", max_length=16),
     ):
         email_store = require_store()
         search_params = {"q": q.strip()} if q.strip() else {}
+        if action_status and action_status not in {"failed", "pending", "done", "skipped", "none"}:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "invalid_email_filter",
+                    "message": "action_status must be failed, pending, done, skipped or none",
+                    "details": {},
+                },
+                status_code=400,
+            )
+        if source and source not in {"model", "agent", "user"}:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "invalid_email_filter",
+                    "message": "source must be model, agent or user",
+                    "details": {},
+                },
+                status_code=400,
+            )
+        filters = {
+            key: value
+            for key, value in (
+                ("category", category.strip()),
+                ("action_status", action_status),
+                ("source", source),
+            )
+            if value
+        }
         if status == "unsubscribe":
             rows, total = email_store.list_unsubscribe_classifications(
                 **search_params,
@@ -1319,25 +1351,13 @@ def register_email_routes(
                 offset=(page - 1) * page_size,
             )
         elif status == "all":
-            fetch_limit = page * page_size
-            pending_rows, pending_total = email_store.list_classifications(
+            rows, total = email_store.list_classifications(
                 **search_params,
-                status=EmailClassificationStatus.PENDING_FEEDBACK,
-                limit=fetch_limit,
-                offset=0,
+                **filters,
+                status=None,
+                limit=page_size,
+                offset=(page - 1) * page_size,
             )
-            processed_rows, processed_total = email_store.list_classifications(
-                **search_params,
-                status=EmailClassificationStatus.PROCESSED,
-                limit=fetch_limit,
-                offset=0,
-            )
-            rows = sorted(
-                [*pending_rows, *processed_rows],
-                key=lambda row: (row.get("updated_at") or "", int(row["id"])),
-                reverse=True,
-            )[(page - 1) * page_size : page * page_size]
-            total = pending_total + processed_total
         else:
             try:
                 classification_status = EmailClassificationStatus(status)
@@ -1353,12 +1373,18 @@ def register_email_routes(
                 )
             rows, total = email_store.list_classifications(
                 **search_params,
+                **filters,
                 status=classification_status,
                 limit=page_size,
                 offset=(page - 1) * page_size,
             )
         row_ids = [int(row["id"]) for row in rows]
         provider_states = email_store.get_provider_classification_states(row_ids)
+        mailbox_actions = (
+            email_store.list_mailbox_action_states(row_ids)
+            if hasattr(email_store, "list_mailbox_action_states")
+            else {}
+        )
         unsubscribe_states = (
             email_store.list_unsubscribe_states(row_ids)
             if status == "unsubscribe"
@@ -1372,6 +1398,7 @@ def register_email_routes(
                 "id": str(row["id"]),
                 "important": provider_state.get("important"),
                 "provider_classification": provider_state,
+                "mailbox_actions": mailbox_actions.get(int(row["id"]), []),
             }
             if status == "unsubscribe":
                 item["unsubscribe_state"] = unsubscribe_states[int(row["id"])]

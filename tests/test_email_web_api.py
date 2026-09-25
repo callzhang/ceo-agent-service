@@ -227,6 +227,7 @@ def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path):
         "classification_source": "agent", "updated_at": "2026-09-14T12:00:00+00:00",
         "important": None,
         "provider_classification": {"state": "unavailable", "reason": "classification_missing"},
+        "mailbox_actions": [],
         "unsubscribe_state": None,
     }]
 
@@ -4261,3 +4262,113 @@ def test_action_throughput_is_the_whole_action_over_the_recent_window(tmp_path: 
     assert speed["finished"] == 4
     assert speed["per_minute"] == 0.1
     assert speed["median_seconds"] == 8.0
+
+
+def _store_with_three_classifications(tmp_path: Path) -> EmailStore:
+    store = EmailStore(tmp_path / "list-filters.sqlite3")
+    for classification_id, status, category, source, moves in (
+        (101, EmailClassificationStatus.PENDING_FEEDBACK, EmailCategory.WORK, "model", False),
+        (102, EmailClassificationStatus.PROCESSED, EmailCategory.LEGAL, "model", True),
+        (103, EmailClassificationStatus.PROCESSED, EmailCategory.WORK, "model", True),
+    ):
+        action_plan = (
+            build_versioned_email_action_plan(
+                action_plan_version=1,
+                classification_id=classification_id,
+                account_id="account-1",
+                category=category,
+                classification_source=source,
+                confidence=0.7,
+                model_id="email-model-v1",
+                config_version="email-config-v1",
+                actions=(EmailAction.MOVE,),
+                action_parameters={EmailAction.MOVE: {"target_folder": "Legal"}},
+                created_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+            )
+            if moves
+            else None
+        )
+        classification = EmailClassification.model_validate(
+            {
+                "classification_id": classification_id,
+                "stable_message_identity": f"account-1:message-id:<{classification_id}@example.com>",
+                "provider_locator": {
+                    "account_id": "account-1", "folder": "INBOX", "uidvalidity": 1,
+                    "uid": classification_id, "rfc_message_id": f"<{classification_id}@example.com>",
+                    "thread_id": str(classification_id),
+                },
+                "category": category, "confidence": 0.7, "margin": 0.2,
+                "probabilities": {category.value: 0.7}, "model_id": "email-model-v1",
+                "config_version": "email-config-v1", "status": status,
+                "classification_source": source, "action_plan": action_plan,
+            }
+        )
+        store.persist_scan_result(
+            classification, sender="sender@example.com", subject=f"Message {classification_id}",
+            normalized_text=f"正文 {classification_id}", preview=f"摘要 {classification_id}",
+            model_text=f"模型文本 {classification_id}",
+        )
+    return store
+
+
+def test_the_all_list_filters_by_category_decider_and_mailbox_action_state(tmp_path: Path) -> None:
+    store = _store_with_three_classifications(tmp_path)
+    client = TestClient(FastAPI())
+    register_email_routes(client.app, lambda: store)
+
+    def ids(**params) -> list[str]:
+        response = client.get("/api/console/email/classifications", params={"status": "all", **params})
+        assert response.status_code == 200
+        return sorted(item["id"] for item in response.json()["items"])
+
+    assert ids() == ["101", "102", "103"]
+    assert ids(category="work") == ["101", "103"]
+    assert ids(source="model") == ["101", "102", "103"]
+    assert ids(source="agent") == []
+    assert ids(category="work", source="model") == ["101", "103"]
+    # 101 has no mailbox action at all; the other two have a pending move.
+    assert ids(action_status="none") == ["101"]
+    assert ids(action_status="pending") == ["102", "103"]
+    assert ids(action_status="failed") == []
+
+    with store._connect() as db:
+        db.execute(
+            "update email_actions set status='failed', error='provider_destination_failed:ImapMoveUnsupported' "
+            "where classification_id=102"
+        )
+
+    assert ids(action_status="failed") == ["102"]
+    assert ids(action_status="pending") == ["103"]
+    assert ids(action_status="failed", category="work") == []
+
+
+def test_a_listed_message_carries_its_mailbox_actions_and_why_one_failed(tmp_path: Path) -> None:
+    store = _store_with_three_classifications(tmp_path)
+    with store._connect() as db:
+        db.execute(
+            "update email_actions set status='failed', error='provider_destination_failed:ImapMoveUnsupported' "
+            "where classification_id=102"
+        )
+    client = TestClient(FastAPI())
+    register_email_routes(client.app, lambda: store)
+
+    items = {
+        item["id"]: item
+        for item in client.get("/api/console/email/classifications", params={"status": "all"}).json()["items"]
+    }
+
+    assert items["102"]["mailbox_actions"] == [
+        {"type": "move", "status": "failed", "error": "provider_destination_failed:ImapMoveUnsupported"}
+    ]
+    assert items["103"]["mailbox_actions"] == [{"type": "move", "status": "pending", "error": ""}]
+    assert items["101"]["mailbox_actions"] == []
+
+
+def test_the_list_refuses_a_filter_value_it_does_not_know(tmp_path: Path) -> None:
+    client = TestClient(FastAPI())
+    register_email_routes(client.app, lambda: _store_with_three_classifications(tmp_path))
+
+    for params in ({"action_status": "exploded"}, {"source": "robot"}):
+        response = client.get("/api/console/email/classifications", params={"status": "all", **params})
+        assert response.status_code == 400
+        assert response.json()["code"] == "invalid_email_filter"

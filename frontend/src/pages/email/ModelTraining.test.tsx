@@ -215,6 +215,37 @@ it("shows the model's own time per message, not the mailbox action after it", ()
   expect(stat).toHaveTextContent("最近 10 分钟 240 封 · P95 320 ms · 只算模型耗时，不含邮箱动作");
 });
 
+it("names what keeps the candidate from being promoted instead of saying pending", () => {
+  renderWith({
+    promotion_gate: {
+      ...learning.promotion_gate,
+      promotion_eligible: false,
+      checks: [
+        { key: "micro_f1", actual: 0.88, target: 0.85, operator: ">=", passed: true, reason: "passed" },
+        { key: "system_integrity", actual: false, target: true, operator: "==", passed: false, reason: "model_evidence_or_configuration_not_ready" },
+        { key: "category_precision:work", actual: 0.5, target: 0.9, operator: ">=", passed: false, reason: "threshold_not_met" },
+      ],
+    },
+  });
+
+  const badge = screen.getByTitle("指最新候选版本能不能上线；正在线上跑的模型不受影响");
+  // Names the blocking check; one category below the bar is not a blocker of its own.
+  expect(badge).toHaveTextContent("候选未达标 · 差 模型与配置完整性");
+  expect(badge).not.toHaveTextContent("待处理");
+});
+
+it("says the candidate can go live when every blocking check passes", () => {
+  renderWith({
+    promotion_gate: {
+      ...learning.promotion_gate,
+      promotion_eligible: true,
+      checks: [{ key: "micro_f1", actual: 0.88, target: 0.85, operator: ">=", passed: true, reason: "passed" }],
+    },
+  });
+
+  expect(screen.getByTitle("指最新候选版本能不能上线；正在线上跑的模型不受影响")).toHaveTextContent("候选已达标，可上线");
+});
+
 it("shows the last batch's model time, and when, when nothing came in lately", () => {
   renderWith({
     runtime: { ...learning.runtime, mode: "model_primary", active_model_id: "m1" },

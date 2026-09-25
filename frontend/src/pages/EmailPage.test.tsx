@@ -637,3 +637,21 @@ it("drops a previous save error once a different category is chosen",async()=>{
   await user.selectOptions(within(drawer).getByRole("combobox",{name:"选择分类"}),"junk");
   expect(within(drawer).queryByRole("alert")).not.toBeInTheDocument();
 });
+it("filters the all list by action status, category and judge, and shows a failed action on its row",async()=>{
+  const user=userEvent.setup();
+  api.listEmailClassifications.mockResolvedValue({items:[{...row("1"),mailbox_actions:[{type:"move_to_folder",status:"failed",error:"服务器拒绝移动"}]}],meta:{total:1,page:1,page_size:50,snapshot_at:""}});
+  show("/email?tab=all&action_status=failed");
+  expect(await screen.findByText(/动作失败：服务器拒绝移动/)).toBeInTheDocument();
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50,action_status:"failed"},expect.any(AbortSignal)));
+  await user.selectOptions(screen.getByLabelText("按判定者筛选"),"model");
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50,action_status:"failed",source:"model"},expect.any(AbortSignal)));
+  await user.click(screen.getByRole("button",{name:"清除筛选"}));
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50},expect.any(AbortSignal)));
+  expect(screen.getByLabelText("URL")).not.toHaveTextContent("action_status");
+});
+it("links the failed action count to the filtered list",async()=>{
+  api.getEmailProcessingProgress.mockResolvedValue({window_hours:24,throughput:{window_minutes:30,finished:0,per_minute:0,median_seconds:null},provider_actions:{done:1,pending:0,processing:0,failed:32,skipped:0},classification_queue:{pending:0,processing:0},unsubscribe_queue:{pending:0,processing:0},waiting_for_owner:0,scans:[]});
+  show("/email?tab=all");
+  const link=await screen.findByRole("link",{name:/邮箱动作失败 32/});
+  expect(link).toHaveAttribute("href","/email?tab=all&action_status=failed");
+});

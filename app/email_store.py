@@ -20,7 +20,7 @@ import re
 import sqlite3
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import unquote, unquote_plus, urlsplit
 from uuid import uuid4
 
@@ -12677,14 +12677,45 @@ class EmailStore:
         }
 
     def list_classifications(
-        self, *, status: EmailClassificationStatus, limit: int, offset: int, q: str = ""
+        self,
+        *,
+        status: EmailClassificationStatus | None,
+        limit: int,
+        offset: int,
+        q: str = "",
+        category: str = "",
+        action_status: str = "",
+        source: str = "",
     ) -> tuple[list[dict[str, Any]], int]:
+        """One page of classifications, newest first, optionally filtered.
+
+        `status=None` lists everything the owner sees on the "all" tab: mail
+        that is processed and mail waiting for a label, as one ordered list.
+        """
+
         with self._connect() as db:
             search, search_params = self._classification_search(db, q)
+            filters, filter_params = self._classification_filters(
+                category=category, action_status=action_status, source=source
+            )
+            statuses = (
+                (EmailClassificationStatus.PROCESSED, EmailClassificationStatus.PENDING_FEEDBACK)
+                if status is None
+                else (status,)
+            )
+            where = (
+                "classifications.status in ("
+                + ",".join("?" for _ in statuses)
+                + ")"
+                + search
+                + filters
+            )
+            params = (*(item.value for item in statuses), *search_params, *filter_params)
             total = int(
                 db.execute(
-                    "select count(*) from email_classifications as classifications where status=?" + search,
-                    (status.value, *search_params),
+                    "select count(*) from email_classifications as classifications where "
+                    + where,
+                    params,
                 ).fetchone()[0]
             )
             rows = db.execute(
@@ -12698,12 +12729,11 @@ class EmailStore:
                   on messages.account_id=classifications.account_id
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
-                where classifications.status=?
-                """ + search + """
+                where """ + where + """
                 order by classifications.updated_at desc, classifications.id desc
                 limit ? offset ?
                 """,
-                (status.value, *search_params, limit, offset),
+                (*params, limit, offset),
             ).fetchall()
         items = []
         for row in rows:
@@ -12712,6 +12742,94 @@ class EmailStore:
             item["message_text"] = _display_message_body(message)
             items.append(item)
         return items, total
+
+    # What "action status" means to the owner, mapped onto the stored states.
+    _ACTION_STATUS_FILTERS: ClassVar[Mapping[str, tuple[str, ...]]] = {
+        "failed": ("failed",),
+        "pending": ("pending", "processing"),
+        "done": ("done",),
+        "skipped": ("skipped",),
+    }
+
+    @classmethod
+    def _classification_filters(
+        cls, *, category: str, action_status: str, source: str
+    ) -> tuple[str, tuple[str, ...]]:
+        """SQL for the list's category, mailbox-action and decider filters."""
+
+        clauses: list[str] = []
+        params: list[str] = []
+        if category.strip():
+            # The category the owner sees: their own confirmation if any.
+            clauses.append(
+                " and coalesce(nullif(classifications.confirmed_category, ''),"
+                " classifications.category) = ?"
+            )
+            params.append(category.strip())
+        if source.strip():
+            clauses.append(" and classifications.classification_source = ?")
+            params.append(source.strip())
+        if action_status.strip():
+            wanted = action_status.strip()
+            if wanted == "none":
+                clauses.append(
+                    " and not exists (select 1 from email_actions as filter_action"
+                    " where filter_action.classification_id=classifications.id"
+                    " and filter_action.action_plan_id=classifications.current_action_plan_id)"
+                )
+            else:
+                statuses = cls._ACTION_STATUS_FILTERS.get(wanted)
+                if statuses is None:
+                    raise ValueError("action_status is invalid")
+                clauses.append(
+                    " and exists (select 1 from email_actions as filter_action"
+                    " where filter_action.classification_id=classifications.id"
+                    " and filter_action.action_plan_id=classifications.current_action_plan_id"
+                    " and filter_action.status in ("
+                    + ",".join("?" for _ in statuses)
+                    + "))"
+                )
+                params.extend(statuses)
+        return "".join(clauses), tuple(params)
+
+    def list_mailbox_action_states(
+        self, classification_ids: Sequence[int]
+    ) -> dict[int, list[dict[str, str]]]:
+        """The mailbox actions of each classification's current plan.
+
+        This is what the list shows beside a message, so a failed move can be
+        seen where the message is, with the reason it failed.
+        """
+
+        ids = [int(item) for item in classification_ids]
+        if not ids:
+            return {}
+        states: dict[int, list[dict[str, str]]] = {item: [] for item in ids}
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select actions.classification_id, actions.action_type,
+                       actions.status, actions.error
+                from email_actions as actions
+                join email_classifications as classifications
+                  on classifications.id=actions.classification_id
+                 and classifications.current_action_plan_id=actions.action_plan_id
+                where actions.classification_id in ("""
+                + ",".join("?" for _ in ids)
+                + """)
+                order by actions.created_at, actions.action_id
+                """,
+                ids,
+            ).fetchall()
+        for row in rows:
+            states[int(row["classification_id"])].append(
+                {
+                    "type": str(row["action_type"]),
+                    "status": str(row["status"]),
+                    "error": str(row["error"] or ""),
+                }
+            )
+        return states
 
     @staticmethod
     def _classification_search(db: sqlite3.Connection, q: str) -> tuple[str, tuple[str, ...]]:

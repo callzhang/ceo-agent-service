@@ -42,7 +42,7 @@ export function PromotionPanel({
           onBusy={onBusy}
         />
         <p className="muted">
-          每个分类单独判断：精度和样本数都达到门槛、并且连续两个版本都达标的分类才会上线，其余分类继续由 Agent 处理。
+          每个分类单独判断：精度和样本数都达到门槛的分类才会上线，其余分类继续由 Agent 处理。
         </p>
         <GateChecks checks={gate.checks} configs={configs} />
       </div>

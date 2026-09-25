@@ -284,6 +284,7 @@ export interface EmailAttachmentMetadata {
 }
 export interface EmailClassificationItem {
   id: string;
+  mailbox_actions?: EmailMailboxActionState[];
   provider: string;
   mailbox: string;
   message_id: string;
@@ -318,8 +319,16 @@ export interface EmailClassificationItem {
 export type EmailClassificationStatus = "all" | "pending_feedback" | "processed" | "unsubscribe";
 export interface EmailClassificationListParams {
   q?: string;
+  category?: string;
+  action_status?: string;
+  source?: string;
   page?: number;
   page_size?: number;
+}
+export interface EmailMailboxActionState {
+  type: string;
+  status: string;
+  error: string;
 }
 export interface EmailClassificationDetailItem extends EmailClassificationItem {
   message_text: string;
@@ -638,6 +647,9 @@ function mapEmailClassification(value: unknown, includeBody = false): EmailClass
     : [];
   const item: EmailClassificationItem = {
     id: typeof row.id === "string" ? row.id : String(row.id ?? ""),
+    mailbox_actions: Array.isArray(row.mailbox_actions)
+      ? row.mailbox_actions.map(asRecord).map((action) => ({type: emailText(action.type), status: emailText(action.status), error: emailText(action.error)}))
+      : [],
     provider: emailText(row.provider),
     mailbox: emailText(row.mailbox || row.folder),
     message_id: emailText(row.message_id || row.rfc_message_id || row.stable_message_identity),

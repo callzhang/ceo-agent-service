@@ -25,6 +25,7 @@ import { EmailDrawer } from "./EmailDrawer";
 import { PromotionPanel, GateChecks } from "./PromotionPanel";
 import { TrainingSetup, useStableTrainingSelection } from "./TrainingSetup";
 import {
+  checkLabel,
   errorMessage,
   localTime,
   measured,
@@ -428,10 +429,9 @@ export function ModelTraining({
                   ? "status-pass"
                   : "status-hold"
               }
+              title="指最新候选版本能不能上线；正在线上跑的模型不受影响"
             >
-              {learning.promotion_gate?.promotion_eligible
-                ? "已达标"
-                : "待处理"}
+              {gateVerdict(learning.promotion_gate, configs)}
             </span>
           </h3>
           {learning.promotion_gate && (
@@ -776,6 +776,23 @@ export function ModelTraining({
     </FamilyNames.Provider>
   );
 }
+// What the badge beside "晋升检查" says. It is about the newest candidate, not
+// the model that is live, and when it is not ready it names what is missing
+// instead of a bare "pending".
+function gateVerdict(
+  gate: EmailLearningEvidence["promotion_gate"] | undefined,
+  configs: EmailCategoryConfig[],
+) {
+  if (!gate) return "暂无数据";
+  if (gate.promotion_eligible) return "候选已达标，可上线";
+  const missing = gate.checks
+    .filter((check) => !check.passed && !check.key.startsWith("category_"))
+    .map((check) => checkLabel(check.key, configs));
+  return missing.length
+    ? `候选未达标 · 差 ${missing.join("、")}`
+    : "候选未达标 · 没有类别达到上线门槛";
+}
+
 function liveRateNote(
   runtime: EmailRuntime | undefined,
   rate: EmailRuntimeRate | null | undefined,
