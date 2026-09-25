@@ -471,6 +471,35 @@ def test_update_task_details_combined_with_other_fields_records_fields_event(ser
     assert service.events(created.task_id)[-1].event_type.value == "fields_changed"
 
 
+def test_update_task_owner_and_status_is_one_atomic_fields_transition(service):
+    created = service.record_candidate(RecordCandidate(
+        title="跟进客户报价",
+        signal=SourceSignal(
+            source_type="message", source_ref="message:task-owner-status-seed",
+            evidence_text="跟进客户报价", dedupe_key="message:task-owner-status-seed",
+        ),
+    ))
+
+    service.update_task(UpdateBusinessTask(
+        task_id=created.task_id,
+        signal=SourceSignal(
+            source_type="message", source_ref="message:task-owner-status-update",
+            evidence_text="王明负责跟进，状态等待客户反馈。",
+            dedupe_key="message:task-owner-status-update",
+            context_json='{"owner_identity":{"user_id":"wangming","name":"王明"}}',
+        ),
+        owner_user_id="wangming",
+        owner_name="王明",
+        owner_evidence_json='{"source_ref":"message:task-owner-status-update","excerpt":"王明负责跟进"}',
+        status=BusinessTaskStatus.WAITING,
+    ))
+
+    updated = service.store.get_business_task(created.task_id)
+    assert updated.owner_user_id == "wangming"
+    assert updated.status is BusinessTaskStatus.WAITING
+    assert service.events(created.task_id)[-1].event_type.value == "fields_changed"
+
+
 def test_record_formal_task_commits_signal_task_evidence_and_initial_event_together(service):
     result = record_assignment(service)
 

@@ -876,6 +876,11 @@ class TaskSemanticService:
             return BusinessTaskEventType.RELEVANCE_CHANGED
         if set(changed) <= {"title", "description"}:
             return BusinessTaskEventType.DETAILS_CHANGED
+        # A single source-grounded update may legitimately change more than one
+        # field category atomically. It remains one transition and is audited
+        # with the general fields_changed event.
+        if len(changed) > 1:
+            return BusinessTaskEventType.FIELDS_CHANGED
         if set(changed) & {"title", "description"}:
             return BusinessTaskEventType.FIELDS_CHANGED
         raise ValueError("each task update must describe one state transition")
