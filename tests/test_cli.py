@@ -1412,10 +1412,10 @@ def test_parser_supports_process_follow_ups():
     assert args.command == "process-follow-ups"
 
 
-def test_parser_supports_check_follow_up_completions():
-    args = build_parser().parse_args(["check-follow-up-completions"])
-
-    assert args.command == "check-follow-up-completions"
+def test_parser_no_longer_offers_periodic_completion_checks():
+    """Derek, 2026-09-25: open tasks are not re-checked on a schedule."""
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["check-follow-up-completions"])
 
 
 def test_parser_supports_single_meeting_scan_with_explicit_database(tmp_path):
@@ -1600,11 +1600,6 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         or 8,
         raising=False,
     )
-    monkeypatch.setattr(
-        cli,
-        "check_follow_up_completions_command",
-        lambda settings, limit=1: calls.append(("completion-check", limit)) or 7,
-    )
     result = cli.daily_task_maintenance_command(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
     )
@@ -1616,7 +1611,6 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         "okr_reviews": 5,
         "dingtalk_todos_closed": 4,
         "dingtalk_todos_recovered": 8,
-        "follow_up_completions_checked": 7,
         "completion_items_processed": 2,
         "follow_ups": 1,
     }
@@ -1627,7 +1621,6 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         ("okr", tmp_path / "worker.sqlite3"),
         ("dingtalk_todo_pull", "FakeDwsClient"),
         ("dingtalk_todo_retry", "FakeDwsClient"),
-        ("completion-check", 50),
         ("work", tmp_path / "worker.sqlite3"),
         ("follow", tmp_path / "worker.sqlite3", False),
     ]
@@ -1635,7 +1628,7 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         "daily-task-maintenance sources=3 oa_approvals=6 work_items=2 "
         "okr_reviews=5 dingtalk_todos_closed=4 "
         "dingtalk_todos_recovered=8 "
-        "follow_up_completions_checked=7 completion_items_processed=2 "
+        "completion_items_processed=2 "
         "follow_ups=1\n"
     )
 
@@ -1731,11 +1724,6 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
         or 8,
         raising=False,
     )
-    monkeypatch.setattr(
-        cli,
-        "check_follow_up_completions_command",
-        lambda settings, limit=1: calls.append(("completion-check", limit)) or 7,
-    )
     result = cli.daily_task_maintenance_command(WorkerSettings(db_path=db_path))
 
     assert calls == [
@@ -1745,13 +1733,11 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
         ("okr", db_path),
         ("dingtalk_todo_pull", "FakeDwsClient"),
         ("dingtalk_todo_retry", "FakeDwsClient"),
-        ("completion-check", 50),
         ("work", db_path),
         ("follow", db_path, False),
     ]
     assert result["dingtalk_todos_closed"] == 4
     assert result["dingtalk_todos_recovered"] == 8
-    assert result["follow_up_completions_checked"] == 7
     assert result["oa_approvals"] == 6
     assert "dingtalk_todos_closed=4" in capsys.readouterr().out
 
@@ -7242,11 +7228,6 @@ def test_task_maintenance_loop_does_not_preflight_codex_auth(
         "scan_task_sources_command",
         lambda received, max_new_items=None: calls.append("scan-task-sources"),
     )
-    monkeypatch.setattr(
-        cli,
-        "check_follow_up_completions_command",
-        lambda received, limit=1: calls.append("completion-check"),
-    )
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
             settings,
@@ -7254,7 +7235,7 @@ def test_task_maintenance_loop_does_not_preflight_codex_auth(
             network_ready=lambda: True,
         )
 
-    assert calls == ["completion-check"]
+    assert calls == []
 
 
 def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
@@ -7372,14 +7353,6 @@ def test_task_maintenance_loop_processes_only_internal_steps(monkeypatch, tmp_pa
         )
         or 1,
     )
-    monkeypatch.setattr(
-        cli,
-        "check_follow_up_completions_command",
-        lambda received, limit=1: calls.append(
-            ("completion-check", received.db_path, limit)
-        )
-        or 7,
-    )
 
     def sleep(seconds):
         calls.append(("sleep", seconds))
@@ -7393,7 +7366,6 @@ def test_task_maintenance_loop_processes_only_internal_steps(monkeypatch, tmp_pa
         )
 
     assert calls == [
-        ("completion-check", tmp_path / "worker.sqlite3", 1),
         ("sleep", 60),
     ]
 
@@ -7467,11 +7439,6 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
     )
     monkeypatch.setattr(
         cli,
-        "check_follow_up_completions_command",
-        lambda received, limit=1: calls.append("completion-check"),
-    )
-    monkeypatch.setattr(
-        cli,
         "close_superseded_scheduled_reply_tasks",
         lambda received: calls.append("resolve-superseded") or 0,
     )
@@ -7509,17 +7476,6 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
         (
             "resolve-kind",
             "task_maintenance_recover_stale_processing_tasks",
-            {"resolution": "recovered by a later successful maintenance cycle"},
-        ),
-        "completion-check",
-        (
-            "health",
-            "task_maintenance.confirm_external_todo_completions",
-            {"state": "healthy"},
-        ),
-        (
-            "resolve-kind",
-            "task_maintenance_confirm_external_todo_completions",
             {"resolution": "recovered by a later successful maintenance cycle"},
         ),
     ]
@@ -7590,14 +7546,6 @@ def test_task_maintenance_loop_does_not_block_follow_up_delivery(
         )
         or 0,
     )
-    monkeypatch.setattr(
-        cli,
-        "check_follow_up_completions_command",
-        lambda received, limit=1: calls.append(
-            ("completion-check", received.db_path, limit)
-        )
-        or 0,
-    )
 
     def sleep(seconds):
         calls.append(("sleep", seconds))
@@ -7612,11 +7560,8 @@ def test_task_maintenance_loop_does_not_block_follow_up_delivery(
         )
 
     assert calls == [
-        ("completion-check", tmp_path / "worker.sqlite3", 1),
         ("sleep", 60),
-        ("completion-check", tmp_path / "worker.sqlite3", 1),
         ("sleep", 60),
-        ("completion-check", tmp_path / "worker.sqlite3", 1),
         ("sleep", 60),
     ]
 
@@ -7775,11 +7720,6 @@ def test_task_maintenance_loop_keeps_only_internal_recovery_checks(
         "process_follow_ups_command",
         lambda received, refresh_evidence=False, limit=50: calls.append("follow"),
     )
-    monkeypatch.setattr(
-        cli,
-        "check_follow_up_completions_command",
-        lambda received, limit=1: calls.append("completion-check"),
-    )
 
     with pytest.raises(StopLoop):
         run_task_maintenance_loop(
@@ -7788,7 +7728,7 @@ def test_task_maintenance_loop_keeps_only_internal_recovery_checks(
             network_ready=lambda: True,
         )
 
-    assert calls == ["completion-check"]
+    assert calls == []
     assert not any("completion" in key and "interval" in key for key in vars(settings))
 
 
@@ -9284,22 +9224,3 @@ def test_task_agent_queue_runs_one_turn_at_a_time():
 
     assert counts == {"reply": 2, "work_summary": 1, "meeting": 1}
 
-
-def test_open_tasks_are_not_rechecked_on_a_schedule(monkeypatch, tmp_path):
-    """Derek, 2026-09-25: 「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」.
-
-    The periodic check re-sent each open to-do with its own snapshot; the
-    turns searched nothing and failed. Nothing is enqueued any more.
-    """
-    import app.cli as cli
-    import app.todo_completion as todo_completion
-
-    calls = []
-    monkeypatch.setattr(
-        todo_completion,
-        "enqueue_todo_completion_evidence_checks",
-        lambda *args, **kwargs: calls.append(kwargs) or 3,
-    )
-
-    assert cli.check_follow_up_completions_command(object(), limit=50) == 0
-    assert calls == []

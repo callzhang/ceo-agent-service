@@ -78,7 +78,7 @@ default to empty values.
   ordinary empty defaults are never a clearing instruction.
 - The store receives a validated mutation map rather than a full model dump.
 
-Completion checks have a narrower policy:
+Completion checks have a narrower policy (superseded 2026-09-25: periodic completion checks were removed; see the amendment at the top of `2026-09-22-task-first-tasks-design.md`):
 
 - No new evidence and no TODO/follow-up state transition means `skip`.
 - A completion check may mutate the linked TODO or follow-up and may update the

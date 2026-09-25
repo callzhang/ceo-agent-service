@@ -368,7 +368,6 @@ def build_parser() -> argparse.ArgumentParser:
         "read-dingteam-okr",
         "daily-report-facts",
         "process-follow-ups",
-        "check-follow-up-completions",
         "daily-task-maintenance",
         "quality-check",
         "channel-doctor",
@@ -2686,25 +2685,6 @@ def process_follow_ups_command(
     return sent
 
 
-def check_follow_up_completions_command(
-    settings: WorkerSettings,
-    *,
-    limit: int = 1,
-) -> int:
-    """Retired: open tasks are no longer re-checked on a schedule.
-
-    Derek, 2026-09-25: 「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应
-    的 task」. A task changes when new information about it arrives -- a
-    message, a meeting, a DingTalk to-do status -- and the source scanners
-    already hand that to Task Agent. The periodic check re-sent each open
-    to-do with its own snapshot; 15 of 16 turns searched nothing, cited the
-    work item itself and failed, some for to-dos three months past due.
-    """
-    del settings, limit
-    print("check-follow-up-completions checked=0 retired=1", flush=True)
-    return 0
-
-
 def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     sources = scan_task_sources_command(settings)
     oa_approvals = scan_oa_approvals_command(settings)
@@ -2725,10 +2705,6 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         dws,
         now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
     )
-    follow_up_completions_checked = check_follow_up_completions_command(
-        settings,
-        limit=50,
-    )
     completion_items_processed = process_work_items_command(settings)
     follow_ups = process_follow_ups_command(settings, refresh_evidence=False)
     result = {
@@ -2738,7 +2714,6 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         "okr_reviews": okr_reviews,
         "dingtalk_todos_closed": dingtalk_todos_closed,
         "dingtalk_todos_recovered": dingtalk_todos_recovered,
-        "follow_up_completions_checked": follow_up_completions_checked,
         "completion_items_processed": completion_items_processed,
         "follow_ups": follow_ups,
     }
@@ -2749,7 +2724,6 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         f"okr_reviews={okr_reviews} "
         f"dingtalk_todos_closed={dingtalk_todos_closed} "
         f"dingtalk_todos_recovered={dingtalk_todos_recovered} "
-        f"follow_up_completions_checked={follow_up_completions_checked} "
         f"completion_items_processed={completion_items_processed} "
         f"follow_ups={follow_ups}",
         flush=True,
@@ -3682,9 +3656,9 @@ def _run_task_maintenance_once(
         + store.resolve_closed_blocked_reply_attempts()
         + close_superseded_scheduled_reply_tasks(store)
     )
+    del settings
     recovered = len(store.recover_stale_processing_reply_tasks())
-    checked = check_follow_up_completions_command(settings, limit=1)
-    return resolved + recovered + int(checked or 0)
+    return resolved + recovered
 
 
 def run_meeting_producer_loop(
@@ -4004,12 +3978,6 @@ def run_task_maintenance_loop(
             # minutes with no run and no scheduled retry.
             "recover_stale_processing_tasks",
             lambda: len(store.recover_stale_processing_reply_tasks()),
-        )
-        run_step(
-            # Delivery-state confirmation is an internal maintenance mechanism.
-            # It does not scan messages, meetings, OA, or other new work sources.
-            "confirm_external_todo_completions",
-            lambda: check_follow_up_completions_command(settings, limit=1),
         )
         sleep(60)
 
@@ -5069,8 +5037,6 @@ def main() -> None:
     elif args.command == "process-follow-ups":
         ensure_live_send_allowed(settings)
         process_follow_ups_command(settings)
-    elif args.command == "check-follow-up-completions":
-        check_follow_up_completions_command(settings, limit=1)
     elif args.command == "daily-task-maintenance":
         ensure_live_send_allowed(settings)
         initialize_agent_runtime_routes(settings)

@@ -6,6 +6,30 @@
 
 **Scope:** CEO Agent Service Tasks domain model, derivation flow, migration boundary, and console information architecture
 
+## Amendment: Tasks change only on new information (Derek, 2026-09-25)
+
+「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task。」
+
+- There is no periodic completion check. Open Tasks, TODOs and follow-ups are
+  not re-sent to Task Agent on a schedule to ask whether they are done.
+- A Task changes only when a new source signal about it arrives: a message,
+  an email, a meeting, or an external TODO status change (DingTalk TODO status
+  pull). The source scanners are the only periodic producers of Task Agent
+  input.
+- Completion is recorded when that new signal carries the evidence. The
+  evidence rules are unchanged: closing a Task still needs a source read in
+  the turn that closes it.
+- Follow-up target repair after a rejected delivery still sends one
+  `follow_up_completion_check` work item for that follow-up. It is triggered
+  by the delivery failure, not by a schedule.
+
+Why: the periodic check re-sent each open TODO with its own snapshot and the
+previous check's conclusion. From Task-first cutover to 2026-09-25, 15 of 16
+such turns searched nothing, cited the work item itself as their source and
+failed the evidence check, some for TODOs three months past due. The code path
+(`enqueue_todo_completion_evidence_checks`, `check-follow-up-completions` and
+its maintenance-loop callers) is removed.
+
 ## Task 6 implementation amendments (approved 2026-09-22)
 
 These constraints refine Sections 5, 7, 8, and 11 and take precedence over any
@@ -245,6 +269,8 @@ Messages / email / meetings / external TODOs / legacy records
                          ↓
           Tasks console and attention-item history
 ```
+
+Every arrow starts from a new source signal. Nothing re-enters this flow on a schedule: open Tasks are not re-checked for completion (amendment of 2026-09-25).
 
 The projection is recomputable from persisted semantic objects and evidence. A projection error must not mutate or erase the underlying Task, relationship, project resolution, or evidence.
 

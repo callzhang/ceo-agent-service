@@ -228,7 +228,7 @@ Task-first 输出不承载 Project 写操作或直接创建新外部 TODO；合�
 Task Agent 的共享会话不会改变 Task、TODO 或 follow-up 的服务端应用边界；适用操作仍由当前
 Work Item 明确绑定，并在对应服务事务中校验和应用。
 
-定时的 TODO/follow-up 完成检查已停用（Derek 2026-09-25），Task 只随新信息更新。普通 Task 提取和 TODO/follow-up 完成检查共用稳定的 `task-agent:work-tracking:v1` 会话范围；每个
+定时的 TODO/follow-up 完成检查已删除（Derek 2026-09-25），Task 只随新信息更新；仅 follow-up 投递失败后的目标修复仍会为该 follow-up 发一条 `follow_up_completion_check`。普通 Task 提取和 TODO/follow-up 完成检查共用稳定的 `task-agent:work-tracking:v1` 会话范围；每个
 Work Item 仍有独立的 workload key、Task Agent run 与 runtime attempt。路由器按 runtime route 保存
 session，同一 route 上的后续输入续接既有 session。`process-work-items` 在恢复队列和领取输入之前
 取得共享 SQLite session lock，运行期间每 60 秒续租；竞争中的进程返回 0 项且不领取、不增加尝试次数。
