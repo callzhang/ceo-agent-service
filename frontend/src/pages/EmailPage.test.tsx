@@ -59,7 +59,7 @@ it("opens on 待确认 with a 50 default, URL pagination and page sizes", async(
   expect(api.listEmailClassifications).toHaveBeenCalledWith("pending_feedback",{page:1,page_size:50},expect.any(AbortSignal));
   await user.selectOptions(screen.getByLabelText("每页邮件数"),"20");
   await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("pending_feedback",{page:1,page_size:20},expect.any(AbortSignal)));
-  await user.click(screen.getByRole("button",{name:"下一页"}));
+  await user.click(screen.getByRole("button",{name:"第 2 页"}));
   expect(screen.getByLabelText("URL")).toHaveTextContent("page=2");
   expect(screen.getByRole("tab",{name:"待确认"})).toHaveAttribute("aria-selected","true");
 });
@@ -238,7 +238,7 @@ it("retains existing list while paging and ignores late page results",async()=>{
   const user=userEvent.setup(),late=deferred<unknown>();
   show();await screen.findByRole("button",{name:"打开邮件 邮件1"});
   api.listEmailClassifications.mockReturnValueOnce(late.promise);
-  await user.click(screen.getByRole("button",{name:"下一页"}));
+  await user.click(screen.getByRole("button",{name:"第 2 页"}));
   const signal=api.listEmailClassifications.mock.calls.at(-1)![2] as AbortSignal;
   expect(screen.getByRole("button",{name:"打开邮件 邮件1"})).toBeInTheDocument();
   await user.click(screen.getByRole("tab",{name:"全部"}));
@@ -657,4 +657,27 @@ it("links the failed action count to the filtered list",async()=>{
   show("/email?tab=all");
   const link=await screen.findByRole("link",{name:/邮箱动作失败 32/});
   expect(link).toHaveAttribute("href","/email?tab=all&action_status=failed");
+});
+
+it("pages with numbers: the first, the neighbours of the current page and the last, with a gap between",async()=>{
+  const user=userEvent.setup();
+  api.listEmailClassifications.mockResolvedValue({items:[row("1")],meta:{total:1600,page:1,page_size:50,snapshot_at:""}});
+  show("/email?tab=all");
+  const pager=await screen.findByRole("group",{name:"页码"});
+  expect(within(pager).getAllByRole("button").map(button=>button.textContent)).toEqual(["1","2","32"]);
+  expect(pager).toHaveTextContent("1 2 … 32".replace(/ /g,"").replace("…","…"));
+  expect(screen.getByText("· 共 1600 封")).toBeInTheDocument();
+  await user.click(within(pager).getByRole("button",{name:"第 2 页"}));
+  await waitFor(()=>expect(screen.getByLabelText("URL")).toHaveTextContent("page=2"));
+  expect(within(screen.getByRole("group",{name:"页码"})).getAllByRole("button").map(button=>button.textContent)).toEqual(["1","2","3","32"]);
+  expect(screen.getByRole("option",{name:"50 封/页"})).toBeInTheDocument();
+});
+it("drops the list filters when the tab changes, so the next tab is not silently empty",async()=>{
+  const user=userEvent.setup();
+  show("/email?tab=all&action_status=failed&source=model");
+  await screen.findByLabelText("按判定者筛选");
+  await user.click(screen.getByRole("tab",{name:"待确认"}));
+  await waitFor(()=>expect(screen.getByLabelText("URL")).toHaveTextContent("tab=pending"));
+  expect(screen.getByLabelText("URL")).not.toHaveTextContent("action_status");
+  expect(screen.getByLabelText("URL")).not.toHaveTextContent("source=");
 });

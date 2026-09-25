@@ -825,9 +825,9 @@ function ScanProgress({
   progress: EmailModelScanProgress | null | undefined;
   perMinute: number;
 }) {
-  if (!progress || progress.total <= 0) return null;
+  // A finished scan has nothing left to show; the bar is for a backlog being worked through.
+  if (!progress || progress.total <= 0 || progress.remaining === 0) return null;
   const percent = Math.min(100, Math.round((progress.done / progress.total) * 100));
-  const finished = progress.remaining === 0;
   return (
     <section className="training-progress" aria-label="模型处理进度">
       <div className="training-progress-head">
@@ -847,11 +847,9 @@ function ScanProgress({
         <i style={{ width: `${percent}%` }} />
       </div>
       <small>
-        {finished
-          ? "窗口内的邮件已全部处理，之后只跟进新邮件。"
-          : perMinute > 0
-            ? `还剩 ${progress.remaining} 封，${waitLabel(progress.remaining / perMinute)}处理完`
-            : `还剩 ${progress.remaining} 封，当前没有处理速度，无法估算时间`}
+        {perMinute > 0
+          ? `还剩 ${progress.remaining} 封，${waitLabel(progress.remaining / perMinute)}处理完`
+          : `还剩 ${progress.remaining} 封，当前没有处理速度，无法估算时间`}
       </small>
     </section>
   );

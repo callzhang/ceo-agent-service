@@ -266,3 +266,9 @@ a.email-unsubscribe-url:hover { text-decoration: underline; }
 .email-multi-filter-menu label { display:flex; align-items:center; gap:6px; padding:4px 6px; white-space:nowrap; cursor:pointer; }
 .email-action-badge { font-size: 11px; }
 .email-action-badge.failed { color: #a43030; }
+.email-pager { display:inline-flex; align-items:center; gap:2px; }
+.email-pager-page { min-width:28px; height:28px; padding:0 6px; border:1px solid transparent; border-radius:6px; background:none; color:var(--ink); cursor:pointer; }
+.email-pager-page:hover:not(:disabled) { background:var(--surface-muted); }
+.email-pager-page.is-current { border-color:var(--accent); color:var(--accent); font-weight:650; opacity:1 !important; }
+.email-pager-gap { padding:0 4px; color:var(--ink-soft); }
+.email-total { color:var(--ink-soft); white-space:nowrap; }

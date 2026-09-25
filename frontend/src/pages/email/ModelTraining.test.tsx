@@ -296,8 +296,8 @@ it("has no progress bar until the scan has reported, and says when the sweep is 
   renderWith({
     model_scan_progress: { remaining: 0, total: 800, done: 800, updated_at: "2026-09-25T09:00:00+00:00" },
   });
-  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
-  expect(screen.getByRole("region", { name: "模型处理进度" })).toHaveTextContent("已全部处理");
+  // A finished scan is not a progress worth showing.
+  expect(screen.queryByRole("region", { name: "模型处理进度" })).not.toBeInTheDocument();
 });
 
 it("shows a family by the name the catalog gives it, not by its stored key", () => {

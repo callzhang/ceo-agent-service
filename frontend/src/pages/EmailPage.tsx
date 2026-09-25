@@ -43,7 +43,7 @@ export function EmailPage() {
   },[reload,tab,retry]);
   function selectTab(value:string) {
     if(busy)return;
-    setParams(previous=>{const next=new URLSearchParams(previous);next.set("tab",value);next.set("page","1");next.delete("selected");return next;});
+    setParams(previous=>{const next=new URLSearchParams(previous);next.set("tab",value);next.set("page","1");next.delete("selected");["category","action_status","source"].forEach(key=>next.delete(key));return next;});
   }
   function keyDown(event:KeyboardEvent<HTMLButtonElement>,index:number) {
     if(busy)return;

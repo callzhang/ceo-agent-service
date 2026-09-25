@@ -13,6 +13,15 @@ function ShellSelect({children, ...props}: SelectHTMLAttributes<HTMLSelectElemen
 const ACTION_FILTERS=[{value:"failed",text:"邮箱动作失败"},{value:"pending",text:"邮箱动作待执行"},{value:"done",text:"邮箱动作已完成"},{value:"skipped",text:"邮箱动作已跳过"},{value:"none",text:"无邮箱动作"}];
 const SOURCE_FILTERS=[{value:"model",text:"模型分类"},{value:"agent",text:"Agent 分类"},{value:"user",text:"人工确认"}];
 
+/** Page numbers to show: the first, the last and the ones around the current page; 0 stands for a gap. */
+function pageWindow(current:number,last:number) {
+  const wanted=new Set([1,last,current-1,current,current+1].filter(value=>value>=1&&value<=last));
+  const pages=[...wanted].sort((a,b)=>a-b);
+  const out:number[]=[];
+  pages.forEach((value,index)=>{if(index>0&&value-pages[index-1]>1)out.push(0);out.push(value);});
+  return out;
+}
+
 function actionBadge(item:EmailClassificationItem) {
   const actions=item.mailbox_actions||[];
   const failed=actions.filter(action=>action.status==="failed");
@@ -166,10 +175,10 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   return <div className={`email-workspace${open ? " has-reading" : ""}${expanded ? " reading-expanded" : ""}`}>
     <section className="console-card email-dense-list" aria-label="邮件分类列表">
     <div className="email-list-controls">
-    <nav className="email-list-toolbar" aria-label="邮件分页"><label className="email-bulk-all"><input type="checkbox" checked={allChecked} disabled={!rows.length||bulkBusy||saving} onChange={()=>{setChecked(allChecked?new Set():new Set(rows.map(item=>item.id)));setBulkDone(null);setBulkError("");}}/> 全选本页</label><span>第 {page} / {Math.max(1,Math.ceil(total/pageSize))} 页 · 共 {total} 封</span>
-      <label>每页邮件数 <ShellSelect aria-label="每页邮件数" value={pageSize} disabled={saving||loading} onChange={event=>navigate(1,Number(event.target.value))}>{[20,50,100].map(size=><option key={size}>{size}</option>)}</ShellSelect></label>
-      <button className="compact-button" disabled={saving||loading||page===1} onClick={()=>navigate(page-1)}>上一页</button>
-      <button className="compact-button" disabled={saving||loading||page*pageSize>=total} onClick={()=>navigate(page+1)}>下一页</button>
+    <nav className="email-list-toolbar" aria-label="邮件分页"><label className="email-bulk-all"><input type="checkbox" aria-label="全选本页" checked={allChecked} disabled={!rows.length||bulkBusy||saving} onChange={()=>{setChecked(allChecked?new Set():new Set(rows.map(item=>item.id)));setBulkDone(null);setBulkError("");}}/> 全选</label>
+      <span className="email-pager" role="group" aria-label="页码">{pageWindow(page,Math.max(1,Math.ceil(total/pageSize))).map((entry,index)=>entry===0?<span key={"gap"+index} className="email-pager-gap" aria-hidden="true">…</span>:<button key={entry} type="button" className={`email-pager-page${entry===page?" is-current":""}`} aria-label={`第 ${entry} 页`} aria-current={entry===page?"page":undefined} disabled={saving||loading||entry===page} onClick={()=>navigate(entry)}>{entry}</button>)}</span>
+      <span className="email-total">· 共 {total} 封</span>
+      <ShellSelect aria-label="每页邮件数" value={pageSize} disabled={saving||loading} onChange={event=>navigate(1,Number(event.target.value))}>{[20,50,100].map(size=><option key={size} value={size}>{size} 封/页</option>)}</ShellSelect>
       {loading&&<span role="status">正在加载邮件…</span>}
     </nav>
     {status!=="unsubscribe"&&<div className="email-list-filters" role="group" aria-label="邮件筛选">
@@ -187,7 +196,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
     </form></div>
     {status==="unsubscribe"&&<p className="muted">显示已入队、处理中和已完成的退订任务；打开邮件可查看执行证据。</p>}
     {error&&<p role="alert">{error} <button onClick={()=>setRevision(value=>value+1)}>重试</button></p>}
-    {!loading&&!error&&!rows.length&&<p className="page-state">{query.trim()||filtered?"未找到匹配邮件":status==="pending_feedback"?"当前没有待确认邮件":status==="unsubscribe"?"当前没有退订记录":"当前没有邮件"}</p>}
+    {!loading&&!error&&!rows.length&&<p className="page-state">{filtered?"没有符合筛选条件的邮件":query.trim()?"未找到匹配邮件":status==="pending_feedback"?"当前没有待确认邮件":status==="unsubscribe"?"当前没有退订记录":"当前没有邮件"}</p>}
     <div className="email-row-list" aria-busy={loading}>
       {rows.map(item=><div className={`email-row-wrap${status==="all"&&item.status==="pending_feedback"?" is-pending":""}${checked.has(item.id)?" is-checked":""}`} key={item.id}>
         {(() => {
