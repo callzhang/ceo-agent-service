@@ -176,3 +176,8 @@
 .email-unsubscribe-state.failure { color: #a43030; }
 .email-unsubscribe-state small { display: block; font-weight: 400; font-size: 11px; line-height: 1.2; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; }
 .email-dense-row > span.email-unsubscribe-state { line-height: 1.25; }
+/* The unsubscribe list spends the classification-source column on the status, so the reason is not cut off. */
+.email-dense-row.unsubscribe-row { grid-template-columns: 38px minmax(120px, 17%) minmax(140px, 1fr) minmax(190px, 24%) 92px; }
+.email-dense-row.unsubscribe-row .email-row-status { display: none; }
+@media(max-width: 1100px) { .email-dense-row.unsubscribe-row { grid-template-columns: 32px 110px minmax(90px, 1fr) 180px 90px; } }
+@media(max-width: 759px) { .email-dense-row.unsubscribe-row { grid-template-columns: 32px minmax(90px, 1fr) minmax(65px, 130px) 75px; } }

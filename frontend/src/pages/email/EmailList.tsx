@@ -111,7 +111,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
     {error&&<p role="alert">{error} <button onClick={()=>setRevision(value=>value+1)}>重试</button></p>}
     {!loading&&!error&&!rows.length&&<p className="page-state">{query.trim()?"未找到匹配邮件":status==="pending_feedback"?"当前没有待确认邮件":status==="unsubscribe"?"当前没有退订记录":"当前没有邮件"}</p>}
     <div className="email-row-list" aria-busy={loading}>
-      {rows.map(item=><button type="button" key={item.id} ref={element=>{if(element)rowRefs.current.set(item.id,element);else rowRefs.current.delete(item.id);}} aria-label={`打开邮件 ${item.subject || "无主题"}`} aria-pressed={selected===item.id} disabled={saving||loading} className="email-dense-row" onClick={()=>{navigate(page,pageSize,item.id);setClosed("");setSaved(false);}}>
+      {rows.map(item=><button type="button" key={item.id} ref={element=>{if(element)rowRefs.current.set(item.id,element);else rowRefs.current.delete(item.id);}} aria-label={`打开邮件 ${item.subject || "无主题"}`} aria-pressed={selected===item.id} disabled={saving||loading} className={`email-dense-row${status==="unsubscribe"?" unsubscribe-row":""}`} onClick={()=>{navigate(page,pageSize,item.id);setClosed("");setSaved(false);}}>
         {(() => {
           const provider = item.provider_classification;
           const signalsAvailable = typeof provider?.starred === "boolean" || typeof provider?.important_flag === "boolean";
@@ -125,7 +125,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
         <span className="email-row-sender" title={item.sender}>{item.sender || "未提供发件人"}</span>
         <span className="email-row-content"><span className="email-mobile-sender">{item.sender} · </span><strong>{item.subject || "无主题"}</strong><span className="email-row-original-text">{item.message_text || "未提供正文"}</span></span>
         {status==="unsubscribe"
-          ? (() => {const state=unsubscribeStateLabel(item.unsubscribe_state);return <span className={`email-row-category email-unsubscribe-state ${state.tone}`} title={state.reason ? `${state.text}：${state.reason}` : state.text}>{state.text}{state.reason && <small>{state.reason}</small>}</span>;})()
+          ? (() => {const state=unsubscribeStateLabel(item.unsubscribe_state);return <span className={`email-row-category email-unsubscribe-state ${state.tone}`} title={state.reason ? `${state.text}：${state.reason}` : state.text}>{state.text}{state.reason && <small>{state.reason.replace(/。$/,"")}</small>}</span>;})()
           : <span className="email-row-category" title={categoryLabel(item.category)}>{item.status==="pending_feedback"?"建议：":""}{categoryLabel(item.category)}{item.status==="pending_feedback"&&<small> · {measured(item.confidence)}</small>}</span>}
         <span className="email-row-status">{sourceLabel(item.classification_source)}{status!=="unsubscribe"&&` · ${statusLabel(item.status)}`}</span>
         <time title={localTime(item.received_at || item.updated_at)}>{localTime(item.received_at || item.updated_at)}</time>
