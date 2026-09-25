@@ -113,6 +113,7 @@
 .email-sender-line { display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: space-between; font-size: 13px; }
 .email-sender-line time { color: var(--ink-soft); font-size: 12px; }
 .email-recipient-details { margin-top: 8px; font-size: 12px; color: var(--ink-soft); }
+.email-recipient-details p { margin: 2px 0; }
 .email-reading summary { cursor: pointer; }
 .email-reading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .email-reading-actions form { display: flex; gap: 8px; align-items: center; }
@@ -122,15 +123,15 @@
 .email-important-signals svg, .email-important-state svg { flex: 0 0 auto; }
 .email-important-state { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: 12px; }
 .email-classification-details { margin-top: 14px; border-radius: 6px; background: var(--surface-muted); padding: 10px 12px; font-size: 12px; }
-.email-classification-details summary span { float: right; color: var(--ink-soft); }
+.email-classification-details h3, .email-reading-body > h3, .email-technical h3 { margin: 0 0 8px; font-size: 13px; }
+.email-technical h4 { margin: 0 0 6px; font-size: 12px; }
+.email-reading-activity { border-bottom: 1px solid var(--line); }
+.email-unsubscribe-url { display: block; margin: 4px 0; padding: 8px 10px; border-radius: 6px; background: var(--surface-muted); font-size: 12px; overflow-wrap: anywhere; word-break: break-all; user-select: all; }
 .email-classification-details .email-candidate-distribution { margin-top: 12px; padding-top: 10px; }
 .email-candidate-row { display: grid; grid-template-columns: minmax(65px, 1fr) 2fr 48px; align-items: center; gap: 8px; margin: 10px 0; }
 .email-candidate-row .email-probability-bar { border-radius: 3px; height: 7px; background: var(--line); }
 .email-candidate-row .email-probability-bar span { background: var(--accent); min-width: 0; }
 .email-candidate-row strong { text-align: right; font-size: 11px; }
-.email-reading-tabs { display: flex; border-block: 1px solid var(--line); padding: 0 24px; gap: 22px; }
-.email-reading-tabs button[role=tab] { padding: 12px 0; border: 0; border-radius: 0; border-bottom: 2px solid transparent; background: none; color: var(--ink-soft); }
-.email-reading-tabs button[aria-selected=true] { border-bottom-color: var(--accent); color: var(--accent); }
 .email-reading-body { padding: 28px 24px; min-height: 360px; }
 .email-reading-body .email-body-text { font-size: 15px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
 .email-reading-empty { color: var(--ink-soft); padding: 24px; }
@@ -139,8 +140,6 @@
 .email-attachments > div { display: inline-flex; flex-direction: column; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; margin: 0 8px 8px 0; font-size: 13px; }
 .email-attachments small { color: var(--ink-soft); margin-top: 4px; }
 .email-quoted { margin: 20px 0; color: var(--ink-soft); font-size: 13px; }
-.email-reading .email-result-strip { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; width: 100%; text-align: left; margin-top: 32px; padding: 12px; background: var(--surface-muted); border: 0; }
-.email-result-strip strong { color: var(--accent); white-space: nowrap; font-size: 12px; }
 .email-observability-item { border-bottom: 1px solid var(--line); padding: 0 0 20px; margin-bottom: 20px; }
 .email-event-heading { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .email-event-heading h3 { font-size: 14px; margin: 0; }
@@ -167,7 +166,6 @@
   .console-page:has(.email-tabs) { padding-inline: 12px; }
   .email-reading-header, .email-reading-body { padding: 18px 16px; }
   .email-reading-header h2 { font-size: 18px; }
-  .email-reading-tabs { padding-inline: 16px; }
   .email-reading-toolbar { padding: 8px; gap: 2px; }
   .email-reading-actions form { flex-wrap: wrap; }
 }

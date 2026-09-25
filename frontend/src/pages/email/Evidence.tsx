@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { getEmailUnsubscribeEntryUrl, type EmailClassificationItem, type EmailObservabilityEvent } from "../../api/console";
 import { localTime } from "./shared";
 function actionPlanEvidence(row: EmailClassificationItem) {
@@ -62,16 +62,19 @@ export function unsubscribeStateLabel(state: {status: string; outcome?: string |
 
 function UnsubscribeEvidence({ event, classificationId, entry }: { event: EmailObservabilityEvent; classificationId: string; entry?: {available: boolean; reason: string | null} }) {
   const [entryUrl, setEntryUrl] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(entry?.available !== false);
   const [error, setError] = useState("");
   const [copyState, setCopyState] = useState("");
-  async function reveal() {
-    if (loading || entryUrl) return;
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (entry?.available === false) { setLoading(false); return; }
+    const controller = new AbortController();
     setLoading(true); setError("");
-    try { setEntryUrl(await getEmailUnsubscribeEntryUrl(classificationId, new AbortController().signal)); }
-    catch { setError("退订地址暂不可用，请重试。"); }
-    finally { setLoading(false); }
-  }
+    getEmailUnsubscribeEntryUrl(classificationId, controller.signal)
+      .then(url => { if (!controller.signal.aborted) { setEntryUrl(url); setLoading(false); } })
+      .catch(() => { if (!controller.signal.aborted) { setError("退订地址暂不可用。"); setLoading(false); } });
+    return () => controller.abort();
+  }, [classificationId, entry?.available, attempt]);
   async function copy() {
     try {
       if (!navigator.clipboard) throw new Error("unavailable");
@@ -80,9 +83,12 @@ function UnsubscribeEvidence({ event, classificationId, entry }: { event: EmailO
   }
   return <>
     {!!event.attempt_ids?.length && <div className="email-unsubscribe-attempts">{event.attempt_ids.map(id => <Link key={id} to={`/attempts/${id}`}>查看处理过程 · Attempt #{id} ↗</Link>)}</div>}
-    <div className="email-unsubscribe-entry"><span>退订入口</span>
-      {entry?.available === false ? <details><summary>地址不可用 · 查看原因</summary><p>当前记录没有可验证的退订地址。</p></details> : !entryUrl ? <button type="button" onClick={()=>void reveal()} disabled={loading}>{loading ? "正在读取地址…" : "显示完整地址"}</button> : <><input aria-label="退订入口地址" readOnly value={entryUrl}/><button type="button" onClick={()=>void copy()}>复制地址</button></>}
-      {error && <p role="alert">{error}</p>}{copyState && <p role="status">{copyState}</p>}
+    <div className="email-unsubscribe-entry"><span>退订链接</span>
+      {entry?.available === false ? <p>没有保存退订地址：当前记录没有可验证的退订地址。</p>
+        : loading ? <p role="status">正在读取退订链接…</p>
+        : error ? <p role="alert">{error} <button type="button" onClick={() => setAttempt(value => value + 1)}>重试</button></p>
+        : <><code className="email-unsubscribe-url" aria-label="退订入口地址">{entryUrl}</code><button type="button" onClick={()=>void copy()}>复制地址</button></>}
+      {copyState && <p role="status">{copyState}</p>}
     </div>
   </>;
 }
@@ -97,7 +103,7 @@ export function ObservabilityDetails({ events, classificationId, entry }: { even
       <div className="email-event-heading"><span className={success ? "email-event-icon success" : failed ? "email-event-icon failure" : "email-event-icon"}>{success ? "✓" : failed ? "!" : "—"}</span><h3>{actionResultLabel(event)}</h3>{recordedAt && <time>{localTime(recordedAt)}</time>}</div>
       {event.kind === "unsubscribe" && <><p className="email-event-reason">{unsubscribeReason(event.outcome) ?? (event.outcome === "done" ? "已记录退订成功结果。" : event.status === "done" && !event.outcome ? "历史记录未提供明确的退订结果。" : null)}</p><UnsubscribeEvidence event={event} classificationId={classificationId} entry={entry}/></>}
       {event.error && <p role="alert">{event.error}</p>}
-      <details className="email-technical"><summary>技术详情</summary>
+      <div className="email-technical"><h4>技术详情</h4>
         {event.summary && <p>{event.summary}</p>}
         {event.result_text && <pre>{event.result_text}</pre>}
         <dl className="detail-definition-list">
@@ -112,7 +118,7 @@ export function ObservabilityDetails({ events, classificationId, entry }: { even
           {event.provider_result_id && <div><dt>Provider 结果</dt><dd>{event.provider_result_id}</dd></div>}
         </dl>
         {!!event.steps?.length && <ol>{event.steps.map(step => <li key={step.sequence}>{step.operation}：{step.state}（{step.reference}）</li>)}</ol>}
-      </details>
+      </div>
     </article>;
   })}</div>;
 }

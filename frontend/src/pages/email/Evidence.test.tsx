@@ -32,6 +32,6 @@ it.each([
 it("keeps Attempt accessible when the entry URL is unavailable", () => {
   render(<MemoryRouter><ObservabilityDetails events={[receipt("skipped_no_reliable_entry")]} classificationId="mail-1" entry={{available:false,reason:"entry_unavailable"}}/></MemoryRouter>);
   expect(screen.getByRole("link", {name:/Attempt #9203/})).toHaveAttribute("href", "/attempts/9203");
-  expect(screen.queryByRole("button", {name:"显示完整地址"})).not.toBeInTheDocument();
-  expect(screen.getByText("地址不可用 · 查看原因")).toBeInTheDocument();
+  expect(screen.queryByRole("button", {name:"复制地址"})).not.toBeInTheDocument();
+  expect(screen.getByText("没有保存退订地址：当前记录没有可验证的退订地址。")).toBeInTheDocument();
 });

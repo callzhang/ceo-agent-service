@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { ChevronLeft, ChevronRight, Flag, Maximize2, Minimize2, Star, X } from "lucide-react";
 import type { EmailClassificationDetail, EmailCategoryConfig } from "../../api/console";
-import { ObservabilityDetails, ProcessedClassificationEvidence, actionResultLabel } from "./Evidence";
+import { ObservabilityDetails, ProcessedClassificationEvidence } from "./Evidence";
 import { localTime, measured, sourceLabel } from "./shared";
 
 interface Props {
@@ -28,7 +28,6 @@ interface Props {
 
 export function EmailReadingPanel(props: Props) {
   const {detail, saving, loading, configs} = props;
-  const [chosenTab, setTab] = useState<string | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const onClose = useRef(props.onClose); onClose.current = props.onClose;
   const locked = useRef(saving); locked.current = saving;
@@ -49,7 +48,6 @@ export function EmailReadingPanel(props: Props) {
   const rawSignals = Array.isArray(provider?.important_signals) ? provider.important_signals.join("、") || "无" : "未同步";
   const editable = item?.status === "pending_feedback" || item?.status === "processed";
   const events = detail?.observability || [];
-  const tab = chosenTab ?? (events.length ? "activity" : "body");
   return <section className="email-reading" role="region" aria-label="邮件详情">
     <div className="email-reading-toolbar">
       <button ref={closeRef} type="button" onClick={props.onClose} disabled={saving} aria-label="关闭详情"><X size={16}/> 返回列表</button>
@@ -60,7 +58,7 @@ export function EmailReadingPanel(props: Props) {
       <header className="email-reading-header">
         <h2>{item.subject || "无主题"}</h2>
         <div className="email-sender-line"><span>{item.sender || "发件人未知"}</span><time>{localTime(item.received_at)}</time></div>
-        <details className="email-recipient-details"><summary>收件信息</summary><p>收件人：{item.recipients?.join("、") || "未提供"}</p>{item.cc && <p>抄送：{item.cc}</p>}</details>
+        <div className="email-recipient-details"><p>收件人：{item.recipients?.join("、") || "未提供"}</p>{item.cc && <p>抄送：{item.cc}</p>}</div>
         <div className="email-reading-actions">
           {editable && <form aria-label="分类确认" onSubmit={event => {event.preventDefault(); props.onSave();}}>
             <label><span className="sr-only">选择分类</span><select aria-label="选择分类" value={props.category || ""} disabled={saving || loading} onChange={event => props.onCategory(event.target.value)}><option value="" disabled>选择类别</option>{props.options.map(option => <option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</select></label>
@@ -72,23 +70,24 @@ export function EmailReadingPanel(props: Props) {
           </span>
         </div>
         {props.saveError && <p role="alert">{props.saveError}</p>}{props.saved && <p role="status" className="email-saved">分类已保存</p>}
-        <details className="email-classification-details"><summary>{sourceLabel(item.classification_source)} · {measured(item.confidence)} <span>分类依据</span></summary>
+        <section className="email-classification-details" aria-label="分类依据"><h3>分类依据 · {sourceLabel(item.classification_source)} · {measured(item.confidence)}</h3>
           <p>{item.status === "pending_feedback" ? "建议" : "当前分类"}：{label(item.category)}</p>
           <section aria-label="候选分布" className="email-candidate-distribution"><h3>候选分布</h3>{Object.entries(item.probabilities || {}).sort(([,a],[,b]) => b-a).map(([key,value]) => <div className="email-candidate-row" key={key}><span>{label(key)}</span><div className="email-probability-bar"><span style={{width: `${Math.max(0,Math.min(1,value))*100}%`}}/></div><strong>{measured(value)}</strong></div>)}{!Object.keys(item.probabilities || {}).length && <p>未提供候选分布</p>}</section>
           <p>模型：{item.model_version || "未提供"} · 描述版本：{item.description_version || "未提供"}</p>
-        </details>
+        </section>
       </header>
-      <div className="email-reading-tabs" role="tablist" aria-label="邮件详情分区">{[["activity",`处理记录 · ${events.length}`],["body","原文"]].map(([key,title]) => <button key={key} role="tab" aria-selected={tab === key} aria-controls={`email-reading-${key}`} id={`email-reading-tab-${key}`} tabIndex={tab === key ? 0 : -1} onClick={() => setTab(key)} onKeyDown={event => {if(event.key === "ArrowLeft" || event.key === "ArrowRight"){event.preventDefault();setTab(key === "body" ? "activity" : "body");const next = event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`#email-reading-tab-${key === "body" ? "activity" : "body"}`);next?.focus();}}}>{title}</button>)}</div>
-      {tab === "body" ? <div role="tabpanel" id="email-reading-body" aria-labelledby="email-reading-tab-body" className="email-reading-body">
-        <section aria-label="邮件正文"><div className="email-body-text">{item.message_text || "这封邮件没有已保存的正文，请查看原邮件后分类。"}</div></section>
-        {item.quoted_text && <details className="email-quoted"><summary>引用邮件</summary><div className="email-body-text">{item.quoted_text}</div></details>}
-        {!!item.attachment_metadata?.length && <section className="email-attachments" aria-label="附件元数据"><h3>附件</h3>{item.attachment_metadata.map((file,index) => <div key={index}>{file.filename}<small>{file.mime_type} · {file.size_bytes} bytes</small></div>)}</section>}
-        {!!events.length && <button className="email-result-strip" onClick={() => setTab("activity")}><span>{events.map(actionResultLabel).join(" · ")}</span><strong>查看处理记录 →</strong></button>}
-      </div> : <div role="tabpanel" id="email-reading-activity" aria-labelledby="email-reading-tab-activity" className="email-reading-body">
+      <section aria-label="处理记录" className="email-reading-body email-reading-activity">
+        <h3>处理记录 · {events.length}</h3>
         <ObservabilityDetails key={item.id} events={events} classificationId={item.id} entry={detail?.unsubscribe_entry}/>
         {provider && <section aria-label="邮箱观察事实" className="email-provider-state"><h3>邮箱当前状态</h3><p>文件夹：{String(provider.provider_folder_name || provider.category_key || "未知")}</p><p>Star：{starLabel} · Flag：{flagLabel}</p><p>原始信号：{rawSignals}</p></section>}
-        <details className="email-technical"><summary>技术详情</summary><ProcessedClassificationEvidence row={item}/>{provider && <pre>{JSON.stringify(provider,null,2)}</pre>}</details>
-      </div>}
+      </section>
+      <section aria-label="原文" className="email-reading-body">
+        <h3>原文</h3>
+        <section aria-label="邮件正文"><div className="email-body-text">{item.message_text || "这封邮件没有已保存的正文，请查看原邮件后分类。"}</div></section>
+        {item.quoted_text && <section className="email-quoted" aria-label="引用邮件"><h3>引用邮件</h3><div className="email-body-text">{item.quoted_text}</div></section>}
+        {!!item.attachment_metadata?.length && <section className="email-attachments" aria-label="附件元数据"><h3>附件</h3>{item.attachment_metadata.map((file,index) => <div key={index}>{file.filename}<small>{file.mime_type} · {file.size_bytes} bytes</small></div>)}</section>}
+      </section>
+      <section className="email-technical" aria-label="技术详情"><h3>技术详情</h3><ProcessedClassificationEvidence row={item}/>{provider && <pre>{JSON.stringify(provider,null,2)}</pre>}</section>
     </>}
   </section>;
 }

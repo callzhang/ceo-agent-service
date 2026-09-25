@@ -472,7 +472,7 @@ http://127.0.0.1:8765/
 - `/settings`：Settings 使用 React SPA 统一导航（Status、Info、Configuration、Agent Runtime、Prompts、Connectors、Audit Rules、Attention）。Configuration 汇总 `.env` 中的运行参数和 Prompt variables；Prompts 页面用 Developer/User tab 与 Template/Rendered preview 切换；Connectors 内含 DingTalk、Lark、纷享销客 CLI、WeChat 和 Email；Workers 通过 `/status` 映射到 Runtime Monitor，Attention 单独展示未解决运行项。`/config`、`/workers`、`/logs` 保留为兼容入口并在 SPA 内映射；Logs 不再作为 Settings 一级导航。
 - Status 的“会议结论同步”用队列租约与对应执行租约共同判断真实活跃 Agent；它展示待处理、到期、超时、处理中、可重试、失败、最久等待和近一小时完成量。超过 30 分钟的到期项或失去有效队列租约的旧运行记录会让系统状态显示为降级，而不是把历史 `running` 记录误报为仍在工作。
 - `/email`：Email 控制台展示保存邮件的可读正文。HTML 邮件只投影可见文字；样式、脚本和远程资源不会在 Console 中执行或加载，保存的邮件文本仍保留在本地存储中。
-  邮件分类采用列表与阅读双栏（窄屏全宽阅读），支持原文/处理记录切换、已处理邮件重新分类和退订 Attempt 跳转。模型训练提供总览、新建训练、样本预览、晋升设置与版本详情；参见 [Email 阅读与训练界面](docs/email-reading-training-ui.md)。
+  邮件分类采用列表与阅读双栏（窄屏全宽阅读），详情一页展开（处理记录在原文之前）、已处理邮件重新分类和退订 Attempt 跳转。模型训练提供总览、新建训练、样本预览、晋升设置与版本详情；参见 [Email 阅读与训练界面](docs/email-reading-training-ui.md)。
 
 除 DingTalk bridge/popup、通知 Service Worker 和 `/api/workbench/*` 外，业务页面统一由同一个 React SPA 渲染。FastAPI 的 `/api/console/*` 按 History、Tasks、Settings、Feedback、Tutorial、Notifications、Codex 和 WeChat 领域返回 JSON DTO；Tasks 使用显式的语义深链，因此 `/tasks/item/836` 等地址可以直接打开或刷新，而未知 `/api/*` 仍返回 JSON 404。
 - `/errors`：错误列表

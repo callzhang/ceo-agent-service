@@ -136,7 +136,6 @@ it("reclassifies a processed message with its current ActionPlan and retains sel
   show("/email?tab=all&page=1&page_size=50&selected=1");
 
   const drawer=await screen.findByRole("region",{name:"邮件详情"});
-  await user.click(within(drawer).getByText("分类依据").closest("summary")!);
   expect(drawer).toHaveTextContent("当前分类：工作");
   await user.selectOptions(within(drawer).getByRole("combobox",{name:"选择分类"}),"legal");
   await user.click(within(drawer).getByRole("button",{name:"保存修改"}));
@@ -266,23 +265,20 @@ it("returns to a legal previous page after removing the last item",async()=>{
   await user.selectOptions(await screen.findByRole("combobox",{name:"选择分类"}),"work");await user.click(screen.getByRole("button",{name:"保存修改"}));
   await waitFor(()=>expect(screen.getByLabelText("URL")).toHaveTextContent("page=1"));
 });
-it("reveals unsubscribe evidence only on demand and links the verified Attempt",async()=>{
+it("shows the unsubscribe link and evidence without opening anything, and links the verified Attempt",async()=>{
   const user=userEvent.setup();
   api.listEmailClassifications.mockResolvedValue({items:[{...row("1"),important:null,provider_classification:{state:"categorized",category_key:"legal",important:null}}],meta:{page:1,page_size:50,total:1}});
   api.getEmailClassification.mockResolvedValue({item:{...row("1"),message_text:"正文",recipients:["legal@example.com"],cc:"cc@example.com",description_version:"desc-v7",action_plan:{action_plan_id:"plan-full-id",action_plan_version:7,actions:["move","unsubscribe"]}},provider_classification:{state:"categorized",category_key:"legal",important:null,observed_at:"2026-09-08T00:00:00Z"},observability:[{kind:"unsubscribe",status:"done",lifecycle_version:"email_unsubscribe_audited_v2",result_text:"退订成功",task_id:42,task_status:"done",consumer_run_ids:[101],audit_run_ids:[102],attempt_ids:[9205],receipt_id:"receipt-2",observation_digest:"digest-2",evidence:"最终结果页：已成功退订",steps:[{sequence:1,operation:"open_entry",state:"done",reference:"receipt-2"}]}]});
   api.getEmailUnsubscribeEntryUrl.mockResolvedValue("https://example.test/unsubscribe?token=fixture");
   show();await user.click(await screen.findByRole("button",{name:"打开邮件 邮件1"}));
   const drawer=await screen.findByRole("region",{name:"邮件详情"});
-  await user.click(await within(drawer).findByRole("tab",{name:"处理记录 · 1"}));
-  for (const summary of drawer.querySelectorAll("details.email-technical > summary")) { await user.click(summary); }
+  await within(drawer).findByRole("region",{name:"处理记录"});
   expect(await within(drawer).findByText("退订成功")).toBeInTheDocument();
   expect(drawer).toHaveTextContent("plan-full-id");expect(drawer).toHaveTextContent("版本 7");
   expect(drawer).toHaveTextContent("Consumer run：101");expect(drawer).toHaveTextContent("Audit run：102");expect(drawer).toHaveTextContent("receipt-2");expect(drawer).toHaveTextContent("digest-2");
   expect(within(drawer).getByRole("link",{name:"查看处理过程 · Attempt #9205 ↗"})).toHaveAttribute("href","/attempts/9205");
-  expect(api.getEmailUnsubscribeEntryUrl).not.toHaveBeenCalled();
-  await user.click(within(drawer).getByRole("button",{name:"显示完整地址"}));
+  expect(await within(drawer).findByText("https://example.test/unsubscribe?token=fixture")).toBeInTheDocument();
   expect(api.getEmailUnsubscribeEntryUrl).toHaveBeenCalledWith("1",expect.any(AbortSignal));
-  expect(await within(drawer).findByDisplayValue("https://example.test/unsubscribe?token=fixture")).toBeInTheDocument();
   expect(within(drawer).getByRole("button",{name:"复制地址"})).toBeInTheDocument();
   expect(within(drawer).getByRole("region",{name:"邮箱观察事实"})).toHaveTextContent("legal");
   expect(within(drawer).getByText("Star：未同步")).toBeInTheDocument();
@@ -305,19 +301,20 @@ it("shows each unsubscribe record's outcome in the 退订记录 list instead of 
   for (const item of rows) expect(item).not.toHaveTextContent("已处理");
   expect(rows[1]).not.toHaveTextContent("未找到可操作的退订入口");
 });
-it("opens the detail on the 处理记录 tab, ahead of the original text, when the mail has records",async()=>{
-  const user=userEvent.setup();
+it("shows the 处理记录 before the original text on one open page, with nothing collapsed",async()=>{
   api.listEmailClassifications.mockResolvedValue({items:[row("1","processed")],meta:{page:1,page_size:50,total:1}});
-  api.getEmailClassification.mockResolvedValue({item:{...row("1","processed"),message_text:"邮件正文内容"},provider_classification:null,observability:[{kind:"unsubscribe",status:"done",outcome:"done"}]});
+  api.getEmailClassification.mockResolvedValue({item:{...row("1","processed"),message_text:"邮件正文内容",quoted_text:"被引用的内容",recipients:["a@example.com"]},provider_classification:null,observability:[{kind:"unsubscribe",status:"done",outcome:"done"}]});
+  api.getEmailUnsubscribeEntryUrl.mockResolvedValue("https://example.test/u");
   show("/email?tab=all&selected=1");
   const drawer=await screen.findByRole("region",{name:"邮件详情"});
-  const tabs=await within(drawer).findAllByRole("tab");
-  expect(tabs.map(tab=>tab.textContent)).toEqual(["处理记录 · 1","原文"]);
-  expect(tabs[0]).toHaveAttribute("aria-selected","true");
-  expect(await within(drawer).findByText("退订成功")).toBeInTheDocument();
-  expect(within(drawer).queryByText("邮件正文内容")).not.toBeInTheDocument();
-  await user.click(tabs[1]);
-  expect(await within(drawer).findByText("邮件正文内容")).toBeInTheDocument();
+  const activity=await within(drawer).findByRole("region",{name:"处理记录"});
+  const original=within(drawer).getByRole("region",{name:"原文"});
+  expect(activity.compareDocumentPosition(original) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(drawer).getByText("邮件正文内容")).toBeInTheDocument();
+  expect(within(drawer).getByText("被引用的内容")).toBeInTheDocument();
+  expect(within(drawer).getByText("a@example.com",{exact:false})).toBeInTheDocument();
+  expect(drawer.querySelector("details")).toBeNull();
+  expect(within(drawer).queryByRole("tab")).toBeNull();
 });
 it("supports keyboard tabs and drawer tab traversal",async()=>{
   const user=userEvent.setup();show();
@@ -468,7 +465,6 @@ it("ignores an aborted learning rejection after a newer tab request succeeds",as
 });
 it("includes evidence summaries in drawer keyboard traversal",async()=>{
   const user=userEvent.setup();show("/email?tab=all&selected=1");await screen.findByText(/完整正文/);
-  await user.click(screen.getByText("分类依据").closest("summary")!);
   const distribution=screen.getByRole("region",{name:"候选分布"});expect(distribution).toHaveTextContent("工作");expect(distribution).toHaveTextContent("70.0%");expect(distribution.querySelector(".email-probability-bar")).toBeTruthy();
 });
 it("reconciles a lost switch response from server mode before claiming current state",async()=>{
