@@ -13,6 +13,7 @@ from app.store import AutoReplyStore
 
 MINUTES_SYNC_MIGRATION_KEY = "ceo-minutes-sync-daily-v1"
 MINUTES_ACCESS_MIGRATION_KEY = "ceo-minutes-access-daily-v1"
+CHROME_COOKIES_MIGRATION_KEY = "chrome-cookie-copy-daily-v1"
 WEEKLY_REPORT_MIGRATION_KEY = "ceo-weekly-report-saturday-v1"
 DAILY_REPORT_MIGRATION_KEY = "ceo-daily-report-daily-v1"
 WEEKLY_OKR_MIGRATION_KEY = "weekly-okr-report-sunday-v1"
@@ -63,6 +64,12 @@ SCHEDULED_TASK_DEFAULT_COPY = {
     DAILY_REPORT_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="发送 CEO 每日总结",
         description="每晚汇总当天的会议、Tasks 项目变化、已处理和等你处理的事项，并扫描当天群消息，写成重要进展、风险、需介入、需关注和管理建议；发布为钉钉文档，由机器人单聊把要点和链接发给 Derek。",
+        old_name="",
+        old_description="",
+    ),
+    CHROME_COOKIES_MIGRATION_KEY: ScheduledTaskDefaultCopy(
+        name="同步 Chrome 登录态",
+        description="每天复制一份你 Chrome 里的 cookies 给服务的无头浏览器用（退订、听记权限申请等需要登录的任务），银行、券商和支付类域名不复制。",
         old_name="",
         old_description="",
     ),
@@ -322,6 +329,9 @@ def seed_scheduled_tasks(
     daily_report = _seed_daily_report_task(
         store=store, options=options, working_directory=working_directory, now=now
     )
+    chrome_cookies = _seed_chrome_cookies_task(
+        store=store, options=options, working_directory=working_directory, now=now
+    )
     minutes_access = _seed_minutes_access_task(
         store=store, options=options, working_directory=working_directory, now=now
     )
@@ -345,6 +355,7 @@ def seed_scheduled_tasks(
             weekly_okr,
             weekly_report,
             daily_report,
+            chrome_cookies,
             minutes_access,
             minutes,
         )
@@ -869,6 +880,39 @@ def _seed_daily_report_task(
         cron_expression="0 0 21 * * *",
         timezone_name="Asia/Shanghai",
         skill_refs=skill_refs,
+        enabled=False,
+        now=now,
+    )
+
+
+def _seed_chrome_cookies_task(
+    *,
+    store: AutoReplyStore,
+    options: ScheduledTaskOptionService,
+    working_directory: Path,
+    now: datetime | None,
+) -> ScheduledTask:
+    """Seed the daily copy of the owner's Chrome cookies.
+
+    Before the tasks that need a login (unsubscribe, minutes access), so the
+    copy they open is the one made this morning.
+    """
+    del options, working_directory
+    adopted = store.adopt_scheduled_task_service_command(
+        migration_key=CHROME_COOKIES_MIGRATION_KEY,
+        command="sync-chrome-cookies",
+        seed_description=_default_copy(CHROME_COOKIES_MIGRATION_KEY).description,
+        now=now,
+    )
+    if adopted is not None:
+        return adopted
+    return store.create_scheduled_task(
+        migration_key=CHROME_COOKIES_MIGRATION_KEY,
+        name=_default_copy(CHROME_COOKIES_MIGRATION_KEY).name,
+        description=_default_copy(CHROME_COOKIES_MIGRATION_KEY).description,
+        command="sync-chrome-cookies",
+        cron_expression="0 0 6 * * *",
+        timezone_name="Asia/Shanghai",
         enabled=False,
         now=now,
     )

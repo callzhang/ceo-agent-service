@@ -163,6 +163,10 @@ FIXED_DISCOVERY_KEYS = frozenset(
 
 
 READABLE_BUILTIN_COPY = {
+    "chrome-cookie-copy-daily-v1": (
+        "同步 Chrome 登录态",
+        "每天复制一份你 Chrome 里的 cookies 给服务的无头浏览器用（退订、听记权限申请等需要登录的任务），银行、券商和支付类域名不复制。",
+    ),
     "ceo-daily-report-daily-v1": (
         "发送 CEO 每日总结",
         "每晚汇总当天的会议、Tasks 项目变化、已处理和等你处理的事项，并扫描当天群消息，写成重要进展、风险、需介入、需关注和管理建议；发布为钉钉文档，由机器人单聊把要点和链接发给 Derek。",
@@ -1488,6 +1492,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
                 "scan-meeting-todos-once": (
                     lambda: produced.append("scan-meeting-todos-once") or "queued=0"
                 ),
+                "sync-chrome-cookies": (
+                    lambda: produced.append("sync-chrome-cookies") or "kept=0"
+                ),
                 "request-minutes-access": (
                     lambda: produced.append("request-minutes-access") or "requested=0"
                 ),
@@ -1519,6 +1526,7 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         "scan-meeting-todos-once",
         "scan-meetings-once",
         "scan-oa-approvals",
+        "sync-chrome-cookies",
         "sync-minutes-once",
         "wechat-produce-once",
         "weekly-okr-report",
@@ -1596,7 +1604,7 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
         store=store, options=options, working_directory=tmp_path, now=NOW
     )
 
-    assert len(tasks) == 13
+    assert len(tasks) == 14
     agent_tasks = {"ceo-weekly-report-saturday-v1", "ceo-daily-report-daily-v1"}
     for task in tasks:
         assert task.enabled is False
@@ -1605,6 +1613,7 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
         assert task.command, task.migration_key
         if task.command in {
             "sync-minutes-once",
+            "sync-chrome-cookies",
             "request-minutes-access",
             "weekly-okr-report",
         }:

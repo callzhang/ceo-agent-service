@@ -370,6 +370,7 @@ def build_parser() -> argparse.ArgumentParser:
         "authorize-memory-connector",
         "renew-minutes-session",
         "request-minutes-access",
+        "sync-chrome-cookies",
         "sync-minutes-once",
         "scan-meetings-once",
         "scan-oa-approvals",
@@ -1076,6 +1077,9 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
             ),
             "request-minutes-access": lambda: (
                 f"request-minutes-access {request_minutes_access_command(settings)}"
+            ),
+            "sync-chrome-cookies": lambda: (
+                f"sync-chrome-cookies {sync_chrome_cookies_command(settings)}"
             ),
             "sync-minutes-once": lambda: (
                 "sync-minutes-once "
@@ -2600,6 +2604,40 @@ def renew_minutes_session_command(settings: WorkerSettings) -> int:
         flush=True,
     )
     return carried
+
+
+def sync_chrome_cookies_command(settings: WorkerSettings) -> str:
+    """Refresh the service's copy of the owner's Chrome cookies.
+
+    Every headless task that may meet a login wall opens a profile seeded from
+    this copy (see `service_browser`). Banks, brokers and payment services are
+    left out by the `CEO_CHROME_COOKIE_DENY_DOMAINS` setting, and the copy is
+    refused until that list exists: an empty list would copy everything.
+    """
+    from app.chrome_cookie_snapshot import (
+        DENY_DOMAINS_SETTING,
+        deny_domains,
+        snapshot_root,
+        source_cookies_path,
+        sync_chrome_cookie_snapshot,
+    )
+
+    del settings
+    deny = deny_domains()
+    if not deny:
+        raise RuntimeError(
+            f"{DENY_DOMAINS_SETTING} is not set; name the banks, brokers and payment "
+            "services to leave out before the cookie copy runs"
+        )
+    counts = sync_chrome_cookie_snapshot(
+        source=source_cookies_path(), root=snapshot_root(), deny=deny
+    )
+    summary = (
+        f"kept={counts['kept_cookies']} removed={counts['removed_cookies']} "
+        f"of={counts['source_cookies']} denied_domains={len(deny)}"
+    )
+    print(f"sync-chrome-cookies {summary}", flush=True)
+    return summary
 
 
 def request_minutes_access_command(settings: WorkerSettings) -> str:
@@ -4959,6 +4997,8 @@ def main() -> None:
         renew_minutes_session_command(settings)
     elif args.command == "request-minutes-access":
         request_minutes_access_command(settings)
+    elif args.command == "sync-chrome-cookies":
+        sync_chrome_cookies_command(settings)
     elif args.command == "sync-minutes-once":
         sync_minutes_once_command(settings)
     elif args.command == "scan-meetings-once":

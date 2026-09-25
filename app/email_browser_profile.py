@@ -491,18 +491,16 @@ def launch_persistent_email_context(
     headless: bool = True,
     **kwargs: object,
 ) -> object:
-    """Launch Chromium only through the validated dedicated profile."""
+    """Launch headless Chrome only through the validated dedicated profile."""
 
     if headless is not True:
         raise EmailBrowserProfileError("email browser must be headless")
     profile_path = profile.prepare()
-    chromium = getattr(playwright, "chromium", None)
-    launch = getattr(chromium, "launch_persistent_context", None)
-    if not callable(launch):
-        raise EmailBrowserProfileError("Chromium persistent context is unavailable")
-    return launch(
-        user_data_dir=str(profile_path),
-        headless=True,
-        accept_downloads=False,
-        **kwargs,
-    )
+    from app.service_browser import launch_service_chrome
+
+    try:
+        return launch_service_chrome(
+            playwright, profile_path, accept_downloads=False, **kwargs
+        )
+    except ValueError as exc:
+        raise EmailBrowserProfileError(str(exc)) from exc

@@ -2625,8 +2625,11 @@ def test_email_browser_profile_rejects_symlink_and_main_browser_locations(
 
 
 def test_persistent_email_browser_launch_is_always_headless_and_dedicated(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.setattr(
+        "app.chrome_cookie_snapshot.snapshot_root", lambda: tmp_path / "no-snapshot"
+    )
     calls: list[dict[str, object]] = []
 
     class Chromium:
@@ -2642,7 +2645,9 @@ def test_persistent_email_browser_launch_is_always_headless_and_dedicated(
     assert calls == [
         {
             "user_data_dir": str(tmp_path / "runtime" / "email-browser-profile"),
+            "channel": "chrome",
             "headless": True,
+            "ignore_default_args": ["--use-mock-keychain", "--password-store=basic"],
             "accept_downloads": False,
         }
     ]

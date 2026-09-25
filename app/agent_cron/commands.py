@@ -164,6 +164,13 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
         consumer_prompt_enabled=True,
     ),
     ServiceCommandOption(
+        name="sync-chrome-cookies",
+        display_name="同步 Chrome 登录态",
+        description="每天复制一份你 Chrome 里的 cookies 给服务的无头浏览器用（退订、听记权限申请等需要登录的任务），银行、券商和支付类域名不复制。",
+        channel="work_summary",
+        consumer_prompt_enabled=False,
+    ),
+    ServiceCommandOption(
         name="request-minutes-access",
         display_name="申请没有权限的听记",
         description="读取听记管理后台，对本账号读不到的听记逐条在其页面提交查看权限申请，并以页面读回的申请状态为准。",
