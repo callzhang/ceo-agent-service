@@ -163,6 +163,7 @@ def scan_hourly_quality(
             _check_email_classification_tasks(db, checked_now, violations)
         if "email_classifier_runtime_samples" in existing:
             _check_email_model_runtime(db, checked_now, violations, attention)
+        _check_email_model_left_active(Path(db_path), violations)
         # Legacy follow_up_drafts are history only (Derek 2026-09-25: a
         # follow-up is sent only when he clicks it), so an unsent or failed
         # one is not a delivery backlog and is not checked here.
@@ -625,6 +626,48 @@ def _check_email_classification_tasks(
         severity="error",
         detail="email classification remained due without being claimed",
     )
+
+
+def _check_email_model_left_active(
+    db_path: Path, violations: list[QualityIssue]
+) -> None:
+    """Say when a model someone activated is no longer the one deciding.
+
+    The activation file records what was switched on. The service re-derives
+    the mode from the registry every time and falls back to the Agent when the
+    evidence no longer verifies, so the two can disagree with nothing failing:
+    from 2026-09-21 the file said `model_primary` while every message went to
+    the Agent, and the runtime-sample check above stayed silent because a
+    model that is never asked leaves no samples.
+    """
+
+    root = db_path.parent / "email-models"
+    activation = root / "online-active.json"
+    try:
+        recorded = json.loads(activation.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(recorded, dict) or recorded.get("mode") != "model_primary":
+        return
+    from app.email_classifier_runtime import (
+        EmailClassifierRuntimeMode,
+        derive_runtime_mode,
+    )
+    from app.email_model_registry import EmailModelRegistry
+
+    try:
+        derived = derive_runtime_mode(EmailModelRegistry(root))
+    except Exception:  # noqa: BLE001 - an unreadable registry is itself the finding
+        derived = EmailClassifierRuntimeMode.AGENT_PRIMARY
+    if derived is not EmailClassifierRuntimeMode.MODEL_PRIMARY:
+        _add(
+            violations,
+            source="email_model_activation",
+            code="activated_model_not_deciding",
+            count=1,
+            severity="error",
+            detail="the activation file says model_primary but the service runs the Agent",
+        )
 
 
 def _check_email_model_runtime(

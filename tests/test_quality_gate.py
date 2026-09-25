@@ -1404,3 +1404,51 @@ def test_an_idle_email_model_is_not_mistaken_for_a_broken_one(tmp_path):
         issue.source == "email_classifier_runtime_samples"
         for issue in (*report.violations, *report.attention)
     )
+
+
+def _activation_file(root, *, mode="model_primary"):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "online-active.json").write_text(
+        json.dumps({"mode": mode, "model_id": "email-model-1"}), encoding="utf-8"
+    )
+
+
+def test_an_activated_model_the_service_no_longer_runs_is_a_violation(tmp_path):
+    """The file said model_primary for days while every message went to the Agent."""
+
+    store = AutoReplyStore(tmp_path / "activated-off.sqlite3")
+    EmailStore(store.path)
+    _activation_file(store.path.parent / "email-models")
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    found = [
+        issue for issue in report.violations
+        if issue.source == "email_model_activation"
+    ]
+    assert len(found) == 1
+    assert found[0].code == "activated_model_not_deciding"
+    assert report.ok is False
+
+
+def test_an_agent_primary_activation_file_is_not_a_finding(tmp_path):
+    store = AutoReplyStore(tmp_path / "activation-agent.sqlite3")
+    EmailStore(store.path)
+    _activation_file(store.path.parent / "email-models", mode="agent_primary")
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(
+        issue.source == "email_model_activation" for issue in report.violations
+    )
+
+
+def test_no_activation_file_is_not_a_finding(tmp_path):
+    store = AutoReplyStore(tmp_path / "never-activated.sqlite3")
+    EmailStore(store.path)
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not any(
+        issue.source == "email_model_activation" for issue in report.violations
+    )
