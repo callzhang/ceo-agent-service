@@ -187,7 +187,11 @@ def persist_model_primary_classification(
         EmailClassification,
         EmailClassificationStatus,
     )
-    from app.email_classifier_scan import _provider_locator, _stable_message_identity
+    from app.email_classifier_scan import (
+        _provider_locator,
+        _recipient_values,
+        _stable_message_identity,
+    )
     from app.email_classifier_runtime import (
         OnlineModelAcceptError,
         OnlineModelAcceptOutcome,
@@ -290,7 +294,7 @@ def persist_model_primary_classification(
         persisted = email_store.persist_scan_result(
             classification,
             sender=sender,
-            recipients=tuple(),
+            recipients=_recipient_values(message),
             subject=str(message.get("subject") or ""),
             normalized_text=str(message.get("markdownBody") or message.get("textBody") or ""),
             attachment_metadata=tuple(
@@ -359,7 +363,11 @@ def persist_model_pending_feedback(
         EmailClassificationStatus,
     )
     from app.email_classifier_model import email_message_to_text
-    from app.email_classifier_scan import _provider_locator, _stable_message_identity
+    from app.email_classifier_scan import (
+        _provider_locator,
+        _recipient_values,
+        _stable_message_identity,
+    )
 
     if not model_text:
         raise ValueError("model pending feedback requires canonical model text")
@@ -396,7 +404,7 @@ def persist_model_pending_feedback(
     return email_store.persist_scan_result(
         classification,
         sender=sender,
-        recipients=tuple(),
+        recipients=_recipient_values(message),
         subject=str(message.get("subject") or ""),
         normalized_text=str(
             message.get("markdownBody") or message.get("textBody") or ""

@@ -283,6 +283,47 @@ def test_rejected_model_result_enters_pending_feedback_without_any_task(tmp_path
         ).fetchone()[0] == 0
 
 
+def test_model_classified_mail_keeps_its_recipients(tmp_path):
+    """Both model paths once stored recipients=() so the detail said 未提供."""
+
+    module = _module()
+    store = EmailStore(tmp_path / "model-recipients.sqlite3")
+    context = AgentScanContext(
+        allowed_category_keys=("work", "junk"),
+        category_descriptions={"work": {}, "junk": {}},
+        folder_targets={"work": "Work"},
+        config_version="config-v1",
+    )
+    recipients = {
+        "toRecipients": [{"name": "Lei", "email": "lei@example.com"}],
+        "ccRecipients": [{"name": "", "email": "cc@example.com"}],
+    }
+    accepted = module.persist_model_primary_classification(
+        store,
+        SimpleNamespace(produce=lambda *_args: None),
+        message=_model_accept_message() | recipients,
+        prediction=_accepted_model_prediction(),
+        context=context,
+        model_id="email-embedding-mlp-ready",
+        model_text="exact current model text",
+        unsubscribe_entries=(),
+    )
+    pending = module.persist_model_pending_feedback(
+        store,
+        message=_model_accept_message()
+        | recipients
+        | {"messageId": "<recipients-review@example.com>", "uid": 18},
+        prediction=_rejected_model_prediction(),
+        context=context,
+        model_id="email-embedding-mlp-ready",
+        model_text="exact current model text",
+    )
+
+    for persisted in (accepted.persisted, pending):
+        detail = store.get_classification(int(persisted["id"]))
+        assert detail["recipients"] == ["lei@example.com", "cc@example.com"]
+
+
 def _route_production_model_accept(
     store,
     producer,

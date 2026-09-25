@@ -12957,6 +12957,7 @@ class EmailStore:
             row = db.execute(
                 """
                 select classifications.*, messages.normalized_text as message_text,
+                       messages.recipients_json as message_recipients_json,
                        messages.attachment_metadata_json
                            as message_attachment_metadata_json
                 from email_classifications as classifications
@@ -12975,9 +12976,14 @@ class EmailStore:
             **self._classification_evidence_row(row),
             "message_text": _display_message_body(message),
             "cc": message.get("Cc", ""),
-            "recipients": [
-                address for _, address in getaddresses(message.get_all("To", []))
-            ],
+            # The stored body carries no header block for almost every message,
+            # so recipients read from its "To:" line came back empty and the
+            # console said 未提供 for mail whose recipients were saved.
+            "recipients": _json_load(
+                row["message_recipients_json"] or "[]",
+                field="recipients_json",
+                expected_type=list,
+            ),
         }
 
     def get_classification_by_stable_identity(
