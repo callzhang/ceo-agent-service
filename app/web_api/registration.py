@@ -87,6 +87,7 @@ def register_console_routes(
     store_factory: Callable[[], Any],
     *,
     status_payload_factory: Callable[[], Any],
+    connector_status_factory: Callable[[], Any] | None = None,
     feedback_backlog_factory: Callable[[], Any],
     attention_rows_factory: Callable[[], Any],
     task_row_builder: Callable[..., Any] | None = None,
@@ -1766,7 +1767,14 @@ def register_console_routes(
         elif section == "attention":
             payload = {"items": [json_safe(item) for item in group_attention_rows(attention_rows_factory())]}
         elif section == "connectors":
-            payload = json_safe(status_payload_factory()).get("connectors", {})
+            # Only the connector block is wanted. Building the whole status
+            # payload for it made this tab as slow as the status page on a cold
+            # start (queue counts, worker state, Attention), and it spun there.
+            payload = json_safe(
+                connector_status_factory()
+                if connector_status_factory is not None
+                else status_payload_factory().get("connectors", {})
+            )
         else:
             from app import config as app_config
             if section == "info":

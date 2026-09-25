@@ -10235,6 +10235,9 @@ def create_audit_app(
         # schema/WAL health check while the worker may be writing SQLite.
         store_factory=lambda: audit_store,
         status_payload_factory=render_settings_status_payload,
+        connector_status_factory=lambda: connector_status_cache.get_or_refresh(
+            _connector_status_snapshots, lambda: {}
+        ),
         feedback_backlog_factory=read_fresh_feedback_backlog,
         # The React Attention page must share Status's cached snapshot.  The
         # legacy/non-SPA handlers retain their direct read for compatibility,
