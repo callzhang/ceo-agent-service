@@ -26,7 +26,6 @@ from app.cli import (
     rerun_message_command,
     reset_codex_sessions_command,
     run_consumer_loop,
-    run_follow_up_delivery_loop,
     run_task_maintenance_loop,
     record_feedback_command,
     refresh_org_cache_command,
@@ -1406,10 +1405,10 @@ def test_read_dingteam_okr_command_returns_processed_live_payload(
     assert json.loads(capsys.readouterr().out) == result
 
 
-def test_parser_supports_process_follow_ups():
-    args = build_parser().parse_args(["process-follow-ups"])
-
-    assert args.command == "process-follow-ups"
+def test_parser_no_longer_offers_automatic_follow_up_sending():
+    """Derek, 2026-09-25: a follow-up is sent only when he clicks its button."""
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["process-follow-ups"])
 
 
 def test_parser_no_longer_offers_periodic_completion_checks():
@@ -1501,52 +1500,6 @@ def test_setup_memory_connector_command_requires_memory_url(tmp_path):
         )
 
 
-def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, capsys):
-    calls = []
-
-    def fake_process(store, dws, *, now, auto_send, feedback_base_url="", limit=50):
-        calls.append(
-            (
-                store.path,
-                type(dws).__name__,
-                bool(now),
-                auto_send,
-                feedback_base_url,
-                limit,
-            )
-        )
-        return 2
-
-    monkeypatch.setattr(
-        cli,
-        "scan_task_sources_command",
-        lambda settings, max_new_items=None: calls.append(
-            ("scan", settings.db_path, max_new_items)
-        )
-        or 3,
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_work_items_command",
-        lambda settings: calls.append(("work", settings.db_path)) or 4,
-    )
-    monkeypatch.setattr("app.follow_up.process_due_follow_ups", fake_process)
-    monkeypatch.setattr("app.follow_up.process_due_business_task_follow_ups", fake_process)
-
-    sent = cli.process_follow_ups_command(
-        WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
-    )
-
-    assert sent == 4
-    assert calls == [
-        ("scan", tmp_path / "worker.sqlite3", None),
-        ("work", tmp_path / "worker.sqlite3"),
-        (tmp_path / "worker.sqlite3", "DwsClient", True, True, "", 50),
-        (tmp_path / "worker.sqlite3", "DwsClient", True, True, "", 50),
-    ]
-    assert capsys.readouterr().out == "process-follow-ups sent=4\n"
-
-
 def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys):
     calls = []
 
@@ -1572,14 +1525,6 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         cli,
         "process_okr_reviews_command",
         lambda settings: calls.append(("okr", settings.db_path)) or 5,
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_follow_ups_command",
-        lambda settings, refresh_evidence=True: calls.append(
-            ("follow", settings.db_path, refresh_evidence)
-        )
-        or 1,
     )
     monkeypatch.setattr(cli, "DwsClient", lambda **_: FakeDwsClient())
     monkeypatch.setattr(
@@ -1612,7 +1557,6 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         "dingtalk_todos_closed": 4,
         "dingtalk_todos_recovered": 8,
         "completion_items_processed": 2,
-        "follow_ups": 1,
     }
     assert calls == [
         ("scan", tmp_path / "worker.sqlite3"),
@@ -1622,14 +1566,12 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         ("dingtalk_todo_scan", "FakeDwsClient"),
         ("dingtalk_todo_retry", "FakeDwsClient"),
         ("work", tmp_path / "worker.sqlite3"),
-        ("follow", tmp_path / "worker.sqlite3", False),
     ]
     assert capsys.readouterr().out == (
         "daily-task-maintenance sources=3 oa_approvals=6 work_items=2 "
         "okr_reviews=5 dingtalk_todos_closed=4 "
         "dingtalk_todos_recovered=8 "
-        "completion_items_processed=2 "
-        "follow_ups=1\n"
+        "completion_items_processed=2\n"
     )
 
 
@@ -1697,14 +1639,6 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
         "process_okr_reviews_command",
         lambda settings: calls.append(("okr", settings.db_path)) or 5,
     )
-    monkeypatch.setattr(
-        cli,
-        "process_follow_ups_command",
-        lambda settings, refresh_evidence=True: calls.append(
-            ("follow", settings.db_path, refresh_evidence)
-        )
-        or 1,
-    )
     monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
     monkeypatch.setattr(
         cli,
@@ -1734,7 +1668,6 @@ def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, caps
         ("dingtalk_todo_scan", "FakeDwsClient"),
         ("dingtalk_todo_retry", "FakeDwsClient"),
         ("work", db_path),
-        ("follow", db_path, False),
     ]
     assert result["dingtalk_todos_closed"] == 4
     assert result["dingtalk_todos_recovered"] == 8
@@ -2552,22 +2485,19 @@ def test_process_work_items_command_does_not_claim_when_lease_is_lost_before_cla
 @pytest.mark.parametrize(
     ("source_type", "expected_route"),
     [
-        ("todo_completion_evidence_candidate", "completion"),
-        ("todo_completion_check", "completion"),
-        ("follow_up_completion_check", "completion"),
+        ("todo_completion_evidence_candidate", "skipped"),
+        ("todo_completion_check", "skipped"),
+        ("follow_up_completion_check", "skipped"),
         ("reply_attempt", "task"),
     ],
 )
-def test_claimed_work_summary_input_uses_explicit_source_dispatch(
+def test_claimed_work_summary_input_skips_retired_completion_checks(
     monkeypatch, source_type, expected_route
 ):
-    completion_module = import_module("app.task_completion_agent")
+    # Derek, 2026-09-25: completion is driven by new evidence and follow-ups
+    # are sent only by his click, so a completion check still queued from
+    # before is closed as skipped instead of reaching the Task Agent.
     routed = []
-    monkeypatch.setattr(
-        completion_module,
-        "process_task_completion_work_item",
-        lambda *args, **kwargs: routed.append("completion"),
-    )
     monkeypatch.setattr(
         cli,
         "process_work_item",
@@ -2581,10 +2511,17 @@ def test_claimed_work_summary_input_uses_explicit_source_dispatch(
         def clear_codex_capacity_pause(self):
             pass
 
+        def mark_work_summary_input_skipped(self, input_id, reason):
+            routed.append("skipped")
+            assert input_id == 1
+            assert reason == cli.RETIRED_COMPLETION_CHECK_REASON
+
     work_input = SimpleNamespace(source_type=source_type, id=1)
     runner = SimpleNamespace(codex=object())
 
-    assert cli._process_claimed_work_summary_input(Store(), runner, work_input)
+    processed = cli._process_claimed_work_summary_input(Store(), runner, work_input)
+
+    assert processed is (expected_route == "task")
     assert routed == [expected_route]
 
 
@@ -5281,18 +5218,13 @@ def test_live_send_allows_guarded_override(monkeypatch, tmp_path):
     ensure_live_send_allowed(settings)
 
 
-@pytest.mark.parametrize("command", ["process-follow-ups", "daily-task-maintenance"])
+@pytest.mark.parametrize("command", ["daily-task-maintenance"])
 def test_main_guards_follow_up_send_commands(monkeypatch, tmp_path, command):
     monkeypatch.delenv("CEO_LIVE_SEND_BLOCKERS_ACCEPTED", raising=False)
     monkeypatch.setattr(
         sys,
         "argv",
         ["ceo-agent", command, "--db", str(tmp_path / "worker.sqlite3")],
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_follow_ups_command",
-        lambda settings: pytest.fail("follow-up send command should be guarded"),
     )
     monkeypatch.setattr(cli, "scan_task_sources_command", lambda settings: 0)
     monkeypatch.setattr(cli, "process_work_items_command", lambda settings: 0)
@@ -7213,11 +7145,6 @@ def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_pat
         "scan_oa_approvals_command",
         lambda received, max_new_items=None: calls.append("scan-oa-approvals"),
     )
-    monkeypatch.setattr(
-        cli,
-        "process_follow_ups_command",
-        lambda received, refresh_evidence=False, limit=50: calls.append("follow-ups"),
-    )
 
     def sleep(seconds):
         calls.append(("sleep", seconds))
@@ -7374,14 +7301,6 @@ def test_task_maintenance_loop_processes_only_internal_steps(monkeypatch, tmp_pa
         "process_okr_reviews_command",
         lambda received: calls.append(("okr", received.db_path)) or 5,
     )
-    monkeypatch.setattr(
-        cli,
-        "process_follow_ups_command",
-        lambda received, refresh_evidence=True, limit=50: calls.append(
-            ("follow", received.db_path, refresh_evidence, limit)
-        )
-        or 1,
-    )
 
     def sleep(seconds):
         calls.append(("sleep", seconds))
@@ -7463,11 +7382,6 @@ def test_task_maintenance_loop_isolates_failed_step_and_continues(
     )
     monkeypatch.setattr(
         cli,
-        "process_follow_ups_command",
-        lambda received, refresh_evidence=False, limit=50: calls.append("follow"),
-    )
-    monkeypatch.setattr(
-        cli,
         "close_superseded_scheduled_reply_tasks",
         lambda received: calls.append("resolve-superseded") or 0,
     )
@@ -7532,104 +7446,6 @@ def test_not_due_maintenance_result_does_not_count_as_recovery():
     assert cli._maintenance_step_completed(None) is True
 
 
-def test_task_maintenance_loop_does_not_block_follow_up_delivery(
-    monkeypatch, tmp_path
-):
-    calls = []
-
-    class StopLoop(Exception):
-        pass
-
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
-    monkeypatch.setattr(
-        cli,
-        "process_work_items_command",
-        lambda received: calls.append(("work", received.db_path)) or 0,
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_task_sources_command",
-        lambda received, max_new_items=None: calls.append(
-            ("scan", received.db_path, max_new_items)
-        )
-        or 0,
-    )
-    monkeypatch.setattr(
-        cli,
-        "scan_oa_approvals_command",
-        lambda received, max_new_items=None: calls.append(
-            ("oa-scan", received.db_path, max_new_items)
-        )
-        or 0,
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_okr_reviews_command",
-        lambda received: calls.append(("okr", received.db_path)) or 0,
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_follow_ups_command",
-        lambda received, refresh_evidence=True, limit=50: calls.append(
-            ("follow", received.db_path, refresh_evidence, limit)
-        )
-        or 0,
-    )
-
-    def sleep(seconds):
-        calls.append(("sleep", seconds))
-        if calls.count(("sleep", seconds)) >= 3:
-            raise StopLoop
-
-    with pytest.raises(StopLoop):
-        run_task_maintenance_loop(
-            settings,
-            sleep=sleep,
-            network_ready=lambda: True,
-        )
-
-    assert calls == [
-        ("sleep", 60),
-        ("sleep", 60),
-        ("sleep", 60),
-    ]
-
-
-def test_follow_up_delivery_loop_runs_independently_of_task_maintenance(
-    monkeypatch, tmp_path
-):
-    calls = []
-
-    class StopLoop(Exception):
-        pass
-
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=1)
-    monkeypatch.setattr(
-        cli,
-        "process_follow_ups_command",
-        lambda received, refresh_evidence=True, limit=50: calls.append(
-            (received.db_path, refresh_evidence, limit)
-        )
-        or 0,
-    )
-
-    def sleep(seconds):
-        calls.append(("sleep", seconds))
-        raise StopLoop
-
-    with pytest.raises(StopLoop):
-        run_follow_up_delivery_loop(
-            settings,
-            sleep=sleep,
-            network_ready=lambda: True,
-        )
-
-    assert calls == [
-        (tmp_path / "worker.sqlite3", False, 50),
-        ("sleep", 60),
-    ]
-
-
 def test_meeting_delivery_loop_never_sends_in_dry_run(monkeypatch, tmp_path):
     class StopLoop(Exception):
         pass
@@ -7660,12 +7476,6 @@ def test_meeting_delivery_loop_never_sends_in_dry_run(monkeypatch, tmp_path):
             "consume_meeting_alignment_jobs",
             "meeting_alignment_consumer",
             {"poll_interval_seconds": 10, "max_tasks": 1},
-        ),
-        (
-            run_follow_up_delivery_loop,
-            "process_follow_ups_command",
-            "follow_up_delivery",
-            {},
         ),
     ],
 )
@@ -7743,11 +7553,6 @@ def test_task_maintenance_loop_keeps_only_internal_recovery_checks(
         cli,
         "scan_oa_approvals_command",
         lambda received, max_new_items=None: calls.append("oa-scan"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_follow_ups_command",
-        lambda received, refresh_evidence=False, limit=50: calls.append("follow"),
     )
 
     with pytest.raises(StopLoop):
@@ -7941,15 +7746,6 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         )
         stop("task-maintenance")
 
-    def follow_up_delivery_loop(settings, network_ready=None):
-        calls.append(
-            (
-                "follow-up-delivery",
-                network_ready is gate.ready,
-            )
-        )
-        stop("follow-up-delivery")
-
     def oa_pending_scan_loop(
         settings,
         interval_seconds,
@@ -7983,7 +7779,6 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         )
         or stop("meeting-memory-write"),
     )
-    monkeypatch.setattr(cli, "run_follow_up_delivery_loop", follow_up_delivery_loop)
     monkeypatch.setattr(cli, "run_oa_pending_scan_loop", oa_pending_scan_loop)
     monkeypatch.setattr(
         cli,
@@ -8895,7 +8690,6 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
         "request-minutes-access",
         "sync-minutes-once",
         "weekly-okr-report",
-        "process-follow-ups",
     }
     assert registry.run("produce-once") == "produce-once queued=3"
     assert registry.run("calendar-invites-once") == "calendar-invites-once queued=3"

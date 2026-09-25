@@ -538,7 +538,6 @@ def test_check_dry_run_passes_without_failed_or_processing_backlog(tmp_path: Pat
         "processing_reply_tasks": 0,
         "failed_reply_tasks": 0,
         "recoverable_blocked_attempts": 0,
-        "due_follow_up_drafts": 0,
     }
 
 
@@ -558,7 +557,7 @@ def test_check_dry_run_reports_processing_backlog(tmp_path: Path):
     result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
 
     assert result.status == "needs_action"
-    assert result.summary == "Unresolved reply, action, or follow-up backlog exists."
+    assert result.summary == "Unresolved reply or action backlog exists."
     assert result.evidence["processing_reply_tasks"] == 1
 
 
@@ -606,7 +605,9 @@ def test_check_dry_run_reports_explained_blocked_attempt(tmp_path: Path):
     assert result.evidence["recoverable_blocked_attempts"] == 1
 
 
-def test_check_dry_run_reports_due_follow_up_backlog(tmp_path: Path):
+def test_check_dry_run_ignores_legacy_follow_up_drafts(tmp_path: Path):
+    # Derek, 2026-09-25: follow-ups are sent only when he clicks one, so a due
+    # legacy draft will never be sent and is not backlog.
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = store.create_work_project(
         title="宝马项目周末攻坚与客户Demo推进",
@@ -626,9 +627,8 @@ def test_check_dry_run_reports_due_follow_up_backlog(tmp_path: Path):
 
     result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
 
-    assert result.status == "needs_action"
-    assert result.summary == "Unresolved reply, action, or follow-up backlog exists."
-    assert result.evidence["due_follow_up_drafts"] == 1
+    assert result.status == "done"
+    assert "due_follow_up_drafts" not in result.evidence
 
 
 def test_check_service_config_accepts_env_and_directories(tmp_path: Path):

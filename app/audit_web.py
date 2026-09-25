@@ -145,7 +145,6 @@ from app.feedback_events import (
 )
 from app.feedback_processing import project_feedback_status
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
-from app.follow_up import resolve_failed_follow_up
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
     launch_repository_updater,
@@ -6664,18 +6663,9 @@ def _task_history_card(item, store: AutoReplyStore) -> str:
     output_text = _task_history_output_text(item, status)
     status_label = _task_history_status_label(item, status)
     attention = task_history_attention(item)
-    follow_up = (
-        store.get_follow_up_draft(item.follow_up_id)
-        if item.follow_up_id > 0
-        else None
-    )
     attention_html = _history_attention_html(
         attention,
-        actions_html=_task_history_attention_actions(
-            attention,
-            detail_url,
-            follow_up,
-        ),
+        actions_html=_history_link_attention_actions(attention, detail_url),
     )
     return (
         '<article class="attempt-item history-kind-task" role="link" tabindex="0" '
@@ -6715,74 +6705,6 @@ def _history_link_attention_actions(
         if action.key in {"manual", "details"}
     )
     return f'<div class="history-attention-actions">{links}</div>' if links else ""
-
-
-def _task_history_attention_actions(
-    attention: HistoryAttention | None,
-    detail_url: str,
-    follow_up,
-) -> str:
-    if attention is None:
-        return ""
-    if follow_up is not None and any(
-        action.key in {"repair_follow_up", "cancel_follow_up"}
-        for action in attention.actions
-    ):
-        return _follow_up_resolution_actions(
-            attention,
-            follow_up,
-            return_to="/history",
-            details_href=detail_url,
-        )
-    return _history_link_attention_actions(attention, detail_url)
-
-
-def _follow_up_resolution_actions(
-    attention: HistoryAttention,
-    follow_up,
-    *,
-    return_to: str,
-    details_href: str,
-) -> str:
-    items: list[str] = []
-    help_items: list[str] = []
-    for action_index, action in enumerate(attention.actions, 1):
-        if (
-            action.key in {"repair_follow_up", "cancel_follow_up"}
-        ):
-            resolution = (
-                "repair_target"
-                if action.key == "repair_follow_up"
-                else "cancel"
-            )
-            confirmation = (
-                ""
-                if resolution == "repair_target"
-                else " onsubmit=\"return confirm('确认取消本次跟进？不会发送消息。')\""
-            )
-            items.append(
-                f'<form method="post" action="/follow-ups/{follow_up.id}/resolution-form"{confirmation}>'
-                f'<input type="hidden" name="expected_revision" value="{follow_up.revision}">'
-                f'<input type="hidden" name="resolution" value="{resolution}">'
-                f'<input type="hidden" name="return_to" value="{escape(return_to, quote=True)}">'
-                f'<button type="submit">{escape(action.label)}</button></form>'
-            )
-            if action.consequence:
-                help_items.append(f"{action.label}：{action.consequence}")
-            continue
-        if action.key == "details":
-            items.append(
-                f'<a class="compact-button" href="{escape(details_href, quote=True)}">'
-                f'{escape(action.label)}</a>'
-            )
-    if not items:
-        return ""
-    help_html = (
-        '<div class="history-action-help">' + "；".join(help_items) + "。</div>"
-        if help_items
-        else ""
-    )
-    return '<div class="history-attention-actions">' + "".join(items) + "</div>" + help_html
 
 
 def _task_history_output_text(item, status: str) -> str:
@@ -8023,16 +7945,7 @@ def _task_follow_up_child_item(draft, conversation_titles: Mapping[str, str]) ->
     )
     attention_html = _history_attention_html(
         attention,
-        actions_html=(
-            _follow_up_resolution_actions(
-                attention,
-                draft,
-                return_to=detail_url,
-                details_href=detail_url,
-            )
-            if attention is not None
-            else ""
-        ),
+        actions_html=_history_link_attention_actions(attention, detail_url),
     )
     return (
         f"<li class=\"todo-followup-item\" id=\"follow-up-{draft.id}\">"
@@ -10252,52 +10165,6 @@ def handle_needs_human_decision_post(
     return 303, {"Location": _safe_action_return_to(return_to, source.id)}, ""
 
 
-def handle_follow_up_resolution_form_post(
-    store: AutoReplyStore,
-    draft_id: int,
-    body: bytes,
-) -> tuple[int, dict[str, str], str]:
-    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
-    return_to = parsed.get("return_to", [""])[0]
-    draft = store.get_follow_up_draft(draft_id)
-    try:
-        expected_revision = int(parsed.get("expected_revision", [""])[0])
-        resolved = resolve_failed_follow_up(
-            store,
-            draft_id,
-            expected_revision=expected_revision,
-            resolution=parsed.get("resolution", [""])[0],
-            now=datetime.now(timezone.utc).strftime(DISPLAY_TIME_FORMAT),
-        )
-    except (TypeError, ValueError) as exc:
-        return (
-            409,
-            {},
-            render_page(
-                "Resolution unavailable",
-                f"<p>该跟进不能执行所选动作：{escape(str(exc))}</p>",
-            ),
-        )
-    if not resolved:
-        return (
-            409,
-            {},
-            render_page(
-                "Resolution unavailable",
-                "<p>该跟进已经变化，请刷新 History 后再处理。</p>",
-            ),
-        )
-    detail_url = (
-        f"/tasks/{draft.project_id}#follow-up-{draft.id}"
-        if draft is not None
-        else "/tasks"
-    )
-    location = return_to.strip()
-    if location not in {"/history", detail_url}:
-        location = "/tasks"
-    return 303, {"Location": location}, ""
-
-
 def _is_valid_rerun_trigger_json(
     trigger_message_json: str, *, channel: str = "dingtalk",
 ) -> bool:
@@ -11724,15 +11591,6 @@ def create_audit_app(
             attempt_id,
             await request.body(),
             return_to=request.query_params.get("return_to", ""),
-        )
-        return _fastapi_post_response(status, headers, html)
-
-    @app.post("/follow-ups/{draft_id}/resolution-form")
-    async def resolve_follow_up_form(draft_id: int, request: Request):
-        status, headers, html = handle_follow_up_resolution_form_post(
-            AutoReplyStore(db_path),
-            draft_id,
-            await request.body(),
         )
         return _fastapi_post_response(status, headers, html)
 

@@ -28,7 +28,6 @@ from app.config import (
     embedding_enabled,
     embedding_model,
     embedding_timeout_seconds,
-    feedback_spike_vercel_base_url,
     principal_display_name,
     meeting_memory_worker_count,
     repository_upgrade_branch,
@@ -187,12 +186,19 @@ WORK_SUMMARY_DISCARDABLE_ERROR_MARKERS = (
         "does not belong to project",
     ),
 )
-# Completion checks are read-only. If bounded repair still proposes a
-# protected project mutation, or finds no lifecycle transition, the correct
-# terminal outcome is a policy skip rather than a retryable service failure.
-COMPLETION_CHECK_SKIP_ERROR_MARKERS = (
-    ("completion check without a lifecycle transition",),
-    ("completion checks cannot change protected project fields",),
+# Derek, 2026-09-25: completion is driven by new evidence (a newly completed
+# DingTalk TODO, a message, a meeting), not by separate completion checks, and
+# follow-ups are sent only by his click, so nothing enqueues these source types
+# any more. One still queued from before is skipped rather than processed.
+RETIRED_COMPLETION_SOURCE_TYPES = frozenset(
+    {
+        "todo_completion_evidence_candidate",
+        "todo_completion_check",
+        "follow_up_completion_check",
+    }
+)
+RETIRED_COMPLETION_CHECK_REASON = (
+    "completion checks retired (Derek 2026-09-25: 完成由新证据驱动)"
 )
 
 LIVE_SEND_BLOCKERS = (
@@ -369,7 +375,6 @@ def build_parser() -> argparse.ArgumentParser:
         "read-dingteam-okr",
         "daily-report-facts",
         "weekly-report-materials",
-        "process-follow-ups",
         "daily-task-maintenance",
         "quality-check",
         "channel-doctor",
@@ -1037,10 +1042,6 @@ def _service_command_registry(store: AutoReplyStore, reply_worker, settings: Wor
                 "scan-meeting-todos-once "
                 f"queued={scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)}"
             ),
-            "process-follow-ups": lambda: (
-                "process-follow-ups "
-                f"sent={process_follow_ups_command(settings, refresh_evidence=False, limit=50)}"
-            ),
             "request-minutes-access": lambda: (
                 f"request-minutes-access {request_minutes_access_command(settings)}"
             ),
@@ -1684,27 +1685,20 @@ def _process_claimed_work_summary_input(
     try:
         if session_lease is not None:
             session_lease.assert_owned()
-        from app.task_completion_agent import (
-            COMPLETION_SOURCE_TYPES,
-            process_task_completion_work_item,
+        if work_input.source_type in RETIRED_COMPLETION_SOURCE_TYPES:
+            # Nothing produces these any more; one left in the queue from
+            # before the change is closed, not handed to the Task Agent.
+            store.mark_work_summary_input_skipped(
+                work_input.id, RETIRED_COMPLETION_CHECK_REASON
+            )
+            return False
+        process_work_item(
+            store,
+            runner,
+            work_input,
+            dws=dws,
+            session_lease=session_lease,
         )
-
-        if work_input.source_type in COMPLETION_SOURCE_TYPES:
-            process_task_completion_work_item(
-                store,
-                runner.codex,
-                work_input,
-                dws=dws,
-                session_lease=session_lease,
-            )
-        else:
-            process_work_item(
-                store,
-                runner,
-                work_input,
-                dws=dws,
-                session_lease=session_lease,
-            )
         store.clear_codex_capacity_pause()
         return True
     except Exception as exc:
@@ -1878,8 +1872,8 @@ def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> b
         return True
     if isinstance(error, TaskDecisionRepairExhausted):
         # The bounded repair rounds ended with a repairable rule unmet; the
-        # item is retried on a later pass with a fresh session unless the
-        # completion-check rule itself defines a terminal policy skip.
+        # item is retried on a later pass with a fresh session unless its
+        # error is a known terminal policy skip.
         return not _should_skip_work_summary_input(normalized_error)
     if _is_codex_provider_recovery_wait_reason(normalized_error):
         return True
@@ -1920,10 +1914,7 @@ def _should_skip_work_summary_input(error: str) -> bool:
     normalized = error.lower()
     return any(
         all(marker in normalized for marker in markers)
-        for markers in (
-            *WORK_SUMMARY_DISCARDABLE_ERROR_MARKERS,
-            *COMPLETION_CHECK_SKIP_ERROR_MARKERS,
-        )
+        for markers in WORK_SUMMARY_DISCARDABLE_ERROR_MARKERS
     )
 
 
@@ -2671,44 +2662,6 @@ def read_dingteam_okr_command(
     return payload
 
 
-def process_follow_ups_command(
-    settings: WorkerSettings,
-    *,
-    refresh_evidence: bool = True,
-    limit: int = 50,
-) -> int:
-    from app.follow_up import (
-        process_due_business_task_follow_ups,
-        process_due_follow_ups,
-    )
-
-    if refresh_evidence:
-        scan_task_sources_command(settings, max_new_items=settings.max_batches)
-        process_work_items_command(settings)
-
-    dws = DwsClient(
-        ding_robot_code=settings.ding_robot_code,
-        ding_robot_name=settings.ding_robot_name,
-        ding_receiver_user_id=settings.ding_receiver_user_id,
-    )
-    store = AutoReplyStore(settings.db_path)
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    sent = process_due_follow_ups(
-        store,
-        dws,
-        now=now,
-        auto_send=not settings.dry_run,
-        feedback_base_url=feedback_spike_vercel_base_url(),
-        limit=limit,
-    )
-    sent += process_due_business_task_follow_ups(
-        store, dws, now=now, auto_send=not settings.dry_run,
-        feedback_base_url=feedback_spike_vercel_base_url(), limit=limit,
-    )
-    print(f"process-follow-ups sent={sent}", flush=True)
-    return sent
-
-
 def scan_completed_dingtalk_todos_command(
     settings: WorkerSettings, *, dws: DwsClient | None = None
 ) -> int:
@@ -2749,7 +2702,6 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
     )
     completion_items_processed = process_work_items_command(settings)
-    follow_ups = process_follow_ups_command(settings, refresh_evidence=False)
     result = {
         "sources": sources,
         "oa_approvals": oa_approvals,
@@ -2758,7 +2710,6 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         "dingtalk_todos_closed": dingtalk_todos_closed,
         "dingtalk_todos_recovered": dingtalk_todos_recovered,
         "completion_items_processed": completion_items_processed,
-        "follow_ups": follow_ups,
     }
     print(
         "daily-task-maintenance "
@@ -2767,8 +2718,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         f"okr_reviews={okr_reviews} "
         f"dingtalk_todos_closed={dingtalk_todos_closed} "
         f"dingtalk_todos_recovered={dingtalk_todos_recovered} "
-        f"completion_items_processed={completion_items_processed} "
-        f"follow_ups={follow_ups}",
+        f"completion_items_processed={completion_items_processed}",
         flush=True,
     )
     return result
@@ -4025,38 +3975,6 @@ def run_task_maintenance_loop(
         sleep(60)
 
 
-def run_follow_up_delivery_loop(
-    settings: WorkerSettings,
-    *,
-    sleep: Callable[[int], None] = time.sleep,
-    network_ready: Callable[[], bool] = _macos_wifi_connected,
-) -> None:
-    store = AutoReplyStore(settings.db_path)
-    consecutive_sqlite_lock_failures = 0
-    while True:
-        if network_ready():
-            try:
-                # max_batches bounds agent task discovery, not durable scheduled delivery.
-                process_follow_ups_command(
-                    settings,
-                    refresh_evidence=False,
-                    limit=50,
-                )
-                consecutive_sqlite_lock_failures = 0
-            except Exception as exc:
-                if isinstance(exc, sqlite3.OperationalError) and (
-                    "database is locked" in str(exc).casefold()
-                    or "database is busy" in str(exc).casefold()
-                ):
-                    consecutive_sqlite_lock_failures += 1
-                    if consecutive_sqlite_lock_failures >= 3:
-                        store.record_error("", "", "follow_up_delivery", str(exc))
-                else:
-                    consecutive_sqlite_lock_failures = 0
-                    store.record_error("", "", "follow_up_delivery", str(exc))
-        sleep(60)
-
-
 def run_oa_pending_scan_loop(
     settings: WorkerSettings,
     interval_seconds: int,
@@ -5079,9 +4997,6 @@ def main() -> None:
         daily_report_facts_command(settings, scheduled_run_id=args.scheduled_run)
     elif args.command == "weekly-report-materials":
         weekly_report_materials_command(settings, scheduled_run_id=args.scheduled_run)
-    elif args.command == "process-follow-ups":
-        ensure_live_send_allowed(settings)
-        process_follow_ups_command(settings)
     elif args.command == "daily-task-maintenance":
         ensure_live_send_allowed(settings)
         initialize_agent_runtime_routes(settings)

@@ -756,37 +756,6 @@ def retry_failed_dingtalk_todo_links(
     return recovered
 
 
-def refresh_dingtalk_todo_before_follow_up(
-    store: AutoReplyStore,
-    dws: Any,
-    *,
-    work_todo_id: int,
-    now: str,
-) -> tuple[bool, str]:
-    link = store.get_active_work_todo_dingtalk_link(work_todo_id)
-    if link is None or not link.dingtalk_task_id.strip():
-        return False, ""
-
-    task_id = link.dingtalk_task_id.strip()
-    try:
-        payload = dws.get_todo_task(task_id)
-        done = _payload_done(payload)
-        store.update_work_todo_dingtalk_link(
-            link.id,
-            last_dingtalk_done=done,
-            last_dingtalk_payload_json=json.dumps(payload, ensure_ascii=False),
-            last_pull_at=now,
-            last_error="",
-        )
-        if done:
-            _close_internal_todo_from_dingtalk(store, link, task_id, now)
-            store.update_work_todo_dingtalk_link(link.id, status="done")
-            return True, "dingtalk_todo_done"
-    except (DwsError, RuntimeError) as exc:
-        store.update_work_todo_dingtalk_link(link.id, last_error=str(exc))
-    return False, ""
-
-
 def sync_completed_todo_to_dingtalk(
     store: AutoReplyStore,
     dws: Any,

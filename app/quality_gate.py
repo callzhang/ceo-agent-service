@@ -163,7 +163,9 @@ def scan_hourly_quality(
             _check_email_classification_tasks(db, checked_now, violations)
         if "email_classifier_runtime_samples" in existing:
             _check_email_model_runtime(db, checked_now, violations, attention)
-        _check_follow_ups(db, checked_now, violations, attention)
+        # Legacy follow_up_drafts are history only (Derek 2026-09-25: a
+        # follow-up is sent only when he clicks it), so an unsent or failed
+        # one is not a delivery backlog and is not checked here.
         _check_meetings(db, checked_now, violations, attention)
         _check_okr_reviews(db, checked_now, violations, attention)
         _check_external_delivery_queues(db, checked_now, violations, attention)
@@ -687,29 +689,6 @@ def _check_email_model_runtime(
             severity="info",
             detail="the promoted email model handed most mail back to the Agent",
         )
-
-
-def _check_follow_ups(
-    db: sqlite3.Connection,
-    now: datetime,
-    violations: list[QualityIssue],
-    attention: list[QualityIssue],
-) -> None:
-    _add(violations, source="follow_up_drafts", code="failed", count=_count(
-        db, "select count(*) from follow_up_drafts where lower(status)='failed'"
-    ), severity="error", detail="follow-up send reached an unrecovered failure")
-    _add(violations, source="follow_up_drafts", code="scheduled_overdue", count=_count(
-        db,
-        """select count(*) from follow_up_drafts
-           where lower(status) in ('draft','approved') and scheduled_at != ''
-             and datetime(scheduled_at) < datetime(?)""",
-        (_cutoff(now, PENDING_STALE_SECONDS),),
-    ), severity="error", detail="scheduled follow-up is overdue")
-    _add(attention, source="follow_up_drafts", code="future_scheduled", count=_count(
-        db,
-        "select count(*) from follow_up_drafts where lower(status) in ('draft','approved') and scheduled_at != '' and datetime(scheduled_at) >= datetime(?)",
-        (now.strftime("%Y-%m-%d %H:%M:%S"),),
-    ), severity="info", detail="future follow-up is intentionally scheduled")
 
 
 def _check_meetings(

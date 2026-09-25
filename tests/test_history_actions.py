@@ -368,8 +368,4 @@ def test_failed_follow_up_with_confirmed_non_delivery_offers_safe_resolution():
     assert state is not None
     assert state.reason == "The recipient is inactive; no message was delivered."
     assert state.external_effect == "已确认未发送跟进消息"
-    assert [action.key for action in state.actions] == [
-        "repair_follow_up",
-        "cancel_follow_up",
-        "details",
-    ]
+    assert [action.key for action in state.actions] == ["details"]

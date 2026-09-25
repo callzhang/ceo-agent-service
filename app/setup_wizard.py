@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import threading
 from collections.abc import Mapping
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
@@ -682,26 +682,20 @@ def check_dry_run(*, store: AutoReplyStore) -> SetupStepStatus:
     processing = store.count_reply_tasks("processing")
     failed = store.count_reply_tasks("failed")
     recoverable_blocked_attempts = store.count_recoverable_blocked_reply_attempts()
-    due_follow_ups = store.count_due_follow_up_drafts(
-        due_before=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    )
+    # Legacy follow-up drafts are history only and never sent (Derek
+    # 2026-09-25: a follow-up is sent only when he clicks it), so a due one is
+    # not backlog.
     evidence = {
         "processing_reply_tasks": processing,
         "failed_reply_tasks": failed,
         "recoverable_blocked_attempts": recoverable_blocked_attempts,
-        "due_follow_up_drafts": due_follow_ups,
     }
-    if (
-        processing
-        or failed
-        or recoverable_blocked_attempts
-        or due_follow_ups
-    ):
+    if processing or failed or recoverable_blocked_attempts:
         return _status(
             "dry_run",
             title="Dry-Run Validation",
             status="needs_action",
-            summary="Unresolved reply, action, or follow-up backlog exists.",
+            summary="Unresolved reply or action backlog exists.",
             evidence=evidence,
         )
     return _status(

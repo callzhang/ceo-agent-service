@@ -164,13 +164,6 @@ SERVICE_COMMAND_OPTIONS: tuple[ServiceCommandOption, ...] = (
         consumer_prompt_enabled=True,
     ),
     ServiceCommandOption(
-        name="process-follow-ups",
-        display_name="投递到期的跟进事项",
-        description="把已到期的跟进事项按既有投递规则发出；只投递已生成的内容，不做新的业务判断。",
-        channel="work_summary",
-        consumer_prompt_enabled=False,
-    ),
-    ServiceCommandOption(
         name="request-minutes-access",
         display_name="申请没有权限的听记",
         description="读取听记管理后台，对本账号读不到的听记逐条在其页面提交查看权限申请，并以页面读回的申请状态为准。",

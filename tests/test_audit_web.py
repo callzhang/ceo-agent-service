@@ -8181,7 +8181,7 @@ def test_failed_meeting_and_follow_up_expose_reason_and_safe_choices(
     )
 
 
-def test_confirmed_not_sent_follow_up_has_inline_actions_on_same_draft(
+def test_confirmed_not_sent_legacy_follow_up_offers_no_repair_or_cancel(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -8225,16 +8225,16 @@ def test_confirmed_not_sent_follow_up_has_inline_actions_on_same_draft(
     assert "The recipient is inactive; no message was delivered." in html
     assert "direct_message_target_rejected" not in html
     assert "已确认未发送跟进消息" in html
-    assert "让 Agent 重新核验负责人" in html
-    assert "取消本次跟进" in html
-    assert f'/follow-ups/{follow_up_id}/resolution-form' in html
+    # Derek, 2026-09-25: legacy follow-ups are history only and never sent,
+    # so the retired repair / cancel form is gone.
+    assert "让 Agent 重新核验负责人" not in html
+    assert "取消本次跟进" not in html
+    assert "/resolution-form" not in html
 
     status, detail_html = render_task_project_detail(store, project_id)
     assert status == 200
     assert "The recipient is inactive; no message was delivered." in detail_html
-    assert "你需要做什么" in detail_html
-    assert "让 Agent 重新核验负责人" in detail_html
-    assert "取消本次跟进" in detail_html
+    assert "/resolution-form" not in detail_html
 
     client = loopback_test_client(create_audit_app(store.path))
     response = client.post(
@@ -8247,13 +8247,11 @@ def test_confirmed_not_sent_follow_up_has_inline_actions_on_same_draft(
         follow_redirects=False,
     )
 
-    assert response.status_code == 303, response.text
-    assert response.headers["location"] == "/history"
-    repaired = store.get_follow_up_draft(follow_up_id)
-    assert repaired is not None
-    assert repaired.id == follow_up_id
-    assert repaired.status == "draft"
-    assert repaired.revision == draft.revision + 1
+    assert response.status_code >= 400
+    unchanged = store.get_follow_up_draft(follow_up_id)
+    assert unchanged is not None
+    assert unchanged.status == "failed"
+    assert unchanged.revision == draft.revision
 
 
 def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(

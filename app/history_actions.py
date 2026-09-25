@@ -188,22 +188,9 @@ def follow_up_history_attention(
             str(payload.get("error") or output_text or "发送失败")
         ),
         external_effect="已确认未发送跟进消息",
-        actions=(
-            HistoryAction(
-                "repair_follow_up",
-                "让 Agent 重新核验负责人",
-                consequence=(
-                    "Agent 会核验当前活跃负责人并修复原跟进，"
-                    "不会创建新的跟进事项。"
-                ),
-            ),
-            HistoryAction(
-                "cancel_follow_up",
-                "取消本次跟进",
-                consequence="停止原跟进，不发送消息。",
-            ),
-            HistoryAction("details", "技术详情"),
-        ),
+        # Legacy follow-ups are history only (Derek 2026-09-25: follow-ups are
+        # sent only by his click), so a failed one offers no repair or cancel.
+        actions=(HistoryAction("details", "技术详情"),),
     )
 
 

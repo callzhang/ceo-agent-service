@@ -637,18 +637,16 @@ DDL、状态和下周任务。周报即使汇总会议纪要与项目沟通记�
 Task Agent 的结构化结果是 `task_decisions` 列表，同一来源可以得到 0 到多个决定。每个非 skip 项必须引用原始来源中的精确摘录与来源引用；Task、负责人、日期和承诺不得由 Agent 自行补造。正式 Task 必须有来源支持的明确负责人；正式指派先记为 `assigned_unaccepted`。只有负责人本人对唯一现存 Task 的明确接受证据才能进入 `accepted`。外部 TODO 的存在只证明有一条外部记录，不证明负责人接受。
 更新既有 Task 时，Agent 可用本轮来源证据修订标题或描述；内容变更、新信号证据链接及 before/after 事件原子提交。纯内容更新记为 `details_changed`，内容与其他 Task 字段同时更新记为 `fields_changed`。重复回放不重复追加事件；只有新证据、没有字段实际变化的更新会被拒绝。
 
-Task Agent 使用一个统一的 `TaskAgentDecision` 生命周期契约：同一来源可同时产生 0..N 个新建/更新 Task 决定，以及适用的既有 TODO 完成或 follow-up 状态转换。completion 操作分别使用 envelope 顶层类型化的 `todo_changes` 和 `follow_up_changes` 字段，不嵌套在单个 `task_decisions` 内。共享 work-summary consumer 仍按精确 source type 选择上下文准备和服务端应用操作，但不启动另一个 Agent，也不使用第二套结果协议。`todo_completion_check` 只可关闭输入明确链接的既有 TODO；证据候选只更新其自身状态；follow-up completion/repair 只可转换输入明确链接的既有 follow-up。没有完成证据时仍记录 `search_trace` 与检查摘要并保持 TODO 开放。无效身份/操作使输入和 run 失败且不提交领域变化；Task 转换、TODO 本地完成、关联 follow-up 完成、候选状态、work-summary input/run 终态在同一事务中提交。事务提交后，外部 TODO 完成与类型化 Task 完成都按受影响 Task 重算当前 Attention 成员；完成的 Task 从成员列表退出，但不会仅凭读取或完成动作把 Attention 标成已解决。
+Task Agent 使用一个统一的 `TaskAgentDecision` 生命周期契约：同一来源可产生 0..N 个新建/更新 Task 决定。单独的 Task completion Agent 已删除（Derek 2026-09-25，完成由新证据驱动）：服务不再产生 `todo_completion_evidence_candidate`、`todo_completion_check`、`follow_up_completion_check` 三类 Work Item，队列里残留的这类输入在到达 Task Agent 前被标为 `skipped`（原因 `completion checks retired (Derek 2026-09-25: 完成由新证据驱动)`）；枚举值只为历史记录保留。契约里的 `todo_changes`、`follow_up_changes`、`search_trace` 字段仍在 schema 中，但当前没有服务端路径应用它们。外部 TODO 完成与类型化 Task 完成在事务提交后按受影响 Task 重算当前 Attention 成员；完成的 Task 从成员列表退出，但不会仅凭读取或完成动作把 Attention 标成已解决。Task Agent prompt 明确要求只读发现，不得通过 CLI/API/MCP 工具创建、更新、删除、发送或完成外部记录；这是 prompt-only 的 best-effort 指引，不是运行时权限边界，Codex route 仍没有 per-turn MCP 写工具 allowlist。外部完成只由现有 outbox 同步。
 
-completion apply 会在事务中校验队列 source_type/ref 与持久化 TODO/project/follow-up/candidate 绑定；trace source_kind、来源时间、服务记录的检索时间、来源数和可观察工具调用数按 Work Item 的 search_policy 校验，并要求 source locator 能在本次运行的工具结果中匹配。candidate 来源时间须与持久化候选一致。receipt 不构成外部内容真实性的独立证明；`completed_at` 只验证可解析且不晚于检查时间，并不证明该时间来自来源正文。当前 audit event 不含可信的 search-vs-raw-read 分类，因此 `max_raw_reads` 没有独立运行时计数；这是当前 prompt/runtime 能力限制，超出已批准范围，不是 Task 6 发布阻断。Task Agent prompt 明确要求只读发现，不得通过 CLI/API/MCP 工具创建、更新、删除、发送或完成外部记录；这是 prompt-only 的 best-effort 指引，不是运行时权限边界，Codex route 仍没有 per-turn MCP 写工具 allowlist。外部完成只由现有 outbox 同步。
-
-普通 Task 提取和 TODO/follow-up 完成检查共用稳定的 `task-agent:work-tracking:v1` 会话范围；每个 Work Item 仍有独立 `workload_key`、run 和运行记录。会话按 runtime route 分开保存，同一路由的后续 Task Agent 输入会续接该路由的 session。`process-work-items` 在领取输入前持有共享 SQLite session lock，并在处理期间续租；锁被其他进程占用时不领取、不增加输入尝试次数。锁续租失败会在领域事务提交前终止本轮并安排输入重试。此前 run 使用的 `task:<run_id>` 会话记录保留不迁移。Agent 每轮以当前 Work Item、当前检索状态和新来源证据作判断，会话历史只作背景；Codex CLI 的 context compaction 由 Codex 原生机制管理，不是事实存储，也不替代当前来源证据。
+Task 提取使用稳定的 `task-agent:work-tracking:v1` 会话范围；每个 Work Item 仍有独立 `workload_key`、run 和运行记录。会话按 runtime route 分开保存，同一路由的后续 Task Agent 输入会续接该路由的 session。`process-work-items` 在领取输入前持有共享 SQLite session lock，并在处理期间续租；锁被其他进程占用时不领取、不增加输入尝试次数。锁续租失败会在领域事务提交前终止本轮并安排输入重试。此前 run 使用的 `task:<run_id>` 会话记录保留不迁移。Agent 每轮以当前 Work Item、当前检索状态和新来源证据作判断，会话历史只作背景；Codex CLI 的 context compaction 由 Codex 原生机制管理，不是事实存储，也不替代当前来源证据。
 若 Codex 明确报告 context compaction 自身超过模型窗口，当前 run 会在同一路由清除该 route 的共享 session 指针并用 fresh session 重试一次；若新 session 仍超限，则进入既有 runtime route fallback，不循环新建 session。其他 session 错误不触发该恢复路径。
 
 **定时完成检查已停用**（Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：定期入队路径（`enqueue_todo_completion_evidence_checks`、`check-follow-up-completions` 命令及维护循环/每日维护中的调用）已删除。Task 只在新信息到来时更新——消息、会议由各来源扫描交给 Task Agent；钉钉待办的完成由定时任务「补查遗漏的钉钉消息和日历更新」列出新完成的待办，已链接的直接关闭对应 TODO 或业务 Task（确定性，不经 Agent，证据记为 `dingtalk_todo:<taskId>`），不再逐条轮询每个链接。停用前，定时检查把每条开放 TODO 连同其快照重发给 Task Agent，16 次中 15 次一次都没检索就以自身编号为来源而失败。关闭来源上的 Task 后，Attention 成员在领域提交后更新；同一关注项中仍开放的兄弟 Task 继续保留。
 
 这是代码分支的运行时契约，不等于服务已部署或发布。Task 6 不得单独部署；Task 7 在 Task 键控的执行表中实现 TODO 镜像、follow-up、回执和完成转换。只有正式、未关闭、来源支持明确负责人且已接受承诺，并有来源支持的可解析 `committed_deadline_at` 的 Task 才排入 TODO 创建 outbox；不得由请求期限、估算或下次检查日期推算镜像期限。创建后保存外部 ID 并读回；若首次读回失败但 provider ID 已知，后续状态拉取会按该 ID 重新读回并收口链接/outbox；若创建结果未知且没有 ID，不会以新的操作键再次创建。同一 Task 有未结清创建 intent 时不再排第二个创建；已知的 `failed` 操作使用有界退避，未到 `next_attempt_at` 时不被再次领取。缺少可信 producer 提供的 `external_task_id` 时也不猜测该 ID。
 
-新 follow-up 只有在已链接来源信号提供精确会话目标和可解析 `next_check_at` 时才创建；问题可概括 Task 状态，但目标与检查时间不能从截止日或历史会话推断。群聊在精确来源群中发送并提及 Task 的证据化负责人；单聊只发送给来源明确指定的负责人账号，来源会话 ID 保留作核对，不把消息误发给可能不是任务负责人的原发件人。发送前先读回已链接的外部 TODO；若其已完成，则关闭精确绑定的 Task/follow-up、保存 provider 状态并释放未发送 claim，不发消息。发送尝试以 Task follow-up 的 revision、租约和幂等 UUID 留存，成功记录回执；发送中断或租约过期的结果标为未知并排入 Task Agent 核查，不自动重发。外部 TODO 完成仅关闭其明确链接的 Task 和 follow-up，不触及同一聚类的兄弟 Task。历史 `work_todos`、`follow_up_drafts` 和旧 outbox 仍可读取；旧 follow-up 定时发送暂保留以处理未迁移记录，Task 8 导入与生产切换之前不能将其误称为新 Task 写入路径。
+新 follow-up 只有在已链接来源信号提供精确会话目标和可解析 `next_check_at` 时才创建；问题可概括 Task 状态，但目标与检查时间不能从截止日或历史会话推断。群聊在精确来源群中发送并提及 Task 的证据化负责人；单聊只发送给来源明确指定的负责人账号，来源会话 ID 保留作核对，不把消息误发给可能不是任务负责人的原发件人。follow-up 只由 Derek 在 Task 详情页点按钮发送（Derek 2026-09-25），`next_check_at` 只是建议时间，到点不会自动发送；定时任务「投递到期的跟进事项」（`process-follow-ups`）已于 2026-09-25 退役并由 seeding 删除。发送尝试以 Task follow-up 的 revision、租约和幂等 UUID 留存，成功记录回执；发送中断或租约过期的结果标为未知、该 follow-up 显示为 `failed`，不自动重发，也不排 Agent 核查，再发由 Derek 再点一次。外部 TODO 完成仅关闭其明确链接的 Task 和 follow-up，不触及同一聚类的兄弟 Task。历史 `work_todos`、`follow_up_drafts` 和旧 outbox 仍可读取；旧 `follow_up_drafts` 只是历史，永远不会再发送，也不再有修复/取消表单，质检与安装向导不把它们算作积压。
 
 系统首先在一个语义事务中写入来源信号、候选或正式 Task、证据、类型化日期、显式 Task 转换和关系/锚点/Project 候选提议；随后从已提交的语义事实重算关注投影。候选提升、接受、字段更正和同一事项合并使用不同转换；模型相似度仅用于提示，不授权身份转换。`created_at` 是系统记录时间；`assigned_at` 仅从明确正式指派的可信源时间戳派生，日期值必须与精确摘录中的可解析日期一致。周级或不可解析日期短语只留在关联的来源信号中，不生成 typed date fact 或猜测时间戳。估算由可信来源发言人署名，抽取 Agent 不冒充估算者；Task 6 的 `next_check_at` 由 Agent 署名但只记录来源明确给出的检查日期，不安排 cadence、不将 due date 转成检查时间；其他日期要求可识别来源行为人。当前 AI Minutes producer 没有可信 speaker→identity 映射，故不把转述者或模型填写的人作为日期行为人，相关日期暂不记录。指派日、请求/外部/承诺 DDL、估算和下次检查分别保存为独立类型。Project 只能引用注册表中的正式对象；Project 候选和锚点匹配不会自动创建正式 Project。
 
@@ -792,9 +790,9 @@ turn 可以复用仍有效的对话 session，或在该 session 已失效时安�
 Task，按需链接正式 Project，记录负责人及类型化日期。只有符合承诺与期限条件的 Task 才通过
 outbox 镜像为钉钉 TODO；只有来源明确给出下次检查时间与目标会话才创建 follow-up。follow-up
 只是建议：由 Derek 在 Task 详情页点按钮发送（Derek 2026-09-25），新信息更新该 Task 时撤回未发出的
-follow-up，见 `docs/runtime-mechanism.md`。发送记录 revision、租约、幂等 ID 与 provider 回执；
-结果未知先进入核查而不是自动重发。读取后续回复或外部 TODO 状态后，仅凭明确完成证据关闭
-对应 Task 与其 follow-up。旧 Project/TODO/follow-up 记录保留在历史边界，等待 Task 8 导入。
+follow-up，见 `docs/runtime-mechanism.md`。没有自动发送：到期的 follow-up 不会被发出，结果未知的
+发送显示为失败、由 Derek 决定是否再点。发送记录 revision、租约、幂等 ID 与 provider 回执。读取后续
+回复或新完成的外部 TODO 后，仅凭明确完成证据关闭对应 Task 与其 follow-up。旧 Project/TODO/follow-up 记录保留在历史边界，等待 Task 8 导入。
 
 ## Audit Rules
 

@@ -24,7 +24,7 @@ History 一致”；它不解释 Agent 如何调用命令，也不维护外部�
 | `reply_attempts` | 最新 trigger 的 `failed` / `blocked` 没有活动重试 | 有 `pending` / `processing` 任务 |
 | `agent_runs` | 超时 `pending` / `running` 或终态与任务 projection 不一致 | 新鲜 `pending` / `running` |
 | `work_summary_inputs` | `failed`、超时 `processing` | `pending` / `processing` |
-| `follow_up_drafts` | `failed`、过期草稿 | 未来计划 follow-up |
+| `follow_up_drafts` | 无：旧记录只是历史，永远不会再发送（Derek 2026-09-25：催办只由他点按钮发送），未发送或失败的旧记录不算积压 | 无 |
 | `meeting_alignment_jobs` | `failed` 或超时处理中状态 | 等待、排队或发送中 |
 | `okr_review_requests` | `failed`、超时 `processing` | `pending` / `processing` |
 | 外部投递队列 | 明确失败的投递 | 活动状态 |

@@ -123,7 +123,6 @@ def test_scheduled_trigger_persists_consumer_prompt_and_skills(
                 "scan-meetings-once",
                 "scan-oa-approvals",
                 "scan-meeting-todos-once",
-                "process-follow-ups",
                 "request-minutes-access",
         "sync-minutes-once",
                 "weekly-okr-report",

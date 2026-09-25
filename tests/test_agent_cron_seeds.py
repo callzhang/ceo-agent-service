@@ -214,10 +214,6 @@ READABLE_BUILTIN_COPY = {
         "补查遗漏的钉钉消息和日历更新",
         "扩大读取范围，找回常规检查遗漏的单聊、群聊 @ 消息和原地更新的日历邀请；发现后由 Agent 按对应的消息或日程规则处理。",
     ),
-    "follow-up-delivery-v1": (
-        "投递到期的跟进事项",
-        "把已到期的跟进事项按既有投递规则发出；只投递已生成的内容，不产生新的判断。Derek 2026-09-18 要求它作为定时任务可见可开关，而不是隐藏的常驻循环。",
-    ),
 }
 
 
@@ -1500,9 +1496,6 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
                 "weekly-okr-report": (
                     lambda: produced.append("weekly-okr-report") or "status=sent"
                 ),
-                "process-follow-ups": (
-                    lambda: produced.append("process-follow-ups") or "sent=0"
-                ),
             }
         ),
     )
@@ -1519,7 +1512,6 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
     assert sorted(produced) == [
         "calendar-invites-once",
         "email-message-check-once",
-        "process-follow-ups",
         "produce-once",
         "recover-recent-messages",
         "request-minutes-access",
@@ -1603,7 +1595,7 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
         store=store, options=options, working_directory=tmp_path, now=NOW
     )
 
-    assert len(tasks) == 14
+    assert len(tasks) == 13
     agent_tasks = {"ceo-weekly-report-saturday-v1", "ceo-daily-report-daily-v1"}
     for task in tasks:
         assert task.enabled is False
@@ -1614,13 +1606,49 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
             "sync-minutes-once",
             "request-minutes-access",
             "weekly-okr-report",
-            "process-follow-ups",
         }:
             assert task.prompt == "" and task.skill_refs == ()
         else:
             assert task.prompt and task.skill_refs
         assert task.runtime_id == ""
         assert store.list_scheduled_task_runs(task.id) == ()
+
+
+def test_seed_deletes_the_retired_follow_up_delivery_task(tmp_path: Path) -> None:
+    """Derek, 2026-09-25: follow-ups are sent only by his click on a Task.
+
+    Production still held 投递到期的跟进事项 (``follow-up-delivery-v1``,
+    command ``process-follow-ups``) from an earlier seed. Seeding deletes it
+    through the console's own soft delete, so its runs stay as history.
+    """
+    store = AutoReplyStore(tmp_path / "retired-follow-up.sqlite3")
+    retired = store.create_scheduled_task(
+        migration_key="follow-up-delivery-v1",
+        name="投递到期的跟进事项",
+        command="process-follow-ups",
+        cron_expression="0 */5 * * * *",
+        timezone_name="Asia/Shanghai",
+        enabled=False,
+        now=NOW,
+    )
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+
+    tasks = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path, now=NOW
+    )
+    seed_scheduled_tasks(
+        store=store,
+        options=options,
+        working_directory=tmp_path,
+        now=NOW + timedelta(minutes=1),
+    )
+
+    assert "follow-up-delivery-v1" not in {task.migration_key for task in tasks}
+    assert all(task.command != "process-follow-ups" for task in store.list_scheduled_tasks())
+    deleted = store.get_scheduled_task(retired.id, include_deleted=True)
+    assert deleted is not None
+    assert deleted.deleted_at is not None
+    assert deleted.enabled is False
 
 
 def test_the_default_oa_prompt_names_no_document_and_no_personal_rule() -> None:

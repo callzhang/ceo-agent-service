@@ -6,51 +6,6 @@ from app.store import AutoReplyStore
 from app.task_models import TodoStatus
 
 
-def close_business_task_with_completion_evidence(
-    store: AutoReplyStore,
-    *,
-    business_task_id: int,
-    evidence: dict[str, object],
-    source_type: str,
-    _db: sqlite3.Connection,
-) -> bool:
-    task = store.get_business_task_in_transaction(task_id=business_task_id, _db=_db)
-    if task is None or task.status.value in {"done", "merged"}:
-        return False
-    source_ref = str(evidence.get("source") or "").strip()
-    if not source_ref or not str(evidence.get("reason") or "").strip():
-        raise ValueError("Business Task completion requires sourced evidence and reason")
-    dedupe_key = f"business-task-completion:{business_task_id}:{source_type}:{source_ref}"
-    signal = store.get_business_task_signal_by_dedupe_key(dedupe_key=dedupe_key, _db=_db)
-    signal_id = signal.id if signal is not None else store.create_business_task_signal_in_transaction(
-        source_type=source_type, source_ref=source_ref,
-        evidence_text=json.dumps(evidence, ensure_ascii=False),
-        dedupe_key=dedupe_key, _db=_db,
-    )
-    store.link_business_task_evidence_in_transaction(
-        task_id=business_task_id, signal_id=signal_id, evidence_role="completion", _db=_db,
-    )
-    before = {"status": task.status.value, "commitment_status": task.commitment_status.value}
-    after = {"status": "done", "commitment_status": "completed", "completion_evidence": evidence}
-    _db.execute(
-        "update business_tasks set status='done', commitment_status='completed', "
-        "updated_at=current_timestamp where id=?", (business_task_id,),
-    )
-    store.append_business_task_event(
-        task_id=business_task_id, event_type="status_changed", signal_id=signal_id,
-        before_json=json.dumps(before, ensure_ascii=False),
-        after_json=json.dumps(after, ensure_ascii=False),
-        reason=str(evidence["reason"]), _db=_db,
-    )
-    _db.execute(
-        "update business_task_follow_ups set status='completed', evidence_check_json=?, "
-        "suppressed_reason=?, updated_at=current_timestamp where business_task_id=? "
-        "and status in ('draft','approved','sent')",
-        (json.dumps(evidence, ensure_ascii=False), str(evidence["reason"]), business_task_id),
-    )
-    return True
-
-
 def complete_business_task_from_external_todo(
     store: AutoReplyStore,
     *,

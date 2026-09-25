@@ -1,18 +1,13 @@
 import json
-from types import SimpleNamespace
 from pathlib import Path
-
-import pytest
 
 from app.store import AutoReplyStore
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
-from app.task_models import WorkItem
 from app.task_semantic_models import AttentionCategory
 from app.todo_completion import complete_business_task_from_external_todo
 from app.todo_completion import (
     close_todo_with_completion_evidence,
 )
-from app.task_completion_agent import TaskCompletionDecision, process_task_completion_work_item
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
@@ -114,8 +109,7 @@ def _business_task_for_completion(store, *, title="客户验收", with_follow_up
     return task_id, signal_id
 
 
-@pytest.mark.parametrize("completion_source", ["dingtalk", "task_agent"])
-def test_business_task_completion_recomputes_attention_membership(tmp_path, completion_source):
+def test_business_task_completion_recomputes_attention_membership(tmp_path):
     store = _store(tmp_path)
     task_id, signal_id = _business_task_for_completion(store)
     sibling_id, _ = _business_task_for_completion(store, title="客户合同")
@@ -135,46 +129,16 @@ def test_business_task_completion_recomputes_attention_membership(tmp_path, comp
         task_ids=(task_id, sibling_id), evidence_signal_id=signal_id,
     ))
     evidence = {
-        "source": "dingtalk_todo:dt-task-1" if completion_source == "dingtalk" else "dws_message:done-1",
+        "source": "dingtalk_todo:dt-task-1",
         "reason": "负责人确认已交付", "description": "客户验收材料已提交。",
         "completed_at": "2026-09-24T09:00:00Z", "checked_at": "2026-09-24T10:00:00Z",
     }
-    if completion_source == "dingtalk":
-        store.create_business_task_dingtalk_link(
-            business_task_id=task_id, dingtalk_task_id="dt-task-1", status="active",
-        )
-        assert complete_business_task_from_external_todo(
-            store, business_task_id=task_id, evidence=evidence,
-        )
-    else:
-        item = WorkItem.model_validate({
-            "source": {"type": "todo_completion_check", "ref": f"business-task-completion-check:{task_id}:2026-09-24"},
-            "context": {"source_conversation_kind": "group"},
-            "summary": json.dumps({
-                "business_task": {"id": task_id},
-                "search_policy": {
-                    "time_window": {"prefer_since": "2026-09-23T09:00:00Z", "end": "2026-09-24T10:00:00Z"},
-                    "limits": {"max_tool_calls": 8, "max_sources_to_return": 3},
-                    "allowed_sources": ["dws_message"],
-                },
-            }),
-        })
-        store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
-        [work_input] = store.claim_work_summary_inputs(limit=1)
-        decision = TaskCompletionDecision.model_validate({
-            "todo_changes": [{"action": "close", "business_task_id": task_id, "completion_evidence": evidence}],
-            "search_trace": [{
-                "source_kind": "dws_message", "source_ref": evidence["source"],
-                "source_created_at": evidence["completed_at"],
-                "result": "负责人确认已交付", "reason": "原始回复直接确认该交付物完成。",
-            }],
-            "update_summary": "负责人已完成客户验收交付。",
-        })
-        runner = SimpleNamespace(
-            decide=lambda **kwargs: decision,
-            last_audit_tool_events=[{"tool": "dws_message_get", "call_id": "read-1", "output": evidence["source"]}],
-        )
-        process_task_completion_work_item(store, runner, work_input, now="2026-09-24T10:00:00Z")
+    store.create_business_task_dingtalk_link(
+        business_task_id=task_id, dingtalk_task_id="dt-task-1", status="active",
+    )
+    assert complete_business_task_from_external_todo(
+        store, business_task_id=task_id, evidence=evidence,
+    )
 
     assert store.get_business_task(task_id).status.value == "done"
     assert [link.task_id for link in store.list_business_attention_tasks(attention_id)] == [sibling_id]

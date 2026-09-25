@@ -222,11 +222,6 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
             (stale,),
         )
         db.execute(
-            """insert into follow_up_drafts (project_id, status, scheduled_at)
-               values (1, 'draft', ?)""",
-            (stale,),
-        )
-        db.execute(
             """insert into work_summary_inputs (source_type, source_ref, payload_json, status, updated_at)
                values ('message', 'work', '{}', 'failed', ?)""",
             (stale,),
@@ -256,7 +251,6 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
     assert {(issue.source, issue.code) for issue in report.violations} >= {
         ("reply_tasks", "processing_stale"),
         ("meeting_alignment_jobs", "failed"),
-        ("follow_up_drafts", "scheduled_overdue"),
         ("work_summary_inputs", "failed"),
         ("email_agent_classification_tasks", "failed"),
         ("errors", "recent_error"),
@@ -495,22 +489,30 @@ def test_quality_gate_accepts_recent_scheduler_health_observation(tmp_path):
         issue.code == "scheduler_tick_stale" for issue in report.violations
     )
 
-def test_quality_gate_keeps_future_follow_up_as_attention_not_failure(tmp_path):
+def test_quality_gate_ignores_legacy_follow_up_drafts(tmp_path):
+    # Derek, 2026-09-25: follow-ups are sent only when he clicks one, so a
+    # legacy draft that is overdue, future or failed will never be sent and
+    # is history, not a delivery backlog.
     store = AutoReplyStore(tmp_path / "state.sqlite3")
+    overdue = (NOW - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
     future = (NOW + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
     with store._connect() as db:
-        db.execute(
-            """insert into follow_up_drafts (project_id, status, scheduled_at)
-               values (1, 'draft', ?)""",
-            (future,),
-        )
+        for status, scheduled_at in (
+            ("draft", overdue), ("approved", future), ("failed", overdue),
+        ):
+            db.execute(
+                """insert into follow_up_drafts (project_id, status, scheduled_at)
+                   values (1, ?, ?)""",
+                (status, scheduled_at),
+            )
 
     report = scan_hourly_quality(store.path, now=NOW)
 
     assert report.ok
-    assert [(item.source, item.code, item.count) for item in report.attention] == [
-        ("follow_up_drafts", "future_scheduled", 1)
-    ]
+    assert not any(
+        issue.source == "follow_up_drafts"
+        for issue in (*report.violations, *report.attention)
+    )
 
 
 def test_quality_gate_keeps_terminal_quarantine_and_discard_out_of_failures(tmp_path):

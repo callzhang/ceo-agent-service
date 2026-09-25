@@ -197,29 +197,17 @@ Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返�
 最新明确周报字段，再取最新确认的会议决策，并保留精确来源引用。
 更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
 
-Task Agent 使用统一的 `TaskAgentDecision` 结果协议，既可返回 0..N 个新建/更新 Task 决定，
-也可在同一个决定里返回对已绑定 TODO 或 follow-up 的适用状态转换。CLI 仍按 Work Item 的精确
-source type 选择上下文与服务端应用路径，但调用的是同一个 Task Agent、相同结果 schema；没有
-独立 Completion Agent 或第二套 decision schema。completion 操作在 envelope 顶层分别使用类型化的
-`todo_changes` 和 `follow_up_changes` 列表，不嵌套在单个 `task_decisions` 中。`todo_completion_evidence_candidate`、
-`todo_completion_check` 来源可关闭 Work Item 中唯一绑定的既有本地 TODO，并记录 completion evidence
-与顶层 `search_trace`；证据候选同步更新 candidate 状态。TODO 完成会完成其关联 follow-up；需要检查
-或修复单个 follow-up 的来源只可转换 Work Item 中明确链接的既有 follow-up。关闭外部 DingTalk TODO
-仍通过既有同步 outbox，且仅在 DingTalk client 已配置时排入。无完成证据时仍持久化检查摘要与
-`search_trace`，保持 TODO 开放并将输入标记为 skipped。错误身份、类型或不合法决策使 Task Agent run
-与输入失败，领域变化、输入终态和 run 终态在一个本地事务中提交。
-
-服务端应用路径在提交事务内核对 work-summary 队列的 source_type/ref、持久化 TODO/project、
-证据候选及所有关联 follow-up draft 的绑定关系。`search_trace` 的 source_kind 必须属于输入
-`search_policy.allowed_sources`，来源时间必须在指定时间窗内，检索时间由服务记录且不得早于窗口起点，
-来源数量和当前运行中可观察的工具调用数不得超过 policy 上限；来源定位符必须能匹配当前 run 的工具事件，call IDs 由
-服务端从该事件生成，不接受模型自报 ID。completion candidate 的来源时间还必须与持久化候选一致。
-现有 receipt 不独立证明外部证据正文的真实性或语义；`completed_at` 只验证时间格式和不晚于当前检查时刻，
-不证明它来自来源正文。raw source read 次数也没有独立运行时计数。Task Agent prompt 明确要求只读发现，
-不得通过 CLI/API/MCP 工具创建、更新、删除、发送或完成外部记录；这是 prompt-only 的 best-effort 指引，
-不是运行时权限边界，Codex route 仍没有 per-turn MCP 写工具 allowlist。Task Agent 的结构化输出由服务端
-校验并应用支持的操作；外部 TODO 完成只走现有 outbox 同步，避免双写。当前 audit event 也没有可信的
-search-vs-raw-read 分类，无法独立计数 `max_raw_reads`。该限制属于当前 prompt/runtime 能力边界，超出已批准范围，不是 Task 6 发布阻断；prompt 中的只读要求仍是 best-effort 指引而非硬性运行时边界。
+Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。完成由新证据驱动
+（Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：新完成的
+钉钉待办由扫描直接关闭对应 Task（见下文「后台周期性工作」），消息、会议等新信息照常作为 Work Item 进入
+Task Agent。单独的 Task completion Agent（`app/task_completion_agent.py`）已删除，服务不再产生
+`todo_completion_evidence_candidate`、`todo_completion_check`、`follow_up_completion_check` 三类 Work Item；
+队列里残留的这类输入在交给 Task Agent 之前被标为 `skipped`，原因
+`completion checks retired (Derek 2026-09-25: 完成由新证据驱动)`。三个枚举值保留，只为读取历史记录。
+`TaskAgentDecision` 里的 `todo_changes`、`follow_up_changes`、`search_trace` 字段仍在 schema 中，但当前没有
+服务端路径应用它们。Task Agent prompt 明确要求只读发现，不得通过 CLI/API/MCP 工具创建、更新、删除、
+发送或完成外部记录；这是 prompt-only 的 best-effort 指引，不是运行时权限边界。外部 TODO 完成只走现有
+outbox 同步，避免双写。
 
 这描述当前功能分支的代码契约，不证明变更已部署。Task 6 仍不得单独部署，整体切换仍需发布验收。
 Task-first 输出不承载 Project 写操作或直接创建新外部 TODO；合格 Task 的钉钉镜像由 Task 7
@@ -228,7 +216,7 @@ Task-first 输出不承载 Project 写操作或直接创建新外部 TODO；合�
 Task Agent 的共享会话不会改变 Task、TODO 或 follow-up 的服务端应用边界；适用操作仍由当前
 Work Item 明确绑定，并在对应服务事务中校验和应用。
 
-定时的 TODO/follow-up 完成检查已删除（Derek 2026-09-25），Task 只随新信息更新；仅 follow-up 投递失败后的目标修复仍会为该 follow-up 发一条 `follow_up_completion_check`。普通 Task 提取和 TODO/follow-up 完成检查共用稳定的 `task-agent:work-tracking:v1` 会话范围；每个
+定时的 TODO/follow-up 完成检查和 follow-up 投递失败后的 Agent 修复都已删除（Derek 2026-09-25），Task 只随新信息更新，不再有任何来源产生 `follow_up_completion_check`。Task 提取使用稳定的 `task-agent:work-tracking:v1` 会话范围；每个
 Work Item 仍有独立的 workload key、Task Agent run 与 runtime attempt。路由器按 runtime route 保存
 session，同一 route 上的后续输入续接既有 session。`process-work-items` 在恢复队列和领取输入之前
 取得共享 SQLite session lock，运行期间每 60 秒续租；竞争中的进程返回 0 项且不领取、不增加尝试次数。
@@ -767,7 +755,11 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
   完成证据记为 `dingtalk_todo:<taskId>`，不经 Agent。此前的做法是逐条读取每个活动链接（660 条），
   且只在手动运行的每日维护里执行，最近完成的待办在服务里全部仍是开放状态。同一步先按已保存回执
   收口结果未知的待办创建（`reconcile_unknown_business_task_todo_creates`），这是投递记账，不是完成检查。
-- 独立定时任务「投递到期的跟进事项」（每 5 分钟）：原先是每 60 秒的隐藏循环。
+- 已退役：定时任务「投递到期的跟进事项」（`process-follow-ups`，原先是每 60 秒的隐藏循环，
+  2026-09-18 改为每 5 分钟的定时任务）。Derek 2026-09-25 决定催办只由他在 Task 详情页点按钮发送，
+  该定时任务当天先停用，随后删除：服务启动时 seeding 用控制台同一个软删除
+  （`delete_scheduled_task`）删掉 migration key 为 `follow-up-delivery-v1` 的任务，运行记录保留为历史；
+  `process-follow-ups` 命令、每日维护里的催办步骤一并删除。
 - 任务长期记忆写入**不是**定时任务（Derek 2026-09-24：「写入记忆不应该是个定时任务，而是系统层
   自动的」）：任务结束时在 `finalize_orchestrated_reply_task` 同一事务里入队，由统一 Dispatcher 的
   `task_memory_write` adapter 立即领取写入；退避重试的行到点再被领取，重试上限后进 Attention。
@@ -869,7 +861,7 @@ DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adap
 另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析、失败数量及会话剩余天数。OKR 周报同样是服务命令：它唯一的动作就是执行一条确定性命令，而那条命令的实时 OKR 读取会跑到五十分钟以上，任何 Agent 超时都装不下，被杀之后命令还会脱离运行记录继续跑。因此发现与同步类种子任务都不是 Agent 形式，Cron 在所有模型路由都不可用时仍然照常工作。只有两个报告是 Agent 种子任务，走标准 Consumer → Audit 生命周期：每周六 `12:00`（`America/Los_Angeles`）的“准备 CEO 管理周报”（`ceo-weekly-report`），和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入全部来自服务自己的记录：Agent 先运行只读命令 `python -m app.cli daily-report-facts --scheduled-run <触发记录 id>`（`app/daily_report_facts.py`）。报告窗口由服务算：终点是本次触发的 `scheduled_for`，起点是同一任务报告日期更早、且真正发出了报告（执行任务 `done` 且最后一次处理结果为 `completed`；无需处理或线路不可用被跳过的也是 `done`，不算）的最近一次运行的触发时刻（断掉的日子并入下一份，同日重跑沿用原起点），从未成功过则回看 24 小时；报告日期是终点的北京日期。命令取得窗口内结束的会议及其已发会后跟进、当天有活动的 Task-first 业务 Task 及其当天事件、全部未解决的业务需关注项（`business_attention_items`）、当天在邮箱里被标为重要的邮件（已执行的 `flag_important` 动作；Agent 只摘有管理含义的，其余计数）、当天处理过的事项（不含 skipped，只计数），以及 Attention 口径下等 Derek 处理的事项；截止日期不从 `deadline_at` 自行推算（见 `docs/task-semantic-storage.md`）；再扫描窗口内群消息、按需补读听记，写成七段报告，发布到知识库“🎯  目标与执行”/“CEO 每日总结”下的同日文档（同日重跑覆盖同一篇）并读回，最后以 Derek 本人身份单聊发给「磊哥」（不用机器人）：要点、需介入条数、当天文档标题和「CEO 每日总结」文件夹链接（正文在执行轮就由服务定稿，那时文档还不存在，所以放文件夹链接）。这条消息走服务的已审核消息通道：执行轮提 `dingtalk-chat` 单聊动作（`target.user_id` 为 Derek 的 userId），服务加签名并记投递台账，审核轮只能用 `send_approved_dingtalk_message` 发送。该通道接受的任务频道为 `DINGTALK_MESSAGE_CHANNELS`（钉钉消息与定时任务，Derek 2026-09-24）；此前只接受钉钉消息任务，定时任务没有合规的发送方式（运行 84467 因此改用命令行发送并被判不合规）。某个来源读不到只写进报告的覆盖说明，不向 Derek 追问材料。该命令登记在 `app/native_cli_metadata.py` 的服务只读命令中。周报的必需输入同样来自服务：Agent 先运行只读命令 `python -m app.cli weekly-report-materials --scheduled-run <触发记录 id>`（`app/weekly_report_materials.py`，同样登记为服务只读命令）。目标周一是运行时刻（按北京日期）之后的第一个周一（周六跑就是后天的周会，绝不是已开完的那次），窗口为其前一个周一 00:00 到目标周一 00:00（北京），截止取运行时刻与窗口终点的较早者。命令在知识库“🎯  目标与执行”/“1. 管理层周会”下找“{年} 年：管理层周会”（是一篇文档，每周的周会文档是它的子页面；名字比较忽略空白），按标题 `{年}年{月}日管理层周会`（月日不补零）找目标与上期文档，找不到只报 `exists: false` 不猜，同名多篇、列表不完整都直接报错；会议清单来自会议队列（`meeting_alignment_jobs`）里窗口内结束的会议，附参与人、会后跟进和听记链接，归档转写文件在才给路径。周报**只写进目标周会文档的三处**：“二、CEO本周判断”、“三、公司级重点指标”表，以及往“一、重点问题及待办跟踪”表追加本周新问题的新行（已有行、各业务线小节、主题讨论、周报链接都归会议参与人，不动）；目标文档不存在时先照上期文档建；完整七段版留作运行目录里的草稿。业务线还没提交的报告写进覆盖说明，不阻塞发布。周报任务经保存版本 → revision 守卫的一次覆盖写入 → 全文读回核对发布，授权来自 Derek 2026-09-24 对该定时任务的批准。Lark 没有
 访问申请页需等待申请按钮实际可用；按钮仍禁用时保留为申请人未解析，下一轮继续尝试。页面仅显示加载壳或其他非权限内容时不能当作已可读，只有听记读取 API 能确认可读。
 默认 seed。
-内部投递、发送状态确认、错误恢复及 Todo completion follow-up 仍是内部机制，不外化为 Cron。
+内部投递、发送状态确认、错误恢复仍是内部机制，不外化为 Cron；催办不自动发送，只由 Derek 点按钮发送。
 
 ### 应用层边界
 
@@ -919,12 +911,13 @@ estimate、requester/external deadline 和 next check 均不能充当镜像期�
 **催办由 Derek 点按钮发送**（Derek 2026-09-25：「催办应该变成 UI 上的一个按钮，让用户决定是否要发送催办（点击一键发送），如果后面有新的信息更新了 task，应该取消可催办状态」）：Task 详情页「催办」区列出该 Task 的全部 follow-up；待发送（`draft`/`approved`）和发送失败（`failed`）的每条带一个发送按钮，点击调用 `POST /api/console/tasks/items/{task_id}/follow-ups/{follow_up_id}/send`（带当前 `revision`），由 `send_business_task_follow_up` 当场发送：不看工作时间、不经 Agent 审核，点击就是决定。失败或结果未知的发送保持 `failed` 并把结果留在该行上，不排 Agent 修复；再点一次作为新 revision 发送，原 attempt 不改。Task Agent 把新信息应用到已有 Task 时，在同一事务里用 `cancel_pending_business_task_follow_ups` 撤回该 Task 其余未发出的 follow-up（`cancelled`，原因写明被哪条来源更新），同一来源信号新建的 follow-up 保留，正在发送的不动。
 
 Task 7 的新 follow-up 只从链接来源信号的精确群/单聊目标与明确、可解析 `next_check_at` 创建，
-不从 deadline 推导时间或猜收件人。群聊回到精确来源会话并提及来源证据支持的负责人；单聊发给来源
-明确指定的负责人账号，原会话 ID 保留用于核对。发送前会读回已关联的 provider TODO；若已完成，则关闭
-精确绑定的 Task/follow-up，记录 provider 状态并释放尚未发送的 claim。发送有独立的 claim、lease、
-revision、幂等 UUID 和回执记录；发送中的租约过期或网络中断标为未知，排入 Task Agent 核查，不自动重发。
-核查后仅可修订输入所绑定的 Task follow-up；旧 `follow_up_drafts` 的读取和发送暂保留给尚未导入的历史记录，
-不能作为新 Task 创建目标。Task 8 的旧记录导入与生产切换仍是独立边界。
+不从 deadline 推导时间或猜收件人；`next_check_at` 只是建议的催办时间，不会到点自动发送。群聊回到精确
+来源会话并提及来源证据支持的负责人；单聊发给来源明确指定的负责人账号，原会话 ID 保留用于核对。发送
+（仅由上述按钮触发）有独立的 claim、lease、revision、幂等 UUID 和回执记录；发送中的租约过期或网络中断
+标为 `unknown`，该 follow-up 显示为 `failed`，不自动重发，也不排 Agent 核查，是否再发由 Derek 再点一次决定。
+旧 `follow_up_drafts` 只是历史记录：不会再被发送，失败的旧记录也不再提供「让 Agent 重新核验负责人 /
+取消本次跟进」表单（`/follow-ups/{id}/resolution-form` 已删除）；小时质检和安装向导的 dry-run 检查
+不再把未发送或失败的旧记录当作积压。Task 8 的旧记录导入与生产切换仍是独立边界。
 
 ## 任务类型
 

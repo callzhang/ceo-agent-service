@@ -31,8 +31,10 @@ DINGTALK_OA_MIGRATION_KEY = "dingtalk-oa-check-v1"
 DINGTALK_OA_SERVICE_COMMAND = "scan-oa-approvals"
 MEETING_TODO_MIGRATION_KEY = "work-source-scan-daily-v1"
 MEETING_TODO_SERVICE_COMMAND = "scan-meeting-todos-once"
-FOLLOW_UP_DELIVERY_MIGRATION_KEY = "follow-up-delivery-v1"
-FOLLOW_UP_DELIVERY_SERVICE_COMMAND = "process-follow-ups"
+# Derek, 2026-09-25: follow-ups are sent only when he clicks a Task's button,
+# so the scheduled 投递到期的跟进事项 task is retired. Seeding deletes a copy
+# that an earlier seed created.
+RETIRED_FOLLOW_UP_DELIVERY_MIGRATION_KEY = "follow-up-delivery-v1"
 EMAIL_MESSAGE_MIGRATION_KEY = "email-message-check-v1"
 EMAIL_MESSAGE_SERVICE_COMMAND = "email-message-check-once"
 
@@ -46,12 +48,6 @@ class ScheduledTaskDefaultCopy:
 
 
 SCHEDULED_TASK_DEFAULT_COPY = {
-    FOLLOW_UP_DELIVERY_MIGRATION_KEY: ScheduledTaskDefaultCopy(
-        name="投递到期的跟进事项",
-        description="把已到期的跟进事项按既有投递规则发出；只投递已生成的内容，不产生新的判断。Derek 2026-09-18 要求它作为定时任务可见可开关，而不是隐藏的常驻循环。",
-        old_name="",
-        old_description="",
-    ),
     EMAIL_MESSAGE_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="分类新邮件",
         description="发现已配置未分类入口中的新未读邮件后，由 Agent 按邮件分类规则判断业务类别和重要性；分类结果再由现有执行队列按邮箱策略处理。",
@@ -319,12 +315,7 @@ def seed_scheduled_tasks(
         working_directory=working_directory,
         now=now,
     )
-    follow_up_delivery = _seed_follow_up_delivery_task(
-        store=store,
-        options=options,
-        working_directory=working_directory,
-        now=now,
-    )
+    _retire_follow_up_delivery_task(store=store, now=now)
     weekly_report = _seed_weekly_report_task(
         store=store, options=options, working_directory=working_directory, now=now
     )
@@ -356,7 +347,6 @@ def seed_scheduled_tasks(
             daily_report,
             minutes_access,
             minutes,
-            follow_up_delivery,
         )
     )
 
@@ -725,38 +715,19 @@ def _seed_weekly_okr_task(
     )
 
 
-def _seed_follow_up_delivery_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed follow-up delivery as a scheduled service command.
+def _retire_follow_up_delivery_task(
+    *, store: AutoReplyStore, now: datetime | None
+) -> None:
+    """Delete the retired follow-up delivery task if an earlier seed made it.
 
-    Derek, 2026-09-18: it ran as a hidden loop every 60 seconds, and the
-    workspace file sweep rode along with it. As a scheduled task it is listed,
-    switchable, and carries nothing else.
+    The delete is the console's own soft delete: the row and its runs stay as
+    history, the task stops being listed and never fires again.
     """
-    del options, working_directory
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=FOLLOW_UP_DELIVERY_MIGRATION_KEY,
-        command=FOLLOW_UP_DELIVERY_SERVICE_COMMAND,
-        seed_description=_default_copy(FOLLOW_UP_DELIVERY_MIGRATION_KEY).description,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=FOLLOW_UP_DELIVERY_MIGRATION_KEY,
-        name=_default_copy(FOLLOW_UP_DELIVERY_MIGRATION_KEY).name,
-        description=_default_copy(FOLLOW_UP_DELIVERY_MIGRATION_KEY).description,
-        command=FOLLOW_UP_DELIVERY_SERVICE_COMMAND,
-        cron_expression="0 */5 * * * *",
-        timezone_name="Asia/Shanghai",
-        enabled=False,
-        now=now,
-    )
+    for task in store.list_scheduled_tasks():
+        if task.migration_key == RETIRED_FOLLOW_UP_DELIVERY_MIGRATION_KEY:
+            store.delete_scheduled_task(
+                task.id, expected_version=task.version, now=now
+            )
 
 
 def _seed_minutes_task(
