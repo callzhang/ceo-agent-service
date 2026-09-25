@@ -218,14 +218,56 @@ function TaskListItem({ task, selected, onSelect }: { task: ScheduledTask; selec
 }
 
 const PREVIOUS_EXECUTION_ACTIVE = "scheduled_task_previous_execution_active";
-type RunHistoryGroupKind = "service_check" | "previous_execution_active";
-interface RunHistoryEntry { run: ScheduledTaskRun; oldest: ScheduledTaskRun; count: number; kind: RunHistoryGroupKind | null; latestAttempt: boolean; }
+type RunTone = "success" | "progress" | "warning" | "danger" | "neutral";
+interface RunCounter { key: string; label: string; value: string; tone: RunTone; }
+interface RunHistoryEntry { run: ScheduledTaskRun; oldest: ScheduledTaskRun; count: number; skipped: number; idle: boolean; latestAttempt: boolean; }
 
-function runHistoryGroupKind(run: ScheduledTaskRun): RunHistoryGroupKind | null {
-  if (run.trigger_kind !== "scheduled" || run.attempts.length > 0) return null;
-  if (run.dispatch_status === "skipped" && run.skip_or_error_reason === PREVIOUS_EXECUTION_ACTIVE) return "previous_execution_active";
-  if (run.dispatch_status === "dispatched" && run.execution_kind === "service_command" && !run.result_summary?.trim()) return "service_check";
-  return null;
+const COUNTER_LABELS: Record<string, string> = {
+  queued: "入队", sent: "已发送", discovered: "发现", synced: "已同步", skipped: "跳过", accounts: "邮箱",
+  permission_requested: "申请权限", permission_pending: "等待授权", requested: "已申请", already_requested: "此前已申请",
+  readable: "已可读", unresolved: "申请人未解析", failed: "失败", failures: "失败", session_expires_in_days: "会话剩余天数",
+};
+const PROBLEM_COUNTERS = new Set(["failed", "failures", "unresolved"]);
+const CONTEXT_COUNTERS = new Set(["accounts", "session_expires_in_days"]);
+const REASON_LABELS: Record<string, string> = {
+  [PREVIOUS_EXECUTION_ACTIVE]: "上一轮还没结束，本次跳过",
+  scheduled_task_service_command_failed: "服务命令失败",
+  scheduled_task_execution_unavailable: "无法执行",
+};
+const ATTEMPT_STATUS_LABELS: Record<string, string> = {
+  completed: "已完成", skipped: "已跳过", failed: "失败", needs_human: "需人工", needs_feedback: "待修正", running: "运行中", pending: "等待中", queued: "排队中",
+};
+const ATTEMPT_STATUS_TONES: Record<string, RunTone> = {
+  completed: "success", skipped: "neutral", failed: "danger", needs_human: "warning", needs_feedback: "warning", running: "progress", pending: "progress", queued: "progress",
+};
+
+/** Numeric `key=value` pairs from a service command's one-line result; anything else stays in the technical details. */
+function runCounters(text: string): RunCounter[] {
+  return text.trim().split(/\s+/).flatMap((token) => {
+    const at = token.indexOf("=");
+    if (at <= 0) return [];
+    const key = token.slice(0, at);
+    const value = token.slice(at + 1);
+    if (!/^\d+(\.\d+)?$/.test(value)) return [];
+    const tone: RunTone = PROBLEM_COUNTERS.has(key) && Number(value) > 0 ? "danger" : "neutral";
+    return [{ key, label: COUNTER_LABELS[key] || key, value, tone }];
+  });
+}
+
+/** A counter that says the run found or did something, as opposed to context such as how many mailboxes it read. */
+function isWorkCounter(counter: RunCounter) {
+  return !CONTEXT_COUNTERS.has(counter.key) && Number(counter.value) > 0;
+}
+
+/** A scheduled run that set nothing in motion: an empty check, or a tick skipped while the previous run was still going. */
+function runTriggeredNothing(run: ScheduledTaskRun) {
+  if (run.trigger_kind !== "scheduled" || run.attempts.length > 0) return false;
+  if (run.dispatch_status === "skipped") return run.skip_or_error_reason === PREVIOUS_EXECUTION_ACTIVE;
+  if (run.dispatch_status !== "dispatched" || run.execution_kind !== "service_command") return false;
+  const summary = run.result_summary?.trim() || "";
+  if (!summary) return true;
+  const counters = runCounters(summary);
+  return counters.length > 0 && !counters.some(isWorkCounter);
 }
 
 function coalescedRunHistory(runs: ScheduledTaskRun[], latestAttemptRun: ScheduledTaskRun | null): RunHistoryEntry[] {
@@ -233,35 +275,100 @@ function coalescedRunHistory(runs: ScheduledTaskRun[], latestAttemptRun: Schedul
   if (latestAttemptRun) unique.set(latestAttemptRun.id, latestAttemptRun);
   const ordered = [...unique.values()].sort((left, right) => right.id - left.id);
   return ordered.reduce<RunHistoryEntry[]>((entries, run) => {
-    const kind = runHistoryGroupKind(run);
+    const idle = runTriggeredNothing(run);
+    const skipped = run.dispatch_status === "skipped" ? run.occurrence_count : 0;
     const previous = entries[entries.length - 1];
-    if (kind && previous?.kind === kind) {
+    if (idle && previous?.idle) {
       previous.count += run.occurrence_count;
+      previous.skipped += skipped;
       previous.oldest = run;
       return entries;
     }
-    entries.push({ run, oldest: run, count: run.occurrence_count, kind, latestAttempt: latestAttemptRun?.id === run.id });
+    entries.push({ run, oldest: run, count: run.occurrence_count, skipped, idle, latestAttempt: latestAttemptRun?.id === run.id });
     return entries;
   }, []);
 }
 
-function RunHistory({ runs, latestAttemptRun, hasMore, loading, onMore, commandOptions }: { runs: ScheduledTaskRun[]; latestAttemptRun: ScheduledTaskRun | null; hasMore: boolean; loading: boolean; onMore: () => void; commandOptions: ScheduledTaskOptions["service_command_options"] }) {
+function runTimeLabel(value: string | null) {
+  if (!value) return "无";
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  const time = date.toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit", ...(date.getSeconds() ? { second: "2-digit" } : {}) });
+  return `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+}
+
+function runStatus(entry: RunHistoryEntry): { label: string; tone: RunTone } {
+  if (entry.idle) return { label: "无新内容", tone: "neutral" };
+  const { run } = entry;
+  if (run.dispatch_status === "pending") return { label: "等待执行", tone: "progress" };
+  if (run.dispatch_status === "skipped") return { label: "已跳过", tone: "neutral" };
+  if (run.dispatch_status === "failed") return { label: "失败", tone: "danger" };
+  if (run.attempts.length > 0 || run.execution_kind !== "service_command") return { label: "已触发 Agent", tone: "success" };
+  return { label: "有新内容", tone: "success" };
+}
+
+function RunReason({ reason, failed }: { reason: string; failed: boolean }) {
+  const at = reason.indexOf(":");
+  const code = at > 0 ? reason.slice(0, at).trim() : reason.trim();
+  const detail = at > 0 ? reason.slice(at + 1).trim() : "";
+  const label = REASON_LABELS[code];
+  const counters = runCounters(detail);
+  return <p className={failed ? "scheduled-task-run-reason is-failed" : "scheduled-task-run-reason"}>
+    <span>{label || reason}</span>
+    {label && detail && !counters.length && <span>：{detail}</span>}
+    {label && counters.length > 0 && <RunCounters counters={counters} />}
+  </p>;
+}
+
+function RunCounters({ counters }: { counters: RunCounter[] }) {
+  return <span className="scheduled-task-run-counters">{counters.filter((counter) => counter.key === "session_expires_in_days" || Number(counter.value) > 0).map((counter) => <span key={counter.key} className={`scheduled-task-run-counter is-${counter.tone}`}>{counter.label} <strong>{counter.value}</strong></span>)}</span>;
+}
+
+function RunHistoryRow({ entry }: { entry: RunHistoryEntry }) {
+  const { run } = entry;
+  const status = runStatus(entry);
+  const summary = run.result_summary?.trim() || "";
+  const counters = runCounters(summary);
+  const merged = entry.count > 1;
+  const agentRun = run.execution_kind !== "service_command";
+  return <li className={entry.idle ? "scheduled-task-run is-idle" : "scheduled-task-run"}>
+    <div className="scheduled-task-run-head">
+      <span className={`status-badge status-${status.tone}`}>{status.label}</span>
+      <time dateTime={run.scheduled_for}>{merged ? `${runTimeLabel(entry.oldest.first_scheduled_for)} – ${runTimeLabel(run.scheduled_for)}` : runTimeLabel(run.scheduled_for)}</time>
+      {run.trigger_kind === "manual" && <span className="scheduled-task-run-kind">手动</span>}
+      {entry.latestAttempt && <span className="scheduled-task-effective-trigger">最近一次触发 Agent</span>}
+    </div>
+    <div className="scheduled-task-run-body">
+      {entry.idle
+        ? <span>{entry.count} 次定时检查都没有新内容{entry.skipped > 0 && `，其中 ${entry.skipped} 次因上一轮未结束而跳过`}</span>
+        : <>
+          {counters.some(isWorkCounter) && <RunCounters counters={counters} />}
+          {!counters.some(isWorkCounter) && summary && !counters.length && <span className="scheduled-task-run-summary">{summary}</span>}
+          {run.attempts.length > 0 && <span className="scheduled-task-attempt-links">{run.attempts.map((attempt) => <Link key={attempt.id} to={`/attempts/${attempt.id}`}>Attempt #{attempt.id}{" "}<span className={`status-badge status-${ATTEMPT_STATUS_TONES[attempt.status] || "neutral"}`}>{ATTEMPT_STATUS_LABELS[attempt.status] || attempt.status}</span></Link>)}</span>}
+          {run.dispatch_status === "dispatched" && agentRun && run.attempts.length === 0 && <span className="scheduled-task-run-muted">未产生 Attempt</span>}
+          {run.skip_or_error_reason && <RunReason reason={run.skip_or_error_reason} failed={run.dispatch_status === "failed"} />}
+        </>}
+    </div>
+    <details className="scheduled-task-run-technical">
+      <summary>技术详情</summary>
+      <dl>
+        <div><dt>Trigger</dt><dd>{merged ? `#${entry.oldest.id} – #${run.id}` : `#${run.id}`}</dd></div>
+        {run.execution_kind && <div><dt>执行</dt><dd>{run.execution_kind === "service_command" ? `${run.execution_kind} ${run.execution_id}` : `${run.execution_kind} #${run.execution_id}`}</dd></div>}
+        {summary && <div><dt>结果</dt><dd>{summary}</dd></div>}
+        {run.skip_or_error_reason && <div><dt>原因</dt><dd>{run.skip_or_error_reason}</dd></div>}
+      </dl>
+    </details>
+  </li>;
+}
+
+function RunHistory({ runs, latestAttemptRun, hasMore, loading, onMore }: { runs: ScheduledTaskRun[]; latestAttemptRun: ScheduledTaskRun | null; hasMore: boolean; loading: boolean; onMore: () => void }) {
   const entries = coalescedRunHistory(runs, latestAttemptRun);
+  const total = entries.reduce((sum, entry) => sum + entry.count, 0);
+  const active = entries.filter((entry) => !entry.idle && entry.run.dispatch_status !== "failed").length;
+  const failed = entries.filter((entry) => entry.run.dispatch_status === "failed").length;
   return <section className="scheduled-task-history" aria-labelledby="scheduled-task-history-title">
-    <div className="scheduled-task-section-heading"><h3 id="scheduled-task-history-title">运行记录</h3><span>{entries.length} 条</span></div>
-    {entries.length === 0 ? <p className="scheduled-task-empty-copy">尚无运行记录。</p> : <ol>{entries.map((entry) => <li key={`${entry.kind || "run"}:${entry.run.id}`}>
-      <div><strong>{entry.run.trigger_kind === "manual" ? "手动运行" : "定时触发"}</strong><span>{entry.kind ? "已合并" : runStatusLabel(entry.run.dispatch_status)}</span>{entry.latestAttempt && <span className="scheduled-task-effective-trigger">最近一次触发 Agent</span>}</div>
-      <small>{entry.count > 1 ? `${timeLabel(entry.oldest.first_scheduled_for)} – ${timeLabel(entry.run.scheduled_for)}` : timeLabel(entry.run.scheduled_for)}</small>
-      {entry.kind === "service_check" ? <span className="scheduled-task-attempt-links">{entry.count} 次检查未触发 Agent</span>
-        : entry.kind === "previous_execution_active" ? <span className="scheduled-task-attempt-links">上一轮运行期间跳过 {entry.count} 个定时点</span>
-          : <span className="scheduled-task-attempt-links"><span>Trigger #{entry.run.id}</span><span aria-hidden="true">→</span>{entry.run.attempts.length > 0 ? entry.run.attempts.map((attempt) => <Link key={attempt.id} to={`/attempts/${attempt.id}`} title={attempt.status}>Attempt #{attempt.id}</Link>) : <span>未产生 Attempt</span>}</span>}
-      {entry.run.execution_kind === "service_command" && entry.run.execution_id ? (() => {
-        const command = commandOptions.find((option) => option.name === entry.run.execution_id);
-        return <span className="scheduled-task-command"><span>{command?.display_name || "服务命令"}</span><details><summary>技术详情</summary><small>{entry.run.execution_id}</small></details></span>;
-      })() : entry.run.execution_kind && entry.run.execution_id && <span>{entry.run.execution_kind} #{entry.run.execution_id}</span>}
-      {entry.run.result_summary?.trim() && <p className="scheduled-task-result-summary">{entry.run.result_summary}</p>}
-      {entry.run.skip_or_error_reason && entry.kind === null && <p>{entry.run.skip_or_error_reason}</p>}
-    </li>)}</ol>}
+    <div className="scheduled-task-section-heading"><h3 id="scheduled-task-history-title">运行记录</h3>{total > 0 && <span>最近 {total} 次 · 有动作 {active} 次{failed > 0 && <> · <span className="scheduled-task-history-failed">失败 {failed} 次</span></>}</span>}</div>
+    {entries.length === 0 ? <p className="scheduled-task-empty-copy">尚无运行记录。</p> : <ol>{entries.map((entry) => <RunHistoryRow key={`${entry.idle ? "idle" : "run"}:${entry.run.id}`} entry={entry} />)}</ol>}
     {hasMore && <button type="button" className="secondary-button" disabled={loading} onClick={onMore}>{loading ? "加载中…" : "加载更多运行记录"}</button>}
   </section>;
 }
@@ -700,7 +807,7 @@ export function ScheduledTasksPage() {
             </>}
             <button type="submit" className="primary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)}>{mutationState === "saving" ? "保存中…" : creating ? "创建任务" : "保存更改"}</button>
           </form> : <TaskReadOnlyDetail task={selected!} commandOption={options?.service_command_options.find((item) => item.name === selected?.command)} choices={choices} />}
-          {!creating && <RunHistory runs={runs} latestAttemptRun={latestAttemptRun} hasMore={historyHasMore} loading={historyLoading} onMore={() => void loadMoreRuns()} commandOptions={options?.service_command_options || []} />}
+          {!creating && <RunHistory runs={runs} latestAttemptRun={latestAttemptRun} hasMore={historyHasMore} loading={historyLoading} onMore={() => void loadMoreRuns()} />}
         </> : <div className="scheduled-task-empty"><strong>选择或新建一个任务</strong><p>右侧会显示 Cron、Skills、Runtime 与运行记录。</p></div>}
       </section>
     </div>

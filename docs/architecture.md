@@ -98,7 +98,7 @@ scheduled adapter 领取 trigger 后，Dispatcher 在本进程内直接运行该
 以 `failed` 结束并进入 Attention。服务命令任务不创建 synthetic scheduled reply task、agent run
 或 reply_attempt；命令发现真实对象后，才由既有 reply、meeting 或 work-summary Consumer 处理。
 运行记录 API 和定时任务页面展示已保存的结果摘要；旧运行记录的摘要为空。这样服务命令即使没有
-创建 Agent Attempt，也能显示本次扫描数量和结果。没有新对象时不会在消息历史里留下每分钟一条的记录。`scheduled-task-options` 为每个服务
+创建 Agent Attempt，也能显示本次扫描数量和结果。页面把结果里的 `key=数字` 读成中文计数（入队、发现、失败……），原始摘要、trigger id 和执行链接收进每行的“技术详情”。连续的定时触发如果什么都没带出来——没有 Attempt，且结果计数除上下文项（邮箱数、会话剩余天数）外全为 0，或摘要为空，或因上一轮未结束而跳过——合并成一行“N 次定时检查都没有新内容”；手动运行、失败和有计数的运行始终单独成行。没有新对象时不会在消息历史里留下每分钟一条的记录。`scheduled-task-options` 为每个服务
 命令附带一份从服务状态计算的只读“下游”描述（通道、consumer 执行器、角色边界常量、实际加载的
 Skill、consumer 要求的 Runtime 能力和路由可用性），页面据此说明命令发现的消息会被谁处理：
 

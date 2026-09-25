@@ -99,17 +99,16 @@ describe("ScheduledTasksPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("Trigger #11")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Attempt #8840" })).toHaveAttribute("href", "/attempts/8840");
-    expect(screen.getByRole("link", { name: "Attempt #8841" })).toHaveAttribute("href", "/attempts/8841");
-    expect(screen.getByText("→")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Attempt #8840 已完成" })).toHaveAttribute("href", "/attempts/8840");
+    expect(screen.getByRole("link", { name: "Attempt #8841 已跳过" })).toHaveAttribute("href", "/attempts/8841");
+    expect(screen.getByText("已触发 Agent")).toBeInTheDocument();
+    expect(screen.getByText("#11")).toBeInTheDocument();
   });
 
   it("states when a Trigger did not produce an Attempt", async () => {
     renderPage();
 
-    expect(await screen.findByText("Trigger #11")).toBeInTheDocument();
-    expect(screen.getByText("未产生 Attempt")).toBeInTheDocument();
+    expect(await screen.findByText("未产生 Attempt")).toBeInTheDocument();
   });
 
   it("coalesces no-attempt Cron checks and keeps the latest effective Trigger visible", async () => {
@@ -148,11 +147,30 @@ describe("ScheduledTasksPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("3 次检查未触发 Agent")).toBeInTheDocument();
-    expect(screen.getByText("上一轮运行期间跳过 2 个定时点")).toBeInTheDocument();
+    expect(await screen.findByText("5 次定时检查都没有新内容，其中 2 次因上一轮未结束而跳过")).toBeInTheDocument();
     expect(screen.getByText("最近一次触发 Agent")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Attempt #8840" })).toHaveAttribute("href", "/attempts/8840");
+    expect(screen.getByRole("link", { name: "Attempt #8840 已完成" })).toHaveAttribute("href", "/attempts/8840");
     expect(screen.queryByText("scheduled_task_previous_execution_active")).not.toBeInTheDocument();
+  });
+
+  it("merges scheduled checks whose counters are all zero and spells out the ones that found work", async () => {
+    const check = (id: number, summary: string) => ({ ...commandRun, id, trigger_kind: "scheduled" as const, scheduled_for: `2026-09-08T12:${String(id).padStart(2, "0")}:00Z`, result_summary: summary, attempts: [] });
+    const failed = { ...check(10, ""), dispatch_status: "failed" as const, execution_kind: "", execution_id: "", skip_or_error_reason: "scheduled_task_service_command_failed: sync-minutes-once incomplete: discovered=3 synced=1 failed=2" };
+    setup([commandTask]);
+    api.listScheduledTaskRuns.mockResolvedValue({
+      scheduled_task: commandTask,
+      items: [check(15, "email-message-check-once accounts=1 discovered=0 failures=0"), check(14, "produce-once queued=0"), check(13, "produce-once queued=3"), check(12, "produce-once queued=0"), check(11, "produce-once queued=0"), failed],
+      meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false },
+    });
+
+    renderPage();
+
+    expect(await screen.findAllByText("2 次定时检查都没有新内容")).toHaveLength(2);
+    expect(screen.getByText("入队").closest(".scheduled-task-run-counter")).toHaveTextContent("入队 3");
+    expect(screen.getByText("服务命令失败")).toBeInTheDocument();
+    expect(screen.getByText("服务命令失败").closest("li")?.querySelector(".scheduled-task-run-counter.is-danger")).toHaveTextContent("失败 2");
+    expect(screen.getByRole("heading", { name: "运行记录" }).nextElementSibling).toHaveTextContent("最近 6 次 · 有动作 1 次 · 失败 1 次");
+    expect([...document.querySelectorAll(".scheduled-task-run-body")].some((body) => body.textContent?.includes("queued="))).toBe(false);
   });
 
   it("keeps a selected task in a readable view until Edit, then saves the real draft", async () => {
@@ -614,7 +632,7 @@ describe("ScheduledTasksPage", () => {
     expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*760px\)[\s\S]*?\.scheduled-tasks-page\s+\.console-page-header\s+\.muted\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*\}/);
     expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-actions\s*\{[^}]*flex-wrap:\s*wrap;[^}]*\}/);
     expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-suggestions\s+button\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;[^}]*\}/);
-    expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-history\s+li\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*\}/);
+    expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-run\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*\}/);
   });
 });
 
@@ -675,7 +693,7 @@ describe("service command tasks", () => {
     expect(screen.getByLabelText("服务命令")).toBeEnabled();
     expect(screen.getAllByText("处理新的钉钉消息").length).toBeGreaterThanOrEqual(1);
     expect(await screen.findByText("技术详情")).toBeInTheDocument();
-    expect(screen.getByText("技术详情").closest(".scheduled-task-command")).not.toBeNull();
+    expect(screen.getByText("技术详情").closest(".scheduled-task-run-technical")).not.toBeNull();
     expect(screen.queryByText("技术详情：produce-once")).toBeNull();
     expect(screen.queryByText("service_command #produce-once")).toBeNull();
     expect(screen.queryByRole("button", { name: "暂停任务" })).toBeNull();

@@ -1735,23 +1735,35 @@ h1, h2, h3, p { margin-top: 0; }
 .scheduled-task-delete-confirm p { margin: 0; }
 .scheduled-task-delete-confirm > div { display: flex; gap: 7px; }
 .scheduled-task-history { display: grid; gap: 11px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
-.scheduled-task-history ol { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
-.scheduled-task-history li { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
-.scheduled-task-history li div { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 0 auto; }
-.scheduled-task-history li div span, .scheduled-task-history li small, .scheduled-task-history li > span { color: var(--ink-soft); font-size: .72rem; }
-.scheduled-task-history li div .scheduled-task-effective-trigger { padding: 2px 6px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-weight: 750; white-space: nowrap; }
-.scheduled-task-history li small, .scheduled-task-history li > span, .scheduled-task-history li p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.scheduled-task-history li small { flex: 0 0 auto; }
-.scheduled-task-history li > span { flex: 0 1 auto; }
-.scheduled-task-history .scheduled-task-attempt-links { display: inline-flex; align-items: center; gap: 5px; min-width: 0; flex: 1 1 auto; }
-.scheduled-task-history .scheduled-task-attempt-links a { color: var(--accent); font-size: .72rem; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.scheduled-task-history .scheduled-task-history-failed { color: var(--status-danger-ink); font-weight: 700; }
+.scheduled-task-history ol { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.scheduled-task-run { display: grid; grid-template-columns: minmax(230px, auto) minmax(0, 1fr) auto; align-items: center; gap: 6px 14px; min-width: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); font-size: .76rem; }
+.scheduled-task-run.is-idle { border-style: dashed; background: var(--surface-muted); color: var(--ink-soft); }
+.scheduled-task-run-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.scheduled-task-run-head .status-badge { padding: 2px 7px; font-size: .7rem; }
+.scheduled-task-run-head time { color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.scheduled-task-run.is-idle .scheduled-task-run-head time { color: var(--ink-soft); }
+.scheduled-task-run-kind { padding: 1px 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-soft); font-size: .68rem; white-space: nowrap; }
+.scheduled-task-run-head .scheduled-task-effective-trigger { padding: 2px 6px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: .68rem; font-weight: 750; white-space: nowrap; }
+.scheduled-task-run-body { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.scheduled-task-run-counters { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.scheduled-task-run-counter { padding: 1px 7px; border-radius: 6px; color: var(--ink-soft); background: var(--surface-muted); white-space: nowrap; }
+.scheduled-task-run-counter strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.scheduled-task-run-counter.is-danger, .scheduled-task-run-counter.is-danger strong { color: var(--status-danger-ink); background: var(--status-danger-surface); }
+.scheduled-task-run-summary, .scheduled-task-run-muted { color: var(--ink-soft); overflow-wrap: anywhere; }
+.scheduled-task-history .scheduled-task-attempt-links { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.scheduled-task-history .scheduled-task-attempt-links a { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-weight: 700; text-decoration: none; white-space: nowrap; }
 .scheduled-task-history .scheduled-task-attempt-links a:hover { text-decoration: underline; }
-.scheduled-task-history .scheduled-task-command { display: inline-flex; align-items: center; gap: 5px; min-width: 0; flex: 0 1 130px; }
-.scheduled-task-history .scheduled-task-command > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.scheduled-task-history .scheduled-task-command details { flex: 0 0 auto; }
-.scheduled-task-history .scheduled-task-command summary { white-space: nowrap; }
-.scheduled-task-history li p { flex: 1 1 auto; min-width: 0; margin: 0; color: var(--danger); font-size: .72rem; }
-.scheduled-task-history li p { grid-column: 1 / -1; margin: 0; color: var(--danger); font-size: .75rem; }
+.scheduled-task-history .scheduled-task-attempt-links .status-badge { padding: 1px 6px; font-size: .66rem; }
+.scheduled-task-run-reason { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 0; color: var(--ink-soft); overflow-wrap: anywhere; }
+.scheduled-task-run-reason.is-failed { color: var(--status-danger-ink); }
+.scheduled-task-run-technical { justify-self: end; color: var(--ink-soft); font-size: .7rem; }
+.scheduled-task-run-technical summary { cursor: pointer; white-space: nowrap; }
+.scheduled-task-run-technical[open] { grid-column: 1 / -1; justify-self: stretch; }
+.scheduled-task-run-technical dl { display: grid; gap: 3px; margin: 6px 0 0; padding: 8px 10px; border-radius: 7px; background: var(--surface-muted); }
+.scheduled-task-run-technical dl > div { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px; }
+.scheduled-task-run-technical dt { font-weight: 700; }
+.scheduled-task-run-technical dd { margin: 0; font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); overflow-wrap: anywhere; }
 .scheduled-task-empty { display: grid; justify-items: start; gap: 8px; padding: 24px 18px; color: var(--ink-soft); }
 .scheduled-task-empty p, .scheduled-task-empty-copy { margin: 0; color: var(--ink-soft); font-size: .8rem; line-height: 1.5; }
 
@@ -1771,7 +1783,8 @@ h1, h2, h3, p { margin-top: 0; }
   .scheduled-task-delete-confirm > div { width: 100%; flex-wrap: wrap; }
   .scheduled-task-skill-chips button { max-width: 100%; }
   .scheduled-task-readonly dl > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
-  .scheduled-task-history li { grid-template-columns: minmax(0, 1fr); }
+  .scheduled-task-run { grid-template-columns: minmax(0, 1fr); }
+  .scheduled-task-run-technical { justify-self: start; }
 }
 
 @media (max-width: 420px) {
@@ -1780,9 +1793,8 @@ h1, h2, h3, p { margin-top: 0; }
   .scheduled-task-suggestions { max-width: 100%; }
   .scheduled-task-suggestions button { min-width: 0; overflow-wrap: anywhere; }
   .scheduled-task-suggestions button strong, .scheduled-task-suggestions button small { min-width: 0; overflow-wrap: anywhere; }
-  .scheduled-task-history li { display: grid; grid-template-columns: minmax(0, 1fr); padding: 12px; }
-  .scheduled-task-history li div { min-width: 0; flex-wrap: wrap; }
-  .scheduled-task-history li > span, .scheduled-task-history li p { overflow-wrap: anywhere; }
+  .scheduled-task-run { display: grid; grid-template-columns: minmax(0, 1fr); padding: 10px 12px; }
+  .scheduled-task-run-head { flex-wrap: wrap; }
 }
 
 /* Turning the model on is the decision this page exists for. */
