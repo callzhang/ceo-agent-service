@@ -647,15 +647,15 @@ describe("SettingsPage", () => {
     await user.click(await screen.findByRole("button", { name: "添加邮箱" }));
     expect(screen.getByRole("slider", { name: "Agent 回溯天数" })).toHaveValue("30");
     expect(screen.getByRole("slider", { name: "模型回溯天数" })).toHaveValue("365");
-    expect(screen.getByRole("switch", { name: "同时处理已读邮件" })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: "等我标注" })).toBeChecked();
     await user.type(screen.getByRole("textbox", { name: "邮箱名称" }), "大邮箱");
     await user.type(screen.getByRole("textbox", { name: "邮箱地址" }), "big@example.test");
     await user.type(screen.getByRole("textbox", { name: "IMAP 服务器" }), "imap.example.test");
     await user.type(screen.getByLabelText("IMAP 密码"), "known-imap-secret");
     fireEvent.change(screen.getByRole("slider", { name: "Agent 回溯天数" }), { target: { value: "90" } });
     fireEvent.change(screen.getByRole("slider", { name: "模型回溯天数" }), { target: { value: "730" } });
-    await user.click(screen.getByRole("switch", { name: "同时处理已读邮件" }));
-    expect(screen.getByText(/Agent 也会处理已读邮件/)).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "先问 Agent" }));
+    expect(screen.getByText("Agent 也拿不准，才等你标注。")).toBeInTheDocument();
     expect(screen.getByText(/尚无上线模型时/)).toBeInTheDocument();
     expect(screen.getByText(/模型上线后优先处理/)).toBeInTheDocument();
     expect(screen.getByText(/不确定的结果进入“待确认”/)).toBeInTheDocument();
@@ -666,7 +666,8 @@ describe("SettingsPage", () => {
       model_lookback_days: 730,
       scan_read_state: "all",
     }));
-    expect(await screen.findByText("Agent 90 天 · 模型 730 天 · Agent 处理未读和已读")).toBeInTheDocument();
+    expect(await screen.findByText(/Agent 90 天 · 模型 730 天$/)).toBeInTheDocument();
+    expect(within(screen.getByRole("radiogroup", { name: "模型拿不准的已读邮件（大邮箱）" })).getByRole("radio", { name: "先问 Agent" })).toBeChecked();
   });
 
   it("adds and edits an IMAP account while leaving a saved secret undisclosed", async () => {
@@ -716,7 +717,7 @@ describe("SettingsPage", () => {
     expect(updateEmailAccount.mock.calls[0][1]).not.toHaveProperty("imap_secret");
   });
 
-  it("flips whether the Agent also takes read mail from the account card, without opening the form", async () => {
+  it("chooses who judges the read mail the model is unsure about, from the account card", async () => {
     const user = userEvent.setup();
     getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
     const account = { account_id: "work_mail", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], imap_secret_configured: true, agent_lookback_days: 30, model_lookback_days: 365, scan_read_state: "unread" as const, created_at: "", updated_at: "" };
@@ -724,15 +725,15 @@ describe("SettingsPage", () => {
     updateEmailAccount.mockResolvedValueOnce({ ok: true, item: { ...account, scan_read_state: "all" }, restart_required: false, message: "Email account configuration saved" });
 
     renderSettings("/settings?tab=connectors&connector=email");
-    const scope = await screen.findByRole("switch", { name: "Agent 也处理已读邮件（工作邮箱）" });
-    expect(scope).not.toBeChecked();
-    expect(screen.getByText(/模型拿不准的已读邮件不经 Agent，直接等你标注/)).toBeInTheDocument();
+    const group = await screen.findByRole("radiogroup", { name: "模型拿不准的已读邮件（工作邮箱）" });
+    expect(within(group).getByRole("radio", { name: "等我标注" })).toBeChecked();
+    expect(screen.getByText("不经过 Agent，直接等你标注。")).toBeInTheDocument();
 
-    await user.click(scope);
+    await user.click(within(group).getByRole("radio", { name: "先问 Agent" }));
 
     expect(updateEmailAccount).toHaveBeenCalledWith("work_mail", expect.objectContaining({ scan_read_state: "all", enabled: true }));
-    expect(await screen.findByRole("switch", { name: "Agent 也处理已读邮件（工作邮箱）" })).toBeChecked();
-    expect(screen.getByText(/未读和已读都先交给 Agent/)).toBeInTheDocument();
+    expect(await screen.findByText("Agent 也拿不准，才等你标注。")).toBeInTheDocument();
+    expect(within(screen.getByRole("radiogroup", { name: "模型拿不准的已读邮件（工作邮箱）" })).getByRole("radio", { name: "先问 Agent" })).toBeChecked();
   });
 
   it("toggles an account, tests IMAP only, and shows restart-required state", async () => {

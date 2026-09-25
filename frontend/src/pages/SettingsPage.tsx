@@ -420,6 +420,17 @@ function savedAccountPayload(account: EmailAccountItem): EmailAccountPayload {
   };
 }
 
+function ReadMailChoice({ value, onChange, disabled, subject }: { value: "unread" | "all"; onChange: (next: "unread" | "all") => void; disabled?: boolean; subject: string }) {
+  const options: ReadonlyArray<readonly ["unread" | "all", string]> = [["unread", "等我标注"], ["all", "先问 Agent"]];
+  return <div className="read-mail-choice">
+    <span className="read-mail-choice-label">模型拿不准的已读邮件</span>
+    <div className="settings-pill-row" role="radiogroup" aria-label={`模型拿不准的已读邮件（${subject}）`}>
+      {options.map(([next, label]) => <button type="button" role="radio" key={next} aria-checked={value === next} className={value === next ? "active" : ""} disabled={disabled} onClick={() => { if (value !== next) onChange(next); }}>{label}</button>)}
+    </div>
+    <small>{value === "all" ? "Agent 也拿不准，才等你标注。" : "不经过 Agent，直接等你标注。"}</small>
+  </div>;
+}
+
 function EmailAccountsPanel() {
   const [accounts, setAccounts] = useState<EmailAccountItem[]>([]);
   const [draft, setDraft] = useState<EmailAccountDraft | null>(null);
@@ -474,16 +485,16 @@ function EmailAccountsPanel() {
     }
   }
 
-  async function toggleReadScope(account: EmailAccountItem) {
+  async function setReadScope(account: EmailAccountItem, next: "unread" | "all") {
     if (busyAccountId) return;
     setBusyAccountId(account.account_id);
     setError("");
     try {
-      const response = await updateEmailAccount(account.account_id, { ...savedAccountPayload(account), scan_read_state: account.scan_read_state === "all" ? "unread" : "all" });
+      const response = await updateEmailAccount(account.account_id, { ...savedAccountPayload(account), scan_read_state: next });
       replaceAccount(response.item);
       setRestartRequired(response.restart_required);
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "Agent 处理范围保存失败");
+      setError(reason instanceof Error ? reason.message : "已读邮件的处理方式保存失败");
     } finally {
       setBusyAccountId("");
     }
@@ -529,8 +540,8 @@ function EmailAccountsPanel() {
     {state === "error" && <button type="button" className="secondary-button" onClick={() => window.location.reload()}>重新加载</button>}
     {state === "ready" && <div className="email-account-list">
       {accounts.length ? accounts.map((account) => <article className="email-account-card" key={account.account_id}>
-        <div className="email-account-summary"><div><h4>{account.display_name}</h4><p>{account.email_address}</p><p className="muted">{account.imap_host}:{account.imap_port} · {account.scan_folders.join("、")}</p><p className="muted">Agent {account.agent_lookback_days} 天 · 模型 {account.model_lookback_days} 天 · Agent 处理{account.scan_read_state === "all" ? "未读和已读" : "仅未读"}</p></div><label className="email-account-switch"><span>启用</span><input type="checkbox" role="switch" aria-label={`启用${account.display_name}`} checked={account.enabled} disabled={Boolean(busyAccountId)} onChange={() => void toggleAccount(account)} /></label></div>
-        <label className="email-scan-read-state email-account-read-scope"><span>Agent 也处理已读邮件</span><span className="email-account-switch"><span>{account.scan_read_state === "all" ? "开" : "关"}</span><input type="checkbox" role="switch" aria-label={`Agent 也处理已读邮件（${account.display_name}）`} checked={account.scan_read_state === "all"} disabled={Boolean(busyAccountId)} onChange={() => void toggleReadScope(account)} /></span><small>{account.scan_read_state === "all" ? "模型拿不准的邮件，未读和已读都先交给 Agent；Agent 也拿不准才等你标注。" : "关闭时 Agent 只处理未读邮件；模型拿不准的已读邮件不经 Agent，直接等你标注。"}</small></label>
+        <div className="email-account-summary"><div><h4>{account.display_name}</h4><p>{account.email_address}</p><p className="muted">{account.imap_host}:{account.imap_port} · {account.scan_folders.join("、")}</p><p className="muted">Agent {account.agent_lookback_days} 天 · 模型 {account.model_lookback_days} 天</p></div><label className="email-account-switch"><span>启用</span><input type="checkbox" role="switch" aria-label={`启用${account.display_name}`} checked={account.enabled} disabled={Boolean(busyAccountId)} onChange={() => void toggleAccount(account)} /></label></div>
+        <ReadMailChoice value={account.scan_read_state} subject={account.display_name} disabled={Boolean(busyAccountId)} onChange={(next) => void setReadScope(account, next)} />
         <div className="email-account-status-row"><span>{account.imap_secret_configured ? "已保存密码" : "尚未设置密码"}</span><span>{connectionStates[account.account_id] || "尚未测试连接"}</span></div>
         {account.unverified_categories?.length ? <p className="field-error" role="status">这些分类在本邮箱里没有验证到文件夹，已暂停：{account.unverified_categories.join("、")}。确认密码和文件夹权限后重新保存邮箱即可恢复。</p> : null}
         <div className="email-account-actions"><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`编辑${account.display_name}`} onClick={() => { setDraft(emailAccountDraft(account)); setError(""); }}>编辑</button><button type="button" className="secondary-button" disabled={Boolean(busyAccountId)} aria-label={`测试${account.display_name}连接`} onClick={() => void testConnection(account)}>测试连接</button></div>
@@ -548,7 +559,7 @@ function EmailAccountsPanel() {
         <label><span>扫描文件夹</span><input aria-label="扫描文件夹" value={draft.scan_folders} placeholder="INBOX, Receipts" onChange={(event) => setDraft({ ...draft, scan_folders: event.target.value })} /><small>多个文件夹用英文逗号分隔。</small></label>
         <label className="email-scan-window"><span>Agent 回溯：最近 {draft.agent_lookback_days} 天</span><input aria-label="Agent 回溯天数" type="range" min="1" max="365" step="1" value={draft.agent_lookback_days} onChange={(event) => setDraft({ ...draft, agent_lookback_days: Number(event.target.value) })} /><small>尚无上线模型时，这个窗口内符合读取范围的邮件会交给 Agent 分类。</small></label>
         <label className="email-scan-window"><span>模型回溯：最近 {draft.model_lookback_days} 天</span><input aria-label="模型回溯天数" type="range" min="1" max="3650" step="1" value={draft.model_lookback_days} onChange={(event) => setDraft({ ...draft, model_lookback_days: Number(event.target.value) })} /><small>模型上线后优先处理这个窗口内的全部未分类邮件；确定结果自动整理，不确定的结果进入“待确认”，不会交给 Agent。</small></label>
-        <label className="email-scan-read-state"><span>Agent 处理范围</span><span className="email-account-switch"><span>{draft.scan_read_state === "all" ? "未读和已读" : "仅未读"}</span><input type="checkbox" role="switch" aria-label="同时处理已读邮件" checked={draft.scan_read_state === "all"} onChange={(event) => setDraft({ ...draft, scan_read_state: event.target.checked ? "all" : "unread" })} /></span><small>{draft.scan_read_state === "all" ? "Agent 也会处理已读邮件，包括模型拿不准的已读邮件；已读状态保持不变。" : "Agent 只处理未读邮件。模型拿不准的已读邮件不交给 Agent，会直接等你标注。"}</small></label>
+        <ReadMailChoice value={draft.scan_read_state} subject={draft.display_name || "新邮箱"} onChange={(next) => setDraft({ ...draft, scan_read_state: next })} />
       </div>
       <div className="email-account-options"><label><input type="checkbox" checked={draft.imap_tls} onChange={(event) => setDraft({ ...draft, imap_tls: event.target.checked })} /> 使用 SSL/TLS</label><label><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /> 启用此邮箱</label></div>
       <button type="submit" className="primary-button" disabled={Boolean(busyAccountId)}>{busyAccountId ? "正在保存…" : "保存邮箱"}</button>
