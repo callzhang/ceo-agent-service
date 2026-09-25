@@ -804,11 +804,11 @@ function liveRateNote(
   if (!rate.evaluated) {
     // The model's speed is unchanged by a quiet spell, so the last batch's time
     // is shown, with when that was.
-    return `最近 ${minutes} 分钟没有邮件进来 · 上一批${rate.latest_at ? `（${localTime(rate.latest_at)}）` : ""}平均 ${rate.latency_ms.mean} ms · 只算模型耗时`;
+    return `最近 ${minutes} 分钟没有邮件进来 · 上一批${rate.latest_at ? `（${localTime(rate.latest_at)}）` : ""} · 中位数 ${rate.latency_ms.p50} ms · P95 ${rate.latency_ms.p95} ms`;
   }
   // Only what the model itself spends. Moving or deleting the mail afterwards
   // happens in the mailbox and is timed on the Email page.
-  return `最近 ${minutes} 分钟 ${rate.evaluated} 封 · 平均 ${rate.latency_ms.mean} ms · 只算模型耗时，不含邮箱动作`;
+  return `最近 ${minutes} 分钟 ${rate.evaluated} 封 · 中位数 ${rate.latency_ms.p50} ms · P95 ${rate.latency_ms.p95} ms`;
 }
 
 function waitLabel(minutes: number) {

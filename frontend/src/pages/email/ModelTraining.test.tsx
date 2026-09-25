@@ -212,7 +212,7 @@ it("shows the model's own time per message, not the mailbox action after it", ()
 
   const stat = screen.getByText("实时处理速度").parentElement;
   expect(stat).toHaveTextContent("190.2 ms/封");
-  expect(stat).toHaveTextContent("最近 10 分钟 240 封 · 平均 190.2 ms · 只算模型耗时，不含邮箱动作");
+  expect(stat).toHaveTextContent("最近 10 分钟 240 封 · 中位数 180.5 ms · P95 320 ms");
 });
 
 it("names what keeps the candidate from being promoted instead of saying pending", () => {
@@ -255,7 +255,7 @@ it("shows the last batch's model time, and when, when nothing came in lately", (
   const stat = screen.getByText("实时处理速度").parentElement;
   expect(stat).toHaveTextContent("225.5 ms/封");
   expect(stat).toHaveTextContent("最近 10 分钟没有邮件进来 · 上一批");
-  expect(stat).toHaveTextContent("平均 225.5 ms");
+  expect(stat).toHaveTextContent("中位数 210 ms · P95 340 ms");
 });
 
 it("says so when the model has never judged anything, and when no model is live", () => {
