@@ -70,11 +70,6 @@ export function EmailReadingPanel(props: Props) {
           </span>
         </div>
         {props.saveError && <p role="alert">{props.saveError}</p>}{props.saved && <p role="status" className="email-saved">分类已保存</p>}
-        <section className="email-classification-details" aria-label="分类依据"><h3>分类依据 · {sourceLabel(item.classification_source)} · {measured(item.confidence)}</h3>
-          <p>{item.status === "pending_feedback" ? "建议" : "当前分类"}：{label(item.category)}</p>
-          <section aria-label="候选分布" className="email-candidate-distribution"><h3>候选分布</h3>{Object.entries(item.probabilities || {}).sort(([,a],[,b]) => b-a).map(([key,value]) => <div className="email-candidate-row" key={key}><span>{label(key)}</span><div className="email-probability-bar"><span style={{width: `${Math.max(0,Math.min(1,value))*100}%`}}/></div><strong>{measured(value)}</strong></div>)}{!Object.keys(item.probabilities || {}).length && <p>未提供候选分布</p>}</section>
-          <p>模型：{item.model_version || "未提供"} · 描述版本：{item.description_version || "未提供"}</p>
-        </section>
       </header>
       <section aria-label="处理记录" className="email-reading-body email-reading-activity">
         <h3>处理记录 · {events.length}</h3>
@@ -87,6 +82,11 @@ export function EmailReadingPanel(props: Props) {
         {item.quoted_text && <section className="email-quoted" aria-label="引用邮件"><h3>引用邮件</h3><div className="email-body-text">{item.quoted_text}</div></section>}
         {!!item.attachment_metadata?.length && <section className="email-attachments" aria-label="附件元数据"><h3>附件</h3>{item.attachment_metadata.map((file,index) => <div key={index}>{file.filename}<small>{file.mime_type} · {file.size_bytes} bytes</small></div>)}</section>}
       </section>
+        <section className="email-classification-details" aria-label="分类依据"><h3>分类依据 · {sourceLabel(item.classification_source)} · {measured(item.confidence)}</h3>
+          <p>{item.status === "pending_feedback" ? "建议" : "当前分类"}：{label(item.category)}</p>
+          <section aria-label="候选分布" className="email-candidate-distribution"><h3>候选分布</h3>{Object.entries(item.probabilities || {}).sort(([,a],[,b]) => b-a).map(([key,value]) => <div className="email-candidate-row" key={key}><span>{label(key)}</span><div className="email-probability-bar"><span style={{width: `${Math.max(0,Math.min(1,value))*100}%`}}/></div><strong>{measured(value)}</strong></div>)}{!Object.keys(item.probabilities || {}).length && <p>未提供候选分布</p>}</section>
+          <p>模型：{item.model_version || "未提供"} · 描述版本：{item.description_version || "未提供"}</p>
+        </section>
       <section className="email-technical" aria-label="技术详情"><h3>技术详情</h3><ProcessedClassificationEvidence row={item}/>{provider && <pre>{JSON.stringify(provider,null,2)}</pre>}</section>
     </>}
   </section>;
