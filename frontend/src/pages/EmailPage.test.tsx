@@ -645,6 +645,9 @@ it("filters the all list by action status, category and judge, and shows a faile
   await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50,action_status:"failed"},expect.any(AbortSignal)));
   await user.selectOptions(screen.getByLabelText("按判定者筛选"),"model");
   await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50,action_status:"failed",source:"model"},expect.any(AbortSignal)));
+  await user.click(screen.getByLabelText("按分类筛选"));
+  await user.click(screen.getByRole("checkbox",{name:/工作/}));
+  await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50,category:"work",action_status:"failed",source:"model"},expect.any(AbortSignal)));
   await user.click(screen.getByRole("button",{name:"清除筛选"}));
   await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50},expect.any(AbortSignal)));
   expect(screen.getByLabelText("URL")).not.toHaveTextContent("action_status");

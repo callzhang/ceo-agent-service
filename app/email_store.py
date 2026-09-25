@@ -12759,13 +12759,16 @@ class EmailStore:
 
         clauses: list[str] = []
         params: list[str] = []
-        if category.strip():
+        wanted_categories = [item.strip() for item in category.split(",") if item.strip()]
+        if wanted_categories:
             # The category the owner sees: their own confirmation if any.
             clauses.append(
                 " and coalesce(nullif(classifications.confirmed_category, ''),"
-                " classifications.category) = ?"
+                " classifications.category) in ("
+                + ",".join("?" for _ in wanted_categories)
+                + ")"
             )
-            params.append(category.strip())
+            params.extend(wanted_categories)
         if source.strip():
             clauses.append(" and classifications.classification_source = ?")
             params.append(source.strip())

@@ -1309,7 +1309,7 @@ def register_email_routes(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),
         q: str = Query(default="", max_length=500),
-        category: str = Query(default="", max_length=64),
+        category: str = Query(default="", max_length=512),
         action_status: str = Query(default="", max_length=16),
         source: str = Query(default="", max_length=16),
     ):

@@ -4323,6 +4323,8 @@ def test_the_all_list_filters_by_category_decider_and_mailbox_action_state(tmp_p
 
     assert ids() == ["101", "102", "103"]
     assert ids(category="work") == ["101", "103"]
+    assert ids(category="work,legal") == ["101", "102", "103"]
+    assert ids(category="legal") == ["102"]
     assert ids(source="model") == ["101", "102", "103"]
     assert ids(source="agent") == []
     assert ids(category="work", source="model") == ["101", "103"]

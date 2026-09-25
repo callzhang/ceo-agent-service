@@ -30,6 +30,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
   const selected=params.get("selected") || "";
   const query=params.get("q") || "";
   const categoryFilter=params.get("category") || "";
+  const categoryChosen=categoryFilter?categoryFilter.split(",").filter(Boolean):[];
   const actionFilter=ACTION_FILTERS.some(item=>item.value===params.get("action_status"))?params.get("action_status") as string:"";
   const sourceFilter=SOURCE_FILTERS.some(item=>item.value===params.get("source"))?params.get("source") as string:"";
   const filtered=!!(categoryFilter||actionFilter||sourceFilter);
@@ -171,16 +172,19 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
       <button className="compact-button" disabled={saving||loading||page*pageSize>=total} onClick={()=>navigate(page+1)}>下一页</button>
       {loading&&<span role="status">正在加载邮件…</span>}
     </nav>
+    {status!=="unsubscribe"&&<div className="email-list-filters" role="group" aria-label="邮件筛选">
+      <details className="email-multi-filter">
+        <summary aria-label="按分类筛选" className={categoryChosen.length?"is-active":""}>{categoryChosen.length===0?"分类":categoryChosen.length===1?label(categoryChosen[0]):`分类 · ${categoryChosen.length}`}</summary>
+        <div className="email-multi-filter-menu">{options.map(option=><label key={option.category_key}><input type="checkbox" checked={categoryChosen.includes(option.category_key)} disabled={saving||loading} onChange={event=>applyFilter("category",(event.target.checked?[...categoryChosen,option.category_key]:categoryChosen.filter(key=>key!==option.category_key)).join(","))}/> {option.display_name}</label>)}</div>
+      </details>
+      <ShellSelect aria-label="按邮箱动作状态筛选" value={actionFilter} disabled={saving||loading} onChange={event=>applyFilter("action_status",event.target.value)}><option value="">状态</option>{ACTION_FILTERS.map(option=><option key={option.value} value={option.value}>{option.text}</option>)}</ShellSelect>
+      <ShellSelect aria-label="按判定者筛选" value={sourceFilter} disabled={saving||loading} onChange={event=>applyFilter("source",event.target.value)}><option value="">判定者</option>{SOURCE_FILTERS.map(option=><option key={option.value} value={option.value}>{option.text}</option>)}</ShellSelect>
+      {filtered&&<button type="button" className="compact-button" disabled={saving||loading} onClick={clearFilters}>清除筛选</button>}
+    </div>}
     <form className="email-search" role="search" onSubmit={event=>{event.preventDefault();if(!composing&&!saving)applySearch(searchText);}}>
       <input type="search" aria-label="搜索邮件" placeholder="搜索发件人、主题、正文…" maxLength={500} value={searchText} disabled={saving} onChange={event=>setSearchText(event.target.value)} onCompositionStart={()=>setComposing(true)} onCompositionEnd={()=>setComposing(false)}/>
       {searchText&&<button type="button" aria-label="清空搜索" disabled={saving} onClick={()=>{setSearchText("");applySearch("");}}>×</button>}
     </form></div>
-    {status!=="unsubscribe"&&<nav className="email-list-toolbar email-list-filters" aria-label="邮件筛选">
-      <label>分类 <ShellSelect aria-label="按分类筛选" value={categoryFilter} disabled={saving||loading} onChange={event=>applyFilter("category",event.target.value)}><option value="">全部分类</option>{options.map(option=><option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</ShellSelect></label>
-      <label>动作 <ShellSelect aria-label="按邮箱动作状态筛选" value={actionFilter} disabled={saving||loading} onChange={event=>applyFilter("action_status",event.target.value)}><option value="">全部动作状态</option>{ACTION_FILTERS.map(option=><option key={option.value} value={option.value}>{option.text}</option>)}</ShellSelect></label>
-      <label>判定者 <ShellSelect aria-label="按判定者筛选" value={sourceFilter} disabled={saving||loading} onChange={event=>applyFilter("source",event.target.value)}><option value="">全部判定者</option>{SOURCE_FILTERS.map(option=><option key={option.value} value={option.value}>{option.text}</option>)}</ShellSelect></label>
-      {filtered&&<button type="button" className="compact-button" disabled={saving||loading} onClick={clearFilters}>清除筛选</button>}
-    </nav>}
     {status==="unsubscribe"&&<p className="muted">显示已入队、处理中和已完成的退订任务；打开邮件可查看执行证据。</p>}
     {error&&<p role="alert">{error} <button onClick={()=>setRevision(value=>value+1)}>重试</button></p>}
     {!loading&&!error&&!rows.length&&<p className="page-state">{query.trim()||filtered?"未找到匹配邮件":status==="pending_feedback"?"当前没有待确认邮件":status==="unsubscribe"?"当前没有退订记录":"当前没有邮件"}</p>}
