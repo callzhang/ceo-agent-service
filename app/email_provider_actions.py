@@ -917,7 +917,12 @@ def _copyuid(response: object, *, source_uid: int) -> tuple[int, int] | None:
     raw = raw_values[0]
     if not isinstance(raw, bytes):
         raise ImapReadbackUnsupported("invalid IMAP COPYUID response")
-    match = _COPYUID_RESPONSE.fullmatch(raw.strip())
+    # imaplib matches a response code up to the LAST "]" of the line, so a
+    # server that appends its own text or code after it hands the parser
+    # "84 7 19] (Success) [THROTTLED". Gmail does exactly that once it starts
+    # throttling a mailbox, and every move it had already carried out was then
+    # recorded as failed. The code itself ends at the first "]".
+    match = _COPYUID_RESPONSE.fullmatch(raw.split(b"]", 1)[0].strip())
     if match is None:
         raise ImapReadbackUnsupported("invalid IMAP COPYUID response")
     parsed_source = _single_uid_set(match.group("source"))

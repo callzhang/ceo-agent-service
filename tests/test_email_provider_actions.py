@@ -1368,6 +1368,29 @@ def test_production_imap_move_rejects_invalid_copyuid_without_message_id_fallbac
     assert not any(call[:2] == ("uid", "SEARCH") for call in session.calls)
 
 
+def test_production_imap_move_accepts_copyuid_followed_by_the_servers_own_text() -> None:
+    """Gmail: ``OK [COPYUID 84 7 19] (Success) [THROTTLED]`` reaches the
+    parser as ``84 7 19] (Success) [THROTTLED`` (imaplib keeps everything up
+    to the last bracket). The move had already happened."""
+
+    module = import_module("app.email_provider_actions")
+
+    class ThrottledGmailSession(FakeWritableImapSession):
+        def response(self, code: str):
+            response = super().response(code)
+            if code == "COPYUID":
+                return "COPYUID", [b"84 7 19] (Success) [THROTTLED"]
+            return response
+
+    session = ThrottledGmailSession()
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.MOVE, {"target_folder": "Projects"}))
+
+    assert result.status == "done", result.error
+
+
 def test_production_imap_move_uses_message_id_readback_when_copyuid_is_absent() -> None:
     module = import_module("app.email_provider_actions")
     session = FakeWritableImapSession(
