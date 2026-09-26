@@ -8238,6 +8238,7 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
         "scan-oa-approvals",
         "scan-meeting-todos-once",
         "request-minutes-access",
+        "sync-chrome-cookies",
         "sync-minutes-once",
         "weekly-okr-report",
     }
