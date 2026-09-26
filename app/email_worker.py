@@ -1882,9 +1882,23 @@ def _finalize_direct_email_unsubscribe_task(
             task.id, expected_execution_generation=task.execution_generation
         )
     elif retryable:
-        # `task.error` can be the recovery reason that caused this direct
-        # task to reopen. It is stale state, not a veto against the fresh
-        # result's retryable classification.
+        # Direct tasks also return their attempt budget on deferral. Carry the
+        # bounded browser retry count in the task error or a transient browser
+        # failure can loop forever without incrementing `attempts`.
+        from app.email_unsubscribe import TRANSIENT_BROWSER_ERROR_CODES
+
+        if error_code in TRANSIENT_BROWSER_ERROR_CODES:
+            spent = _transient_browser_retry_count(
+                str(getattr(task, "error", "") or ""), error_code
+            ) + 1
+            if spent >= TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
+                store.fail_reply_task(
+                    task.id,
+                    error_code,
+                    expected_execution_generation=task.execution_generation,
+                )
+                return
+            task_error = f"{error_code}:{spent}"
         store.defer_reply_task(
             task.id,
             task_error,

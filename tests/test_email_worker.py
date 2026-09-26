@@ -6143,7 +6143,48 @@ def test_direct_unsubscribe_browser_timeout_retries_after_recovery_error():
 
     assert calls[0] == ("attempt", "failed")
     assert calls[1][0] == "defer"
-    assert calls[1][1][0:2] == (92, "email_unsubscribe_browser_timeout")
+    assert calls[1][1][0:2] == (92, "email_unsubscribe_browser_timeout:1")
+
+
+def test_direct_unsubscribe_browser_timeout_stops_after_retry_limit():
+    module = _module()
+    task = SimpleNamespace(
+        id=94,
+        execution_generation="generation-94",
+        attempts=1,
+        error=f"email_unsubscribe_browser_timeout:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES - 1}",
+        conversation_id="email-thread:94",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-action:timeout-94",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    calls = []
+
+    class Store:
+        def record_reply_attempt(self, **kwargs):
+            calls.append(("attempt", kwargs["send_status"]))
+
+        def fail_reply_task(self, task_id, error, **kwargs):
+            calls.append(("fail", task_id, error))
+
+        def defer_reply_task(self, *args, **kwargs):
+            calls.append(("defer", args, kwargs))
+
+    module._finalize_direct_email_unsubscribe_task(
+        Store(),
+        task,
+        {
+            "status": "failed",
+            "outcome": "failed_browser",
+            "error": {"code": "email_unsubscribe_browser_timeout", "retryable": True},
+        },
+    )
+
+    assert calls == [
+        ("attempt", "failed"),
+        ("fail", 94, "email_unsubscribe_browser_timeout"),
+    ]
 
 
 def test_direct_unsubscribe_failure_detail_reaches_the_attempt_and_task():
