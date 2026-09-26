@@ -449,6 +449,19 @@ def test_one_call_unsubscribes_and_persists_the_receipt(tmp_path: Path) -> None:
     assert len(browser.calls) == 1
 
 
+def test_source_message_unavailable_is_retryable(tmp_path: Path) -> None:
+    operation, task, _email_store, _browser = _operation(tmp_path, [])
+    operation.resolve_entries = lambda *_args, **_kwargs: (
+        (_ for _ in ()).throw(ValueError("email unsubscribe source message is unavailable"))
+    )
+
+    result = operation.execute(task.id)
+
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "unsubscribe_operation_rejected:ValueError"
+    assert result["error"]["retryable"] is True
+
+
 def test_the_receipt_records_the_entry_this_call_opened(tmp_path: Path) -> None:
     effect = _effect()
     operation, task, email_store, _browser = _operation(

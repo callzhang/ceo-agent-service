@@ -528,9 +528,11 @@ class DirectEmailUnsubscribeOperation:
                 )
             return _normalize_result(result).model_dump(mode="json")
         except Exception as exc:  # noqa: BLE001 - a public tool fails closed
+            detail = _rejection_detail(exc)
             return _failed_call(
                 f"unsubscribe_operation_rejected:{type(exc).__name__}",
-                detail=_rejection_detail(exc),
+                detail=detail,
+                retryable=detail == "email unsubscribe source message is unavailable",
             )
 
     def _performed_effect(
@@ -701,11 +703,13 @@ def _persisted_receipt_result(receipt: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _failed_call(code: str, *, detail: str = "") -> dict[str, object]:
+def _failed_call(
+    code: str, *, detail: str = "", retryable: bool = False
+) -> dict[str, object]:
     from app.agent_result import AgentError
 
     return {
         "status": "failed",
         "summary": f"{code}: {detail}" if detail else code,
-        "error": AgentError(code=code, retryable=False).model_dump(mode="json"),
+        "error": AgentError(code=code, retryable=retryable).model_dump(mode="json"),
     }
