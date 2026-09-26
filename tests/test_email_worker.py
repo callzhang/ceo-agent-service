@@ -6030,6 +6030,15 @@ def test_terminal_no_reliable_entry_after_retry_is_not_reopened_forever():
     assert reopened == []
 
 
+def test_terminal_direct_recovery_has_one_consumer_owner():
+    module = _module()
+    module._TERMINAL_DIRECT_RECOVERY_LOCK.acquire()
+    try:
+        assert module._recover_terminal_direct_unsubscribe_tasks(object(), object()) == 0
+    finally:
+        module._TERMINAL_DIRECT_RECOVERY_LOCK.release()
+
+
 def test_direct_unsubscribe_browser_timeout_does_not_loop_after_one_retry():
     module = _module()
     task = SimpleNamespace(

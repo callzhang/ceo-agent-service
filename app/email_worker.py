@@ -53,6 +53,11 @@ DIRECT_ACTION_DRAIN_MAX_ACTIONS = 25
 DIRECT_ACTION_DRAIN_MAX_SECONDS = 120.0
 CLASSIFICATION_DRAIN_MAX_ACTIONS = 25
 CLASSIFICATION_DRAIN_MAX_SECONDS = 120.0
+# Multiple Email consumers share one database, but startup reconciliation must
+# be single-owner: two passes can both requeue the same terminal task before
+# either consumer finishes it, rotating its execution generation underneath
+# the first consumer.
+_TERMINAL_DIRECT_RECOVERY_LOCK = Lock()
 
 
 def _agent_classification_action_plan(
@@ -1745,6 +1750,18 @@ def _recover_terminal_direct_unsubscribe_tasks(
     only effect-free task projection rows, then let the normal direct runner
     convert the persisted receipt into the current task terminal state.
     """
+    if not _TERMINAL_DIRECT_RECOVERY_LOCK.acquire(blocking=False):
+        return 0
+    try:
+        return _recover_terminal_direct_unsubscribe_tasks_locked(task_store, email_store)
+    finally:
+        _TERMINAL_DIRECT_RECOVERY_LOCK.release()
+
+
+def _recover_terminal_direct_unsubscribe_tasks_locked(
+    task_store: object,
+    email_store: object,
+) -> int:
     list_tasks = getattr(task_store, "list_reply_tasks", None)
     retry_failed = getattr(task_store, "retry_failed_pre_agent_reply_task", None)
     get_receipt = getattr(email_store, "get_email_unsubscribe_receipt", None)
