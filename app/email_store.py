@@ -14489,6 +14489,19 @@ class EmailStore:
                     (since,),
                 )
             }
+            # A failed action stays until someone deals with it, so it is
+            # counted the way the list's "邮箱动作失败" filter counts it (mail
+            # whose current plan has one), not only within the 24 hours.
+            actions["failed"] = int(
+                db.execute(
+                    "select count(*) from email_classifications as classifications "
+                    "where exists (select 1 from email_actions as failed_action "
+                    "where failed_action.classification_id=classifications.id "
+                    "and failed_action.action_plan_id="
+                    "classifications.current_action_plan_id "
+                    "and failed_action.status='failed')"
+                ).fetchone()[0]
+            )
             classification_queue = {
                 str(row["status"]): int(row["n"])
                 for row in db.execute(

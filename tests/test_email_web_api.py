@@ -213,6 +213,26 @@ def test_processing_progress_reports_exact_queue_counts_and_scan_cursors(tmp_pat
     assert payload["scans"][0]["last_success_at"]
 
 
+def test_processing_progress_counts_a_failed_action_the_way_the_list_filter_does(tmp_path: Path):
+    client, store, identity = _signal_client(tmp_path, _FakeSignalProvider(set()))
+    # A failure from three days ago: outside the 24-hour window, still failed.
+    with sqlite3.connect(store.path) as db:
+        db.execute("update email_classifications set current_action_plan_id='plan-1' where id=?", (identity,))
+        db.execute(
+            "insert into email_actions (action_id, action_plan_id, classification_id, account_id,"
+            " action_type, parameters_json, config_version, status, attempt_count, error,"
+            " created_at, updated_at) values ('a1','plan-1',?,'account-1','move','{}','v1',"
+            "'failed',3,'provider_read_failed:ImapMessageUnavailable',"
+            "'2020-01-01T00:00:00+00:00','2020-01-01T00:00:00+00:00')",
+            (identity,),
+        )
+
+    progress = client.get("/api/console/email/processing-progress").json()
+    listed = client.get("/api/console/email/classifications?status=pending_feedback&action_status=failed").json()
+
+    assert progress["provider_actions"]["failed"] == 1 == listed["meta"]["total"]
+
+
 def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path):
     store = EmailStore(tmp_path / "unsubscribe-filter.sqlite3")
     store.list_unsubscribe_classifications = lambda *, limit, offset: ([{
