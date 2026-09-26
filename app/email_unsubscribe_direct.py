@@ -532,7 +532,6 @@ class DirectEmailUnsubscribeOperation:
             return _failed_call(
                 f"unsubscribe_operation_rejected:{type(exc).__name__}",
                 detail=detail,
-                retryable=detail == "email unsubscribe source message is unavailable",
             )
 
     def _performed_effect(
