@@ -45,3 +45,14 @@ def test_parse_mentions_decompresses_zstd_source():
     compressed = out.raw[:n]
     assert compressed[:4] == schema.ZSTD_MAGIC
     assert schema.parse_mentions(compressed, 4) == ["wxid_aaa", "wxid_bbb", "derek840121"]
+
+
+def test_shared_article_is_text_eligible_after_decoding():
+    content = b"<appmsg><title><![CDATA[An article]]></title><url><![CDATA[https://example.com/a]]></url></appmsg>"
+    text = schema.decode_message(content, 0, 49)
+    assert text == "[链接]《An article》 https://example.com/a"
+    assert schema.kind_for(49, text) == "text"
+
+
+def test_image_remains_non_text_without_media_input():
+    assert schema.kind_for(3, "") == "unknown"

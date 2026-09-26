@@ -214,6 +214,7 @@ class WcdbReaderBackend:
                     )
             for local_id, server_id, ltype, sender, ctime, content, flag, source, source_flag in raw_rows:
                 sender_user = id2u.get(sender, str(sender))
+                decoded_text = schema.decode_message(content, flag, ltype)
                 rows.append({
                     "message_id": str(server_id) if server_id else f"{shard.name}:{local_id}",
                     "conversation_id": conversation_id,
@@ -222,8 +223,8 @@ class WcdbReaderBackend:
                     "conversation_type": conversation_type,
                     "direction": "outbound" if (self.self_username and sender_user == self.self_username) else "inbound",
                     "sent_at": self._iso(ctime),
-                    "kind": schema.kind_for(ltype),
-                    "text": schema.decode_message(content, flag, ltype),
+                    "kind": schema.kind_for(ltype, decoded_text),
+                    "text": decoded_text,
                     "mentioned_user_ids": schema.parse_mentions(source, source_flag),
                     "_overlap": bool(since) and ctime == since_ts,
                 })

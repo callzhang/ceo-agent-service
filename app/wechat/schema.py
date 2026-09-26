@@ -122,9 +122,18 @@ def table_for(conversation_username: str) -> str:
     return "Msg_" + hashlib.md5(conversation_username.encode()).hexdigest()
 
 
-def kind_for(local_type: int) -> str:
-    # 1 = text; images/voice/video/file map to non-text kinds; others -> unknown
-    return {1: "text"}.get(local_type, "unknown" if local_type != 10000 else "system")
+def kind_for(local_type: int, decoded_text: str = "") -> str:
+    """Map WeChat's local type to the normalized message kind.
+
+    Shared articles use appmsg type 49.  Their decoded title/URL is usable
+    text context, so keep them eligible for the normal text reply path.  Image
+    and other binary messages remain non-text until the reader supplies media
+    bytes or a vision input path.
+    """
+    base_type = local_type & 0xFFFFFFFF
+    if base_type == 1 or (base_type == 49 and decoded_text.startswith("[链接]")):
+        return "text"
+    return "unknown" if local_type != 10000 else "system"
 
 
 def name2id_map(conn) -> dict[int, str]:

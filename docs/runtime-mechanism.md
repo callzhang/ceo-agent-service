@@ -901,6 +901,7 @@ Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
 失败 3 次时请求一次 Reader 重启、把健康标为 degraded 并只记录一条
 `wechat_reader_unavailable`；App Data 权限缺失只记录一条 `wechat_data_permission_required`；
 下一次成功读取恢复 healthy 并清除上述报告。其他异常才是命令失败，trigger 记 `failed`。
+Reader 会把 WeChat 共享文章的标题、摘要和 URL 解码为文本，因此链接消息进入与普通文本相同的回复队列；图片目前只保留消息类型元数据，未提供媒体文件或视觉输入时不会被当作可读文本触发。
 
 同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review、
 DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、

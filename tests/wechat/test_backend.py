@@ -140,3 +140,24 @@ def test_since_timestamp_treats_naive_values_as_asia_shanghai():
     assert WcdbReaderBackend._since_ts("2026-07-17T10:00:00") == (
         WcdbReaderBackend._since_ts("2026-07-17T02:00:00Z")
     )
+
+
+def test_shared_article_is_returned_as_text(tmp_path):
+    conversation_id = "friend-1"
+    source = tmp_path / "db_storage/message/message_0.db"
+    source.parent.mkdir(parents=True)
+    table = schema.table_for(conversation_id)
+    with sqlite3.connect(source) as db:
+        db.execute("create table Name2Id (user_name text)")
+        db.execute("insert into Name2Id(rowid, user_name) values (1, 'friend-1')")
+        db.execute(f'''create table "{table}" (
+            local_id integer, server_id integer, local_type integer,
+            real_sender_id integer, create_time integer, message_content blob,
+            WCDB_CT_message_content integer, source blob, WCDB_CT_source integer)''')
+        db.execute(f'''insert into "{table}" values (1, 1, 49, 1, 1, ?, 0, ?, 0)''',
+                   (b"<appmsg><title>Article</title><url>https://example.com/a</url></appmsg>", b""))
+    backend = WcdbReaderBackend(tmp_path / "mirror", cipher=CopyCipher())
+    rows = backend.read_messages(tmp_path / "db_storage", b"key",
+        conversation_id=conversation_id, conversation_type="direct", since="", limit=1)
+    assert rows[0]["kind"] == "text"
+    assert "https://example.com/a" in rows[0]["text"]
