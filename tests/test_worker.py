@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.agent_context import AgentTaskContext
 from app.agent_cron.commands import (
+    SERVICE_COMMAND_OPTIONS,
     ServiceCommandConsumerContext,
     ServiceCommandRegistry,
 )
@@ -933,15 +934,13 @@ def script_calendar_result(
             summary=scenario,
             operation_id="calendar-action",
         )
+    # A needs_human result is a typed decision and must not carry an error
+    # code (only authorization_required may); an error code makes it invalid
+    # and the task ends failed. A technical calendar failure is scripted as
+    # ScriptOutcome.FAILED by the test itself.
     return script_agent_result(
         worker,
-        explicit_agent_result(
-            outcome,
-            scenario,
-            code=(
-                "calendar_needs_human" if outcome is ScriptOutcome.NEEDS_HUMAN else ""
-            ),
-        ),
+        explicit_agent_result(outcome, scenario),
     )
 
 
@@ -2014,22 +2013,15 @@ def test_scheduled_service_trigger_persists_consumer_context_on_new_reply_task(
             if worker._enqueue_reply_task(conversation(), message("请跟进"))
             else "queued=0"
         )
+    # The registry must bind exactly the catalogued commands, so take the
+    # names from the catalog instead of a hand-kept copy that drifts (it lost
+    # `sync-chrome-cookies`).
     registry = ServiceCommandRegistry(
         {
-            option: (produce if option == "produce-once" else lambda: "unused")
-                for option in (
-                    "email-message-check-once",
-                    "produce-once",
-                    "calendar-invites-once",
-                    "recover-recent-messages",
-                "wechat-produce-once",
-                "scan-meetings-once",
-                "scan-oa-approvals",
-                "scan-meeting-todos-once",
-                "request-minutes-access",
-                "sync-minutes-once",
-                "weekly-okr-report",
+            option.name: (
+                produce if option.name == "produce-once" else lambda: "unused"
             )
+            for option in SERVICE_COMMAND_OPTIONS
         }
     )
 
@@ -2242,8 +2234,11 @@ def test_consumer_codex_command_injects_work_profile_content(
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     runner = script_agent_result(
         worker,
+        # Missing material is an information gap, not a rule decision, so it
+        # cannot be a needs_human result carrying an error code; it ends
+        # failed (typed result contract, 2026-09-22).
         explicit_agent_result(
-            ScriptOutcome.NEEDS_HUMAN,
+            ScriptOutcome.FAILED,
             "缺少岗位要求和候选人简历，需补充材料。",
             code="candidate_material_missing",
         ),
@@ -2258,7 +2253,7 @@ def test_consumer_codex_command_injects_work_profile_content(
     assert profile_content not in context.render()
     assert final_sent(dws) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None and attempt.send_status == "needs_human"
+    assert attempt is not None and attempt.send_status == "failed"
 
 
 def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
@@ -2305,8 +2300,11 @@ def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     runner = script_agent_result(
         worker,
+        # Missing material is an information gap, not a rule decision, so it
+        # cannot be a needs_human result carrying an error code; it ends
+        # failed (typed result contract, 2026-09-22).
         explicit_agent_result(
-            ScriptOutcome.NEEDS_HUMAN,
+            ScriptOutcome.FAILED,
             "缺少岗位要求和候选人简历，需补充材料。",
             code="candidate_material_missing",
         ),
@@ -2323,7 +2321,7 @@ def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
     )
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
+    assert attempt.send_status == "failed"
     assert attempt.send_error == "candidate_material_missing"
 
 
@@ -4671,8 +4669,11 @@ def test_worker_falls_back_when_explicit_document_create_has_no_url(
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
     script_agent_result(
         worker,
+        # A document that came back without a URL is a technical failure. Only
+        # a typed rule decision may end needs_human (typed result contract,
+        # 2026-09-22), so this ends failed.
         explicit_agent_result(
-            ScriptOutcome.NEEDS_HUMAN,
+            ScriptOutcome.FAILED,
             "document creation returned no URL",
             code="document_creation_no_url",
         ),
@@ -4684,7 +4685,7 @@ def test_worker_falls_back_when_explicit_document_create_has_no_url(
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
+    assert attempt.send_status == "failed"
     assert attempt.send_error == "document_creation_no_url"
     assert dws.created_markdown_docs == []
 
@@ -4742,8 +4743,10 @@ def test_worker_keeps_explicit_document_reply_failed_when_permission_fails(
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
     script_agent_result(
         worker,
+        # A permission API error is a technical failure, not a rule decision:
+        # it ends failed (typed result contract, 2026-09-22).
         explicit_agent_result(
-            ScriptOutcome.NEEDS_HUMAN,
+            ScriptOutcome.FAILED,
             "doc permission add failed",
             code="doc_permission_failed",
         ),
@@ -4754,7 +4757,7 @@ def test_worker_keeps_explicit_document_reply_failed_when_permission_fails(
     assert final_sent(dws) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "needs_human"
+    assert attempt.send_status == "failed"
     assert attempt.send_error == "doc_permission_failed"
     assert dws.doc_editor_permissions == []
 
@@ -6152,11 +6155,18 @@ def test_consume_once_stops_retryable_orchestration_at_limit(
     assert retried.execution_generation == generation
     assert len(runner.calls) == 2
     assert runner.calls[1][3] == "retry-session"
-    assert notifications == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "failed"
     assert attempt.send_error == "temporary_agent_failure"
+    # A failed task now raises the same generic local notification as a
+    # needs_human one (8de3aa91, docs/runtime-mechanism.md 失败与人工决策通知);
+    # the macOS fallback is used because no browser bridge is reachable here.
+    assert len(notifications) == 1
+    assert notifications[0]["title"].startswith("CEO 待处理：")
+    assert notifications[0]["url"] == (
+        "http://127.0.0.1:8765/open-attempt?attempt_id=1"
+    )
 
 
 def test_orchestration_finalize_is_atomic_after_generation_switch(
@@ -7776,10 +7786,15 @@ def test_send_reply_calendar_response_failure_does_not_send_reply(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
-    _calendar_runner = script_calendar_result(
+    # The calendar accept call failed: a technical failure, not a rule
+    # decision, so it ends failed (typed result contract, 2026-09-22).
+    script_agent_result(
         worker,
-        ScriptOutcome.NEEDS_HUMAN,
-        "test_send_reply_calendar_response_failure_does_not_send_reply",
+        explicit_agent_result(
+            ScriptOutcome.FAILED,
+            "test_send_reply_calendar_response_failure_does_not_send_reply",
+            code="calendar_response_failed",
+        ),
     )
     worker.run_once()
 
@@ -7787,8 +7802,8 @@ def test_send_reply_calendar_response_failure_does_not_send_reply(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "calendar_needs_human"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "calendar_response_failed"
     runner = worker._test_agent_runner
     assert isinstance(runner, FakeAgentResultRunner)
     context = runner.calls[0][2]
@@ -8291,10 +8306,16 @@ def test_calendar_response_verifies_result_before_sending_reply(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
-    _calendar_runner = script_calendar_result(
+    # The response could not be verified on read-back: a technical failure,
+    # not a rule decision, so it ends failed (typed result contract,
+    # 2026-09-22).
+    script_agent_result(
         worker,
-        ScriptOutcome.NEEDS_HUMAN,
-        "test_calendar_response_verifies_result_before_sending_reply",
+        explicit_agent_result(
+            ScriptOutcome.FAILED,
+            "test_calendar_response_verifies_result_before_sending_reply",
+            code="calendar_response_unverified",
+        ),
     )
     worker.run_once()
 
@@ -8302,8 +8323,8 @@ def test_calendar_response_verifies_result_before_sending_reply(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "calendar_needs_human"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "calendar_response_unverified"
     assert worker.store.has_seen("msg-1") is False
 
 
@@ -9740,10 +9761,10 @@ def test_structured_approval_card_is_processed_by_audit_agent(
     )
     script_agent_result(
         worker,
+        # A genuine human decision is a typed needs_human without an error code.
         explicit_agent_result(
             ScriptOutcome.NEEDS_HUMAN,
             "审批需要本人处理",
-            code="oa_review_required",
         ),
     )
 
@@ -11681,8 +11702,10 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     script_agent_result(
         worker,
+        # The image could not be downloaded: a technical failure, not a rule
+        # decision, so it ends failed (typed result contract, 2026-09-22).
         explicit_agent_result(
-            ScriptOutcome.NEEDS_HUMAN,
+            ScriptOutcome.FAILED,
             "image must be read by the agent",
             code="image_read_required",
         ),
@@ -11704,7 +11727,7 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
     attempts = worker.store.list_reply_attempts()
     assert len(attempts) == 1
     assert attempts[0].action == "agent_run"
-    assert attempts[0].send_status == "needs_human"
+    assert attempts[0].send_status == "failed"
     errors = worker.store.list_errors()
     assert len(errors) == 1
     assert errors[0].kind == "image_download"
@@ -12581,7 +12604,14 @@ def test_critical_info_unavailable_stop_with_error_fails_queued_task(
     assert attempt.send_status == "failed"
     assert attempt.send_error == "critical_info_unavailable"
     assert final_sent(dws) == []
-    assert notifications == []
+    # A failed task now raises the same generic local notification as a
+    # needs_human one (8de3aa91, docs/runtime-mechanism.md 失败与人工决策通知);
+    # the macOS fallback is used because no browser bridge is reachable here.
+    assert len(notifications) == 1
+    assert notifications[0]["title"].startswith("CEO 待处理：")
+    assert notifications[0]["url"] == (
+        "http://127.0.0.1:8765/open-attempt?attempt_id=1"
+    )
 
 
 def test_xiaoqing_unavailable_without_mcp_call_forces_retry(
@@ -16555,7 +16585,14 @@ def test_untyped_handoff_ding_failure_does_not_create_a_human_ack(
     assert store.has_seen("msg-1") is False
     assert store.count_errors() == 0
     assert store.count_reply_tasks(status="failed") == 1
-    assert notifications == []
+    # A failed task now raises the same generic local notification as a
+    # needs_human one (8de3aa91, docs/runtime-mechanism.md 失败与人工决策通知);
+    # the macOS fallback is used because no browser bridge is reachable here.
+    assert len(notifications) == 1
+    assert notifications[0]["title"].startswith("CEO 待处理：")
+    assert notifications[0]["url"] == (
+        "http://127.0.0.1:8765/open-attempt?attempt_id=1"
+    )
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
@@ -16906,7 +16943,14 @@ def test_untyped_handoff_does_not_fall_back_to_local_human_delivery(
     assert store.list_errors() == []
     assert dws.dings == []
     assert dws.bot_direct_messages == []
-    assert notifications == []
+    # A failed task now raises the same generic local notification as a
+    # needs_human one (8de3aa91, docs/runtime-mechanism.md 失败与人工决策通知);
+    # the macOS fallback is used because no browser bridge is reachable here.
+    assert len(notifications) == 1
+    assert notifications[0]["title"].startswith("CEO 待处理：")
+    assert notifications[0]["url"] == (
+        "http://127.0.0.1:8765/open-attempt?attempt_id=1"
+    )
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
