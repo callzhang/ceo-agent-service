@@ -834,11 +834,27 @@ def run_email_classification_task_once(
         prompt_message = dict(payload.get("message") or {})
         prompt_message["text"] = body_text
         prompt_message["subject"] = str(current_message.get("subject") or "")
+        from app.email_similar_examples import similar_owner_examples
+
+        prompt_sender = prompt_message.get("sender") or {}
+        similar = similar_owner_examples(
+            email_store,
+            stable_message_identity=str(task.stable_message_identity),
+            sender=(
+                str(prompt_sender.get("email") or prompt_sender.get("name") or "")
+                if isinstance(prompt_sender, Mapping)
+                else str(prompt_sender)
+            ),
+            subject=prompt_message["subject"],
+            text=body_text,
+            allowed_category_keys=payload["allowed_category_keys"],
+        )
         result = agent.classify(
             task,
             current_message=prompt_message,
             unsubscribe_candidates=candidate_urls,
             unsubscribe_candidate_metadata=candidate_metadata,
+            **({"similar_examples": similar} if similar else {}),
         )
         durable_result = durable_agent_classification_result(result, entries)
         outcome = {

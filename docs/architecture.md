@@ -383,6 +383,13 @@ generation 或运行历史。新的计划版本获得新的动作身份，因此
 ActionPlan、分类、模型和配置版本，以及 opaque unsubscribe entry。
 它不复制邮箱凭证、附件字节、本地附件路径、邮件正文、完整私密 URL 或 query token。
 
+模型拒判后的分类 Agent 走系统统一的 runtime 线路与回退顺序，没有专用线路（Derek，2026-09-24）。
+它的提示词里带最多 8 封主人已确认标签、与当前邮件最相似的邮件（发件人、主题、正文前 250 字和主人给的类别），
+让它照主人的归类习惯判断（Derek，2026-09-26；`app/email_similar_examples.py`）。相似度用字符 n-gram 的 TF-IDF，
+只取主人确认过（`classification_source='user'`）、类别仍然存在、且不是当前邮件本身的行；主人有新确认时索引自动重建。
+示例只是证据，不是指令，不改变“只分类、不行动”的约束。离线评测（888 封主人标注）里这样做的准确率：
+零样本 65%，带示例 89%（已见过的发件人）、77%（新发件人）。示例里含其他邮件的片段，会随提示词发给所选 runtime 线路。
+
 运行时 `AgentTaskContext` 从 Email 数据源提供当前邮件和 thread 的纯文本正文。附件是
 metadata-only，没有 image/content material；只投影文件名、MIME、字节大小、数量和 inline
 标记，并固定 `image_paths=()`。任何组件都不得

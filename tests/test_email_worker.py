@@ -10362,3 +10362,59 @@ def test_the_unsubscribe_page_judge_runs_in_the_service_workspace_not_the_databa
 
     assert result == {"task": 7}
     assert seen["workspace"] == workspace
+
+
+def test_classification_worker_shows_the_agent_the_owners_similar_labels(tmp_path):
+    from app.email_classifier_agent import AgentClassificationResult
+    from app.email_classifier_contracts import (
+        EmailCategory,
+        EmailClassification,
+        EmailClassificationStatus,
+    )
+    from app.email_similar_examples import clear_cache
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    clear_cache()
+    email_store = EmailStore(tmp_path / "classification-examples.sqlite3")
+    email_store.persist_scan_result(
+        EmailClassification.model_validate({
+            "classification_id": 901,
+            "stable_message_identity": "account-1:message-id:<earlier@example.com>",
+            "provider_locator": {
+                "account_id": "account-1", "folder": "INBOX", "uidvalidity": 42, "uid": 5,
+                "rfc_message_id": "<earlier@example.com>", "thread_id": "earlier",
+            },
+            "category": EmailCategory.NOTIFICATION, "confidence": 0.5, "margin": 0.1,
+            "probabilities": {"notification": 0.5}, "model_id": "m", "config_version": "v1",
+            "status": EmailClassificationStatus.PENDING_FEEDBACK,
+            "classification_source": "model", "action_plan": None,
+        }),
+        sender="customer@example.com", subject="Launch decision earlier", preview="p",
+        model_text="Please confirm the customer launch decision.",
+    )
+    with email_store._connect() as db:
+        db.execute(
+            "update email_classifications set classification_source='user', "
+            "confirmed_category='work', status='processed' where id=901"
+        )
+    adapter = EmailClassificationTaskAdapter(email_store)
+    adapter.ensure_task(_classification_task_input())
+    seen = {}
+
+    def classify(_task, **kwargs):
+        seen.update(kwargs)
+        return AgentClassificationResult(
+            category="work", important=False, certainty="certain", confidence=0.9,
+            reason="Customer project decision.", unsubscribe_candidate_index=None,
+            unsubscribe_url=None,
+        )
+
+    _module().run_email_classification_task_once(
+        adapter, SimpleNamespace(classify=classify), email_store, owner="email-worker:test",
+        provider_readback=_classification_provider_readback,
+        action_task_producer=_forbid_action_task_production(),
+    )
+
+    assert [item["category"] for item in seen["similar_examples"]] == ["work"]
+    assert seen["similar_examples"][0]["subject"] == "Launch decision earlier"
+    clear_cache()
