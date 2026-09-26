@@ -6257,18 +6257,25 @@ def test_latest_scoped_authorization_run_restores_needs_human_projection(
         "confidence": 0.2,
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
+        # The OA workflow's own choices (dingtalk-oa-approval): Derek confirms
+        # and the Agent re-runs the current item under that choice (`one_time`),
+        # optionally also recording the rule so the class is handled from then
+        # on (`skill_update`). They are choices about how this class of task is
+        # handled, never a button that executes the instance itself.
         "decision_options": [
             {
-                "key": "authorize_this_action",
-                "label": "Authorize this action once",
-                "instruction": "Authorize only the displayed OA action.",
-                "consequence": "The current OA task will be returned to its supervisor.",
+                "key": "one_time",
+                "label": "Authorize this return once",
+                "instruction": "Authorize the Agent to return the current OA task to its supervisor as planned.",
+                "consequence": "The Agent returns this OA task; the rule for later ones is unchanged.",
+                "applies_to": "task_class",
             },
             {
-                "key": "leave_current_state",
-                "label": "Leave the OA unchanged",
-                "instruction": "Do not authorize the displayed action.",
-                "consequence": "No external OA action will be taken.",
+                "key": "skill_update",
+                "label": "Record the rule for this class",
+                "instruction": "Add the authorization boundary for this class of OA return to the OA Skill.",
+                "consequence": "Later OA returns of this class follow the recorded rule.",
+                "applies_to": "task_class",
             },
         ],
         "error": {
