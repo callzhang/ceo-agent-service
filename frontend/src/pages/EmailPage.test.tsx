@@ -653,6 +653,12 @@ it("filters the all list by action status, category and judge, and shows a faile
   await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50},expect.any(AbortSignal)));
   expect(screen.getByLabelText("URL")).not.toHaveTextContent("action_status");
 });
+it("shows the mailbox actions of a message in its detail, with whether a failed one will be retried",async()=>{
+  api.getEmailClassification.mockResolvedValue({item:{...row("1"),message_text:"正文",recipients:[],attachment_metadata:[],mailbox_actions:[{type:"move",status:"failed",error:"provider_read_failed:ImapMessageUnavailable",retriable:false,retry_note:"已试 3 次仍失败，不再自动重试"},{type:"mark_read",status:"pending",error:""}]},observability:[]});
+  show("/email?tab=all&selected=1");
+  const line=await screen.findByLabelText("邮箱动作");
+  expect(line).toHaveTextContent("移动 失败，不会重试：provider_read_failed:ImapMessageUnavailable（已试 3 次仍失败，不再自动重试）；标已读 待执行");
+});
 it("links the failed action count to the filtered list",async()=>{
   api.getEmailProcessingProgress.mockResolvedValue({window_hours:24,throughput:{window_minutes:30,finished:0,per_minute:0,median_seconds:null},provider_actions:{done:1,pending:0,processing:0,failed:32,skipped:0},classification_queue:{pending:0,processing:0},unsubscribe_queue:{pending:0,processing:0},waiting_for_owner:0,scans:[]});
   show("/email?tab=all");

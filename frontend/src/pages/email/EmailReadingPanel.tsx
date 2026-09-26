@@ -27,6 +27,9 @@ interface Props {
   onSignalChanged: () => void;
 }
 
+const ACTION_TYPE_LABELS: Record<string, string> = {label: "打标签", mark_read: "标已读", archive: "归档", move: "移动", trash: "移到垃圾箱", flag_important: "标重要", auto_reply: "自动回复", unsubscribe: "退订"};
+const ACTION_STATUS_LABELS: Record<string, string> = {pending: "待执行", processing: "执行中", done: "已完成", skipped: "已跳过", failed: "失败"};
+
 export function EmailReadingPanel(props: Props) {
   const {detail, saving, loading, configs} = props;
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -89,6 +92,7 @@ export function EmailReadingPanel(props: Props) {
           <span className={`email-chip ${item.status === "pending_feedback" ? "pending" : "quiet"}`}>{statusLabel(item.status)}</span>
           {unsubscribe && <span className={`email-chip ${unsubscribe.tone}`}>{unsubscribe.text}</span>}
         </div>
+        {!!item.mailbox_actions?.length && <p className="email-mailbox-actions" aria-label="邮箱动作">邮箱动作：{item.mailbox_actions.map((action, index) => <span key={index} className={`email-mailbox-action ${action.status}`}>{index > 0 && "；"}{ACTION_TYPE_LABELS[action.type] || action.type}{" "}{ACTION_STATUS_LABELS[action.status] || action.status}{action.status === "failed" && action.retriable !== undefined && (action.retriable ? "，会重试" : "，不会重试")}{action.error && `：${action.error}`}{action.retry_note && `（${action.retry_note}）`}</span>)}</p>}
         <div className="email-reading-actions">
           {editable && <form aria-label="分类确认" onSubmit={event => {event.preventDefault(); props.onSave();}}>
             <label className="filter-select email-select email-select-field"><span className="sr-only">选择分类</span><span className="filter-control-shell"><select aria-label="选择分类" value={props.category || ""} disabled={saving || loading} onChange={event => props.onCategory(event.target.value)}><option value="" disabled>选择类别</option>{props.options.map(option => <option key={option.category_key} value={option.category_key}>{option.display_name}</option>)}</select></span></label>

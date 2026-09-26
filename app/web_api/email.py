@@ -1427,7 +1427,17 @@ def register_email_routes(
         )
         return {
             "ok": True,
-            "item": {**item, "id": str(item["id"])},
+            "item": {
+                **item,
+                "id": str(item["id"]),
+                "mailbox_actions": (
+                    email_store.list_mailbox_action_states([classification_id]).get(
+                        classification_id, []
+                    )
+                    if hasattr(email_store, "list_mailbox_action_states")
+                    else []
+                ),
+            },
             "observability": email_store.list_email_classification_observability(
                 classification_id
             ),

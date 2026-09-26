@@ -1364,7 +1364,7 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["item"] == {**classification, "id": str(classification["id"])}
+    assert payload["item"] == {**classification, "id": str(classification["id"]), "mailbox_actions": []}
     assert payload["unsubscribe_entry"] == {
         "available": False,
         "reason": "entry_unavailable",
@@ -4370,6 +4370,16 @@ def test_the_all_list_filters_by_category_decider_and_mailbox_action_state(tmp_p
     assert ids(action_status="failed") == ["102"]
     assert ids(action_status="pending") == ["103"]
     assert ids(action_status="failed", category="work") == []
+
+
+def test_the_detail_carries_the_mailbox_actions_of_the_message(tmp_path: Path) -> None:
+    store = _store_with_three_classifications(tmp_path)
+    client = TestClient(FastAPI())
+    register_email_routes(client.app, lambda: store)
+
+    item = client.get("/api/console/email/classifications/103").json()["item"]
+
+    assert item["mailbox_actions"] == [{"type": "move", "status": "pending", "error": ""}]
 
 
 def test_a_failed_action_says_whether_it_will_be_retried() -> None:
