@@ -6,6 +6,9 @@ import sys
 import pytest
 
 
+os.environ["CEO_ENV_FILE"] = "/private/tmp/ceo-agent-service-test.env.missing"
+
+
 # Derek, 2026-09-25: tests never run in the production checkout. A session
 # ran them there, committed a test fix in place, and every deploy stopped.
 def _refuse_the_production_checkout() -> None:
@@ -24,7 +27,6 @@ _refuse_the_production_checkout()
 collect_ignore_glob = ["* 2.py"]
 
 
-os.environ["CEO_ENV_FILE"] = "/private/tmp/ceo-agent-service-test.env.missing"
 os.environ["CEO_PRINCIPAL_NAME"] = "Alex"
 os.environ["USER_ALIAS"] = "明哥"
 os.environ["CEO_MENTION_ALIASES"] = "@Alex Chen,@明哥"
