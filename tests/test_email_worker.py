@@ -9889,6 +9889,7 @@ def test_email_agent_consumer_leaves_superseded_task_to_its_new_generation():
         ),
     )
     calls = []
+    health = []
 
     class Store:
         def claim_reply_tasks(self, limit, *, channel):
@@ -9905,11 +9906,15 @@ def test_email_agent_consumer_leaves_superseded_task_to_its_new_generation():
         SimpleNamespace(process=lambda *_a, **_k: pytest.fail("no context")),
         load_task_context=lambda _task: (_ for _ in ()).throw(AgentRunLeaseLostError("reply task superseded: 53")),
         finalize_task=lambda *_a: pytest.fail("no result"),
+        record_health=lambda status, details: health.append((status, details)),
         sleep=lambda _seconds: None,
         max_cycles=1,
     )
 
     assert calls == []
+    assert health == [
+        ("component:email-agent-consumer", {"status": "ready", "failures": 0})
+    ]
 
 
 def test_recovery_releases_a_claim_whose_audit_run_died():

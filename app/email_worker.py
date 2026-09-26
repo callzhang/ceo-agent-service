@@ -1983,6 +1983,11 @@ def run_email_agent_task_loop(
                 )
                 continue
             except Exception as exc:  # noqa: BLE001 - isolate one Email task
+                if _is_superseded_task_error(exc):
+                    # A rerun or stale-claim recovery rotated the task while
+                    # this turn ran; the new generation owns it now. This is
+                    # expected coordination, not a consumer failure.
+                    continue
                 failures += 1
                 last_error_type = type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH]
                 # The task row keeps only the exception type; the message and
@@ -1994,10 +1999,6 @@ def run_email_agent_task_loop(
                     exc,
                     exc_info=True,
                 )
-                if _is_superseded_task_error(exc):
-                    # A rerun or stale-claim recovery rotated the task while
-                    # this turn ran; the new generation owns it now.
-                    continue
                 try:
                     if _is_transient_email_provider_error(exc) and (
                         task.attempts < EMAIL_TASK_TRANSIENT_RETRY_ATTEMPTS
