@@ -6030,6 +6030,41 @@ def test_terminal_no_reliable_entry_after_retry_is_not_reopened_forever():
     assert reopened == []
 
 
+def test_login_required_receipt_after_a_failed_rerun_is_not_reopened_on_every_restart():
+    module = _module()
+    task = SimpleNamespace(
+        id=95,
+        channel="email",
+        attempts=1,
+        trigger_message_id="email-action:login-required",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "lifecycle_version": "email_unsubscribe_audited_v2",
+                "action_type": "unsubscribe",
+            }
+        ),
+    )
+    reopened = []
+
+    class TaskStore:
+        def list_reply_tasks(self, statuses, *, channel):
+            assert statuses == ("failed",)
+            assert channel == "email"
+            return [task]
+
+        def retry_failed_pre_agent_reply_task(self, task_id, *, reason):
+            reopened.append((task_id, reason))
+
+    class EmailStore:
+        def get_email_unsubscribe_receipt(self, action_identity):
+            assert action_identity == task.trigger_message_id
+            return {"outcome": "skipped_login_required"}
+
+    assert module._recover_terminal_direct_unsubscribe_tasks(TaskStore(), EmailStore()) == 0
+    assert reopened == []
+
+
 def test_terminal_direct_recovery_has_one_consumer_owner():
     module = _module()
     module._TERMINAL_DIRECT_RECOVERY_LOCK.acquire()

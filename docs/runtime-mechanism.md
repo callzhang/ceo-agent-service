@@ -644,6 +644,8 @@ Consumer→Audit 往返——退订在真实世界本来就是幂等的。同理
 不得重新选择入口并改变已有授权。已有终态 receipt 的新 Consumer/Audit 执行只读取该 receipt，
 形成新的明确成功 run，不重新打开浏览器或发送新的外部请求。
 
+启动时的终态 receipt 投影恢复只重开“receipt 已落库、任务因旧生命周期超时而失败”的退订任务。`skipped_no_reliable_entry` 和 `skipped_login_required` 两种跳过 receipt 且任务已有执行次数的，不再重开：手动重跑因原邮件已不在邮箱而失败（`email unsubscribe source message is unavailable`）时，每次重启重开只会让同一批任务必然再失败一次。
+
 每个邮箱账户有两个独立回溯窗口：Agent 默认 30 天，模型默认 365 天。`email-message-check-once`
 按当前 runtime 模式只运行其中一条路径：无上线模型时运行 Agent 窗口并遵守账户的“仅未读/全部”
 设置；模型上线后只运行模型窗口，优先覆盖全部尚无稳定记录的已读和未读 Inbox/未绑定来源邮件，不

@@ -1787,7 +1787,8 @@ def _recover_terminal_direct_unsubscribe_tasks_locked(
             receipt = get_receipt(task.trigger_message_id)
             if receipt is None:
                 continue
-            # A no-reliable-entry receipt is deliberately terminal. Once the
+            # A skip receipt (no reliable entry, login required) is
+            # deliberately terminal. Once the
             # direct runner has already spent this task's generation on a
             # browser retry, reopening it from startup reconciliation would
             # send the same dead link back through the browser forever (and
@@ -1796,7 +1797,7 @@ def _recover_terminal_direct_unsubscribe_tasks_locked(
             # provider state has actually changed.
             if (
                 str(receipt.get("outcome") or "")
-                == "skipped_no_reliable_entry"
+                in {"skipped_no_reliable_entry", "skipped_login_required"}
                 and int(getattr(task, "attempts", 0) or 0) > 0
             ):
                 continue
