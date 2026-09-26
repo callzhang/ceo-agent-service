@@ -1873,7 +1873,10 @@ def _finalize_direct_email_unsubscribe_task(
         store.complete_reply_task(
             task.id, expected_execution_generation=task.execution_generation
         )
-    elif retryable and not str(getattr(task, "error", "") or "").strip():
+    elif retryable:
+        # `task.error` can be the recovery reason that caused this direct
+        # task to reopen. It is stale state, not a veto against the fresh
+        # result's retryable classification.
         store.defer_reply_task(
             task.id,
             task_error,

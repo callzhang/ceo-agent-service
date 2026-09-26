@@ -6039,11 +6039,12 @@ def test_terminal_direct_recovery_has_one_consumer_owner():
         module._TERMINAL_DIRECT_RECOVERY_LOCK.release()
 
 
-def test_direct_unsubscribe_browser_timeout_does_not_loop_after_one_retry():
+def test_direct_unsubscribe_browser_timeout_retries_after_recovery_error():
     module = _module()
     task = SimpleNamespace(
         id=92,
         execution_generation="generation-92",
+        attempts=1,
         channel="email",
         error="email_unsubscribe_browser_timeout",
         conversation_id="email-thread:92",
@@ -6074,10 +6075,9 @@ def test_direct_unsubscribe_browser_timeout_does_not_loop_after_one_retry():
         },
     )
 
-    assert calls == [
-        ("attempt", "failed"),
-        ("fail", 92, "email_unsubscribe_browser_timeout"),
-    ]
+    assert calls[0] == ("attempt", "failed")
+    assert calls[1][0] == "defer"
+    assert calls[1][1][0:2] == (92, "email_unsubscribe_browser_timeout")
 
 
 def test_direct_unsubscribe_failure_detail_reaches_the_attempt_and_task():
