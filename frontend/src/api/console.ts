@@ -329,6 +329,8 @@ export interface EmailMailboxActionState {
   type: string;
   status: string;
   error: string;
+  retriable?: boolean;
+  retry_note?: string;
 }
 export interface EmailClassificationDetailItem extends EmailClassificationItem {
   message_text: string;
@@ -648,7 +650,7 @@ function mapEmailClassification(value: unknown, includeBody = false): EmailClass
   const item: EmailClassificationItem = {
     id: typeof row.id === "string" ? row.id : String(row.id ?? ""),
     mailbox_actions: Array.isArray(row.mailbox_actions)
-      ? row.mailbox_actions.map(asRecord).map((action) => ({type: emailText(action.type), status: emailText(action.status), error: emailText(action.error)}))
+      ? row.mailbox_actions.map(asRecord).map((action) => ({type: emailText(action.type), status: emailText(action.status), error: emailText(action.error), ...(typeof action.retriable === "boolean" ? {retriable: action.retriable, retry_note: emailText(action.retry_note)} : {})}))
       : [],
     provider: emailText(row.provider),
     mailbox: emailText(row.mailbox || row.folder),

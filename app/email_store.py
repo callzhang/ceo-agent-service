@@ -1712,6 +1712,32 @@ def _direct_action_failed_retryable(row: sqlite3.Row, *, claimed_at: str) -> boo
     return retry_at.isoformat(timespec="seconds") <= claimed_at
 
 
+def _direct_action_retry_outlook(row: sqlite3.Row) -> dict[str, object]:
+    """Whether a failed direct action will be tried again, and why or why not.
+
+    The same rules `_direct_action_failed_retryable` applies when it claims the
+    action, minus the clock: a retry that is only not yet due is still coming.
+    """
+
+    attempts = int(row["attempt_count"])
+    if attempts < DIRECT_ACTION_MAX_ATTEMPTS:
+        if row["next_attempt_at"]:
+            return {
+                "retriable": True,
+                "retry_note": f"将自动重试（已试 {attempts}/{DIRECT_ACTION_MAX_ATTEMPTS} 次）",
+            }
+        return {"retriable": False, "retry_note": "这个错误不可重试"}
+    if _exhausted_direct_action_is_service_transient(row):
+        return {
+            "retriable": True,
+            "retry_note": f"已试 {attempts} 次，稍后仍会自动再试",
+        }
+    return {
+        "retriable": False,
+        "retry_note": f"已试 {attempts} 次仍失败，不再自动重试",
+    }
+
+
 def _exhausted_direct_action_is_service_transient(row: sqlite3.Row) -> bool:
     provider_operation = str(row["provider_operation"])
     error = str(row["error"])
@@ -12813,7 +12839,8 @@ class EmailStore:
             rows = db.execute(
                 """
                 select actions.classification_id, actions.action_type,
-                       actions.status, actions.error
+                       actions.status, actions.error, actions.attempt_count,
+                       actions.next_attempt_at, actions.provider_operation
                 from email_actions as actions
                 join email_classifications as classifications
                   on classifications.id=actions.classification_id
@@ -12826,13 +12853,14 @@ class EmailStore:
                 ids,
             ).fetchall()
         for row in rows:
-            states[int(row["classification_id"])].append(
-                {
-                    "type": str(row["action_type"]),
-                    "status": str(row["status"]),
-                    "error": str(row["error"] or ""),
-                }
-            )
+            state = {
+                "type": str(row["action_type"]),
+                "status": str(row["status"]),
+                "error": str(row["error"] or ""),
+            }
+            if state["status"] == "failed":
+                state.update(_direct_action_retry_outlook(row))
+            states[int(row["classification_id"])].append(state)
         return states
 
     @staticmethod

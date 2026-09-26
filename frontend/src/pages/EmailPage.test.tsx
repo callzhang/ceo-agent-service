@@ -640,9 +640,9 @@ it("drops a previous save error once a different category is chosen",async()=>{
 });
 it("filters the all list by action status, category and judge, and shows a failed action on its row",async()=>{
   const user=userEvent.setup();
-  api.listEmailClassifications.mockResolvedValue({items:[{...row("1"),mailbox_actions:[{type:"move_to_folder",status:"failed",error:"服务器拒绝移动"}]}],meta:{total:1,page:1,page_size:50,snapshot_at:""}});
+  api.listEmailClassifications.mockResolvedValue({items:[{...row("1"),mailbox_actions:[{type:"move_to_folder",status:"failed",error:"服务器拒绝移动",retriable:false,retry_note:"已试 3 次仍失败，不再自动重试"}]}],meta:{total:1,page:1,page_size:50,snapshot_at:""}});
   show("/email?tab=all&action_status=failed");
-  expect(await screen.findByText(/动作失败：服务器拒绝移动/)).toBeInTheDocument();
+  expect(await screen.findByText(/动作失败，不会重试：服务器拒绝移动（已试 3 次仍失败，不再自动重试）/)).toBeInTheDocument();
   await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50,action_status:"failed"},expect.any(AbortSignal)));
   await user.selectOptions(screen.getByLabelText("按判定者筛选"),"model");
   await waitFor(()=>expect(api.listEmailClassifications).toHaveBeenLastCalledWith("all",{page:1,page_size:50,action_status:"failed",source:"model"},expect.any(AbortSignal)));

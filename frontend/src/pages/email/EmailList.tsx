@@ -25,8 +25,12 @@ function pageWindow(current:number,last:number) {
 function actionBadge(item:EmailClassificationItem) {
   const actions=item.mailbox_actions||[];
   const failed=actions.filter(action=>action.status==="failed");
-  if(failed.length)return {tone:"failed",text:"动作失败",reason:failed[0].error};
-  if(actions.some(action=>action.status==="pending"||action.status==="processing"))return {tone:"pending",text:"动作待执行",reason:""};
+  if(failed.length){
+    const first=failed[0];
+    const retry=first.retriable===undefined?"":first.retriable?"，会重试":"，不会重试";
+    return {tone:"failed",text:`动作失败${retry}`,reason:first.error,note:first.retry_note||""};
+  }
+  if(actions.some(action=>action.status==="pending"||action.status==="processing"))return {tone:"pending",text:"动作待执行",reason:"",note:""};
   return null;
 }
 
@@ -227,7 +231,7 @@ export function EmailList({configs, status, onBusy}: {configs:EmailCategoryConfi
         {status==="unsubscribe"
           ? (() => {const state=unsubscribeStateLabel(item.unsubscribe_state);return <span className={`email-row-category email-unsubscribe-state ${state.tone}`} title={state.reason ? `${state.text}：${state.reason}` : state.text}>{state.text}{state.reason && <small>{state.reason.replace(/。$/,"")}</small>}</span>;})()
           : <span className="email-row-category" title={categoryLabel(item.category)}>{item.status==="pending_feedback"?"建议：":""}{categoryLabel(item.category)}{item.status==="pending_feedback"&&<small> · {measured(item.confidence)}</small>}</span>}
-        <span className="email-row-status">{sourceLabel(item.classification_source)}{status!=="unsubscribe"&&` · ${statusLabel(item.status)}`}{status!=="unsubscribe"&&(()=>{const badge=actionBadge(item);return badge?<small className={`email-action-badge ${badge.tone}`} title={badge.reason||badge.text}> · {badge.text}{badge.reason&&`：${badge.reason}`}</small>:null;})()}</span>
+        <span className="email-row-status">{sourceLabel(item.classification_source)}{status!=="unsubscribe"&&` · ${statusLabel(item.status)}`}{status!=="unsubscribe"&&(()=>{const badge=actionBadge(item);return badge?<small className={`email-action-badge ${badge.tone}`} title={[badge.reason,badge.note].filter(Boolean).join("；")||badge.text}> · {badge.text}{badge.reason&&`：${badge.reason}`}{badge.note&&`（${badge.note}）`}</small>:null;})()}</span>
         <time title={localTime(item.received_at || item.updated_at)}>{localTime(item.received_at || item.updated_at)}</time>
       </button></div>)}
     </div>

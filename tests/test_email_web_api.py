@@ -4372,6 +4372,22 @@ def test_the_all_list_filters_by_category_decider_and_mailbox_action_state(tmp_p
     assert ids(action_status="failed", category="work") == []
 
 
+def test_a_failed_action_says_whether_it_will_be_retried() -> None:
+    from app.email_store import _direct_action_retry_outlook as outlook
+
+    def failed(attempts, next_at, *, error="provider_read_failed:ImapConnectionError", operation="READ", action="move"):
+        return {"attempt_count": attempts, "next_attempt_at": next_at, "error": error,
+                "provider_operation": operation, "action_type": action}
+
+    assert outlook(failed(1, "2099-01-01T00:00:00+00:00")) == {
+        "retriable": True, "retry_note": "将自动重试（已试 1/3 次）"}
+    assert outlook(failed(1, "")) == {"retriable": False, "retry_note": "这个错误不可重试"}
+    assert outlook(failed(3, "", error="provider_read_failed:ImapMessageUnavailable")) == {
+        "retriable": False, "retry_note": "已试 3 次仍失败，不再自动重试"}
+    # A trash whose message is briefly unreadable keeps being tried after the budget.
+    assert outlook(failed(3, "", error="provider_read_failed:ImapMessageUnavailable", action="trash"))["retriable"] is True
+
+
 def test_a_listed_message_carries_its_mailbox_actions_and_why_one_failed(tmp_path: Path) -> None:
     store = _store_with_three_classifications(tmp_path)
     with store._connect() as db:
@@ -4388,7 +4404,11 @@ def test_a_listed_message_carries_its_mailbox_actions_and_why_one_failed(tmp_pat
     }
 
     assert items["102"]["mailbox_actions"] == [
-        {"type": "move", "status": "failed", "error": "provider_destination_failed:ImapMoveUnsupported"}
+        {
+            "type": "move", "status": "failed",
+            "error": "provider_destination_failed:ImapMoveUnsupported",
+            "retriable": False, "retry_note": "这个错误不可重试",
+        }
     ]
     assert items["103"]["mailbox_actions"] == [{"type": "move", "status": "pending", "error": ""}]
     assert items["101"]["mailbox_actions"] == []
