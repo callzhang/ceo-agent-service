@@ -6039,6 +6039,37 @@ def test_terminal_direct_recovery_has_one_consumer_owner():
         module._TERMINAL_DIRECT_RECOVERY_LOCK.release()
 
 
+def test_terminal_direct_recovery_is_one_shot_after_reopen():
+    module = _module()
+    task = SimpleNamespace(
+        id=96,
+        channel="email",
+        error="email_unsubscribe_terminal_receipt_projection",
+        attempts=1,
+        trigger_message_id="email-action:already-recovered",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "lifecycle_version": "email_unsubscribe_audited_v2",
+                "action_type": "unsubscribe",
+            }
+        ),
+    )
+
+    class TaskStore:
+        def list_reply_tasks(self, statuses, *, channel):
+            return [task]
+
+        def retry_failed_pre_agent_reply_task(self, task_id, *, reason):
+            raise AssertionError("recovery must be one-shot")
+
+    class EmailStore:
+        def get_email_unsubscribe_receipt(self, action_identity):
+            return {"outcome": "done"}
+
+    assert module._recover_terminal_direct_unsubscribe_tasks(TaskStore(), EmailStore()) == 0
+
+
 def test_direct_unsubscribe_browser_timeout_retries_after_recovery_error():
     module = _module()
     task = SimpleNamespace(

@@ -1776,6 +1776,13 @@ def _recover_terminal_direct_unsubscribe_tasks_locked(
     for task in failed_tasks:
         if not _is_direct_email_unsubscribe_task(task):
             continue
+        # The projection recovery is deliberately one-shot. If the reopened
+        # task fails again, automatically reopening it on every consumer pass
+        # creates a processing/failed loop and can supersede a live claim.
+        if str(getattr(task, "error", "") or "") == (
+            "email_unsubscribe_terminal_receipt_projection"
+        ):
+            continue
         try:
             receipt = get_receipt(task.trigger_message_id)
             if receipt is None:
