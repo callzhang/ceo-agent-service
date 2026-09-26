@@ -171,7 +171,8 @@ class DeterministicEmailActionExecutor:
                     )
                 if _message_is_gone(exc):
                     # The message left the account, so this action can never be
-                    # applied and no provider call was made. It is not a failure.
+                    # applied and the requested state cannot be reached. It is
+                    # not a failure after a complete missing-message readback.
                     return ProviderActionResult(
                         status="skipped",
                         provider_operation="readback_missing",
@@ -310,12 +311,15 @@ class DeterministicEmailActionExecutor:
         prefix: str,
         exc: Exception,
     ) -> ProviderActionResult:
+        error_type = type(exc).__name__
+        if isinstance(exc, ImapMessageUnavailable):
+            error_type = _message_unavailable_error(exc)
         return ProviderActionResult(
             status="failed",
             provider_operation=operation,
             provider_target=action.locator.stable_message_identity,
             provider_result_id="",
-            error=f"{prefix}:{type(exc).__name__}",
+            error=f"{prefix}:{error_type}",
             retryable=not isinstance(exc, ImapPermanentProviderError),
         )
 
@@ -349,6 +353,22 @@ def _message_is_gone(exc: ImapMessageUnavailable) -> bool:
     """A missing message is absent; an ambiguous one is a real anomaly."""
 
     return "missing" in str(exc).casefold()
+
+
+def _message_unavailable_error(exc: ImapMessageUnavailable) -> str:
+    """Preserve the provider distinction behind the local exception type."""
+
+    reason = str(exc).strip()
+    lowered = reason.casefold()
+    if "ambiguous" in lowered:
+        code = "imap.uid_lookup_ambiguous"
+    elif "missing" in lowered:
+        code = "imap.uid_lookup_missing"
+    elif "uidvalidity changed" in lowered:
+        code = "imap.uidvalidity_changed"
+    else:
+        code = "imap.message_unavailable"
+    return f"{code}:{reason}" if reason else code
 
 
 def _message_unavailable_satisfies_action(

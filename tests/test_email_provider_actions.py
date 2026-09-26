@@ -324,7 +324,43 @@ def test_ambiguous_message_does_not_satisfy_trash() -> None:
         provider_operation="READ",
         provider_target=action.locator.stable_message_identity,
         provider_result_id="",
-        error="provider_read_failed:ImapMessageUnavailable",
+        error=(
+            "provider_read_failed:imap.uid_lookup_ambiguous:"
+            "message lookup was ambiguous"
+        ),
+    )
+
+
+def test_uidvalidity_change_preserves_provider_code() -> None:
+    module = import_module("app.email_provider_actions")
+    action = _action(EmailAction.MOVE, {"target_folder": "Projects"})
+
+    class ChangedUidValidityProvider:
+        def read_state(self, locator, *, action_type):
+            return module.ProviderMessageState(
+                revision="revision-0",
+                labels=frozenset(),
+                is_read=False,
+                archived=False,
+                folder="INBOX",
+                trashed=False,
+            )
+
+        def resolve_destination(self, locator, action_type, parameters):
+            return "Projects"
+
+        def apply(self, locator, action_type, parameters, *, observed_state):
+            raise module.ImapMessageUnavailable(
+                "message UIDVALIDITY changed before move"
+            )
+
+    result = module.DeterministicEmailActionExecutor(
+        ChangedUidValidityProvider()
+    ).execute(action)
+
+    assert result.error == (
+        "provider_apply_failed:imap.uidvalidity_changed:"
+        "message UIDVALIDITY changed before move"
     )
 
 

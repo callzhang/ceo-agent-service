@@ -93,7 +93,7 @@ projection。对具有 `business_object_key` 的任务，当前状态由 `busine
 
 | 错误码 | 解释 | 默认处理 |
 | --- | --- | --- |
-| `provider_read_failed` | 业务 provider 读取失败；具体原因保存在 `source_code` | 按 provider retryable 重试 |
+| `provider_read_failed` | 业务 provider 读取失败；保留 provider 原始 code 和 reason，例如 `imap.uid_lookup_missing`、`imap.uid_lookup_ambiguous`、`imap.uidvalidity_changed` | 按 provider retryable 重试；不得把不同 provider 原因压成单一服务错误码 |
 | `provider_target_failed` | provider 或 Skill 无法完成目标选择；具体原因保存在 `source_code` | 按 provider 的 retryable 处理 |
 | `delivery_failed` | 外部发送请求或 provider 结果失败；具体原因保存在 `source_code` | 按 provider retryable 重试 |
 | `oa_skill_workflow_incomplete` | OA Skill 流程未完成 | 按当前业务能力重试或失败 |
