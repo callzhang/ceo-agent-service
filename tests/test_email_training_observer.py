@@ -1177,6 +1177,37 @@ def test_change_detector_persists_folder_fingerprint_and_only_requests_on_change
     assert requests == ["requested"]
 
 
+def test_change_detector_preserves_provider_error_with_connection_stage(tmp_path):
+    from app.email_training_observer import (
+        ProviderTrainingChangeDetector,
+        ProviderTrainingObservationJob,
+    )
+
+    original = LookupError("provider unavailable")
+
+    def source_factory(_account):
+        raise original
+
+    job = ProviderTrainingObservationJob(
+        state_path=tmp_path / "observer.json",
+        source_factory=source_factory,
+        email_store=_Store(),
+        batch_size=10,
+    )
+    detector = ProviderTrainingChangeDetector(
+        job=job,
+        accounts_loader=lambda: ({"account_id": "account-1"},),
+        request=lambda _key=None: None,
+    )
+
+    with pytest.raises(LookupError, match="provider unavailable") as caught:
+        detector.tick()
+
+    assert caught.value is original
+    assert getattr(caught.value, "ceo_training_stage") == "provider_connect"
+    assert getattr(caught.value, "ceo_training_account_id") == "account-1"
+
+
 def test_legacy_cache_without_fingerprint_requests_reconciliation_before_baseline(
     tmp_path,
 ):

@@ -403,7 +403,10 @@ class ProviderTrainingObservationJob:
             for account in accounts:
                 account_id = _required_text(account.get("account_id"), "account_id")
                 active_account_ids.add(account_id)
-                source = self.source_factory(account)
+                try:
+                    source = self.source_factory(account)
+                except Exception as exc:  # noqa: BLE001 - preserve provider failure
+                    _raise_with_stage(exc, "provider_connect", account_id)
                 try:
                     inventory = tuple(
                         folder
