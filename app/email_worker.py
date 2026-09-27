@@ -1202,11 +1202,18 @@ def _account_id(account: Mapping[str, object]) -> str:
 
 
 def _safe_health_error(exc: Exception) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "status": "failed",
         "error_code": "provider_runtime_error",
         "error_type": type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH],
     }
+    stage = getattr(exc, "ceo_training_stage", "")
+    if stage:
+        payload["error_stage"] = str(stage)[:MAX_HEALTH_TEXT_LENGTH]
+    account_id = getattr(exc, "ceo_training_account_id", "")
+    if account_id:
+        payload["account_id"] = str(account_id)[:MAX_HEALTH_TEXT_LENGTH]
+    return payload
 
 
 def _training_health_error(exc: Exception) -> dict[str, object]:

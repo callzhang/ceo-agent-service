@@ -27,6 +27,17 @@ _PROCESS_LOCKS_GUARD = threading.Lock()
 _PROCESS_LOCKS: dict[str, threading.RLock] = {}
 
 
+def _raise_with_stage(exc: Exception, stage: str, account_id: str) -> None:
+    """Preserve the provider exception while adding bounded diagnostic context."""
+
+    try:
+        setattr(exc, "ceo_training_stage", stage)
+        setattr(exc, "ceo_training_account_id", account_id[:128])
+    except Exception:
+        pass
+    raise exc
+
+
 def provider_training_folder_is_relevant(
     folder: object, binding: Mapping[str, object] | None
 ) -> bool:
@@ -108,7 +119,10 @@ class ProviderTrainingObservationJob:
             for account in accounts:
                 account_id = _required_text(account.get("account_id"), "account_id")
                 active_account_ids.add(account_id)
-                source = self.source_factory(account)
+                try:
+                    source = self.source_factory(account)
+                except Exception as exc:  # noqa: BLE001 - preserve provider failure
+                    _raise_with_stage(exc, "provider_connect", account_id)
                 try:
                     inventory = tuple(source.list_folders())
                     inventory = tuple(

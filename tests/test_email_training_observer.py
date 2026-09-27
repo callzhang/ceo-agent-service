@@ -1533,3 +1533,23 @@ def test_coordinator_publishes_only_after_all_observation_pages_complete(tmp_pat
     assert (
         json.loads((tmp_path / "requests.json").read_text())["handled_generation"] == 1
     )
+
+
+def test_provider_connect_failure_keeps_original_error_and_adds_diagnostic_stage(tmp_path):
+    from app.email_training_observer import ProviderTrainingObservationJob
+
+    def source_factory(_account):
+        raise LookupError("email IMAP account is unavailable")
+
+    job = ProviderTrainingObservationJob(
+        state_path=tmp_path / "observer.json",
+        source_factory=source_factory,
+        email_store=_Store(),
+        batch_size=10,
+    )
+
+    with pytest.raises(LookupError, match="email IMAP account is unavailable") as caught:
+        job.run_once(({"account_id": "missing-account"},))
+
+    assert caught.value.ceo_training_stage == "provider_connect"
+    assert caught.value.ceo_training_account_id == "missing-account"
