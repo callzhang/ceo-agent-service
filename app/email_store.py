@@ -13150,26 +13150,39 @@ class EmailStore:
             ),
         }
 
+    def owner_labelled_stamp(self) -> str:
+        """Changes whenever the owner labels or relabels a message; cheap to read."""
+
+        with self._connect() as db:
+            count, latest = db.execute(
+                """
+                select count(*), coalesce(max(updated_at), '')
+                from email_classifications
+                where classification_source='user'
+                  and coalesce(confirmed_category, '') != ''
+                """
+            ).fetchone()
+        return f"{count}:{latest}"
+
     def owner_labelled_examples(self) -> tuple[list[dict[str, str]], str]:
-        """Messages the owner has labelled, and a stamp that changes when they do.
+        """Messages the owner has labelled, and the stamp they were read at.
 
         The Agent is shown the ones most like the message it is classifying, so
-        it files mail the way the owner does. The stamp lets a caller keep an
-        index of them until the owner labels something new.
+        it files mail the way the owner does.
         """
 
+        stamp = self.owner_labelled_stamp()
         with self._connect() as db:
             rows = db.execute(
                 """
                 select stable_message_identity, sender, subject, model_text,
-                       confirmed_category, updated_at
+                       confirmed_category
                 from email_classifications
                 where classification_source='user'
                   and coalesce(confirmed_category, '') != ''
                 order by id
                 """
             ).fetchall()
-        stamp = f"{len(rows)}:{max((str(row['updated_at']) for row in rows), default='')}"
         return (
             [
                 {

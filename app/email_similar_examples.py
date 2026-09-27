@@ -35,12 +35,14 @@ def _document(sender: str, subject: str, text: str) -> str:
 
 
 def _index(store: object) -> _Index | None:
-    examples, stamp = store.owner_labelled_examples()  # type: ignore[attr-defined]
     key = Path(getattr(store, "path"))
     with _LOCK:
         cached = _INDEXES.get(key)
-        if cached is not None and cached.stamp == stamp:
-            return cached
+    # Reading one count and one timestamp is cheap; the rows and the index are
+    # only rebuilt when the owner has labelled something new.
+    if cached is not None and cached.stamp == store.owner_labelled_stamp():  # type: ignore[attr-defined]
+        return cached
+    examples, stamp = store.owner_labelled_examples()  # type: ignore[attr-defined]
     if not examples:
         return None
     from sklearn.feature_extraction.text import TfidfVectorizer
