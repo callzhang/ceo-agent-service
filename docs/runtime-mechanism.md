@@ -1070,3 +1070,12 @@ Derek 2026-09-25。候选只是没确认的猜测，所以可以在控制台“�
 - OKR 领域输入和输出：`docs/superpowers/specs/2026-06-08-okr-review-runner-design.md`
 - 当前实现：`app/agent_orchestrator.py`、`app/consumer_agent.py`、`app/audit_agent.py`、`app/okr_review.py`、`app/weekly_okr_report.py`、`app/store.py`
 - 系统错误码目录：[`docs/error-catalog.md`](error-catalog.md)
+### Production deployment lifecycle
+
+Production deployment is serialized at both the repository and service
+boundaries. The deployer first waits for the persisted work leases to drain,
+then bootstraps no new claims by stopping the launchd service before taking a
+database backup or changing the production checkout. It starts the service
+again with launchd `bootstrap` after verification, then performs the normal
+health and queue readback. This prevents the deployment process and worker
+process from writing the same SQLite database concurrently.

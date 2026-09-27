@@ -89,6 +89,27 @@ def test_clean_upgrade_fast_forwards_and_verifies(tmp_path: Path):
     assert calls == ["restart", "health"]
 
 
+def test_upgrade_stops_service_after_quiet_before_backup_and_restart(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    calls: list[str] = []
+
+    updater = RepositoryUpdater(
+        local,
+        StateStore(),
+        database_path=tmp_path / "missing.sqlite3",
+        wait_for_quiet=lambda: calls.append("quiet"),
+        stop=lambda: calls.append("stop"),
+        restart=lambda: calls.append("restart"),
+        health=lambda: calls.append("health") or True,
+    )
+
+    result = updater.execute(op)
+
+    assert result.status == "succeeded"
+    assert calls == ["quiet", "stop", "restart", "health"]
+
+
 def test_diverged_target_is_rejected_without_merge(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     git(local, "config", "user.name", "Local")

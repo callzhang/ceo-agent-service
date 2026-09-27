@@ -107,6 +107,31 @@ def _default_restart() -> None:
         raise UpgradeFailed("launchd restart failed")
 
 
+def _default_stop() -> None:
+    result = subprocess.run(
+        ["launchctl", "bootout", f"gui/{_uid()}/com.ceo-agent-service.main"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise UpgradeFailed("launchd stop failed")
+
+
+def _default_start() -> None:
+    plist = Path.home() / "Library" / "LaunchAgents" / "com.ceo-agent-service.main.plist"
+    result = subprocess.run(
+        ["launchctl", "bootstrap", f"gui/{_uid()}", str(plist)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise UpgradeFailed("launchd bootstrap failed")
+
+
 def _uid() -> int:
     import os
 
@@ -243,6 +268,7 @@ class RepositoryUpdater:
         dependency_sync: Callable[[], None] | None = None,
         verification: Callable[[], None] | None = None,
         restart: Callable[[], None] = _default_restart,
+        stop: Callable[[], None] = lambda: None,
         health: Callable[[], bool] = _default_health,
         wait_for_quiet: Callable[[], None] = lambda: None,
     ) -> None:
@@ -254,6 +280,7 @@ class RepositoryUpdater:
         self.dependency_sync = dependency_sync or (lambda: None)
         self.verification = verification or (lambda: None)
         self.restart = restart
+        self.stop = stop
         self.health = health
         self.wait_for_quiet = wait_for_quiet
 
@@ -270,11 +297,12 @@ class RepositoryUpdater:
             self._persist(operation, "preparing")
             self.repository.fetch(self.remote)
             records = self._recheck(operation)
+            self._persist(operation, "waiting_for_idle")
+            self.wait_for_quiet()
+            self.stop()
             backup_path = self._backup(operation)
             if records:
                 self._preserve_local_changes(operation)
-            self._persist(operation, "waiting_for_idle", backup_path=backup_path)
-            self.wait_for_quiet()
             self._persist(operation, "updating", backup_path=backup_path)
             try:
                 self.repository._run(
