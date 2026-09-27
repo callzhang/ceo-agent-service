@@ -21,11 +21,13 @@ from app.agent_contracts import (
     ConsumerOutcome,
 )
 from app.agent_orchestrator import (
+    MAX_CONSECUTIVE_FAILED_TURNS,
     MAX_TURNS_PER_PROCESS,
     AgentOrchestrator,
     OrchestrationResult,
     _NextAudit,
     _NextConsumer,
+    _consecutive_failed_turns,
 )
 from app.agent_result import AgentError
 from app.agent_turn_runner import AgentTurnRunResult
@@ -3444,4 +3446,138 @@ def test_provider_outage_poll_leaves_no_run_behind(store):
             proposal_revision=0,
         )
         == 0
+    )
+
+
+def _passes_until_stopped(orchestrator, store, task, *, limit=10):
+    """Run passes the way a caller that defers without spending an attempt does."""
+    results = []
+    for _ in range(limit):
+        claimed = store.claim_reply_task(task.id)
+        assert claimed is not None
+        result = _process(orchestrator, claimed)
+        results.append(result)
+        if result.status != "failed_retryable":
+            break
+        store.defer_reply_task(
+            task.id,
+            result.error.code,
+            expected_execution_generation=claimed.execution_generation,
+        )
+    return results
+
+
+def _agent_reported_failure(source_code: str) -> AgentError:
+    return AgentError(
+        code="agent_reported_failure",
+        retryable=True,
+        source="agent",
+        source_code=source_code,
+    )
+
+
+def test_an_audit_that_keeps_reporting_one_failure_stops_after_the_bound(store):
+    """Reply task 385880 ran 310 Audit turns in a single generation."""
+    task = _task(store)
+    failure = _audit_result("failed", 0).model_copy(
+        update={"error": _agent_reported_failure("proposal_already_executed")}
+    )
+    audit = ScriptedAudit(store, *[failure] * 40)
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=ScriptedConsumer(store, _consumer_result("proposal", "R0")),
+        audit=audit,
+    )
+
+    results = _passes_until_stopped(orchestrator, store, task)
+
+    assert [r.status for r in results] == [
+        "failed_retryable",
+        "failed_retryable",
+        "failed_terminal",
+    ]
+    assert len(audit.calls) == MAX_CONSECUTIVE_FAILED_TURNS
+    # Passes are spaced by the shared exponential schedule (60s, 120s, ...).
+    assert [r.retry_after_seconds for r in results] == [60.0, 120.0, 0.0]
+    stopped = results[-1]
+    assert stopped.final_role is AgentRole.AUDIT
+    assert stopped.error.code == "agent_reported_failure"
+    assert stopped.error.source_code == "proposal_already_executed"
+    assert stopped.error.retryable is False
+    assert "proposal_already_executed" in stopped.summary
+    assert "retries stopped" in stopped.summary
+    assert stopped.final_run_id == audit.calls[-1]["run_id"]
+
+
+def test_a_consumer_that_keeps_failing_the_same_way_stops_after_the_bound(store):
+    task = _task(store)
+    failure = _consumer_result("failed", "cannot draft").model_copy(
+        update={"error": _agent_reported_failure("source_unreadable")}
+    )
+    consumer = ScriptedConsumer(store, *[failure] * 40)
+    orchestrator = AgentOrchestrator(
+        store=store, consumer=consumer, audit=ScriptedAudit(store)
+    )
+
+    results = _passes_until_stopped(orchestrator, store, task)
+
+    assert [r.status for r in results] == [
+        "failed_retryable",
+        "failed_retryable",
+        "failed_terminal",
+    ]
+    assert len(consumer.calls) == MAX_CONSECUTIVE_FAILED_TURNS
+    assert [r.retry_after_seconds for r in results] == [60.0, 120.0, 0.0]
+    assert results[-1].final_role is AgentRole.CONSUMER
+    assert results[-1].error.source_code == "source_unreadable"
+    assert "source_unreadable" in results[-1].summary
+
+
+def test_an_audit_that_recovers_before_the_bound_still_executes(store):
+    task = _task(store)
+    failure = _audit_result("failed", 0).model_copy(
+        update={"error": _agent_reported_failure("doc_write_commit_unknown")}
+    )
+    audit = ScriptedAudit(store, failure, failure, failure, _audit_result("executed", 0))
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=ScriptedConsumer(store, _consumer_result("proposal", "R0")),
+        audit=audit,
+    )
+
+    results = _passes_until_stopped(orchestrator, store, task)
+
+    assert [r.status for r in results] == ["failed_retryable", "executed"]
+    assert len(audit.calls) == 4
+
+
+def test_waiting_for_the_runtime_does_not_count_toward_the_failure_bound():
+    def run(turn, status, code):
+        return type(
+            "Run",
+            (),
+            {
+                "id": turn,
+                "turn_attempt": turn,
+                "status": status,
+                "structured_error_json": json.dumps(
+                    {"code": code, "retryable": True}
+                ),
+            },
+        )()
+
+    generic = "agent_reported_failure"
+    assert _consecutive_failed_turns([]) == 0
+    assert (
+        _consecutive_failed_turns(
+            [run(0, "failed", "runtime_provider_unreachable")]
+            + [run(1, "failed", generic), run(2, "failed", generic)]
+        )
+        == 2
+    )
+    assert (
+        _consecutive_failed_turns(
+            [run(0, "failed", generic), run(1, "completed", ""), run(2, "failed", generic)]
+        )
+        == 1
     )

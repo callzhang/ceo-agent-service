@@ -205,9 +205,19 @@ class ScheduledAgentConsumer:
         )
         guard.assert_current(self._now().astimezone(UTC))
         if result.status == "failed_retryable":
+            # Deferring hands the attempt back, so nothing else spaces or
+            # counts these passes: the orchestrator says how long to wait and
+            # ends the task failed once the role has failed too many turns.
+            available_at = ""
+            if result.retry_after_seconds > 0:
+                available_at = (
+                    self._now().astimezone(UTC)
+                    + timedelta(seconds=result.retry_after_seconds)
+                ).strftime("%Y-%m-%d %H:%M:%S")
             self._store.defer_reply_task(
                 task.id, result.error.code or "agent_failed",
                 expected_execution_generation=task.execution_generation,
+                available_at=available_at,
             )
             return
         mapping = {

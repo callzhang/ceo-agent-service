@@ -139,6 +139,7 @@ def commands(produce_once=lambda: "produce-once queued=0"):
         "request-minutes-access": lambda: "request-minutes-access requested=0",
         "sync-minutes-once": lambda: "sync-minutes-once queued=0",
         "weekly-okr-report": lambda: "weekly-okr-report status=sent",
+        "sync-chrome-cookies": lambda: "sync-chrome-cookies copied=0",
     })
 
 
@@ -735,7 +736,7 @@ def test_retry_reclaims_same_execution_source(tmp_path):
             if calls == 1:
                 return SimpleNamespace(status="failed_retryable", final_run_id=0,
                     summary="retry", error=AgentError(code="temporary", retryable=True),
-                    audit_result=None)
+                    audit_result=None, retry_after_seconds=0.0)
             run_claim = store.claim_agent_run(
                 task.id, task.execution_generation, role=AgentRole.AUDIT,
                 proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
@@ -784,3 +785,86 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
     assert identities == ["stable-action", "stable-action"]
     assert task.status == "done"
     assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
+
+
+class FailingAudit:
+    """An Audit turn that always reports the same failure the service cannot classify."""
+
+    def __init__(self, store):
+        self.store, self.turns = store, 0
+
+    def run(self, task, context, *, turn_attempt, parent_agent_run_id):
+        claimed = self.store.claim_agent_run(
+            task.id, task.execution_generation, role=AgentRole.AUDIT,
+            proposal_revision=context.proposal_revision, turn_attempt=turn_attempt,
+            parent_agent_run_id=parent_agent_run_id, operation_id=context.operation_id,
+            owner="audit",
+        )
+        self.turns += 1
+        error = AgentError(
+            code="agent_reported_failure", retryable=True, source="agent",
+            source_code="proposal_already_executed",
+        )
+        self.store.fail_agent_run(
+            claimed.run.id, error.model_dump(mode="json"), owner="audit"
+        )
+        result = AuditAgentResult.model_validate({
+            "outcome": "failed", "summary": "already executed",
+            "proposal_revision": context.proposal_revision, "feedback": None,
+            "external_result": None, "error": error.model_dump(mode="json"),
+            "risk": "high", "confidence": 0.0,
+            "rule_coverage": 1.0, "information_completeness": 1.0,
+        })
+        return AgentTurnRunResult(claimed.run.id, result, 0, 1)
+
+
+def test_a_scheduled_audit_that_keeps_failing_is_spaced_then_stops_failed(tmp_path):
+    """Reply task 385880 ran 310 Audit turns in one generation.
+
+    A scheduled execution hands its attempt back when it defers, so no counter
+    moved and the deferral asked for no wait: the task was due again at once.
+    """
+    store, run, options = fixture(tmp_path)
+    execution_id = int(dispatch(store, run, options).execution_id)
+    audit_agent = FailingAudit(store)
+    orchestrator = AgentOrchestrator(
+        store=store, consumer=Consumer(store, proposal("R0")), audit=audit_agent,
+    )
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
+    clock = {"now": NOW}
+    consumer = ScheduledAgentConsumer(
+        store=store, option_service=options,
+        orchestrator_factory=lambda _built: orchestrator, now=lambda: clock["now"],
+    )
+
+    waits = []
+    for owner in ("first", "second", "third"):
+        envelope, guard = claim(adapter, execution_id, owner, now=clock["now"])
+        consumer(envelope, guard)
+        guard.complete(clock["now"])
+        task = store.get_reply_task(execution_id)
+        if task.status == "pending":
+            due = datetime.strptime(task.available_at, "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=UTC
+            )
+            waits.append((due - clock["now"]).total_seconds())
+            # Not claimable before the wait is over, claimable when it is.
+            assert adapter.claim(
+                clock["now"] + timedelta(seconds=waits[-1] - 1),
+                owner="early", owner_pid=42, lease=timedelta(minutes=5),
+            ) is None
+            clock["now"] += timedelta(seconds=waits[-1])
+
+    task = store.get_reply_task(execution_id)
+    assert waits == [60.0, 120.0]
+    assert audit_agent.turns == 6
+    assert task.status == "failed"
+    assert task.error == "agent_reported_failure"
+    attempts = store.list_reply_attempts_for_conversation(task.conversation_id)
+    runs = store.list_agent_runs_for_task_generation(
+        execution_id, task.execution_generation
+    )
+    assert [r.status for r in runs if r.role is AgentRole.AUDIT] == ["failed"] * 6
+    # The concrete cause the Agent gave stays readable on the Attempt.
+    assert "proposal_already_executed" in attempts[0].audit_summary
+    assert attempts[0].send_status == "failed"

@@ -18,6 +18,7 @@ from app.agent_result import AgentError, ResultParseError
 from app.agent_turn_runner import AgentTurnRunResult
 from app.codex_capacity import is_codex_provider_recovery_code
 from app.config import principal_display_name
+from app.external_retry import retry_delay_seconds
 from app.email_unsubscribe_continuation import (
     DomainContinuationConsumptionDecision,
     DomainContinuationConsumptionState,
@@ -31,6 +32,13 @@ from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 MAX_TURNS_PER_PROCESS = 32
 MAX_CONTENT_FEEDBACK_CYCLES = 3
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
+# A role that fails this many turns in a row on one proposal revision stops
+# retrying and ends the task failed. It is the same bound the DingTalk worker
+# already has through its task attempts: three passes of
+# MAX_ROLE_ATTEMPTS_PER_PROCESS turns (worker.MAX_REPLY_TASK_ATTEMPTS = 3). A
+# caller that hands the attempt back on deferral (scheduled executions, email
+# tasks) has no such counter, so the bound is counted from the persisted runs.
+MAX_CONSECUTIVE_FAILED_TURNS = MAX_ROLE_ATTEMPTS_PER_PROCESS * 3
 _DOMAIN_SNAPSHOT_INVALID = object()
 
 
@@ -143,6 +151,10 @@ class OrchestrationResult:
     feedback: AuditFeedback | None = None
     consumer_result: ConsumerAgentResult | None = None
     audit_result: AuditAgentResult | None = None
+    # Seconds a retryable result asks the caller to wait before the next pass;
+    # 0 leaves the timing to the caller. Only a role that spent its turns on a
+    # failure it could not explain sets it.
+    retry_after_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -1328,12 +1340,55 @@ class AgentOrchestrator:
         # example, a live OKR read failure) behind a generic wrapper.
         underlying = _run_error(latest)
         code = underlying.code or f"{role.value}_retry_exhausted"
+        # The Agent's own wording is the only concrete cause of a
+        # `agent_reported_failure`; keep it beside the code.
+        cause = (
+            f"{code} ({underlying.source_code})"
+            if underlying.source_code and underlying.source_code != code
+            else code
+        )
         summary = code
         if code != f"{role.value}_retry_exhausted":
-            summary = f"{code}; {role.value} retry attempts exhausted"
+            summary = f"{cause}; {role.value} retry attempts exhausted"
+        diagnostics = {
+            "stage": underlying.stage,
+            "source": underlying.source,
+            "source_code": underlying.source_code,
+        }
+        failed_turns = _consecutive_failed_turns(
+            [
+                run
+                for run in runs
+                if run.role is role and run.proposal_revision == proposal_revision
+            ]
+        )
+        if (
+            underlying.retryable
+            and not underlying.authorization_required
+            and failed_turns >= MAX_CONSECUTIVE_FAILED_TURNS
+        ):
+            # Every pass reached the same wall. Scheduled executions and email
+            # tasks hand the attempt back when they defer, so nothing else
+            # counts these passes: 2026-09-26 an Audit turn on reply task
+            # 385880 was run 310 times in one generation, each refusing to
+            # resubmit an already executed proposal.
+            return OrchestrationResult(
+                status="failed_terminal",
+                final_run_id=latest.id,
+                final_role=role,
+                summary=(
+                    f"{cause}; {role.value} turns failed {failed_turns} times in a "
+                    "row, retries stopped"
+                ),
+                error=AgentError(code=code, retryable=False, **diagnostics),
+                feedback_cycles=self._feedback_cycles(task),
+            )
         # Inner turn retries are only a transport/runtime budget. Preserve
         # the persisted error's retryability so the task-level worker can
         # apply the single exponential-backoff ceiling consistently.
+        retry_after = 0.0
+        if underlying.retryable and not underlying.authorization_required:
+            retry_after = _next_pass_delay_seconds(failed_turns)
         return OrchestrationResult(
             status=_failure_status(underlying),
             final_run_id=latest.id,
@@ -1343,8 +1398,10 @@ class AgentOrchestrator:
                 code=code,
                 retryable=underlying.retryable,
                 authorization_required=underlying.authorization_required,
+                **diagnostics,
             ),
             feedback_cycles=self._feedback_cycles(task),
+            retry_after_seconds=retry_after,
         )
 
     @staticmethod
@@ -1460,6 +1517,49 @@ def _run_error(run: AgentRun) -> AgentError:
             "source_code": str(payload.get("source_code") or ""),
             "session_continuable": payload.get("session_continuable") is True,
         }
+    )
+
+
+def _is_waiting_failure(error: AgentError) -> bool:
+    """A failure that waits for the runtime or a person, not the Agent's fault."""
+    return (
+        error.authorization_required
+        or error.code
+        in {
+            "runtime_execution_failed",
+            "runtime_provider_unreachable",
+            "runtime_provider_auth_failed",
+        }
+        or is_codex_provider_recovery_code(error.code)
+    )
+
+
+def _consecutive_failed_turns(role_runs: list[AgentRun]) -> int:
+    """Count the failed turns a role has run in a row on one proposal revision."""
+    count = 0
+    newest_first = sorted(
+        role_runs, key=lambda item: (item.turn_attempt, item.id), reverse=True
+    )
+    for run in newest_first:
+        if run.status != "failed" or _is_waiting_failure(_run_error(run)):
+            break
+        count += 1
+    return count
+
+
+def _next_pass_delay_seconds(failed_turns: int) -> float:
+    """The wait before the next pass, on the schedule the DingTalk worker uses."""
+    # Imported here: the worker imports this module.
+    from app.worker import (
+        REPLY_TASK_RETRY_BASE_DELAY_SECONDS,
+        REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
+    )
+
+    passes = max(failed_turns // MAX_ROLE_ATTEMPTS_PER_PROCESS, 1)
+    return retry_delay_seconds(
+        REPLY_TASK_RETRY_BASE_DELAY_SECONDS,
+        passes - 1,
+        max_delay_seconds=REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
     )
 
 

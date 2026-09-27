@@ -1182,9 +1182,19 @@ run 才能被持久队列恢复。
   （`correction_capacity_wait:<n>`）交给调用方退避延期；等待期内该修正会话只在自己的路由上恢复；第 4 次失败换到
   后继路由，用新会话、原始 prompt 和独立的修正预算。修正轮的非故障类失败仍为终态。
 - **同一 revision 的角色重试上限**：Consumer 或 Audit 在一次 worker pass 内对同一 proposal revision 最多 2 次
-  turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的结果/进程/依赖/原生写入失败时编排结果进入
-  `failed_terminal`，任务在本 pass 结束为 `failed` 并保留最后一个 run 的真实错误码，不再回到 `pending` 让下一个
-  pass 重进同一 generation（否则定时任务消费者和 active-recovery 路径会无限增加 `turn_attempt`）。
+  turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的结果/进程/依赖/原生写入失败时，本 pass 以
+  `failed_retryable` 结束，由调用方延期后进入下一 pass。跨 pass 的上限由编排层按已持久化的 run 计数：同一
+  generation、同一 revision 下该角色**连续**失败满 `MAX_CONSECUTIVE_FAILED_TURNS`（6，即 3 个 pass ×
+  每 pass 2 次 turn，与 DingTalk worker 的 `MAX_REPLY_TASK_ATTEMPTS`=3 一致）后，编排结果进入
+  `failed_terminal`，任务结束为 `failed`，保留最后一个 run 的真实错误码，并把 Agent 原文（`source_code`）
+  写进结果摘要和错误诊断，不再回到 `pending`。未满上限的 pass 之间按共享指数退避（`external_retry.retry_delay_seconds`，
+  60 秒起、每 pass 翻倍、封顶 15 分钟，与 DingTalk worker 相同）由 `OrchestrationResult.retry_after_seconds`
+  给出，定时任务消费者据此设置 `available_at`。这条上限存在的原因：定时执行和 Email 任务在延期时归还
+  attempts，任务级计数不前进；2026-09-26 定时周报（任务 385880）的 Audit 因 `proposal_already_executed`
+  被重跑 310 次，每次都立刻重新入队。计数遇到 `completed` run 或等待类错误（授权、`runtime_*`、
+  `codex_provider_*`）即中断，这些按各自的退避延期，不计入该上限。Email 任务在 `failed_retryable`
+  上有自己的退订阶梯（瞬时浏览器错误 4 次、路由拒绝 5 次），仍按原判断，本上限只额外保证不可解释的
+  通用 Agent 失败不会无限重试。
   内容反馈轮次耗尽但最后一次 Audit 仍有具体修改意见时，编排结果进入 `needs_human` 并提供“按审计意见修订”或
   “停止不执行”，不能丢掉这条意见后投影为 opaque failed。中断/授权/延期类错误码不计入该上限，按退避延期。
 - **进入最后一条可用路由后才发现的故障**：该路由以 capacity/transport 失败且其余路由均已暂停时，与
