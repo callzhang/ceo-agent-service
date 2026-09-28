@@ -97,8 +97,11 @@ _COMMON_RUNTIME_CAPABILITIES = frozenset(
     {"structured_output", "local_schema_validation"}
 )
 _RUNTIME_DOMAIN_RESULT_CODEC_VERSION = 1
-_RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 32 * 1024
-_RUNTIME_RESULT_SUMMARY_MAX_CHARS = 2048
+# Reports and other long-form agent results are stored in the domain result
+# envelope. Keep a bounded field and envelope limit without rejecting valid
+# published output solely because its summary is moderately long.
+_RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 64 * 1024
+_RUNTIME_RESULT_SUMMARY_MAX_CHARS = 8192
 
 
 def _fallback_requested_session_id(
