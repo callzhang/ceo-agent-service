@@ -4291,12 +4291,12 @@ def run_service(
     if runtime_refresher is not None:
         try:
             runtime_refresher.refresh_expired(force=True)
-        except Exception:  # noqa: BLE001 - startup must degrade, not abort service
+        except Exception as exc:  # noqa: BLE001 - startup must degrade, not abort service
             AutoReplyStore(settings.db_path).record_error(
                 "",
                 "",
                 "agent_runtime_probe_startup_failed",
-                "Agent runtime startup probe failed; routes remain unavailable.",
+                f"Agent runtime startup probe failed; routes remain unavailable: {exc}",
             )
     _prepare_runtime_skills_on_service_start(settings)
     _seed_scheduled_tasks_on_service_start(settings, runtime_skill_snapshot)

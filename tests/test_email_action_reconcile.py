@@ -26,6 +26,7 @@ from app.email_action_reconcile import (
     VERIFIED,
     ReadOnlyImapSession,
     ReadOnlyViolation,
+    _record_done,
     read_only_provider,
     reconcile_email_actions,
 )
@@ -692,3 +693,34 @@ def test_progress_is_reported_every_25_rows_and_ctrl_c_returns_partial_counts(
     )
     assert interrupted.interrupted is True
     assert interrupted.examined == 1  # the pause before row two raised
+
+
+def test_record_done_failure_keeps_the_exceptions_own_message():
+    # Derek 2026-09-28 "所有底层错误码都要带着到 agent 的报错里面": this used to
+    # persist only `reconcile_record_failed:<ExceptionClassName>`, discarding
+    # the exception's own message -- the only place that diagnostic existed.
+    claimed = SimpleNamespace(
+        locator=SimpleNamespace(stable_message_identity="account-1:message-id:<m@example.com>")
+    )
+    action = SimpleNamespace(action_id="action-1", attempt_number=2)
+    failed = SimpleNamespace(action=action)
+    verified = SimpleNamespace(revision="rev-1", locator=None)
+    calls = []
+
+    class Store:
+        def claim_failed_direct_action_for_reconciliation(self, **_kwargs):
+            return claimed
+
+        def complete_direct_action_attempt(self, target, **values):
+            calls.append(values)
+            if len(calls) == 1:
+                raise sqlite3.OperationalError("database is locked")
+
+    with pytest.raises(sqlite3.OperationalError):
+        _record_done(Store(), failed, verified, "2026-09-28T00:00:00+00:00")
+
+    assert len(calls) == 2
+    error = calls[1]["error"]
+    assert error.startswith("reconcile_record_failed:")
+    assert "OperationalError" in error
+    assert "database is locked" in error

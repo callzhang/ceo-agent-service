@@ -485,10 +485,10 @@ class ImapDeterministicProvider:
             timeout=timeout,
         )
         try:
-            status, _ = session.login(username, password)
-            _require_ok(status, "IMAP login failed")
+            status, login_data = session.login(username, password)
+            _require_ok(status, "IMAP login failed", login_data)
             status, data = session.capability()
-            _require_ok(status, "IMAP capability refresh failed")
+            _require_ok(status, "IMAP capability refresh failed", data)
             capabilities = _capability_tokens(data)
         except Exception:
             _logout_or_shutdown(session)
@@ -549,8 +549,8 @@ class ImapDeterministicProvider:
 
     def create_folder_exact(self, name: str) -> None:
         try:
-            status, _ = self.session.create(_imap_mailbox_argument(name))
-            _require_ok(status, "IMAP folder creation failed")
+            status, data = self.session.create(_imap_mailbox_argument(name))
+            _require_ok(status, "IMAP folder creation failed", data)
         finally:
             self._mailbox_cache = None
 
@@ -614,7 +614,7 @@ class ImapDeterministicProvider:
                 "Message-ID",
                 locator.rfc_message_id,
             )
-            _require_ok(status, "IMAP Message-ID search failed")
+            _require_ok(status, "IMAP Message-ID search failed", data)
             for uid in _search_uids(data):
                 state = self._read_exact(
                     StoredEmailLocator(
@@ -694,12 +694,12 @@ class ImapDeterministicProvider:
         if selected_uidvalidity != locator.uidvalidity:
             raise ImapMessageUnavailable("message UIDVALIDITY changed before move")
         command = "MOVE" if "MOVE" in self._capabilities() else "COPY"
-        status, _ = self.session.uid(
+        status, data = self.session.uid(
             command,
             str(locator.uid),
             _imap_mailbox_argument(destination),
         )
-        _require_ok(status, f"IMAP UID {command} failed")
+        _require_ok(status, f"IMAP UID {command} failed", data)
         copied = _copyuid(self.session.response("COPYUID"), source_uid=locator.uid)
         if copied is not None:
             destination_uidvalidity, destination_uid = copied
@@ -790,13 +790,13 @@ class ImapDeterministicProvider:
             raise ImapPermanentFlagsUnsupported(
                 "IMAP mailbox does not persist the requested flag"
             )
-        status, _ = self.session.uid(
+        status, data = self.session.uid(
             "STORE",
             str(locator.uid),
             "-FLAGS.SILENT" if remove else "+FLAGS.SILENT",
             "(" + " ".join(flags) + ")",
         )
-        _require_ok(status, "IMAP UID STORE failed")
+        _require_ok(status, "IMAP UID STORE failed", data)
 
     def _permanent_flags(self) -> _PermanentFlagsState:
         response = self.session.response("PERMANENTFLAGS")
@@ -854,7 +854,7 @@ class ImapDeterministicProvider:
             str(locator.uid),
             "(UID FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])",
         )
-        _require_ok(status, "IMAP UID FETCH failed")
+        _require_ok(status, "IMAP UID FETCH failed", data)
         response = _response_bytes(data)
         uid_match = _UID_RESPONSE.search(response)
         if uid_match is None or int(uid_match.group("uid")) != locator.uid:
@@ -922,11 +922,11 @@ class ImapDeterministicProvider:
         )
 
     def _select(self, mailbox: str, *, readonly: bool) -> int:
-        status, _ = self.session.select(
+        status, data = self.session.select(
             _imap_mailbox_argument(mailbox),
             readonly=readonly,
         )
-        _require_ok(status, "IMAP mailbox select failed")
+        _require_ok(status, "IMAP mailbox select failed", data)
         response = self.session.response("UIDVALIDITY")
         values = response[1] if isinstance(response, tuple) and len(response) > 1 else ()
         raw = next((value for value in values or () if value), None)
@@ -951,7 +951,7 @@ class ImapDeterministicProvider:
         if self._mailbox_cache is not None:
             return self._mailbox_cache
         status, data = self.session.list()
-        _require_ok(status, "IMAP folder discovery failed")
+        _require_ok(status, "IMAP folder discovery failed", data)
         try:
             mailboxes = parse_imap_list_response(data)
         except ImapFolderListError as exc:
@@ -1098,9 +1098,28 @@ def _imap_mailbox_argument(value: str) -> str:
         raise ImapDestinationUnavailable("unsupported IMAP folder name") from exc
 
 
-def _require_ok(status: object, message: str) -> None:
+def _imap_response_text(data: object) -> str:
+    """The server's own response text for a non-OK status, when present.
+
+    imaplib always returns ``(status, data)``; on a NO/BAD status ``data``
+    still carries the server's reason line, which every ``_require_ok`` call
+    site used to discard by destructuring it away as ``_``.
+    """
+    if not isinstance(data, (list, tuple)):
+        return ""
+    parts: list[str] = []
+    for item in data:
+        if isinstance(item, bytes):
+            parts.append(item.decode("utf-8", errors="replace"))
+        elif isinstance(item, str):
+            parts.append(item)
+    return " ".join(part.strip() for part in parts if part.strip())[:200]
+
+
+def _require_ok(status: object, message: str, data: object = None) -> None:
     if str(status).upper() != "OK":
-        raise ImapProviderError(message)
+        detail = _imap_response_text(data)
+        raise ImapProviderError(f"{message}: {detail}" if detail else message)
 
 
 def _logout_or_shutdown(session: Any) -> None:

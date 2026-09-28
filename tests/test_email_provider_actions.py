@@ -1799,3 +1799,35 @@ def test_a_connection_that_did_not_verify_is_closed_not_handed_on() -> None:
     assert result.error == "provider_readback_mismatch"
     assert handed_over == []
     assert readback_session.logged_out is True
+
+
+def test_require_ok_keeps_the_servers_own_reason() -> None:
+    # Derek 2026-09-28 "所有底层错误码都要带着到 agent 的报错里面": every
+    # `_require_ok` call site used to destructure the server's response text
+    # away as `_`, so a NO/BAD status raised only a fixed message like
+    # "IMAP UID STORE failed" with no server-provided reason.
+    module = import_module("app.email_provider_actions")
+
+    with pytest.raises(module.ImapProviderError) as excinfo:
+        module._require_ok(
+            "NO", "IMAP UID STORE failed", [b"[ALREADYEXISTS] flag not permitted"]
+        )
+
+    assert str(excinfo.value) == (
+        "IMAP UID STORE failed: [ALREADYEXISTS] flag not permitted"
+    )
+
+
+def test_require_ok_without_a_server_reason_keeps_the_plain_message() -> None:
+    module = import_module("app.email_provider_actions")
+
+    with pytest.raises(module.ImapProviderError) as excinfo:
+        module._require_ok("NO", "IMAP UID STORE failed", None)
+
+    assert str(excinfo.value) == "IMAP UID STORE failed"
+
+
+def test_require_ok_passes_on_an_ok_status() -> None:
+    module = import_module("app.email_provider_actions")
+
+    module._require_ok("OK", "IMAP UID STORE failed", [b"anything"])

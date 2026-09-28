@@ -1938,3 +1938,54 @@ def test_imap_connect_defaults_to_a_wide_socket_timeout(monkeypatch) -> None:
     )
 
     assert captured["timeout"] == 5.0
+
+
+def test_imap_connect_login_failure_keeps_the_servers_own_reason(monkeypatch) -> None:
+    # Derek 2026-09-28 "所有底层错误码都要带着到 agent 的报错里面": a non-OK
+    # login status used to raise a bare "IMAP login failed" with the server's
+    # own response text discarded as `_`.
+    class FakeSSL:
+        def __init__(self, host, port, timeout=None):
+            pass
+
+        def login(self, username, password):
+            return "NO", [b"[AUTHENTICATIONFAILED] Invalid credentials"]
+
+        def logout(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", FakeSSL)
+
+    with pytest.raises(ConnectionError) as excinfo:
+        ImapReadonlyAdapter.connect(
+            "imap.example.test", "user@example.test", "secret", account_id="account-a"
+        )
+
+    assert "[AUTHENTICATIONFAILED] Invalid credentials" in str(excinfo.value)
+
+
+def test_imap_connect_login_exception_keeps_its_own_message(monkeypatch) -> None:
+    class FakeSSL:
+        def __init__(self, host, port, timeout=None):
+            pass
+
+        def login(self, username, password):
+            raise imaplib.IMAP4.error("too many simultaneous connections")
+
+        def logout(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", FakeSSL)
+
+    with pytest.raises(ConnectionError) as excinfo:
+        ImapReadonlyAdapter.connect(
+            "imap.example.test", "user@example.test", "secret", account_id="account-a"
+        )
+
+    assert "too many simultaneous connections" in str(excinfo.value)

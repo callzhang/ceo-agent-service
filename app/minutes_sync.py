@@ -554,9 +554,9 @@ def sync_minutes_once(
 
         try:
             rendered_summary = summary_markdown(summary)
-        except MinutesSummaryShapeUnknown:
+        except MinutesSummaryShapeUnknown as exc:
             failed += 1
-            failures.append((task_uuid, "summary_shape_unknown"))
+            failures.append((task_uuid, f"summary_shape_unknown:{exc}"[:200]))
             continue
         # DingTalk can publish a usable summary before it exposes transcript
         # paragraphs. Archive that summary now instead of turning a readable
@@ -600,9 +600,9 @@ def sync_minutes_once(
             body = render_archive(
                 task_uuid=task_uuid, summary=summary, paragraphs=paragraphs
             )
-        except MinutesSummaryShapeUnknown:
+        except MinutesSummaryShapeUnknown as exc:
             failed += 1
-            failures.append((task_uuid, "archive_render_failed"))
+            failures.append((task_uuid, f"archive_render_failed:{exc}"[:200]))
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")

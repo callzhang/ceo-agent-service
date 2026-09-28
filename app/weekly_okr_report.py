@@ -2222,7 +2222,9 @@ def _extract_report_payload(raw: str) -> dict[str, Any]:
     try:
         return WeeklyOkrAnalysis.model_validate(direct[-1]).model_dump()
     except ValidationError as exc:
-        raise ValueError("Codex weekly OKR payload failed validation") from exc
+        raise ValueError(
+            f"Codex weekly OKR payload failed validation: {exc}"
+        ) from exc
 
 
 def _okr_stats(payload: dict[str, Any]) -> dict[str, Any]:

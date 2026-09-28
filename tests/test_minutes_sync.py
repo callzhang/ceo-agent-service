@@ -305,6 +305,11 @@ def test_an_unreadable_summary_shape_fails_the_item_instead_of_archiving_it(
     assert result.failed == 1 and result.synced == 0
     assert list((tmp_path / "AI听记").rglob("*.md")) == []
     assert _cursor(store)["archived_ids"] == []
+    # Derek 2026-09-28 "所有底层错误码都要带着到 agent 的报错里面": the reason
+    # must name the actual unreadable shape, not just "summary_shape_unknown".
+    assert result.failures[0][0] == "u1"
+    assert result.failures[0][1].startswith("summary_shape_unknown:")
+    assert "sections" in result.failures[0][1]
 
 
 def test_incomplete_minutes_pagination_does_not_claim_success(tmp_path: Path) -> None:

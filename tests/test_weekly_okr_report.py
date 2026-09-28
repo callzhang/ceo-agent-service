@@ -794,6 +794,51 @@ def test_extract_report_payload_reads_final_codex_jsonl_message():
     assert _extract_report_payload(raw)["executive_summary"] == "摘要"
 
 
+def test_extract_report_payload_validation_failure_names_the_bad_field():
+    # Derek 2026-09-28 "所有底层错误码都要带着到 agent 的报错里面": this used to
+    # raise a fixed "Codex weekly OKR payload failed validation" with no field
+    # detail -- the persisted weekly_okr_analysis_jobs.error column then said
+    # only that, with no way to tell what Codex actually got wrong.
+    payload = {
+        "executive_summary": "摘要",
+        "company_progress": [],
+        "ceo_attention_items": [],
+        "manager_reviews": [
+            {
+                # "name" deliberately omitted: a required field.
+                "role_level": "总监",
+                "role_level_evidence": "钉钉通讯录当前职务为总监",
+                "progress_summary": "推进中",
+                "key_progress": [],
+                "independent_evidence": [],
+                "evidence_assessment": "证据不足",
+                "risks": [],
+                "next_week_focus": [],
+                "data_gaps": [],
+                "kr_reviews": [],
+                "leadership_dimensions": [item.model_dump() for item in _dimensions(4, 70)],
+                "culture_dimensions": [item.model_dump() for item in _dimensions(3, 80)],
+            }
+        ],
+        "source_coverage": ["实时叮当 OKR"],
+        "warnings": [],
+    }
+    raw = "\n".join(
+        [
+            '{"type":"thread.started","thread_id":"t1"}',
+            '{"item":{"type":"agent_message","text":' + json_string(payload) + "}}",
+        ]
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        _extract_report_payload(raw)
+
+    message = str(excinfo.value)
+    assert "Codex weekly OKR payload failed validation" in message
+    assert "name" in message
+    assert message != "Codex weekly OKR payload failed validation"
+
+
 def test_weekly_window_rejects_invalid_hour():
     with pytest.raises(ValueError, match="between 0 and 23"):
         weekly_okr_report_window_open(

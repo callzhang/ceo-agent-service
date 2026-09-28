@@ -2828,12 +2828,15 @@ def _run_next_direct_action(
             raise LookupError("provider executor unavailable")
         result = executor.execute(action)
     except Exception as exc:  # noqa: BLE001 - every durable claim is terminalized
+        # `provider_factory_failed:` prefix is matched by the retryable-status
+        # SQL (email_store.py) and must stay first; the message after it is
+        # for diagnosis only, not for that match.
         result = ProviderActionResult(
             status="failed",
             provider_operation="provider_factory",
             provider_target=action.locator.stable_message_identity,
             provider_result_id="",
-            error=f"provider_factory_failed:{type(exc).__name__}",
+            error=f"provider_factory_failed:{type(exc).__name__}: {exc}"[:300],
             retryable=True,
         )
     email_store.complete_direct_action_attempt(

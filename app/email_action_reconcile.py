@@ -349,7 +349,7 @@ def _record_done(
             provider_operation="reconcile_record",
             provider_target=claimed.locator.stable_message_identity,
             provider_result_id="",
-            error=f"reconcile_record_failed:{type(exc).__name__}",
+            error=f"reconcile_record_failed:{type(exc).__name__}: {exc}"[:300],
             finished_at=finished_at,
             retryable=False,
         )

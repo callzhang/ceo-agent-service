@@ -226,6 +226,11 @@ class WechatReplyConsumer:
                         exc.failure_class.value if exc.failure_class is not None else ""
                     ),
                     "failure_code": exc.failure_code,
+                    # exc.reason is the concrete underlying failure text; keep
+                    # it alongside the classification codes above, the same
+                    # way _failure_from_routed_error / _runtime_error_json do
+                    # for the same exception type elsewhere in the service.
+                    "detail": (exc.reason or exc.failure_code or exc.code).strip()[:500],
                 }
             else:
                 structured_error = {

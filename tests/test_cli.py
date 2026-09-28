@@ -1079,6 +1079,46 @@ def test_run_service_probes_before_starting_shared_refresh_component(
     assert calls[-1] == ("wait",)
 
 
+def test_run_service_keeps_the_probe_failure_reason(tmp_path, monkeypatch):
+    # Derek 2026-09-28 "所有底层错误码都要带着到 agent 的报错里面": the except
+    # clause didn't bind the exception at all, so nothing downstream of
+    # "service continues to start" could ever learn why the startup probe
+    # failed -- not even a generic message, since none was ever captured.
+    class FailingRefresher:
+        def refresh_expired(self, *, force=False):
+            raise RuntimeError("agent_runtime_probe: connection refused")
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            del target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(cli, "doctor_mcp_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_wechat_service_components", lambda _settings: ())
+    monkeypatch.setattr(cli, "_prepare_runtime_skills_on_service_start", lambda settings: None)
+    monkeypatch.setattr(
+        cli, "_seed_scheduled_tasks_on_service_start", lambda settings, snapshot: None
+    )
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+
+    run_service(
+        settings,
+        host="127.0.0.1",
+        port=8765,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        runtime_refresher=FailingRefresher(),
+    )
+
+    errors = AutoReplyStore(settings.db_path).list_errors(limit=10)
+    assert [error.kind for error in errors] == ["agent_runtime_probe_startup_failed"]
+    assert "agent_runtime_probe: connection refused" in errors[0].detail
+
+
 def test_a_task_that_cannot_be_seeded_does_not_stop_the_service(tmp_path, monkeypatch):
     """The 2026-09-18 crash loop: one unseedable task killed the whole worker.
 

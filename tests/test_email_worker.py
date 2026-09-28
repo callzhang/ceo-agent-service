@@ -7992,6 +7992,35 @@ def test_direct_actions_are_not_claimed_without_a_provider_executor_factory():
     assert module._run_next_direct_action(Store(), None) is None
 
 
+def test_provider_factory_failure_keeps_the_exceptions_own_message():
+    # Derek 2026-09-28 "所有底层错误码都要带着到 agent 的报错里面": this used to
+    # persist only `provider_factory_failed:<ExceptionClassName>`, discarding
+    # the exception's own message -- the only place that diagnostic existed.
+    module = _module()
+    action = SimpleNamespace(
+        account_id="account-1",
+        locator=SimpleNamespace(stable_message_identity="account-1:message-id:<m@example.com>"),
+    )
+    completed = []
+
+    class Store:
+        def claim_next_direct_action(self, *, claimed_at):
+            return action
+
+        def complete_direct_action_attempt(self, claimed, **values):
+            completed.append(values)
+
+    def raising_factory(_account_id):
+        raise ConnectionRefusedError("IMAP host refused the connection on port 993")
+
+    module._run_next_direct_action(Store(), raising_factory)
+
+    error = completed[0]["error"]
+    assert error.startswith("provider_factory_failed:")
+    assert "ConnectionRefusedError" in error
+    assert "IMAP host refused the connection on port 993" in error
+
+
 def test_direct_action_executor_result_completes_the_exact_claim():
     module = _module()
     action = SimpleNamespace(account_id="account-1")

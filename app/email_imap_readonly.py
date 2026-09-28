@@ -322,15 +322,20 @@ class ImapReadonlyAdapter:
         mailbox_address: str = "",
         trusted_authserv_domain: str = "",
     ) -> "ImapReadonlyAdapter":
+        from app.email_provider_actions import _imap_response_text
+
         session = imaplib.IMAP4_SSL(host, port, timeout=timeout)
         try:
-            status, _ = session.login(username, password)
+            status, login_data = session.login(username, password)
         except imaplib.IMAP4.error as exc:
             _close_imap_session(session)
-            raise ConnectionError("IMAP login failed") from exc
+            raise ConnectionError(f"IMAP login failed: {exc}") from exc
         if status != "OK":
             _close_imap_session(session)
-            raise ConnectionError("IMAP login failed")
+            detail = _imap_response_text(login_data)
+            raise ConnectionError(
+                f"IMAP login failed: {detail}" if detail else "IMAP login failed"
+            )
         return cls(
             session,
             account_id=account_id,
