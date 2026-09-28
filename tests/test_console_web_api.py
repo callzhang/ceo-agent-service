@@ -915,6 +915,51 @@ def test_console_history_counts_live_reply_queue_states(tmp_path: Path):
     assert queue_only.json()["meta"]["total"] == 2
 
 
+def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
+    tmp_path: Path,
+):
+    # Derek, 2026-09-27: a scheduled task's own reply task has no Attempt
+    # while it is still queued or running, so clicking it used to land on the
+    # generic Status page. It has a real home: that scheduled task's run
+    # history, the same place a completed run's row already links to.
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            "insert into scheduled_tasks (id, name, prompt, command, cron_expression, "
+            "timezone, runtime_id, enabled) values (13, '准备 CEO 管理周报', 'p', '', "
+            "'0 12 * * 6', 'America/Los_Angeles', '', 1)"
+        )
+    store.enqueue_reply_task(
+        conversation_id="scheduled-conversation",
+        conversation_title="准备 CEO 管理周报",
+        single_chat=False,
+        trigger_message_id="scheduled-run-91606",
+        trigger_create_time="2026-09-26T19:00:00Z",
+        trigger_sender="Agent Cron",
+        trigger_text="",
+        channel="scheduled",
+    )
+    task = store.get_reply_task_for_message(
+        "scheduled-conversation", "scheduled-run-91606", channel="scheduled"
+    )
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
+            "scheduled_for, first_scheduled_for, dispatch_status, snapshot_json, "
+            "execution_kind, execution_id, created_at) values ('event-91606', 13, "
+            "'scheduled', '2026-09-26T19:00:00Z', '2026-09-26T19:00:00Z', 'dispatched', "
+            "'{}', 'reply_task', ?, '2026-09-26T19:00:00Z')",
+            (str(task.id),),
+        )
+
+    with _client(tmp_path) as client:
+        rows = client.get("/api/console/history?object_type=queue").json()["items"]
+
+    assert len(rows) == 1
+    assert rows[0]["detail_url"] == "/scheduled-tasks?id=13"
+
+
 def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = _project(store, "History project")

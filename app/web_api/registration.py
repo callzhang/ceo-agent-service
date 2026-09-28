@@ -241,7 +241,9 @@ def register_console_routes(
             "action": normalize_display_value(getattr(log, "action", "")),
         }
 
-    def queue_history_item(task: Any) -> dict[str, Any]:
+    def queue_history_item(
+        task: Any, *, scheduled_task_ids: dict[int, int] | None = None
+    ) -> dict[str, Any]:
         """Render a live queue item without presenting it as an execution run."""
         status = str(getattr(task, "status", "") or "").strip().lower()
         progress = (
@@ -252,15 +254,25 @@ def register_console_routes(
         error = normalize_display_value(getattr(task, "error", ""))
         if error:
             progress = f"{progress} {error}"
+        task_id = int(getattr(task, "id", 0) or 0)
+        # A scheduled task's own reply task has no Attempt yet while it is
+        # still running, so it goes to that scheduled task's run history
+        # instead of the generic Status page (Derek, 2026-09-27).
+        scheduled_task_id = (scheduled_task_ids or {}).get(task_id)
+        detail_url = (
+            f"/scheduled-tasks?id={scheduled_task_id}"
+            if scheduled_task_id is not None
+            else "/workers"
+        )
         return {
-            "id": f"task-{int(getattr(task, 'id', 0) or 0)}",
+            "id": f"task-{task_id}",
             "occurred_at": str(getattr(task, "updated_at", "") or ""),
             "title": normalize_display_value(getattr(task, "conversation_title", "")),
             "type": "queue",
             "status": status,
             "summary": progress,
             "actor": normalize_display_value(getattr(task, "trigger_sender", "")),
-            "detail_url": "/workers",
+            "detail_url": detail_url,
             "kind": "queue",
             "input": normalize_display_value(getattr(task, "trigger_text", "")),
             "output": progress,
@@ -549,15 +561,24 @@ def register_console_routes(
         log_types = tuple(value for value in type_keys if value != history_types.QUEUE)
         selected_history_types = log_types or None
         visible_source_tables = history_types.HISTORY_SOURCE_TABLES
-        queue_items = (
-            [
-                queue_history_item(task)
+        queue_items: list[dict[str, Any]] = []
+        if not type_keys or history_types.QUEUE in type_keys:
+            queued_reply_tasks = [
+                task
                 for task in store.list_reply_tasks(statuses=("pending", "processing"))
                 if queue_history_matches(task, query=q, statuses=status_keys)
             ]
-            if not type_keys or history_types.QUEUE in type_keys
-            else []
-        )
+            scheduled_task_ids = store.scheduled_task_ids_for_reply_tasks(
+                tuple(
+                    int(task.id)
+                    for task in queued_reply_tasks
+                    if str(task.channel) == "scheduled"
+                )
+            )
+            queue_items = [
+                queue_history_item(task, scheduled_task_ids=scheduled_task_ids)
+                for task in queued_reply_tasks
+            ]
         if type_keys == (history_types.QUEUE,):
             log_total, rows = 0, []
         else:

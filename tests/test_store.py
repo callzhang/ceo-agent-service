@@ -13135,3 +13135,25 @@ def test_an_answered_question_can_close(tmp_path: Path):
     assert store.get_reply_task(task.id).status == "done"
     # A task that is not waiting on anyone is not closed this way.
     assert not store.close_needs_human_task_with_decision(task.id, decision="again")
+
+
+def test_scheduled_task_ids_for_reply_tasks_maps_only_reply_task_runs(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            "insert into scheduled_tasks (id, name, prompt, command, cron_expression, "
+            "timezone, runtime_id, enabled) values (13, '准备 CEO 管理周报', 'p', '', "
+            "'0 12 * * 6', 'America/Los_Angeles', '', 1)"
+        )
+        db.execute(
+            "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
+            "scheduled_for, first_scheduled_for, dispatch_status, execution_kind, "
+            "execution_id, created_at) values "
+            "('e1', 13, 'scheduled', 't', 't', 'dispatched', 'reply_task', '9001', 't'), "
+            "('e2', 13, 'scheduled', 't', 't', 'dispatched', 'service_command', 'produce-once', 't')"
+        )
+
+    mapped = store.scheduled_task_ids_for_reply_tasks((9001, 9002))
+
+    assert mapped == {9001: 13}
+    assert store.scheduled_task_ids_for_reply_tasks(()) == {}

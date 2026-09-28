@@ -562,7 +562,11 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
   `YYYY-MM-DD HH:MM:SS`（UTC）。History 图表仍只统计回复 attempt、会议和 Task，不含
   定时命令和邮件动作。
 - `reply_tasks` 的 `pending` 和 `processing` 是当前队列任务，必须在 History 中按真实
-  状态展示、筛选和计数；它们不属于 Attention。
+  状态展示、筛选和计数；它们不属于 Attention。还没有 Attempt，所以不能像已完成记录
+  那样链到执行详情：`channel='scheduled'` 的队列行链到它所属定时任务的运行记录
+  `/scheduled-tasks?id=<任务>`（映射来自 `scheduled_task_runs` 里 `execution_kind='reply_task'`
+  且 `execution_id` 等于该 reply task id 的那一行，`AutoReplyStore.scheduled_task_ids_for_reply_tasks`），
+  其余渠道链到 `/workers`（Derek 2026-09-27：点开原来一律落到 Status 页，看起来像详情坏了）。
 - History 在页面可见时每十秒读取当前快照；已经进入终态的队列任务不得因页面保持打开而继续
   显示为 `processing`。
 - 24 小时图表统计的是该小时内发生的历史事件，不是当前队列的状态计数。重试和执行开始须以

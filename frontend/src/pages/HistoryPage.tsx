@@ -134,7 +134,11 @@ export function HistoryPage() {
   const typeName = typeLabels.get(row.type) || row.type || row.kind || "History";
   const { copy, code } = splitStatusCode(previewText(row.output || row.summary || row.input));
   const when = localTime(row.occurred_at);
-  return <Link className={`history-dense-row history-kind-${row.kind || row.type}`} key={`${row.kind || row.type}-${row.id}`} to={row.detail_url || `/attempts/${row.id}`} aria-label={`${typeName} ${row.title}`} title={`#${row.id} · ${row.title}`}>
+  // A queue row has no Attempt yet, so its link is not "详情"; say where it
+  // actually goes (Derek, 2026-09-27), instead of the row looking broken
+  // when it lands on Status or a scheduled task's run history.
+  const destination = row.kind !== "queue" ? "" : (row.detail_url || "").startsWith("/scheduled-tasks") ? "查看运行记录" : "查看队列状态";
+  return <Link className={`history-dense-row history-kind-${row.kind || row.type}`} key={`${row.kind || row.type}-${row.id}`} to={row.detail_url || `/attempts/${row.id}`} aria-label={destination ? `${typeName} ${row.title} · ${destination}` : `${typeName} ${row.title}`} title={destination ? `#${row.id} · ${row.title} · ${destination}` : `#${row.id} · ${row.title}`}>
     <span className={`history-type-badge history-type-${row.kind || row.type}`}>{typeName}</span>
     <span className="history-row-status"><StatusBadge value={row.status} /></span>
     <span className="history-row-actor" title={row.actor}>{row.actor || "未提供"}</span>
