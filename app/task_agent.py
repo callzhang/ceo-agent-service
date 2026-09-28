@@ -517,6 +517,19 @@ Evidence protocol:
 
 TaskAgentDecision Pydantic JSON schema:
 {decision_schema}
+
+NON-NEGOTIABLE VALIDATION CHECK (apply this before returning JSON):
+- If a decision contains `status` or `business_relevance`, it MUST be an
+  existing Task update: set `action` to `update_task`, provide `task_id`, and
+  set `transition` to `update_fields`. Do not emit those fields on a new task,
+  candidate, or skip decision.
+- If a decision contains `acceptance_polarity` or
+  `acceptance_target_signal_id`, it MUST set `action=update_task`, provide
+  `task_id`, set `transition=apply_acceptance`, and use
+  `acceptance_polarity=accepted` with the cited signal id.
+- For ordinary source-backed work with no lifecycle change, omit both
+  `status` and `business_relevance` rather than guessing an update.
+Return the envelope only after checking every item against these rules.
 """
 
 

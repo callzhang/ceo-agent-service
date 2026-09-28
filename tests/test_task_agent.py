@@ -620,6 +620,9 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
     assert "use connected tools only for read-only discovery" in prompt.lower()
     assert "Do not use CLI, API, or MCP tools to create, update, delete, send, or complete" in prompt
     assert "the service validates and applies supported operations" in prompt.lower()
+    assert "`status` or `business_relevance`" in prompt
+    assert "`transition` to `update_fields`" in prompt
+    assert "`transition=apply_acceptance`" in prompt
     # Derek 2026-09-25: earlier session evidence and Memory provenance may be relied on.
     assert "You may rely on evidence you read earlier in this session" in prompt
     assert 'set evidence_origin to "session" or "memory"' in prompt
