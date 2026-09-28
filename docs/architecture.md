@@ -1198,7 +1198,8 @@ run 才能被持久队列恢复。
   `failed_retryable` 结束，由调用方延期后进入下一 pass。跨 pass 的上限由编排层按已持久化的 run 计数：同一
   generation、同一 revision 下该角色**连续**失败满 `MAX_CONSECUTIVE_FAILED_TURNS`（6，即 3 个 pass ×
   每 pass 2 次 turn，与 DingTalk worker 的 `MAX_REPLY_TASK_ATTEMPTS`=3 一致）后，编排结果进入
-  `failed_terminal`，任务结束为 `failed`，保留最后一个 run 的真实错误码，并把 Agent 原文（`source_code`）
+  `failed_terminal`，任务结束为 `failed`，保留最后一个 run 的真实错误码，并把 Agent 原文（`source_code`、
+  以及 typed 失败结果必填的 `summary`，存在错误载荷的 `reported_summary` 字段里，2026-09-28）
   写进结果摘要和错误诊断，不再回到 `pending`。未满上限的 pass 之间按共享指数退避（`external_retry.retry_delay_seconds`，
   60 秒起、每 pass 翻倍、封顶 15 分钟，与 DingTalk worker 相同）由 `OrchestrationResult.retry_after_seconds`
   给出，定时任务消费者据此设置 `available_at`。这条上限存在的原因：定时执行和 Email 任务在延期时归还
