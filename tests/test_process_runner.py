@@ -44,6 +44,26 @@ def test_process_runner_keeps_process_alive_when_output_continues():
     assert result.stdout.splitlines() == ["first", "second"]
 
 
+def test_process_runner_does_not_treat_stderr_as_progress_when_streaming_lines():
+    result = run_process_with_idle_timeout(
+        [
+            sys.executable,
+            "-c",
+            "import sys, time; "
+            "print('event', flush=True); "
+            "[print('noise', file=sys.stderr, flush=True) or time.sleep(0.05) for _ in range(20)]",
+        ],
+        prompt="",
+        env=None,
+        total_timeout_seconds=5,
+        idle_timeout_seconds=0.2,
+        on_stdout_line=lambda _line: None,
+    )
+
+    assert result.timed_out is True
+    assert result.timeout_kind == "idle"
+
+
 def test_process_runner_returns_when_parent_exits_but_child_keeps_stdio_open():
     child_pids = []
     script = (

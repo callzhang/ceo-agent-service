@@ -623,6 +623,8 @@ session。每次 turn 仍记录当前契约哈希作为回执，但哈希变化�
 
 服务重启时，未完成的 Agent turn 按普通失败重试；已完成 Agent 回合会从持久化结果继续。普通重启保留同一任务的 execution generation、session 和外部回执；明确完成运行时、路由或本地环境修复后，服务修复重试可以创建新的 execution generation，但仍优先续用可访问的 session。两者都不创建独立的 unknown 或状态核对状态机，也不根据工具事件替 Agent 判断外部动作结果。下一次 Agent turn 按当前业务 Skill 读取外部状态，再决定是否继续。
 
+Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 JSONL 事件都会续租 Agent run 并作为进展证据；连续 5 分钟没有事件时，idle watchdog 才会中断该 turn。`CEO_TASK_CODEX_TIMEOUT_SECONDS`（生产为 7200 秒）只是防止泄漏进程长期占用资源的紧急上限，不是长任务的业务完成时限；只要有进展，任务可以在同一 session 上持续或恢复多个 turn。
+
 ### Schema 初始化竞争
 
 worker 与审计页面会各自打开 SQLite。它们先取得同一个初始化文件锁，再检查 schema 版本、必要表、

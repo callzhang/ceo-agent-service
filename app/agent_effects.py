@@ -14,7 +14,10 @@ from app.native_cli_metadata import structured_target_identifiers
 DEFAULT_MCP_EFFECTS_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "mcp-tool-effects.json"
 )
-TOTAL_TIMEOUT_SECONDS = int(os.getenv("CEO_TASK_CODEX_TIMEOUT_SECONDS", "1200"))
+# This is an emergency process guard, not the normal completion boundary for a
+# progressing task. Normal liveness is governed by the structured-event idle
+# watchdog below; a long report may legitimately span multiple provider turns.
+TOTAL_TIMEOUT_SECONDS = int(os.getenv("CEO_TASK_CODEX_TIMEOUT_SECONDS", "7200"))
 IDLE_TIMEOUT_SECONDS = int(os.getenv("CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS", "900"))
 LEASE_SECONDS = TOTAL_TIMEOUT_SECONDS + IDLE_TIMEOUT_SECONDS + 300
 _MAX_MCP_RESULT_DEPTH = 32

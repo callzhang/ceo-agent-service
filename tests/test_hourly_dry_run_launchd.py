@@ -91,7 +91,7 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     )
     assert 'CEO_MAX_BATCHES="${CEO_MAX_BATCHES:-4}"' in command[2]
     assert 'CEO_CONSUMER_WORKERS="${CEO_CONSUMER_WORKERS:-2}"' in command[2]
-    assert plist["EnvironmentVariables"]["CEO_TASK_CODEX_TIMEOUT_SECONDS"] == "900"
+    assert plist["EnvironmentVariables"]["CEO_TASK_CODEX_TIMEOUT_SECONDS"] == "7200"
     assert plist["EnvironmentVariables"]["CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS"] == "300"
     assert plist["EnvironmentVariables"].get("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth") == "codex_oauth"
     assert "DWS_DISABLE_KEYCHAIN" not in command[2]

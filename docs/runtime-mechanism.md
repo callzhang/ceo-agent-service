@@ -935,6 +935,12 @@ Agent 的生产命令成功时不进 History，它们排入的每一项各自是
 默认 seed。
 内部投递、发送状态确认、错误恢复仍是内部机制，不外化为 Cron；催办不自动发送，只由 Derek 点按钮发送。
 
+Task Agent 的正常 liveness 由结构化 provider stdout 事件驱动：执行器在完整事件行被消费后续租
+Agent run，并把它作为有效进展证据；stderr 和未完成的 stdout 片段不刷新进展时间。生产环境连续
+300 秒没有这样的事件时，idle watchdog 才会中断当前 turn；`CEO_TASK_CODEX_TIMEOUT_SECONDS=7200`
+只是防止泄漏进程长期占用资源的紧急上限，不是长任务的业务完成时限。任务可以在同一 session
+上持续或恢复多个 turn，原有同 revision 的重复失败上限仍然有效。
+
 ### 应用层边界
 
 应用层不审核 Agent 使用的命令、MCP 工具、Skill、读写模式或工具名称，也不维护

@@ -49,7 +49,7 @@
     <key>PYTHONDONTWRITEBYTECODE</key>
     <string>1</string>
     <key>CEO_TASK_CODEX_TIMEOUT_SECONDS</key>
-    <string>900</string>
+    <string>7200</string>
     <key>CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS</key>
     <string>300</string>
     <!-- WeChat is an explicitly enabled local channel in the deployed CEO

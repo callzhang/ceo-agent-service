@@ -37,6 +37,14 @@ def run_process_with_idle_timeout(
     stderr_chunks: list[bytes] = []
     stdout_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     stdout_line_buffer = ""
+    progress_count = 0
+
+    def emit_progress_line(line: str) -> None:
+        nonlocal progress_count
+        assert on_stdout_line is not None
+        on_stdout_line(line)
+        progress_count += 1
+
     process = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
@@ -88,12 +96,19 @@ def run_process_with_idle_timeout(
                 if chunk:
                     key.data.append(chunk)
                     if on_stdout_line is not None and key.data is stdout_chunks:
+                        previous_progress_count = progress_count
                         decoded = stdout_decoder.decode(chunk)
                         stdout_line_buffer = _emit_stdout_lines(
                             stdout_line_buffer + decoded,
-                            on_stdout_line,
+                            emit_progress_line,
                         )
-                    last_output_at = time.monotonic()
+                        if progress_count != previous_progress_count:
+                            # A streamed provider line is the liveness signal for
+                            # Agent turns. stderr and partial stdout are transport
+                            # activity, but do not prove useful work progressed.
+                            last_output_at = time.monotonic()
+                    elif on_stdout_line is None:
+                        last_output_at = time.monotonic()
                 else:
                     selector.unregister(key.fileobj)
             if process.poll() is not None:
