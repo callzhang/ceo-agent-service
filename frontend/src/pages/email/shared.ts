@@ -12,6 +12,14 @@ export function measured(value: unknown, unit = "%") {
   return unit === "%" ? (value * 100).toFixed(1) + "%" : value.toFixed(1) + unit;
 }
 export function errorMessage(reason: unknown) {return reason instanceof Error ? reason.message : "请求失败，请重试";}
+/** Page numbers to show: the first, the last and the ones around the current page; 0 stands for a gap. */
+export function pageWindow(current:number,last:number) {
+  const wanted=new Set([1,last,current-1,current,current+1].filter(value=>value>=1&&value<=last));
+  const pages=[...wanted].sort((a,b)=>a-b);
+  const out:number[]=[];
+  pages.forEach((value,index)=>{if(index>0&&value-pages[index-1]>1)out.push(0);out.push(value);});
+  return out;
+}
 export function sourceLabel(value:string) {
   return ({agent:"Agent 分类",model:"模型分类",user:"人工确认",provider:"邮箱观察"} as Record<string,string>)[value] || value || "来源未提供";
 }

@@ -30,6 +30,7 @@ import {
   localTime,
   measured,
   modeLabel,
+  pageWindow,
   reasonLabel,
   statusLabel,
 } from "./shared";
@@ -98,6 +99,7 @@ export function ModelTraining({
   const [retry, setRetry] = useState(0);
   const [familyFilter, setFamilyFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [modelPage, setModelPage] = useState(1);
   const lock = useRef(false);
   const requestId = useRef("");
   const poll = useRef<number | undefined>(undefined);
@@ -146,6 +148,13 @@ export function ModelTraining({
         (item.model.model_family || "未提供") === familyFilter) &&
       (statusFilter === "all" || item.model.status === statusFilter),
   );
+  const MODEL_PAGE_SIZE = 20;
+  const modelPageCount = Math.max(1, Math.ceil(visibleVersions.length / MODEL_PAGE_SIZE));
+  const currentModelPage = Math.min(modelPage, modelPageCount);
+  const pagedVersions = visibleVersions.slice(
+    (currentModelPage - 1) * MODEL_PAGE_SIZE,
+    currentModelPage * MODEL_PAGE_SIZE,
+  );
   const trainingLock = useRef(false);
   const polling = useRef(false);
   function stopPolling() {
@@ -173,6 +182,7 @@ export function ModelTraining({
     void pollTraining(runId);
     poll.current = window.setInterval(() => void pollTraining(runId), 5000);
   }
+  useEffect(() => setModelPage(1), [familyFilter, statusFilter]);
   useEffect(() => () => stopPolling(), []);
   useEffect(() => {
     // A run started before this page was opened is still worth following: the
@@ -500,6 +510,30 @@ export function ModelTraining({
             </label>
           </div>
         </header>
+        {visibleVersions.length > MODEL_PAGE_SIZE && (
+          <nav className="email-list-toolbar" aria-label="模型版本分页">
+            <span className="email-pager" role="group" aria-label="页码">
+              {pageWindow(currentModelPage, modelPageCount).map((entry, index) =>
+                entry === 0 ? (
+                  <span key={"gap" + index} className="email-pager-gap" aria-hidden="true">…</span>
+                ) : (
+                  <button
+                    key={entry}
+                    type="button"
+                    className={`email-pager-page${entry === currentModelPage ? " is-current" : ""}`}
+                    aria-label={`第 ${entry} 页`}
+                    aria-current={entry === currentModelPage ? "page" : undefined}
+                    disabled={entry === currentModelPage}
+                    onClick={() => setModelPage(entry)}
+                  >
+                    {entry}
+                  </button>
+                ),
+              )}
+            </span>
+            <span className="email-total">· 共 {visibleVersions.length} 个版本</span>
+          </nav>
+        )}
         {visibleVersions.length ? (
           <div className="responsive-table-wrap">
             <table
@@ -520,7 +554,7 @@ export function ModelTraining({
                 </tr>
               </thead>
               <tbody>
-                {visibleVersions.map((item) => (
+                {pagedVersions.map((item) => (
                   <tr key={item.model.model_id}>
                     <td title={item.model.model_id}>
                       {shortModelId(item.model.model_id)}

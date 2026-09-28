@@ -4,7 +4,7 @@ import { Flag, Star } from "lucide-react";
 import { confirmEmailClassification, getEmailClassification, listEmailClassifications, markEmailRead, setEmailProviderSignal, type EmailCategoryConfig, type EmailClassificationDetail, type EmailClassificationItem, type EmailClassificationStatus, type EmailProviderClassification } from "../../api/console";
 import { EmailReadingPanel } from "./EmailReadingPanel";
 import { unsubscribeStateLabel } from "./Evidence";
-import { configurableCategories, errorMessage, localTime, measured, sourceLabel, statusLabel } from "./shared";
+import { configurableCategories, errorMessage, localTime, measured, pageWindow, sourceLabel, statusLabel } from "./shared";
 
 function ShellSelect({children, ...props}: SelectHTMLAttributes<HTMLSelectElement>) {
   return <span className="filter-select email-select"><span className="filter-control-shell"><select {...props}>{children}</select></span></span>;
@@ -14,14 +14,6 @@ const ACTION_FILTERS=[{value:"failed",text:"邮箱动作失败（全部）"},{va
 const SOURCE_FILTERS=[{value:"model",text:"模型分类"},{value:"agent",text:"Agent 分类"},{value:"user",text:"人工确认"}];
 
 /** Page numbers to show: the first, the last and the ones around the current page; 0 stands for a gap. */
-function pageWindow(current:number,last:number) {
-  const wanted=new Set([1,last,current-1,current,current+1].filter(value=>value>=1&&value<=last));
-  const pages=[...wanted].sort((a,b)=>a-b);
-  const out:number[]=[];
-  pages.forEach((value,index)=>{if(index>0&&value-pages[index-1]>1)out.push(0);out.push(value);});
-  return out;
-}
-
 function actionBadge(item:EmailClassificationItem) {
   const actions=item.mailbox_actions||[];
   const failed=actions.filter(action=>action.status==="failed");

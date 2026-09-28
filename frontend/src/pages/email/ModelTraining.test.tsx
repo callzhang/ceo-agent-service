@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -811,4 +811,69 @@ it("does not offer others when every category is already selected", () => {
   const thin = [...all, { source: "agent_auto_label", category: "legal", sample_count: 2, unique_trainable_count: 2, provenance: {} }];
   // legal falls under the floor, so its mail trains as others.
   expect(initialTrainingSelection(thin, []).categories).toEqual(["work", "junk", "notification", "others"]);
+});
+
+it("pages the model version table at 20 per page", async () => {
+  const user = userEvent.setup();
+  const many = {
+    ...learning,
+    staged_models: Array.from({ length: 25 }, (_, index) => ({
+      ...learning.staged_models[0],
+      model_id: `candidate-${String(index).padStart(2, "0")}`,
+      trained_at: `2026-09-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+    })),
+  };
+  render(
+    <ModelTraining
+      learning={many}
+      configs={[]}
+      reload={async () => many}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+
+  const table = screen.getByRole("table", { name: "模型版本" });
+  expect(table.querySelectorAll("tbody tr")).toHaveLength(20);
+  // Newest first: page 1 starts at candidate-24 (2026-09-25), the 25th trained.
+  expect(table.querySelector("tbody tr td")).toHaveAttribute("title", "candidate-24");
+  const pager = screen.getByRole("group", { name: "页码" });
+  expect(screen.getByText("· 共 25 个版本")).toBeInTheDocument();
+
+  await user.click(within(pager).getByRole("button", { name: "第 2 页" }));
+
+  expect(table.querySelectorAll("tbody tr")).toHaveLength(5);
+  expect(table.querySelector("tbody tr td")).toHaveAttribute("title", "candidate-04");
+});
+
+it("resets the model version page to 1 when a filter changes", async () => {
+  const user = userEvent.setup();
+  const many = {
+    ...learning,
+    staged_models: Array.from({ length: 25 }, (_, index) => ({
+      ...learning.staged_models[0],
+      model_id: `candidate-${String(index).padStart(2, "0")}`,
+      model_family: index < 3 ? "linear" : "embedding-mlp",
+      trained_at: `2026-09-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+    })),
+  };
+  render(
+    <ModelTraining
+      learning={many}
+      configs={[]}
+      reload={async () => many}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+  const table = screen.getByRole("table", { name: "模型版本" });
+  await user.click(within(screen.getByRole("group", { name: "页码" })).getByRole("button", { name: "第 2 页" }));
+  expect(table.querySelectorAll("tbody tr")).toHaveLength(5);
+
+  await user.selectOptions(screen.getByLabelText("模型家族筛选"), "linear");
+
+  expect(screen.queryByRole("group", { name: "页码" })).not.toBeInTheDocument();
+  expect(table.querySelectorAll("tbody tr")).toHaveLength(3);
 });
