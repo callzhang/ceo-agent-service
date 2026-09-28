@@ -4392,8 +4392,8 @@ def test_a_failed_action_says_whether_it_will_be_retried() -> None:
     assert outlook(failed(1, "2099-01-01T00:00:00+00:00")) == {
         "retriable": True, "retry_note": "将自动重试（已试 1/3 次）"}
     assert outlook(failed(1, "")) == {"retriable": False, "retry_note": "这个错误不可重试"}
-    assert outlook(failed(3, "", error="provider_read_failed:ImapMessageUnavailable")) == {
-        "retriable": False, "retry_note": "已试 3 次仍失败，不再自动重试"}
+    assert outlook(failed(3, "", error="provider_read_failed:ImapMessageUnavailable"))["retriable"] is True
+    assert outlook(failed(3, "", error="provider_read_failed:ImapMessageUnavailable", action="move"))["retriable"] is True
     # A trash whose message is briefly unreadable keeps being tried after the budget.
     assert outlook(failed(3, "", error="provider_read_failed:ImapMessageUnavailable", action="trash"))["retriable"] is True
 

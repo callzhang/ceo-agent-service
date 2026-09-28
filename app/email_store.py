@@ -1753,7 +1753,10 @@ def _exhausted_direct_action_is_service_transient(row: sqlite3.Row) -> bool:
         # attempt learned nothing about the action and must not end it.
         return True
     return (
-        str(row["action_type"]) == EmailAction.TRASH.value
+        str(row["action_type"]) in {
+            EmailAction.MOVE.value,
+            EmailAction.TRASH.value,
+        }
         and provider_operation == "READ"
         and error == "provider_read_failed:ImapMessageUnavailable"
     )
