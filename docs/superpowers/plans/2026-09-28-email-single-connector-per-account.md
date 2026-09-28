@@ -63,7 +63,7 @@
 
 `ImapReadonlyAdapter`（只读，`email_imap_readonly.py`）和 `ImapDeterministicProvider`（读写，`email_provider_actions.py`）是两个独立实现、各自 `.connect()`，但都接受一个已连接的 `session` 对象初始化——这是新 registry 能直接复用、不用改两个类内部逻辑的原因。
 
-## Task 1：`EmailAccountConnector` / `EmailConnectorRegistry`，先写测试
+## Task 1：`EmailAccountConnector` / `EmailConnectorRegistry`，先写测试 ✅ 已完成 2026-09-28
 
 **Files:** Create `app/email_account_connector.py`, `tests/test_email_account_connector.py`.
 
