@@ -2039,8 +2039,27 @@ def test_run_historical_once_uses_provider_rereads_cached_batch_and_durable_hist
                 updated_locator=updated,
             )
 
+    class FakeConnectorRegistry:
+        def connector_for(self, _account_id):
+            return self
+
+        def checkout(self, _kind, _priority=None, **_kwargs):
+            return object(), Source()
+
+        def checkin(self, _session, *, keep):
+            return None
+
+        @contextmanager
+        def acquire(self, _account_id, _kind, _priority=None, **_kwargs):
+            yield Source()
+
     monkeypatch.setattr(
         module, "_build_email_source_factory", lambda _settings: lambda _account: Source()
+    )
+    monkeypatch.setattr(
+        module,
+        "_build_email_connector_registry",
+        lambda _store: FakeConnectorRegistry(),
     )
     monkeypatch.setattr(module, "_build_agent_orchestrator", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(
@@ -4559,10 +4578,27 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
             source_events.append("logout")
 
     source = Source()
+    checkin_calls = []
+
+    class FakeConnectorRegistry:
+        def connector_for(self, _account_id):
+            return self
+
+        def checkout(self, _kind, _priority=None, **_kwargs):
+            return object(), source
+
+        def checkin(self, _session, *, keep):
+            checkin_calls.append(keep)
+
     monkeypatch.setattr(
         module,
         "_build_email_source_factory",
         lambda _settings: lambda _account: source,
+    )
+    monkeypatch.setattr(
+        module,
+        "_build_email_connector_registry",
+        lambda _store: FakeConnectorRegistry(),
     )
     execution_calls = []
     sentinel_result = object()
@@ -4610,7 +4646,10 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
         locator,
         entry.reference,
     ) == (entry,)
-    assert source_events == [("fetch", "INBOX", 42, 6, 2), "logout"]
+    # The connector-backed source checks its connection back in (discarded)
+    # rather than really logging out -- see _ConnectorBackedSource.
+    assert source_events == [("fetch", "INBOX", 42, 6, 2)]
+    assert checkin_calls == [False]
     assert execution_calls == []
 
     effect = SimpleNamespace(
@@ -4710,10 +4749,25 @@ def test_execution_resolves_selected_candidate_before_executing(
         def logout(self):
             return None
 
+    class FakeConnectorRegistry:
+        def connector_for(self, _account_id):
+            return self
+
+        def checkout(self, _kind, _priority=None, **_kwargs):
+            return object(), Source()
+
+        def checkin(self, _session, *, keep):
+            return None
+
     monkeypatch.setattr(
         module,
         "_build_email_source_factory",
         lambda _settings: lambda _account: Source(),
+    )
+    monkeypatch.setattr(
+        module,
+        "_build_email_connector_registry",
+        lambda _store: FakeConnectorRegistry(),
     )
     operation = module.build_audited_email_unsubscribe_operation(
         SimpleNamespace(db_path=tmp_path / "multi-origin.sqlite3", workspace=tmp_path)
@@ -4790,10 +4844,25 @@ def test_audited_unsubscribe_resolves_html_only_provider_entry_in_memory(
         def logout(self):
             return None
 
+    class FakeConnectorRegistry:
+        def connector_for(self, _account_id):
+            return self
+
+        def checkout(self, _kind, _priority=None, **_kwargs):
+            return object(), Source()
+
+        def checkin(self, _session, *, keep):
+            return None
+
     monkeypatch.setattr(
         module,
         "_build_email_source_factory",
         lambda _settings: lambda _account: Source(),
+    )
+    monkeypatch.setattr(
+        module,
+        "_build_email_connector_registry",
+        lambda _store: FakeConnectorRegistry(),
     )
     settings = SimpleNamespace(
         db_path=tmp_path / "email-worker.sqlite3",
@@ -5118,6 +5187,22 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
     ).run
     monkeypatch.setattr(
         module, "_build_email_source_factory", lambda _settings: source_factory
+    )
+
+    class FakeConnectorRegistry:
+        def connector_for(self, _account_id):
+            return self
+
+        def checkout(self, _kind, _priority=None, **_kwargs):
+            return object(), source_factory(None)
+
+        def checkin(self, _session, *, keep):
+            return None
+
+    monkeypatch.setattr(
+        module,
+        "_build_email_connector_registry",
+        lambda _store: FakeConnectorRegistry(),
     )
     execution_calls = []
 

@@ -3490,12 +3490,25 @@ def build_email_worker_dependencies(
     classification_task_producer = EmailClassificationTaskProducer(email_store)
     action_task_producer = EmailActionTaskProducer(task_store, email_store)
     classification_task_producer.adapter.recover_running_tasks()
-    source_factory = _build_email_source_factory(settings)
     # One shared IMAP connection per account for every in-process subsystem
-    # (see app/email_account_connector.py) -- built once here so scan,
-    # training observation and direct-action delivery all queue for the
-    # same connector per account instead of each dialing their own.
+    # (see app/email_account_connector.py) -- built once here so every
+    # caller below queues for the same connector per account instead of
+    # each dialing their own (Derek, 2026-09-28: "邮箱的链接只能通用一个
+    # connector，不能自己建多个通道", after a py-spy dump caught two
+    # threads holding separate live sockets to the same Gmail account).
     email_connector_registry = _build_email_connector_registry(email_store)
+    from app.email_account_connector import ConnectorPriority as _ConnectorPriority
+
+    # HIGH: anything the owner is waiting on directly (classification
+    # readback, OTP, Agent task context). LOW: background/bulk (historical
+    # batches, model-action repair) -- see run_historical_once and
+    # load_model_action_repair_message below for their own LOW factory.
+    source_factory = _build_registry_source_factory(
+        email_connector_registry, _ConnectorPriority.HIGH
+    )
+    low_priority_source_factory = _build_registry_source_factory(
+        email_connector_registry, _ConnectorPriority.LOW
+    )
     model_root = Path(settings.db_path).parent / "email-models"
     registry = EmailModelRegistry(model_root)
     description_optimizer = DescriptionOptimizationOrchestrator(
@@ -3797,7 +3810,7 @@ def build_email_worker_dependencies(
                         sorted({str(item["config_version"]) for item in configs})
                     ),
                 )
-                source = source_factory(account)
+                source = low_priority_source_factory(account)
                 try:
                     inventory = tuple(source.list_folders())
                     for folder_name in account["scan_folders"]:
@@ -3849,14 +3862,14 @@ def build_email_worker_dependencies(
                         def read_state(candidate):
                             return _reread_historical_candidate_state(
                                 email_store,
-                                source_factory,
+                                low_priority_source_factory,
                                 account,
                                 candidate,
                             )
 
                         def execute(candidate, prediction):
                             message = _reread_historical_candidate_message(
-                                source_factory, account, candidate
+                                low_priority_source_factory, account, candidate
                             )
                             from app.email_unsubscribe import extract_unsubscribe_entries
                             from app.email_imap_readonly import ephemeral_body_html
@@ -3887,7 +3900,7 @@ def build_email_worker_dependencies(
                                 unsubscribe_entries=entries,
                                 read_after=lambda: _read_persisted_historical_state(
                                     email_store,
-                                    source_factory,
+                                    low_priority_source_factory,
                                     account,
                                     candidate.stable_message_identity,
                                 ),
@@ -3928,7 +3941,7 @@ def build_email_worker_dependencies(
                                 )
                                 continue
                             current_message = _reread_historical_candidate_message(
-                                source_factory, account, candidate
+                                low_priority_source_factory, account, candidate
                             )
                             from app.email_classifier_model import email_message_to_text
 
@@ -4053,7 +4066,7 @@ def build_email_worker_dependencies(
             account = email_store.get_account(str(classification["account_id"]))
             if not isinstance(account, Mapping):
                 return None
-            source = source_factory(account)
+            source = low_priority_source_factory(account)
             try:
                 uid = int(classification["uid"])
                 uidvalidity = int(classification["uidvalidity"])
@@ -4094,7 +4107,7 @@ def build_email_worker_dependencies(
                     return _missing_historical_state("")
                 return _read_persisted_historical_state(
                     email_store,
-                    source_factory,
+                    low_priority_source_factory,
                     account,
                     str(operation["stable_message_identity"]),
                 )
@@ -4206,16 +4219,16 @@ def _active_description_set_version(email_store: object) -> str:
     )
 
 
-class _ConnectorBackedTrainingSource:
+class _ConnectorBackedSource:
     """A `source_factory(account)` result that checks its connection back
     in on close, instead of really logging out.
 
-    `ProviderTrainingObservationJob` (app/email_training_observer.py) always
-    calls `source.logout()`/`.close()` exactly once, unconditionally, in a
-    `finally` -- it never reuses a source across calls. That is also today's
-    connector contract for a checked-out session that will not be kept
-    (`checkin(keep=False)`), so this proxy lets the job's existing lifecycle
-    drive the connector without changing that module at all.
+    Every `source_factory(account)` caller in this module already follows
+    the same convention: take one, use it, close exactly once in a
+    `finally`, never reuse across calls. That is also today's connector
+    contract for a checked-out session that will not be kept
+    (`checkin(keep=False)`), so this proxy lets each caller's existing
+    lifecycle drive the connector without changing any of those call sites.
     """
 
     def __init__(self, connector: object, session: object, wrapped: object) -> None:
@@ -4239,6 +4252,27 @@ class _ConnectorBackedTrainingSource:
         self._checkin()
 
 
+def _build_registry_source_factory(registry: object, priority: object):
+    """A `source_factory(account)` that checks out from the shared registry.
+
+    The returned source's `.logout()`/`.close()` checks the connection back
+    in (discarded, never kept) instead of really logging out -- see
+    `_ConnectorBackedSource`.
+    """
+
+    def source_factory(account: Mapping[str, object]):
+        account_id = str(account["account_id"])
+        connector = registry.connector_for(account_id)
+        session, wrapped = connector.checkout(
+            "readonly",
+            priority,
+            mailbox_address=str(account.get("email_address") or ""),
+        )
+        return _ConnectorBackedSource(connector, session, wrapped)
+
+    return source_factory
+
+
 def _build_training_observation_source_factory(registry: object):
     """`source_factory` for `ProviderTrainingObservationJob`, LOW priority.
 
@@ -4251,17 +4285,7 @@ def _build_training_observation_source_factory(registry: object):
 
     from app.email_account_connector import ConnectorPriority
 
-    def source_factory(account: Mapping[str, object]):
-        account_id = str(account["account_id"])
-        connector = registry.connector_for(account_id)
-        session, wrapped = connector.checkout(
-            "readonly",
-            ConnectorPriority.LOW,
-            mailbox_address=str(account.get("email_address") or ""),
-        )
-        return _ConnectorBackedTrainingSource(connector, session, wrapped)
-
-    return source_factory
+    return _build_registry_source_factory(registry, ConnectorPriority.LOW)
 
 
 def _build_email_connector_registry(email_store: object):
@@ -4392,9 +4416,18 @@ def _build_email_unsubscribe_context(settings: object) -> SimpleNamespace:
     from app.email_imap_readonly import ephemeral_body_html
     from app.store import AutoReplyStore
 
+    from app.email_account_connector import ConnectorPriority
+
     email_store = EmailStore(Path(settings.db_path))
     task_store = AutoReplyStore(Path(settings.db_path))
-    source_factory = _build_email_source_factory(settings)
+    # This process runs one unsubscribe task at a time (see
+    # app/email_account_connector.py), so this registry only ever needs to
+    # serialize this task against itself -- but it still routes through the
+    # same connector so a stray concurrent call never opens a second
+    # connection to the account this task is already using.
+    source_factory = _build_registry_source_factory(
+        _build_email_connector_registry(email_store), ConnectorPriority.HIGH
+    )
     browser_profile = EmailBrowserProfile(
         Path(settings.db_path).parent / "email-browser-runtime"
     )
