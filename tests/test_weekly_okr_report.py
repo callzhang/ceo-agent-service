@@ -1622,8 +1622,8 @@ def test_weekly_command_bounds_unresponsive_codex_wait(tmp_path, monkeypatch):
 
     weekly_okr_report_module.weekly_okr_report_command(settings, force=True)
 
-    assert captured["agent"].timeout_seconds == 1800
-    assert captured["agent"].idle_timeout_seconds == 1800
+    assert captured["agent"].timeout_seconds == 300
+    assert captured["agent"].idle_timeout_seconds == 300
 
 
 def test_weekly_command_allows_only_one_report_run(tmp_path, monkeypatch):

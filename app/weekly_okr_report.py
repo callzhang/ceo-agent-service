@@ -30,13 +30,12 @@ LATEST_ARCHIVE_RAW_NAME = "latest_company_okr_raw.json"
 DEFAULT_SCHEDULE_HOUR = 18
 DEFAULT_RETRY_SECONDS = 1800
 DEFAULT_RUN_LEASE_SECONDS = 300
-# A complete manager review can require several DWS evidence reads before the
-# structured result is emitted. Keep the process bounded, but do not cut off a
-# valid review at the generic five-minute task limit.
-WEEKLY_OKR_AGENT_MAX_TIMEOUT_SECONDS = 1800
-# The structured Codex CLI emits its result only at completion, so an earlier
-# no-output deadline is not a useful liveness signal for this workload.
-WEEKLY_OKR_AGENT_MAX_IDLE_TIMEOUT_SECONDS = 1800
+# A manager review is one bounded, read-only unit. The structured Codex CLI
+# emits its result only at completion, so the idle deadline is also the hard
+# per-manager liveness boundary. Keeping both at five minutes prevents one
+# provider or model call from holding the whole weekly report for hours.
+WEEKLY_OKR_AGENT_MAX_TIMEOUT_SECONDS = 300
+WEEKLY_OKR_AGENT_MAX_IDLE_TIMEOUT_SECONDS = 300
 WEEKLY_OKR_REPORT_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "weekly_okr_report.schema.json"
 )
