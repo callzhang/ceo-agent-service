@@ -1310,17 +1310,23 @@ def register_email_routes(
         page_size: int = Query(default=20, ge=1, le=100),
         q: str = Query(default="", max_length=500),
         category: str = Query(default="", max_length=512),
-        action_status: str = Query(default="", max_length=16),
+        action_status: str = Query(default="", max_length=20),
         source: str = Query(default="", max_length=16),
     ):
         email_store = require_store()
         search_params = {"q": q.strip()} if q.strip() else {}
-        if action_status and action_status not in {"failed", "pending", "done", "skipped", "none"}:
+        if action_status and action_status not in {
+            "failed", "failed_retriable", "failed_not_retriable",
+            "pending", "done", "skipped", "none",
+        }:
             return JSONResponse(
                 {
                     "ok": False,
                     "code": "invalid_email_filter",
-                    "message": "action_status must be failed, pending, done, skipped or none",
+                    "message": (
+                        "action_status must be failed, failed_retriable, "
+                        "failed_not_retriable, pending, done, skipped or none"
+                    ),
                     "details": {},
                 },
                 status_code=400,

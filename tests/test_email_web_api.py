@@ -205,7 +205,7 @@ def test_processing_progress_reports_exact_queue_counts_and_scan_cursors(tmp_pat
 
     assert payload["ok"] is True
     assert payload["waiting_for_owner"] == 1
-    assert payload["provider_actions"] == {"done": 0, "pending": 0, "processing": 0, "failed": 0, "skipped": 0}
+    assert payload["provider_actions"] == {"done": 0, "pending": 0, "processing": 0, "failed": 0, "skipped": 0, "failed_retriable": 0, "failed_not_retriable": 0}
     assert payload["classification_queue"] == {"pending": 0, "processing": 0}
     assert payload["unsubscribe_queue"] == {"pending": 0, "processing": 0}
     assert payload["throughput"] == {"window_minutes": 30, "finished": 0, "per_minute": 0.0, "median_seconds": None}
@@ -231,6 +231,33 @@ def test_processing_progress_counts_a_failed_action_the_way_the_list_filter_does
     listed = client.get("/api/console/email/classifications?status=pending_feedback&action_status=failed").json()
 
     assert progress["provider_actions"]["failed"] == 1 == listed["meta"]["total"]
+    # Exhausted with no service-transient reason recognized: not retriable.
+    assert progress["provider_actions"]["failed_not_retriable"] == 1
+    assert progress["provider_actions"]["failed_retriable"] == 0
+
+
+def test_processing_progress_and_the_list_filter_split_failed_actions_by_whether_they_retry(tmp_path: Path):
+    client, store, identity = _signal_client(tmp_path, _FakeSignalProvider(set()))
+    with sqlite3.connect(store.path) as db:
+        db.execute("update email_classifications set current_action_plan_id='plan-1' where id=?", (identity,))
+        db.execute(
+            "insert into email_actions (action_id, action_plan_id, classification_id, account_id,"
+            " action_type, parameters_json, config_version, status, attempt_count, next_attempt_at,"
+            " error, created_at, updated_at) values ('a1','plan-1',?,'account-1','move','{}','v1',"
+            "'failed',1,'2099-01-01T00:00:00+00:00','provider_read_failed:ImapConnectionError',"
+            "'2020-01-01T00:00:00+00:00','2020-01-01T00:00:00+00:00')",
+            (identity,),
+        )
+
+    progress = client.get("/api/console/email/processing-progress").json()
+    retriable = client.get("/api/console/email/classifications?status=pending_feedback&action_status=failed_retriable").json()
+    not_retriable = client.get("/api/console/email/classifications?status=pending_feedback&action_status=failed_not_retriable").json()
+
+    assert progress["provider_actions"]["failed"] == 1
+    assert progress["provider_actions"]["failed_retriable"] == 1
+    assert progress["provider_actions"]["failed_not_retriable"] == 0
+    assert retriable["meta"]["total"] == 1
+    assert not_retriable["meta"]["total"] == 0
 
 
 def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path):

@@ -1712,6 +1712,29 @@ def _direct_action_failed_retryable(row: sqlite3.Row, *, claimed_at: str) -> boo
     return retry_at.isoformat(timespec="seconds") <= claimed_at
 
 
+def _failed_action_retriable_sql(alias: str) -> str:
+    """The boolean SQL twin of `_direct_action_retry_outlook`'s verdict.
+
+    Both read the same four columns of a failed `email_actions` row and must
+    agree: this one lets the list and the progress counts filter and split by
+    it, the Python one explains a single row in the console.
+    """
+
+    return (
+        f"(({alias}.attempt_count < {DIRECT_ACTION_MAX_ATTEMPTS}"
+        f" AND {alias}.next_attempt_at != '')"
+        f" OR ({alias}.attempt_count >= {DIRECT_ACTION_MAX_ATTEMPTS}"
+        f" AND (("
+        f"{alias}.provider_operation='provider_factory'"
+        f" AND {alias}.error LIKE 'provider_factory_failed:%')"
+        f" OR ({alias}.provider_operation='startup_recovery'"
+        f" AND {alias}.error='stale_processing_recovered')"
+        f" OR ({alias}.action_type='trash' AND {alias}.provider_operation='READ'"
+        f" AND {alias}.error='provider_read_failed:ImapMessageUnavailable')"
+        f")))"
+    )
+
+
 def _direct_action_retry_outlook(row: sqlite3.Row) -> dict[str, object]:
     """Whether a failed direct action will be tried again, and why or why not.
 
@@ -12815,6 +12838,19 @@ class EmailStore:
                     " where filter_action.classification_id=classifications.id"
                     " and filter_action.action_plan_id=classifications.current_action_plan_id)"
                 )
+            elif wanted in ("failed_retriable", "failed_not_retriable"):
+                # Same failed rows the plain "failed" filter lists, split by
+                # whether the worker will try this action again.
+                retriable_sql = _failed_action_retriable_sql("filter_action")
+                if wanted == "failed_not_retriable":
+                    retriable_sql = f"not {retriable_sql}"
+                clauses.append(
+                    " and exists (select 1 from email_actions as filter_action"
+                    " where filter_action.classification_id=classifications.id"
+                    " and filter_action.action_plan_id=classifications.current_action_plan_id"
+                    " and filter_action.status='failed'"
+                    f" and {retriable_sql})"
+                )
             else:
                 statuses = cls._ACTION_STATUS_FILTERS.get(wanted)
                 if statuses is None:
@@ -14585,6 +14621,21 @@ class EmailStore:
                     "and failed_action.status='failed')"
                 ).fetchone()[0]
             )
+            # Split the same failed mail by whether the worker will try it
+            # again, so the bar can point at what still needs a person.
+            actions["failed_retriable"] = int(
+                db.execute(
+                    "select count(*) from email_classifications as classifications "
+                    "where exists (select 1 from email_actions as failed_action "
+                    "where failed_action.classification_id=classifications.id "
+                    "and failed_action.action_plan_id="
+                    "classifications.current_action_plan_id "
+                    "and failed_action.status='failed' and "
+                    + _failed_action_retriable_sql("failed_action")
+                    + ")"
+                ).fetchone()[0]
+            )
+            actions["failed_not_retriable"] = actions["failed"] - actions["failed_retriable"]
             classification_queue = {
                 str(row["status"]): int(row["n"])
                 for row in db.execute(
@@ -14638,7 +14689,10 @@ class EmailStore:
             "throughput": self._provider_action_throughput(now=now),
             "provider_actions": {
                 key: actions.get(key, 0)
-                for key in ("done", "pending", "processing", "failed", "skipped")
+                for key in (
+                    "done", "pending", "processing", "failed", "skipped",
+                    "failed_retriable", "failed_not_retriable",
+                )
             },
             "classification_queue": {
                 key: classification_queue.get(key, 0)

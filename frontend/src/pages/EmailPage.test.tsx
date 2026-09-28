@@ -6,7 +6,7 @@ import type { EmailClassificationListParams } from "../api/console";
 const api = vi.hoisted(() => Object.fromEntries(["listEmailClassifications", "confirmEmailClassification", "listEmailConfigs", "saveEmailConfig", "createEmailCategory", "listEmailLearning", "requestEmailTraining", "previewEmailTraining", "getEmailClassification", "getEmailUnsubscribeEntryUrl", "setEmailProviderSignal", "getEmailProcessingProgress", "getEmailModelVersion", "saveEmailRuntimeMode", "saveEmailPromotionConfig", "listEmailCategoryHistory", "markEmailRead"].map(key => [key, vi.fn()])));
 vi.mock("../api/console", async importOriginal => ({ ...await importOriginal<object>(), ...api }));
 import { EmailPage } from "./EmailPage";
-const idleProgress = { window_hours: 24, throughput: {window_minutes: 30, finished: 0, per_minute: 0, median_seconds: null}, provider_actions: {done: 0, pending: 0, processing: 0, failed: 0, skipped: 0}, classification_queue: {pending: 0, processing: 0}, unsubscribe_queue: {pending: 0, processing: 0}, waiting_for_owner: 0, scans: [] };
+const idleProgress = { window_hours: 24, throughput: {window_minutes: 30, finished: 0, per_minute: 0, median_seconds: null}, provider_actions: {done: 0, pending: 0, processing: 0, failed: 0, skipped: 0, failed_retriable: 0, failed_not_retriable: 0}, classification_queue: {pending: 0, processing: 0}, unsubscribe_queue: {pending: 0, processing: 0}, waiting_for_owner: 0, scans: [] };
 const config = { category_key: "work", display_name: "工作", core_description: "工作定义", include: ["项目"], exclude: ["私人"], threshold: .9, actions: ["move"], action_parameters: {}, enabled: true, config_version: "c1", description_version: "d1", updated_at: "", bindings: [] };
 const row = (id: string, status = "pending_feedback") => ({ id, sender: "sender@example.com", subject: "邮件" + id, preview: "生成的摘要不应出现在列表", message_text: "原始邮件正文前段 " + id, category: "work", confidence: .7, margin: .2, probabilities: {work:.7}, status, classification_source: "agent", model_version: "model-full-v1", config_version: "c1", attachment_metadata: [], action_plan: {}, current_action_plan_id: null, received_at: "", updated_at: "" });
 const runtime = {mode:"agent_primary", active_model_id:null, candidate_model_id:"model-v2", candidate_ready:true, toggle_enabled:true};
@@ -402,7 +402,7 @@ it("selects the whole page at once",async()=>{
   expect(screen.queryByRole("group",{name:"批量标注"})).not.toBeInTheDocument();
 });
 it("shows how far mail processing has got, above the tabs",async()=>{
-  api.getEmailProcessingProgress.mockResolvedValue({window_hours:24,throughput:{window_minutes:30,finished:90,per_minute:3,median_seconds:9},provider_actions:{done:1249,pending:478,processing:1,failed:252,skipped:1},classification_queue:{pending:2,processing:0},unsubscribe_queue:{pending:0,processing:1},waiting_for_owner:141,scans:[{account:"DingTalk 企业邮箱",folder:"INBOX",last_seen_uid:32909,last_success_at:"2026-09-25T09:34:24+00:00",last_error:""},{account:"Gmail",folder:"INBOX",last_seen_uid:9,last_success_at:"",last_error:"登录失败"}]});
+  api.getEmailProcessingProgress.mockResolvedValue({window_hours:24,throughput:{window_minutes:30,finished:90,per_minute:3,median_seconds:9},provider_actions:{done:1249,pending:478,processing:1,failed:252,skipped:1,failed_retriable:52,failed_not_retriable:200},classification_queue:{pending:2,processing:0},unsubscribe_queue:{pending:0,processing:1},waiting_for_owner:141,scans:[{account:"DingTalk 企业邮箱",folder:"INBOX",last_seen_uid:32909,last_success_at:"2026-09-25T09:34:24+00:00",last_error:""},{account:"Gmail",folder:"INBOX",last_seen_uid:9,last_success_at:"",last_error:"登录失败"}]});
   show("/email?tab=all");
   const progress=await screen.findByRole("region",{name:"邮件处理进度"});
   expect(await within(progress).findByText(/邮件处理中 · 还有 482 项在排队/)).toBeInTheDocument();
@@ -410,7 +410,8 @@ it("shows how far mail processing has got, above the tabs",async()=>{
   // End to end: the whole action, connection and read-back included, then the wait it implies.
   expect(progress).toHaveTextContent("端到端 3 项/分钟 · 每项约 9 秒 · 预计还要 2.7 小时");
   expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuenow","63");
-  expect(progress).toHaveTextContent("邮箱动作失败 252");
+  expect(progress).toHaveTextContent("邮箱动作失败，不会重试 200");
+  expect(progress).toHaveTextContent("邮箱动作失败，会重试 52");
   expect(progress).toHaveTextContent("Agent 分类排队 2");
   expect(progress).toHaveTextContent("退订任务排队 1");
   expect(progress).toHaveTextContent("待你确认 141");
@@ -659,11 +660,13 @@ it("shows the mailbox actions of a message in its detail, with whether a failed 
   const line=await screen.findByLabelText("邮箱动作");
   expect(line).toHaveTextContent("移动 失败，不会重试：provider_read_failed:ImapMessageUnavailable（已试 3 次仍失败，不再自动重试）；标已读 待执行");
 });
-it("links the failed action count to the filtered list",async()=>{
-  api.getEmailProcessingProgress.mockResolvedValue({window_hours:24,throughput:{window_minutes:30,finished:0,per_minute:0,median_seconds:null},provider_actions:{done:1,pending:0,processing:0,failed:32,skipped:0},classification_queue:{pending:0,processing:0},unsubscribe_queue:{pending:0,processing:0},waiting_for_owner:0,scans:[]});
+it("links each half of the failed action count to its own filter",async()=>{
+  api.getEmailProcessingProgress.mockResolvedValue({window_hours:24,throughput:{window_minutes:30,finished:0,per_minute:0,median_seconds:null},provider_actions:{done:1,pending:0,processing:0,failed:32,skipped:0,failed_retriable:5,failed_not_retriable:27},classification_queue:{pending:0,processing:0},unsubscribe_queue:{pending:0,processing:0},waiting_for_owner:0,scans:[]});
   show("/email?tab=all");
-  const link=await screen.findByRole("link",{name:/邮箱动作失败 32/});
-  expect(link).toHaveAttribute("href","/email?tab=all&action_status=failed");
+  const notRetriable=await screen.findByRole("link",{name:/邮箱动作失败，不会重试 27/});
+  expect(notRetriable).toHaveAttribute("href","/email?tab=all&action_status=failed_not_retriable");
+  const retriable=await screen.findByRole("link",{name:/邮箱动作失败，会重试 5/});
+  expect(retriable).toHaveAttribute("href","/email?tab=all&action_status=failed_retriable");
 });
 
 it("pages with numbers: the first, the neighbours of the current page and the last, with a gap between",async()=>{

@@ -74,7 +74,8 @@ export function EmailProcessingProgress() {
     <div className="email-progress-track" role="progressbar" aria-label="邮箱动作完成比例" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{width: `${percent}%`}}/></div>
     <div className="email-progress-counts">
       {actions.pending + actions.processing > 0 && <span>邮箱动作待执行 {actions.pending + actions.processing}</span>}
-      {actions.failed > 0 && <Link className="email-progress-warning" to="/email?tab=all&action_status=failed" title="在「全部」列表里查看失败的邮件和原因">邮箱动作失败 {actions.failed}</Link>}
+      {actions.failed_not_retriable > 0 && <Link className="email-progress-warning" to="/email?tab=all&action_status=failed_not_retriable" title="在「全部」列表里查看失败且不会自动重试的邮件和原因">邮箱动作失败，不会重试 {actions.failed_not_retriable}</Link>}
+      {actions.failed_retriable > 0 && <Link to="/email?tab=all&action_status=failed_retriable" title="在「全部」列表里查看失败但还会自动重试的邮件和原因">邮箱动作失败，会重试 {actions.failed_retriable}</Link>}
       {data.classification_queue.pending + data.classification_queue.processing > 0 && <span>Agent 分类排队 {data.classification_queue.pending + data.classification_queue.processing}</span>}
       {data.unsubscribe_queue.pending + data.unsubscribe_queue.processing > 0 && <span>退订任务排队 {data.unsubscribe_queue.pending + data.unsubscribe_queue.processing}</span>}
       <span>待你确认 {data.waiting_for_owner}</span>

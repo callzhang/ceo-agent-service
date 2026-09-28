@@ -10,7 +10,7 @@ function ShellSelect({children, ...props}: SelectHTMLAttributes<HTMLSelectElemen
   return <span className="filter-select email-select"><span className="filter-control-shell"><select {...props}>{children}</select></span></span>;
 }
 
-const ACTION_FILTERS=[{value:"failed",text:"邮箱动作失败"},{value:"pending",text:"邮箱动作待执行"},{value:"done",text:"邮箱动作已完成"},{value:"skipped",text:"邮箱动作已跳过"},{value:"none",text:"无邮箱动作"}];
+const ACTION_FILTERS=[{value:"failed",text:"邮箱动作失败（全部）"},{value:"failed_not_retriable",text:"邮箱动作失败·不会重试"},{value:"failed_retriable",text:"邮箱动作失败·会重试"},{value:"pending",text:"邮箱动作待执行"},{value:"done",text:"邮箱动作已完成"},{value:"skipped",text:"邮箱动作已跳过"},{value:"none",text:"无邮箱动作"}];
 const SOURCE_FILTERS=[{value:"model",text:"模型分类"},{value:"agent",text:"Agent 分类"},{value:"user",text:"人工确认"}];
 
 /** Page numbers to show: the first, the last and the ones around the current page; 0 stands for a gap. */
