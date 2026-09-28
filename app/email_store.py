@@ -1752,13 +1752,18 @@ def _exhausted_direct_action_is_service_transient(row: sqlite3.Row) -> bool:
         # A restart interrupted the claim before the provider answered, so this
         # attempt learned nothing about the action and must not end it.
         return True
+    provider_read_transient = error in {
+        "provider_read_failed:ImapMessageUnavailable",
+    } or error.startswith(
+        "provider_read_failed:imap.uid_lookup_ambiguous:"
+    )
     return (
         str(row["action_type"]) in {
             EmailAction.MOVE.value,
             EmailAction.TRASH.value,
         }
         and provider_operation == "READ"
-        and error == "provider_read_failed:ImapMessageUnavailable"
+        and provider_read_transient
     )
 
 

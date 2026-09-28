@@ -7368,6 +7368,48 @@ def test_exhausted_missing_message_trash_recovers_after_retry_ceiling(
     assert retry.attempt_number == 4
 
 
+def test_exhausted_ambiguous_message_move_recovers_after_retry_ceiling(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "exhausted-ambiguous-message-move.sqlite3")
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.MOVE,),
+            action_parameters={EmailAction.MOVE: {"target_folder": "Legal"}},
+        ),
+    )
+    claim_times = (
+        "2026-09-07T12:00:00+00:00",
+        "2026-09-07T12:01:00+00:00",
+        "2026-09-07T12:03:00+00:00",
+    )
+    for attempt_number, claimed_at in enumerate(claim_times, start=1):
+        move = store.claim_next_direct_action(claimed_at=claimed_at)
+        assert move is not None
+        assert move.action_type is EmailAction.MOVE
+        assert move.attempt_number == attempt_number
+        store.complete_direct_action_attempt(
+            move,
+            status="failed",
+            provider_operation="READ",
+            provider_target=move.locator.stable_message_identity,
+            provider_result_id="",
+            error=(
+                "provider_read_failed:imap.uid_lookup_ambiguous:"
+                "message lookup was ambiguous"
+            ),
+            finished_at=claimed_at,
+        )
+
+    retry = store.claim_next_direct_action(claimed_at="2026-09-08T12:00:00+00:00")
+
+    assert retry is not None
+    assert retry.action_type is EmailAction.MOVE
+    assert retry.attempt_number == 4
+
+
 def test_retry_exhausted_provider_apply_move_blocks_important_flag_claim(
     tmp_path: Path,
 ):
