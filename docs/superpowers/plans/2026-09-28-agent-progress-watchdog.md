@@ -38,6 +38,6 @@
 - No additional source files.
 
 - [x] **Step 1: Run `pytest -q tests/test_process_runner.py tests/test_hourly_dry_run_launchd.py tests/test_agent_orchestrator.py::test_an_audit_that_keeps_reporting_one_failure_stops_after_the_bound`.
-- [ ] **Step 2: Commit only the claimed files with message `fix(runtime): use progress watchdog for long agent turns`.
-- [ ] **Step 3: Run `python -m app.deploy`.
-- [ ] **Step 4: Read back launchd environment, PID, `/healthz`, runtime skill load, pending queues, and the latest weekly-report scheduled runs.
+- [x] **Step 2: Commit only the claimed files with message `fix(runtime): use progress watchdog for long agent turns`.
+- [x] **Step 3: Run `python -m app.deploy`, then install the updated launchd template so the 7200-second emergency ceiling is live.
+- [x] **Step 4: Read back launchd environment, PID, `/healthz`, runtime skill load, pending queues, and the latest weekly-report scheduled runs.
