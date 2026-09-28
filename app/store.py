@@ -6504,6 +6504,33 @@ class AutoReplyStore:
             ).fetchall()
             return tuple(self._scheduled_task_from_row(db, row) for row in rows)
 
+    def scheduled_task_ids_for_reply_tasks(
+        self, reply_task_ids: tuple[int, ...]
+    ) -> dict[int, int]:
+        """Map a reply task id to the scheduled task that queued it, if any.
+
+        Derek, 2026-09-27: a queue row for a scheduled task's own reply task
+        had nowhere to link while it was still running (no Attempt exists
+        yet), so History sent it to the generic Status page. It belongs on
+        that scheduled task's own run history instead.
+        """
+        if not reply_task_ids:
+            return {}
+        placeholders = ",".join("?" for _ in reply_task_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select execution_id, scheduled_task_id
+                from scheduled_task_runs
+                where execution_kind='reply_task' and execution_id in ({placeholders})
+                order by id
+                """,
+                reply_task_ids,
+            ).fetchall()
+        # A reply task is queued by at most one scheduled task run; keep the
+        # latest if a stale row is ever reused.
+        return {int(row["execution_id"]): int(row["scheduled_task_id"]) for row in rows}
+
     @staticmethod
     def _business_task_signal_from_row(row: sqlite3.Row) -> BusinessTaskSignal:
         return BusinessTaskSignal.model_validate(dict(row))
@@ -14574,6 +14601,7 @@ class AutoReplyStore:
         """
         retryable_errors = (
             "email_unsubscribe_browser_failed:%",
+            "email_unsubscribe_browser_timeout",
             "unsubscribe_operation_rejected:%",
         )
         with self._immediate_write_transaction() as db:
@@ -14583,7 +14611,7 @@ class AutoReplyStore:
                 from reply_tasks as tasks
                 where tasks.channel='email'
                   and tasks.status='failed'
-                  and (tasks.error like ? or tasks.error like ?)
+                  and (tasks.error like ? or tasks.error=? or tasks.error like ?)
                   and json_valid(tasks.trigger_message_json)
                   and json_extract(tasks.trigger_message_json, '$.schema')='email_agent_action.v1'
                   and json_extract(tasks.trigger_message_json, '$.action_type')='unsubscribe'
@@ -14599,7 +14627,7 @@ class AutoReplyStore:
                   and not exists (select 1 from email_unsubscribe_steps where action_identity=tasks.trigger_message_id)
                 order by tasks.id
                 """,
-                retryable_errors,
+                (retryable_errors[0], retryable_errors[1], retryable_errors[2]),
             ).fetchall()
             recovered: list[int] = []
             for row in rows:
