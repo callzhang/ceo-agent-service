@@ -1170,6 +1170,11 @@ def test_codex_agent_parent_lease_covers_turn_and_validation_retry(tmp_path):
     assert agent._job_lease_seconds == 900
 
 
+def test_weekly_okr_keeps_two_hour_emergency_cap_and_five_minute_watchdog():
+    assert weekly_okr_report_module.WEEKLY_OKR_AGENT_MAX_TIMEOUT_SECONDS == 7200
+    assert weekly_okr_report_module.WEEKLY_OKR_AGENT_MAX_IDLE_TIMEOUT_SECONDS == 300
+
+
 def test_kr_binding_uses_live_order_when_model_paraphrases_all_titles():
     review = ManagerReportAnalysis.model_construct(
         name="甲",
@@ -1676,7 +1681,7 @@ def test_weekly_command_inherits_scheduled_parent_execution_mode(
         assert gateway.sent
 
 
-def test_weekly_command_bounds_unresponsive_codex_wait(tmp_path, monkeypatch):
+def test_weekly_command_uses_emergency_cap_and_idle_watchdog(tmp_path, monkeypatch):
     captured = {}
 
     def fake_run_weekly_okr_report(**kwargs):
@@ -1704,7 +1709,7 @@ def test_weekly_command_bounds_unresponsive_codex_wait(tmp_path, monkeypatch):
 
     weekly_okr_report_module.weekly_okr_report_command(settings, force=True)
 
-    assert captured["agent"].timeout_seconds == 300
+    assert captured["agent"].timeout_seconds == 2400
     assert captured["agent"].idle_timeout_seconds == 300
 
 
