@@ -603,11 +603,19 @@ def _schema_requiring_exact_kr_rows(
     # dimensions.  Pin that shape in structured output so a model cannot
     # return a partial culture section that only fails after the provider turn
     # has spent its full timeout.
-    culture = schema["properties"]["manager_reviews"]["items"]["properties"][
-        "culture_dimensions"
-    ]
+    culture_property = schema["properties"]["manager_reviews"]["items"][
+        "properties"
+    ]["culture_dimensions"]
+    # `culture_dimensions` is a `$ref` in the shared schema.  OpenAI strict
+    # structured output rejects sibling constraints next to `$ref`, so copy
+    # the referenced definition into this property before pinning its count.
+    culture = json.loads(
+        json.dumps(schema["$defs"]["dimensions"], ensure_ascii=False)
+    )
     culture["minItems"] = 3
     culture["maxItems"] = 3
+    culture_property.clear()
+    culture_property.update(culture)
     manager_reviews = schema["properties"]["manager_reviews"]
     manager_reviews["minItems"] = 1
     manager_reviews["maxItems"] = 1
