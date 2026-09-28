@@ -11566,6 +11566,64 @@ def test_attention_skips_an_expired_dingteam_okr_login(tmp_path: Path):
         ).fetchone()[0] == 1
 
 
+def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old = store.ensure_reply_task(
+        conversation_id="scheduled-task-run:100",
+        conversation_title="Daily report",
+        single_chat=False,
+        trigger_message_id="event-old",
+        trigger_create_time="2026-09-28 13:00:00",
+        trigger_sender="Scheduler",
+        trigger_text="Run daily report",
+        channel="scheduled",
+    )
+    new = store.ensure_reply_task(
+        conversation_id="scheduled-task-run:101",
+        conversation_title="Daily report",
+        single_chat=False,
+        trigger_message_id="event-new",
+        trigger_create_time="2026-09-28 22:00:00",
+        trigger_sender="Scheduler",
+        trigger_text="Run daily report",
+        channel="scheduled",
+    )
+    with store._connect() as db:
+        db.execute(
+            "insert into scheduled_tasks (id, name, prompt, cron_expression, "
+            "timezone, runtime_id, enabled) values "
+            "(14, 'Daily report', 'p', '0 * * * *', 'UTC', '', 1)"
+        )
+        for run_id, event_id, task_id in ((100, "event-old", old.id), (101, "event-new", new.id)):
+            db.execute(
+                "insert into scheduled_task_runs "
+                "(id, event_id, scheduled_task_id, trigger_kind, scheduled_for, "
+                "first_scheduled_for, dispatch_status, snapshot_json, "
+                "execution_kind, execution_id) "
+                "values (?, ?, 14, 'manual', ?, ?, 'dispatched', '{}', "
+                "'reply_task', ?)",
+                (run_id, event_id, f"2026-09-28T{run_id-87:02d}:00:00Z", f"2026-09-28T{run_id-87:02d}:00:00Z", str(task_id)),
+            )
+        db.execute("update reply_tasks set status='failed', error='codex_result_missing' where id=?", (old.id,))
+        db.execute("update reply_tasks set status='done' where id=?", (new.id,))
+        db.execute(
+            "insert into errors (conversation_id, message_id, kind, detail) "
+            "values ('scheduled-task-run:100', null, 'read_recent_messages_rerun', 'invalid conversation')"
+        )
+        db.execute(
+            "insert into errors (conversation_id, message_id, kind, detail) "
+            "values ('scheduled-task-run:100', 'event-old', 'list_messages_by_ids_rerun', 'invalid message')"
+        )
+    rows = audit_web_module._queue_attention_rows(store)
+    assert not any(row["category"] == "Reply task" and row["id"] == str(old.id) for row in rows)
+    assert not any(row["category"] == "Service error" for row in rows)
+    with store._connect() as db:
+        assert db.execute("select status from reply_tasks where id=?", (old.id,)).fetchone()[0] == "failed"
+        assert db.execute("select count(*) from errors where resolved_at='' ").fetchone()[0] == 2
+
+
 def test_service_component_catalog_lists_runtime_attempt_reclaim(tmp_path: Path):
     # Derek 2026-09-28: cli.py's run_service starts a "runtime-attempt-reclaim"
     # thread, but this hardcoded catalog is what the console actually renders --
