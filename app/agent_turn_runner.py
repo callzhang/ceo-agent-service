@@ -1541,9 +1541,21 @@ class AgentTurnProcess(Generic[ResultT]):
                 ),
             )
         if outcome in {ConsumerOutcome.FAILED, AuditOutcome.FAILED}:
+            # The turn produced a valid typed result whose outcome happens to
+            # be `failed`; `result.summary` is the Agent's own account of why
+            # (a required field), but only `result.error` used to be kept --
+            # an `agent_reported_failure` with an unrecognized `source_code`
+            # (e.g. attempt 14752's invented `provider_rejected_risk`) was
+            # otherwise undiagnosable once the transcript itself is gone.
+            # Carried as an extra key on the error payload, not by widening
+            # `final_result_json` for a failed run: several readers (send
+            # evidence, deciding-score projection, needs_human parsing) treat
+            # that field's emptiness on a failed run as a meaningful signal.
+            error_payload = getattr(result, "error").model_dump(mode="json")
+            error_payload["reported_summary"] = result.summary
             self.store.fail_agent_run(
                 run.id,
-                getattr(result, "error").model_dump(mode="json"),
+                error_payload,
                 owner=self.owner,
                 transcript_end_line=transcript_end,
             )

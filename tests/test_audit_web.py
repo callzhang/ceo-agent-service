@@ -6823,6 +6823,46 @@ def test_failure_reason_uses_human_stage_label_without_double_punctuation(
         "按普通失败流程重试或反馈。"
     )
     assert "consumer:" not in reason
+
+
+def test_failure_reason_prefers_the_agents_own_reported_summary(tmp_path: Path):
+    # Derek 2026-09-28, attempt 14752: an agent_reported_failure with an
+    # unrecognized source_code (`provider_rejected_risk`) only ever showed
+    # the generic per-code explanation, because `detail` belongs to the
+    # technical/process failure path and was never populated for an
+    # Agent-reported business failure. `reported_summary` carries the
+    # Agent's own required `summary` field instead.
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-reported-summary",
+        conversation_title="HR管理",
+        trigger_message_id="msg-reported-summary",
+        trigger_sender="Mina",
+        trigger_text="请处理",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="failed",
+    )
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    run = AgentRun.model_construct(
+        role=AgentRole.AUDIT,
+        status="failed",
+        structured_error_json=json.dumps(
+            {
+                "code": "agent_reported_failure",
+                "source": "agent",
+                "source_code": "provider_rejected_risk",
+                "reported_summary": "该消息会代表 Derek 做出安排承诺，需要人工确认后再发送。",
+            }
+        ),
+        side_effect_state="none",
+    )
+
+    reason = audit_web_module._agent_failure_reason_text(attempt, [run])
+
+    assert "该消息会代表 Derek 做出安排承诺，需要人工确认后再发送" in reason
+    assert "provider_rejected_risk" not in reason
     assert "。；" not in reason
 
 

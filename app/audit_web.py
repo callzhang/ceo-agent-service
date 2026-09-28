@@ -11385,8 +11385,16 @@ def _agent_failure_reason_text(
             error = {}
         code = str(error.get("code") or "unknown") if isinstance(error, dict) else "unknown"
         detail = str(error.get("detail") or "") if isinstance(error, dict) else ""
+        # An Agent-reported failure (source="agent") never carries `detail` --
+        # that field belongs to the technical/process failure path -- but its
+        # own required `summary` is the Agent's account of why, kept under
+        # `reported_summary` since 2026-09-28. Prefer it over the generic
+        # per-code explanation when present.
+        reported_summary = (
+            str(error.get("reported_summary") or "") if isinstance(error, dict) else ""
+        )
         effect = "按普通失败流程重试或反馈"
-        safe_detail = detail.strip()
+        safe_detail = detail.strip() or reported_summary.strip()
         if not safe_detail or safe_detail.startswith("处理未完成，失败代码："):
             safe_detail = _failure_code_explanation(code)
         stage = {
