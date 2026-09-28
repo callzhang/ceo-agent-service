@@ -3660,8 +3660,14 @@ def build_email_worker_dependencies(
                     sorted({str(item["config_version"]) for item in configs})
                 ),
             )
-            source = source_factory(account)
-            try:
+            from app.email_account_connector import ConnectorPriority
+
+            with email_connector_registry.acquire(
+                str(account["account_id"]),
+                "readonly",
+                ConnectorPriority.HIGH,
+                mailbox_address=str(account.get("email_address") or ""),
+            ) as source:
                 inventory = tuple(source.list_folders())
                 results = []
                 for folder_name in account["scan_folders"]:
@@ -3710,8 +3716,6 @@ def build_email_worker_dependencies(
                         )
                     )
                 return tuple(results)
-            finally:
-                _close_email_source(source)
 
         def run_historical_once(
             model_id: str, *, account_id: str | None = None

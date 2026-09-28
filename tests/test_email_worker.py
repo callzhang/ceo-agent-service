@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from contextlib import contextmanager
 from email import policy
 from email.parser import BytesParser
 from datetime import datetime, timezone
@@ -956,8 +957,18 @@ def test_production_scan_account_model_primary_closure_persists_without_agent(
         def logout(self):
             return None
 
+    class FakeConnectorRegistry:
+        @contextmanager
+        def acquire(self, _account_id, _kind, _priority=None, **_kwargs):
+            yield Source()
+
     monkeypatch.setattr(
         module, "_build_email_source_factory", lambda _settings: lambda _account: Source()
+    )
+    monkeypatch.setattr(
+        module,
+        "_build_email_connector_registry",
+        lambda _store: FakeConnectorRegistry(),
     )
     monkeypatch.setattr(module, "_build_agent_orchestrator", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(
@@ -1043,6 +1054,101 @@ def test_production_scan_account_model_primary_closure_persists_without_agent(
         assert db.execute(
             "select count(*) from email_agent_classification_tasks"
         ).fetchone()[0] == 0
+
+
+def test_scan_account_acquires_the_shared_connector_at_high_priority(
+    tmp_path, monkeypatch
+):
+    """Task 3 of the single-connector plan: the periodic scan must take the
+    account's connection from the shared registry (HIGH priority, kind
+    "readonly"), not dial its own via `_build_email_source_factory`.
+    """
+
+    module = _module()
+
+    class Source:
+        account_id = "account-1"
+
+        def list_folders(self):
+            return ()
+
+        def logout(self):
+            return None
+
+    acquire_calls = []
+
+    class FakeConnectorRegistry:
+        @contextmanager
+        def acquire(self, account_id, kind, priority=None, **kwargs):
+            acquire_calls.append((account_id, kind, priority, kwargs))
+            yield Source()
+
+    def _forbidden_source_factory(_account):
+        raise AssertionError("scan_account must not use the plain source_factory")
+
+    monkeypatch.setattr(
+        module,
+        "_build_email_source_factory",
+        lambda _settings: _forbidden_source_factory,
+    )
+    monkeypatch.setattr(
+        module,
+        "_build_email_connector_registry",
+        lambda _store: FakeConnectorRegistry(),
+    )
+    monkeypatch.setattr(module, "_build_agent_orchestrator", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **_kwargs: object(),
+    )
+    settings = SimpleNamespace(
+        db_path=tmp_path / "scan-connector-priority.sqlite3",
+        workspace=tmp_path,
+        dry_run=False,
+    )
+    bootstrap = module.build_email_worker_dependencies(settings)
+    store = bootstrap.email_store
+    monkeypatch.setattr(
+        store,
+        "list_category_configs",
+        lambda: [
+            {
+                "category_key": "work",
+                "enabled": True,
+                "core_description": "Business work.",
+                "include": [],
+                "exclude": [],
+                "config_version": "config-v1",
+            }
+        ],
+    )
+    monkeypatch.setattr(store, "list_account_folder_bindings", lambda: [])
+    runtime = SimpleNamespace(
+        mode=EmailClassifierRuntimeMode.MODEL_PRIMARY,
+        model_predict=lambda _input: None,
+        input_schema_version="input-v3",
+        model_id="unused",
+    )
+    dependencies = bootstrap.build_dependencies(
+        ({"account_id": "account-1", "enabled": True, "scan_folders": []},),
+        runtime,
+    )
+
+    dependencies.scan_account(
+        {
+            "account_id": "account-1",
+            "enabled": True,
+            "scan_folders": [],
+            "email_address": "a@example.com",
+        },
+        runtime,
+    )
+
+    from app.email_account_connector import ConnectorPriority
+
+    assert acquire_calls == [
+        ("account-1", "readonly", ConnectorPriority.HIGH, {"mailbox_address": "a@example.com"})
+    ]
 
 
 def test_historical_actions_use_changed_locator_preserve_read_and_persist_attempts(
