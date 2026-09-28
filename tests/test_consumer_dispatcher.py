@@ -261,6 +261,41 @@ def test_task_todo_outbox_adapter_fences_owner_and_generation(tmp_path: Path) ->
         adapter.release(first, owner="dispatcher-b", now=NOW)
 
 
+def test_reply_handler_error_requeues_business_task_instead_of_spinning(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _reply(store)
+    adapter = ReplyQueueAdapter(store, owner_alive=lambda _pid: False)
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    def consume(_envelope, _guard):
+        raise RuntimeError("failed before agent run")
+
+    dispatcher = ConsumerDispatcher(
+        adapters=(adapter,),
+        consumers={"reply": consume},
+        executors={"reply": executor},
+        max_in_flight={"reply": 1},
+        owner="dispatcher-a",
+        owner_pid=101,
+        lease=timedelta(minutes=5),
+    )
+
+    assert dispatcher.dispatch_available(NOW, limit=1) == 1
+    for _ in range(100):
+        task = store.get_reply_task(1)
+        if task is not None and task.status == "pending":
+            break
+        Event().wait(0.01)
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.error == "failed before agent run"
+    assert adapter.metrics(NOW).running == 0
+    executor.shutdown()
+
+
 def test_task_todo_outbox_dispatcher_processes_due_retry_once(
     tmp_path: Path,
 ) -> None:

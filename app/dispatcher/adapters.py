@@ -535,6 +535,36 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
             if cursor.rowcount != 1:
                 raise ValueError("reply dispatch claim is no longer owned")
 
+    def handle_handler_error(
+        self,
+        envelope: DispatchEnvelope,
+        *,
+        owner: str,
+        now: datetime,
+        error: str,
+    ) -> None:
+        """Return a source to the queue when its handler failed before a run.
+
+        The dispatcher lease and the business queue row are one recovery unit.
+        Releasing only ``dispatcher_claim_leases`` leaves ``reply_tasks`` in
+        ``processing`` and lets the live process reclaim the same task forever.
+        """
+        _validate_release(self.name, envelope, owner, now)
+        now_text = _sqlite_time(now)
+        with self.store._immediate_write_transaction() as db:
+            _release_lease(db, envelope=envelope, owner=owner, now=now_text)
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='pending', attempts=max(attempts-1, 0),
+                    locked_at=null, available_at='', error=?, updated_at=?
+                where id=? and status='processing'
+                """,
+                (error[:2000], now_text, int(envelope.source_id)),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("reply dispatch handler error source is no longer owned")
+
     def renew(
         self,
         envelope: DispatchEnvelope,

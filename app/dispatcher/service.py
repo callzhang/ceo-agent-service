@@ -285,12 +285,30 @@ class ConsumerDispatcher:
                 guard.mark_lost()
                 self._let_go(guard)
         else:
-            guard.adapter.record_lease_error(
-                guard.envelope,
-                owner=guard.token.owner,
-                error=str(future_error),
-                now=now,
-            )
+            error = str(future_error)
+            recover = getattr(guard.adapter, "handle_handler_error", None)
+            if recover is not None:
+                try:
+                    recover(
+                        guard.envelope,
+                        owner=guard.token.owner,
+                        now=now,
+                        error=error,
+                    )
+                except Exception as exc:  # noqa: BLE001 - preserve source evidence
+                    guard.adapter.record_lease_error(
+                        guard.envelope,
+                        owner=guard.token.owner,
+                        error=f"{error}; recovery failed: {exc}",
+                        now=now,
+                    )
+            else:
+                guard.adapter.record_lease_error(
+                    guard.envelope,
+                    owner=guard.token.owner,
+                    error=error,
+                    now=now,
+                )
             guard.mark_lost()
             self._let_go(guard)
         self._signal_future_completion()
