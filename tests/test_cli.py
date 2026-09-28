@@ -214,6 +214,23 @@ def test_service_start_closes_superseded_failed_weekly_okr_jobs(monkeypatch):
     assert calls[:4] == ["orphaned", "stale-weekly", "failed-weekly", "scheduled"]
 
 
+def test_service_start_resolves_scheduled_reply_failures(monkeypatch):
+    calls: list[str] = []
+    store = SimpleNamespace(
+        resolve_errors_recovered_by_reply_attempts=lambda: calls.append("attempts") or 1,
+        resolve_errors_recovered_by_completed_reply_tasks=lambda: calls.append("tasks") or 2,
+        resolve_errors_recovered_by_scheduled_reply_task=lambda: calls.append("scheduled") or 3,
+        resolve_errors_recovered_by_terminal_work_summary_inputs=lambda: calls.append("work") or 4,
+        resolve_errors_recovered_by_scheduled_service_command=lambda: calls.append("commands") or 5,
+        resolve_closed_blocked_reply_attempts=lambda: calls.append("blocked") or 6,
+    )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
+    settings = SimpleNamespace(db_path=Path("/tmp/unused.sqlite3"))
+
+    assert cli._resolve_recovered_errors_on_service_start(settings) == 21
+    assert calls == ["attempts", "tasks", "scheduled", "work", "commands", "blocked"]
+
+
 def test_service_start_reconciles_invalid_human_projections(monkeypatch):
     calls: list[str] = []
 
