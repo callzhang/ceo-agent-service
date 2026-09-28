@@ -30,12 +30,6 @@ LATEST_ARCHIVE_RAW_NAME = "latest_company_okr_raw.json"
 DEFAULT_SCHEDULE_HOUR = 18
 DEFAULT_RETRY_SECONDS = 1800
 DEFAULT_RUN_LEASE_SECONDS = 300
-# A manager review is one bounded, read-only unit. Keep the emergency ceiling
-# aligned with the service-wide two-hour Agent cap; the structured provider
-# watchdog is the five-minute no-progress boundary. A long review may run past
-# five minutes when it continues emitting valid structured progress events.
-WEEKLY_OKR_AGENT_MAX_TIMEOUT_SECONDS = 7200
-WEEKLY_OKR_AGENT_MAX_IDLE_TIMEOUT_SECONDS = 300
 WEEKLY_OKR_REPORT_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "weekly_okr_report.schema.json"
 )
@@ -1445,14 +1439,10 @@ def _run_claimed_weekly_okr_report_command(
         agent=CodexWeeklyOkrAgent(
             workspace=settings.workspace,
             store=store,
-            timeout_seconds=min(
-                settings.codex_timeout_seconds,
-                WEEKLY_OKR_AGENT_MAX_TIMEOUT_SECONDS,
-            ),
-            idle_timeout_seconds=min(
-                settings.codex_idle_timeout_seconds,
-                WEEKLY_OKR_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
-            ),
+            # The weekly report uses the same service-managed emergency cap
+            # and structured-progress watchdog as every other Agent turn.
+            timeout_seconds=settings.codex_timeout_seconds,
+            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
         ),
         workspace=settings.workspace,
         now=current,
