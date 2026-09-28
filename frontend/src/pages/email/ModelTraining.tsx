@@ -907,10 +907,18 @@ function Stat({
   );
 }
 function Hint({ text }: { text: string }) {
+  // The browser's own title tooltip is unreliable (a long hover delay, easy
+  // to miss, invisible on touch), so the bubble is drawn with CSS instead;
+  // title stays as a fallback for anything that reads it directly.
   return (
-    <button type="button" className="metric-hint" title={text} aria-label={text}>
-      ?
-    </button>
+    <span className="metric-hint">
+      <button type="button" className="metric-hint-mark" title={text} aria-label={text}>
+        ?
+      </button>
+      <span className="metric-hint-bubble" role="tooltip">
+        {text}
+      </span>
+    </span>
   );
 }
 

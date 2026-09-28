@@ -389,3 +389,46 @@
   color: var(--ink-soft);
   font-size: 12px;
 }
+.metric-hint {
+  position: relative;
+  display: inline-flex;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.metric-hint-mark {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  line-height: 1;
+  font-size: 11px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+  cursor: help;
+}
+.metric-hint-bubble {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 260px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--panel, #fff);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+.metric-hint:hover .metric-hint-bubble,
+.metric-hint:focus-within .metric-hint-bubble {
+  opacity: 1;
+  visibility: visible;
+}

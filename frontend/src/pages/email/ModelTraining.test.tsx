@@ -877,3 +877,28 @@ it("resets the model version page to 1 when a filter changes", async () => {
   expect(screen.queryByRole("group", { name: "页码" })).not.toBeInTheDocument();
   expect(table.querySelectorAll("tbody tr")).toHaveLength(3);
 });
+
+it("shows a metric hint's explanation on hover, not just as a title attribute", async () => {
+  const user = userEvent.setup();
+  api.getEmailModelVersion.mockResolvedValue({ ok: true, model: learning.staged_models[0] });
+  render(
+    <ModelTraining
+      learning={learning}
+      configs={[]}
+      reload={async () => learning}
+      runtimeVerified
+      onRuntimeUnverified={vi.fn()}
+      onBusy={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "查看 candidate-full-id" }));
+  await screen.findByRole("dialog", { name: "模型版本详情" });
+
+  const mark = screen.getAllByRole("button", {
+    name: "逼它对每封邮件都表态时，它说属于这一类的邮件里有多少判对。",
+  })[0];
+  const bubble = mark.parentElement!.querySelector(".metric-hint-bubble");
+  expect(bubble).toHaveTextContent("逼它对每封邮件都表态时");
+  // The CSS bubble carries the explanation; it is not left to the native title tooltip alone.
+  expect(mark.parentElement).toHaveClass("metric-hint");
+});
