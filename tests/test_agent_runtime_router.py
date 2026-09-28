@@ -915,6 +915,33 @@ def test_resumed_codex_api_session_incompatibility_gets_one_fresh_retry(
     assert decision.reason == "fresh_session_retry"
 
 
+def test_resumed_unclassified_runtime_failure_gets_one_fresh_retry(
+    store, running_attempt
+):
+    failure = RuntimeFailure(
+        failure_class=RuntimeFailureClass.UNCLASSIFIED,
+        code="runtime_unclassified",
+        detail="provider failure",
+    )
+    failed_attempt = running_attempt.model_copy(
+        update={
+            "route_name": "codex_oauth",
+            "session_mode": "resume",
+            "source_session_id": "oauth-session",
+            "failure_class": RuntimeFailureClass.UNCLASSIFIED.value,
+            "failure_code": "runtime_unclassified",
+        }
+    )
+    router = make_router(store, routes=(route("codex_oauth"),))
+
+    assert router._fresh_session_retry_is_permitted(
+        route=route("codex_oauth"),
+        failed_attempt=failed_attempt,
+        failure=failure,
+        attempts=(failed_attempt,),
+    ) is True
+
+
 @pytest.mark.parametrize(
     ("runtime_kind", "model"),
     [(RuntimeKind.CODEX_CLI, "qwen3.8-27b"), (RuntimeKind.CLAUDE_CLI, "claude-sonnet-5")],

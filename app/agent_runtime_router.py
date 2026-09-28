@@ -832,7 +832,10 @@ class AgentRuntimeRouter:
             for attempt in attempts
         )
         if (
-            route.is_cli_api_route
+            (
+                route.is_cli_api_route
+                or route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
+            )
             and failed_attempt.route_name == route.name
             and failed_attempt.session_mode == RuntimeAttemptSessionMode.FRESH
             and failure.retryable_on_same_route
@@ -847,13 +850,24 @@ class AgentRuntimeRouter:
             and attempt.session_mode == RuntimeAttemptSessionMode.FRESH
             for attempt in attempts
         ) and (
-            route.is_cli_api_route
+            (
+                route.is_cli_api_route
+                or route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
+            )
             and failed_attempt.route_name == route.name
             and failed_attempt.session_mode == RuntimeAttemptSessionMode.RESUME
             and bool(failed_attempt.source_session_id.strip())
-            and failed_attempt.failure_class == RuntimeFailureClass.SESSION.value
-            and failure.failure_class == RuntimeFailureClass.SESSION
-            and failure.code == "session_route_incompatible"
+            and (
+                (
+                    failed_attempt.failure_class == RuntimeFailureClass.SESSION.value
+                    and failure.failure_class == RuntimeFailureClass.SESSION
+                    and failure.code == "session_route_incompatible"
+                )
+                or (
+                    failed_attempt.failure_code == "runtime_unclassified"
+                    and failure.code == "runtime_unclassified"
+                )
+            )
         )
 
     def _snapshot_is_current_and_eligible(
