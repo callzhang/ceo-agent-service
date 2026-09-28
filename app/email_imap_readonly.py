@@ -1074,7 +1074,14 @@ def _decode_fetched_content(payload: bytes, part: _BodyPart) -> str:
             decoded = b""
     elif part.transfer_encoding == "quoted-printable":
         decoded = quopri.decodestring(payload)
-    value = decoded.decode(part.charset or "utf-8", errors="replace")
+    charset = part.charset or "utf-8"
+    try:
+        value = decoded.decode(charset, errors="replace")
+    except LookupError:
+        # Providers occasionally emit an IANA/legacy charset name that Python
+        # does not know.  Keep the message in the bounded batch instead of
+        # aborting the whole training observation run.
+        value = decoded.decode("utf-8", errors="replace")
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     return value
 
@@ -1299,7 +1306,13 @@ def _decode_part(part: email.message.Message) -> str:
     if payload is None:
         value = str(part.get_payload() or "")
     else:
-        value = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+        charset = part.get_content_charset() or "utf-8"
+        try:
+            value = payload.decode(charset, errors="replace")
+        except LookupError:
+            # Keep one malformed provider charset from aborting the whole
+            # bounded observation batch.
+            value = payload.decode("utf-8", errors="replace")
     return value.replace("\r\n", "\n").replace("\r", "\n")
 
 

@@ -1839,3 +1839,20 @@ def test_imap_batch_does_not_count_excluded_messages_as_remaining() -> None:
 
     assert len(batch.messages) == 2
     assert batch.remaining == 1
+
+
+def test_unknown_mime_charset_does_not_abort_message_parsing() -> None:
+    parsed = parse_rfc822_message(
+        b"From: sender@example.com\r\n"
+        b"Subject: charset probe\r\n"
+        b"Message-ID: <charset-probe@example.com>\r\n"
+        b"Content-Type: text/plain; charset=x-provider-legacy\r\n"
+        b"\r\n"
+        b"provider body\r\n",
+        account_id="account-a",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=1,
+    )
+
+    assert parsed["textBody"] == "provider body"
