@@ -1003,12 +1003,11 @@ Claude API 种类的添加线路（例如名为 `claude_api` 的那条）用它�
 
 两条路由都不覆盖 `CLAUDE_CONFIG_DIR`，直接复用调用方真实的 `~/.claude`：`--bare` 已经
 保证 `claude_api` 的认证只能来自 `ANTHROPIC_API_KEY`（不会读到 `~/.claude` 里缓存的 OAuth
-凭据），所以没有必要为凭据隔离单独换一个配置目录。每次调用要落地的
-`ceo-agent-service-settings-<uuid>.json` / `ceo-agent-service-mcp-<uuid>.json` 文件（文件名
-按 uuid 区分、带 `ceo-agent-service-` 前缀跟真实配置区分开，不需要目录级隔离）直接写在
-`~/.claude/` 根目录下，跟 Codex 直接写在 `~/.codex` 根目录（`auth.json`、`sessions/` 等）
-是同一个做法——没有专门建子目录，也就没有目录生命周期要管理。调用结束后单个文件由
-`finish_invocation` 清理，不需要任何清理任务。
+凭据），所以没有必要为凭据隔离单独换一个配置目录。每次调用的 settings 和 MCP 配置由
+`ClaudeRuntimeAdapter._invocation_boundary` 构造成两段 JSON 字符串，作为 `--settings` /
+`--mcp-config` 的参数值直接传给 CLI；不写任何文件到磁盘，调用结束后也就没有文件要清理
+（`app/claude_runtime_adapter.py`，AGENTS.md「Keep runtime plumbing simple」：inline 传参，
+不做临时文件这类防御层）。
 
 `--bare` 规定 Anthropic 认证只能来自 `ANTHROPIC_API_KEY`，因此订阅路由必须去掉它，改由
 CLI 自己解析本机登录态；`CLAUDE_CODE_SIMPLE=1` 与 `--bare` 等价，同样不可用于该路由。
