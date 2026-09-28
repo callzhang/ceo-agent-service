@@ -575,12 +575,12 @@ def test_transport_failures_are_typed(adapter, kwargs, code):
     assert failure.route_pause_required is True
 
 
-def test_empty_nonzero_process_failure_does_not_fail_over(adapter):
+def test_empty_nonzero_process_failure_fails_over(adapter):
     failure = adapter.classify_failure(stderr="", stdout="", returncode=1)
 
     assert failure.failure_class.value == "process"
     assert failure.code == "codex_process_failed"
-    assert failure.failover_permitted is False
+    assert failure.failover_permitted is True
 
 
 def test_session_active_writer_conflict_is_retryable_without_pausing_route(adapter):

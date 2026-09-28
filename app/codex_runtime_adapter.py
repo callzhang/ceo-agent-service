@@ -211,6 +211,7 @@ class CodexRuntimeAdapter:
                 failure_class=RuntimeFailureClass.PROCESS,
                 code=CODEX_PROCESS_FAILED,
                 detail="Codex exited without output.",
+                failover_permitted=True,
             )
         detail, structured_messages = _provider_failure_text(stdout, stderr)
         if _is_codex_login_required_error(detail):

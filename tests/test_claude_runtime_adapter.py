@@ -1197,6 +1197,8 @@ def test_a_successful_result_is_never_read_for_failure_markers(adapter):
     failure = adapter.classify_failure(stdout, "", 1)
 
     assert failure.code == "claude_runtime_unclassified"
+    assert failure.failure_class is RuntimeFailureClass.PROCESS
+    assert failure.failover_permitted is True
 
 
 

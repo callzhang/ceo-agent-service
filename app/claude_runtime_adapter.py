@@ -416,13 +416,18 @@ class ClaudeRuntimeAdapter:
         ):
             return _result_failure("claude_result_incomplete")
         return RuntimeFailure(
-            failure_class=RuntimeFailureClass.UNCLASSIFIED,
+            failure_class=(
+                RuntimeFailureClass.PROCESS
+                if returncode != 0
+                else RuntimeFailureClass.UNCLASSIFIED
+            ),
             code="claude_runtime_unclassified",
             detail=(
                 "Claude exited without a classified runtime failure."
                 if returncode != 0
                 else "Claude completed without a classified runtime result."
             ),
+            failover_permitted=returncode != 0,
         )
 
     def _invocation_boundary(self, policy: ClaudeCommandPolicy) -> tuple[str, str]:
