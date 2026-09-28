@@ -1096,3 +1096,12 @@ database backup or changing the production checkout. It starts the service
 again with launchd `bootstrap` after verification, then performs the normal
 health and queue readback. This prevents the deployment process and worker
 process from writing the same SQLite database concurrently.
+
+### Runtime result failure evidence
+
+When a Codex turn produces no typed result or an invalid typed result, the
+runtime attempt is recorded with the result-stage failure code
+(`codex_result_missing` or `codex_result_invalid`) rather than the generic
+`runtime_unclassified` code. This keeps Task Agent retries and Attention
+classification tied to the actual failure stage; genuinely unknown execution
+exceptions remain fail-closed as `runtime_unclassified`.

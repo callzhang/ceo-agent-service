@@ -18,6 +18,28 @@ from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore, RuntimeRoutePausedError
 
 
+def test_result_parse_failure_preserves_runtime_attempt_code():
+    from app.agent_result import ResultParseError
+
+    calls = []
+
+    class Store:
+        def get_agent_runtime_attempt(self, attempt_id):
+            return SimpleNamespace(id=attempt_id, status="running")
+
+        def fail_agent_runtime_attempt(self, *args):
+            calls.append(args)
+
+    runner = object.__new__(AgentTurnProcess)
+    runner.store = Store()
+    runner._fail_runtime_attempt_unclassified(
+        SimpleNamespace(id=17),
+        ResultParseError("no valid typed result JSON found in Codex JSONL"),
+    )
+
+    assert calls == [(17, "result", "codex_result_missing", False)]
+
+
 def test_same_route_capacity_retry_resumes_observed_audit_session():
     assert _fallback_requested_session_id(
         previous_route_name="codex_oauth",
@@ -477,4 +499,3 @@ def test_forced_fresh_session_applies_to_every_route(
     )
 
     assert session is None
-

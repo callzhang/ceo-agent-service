@@ -1216,8 +1216,8 @@ class AgentTurnProcess(Generic[ResultT]):
                             attempt_transcript_reference,
                         )
                     process = ProcessRunResult(1, "", exc.detail)
-                except Exception:
-                    self._fail_runtime_attempt_unclassified(active_attempt)
+                except Exception as exc:
+                    self._fail_runtime_attempt_unclassified(active_attempt, exc)
                     raise
                 if process.returncode == 0 and not process.timed_out:
                     if claude_adapter is not None:
@@ -1435,7 +1435,7 @@ class AgentTurnProcess(Generic[ResultT]):
             )
             raise
         except ResultParseError as exc:
-            self._fail_runtime_attempt_unclassified(active_attempt)
+            self._fail_runtime_attempt_unclassified(active_attempt, exc)
             parse_error_code = _agent_process_error_code(exc)
             self._fail_running(
                 run,
@@ -1447,7 +1447,7 @@ class AgentTurnProcess(Generic[ResultT]):
             )
             raise
         except Exception as exc:
-            self._fail_runtime_attempt_unclassified(active_attempt)
+            self._fail_runtime_attempt_unclassified(active_attempt, exc)
             provider_recovery = _agent_process_error_code(exc)
             code = provider_recovery
             self._fail_running(
@@ -1676,11 +1676,21 @@ class AgentTurnProcess(Generic[ResultT]):
     def _fail_runtime_attempt_unclassified(
         self,
         attempt: AgentRuntimeAttempt | None,
+        exc: Exception | None = None,
     ) -> None:
         if attempt is None:
             return
         persisted = self.store.get_agent_runtime_attempt(attempt.id)
         if persisted is None or persisted.status not in {"starting", "running"}:
+            return
+        if isinstance(exc, ResultParseError):
+            failure_code = _agent_process_error_code(exc)
+            self.store.fail_agent_runtime_attempt(
+                attempt.id,
+                RuntimeFailureClass.RESULT.value,
+                failure_code,
+                False,
+            )
             return
         self.store.fail_agent_runtime_attempt(
             attempt.id,
