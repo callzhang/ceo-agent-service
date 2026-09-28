@@ -352,6 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
         "consume",
         "process-work-items",
         "retry-work-summary-input",
+        "retry-failed-email-unsubscribe",
         "release-failed-email-unsubscribe",
         "reconcile-email-actions",
         "reconcile-failed-agent-message",
@@ -1838,6 +1839,13 @@ def release_failed_email_unsubscribe_command(
         audit_agent_run_id=audit_agent_run_id,
     )
     print("failed email unsubscribe released for explicit retry", flush=True)
+
+
+def retry_failed_email_unsubscribe_command(settings: WorkerSettings) -> None:
+    from app.store import AutoReplyStore
+
+    task_ids = AutoReplyStore(settings.db_path).retry_failed_effect_free_email_unsubscribe_tasks()
+    print(f"failed email unsubscribe requeued={task_ids}", flush=True)
 
 
 def reconcile_email_actions_command(
@@ -4861,6 +4869,8 @@ def main() -> None:
         process_work_items_command(settings)
     elif args.command == "retry-work-summary-input":
         retry_work_summary_input_command(settings, input_id=args.input_id)
+    elif args.command == "retry-failed-email-unsubscribe":
+        retry_failed_email_unsubscribe_command(settings)
     elif args.command == "release-failed-email-unsubscribe":
         release_failed_email_unsubscribe_command(
             settings,

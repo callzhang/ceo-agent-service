@@ -14563,6 +14563,62 @@ class AutoReplyStore:
                     recovered.append(int(row['id']))
             return recovered
 
+    def retry_failed_effect_free_email_unsubscribe_tasks(self) -> list[int]:
+        """Requeue safe legacy unsubscribe failures for a fresh audited run.
+
+        Older direct-unsubscribe failures can have no Agent run at all.  They
+        are retryable only when the immutable action payload is intact and no
+        claim, receipt, effect, or browser step was persisted.  This keeps the
+        stable action identity as the idempotency boundary while avoiding a
+        blind status edit for arbitrary failed reply tasks.
+        """
+        retryable_errors = (
+            "email_unsubscribe_browser_failed:%",
+            "unsubscribe_operation_rejected:%",
+        )
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                """
+                select tasks.id, tasks.execution_generation
+                from reply_tasks as tasks
+                where tasks.channel='email'
+                  and tasks.status='failed'
+                  and (tasks.error like ? or tasks.error like ?)
+                  and json_valid(tasks.trigger_message_json)
+                  and json_extract(tasks.trigger_message_json, '$.schema')='email_agent_action.v1'
+                  and json_extract(tasks.trigger_message_json, '$.action_type')='unsubscribe'
+                  and json_extract(tasks.trigger_message_json, '$.lifecycle_version') in (
+                      'email_unsubscribe_consumer_direct_v1',
+                      'email_unsubscribe_audited_v2'
+                  )
+                  and coalesce(json_extract(tasks.trigger_message_json, '$.action_identity'), '')=tasks.trigger_message_id
+                  and not exists (select 1 from agent_runs where reply_task_id=tasks.id)
+                  and not exists (select 1 from email_unsubscribe_claims where action_identity=tasks.trigger_message_id)
+                  and not exists (select 1 from email_unsubscribe_receipts where action_identity=tasks.trigger_message_id)
+                  and not exists (select 1 from email_unsubscribe_effects where action_identity=tasks.trigger_message_id)
+                  and not exists (select 1 from email_unsubscribe_steps where action_identity=tasks.trigger_message_id)
+                order by tasks.id
+                """,
+                retryable_errors,
+            ).fetchall()
+            recovered: list[int] = []
+            for row in rows:
+                generation = uuid4().hex
+                updated = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', attempts=0, locked_at=null,
+                        available_at='', error='explicit_effect_free_unsubscribe_retry',
+                        recovery_code='effect_free_unsubscribe_retry',
+                        force_new_decision=1, execution_generation=?, updated_at=current_timestamp
+                    where id=? and status='failed' and execution_generation=?
+                    """,
+                    (generation, int(row['id']), str(row['execution_generation'])),
+                ).rowcount
+                if updated == 1:
+                    recovered.append(int(row['id']))
+            return recovered
+
     def terminalize_exhausted_pending_reply_tasks(
         self,
         *,

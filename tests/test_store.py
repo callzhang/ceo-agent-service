@@ -4366,6 +4366,45 @@ def test_reply_task_queue_dedupes_by_conversation_and_message(tmp_path: Path):
     assert store.count_reply_tasks(status="pending") == 1
 
 
+def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_rows(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    action_identity = "email-action:unsubscribe-safe"
+    payload = {
+        "schema": "email_agent_action.v1",
+        "action_type": "unsubscribe",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "action_identity": action_identity,
+    }
+    assert store.enqueue_reply_task(
+        conversation_id="email-thread:1",
+        conversation_title="Email unsubscribe",
+        single_chat=False,
+        trigger_message_id=action_identity,
+        trigger_create_time="2026-09-28 09:00:00",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+        channel="email",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='failed', error=?, trigger_message_json=? where trigger_message_id=?",
+            (
+                "email_unsubscribe_browser_failed: category=operation_failed",
+                json.dumps(payload),
+                action_identity,
+            ),
+        )
+
+    assert store.retry_failed_effect_free_email_unsubscribe_tasks() == [1]
+    task = store.list_reply_tasks(limit=1)[0]
+    assert task.status == "pending"
+    assert task.attempts == 0
+    assert task.recovery_code == "effect_free_unsubscribe_retry"
+    assert task.execution_generation != "initial"
+
+
 def test_reply_task_execution_generation_defaults_and_survives_requeue(
     tmp_path: Path,
 ):
