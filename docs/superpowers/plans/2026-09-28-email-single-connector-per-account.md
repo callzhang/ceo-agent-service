@@ -76,44 +76,44 @@
 - [ ] 实现 `EmailAccountConnector`（单账号：`threading.Lock`、当前 session、`kept_at`、`chain_began`，`acquire()`/内部 `_connect()`/`_alive()`）与 `EmailConnectorRegistry`（`dict[str, EmailAccountConnector]` + 小锁保护懒创建，不用于每次借用）。
 - [ ] 跑 `pytest -q tests/test_email_account_connector.py`，全绿后 `git commit --only` 这两个文件。
 
-## Task 2：邮箱动作投递迁移到 registry，退役 `warm_sessions`
+## Task 2：邮箱动作投递迁移到 registry，退役 `warm_sessions` ✅ 已完成 2026-09-28
 
 **Files:** `app/email_worker.py`（`_build_imap_direct_action_executor_factory` 及其两个常量、`warm_sessions`/`warm_lock`），`tests/test_email_worker.py`。
 
-- [ ] 先在现有热连接测试基础上加一个新测试：两个线程"同时"（用一个受控的假连接延迟制造重叠窗口）请求同一账号的 executor，断言只建了一条连接，不是两条——现状下这个测试应该失败（现有实现允许并发多开）。
-- [ ] 把 `_build_imap_direct_action_executor_factory` 改成从 `EmailConnectorRegistry.acquire(account_id, kind="deterministic")` 拿 provider，`hand_over_session`/`keep_for_next_action` 直接对应 registry 的"正常返回即保留复用"；删除 `warm_sessions`/`warm_lock`/`WARM_SESSION_MAX_IDLE_SECONDS`/`WARM_SESSION_MAX_AGE_SECONDS`（数值原样带进 `EmailAccountConnector` 的默认值，不悄悄改行为）。
-- [ ] 跑 `pytest -q tests/test_email_worker.py -k action_executor or warm or hand_over`，全绿后单独提交这一个 Task 的 hunks，更新 `docs/architecture.md` 里写连接那一段（改成描述共享 connector，而不是"warm_sessions 字典"），推送、`python -m app.deploy`，读回健康状态确认真实邮箱动作正常执行。
+- [x] 先在现有热连接测试基础上加一个新测试：两个线程"同时"（用一个受控的假连接延迟制造重叠窗口）请求同一账号的 executor，断言只建了一条连接，不是两条——现状下这个测试应该失败（现有实现允许并发多开）。
+- [x] 把 `_build_imap_direct_action_executor_factory` 改成从 `EmailConnectorRegistry` 拿 provider——实际用的是 `connector.checkout(kind="deterministic")`/`checkin()`，不是 `acquire()`（execute() 的写连接丢弃/回读连接开启不在一个 `with` 块里，需要 `hand_over_session`/新增的 `discard_session` 两条独立路径各自对应 `checkin(keep=True/False)`）；删除 `warm_sessions`/`warm_lock`/`WARM_SESSION_MAX_IDLE_SECONDS`/`WARM_SESSION_MAX_AGE_SECONDS`（数值原样带进 `EmailAccountConnector` 的默认值，没有悄悄改行为）。
+- [x] 跑测试全绿后单独提交这一个 Task 的 hunks，更新 `docs/architecture.md` 里写连接那一段，推送、`python -m app.deploy`，读回健康状态确认真实邮箱动作正常执行（MOVE 动作 `done`）。
 
-## Task 3：周期性分类扫描（`scan_account`）迁移
+## Task 3：周期性分类扫描（`scan_account`）迁移 ✅ 已完成 2026-09-28
 
-**Files:** `app/email_worker.py`（`build_dependencies` 内 `scan_account`，约 3658 行）。
+**Files:** `app/email_worker.py`（`build_dependencies` 内 `scan_account`）。
 
-- [ ] 先写测试：`scan_account` 用假 registry 断言它通过 `registry.acquire(account_id, kind="readonly")` 拿连接，不再直接调用 `source_factory`。
-- [ ] 改实现；跑该函数相关的现有扫描测试（`tests/test_email_classifier_scan_model.py` 等如涉及 `scan_account` 的集成路径）确认没有破坏批次/游标行为。
-- [ ] 单独提交、推送、部署、读回：确认分类扫描仍按正常节奏产出。
+- [x] 先写测试：`scan_account` 用假 registry 断言它通过 `registry.acquire(account_id, kind="readonly", priority=HIGH)` 拿连接，不再直接调用 `source_factory`。
+- [x] 改实现；跑相关测试确认没有破坏批次/游标行为。
+- [x] 单独提交、推送、部署、读回：确认分类扫描仍按正常节奏产出（`email-discovery`/`email-scan-actions` 健康持续 ready）。
 
-## Task 4：训练观察任务（`ProviderTrainingObservationJob`）迁移
+## Task 4：训练观察任务（`ProviderTrainingObservationJob`）迁移 ✅ 已完成 2026-09-28
 
-**Files:** `app/email_training_observer.py`、`app/email_worker.py`（`observation_job = ProviderTrainingObservationJob(...)` 的 `source_factory` 构造处）。
+**Files:** `app/email_worker.py`（`observation_job = ProviderTrainingObservationJob(...)` 的 `source_factory` 构造处）。`app/email_training_observer.py` 本身未改动。
 
-- [ ] 先写测试：`run_once` 对同一账号的多个文件夹复用**同一条**连接（现状已经是这样，一个账号一次 `run_once` 内只连一次），但现在要断言这条连接来自 registry，而不是 `run_once` 自己 `source_factory(account)` 独占一整轮——即：如果这一轮跑很久，其间别的子系统（比如动作投递）来抢同一账号的连接，应该排队等，而不是各自另开。
-- [ ] 改实现；这是本次事故直接相关的调用点，改完要特别验证：部署后观察 `email_worker_health:component:email-training-observation` 连续几轮都能推进（不只是成功一次），且不再看到同账号两条并发连接。
-- [ ] 单独提交、推送、部署、读回，观察至少 10-15 分钟确认没有再复现今天的卡死。
+- [x] 先写测试：断言 `_build_training_observation_source_factory` 通过 registry 以 LOW 优先级 checkout，关闭时 `checkin(keep=False)` 而不是真登出。
+- [x] 改实现：新增 `_ConnectorBackedSource` 代理类，让 `ProviderTrainingObservationJob` 现有的"取一次、用完在 finally 里无条件关闭一次"调用约定不用改，`source.logout()`/`.close()` 改成签回连接而不是真登出。部署后观察 `email_worker_health:component:email-training-observation` 连续多轮推进：初次误判为卡死（其实是两次心跳间隔约 28 分钟，会话有过长时间空档），复核后确认多轮正常推进，出现的失败（Gmail `TimeoutError`、DingTalk 邮箱 `gaierror`）都是已知的外部原因，不是本次改动引入的。
+- [x] 单独提交、推送、部署、读回，观察超过 15 分钟确认没有再复现卡死。
 
-## Task 5：剩余按需调用点迁移
+## Task 5：剩余按需调用点迁移 ✅ 已完成 2026-09-28
 
-**Files:** `app/email_worker.py`（`resolve` OTP、`_read_historical_provider_state`、`_reread_historical_candidate_message`、`read_current_classification_message`、`run_historical_once`、`load_model_action_repair_message`、`resolve_entries`，共 7 处）。
+**Files:** `app/email_worker.py`（`resolve` OTP、`_read_historical_provider_state`、`_reread_historical_candidate_message`（及其 `_state` 版本）、`read_current_classification_message`、`run_historical_once`（含其内部文件夹扫描与嵌套历史重读）、`load_model_action_repair_message`、`_load_email_task_context`（写 spec 时漏记的第 8 个调用点）、`resolve_entries`）。
 
-- [ ] 逐个迁移到 `registry.acquire(...)`，每处改完跑其自身覆盖的测试文件；这 7 处都是低频、按需触发，风险比 Task 3/4 低，可以一次提交里改多处，但仍要在提交信息里逐条列出改了哪几个调用点。
-- [ ] 全部迁移完成后，全仓库搜索确认 `source_factory(account)` 只在 registry 内部出现一次（连接真正建立的地方），其余全部改成走 `registry.acquire`。
-- [ ] 提交、推送、部署、读回。
+- [x] 逐个迁移到 registry：把 Task 4 的连接代理泛化成 `_ConnectorBackedSource`/`_build_registry_source_factory(registry, priority)`，`build_email_worker_dependencies` 统一挂出 `source_factory`（HIGH）和 `low_priority_source_factory`（LOW）两个闭包变量，各调用点按 spec 里标注的优先级换成对应那个——因为这些调用点本来就是"拿一次、用完在 finally 里关闭一次"，不用改各自函数体，只改传进去的是哪个 factory。
+- [x] 全部迁移完成后确认：`_build_email_source_factory`（旧的、不互斥的 builder）在 `app/email_worker.py` 里不再被任何生产代码路径调用，只剩定义本身（仍被几个直接测试这个函数的单测引用，留着）。退订任务的两个入口（`build_audited_email_unsubscribe_operation`/`build_direct_email_unsubscribe_operation`）各自跑在独立的按任务 CLI 进程里，不在主 worker 进程内，各自建一份只服务自己这次调用的 registry。
+- [x] 提交、推送、部署、读回：健康记录里 direct-action/scan/training/training-observation/model-action-reconciliation 全部 `ready`，MOVE 动作持续 `done`。
 
-## Task 6：收尾文档
+## Task 6：收尾文档 ✅ 已完成 2026-09-28
 
 **Files:** `docs/architecture.md`、`docs/runtime-mechanism.md`。
 
-- [ ] 确认这两份文档不再有"每个子系统各自开连接"或旧 `warm_sessions` 字典的描述，改成统一描述"每账号一个共享 connector，按优先级排队，超时 600 秒"。
-- [ ] 在 `docs/agent-claims.md` 补齐这次改动的认领行，状态标 done。
+- [x] 确认两份文档不再有"每个子系统各自开连接"或旧 `warm_sessions` 字典的描述——`docs/architecture.md` 已在 Task 2-5 各自的提交里逐步改写成统一描述（一个账号一个共享 connector，按优先级排队，600 秒超时，两个独立进程的退订任务各自持有只服务自己的 registry）；`docs/runtime-mechanism.md` 本来就没有描述过这块机制，不用改。
+- [x] `docs/agent-claims.md` 的认领行已在 Task 2-5 各自提交里逐步更新，本次收尾确认状态列写清六个 Task 全部 done。
 
 ## 已拍板（不用再问）
 
