@@ -1031,6 +1031,12 @@ def _run_training_job(
         from app.email_candidate_benchmark import benchmark_candidate
 
         model_ids: list[str] = []
+        # A classic family (fastText, TF-IDF) is an experiment-only artifact
+        # that never activates; its own instability (observed: fastText's C++
+        # optimizer diverging to NaN on a thin category) must not discard an
+        # embedding-mlp candidate the run already trained. Only embedding-mlp
+        # failing still fails the whole run.
+        family_failures: dict[str, str] = {}
         for family in (
             model_families if training_selection is not None else ["embedding-mlp"]
         ):
@@ -1095,16 +1101,30 @@ def _run_training_job(
                         description_overlay.proposal_id, model_id=result.model_id
                     )
             else:
-                classic = train_frozen_classic_candidate(
-                    store=store,
-                    snapshot_id=snapshot_id,
-                    registry=registry,
-                    categories=tuple(descriptions),
-                    model_family=family,
-                    trained_at=trained_at,
-                    selected_message_identities=selected_message_identities,
-                )
+                try:
+                    classic = train_frozen_classic_candidate(
+                        store=store,
+                        snapshot_id=snapshot_id,
+                        registry=registry,
+                        categories=tuple(descriptions),
+                        model_family=family,
+                        trained_at=trained_at,
+                        selected_message_identities=selected_message_identities,
+                    )
+                except Exception as exc:  # noqa: BLE001 - isolate one unstable experiment family
+                    family_failures[family] = f"{type(exc).__name__}:{exc}"
+                    continue
                 model_ids.append(classic.model_id)
+        if not model_ids:
+            raise RuntimeError(
+                "every requested model family failed: "
+                + "; ".join(f"{family}={reason}" for family, reason in family_failures.items())
+            )
+        reason = "candidate_staged_not_activated"
+        if family_failures:
+            reason += ";family_failures:" + ",".join(
+                f"{family}={failure}" for family, failure in family_failures.items()
+            )
         terminal = replace(
             started,
             status="succeeded",
@@ -1113,7 +1133,7 @@ def _run_training_job(
             exit_code=0,
             model_id=model_ids[-1] if model_ids else None,
             model_ids=tuple(model_ids),
-            reason="candidate_staged_not_activated",
+            reason=reason,
         )
         controller._save_run(terminal)
         return 0

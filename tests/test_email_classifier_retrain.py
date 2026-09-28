@@ -1022,3 +1022,193 @@ def test_selected_folder_categories_reach_the_staged_trainer(tmp_path, monkeypat
         == 0
     )
     assert tuple(observed["descriptions"]) == ("legal",)
+
+
+def test_one_unstable_classic_family_does_not_discard_the_embedding_candidate(
+    tmp_path, monkeypatch
+):
+    """fastText's own optimizer can diverge to NaN on a thin category; that must
+
+    not throw away an embedding-mlp candidate the same run already trained
+    (observed 2026-09-28: run d6df9ed0 staged a valid embedding-mlp candidate,
+    then fastText's `RuntimeError: Encountered NaN.` marked the whole run
+    failed and hid it).
+    """
+
+    registry = EmailModelRegistry(tmp_path / "registry")
+    error_state = registry.record_historical_systematic_error_state(
+        HistoricalSystematicErrorState(
+            unresolved=False,
+            source="operator-review",
+            reason="reviewed",
+            updated_at=NOW.isoformat(),
+        )
+    )
+    queued = TrainingSubprocessRun(
+        run_id="run-mixed-families",
+        status="queued",
+        pid=0,
+        started_at=NOW.isoformat(),
+        updated_at=NOW.isoformat(),
+        snapshot_id="snapshot-1",
+        snapshot_sha="a" * 64,
+        description_version="description-set-sha256:" + "b" * 64,
+        unresolved_historical_systematic_error=False,
+        historical_systematic_error_state_sha256=error_state.state_sha256,
+        historical_systematic_error_source=error_state.source,
+        historical_systematic_error_reason=error_state.reason,
+        historical_systematic_error_updated_at=error_state.updated_at,
+        training_selection={
+            "sources": ["folder_snapshot"],
+            "categories": ["work"],
+            "model_families": ["embedding-mlp", "fasttext"],
+            "selected_message_identities": ["selected-work-message"],
+            "provenance": [{"source": "folder_snapshot", "category": "work"}],
+        },
+    )
+    controller = TrainingSubprocessController(registry, store_path=tmp_path / "db")
+    controller._save_run(queued)
+
+    class Store:
+        def __init__(self, _path):
+            pass
+
+        def current_model_promotion_config(self):
+            return {"category_precision_min": 0.9, "category_validation_samples_min": 10}
+
+        def list_category_configs(self):
+            return [
+                {
+                    "category_key": "work",
+                    "core_description": "Routine work.",
+                    "include": ["Projects"],
+                    "exclude": ["Contracts"],
+                    "description_version": "work-v1",
+                    "enabled": True,
+                },
+            ]
+
+        def get_training_snapshot(self, _snapshot_id):
+            return {"input_schema_version": "input-v3", "observations": []}
+
+    monkeypatch.setattr(retrain_module, "EmailStore", Store)
+    monkeypatch.setattr(retrain_module, "EmbeddingCache", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        retrain_module,
+        "EmailEmbeddingClient",
+        SimpleNamespace(from_environment=lambda **_kwargs: object()),
+    )
+    monkeypatch.setattr(
+        retrain_module, "warm_frozen_training_embeddings", lambda **_kwargs: None
+    )
+    monkeypatch.setenv("CEO_EMAIL_EMBEDDING_DIMENSION", "2")
+    monkeypatch.setenv("CEO_EMAIL_EMBEDDING_REVISION", "gpu4-r1")
+    monkeypatch.setattr(
+        retrain_module,
+        "train_frozen_embedding_candidate",
+        lambda **_kwargs: SimpleNamespace(model_id="email-embedding-mlp-mixed"),
+    )
+
+    def failing_classic(**_kwargs):
+        raise RuntimeError("Encountered NaN.")
+
+    monkeypatch.setattr(
+        retrain_module, "train_frozen_classic_candidate", failing_classic
+    )
+
+    exit_code = retrain_module._run_training_job(
+        db_path=tmp_path / "db",
+        registry_path=registry.root,
+        run_id=queued.run_id,
+        snapshot_id=queued.snapshot_id,
+        trained_at=NOW,
+    )
+
+    assert exit_code == 0
+    run = controller._load_run(queued.run_id)
+    assert run.status == "succeeded"
+    assert run.model_ids == ["email-embedding-mlp-mixed"]
+    assert run.model_id == "email-embedding-mlp-mixed"
+    assert "fasttext=RuntimeError:Encountered NaN." in run.reason
+
+
+def test_every_family_failing_still_fails_the_run(tmp_path, monkeypatch):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    error_state = registry.record_historical_systematic_error_state(
+        HistoricalSystematicErrorState(
+            unresolved=False,
+            source="operator-review",
+            reason="reviewed",
+            updated_at=NOW.isoformat(),
+        )
+    )
+    queued = TrainingSubprocessRun(
+        run_id="run-all-fail",
+        status="queued",
+        pid=0,
+        started_at=NOW.isoformat(),
+        updated_at=NOW.isoformat(),
+        snapshot_id="snapshot-1",
+        snapshot_sha="a" * 64,
+        description_version="description-set-sha256:" + "b" * 64,
+        unresolved_historical_systematic_error=False,
+        historical_systematic_error_state_sha256=error_state.state_sha256,
+        historical_systematic_error_source=error_state.source,
+        historical_systematic_error_reason=error_state.reason,
+        historical_systematic_error_updated_at=error_state.updated_at,
+        training_selection={
+            "sources": ["folder_snapshot"],
+            "categories": ["work"],
+            "model_families": ["fasttext", "tfidf-logistic-regression"],
+            "selected_message_identities": ["selected-work-message"],
+            "provenance": [{"source": "folder_snapshot", "category": "work"}],
+        },
+    )
+    controller = TrainingSubprocessController(registry, store_path=tmp_path / "db")
+    controller._save_run(queued)
+
+    class Store:
+        def __init__(self, _path):
+            pass
+
+        def current_model_promotion_config(self):
+            return {"category_precision_min": 0.9, "category_validation_samples_min": 10}
+
+        def list_category_configs(self):
+            return [
+                {
+                    "category_key": "work",
+                    "core_description": "Routine work.",
+                    "include": ["Projects"],
+                    "exclude": ["Contracts"],
+                    "description_version": "work-v1",
+                    "enabled": True,
+                },
+            ]
+
+        def get_training_snapshot(self, _snapshot_id):
+            return {"input_schema_version": "input-v3", "observations": []}
+
+    monkeypatch.setattr(retrain_module, "EmailStore", Store)
+
+    def failing_classic(**_kwargs):
+        raise RuntimeError("Encountered NaN.")
+
+    monkeypatch.setattr(
+        retrain_module, "train_frozen_classic_candidate", failing_classic
+    )
+
+    exit_code = retrain_module._run_training_job(
+        db_path=tmp_path / "db",
+        registry_path=registry.root,
+        run_id=queued.run_id,
+        snapshot_id=queued.snapshot_id,
+        trained_at=NOW,
+    )
+
+    assert exit_code == 1
+    run = controller._load_run(queued.run_id)
+    assert run.status == "failed"
+    assert run.model_ids == []
+    assert "fasttext=RuntimeError:Encountered NaN." in run.reason
+    assert "tfidf-logistic-regression=RuntimeError:Encountered NaN." in run.reason
