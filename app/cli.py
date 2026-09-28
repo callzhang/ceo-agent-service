@@ -3600,6 +3600,42 @@ def run_runtime_probe_loop(
             continue
 
 
+RUNTIME_ATTEMPT_RECLAIM_INTERVAL_SECONDS = 5 * 60
+
+
+def run_runtime_attempt_reclaim_loop(
+    settings: WorkerSettings,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Reclaim runtime attempts whose lease has expired, on a standing cadence.
+
+    ``_recover_processing_work_summary_inputs_on_service_start`` only ran
+    this once, at process start. A lease that goes stale mid-uptime (the
+    owning process died, a route stalled) then sat `starting`/`running`
+    forever: `_claim_runtime_attempt`'s active-row reuse does not check
+    expiry, so the next claim for the same workload key just returned the
+    same dead row, and the row's non-terminal status permanently blocked
+    `in_flight_work()`'s deploy quiet-check too (Derek 2026-09-28: found
+    while every `python -m app.deploy` silently no-op'd on "service did not
+    become idle" for hours; two orphaned `weekly_okr` attempts, leases
+    expired ~1h40m earlier, no live Codex session behind either).
+    """
+    store = AutoReplyStore(settings.db_path)
+    stale_after_seconds = _work_summary_processing_stale_seconds(settings)
+    while True:
+        try:
+            store.recover_stale_runtime_attempts(
+                stale_after_seconds=stale_after_seconds
+            )
+            store.recover_expired_terminal_task_runtime_attempts()
+        except Exception:  # noqa: BLE001, S112 - persistent maintenance loop
+            # A reclaim miss just means the next interval tries again; it is
+            # never a reason to kill the service child over a stale lease.
+            pass
+        sleep(RUNTIME_ATTEMPT_RECLAIM_INTERVAL_SECONDS)
+
+
 def _create_meeting_dws(settings: WorkerSettings) -> DwsClient:
     return DwsClient(
         ding_robot_code=settings.ding_robot_code,
@@ -4290,6 +4326,10 @@ def run_service(
         (
             "database-backup",
             lambda: run_database_backup_loop(settings.db_path),
+        ),
+        (
+            "runtime-attempt-reclaim",
+            lambda: run_runtime_attempt_reclaim_loop(settings),
         ),
         (
             "agent-cron-scheduler",

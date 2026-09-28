@@ -908,6 +908,75 @@ def test_runtime_probe_loop_survives_unexpected_refresh_failure():
     assert calls == ["sleep", "refresh", "sleep"]
 
 
+def test_runtime_attempt_reclaim_loop_reclaims_each_interval(tmp_path, monkeypatch):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    monkeypatch.setattr(
+        AutoReplyStore,
+        "recover_stale_runtime_attempts",
+        lambda self, *, stale_after_seconds: calls.append(
+            ("recover_stale", stale_after_seconds)
+        ),
+    )
+    monkeypatch.setattr(
+        AutoReplyStore,
+        "recover_expired_terminal_task_runtime_attempts",
+        lambda self: calls.append(("recover_terminal",)),
+    )
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        if len([call for call in calls if call[0] == "sleep"]) == 2:
+            raise StopLoop
+
+    with pytest.raises(StopLoop):
+        cli.run_runtime_attempt_reclaim_loop(settings, sleep=sleep)
+
+    assert calls == [
+        ("recover_stale", cli._work_summary_processing_stale_seconds(settings)),
+        ("recover_terminal",),
+        ("sleep", cli.RUNTIME_ATTEMPT_RECLAIM_INTERVAL_SECONDS),
+        ("recover_stale", cli._work_summary_processing_stale_seconds(settings)),
+        ("recover_terminal",),
+        ("sleep", cli.RUNTIME_ATTEMPT_RECLAIM_INTERVAL_SECONDS),
+    ]
+
+
+def test_runtime_attempt_reclaim_loop_survives_unexpected_failure(tmp_path, monkeypatch):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    def failing_recover(self, *, stale_after_seconds):
+        calls.append("recover_stale")
+        raise RuntimeError("must not stop service")
+
+    monkeypatch.setattr(
+        AutoReplyStore, "recover_stale_runtime_attempts", failing_recover
+    )
+    monkeypatch.setattr(
+        AutoReplyStore,
+        "recover_expired_terminal_task_runtime_attempts",
+        lambda self: calls.append("recover_terminal"),
+    )
+
+    def sleep(_seconds):
+        calls.append("sleep")
+        if calls.count("sleep") == 2:
+            raise StopLoop
+
+    with pytest.raises(StopLoop):
+        cli.run_runtime_attempt_reclaim_loop(settings, sleep=sleep)
+
+    assert calls == ["recover_stale", "sleep", "recover_stale", "sleep"]
+
+
 def test_claude_skills_link_is_created_and_is_idempotent(tmp_path, monkeypatch):
     home = tmp_path / "home"
     agents = home / ".agents" / "skills"
@@ -7287,6 +7356,12 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
     )
     monkeypatch.setattr(
         cli,
+        "run_runtime_attempt_reclaim_loop",
+        lambda settings: calls.append(("runtime-attempt-reclaim", settings.db_path))
+        or stop("runtime-attempt-reclaim"),
+    )
+    monkeypatch.setattr(
+        cli,
         "run_agent_cron_scheduler_loop",
         lambda settings, runtime_skill_snapshot, *, wake_event, dispatcher_wake_event: calls.append(
             (
@@ -7376,6 +7451,8 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         ("service-heartbeat",),
         ("start", "ceo-agent-service-database-backup", True),
         ("database-backup", tmp_path / "worker.sqlite3"),
+        ("start", "ceo-agent-service-runtime-attempt-reclaim", True),
+        ("runtime-attempt-reclaim", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-agent-cron-scheduler", True),
         (
             "agent-cron-scheduler",
@@ -7396,11 +7473,12 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
     assert failures == [
         ("service-heartbeat", "stop service-heartbeat"),
         ("database-backup", "stop database-backup"),
+        ("runtime-attempt-reclaim", "stop runtime-attempt-reclaim"),
         ("agent-cron-scheduler", "stop agent-cron-scheduler"),
         ("agent-cron-dispatcher", "stop agent-cron-dispatcher"),
         ("meeting-delivery", "stop meeting-delivery"),
     ]
-    assert exits == [1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1]
 
 
 def test_service_component_failure_persists_scheduler_error_health(

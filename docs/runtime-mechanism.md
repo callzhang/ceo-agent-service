@@ -829,7 +829,15 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
   以及备份、cron 调度/派发、探针等不产生业务判断的基础设施。
 
 任务卡死的回收由服务启动恢复、Consumer 的 stale-age 检查和 Dispatcher 的过期租约处理共同负责；
-不再依赖一个隐藏的业务级维护循环。
+不再依赖一个隐藏的业务级维护循环。`recover_stale_runtime_attempts`/`recover_expired_terminal_task_runtime_attempts`
+此前只在服务启动时跑一次：一个在进程运行期间才过期的租约（owner 进程已死、route 卡住）会
+永远停在 `starting`/`running`，`_claim_runtime_attempt` 复用同一 workload key 的现有行时不
+检查过期，新的领取请求只会拿回同一条死记录；这条非终态记录还会一直卡住部署前的
+`in_flight_work()` 静默检查（Derek 2026-09-28：查了两条孤儿 `weekly_okr` attempt，租约在
+约 1 小时 40 分钟前就过期，背后没有存活的 Codex session，`python -m app.deploy` 因此连续
+几个小时都在「service did not become idle」上空跑）。修复是把这两个恢复函数也挂到一个新的
+常驻组件 `runtime-attempt-reclaim` 上，每 5 分钟跑一次，和 `database-backup`、探针一样是
+命名、受心跳监控的基础设施循环，不是隐藏循环。
 
 ## 进程、租约和恢复
 
