@@ -1903,7 +1903,18 @@ def _bind_kr_reviews_to_live_rows(
     if len(set(resolved_ids.values())) != len(resolved_ids):
         raise ValueError(f"weekly OKR analysis contains duplicate KR titles for {review.name}")
     if len(expected_ids) > 1 and not resolved_ids:
-        raise ValueError(f"weekly OKR analysis has no title anchors for {review.name}")
+        # The prompt requires the model to preserve the live KR order, but
+        # models sometimes paraphrase every title and omit the opaque IDs.
+        # With an exact row count and no usable anchor, bind by that required
+        # source order instead of retrying the same semantically valid review
+        # forever. Any count, duplicate, or order violation is still rejected
+        # by the checks above and below.
+        if all(_normalized_title(item.kr_title) for item in review.kr_reviews):
+            resolved_ids = {
+                index: expected_ids[index] for index in range(len(expected_ids))
+            }
+        else:
+            raise ValueError(f"weekly OKR analysis has no title anchors for {review.name}")
     displaced = [
         (index, kr_id)
         for index, kr_id in resolved_ids.items()

@@ -1087,6 +1087,7 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
     assert [review.name for review in analysis.manager_reviews] == ["甲", "乙"]
     assert all(review.kr_reviews[0].kr_id == "kr-1" for review in analysis.manager_reviews)
 
+
     refreshed_source = json.loads(source_path.read_text(encoding="utf-8"))
     for item in refreshed_source["managers"]:
         item["liveOkr"]["source"]["fetchedAt"] = "2026-07-30T04:00:00+08:00"
@@ -1108,6 +1109,28 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
 
     assert len(seen) == 2
     assert [review.name for review in cached.manager_reviews] == ["甲", "乙"]
+
+
+def test_kr_binding_uses_live_order_when_model_paraphrases_all_titles():
+    review = ManagerReportAnalysis.model_construct(
+        name="甲",
+        kr_reviews=[
+            KrScoreReview.model_construct(
+                kr_id="", objective_title="改写后的目标", kr_title="改写后的第一条"
+            ),
+            KrScoreReview.model_construct(
+                kr_id="", objective_title="改写后的目标", kr_title="改写后的第二条"
+            ),
+        ],
+    )
+    expected = {
+        "live-1": {"objectiveTitle": "O", "krTitle": "第一条"},
+        "live-2": {"objectiveTitle": "O", "krTitle": "第二条"},
+    }
+
+    weekly_okr_report_module._bind_kr_reviews_to_live_rows(review, expected)
+
+    assert [item.kr_id for item in review.kr_reviews] == ["live-1", "live-2"]
 
 
 def test_codex_agent_claims_exact_weekly_job_before_routed_execution(tmp_path):
