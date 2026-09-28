@@ -67,3 +67,19 @@ def test_a_paragraph_without_sentence_punctuation_stays_one_line():
     paragraph = {"nickName": "Zoey", "paragraph": "行", "startTime": 1000, "endTime": 2000}
     [excerpt] = todo_transcript_excerpts(_todos({"title": "t", "createdTime": 1500}), [paragraph])
     assert excerpt["lines"] == ["Zoey：行"]
+
+
+def test_minutes_full_summary_extracts_the_ready_text_unfiltered():
+    from app.minutes_todo_context import minutes_full_summary
+
+    assert minutes_full_summary({"result": {"fullSummary": "  行动项：磊哥负责 Review。  "}}) == "行动项：磊哥负责 Review。"
+
+
+def test_minutes_full_summary_is_empty_for_missing_or_malformed_payloads():
+    from app.minutes_todo_context import minutes_full_summary
+
+    assert minutes_full_summary({"result": {}}) == ""
+    assert minutes_full_summary({"result": {"fullSummary": ""}}) == ""
+    assert minutes_full_summary({}) == ""
+    assert minutes_full_summary("not a payload") == ""
+    assert minutes_full_summary(None) == ""

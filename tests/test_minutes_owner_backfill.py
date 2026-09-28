@@ -18,8 +18,8 @@ PARAGRAPHS = [
 
 
 class FakeDws:
-    def __init__(self, *, todos=TODOS, paragraphs=PARAGRAPHS):
-        self.todos, self.paragraphs, self.reads = todos, paragraphs, []
+    def __init__(self, *, todos=TODOS, paragraphs=PARAGRAPHS, summary=""):
+        self.todos, self.paragraphs, self.summary, self.reads = todos, paragraphs, summary, []
 
     def get_minutes_todos(self, minutes_id):
         self.reads.append(minutes_id)
@@ -27,6 +27,9 @@ class FakeDws:
 
     def get_all_minutes_transcription(self, minutes_id):
         return {"paragraphs": self.paragraphs}
+
+    def get_minutes_summary(self, minutes_id):
+        return {"result": {"fullSummary": self.summary}}
 
 
 def _candidate(store, *, minutes_id="minutes-1", title="整理访谈问题清单", meeting=MEETING, owner=""):
@@ -83,7 +86,7 @@ def test_only_open_ownerless_candidates_from_minutes_count(tmp_path):
     ("dws", "outcome"),
     [
         (FakeDws(todos={"result": {"actions": []}}), "skipped: the meeting has no action items now"),
-        (FakeDws(paragraphs=[]), "skipped: no action item can be located in the transcript"),
+        (FakeDws(paragraphs=[]), "skipped: no action item can be located in the transcript, and no meeting summary either"),
     ],
 )
 def test_a_meeting_that_cannot_be_read_further_is_reported_and_left_alone(tmp_path, dws, outcome):
@@ -94,6 +97,22 @@ def test_a_meeting_that_cannot_be_read_further_is_reported_and_left_alone(tmp_pa
 
     assert (result.queued, result.decisions[0]["outcome"]) == (0, outcome)
     assert _queued(store) == []
+
+
+def test_a_meeting_with_no_locatable_excerpt_but_a_summary_is_still_queued(tmp_path):
+    """Derek 2026-09-28: a transcript-window miss is not proof the source has no owner; the summary may still have it."""
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    _candidate(store)
+    full_summary = "行动项：**磊哥**与**周俊杰**负责代码 Review。"
+
+    result = backfill_minutes_owners(store, FakeDws(paragraphs=[], summary=full_summary), dry_run=False)
+
+    assert (result.queued, result.decisions[0]["outcome"]) == (1, "queued")
+    assert result.decisions[0]["has_summary"] is True
+    [claimed] = store.claim_work_summary_inputs(limit=5)
+    summary = json.loads(json.loads(claimed.payload_json)["summary"])
+    assert summary["meeting_summary"] == full_summary
+    assert "transcript_excerpts" not in summary
 
 
 def test_limit_takes_the_newest_meetings_first(tmp_path):

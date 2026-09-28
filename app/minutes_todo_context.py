@@ -31,6 +31,24 @@ def _millis(value: Any) -> int | None:
         return None
 
 
+def minutes_full_summary(payload: Any) -> str:
+    """The DingTalk-generated structured meeting summary, when it is ready.
+
+    This is a second, independent source of owner information (Derek 2026-09-28: a
+    narrow transcript window around one action item's createdTime can land before or
+    after the sentence that actually names who does it; DingTalk's own summary often
+    states it explicitly, e.g. "行动项：**磊哥**与**周俊杰**负责代码 Review", sometimes
+    well outside that window). Returned whole and unfiltered, like the transcript
+    excerpts: no keyword or section slicing here, so nothing this summary says is
+    silently dropped before an Agent reads it.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    result = payload.get("result")
+    text = (result or {}).get("fullSummary") if isinstance(result, dict) else None
+    return text.strip() if isinstance(text, str) else ""
+
+
 def _todo_entries(payload: Any) -> list[dict[str, Any]]:
     """The extracted action items with their titles and offsets."""
     if not isinstance(payload, dict):

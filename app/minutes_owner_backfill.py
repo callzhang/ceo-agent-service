@@ -10,8 +10,9 @@ the existing candidates through its ordinary path (a new source signal, an
 
 Which meetings: those with an open candidate Task that has no owner and was
 discovered from AI minutes. What is queued is the same Work Item the scan builds,
-under a source reference of its own (the digest covers the action items and their
-excerpts), so running this twice queues nothing the second time.
+under a source reference of its own (the digest covers the action items, the
+transcript excerpts and the meeting summary), so running this twice queues nothing
+the second time.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.minutes_todo_context import todo_transcript_excerpts
+from app.minutes_todo_context import minutes_full_summary, todo_transcript_excerpts
 from app.store import AutoReplyStore
 from app.task_scanners import (
     _actions_digest,
@@ -33,8 +34,11 @@ from app.task_scanners import (
 # Bump when what the Agent is asked to do with the excerpts changes (their format, the prompt's
 # owner rules, the checks a decision passes), so meetings whose earlier attempt ended without an
 # owner are read again instead of being reported as already queued. Revision 1 was the first
-# attempt (2026-09-25); 2 followed the sentence split and the per-item owner check; 3 the citation rules (extracts allowed, earlier evidence citable).
-BACKFILL_REVISION = 3
+# attempt (2026-09-25); 2 followed the sentence split and the per-item owner check; 3 the citation
+# rules (extracts allowed, earlier evidence citable); 4 added the meeting's own DingTalk summary
+# (Derek 2026-09-28: a transcript-window miss is not proof the source has no owner — read the
+# summary too before concluding that).
+BACKFILL_REVISION = 4
 
 
 @dataclass
@@ -85,14 +89,16 @@ def backfill_minutes_owners(
             decision["outcome"] = "skipped: the meeting has no action items now"
             continue
         excerpts = todo_transcript_excerpts(todos_payload, dws.get_all_minutes_transcription(minutes_id)["paragraphs"])
+        summary = minutes_full_summary(dws.get_minutes_summary(minutes_id))
         decision["located_items"] = len(excerpts)
-        if not excerpts:
-            decision["outcome"] = "skipped: no action item can be located in the transcript"
+        decision["has_summary"] = bool(summary)
+        if not excerpts and not summary:
+            decision["outcome"] = "skipped: no action item can be located in the transcript, and no meeting summary either"
             continue
         canonical = _canonical_minutes_todos_payload(
-            minutes=record, todos_payload=todos_payload, transcript_excerpts=excerpts
+            minutes=record, todos_payload=todos_payload, transcript_excerpts=excerpts, meeting_summary=summary,
         )
-        digest = _actions_digest([BACKFILL_REVISION, actions, excerpts])
+        digest = _actions_digest([BACKFILL_REVISION, actions, excerpts, summary])
         item = minutes_work_item(record, minutes_id=minutes_id, digest=digest, canonical=canonical)
         decision["source_ref"] = item.source.ref
         if dry_run:

@@ -12,7 +12,7 @@ from app.agent_cron.commands import (
 )
 from app.dingtalk_models import DingTalkMessage
 from app.dws_client import OA_PENDING_PAGE_SIZE_MAX
-from app.minutes_todo_context import todo_transcript_excerpts
+from app.minutes_todo_context import minutes_full_summary, todo_transcript_excerpts
 from app.store import AutoReplyStore
 from app.task_models import WorkItem
 from app.skill_features import FeatureRegistry
@@ -214,11 +214,13 @@ def _canonical_minutes_todos_payload(
     minutes: dict[str, Any],
     todos_payload: dict[str, Any],
     transcript_excerpts: list[dict[str, Any]],
+    meeting_summary: str = "",
 ) -> str:
     payload = {
         "meeting": minutes,
         "todos": todos_payload,
         **({"transcript_excerpts": transcript_excerpts} if transcript_excerpts else {}),
+        **({"meeting_summary": meeting_summary} if meeting_summary else {}),
     }
     return json.dumps(
         payload,
@@ -274,11 +276,13 @@ def scan_meeting_todos(
     list_minutes = getattr(dws, "list_minutes", None)
     get_minutes_todos = getattr(dws, "get_minutes_todos", None)
     get_minutes_transcript = getattr(dws, "get_all_minutes_transcription", None)
-    if list_minutes is None or get_minutes_todos is None or get_minutes_transcript is None:
+    get_minutes_summary = getattr(dws, "get_minutes_summary", None)
+    if list_minutes is None or get_minutes_todos is None or get_minutes_transcript is None or get_minutes_summary is None:
         missing = (
             "list_minutes" if list_minutes is None
             else "get_minutes_todos" if get_minutes_todos is None
-            else "get_all_minutes_transcription"
+            else "get_all_minutes_transcription" if get_minutes_transcript is None
+            else "get_minutes_summary"
         )
         store.set_daily_scan_state(
             MEETING_TODO_SCANNER,
@@ -346,10 +350,19 @@ def scan_meeting_todos(
         except Exception as exc:
             errors.append(f"{minutes_id}: transcript: {exc}")
             continue
+        # The DingTalk-generated summary is a second source for who owns each item;
+        # a meeting whose summary is not ready yet is retried next scan rather than
+        # queued without it, same as an unreadable transcript.
+        try:
+            meeting_summary = minutes_full_summary(get_minutes_summary(minutes_id))
+        except Exception as exc:
+            errors.append(f"{minutes_id}: summary: {exc}")
+            continue
         canonical = _canonical_minutes_todos_payload(
             minutes=minutes,
             todos_payload=todos_payload,
             transcript_excerpts=todo_transcript_excerpts(todos_payload, paragraphs),
+            meeting_summary=meeting_summary,
         )
 
         item = minutes_work_item(

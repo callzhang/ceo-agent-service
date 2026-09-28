@@ -2074,6 +2074,10 @@ def test_task_agent_prompt_reads_minutes_owners_from_the_conversation_around_eac
     assert "speaker label included" in prompt
     assert '"excerpt"' in prompt  # the owner_evidence key the service reads
     assert "发言人 N" in prompt  # DingTalk's placeholder for an unnamed speaker is not an owner
+    # Derek 2026-09-28: a narrow transcript window can miss the sentence that names the owner;
+    # the meeting's own DingTalk summary is a second source and must be checked too.
+    assert "meeting_summary" in prompt
+    assert "not a team or department" in prompt
 
 
 def test_update_restating_current_fields_adds_the_owner_and_an_unchanged_item_is_skipped_not_fatal(tmp_path):

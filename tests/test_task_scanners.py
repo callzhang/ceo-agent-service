@@ -62,6 +62,9 @@ def test_scan_meeting_todos_carries_scheduled_consumer_context(tmp_path):
         def get_all_minutes_transcription(self, task_uuid):
             return {"paragraphs": []}
 
+        def get_minutes_summary(self, task_uuid):
+            return {"result": {"fullSummary": ""}}
+
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     context = ServiceCommandConsumerContext(
         scheduled_task_id=7,
@@ -447,6 +450,9 @@ def test_scan_meeting_todos_enqueues_only_meetings_with_action_items(tmp_path):
         def get_all_minutes_transcription(self, task_uuid):
             return {"paragraphs": []}
 
+        def get_minutes_summary(self, task_uuid):
+            return {"result": {"fullSummary": ""}}
+
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
     assert scan_meeting_todos(store, FakeDws()) == 1
@@ -474,6 +480,9 @@ def test_scan_meeting_todos_requeues_only_when_todos_change(tmp_path):
 
         def get_all_minutes_transcription(self, task_uuid):
             return {"paragraphs": []}
+
+        def get_minutes_summary(self, task_uuid):
+            return {"result": {"fullSummary": ""}}
 
         def get_minutes_todos(self, task_uuid):
             assert task_uuid == "minutes-1"
@@ -520,6 +529,9 @@ def test_scan_meeting_todos_does_not_advance_failed_or_deferred_items(tmp_path):
 
         def get_all_minutes_transcription(self, task_uuid):
             return {"paragraphs": []}
+
+        def get_minutes_summary(self, task_uuid):
+            return {"result": {"fullSummary": ""}}
 
         def get_minutes_todos(self, task_uuid):
             if task_uuid == "minutes-1" and self.fail_first:
@@ -1657,7 +1669,7 @@ FRIDAY_PARAGRAPHS = [
 ]
 
 
-def _friday_dws(paragraphs=None, *, transcript_error=None):
+def _friday_dws(paragraphs=None, *, transcript_error=None, summary="", summary_error=None):
     class FakeDws:
         def list_minutes(self, *, limit):
             return [{"taskUuid": "minutes-1", "title": "每周内容同步"}]
@@ -1669,6 +1681,11 @@ def _friday_dws(paragraphs=None, *, transcript_error=None):
             if transcript_error:
                 raise transcript_error
             return {"paragraphs": FRIDAY_PARAGRAPHS if paragraphs is None else paragraphs}
+
+        def get_minutes_summary(self, task_uuid):
+            if summary_error:
+                raise summary_error
+            return {"result": {"fullSummary": summary}}
 
     return FakeDws()
 
@@ -1706,5 +1723,37 @@ def test_scan_meeting_todos_retries_when_the_transcript_cannot_be_read(tmp_path)
 
     state = store.get_daily_scan_state(MEETING_TODO_SCANNER)
     assert "transcript unavailable" in state["last_error"]
+
+
+def test_scan_meeting_todos_also_hands_over_the_meetings_own_summary(tmp_path):
+    """Derek 2026-09-28: a narrow transcript window can miss a sentence the meeting's own summary states plainly."""
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    full_summary = "行动项：**磊哥**与**周俊杰**负责代码 Review。"
+
+    assert scan_meeting_todos(store, _friday_dws(summary=full_summary)) == 1
+
+    [claimed] = store.claim_work_summary_inputs(limit=10)
+    summary = json.loads(json.loads(claimed.payload_json)["summary"])
+    assert summary["meeting_summary"] == full_summary
+
+
+def test_scan_meeting_todos_omits_an_empty_summary(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_meeting_todos(store, _friday_dws()) == 1
+    [claimed] = store.claim_work_summary_inputs(limit=10)
+    assert "meeting_summary" not in json.loads(json.loads(claimed.payload_json)["summary"])
+
+
+def test_scan_meeting_todos_retries_when_the_summary_cannot_be_read(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    dws = _friday_dws(summary_error=RuntimeError("summary unavailable"))
+    assert scan_meeting_todos(store, dws) == 0
+    assert store.claim_work_summary_inputs(limit=10) == []
+    from app.task_scanners import MEETING_TODO_SCANNER
+
+    state = store.get_daily_scan_state(MEETING_TODO_SCANNER)
+    assert "summary unavailable" in state["last_error"]
     # nothing was recorded as seen, so the next scan reads it again
     assert scan_meeting_todos(store, _friday_dws()) == 1

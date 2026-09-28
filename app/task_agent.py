@@ -442,6 +442,20 @@ speaker it could not name; it is not a person and never an owner. When the lines
 do not settle who owns it, or an action item has no excerpt, leave the owner
 empty.
 
+The Work Item's meeting_summary, when present, is DingTalk's own structured
+summary of the whole meeting: read it too before concluding there is no owner. A
+narrow transcript window keyed to one action item's extraction moment can miss the
+sentence that actually names the owner, and this summary often states an
+assignment explicitly and elsewhere in the meeting (e.g. "行动项：**磊哥**与**周俊杰**
+负责代码 Review"), sometimes for several action items in one place, sometimes long
+after the moment the item itself was raised. An owner citation may come from
+meeting_summary the same way it comes from transcript_excerpts: a sentence
+(an extract is fine) that contains the owner's name; the person named must be an
+individual DingTalk gave a name to, not a team or department ("研发", "算法团队",
+"Product Marketing") and not a placeholder like "发言人 N". When neither the
+transcript window nor the summary names an individual, leave the owner empty:
+that is the source's limit, not something to fill in.
+
 An assignment creates an assigned_unaccepted Task. Only explicit evidence from
 that identified owner may apply_acceptance to exactly one existing formal Task;
 “收到” and external TODO existence are not acceptance. Use explicit
