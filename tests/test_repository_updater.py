@@ -350,6 +350,121 @@ def test_deploy_names_commits_made_in_the_production_checkout(tmp_path: Path):
     assert git(local, "log", "-1", "--format=%s") == "stray production commit"
 
 
+def fixture_repo_with_protected_source(tmp_path: Path) -> tuple[Path, list[Path]]:
+    """Like `fixture_repo`, plus tracked files under each protected source tree.
+
+    The files must be committed, not merely present, or the pre-existing "has
+    local changes" guard refuses the deploy before the lock/unlock code under
+    test ever runs.
+    """
+    remote = tmp_path / "remote.git"
+    local = tmp_path / "local"
+    git(tmp_path, "init", "--bare", str(remote))
+    git(tmp_path, "init", "--initial-branch=main", str(local))
+    git(local, "config", "user.name", "Test User")
+    git(local, "config", "user.email", "test@example.com")
+    files = [
+        local / "app" / "cli.py",
+        local / "frontend" / "src" / "app.tsx",
+        local / "tests" / "test_cli.py",
+    ]
+    for path in files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("old\n", encoding="utf-8")
+        git(local, "add", str(path.relative_to(local)))
+    git(local, "commit", "-m", "old")
+    git(local, "remote", "add", "origin", str(remote))
+    git(local, "push", "-u", "origin", "main")
+    updater = tmp_path / "updater"
+    git(tmp_path, "clone", str(remote), str(updater))
+    git(updater, "config", "user.name", "Remote")
+    git(updater, "config", "user.email", "remote@example.com")
+    (updater / "version.txt").write_text("new\n", encoding="utf-8")
+    git(updater, "add", "version.txt")
+    git(updater, "commit", "-m", "new")
+    git(updater, "push", "origin", "main")
+    return local, files
+
+
+def test_lock_and_unlock_source_tree_toggle_write_permission(tmp_path: Path):
+    import stat as stat_module
+
+    from app.deploy import lock_source_tree, unlock_source_tree
+
+    local, files = fixture_repo_with_protected_source(tmp_path)
+    # Nothing outside app/, frontend/src/ and tests/ is touched.
+    unprotected = local / "data" / "config.json"
+    unprotected.parent.mkdir(parents=True, exist_ok=True)
+    unprotected.write_text("{}\n", encoding="utf-8")
+
+    lock_source_tree(local)
+
+    for path in files:
+        assert path.stat().st_mode & stat_module.S_IWUSR == 0
+        with pytest.raises(PermissionError):
+            path.write_text("edited\n", encoding="utf-8")
+    assert unprotected.stat().st_mode & stat_module.S_IWUSR != 0
+    unprotected.write_text("{}\n", encoding="utf-8")  # still writable
+
+    unlock_source_tree(local)
+
+    for path in files:
+        assert path.stat().st_mode & stat_module.S_IWUSR != 0
+        path.write_text("edited\n", encoding="utf-8")  # no longer raises
+
+
+def test_deploy_locks_the_source_tree_after_a_successful_deploy(tmp_path: Path, monkeypatch):
+    import stat as stat_module
+
+    import app.deploy as deploy_module
+    from app.repository_updater import UpgradeResult
+
+    local, files = fixture_repo_with_protected_source(tmp_path)
+
+    class SucceedingUpdater:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def execute(self, operation):
+            return UpgradeResult(
+                operation_id=operation.operation_id,
+                status="succeeded",
+                installed_commit=git(local, "rev-parse", "origin/main"),
+            )
+
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", SucceedingUpdater)
+    monkeypatch.setattr("app.store.AutoReplyStore", lambda _path: StateStore())
+
+    deploy_module.deploy(local, tmp_path / "db.sqlite3")
+
+    for path in files:
+        assert path.stat().st_mode & stat_module.S_IWUSR == 0
+
+
+def test_deploy_relocks_the_source_tree_even_when_the_race_is_lost(tmp_path: Path, monkeypatch):
+    import stat as stat_module
+
+    import app.deploy as deploy_module
+
+    local, files = fixture_repo_with_protected_source(tmp_path)
+
+    class RacingUpdater:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def execute(self, operation):
+            git(local, "merge", "--ff-only", "origin/main")
+            raise UpgradePreconditionError("repository revision changed")
+
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", RacingUpdater)
+    monkeypatch.setattr("app.store.AutoReplyStore", lambda _path: StateStore())
+
+    deploy_module.deploy(local, tmp_path / "db.sqlite3")
+
+    for path in files:
+        assert path.stat().st_mode & stat_module.S_IWUSR == 0
+
+
 def test_production_checkout_refuses_commits_but_still_fast_forwards(tmp_path: Path):
     from app.deploy import ensure_production_guards
 

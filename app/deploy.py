@@ -66,6 +66,52 @@ def ensure_production_guards(root: Path) -> None:
         hook.chmod(hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+#: Source trees nobody should hand-edit between deploys (Derek 2026-09-28).
+#: The guard hooks above stop a commit, and the "has local changes" check in
+#: `deploy` below stops a stray edit from ever going live, but neither one
+#: stops the edit from being *made* -- this catches that at write time. Kept
+#: narrow on purpose: `data/`, `.env` and build output outside these trees
+#: (`app/static/workbench`, `frontend/dist`, `frontend/node_modules`) are
+#: genuinely written at runtime or by the build step below and must stay
+#: writable. `app/static/workbench` itself sits inside `app/` and is
+#: deliberately swept into the lock too -- nothing writes there except the
+#: build step, which always runs inside the unlocked window.
+PROTECTED_SOURCE_DIRS = ("app", "frontend/src", "tests")
+
+
+def _chmod_tree(path: Path, *, writable: bool) -> None:
+    if not path.exists():
+        return
+    for entry in path.rglob("*"):
+        try:
+            if entry.is_symlink():
+                continue
+            current = entry.stat().st_mode
+            if writable:
+                entry.chmod(current | stat.S_IWUSR)
+            else:
+                entry.chmod(current & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
+        except OSError:
+            # A file mid-write, or gone by the time we reach it, must not
+            # abort a deploy; the next lock/unlock pass corrects it.
+            continue
+    top_mode = path.stat().st_mode
+    if writable:
+        path.chmod(top_mode | stat.S_IWUSR)
+    else:
+        path.chmod(top_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
+
+
+def lock_source_tree(root: Path) -> None:
+    for relative in PROTECTED_SOURCE_DIRS:
+        _chmod_tree(root / relative, writable=False)
+
+
+def unlock_source_tree(root: Path) -> None:
+    for relative in PROTECTED_SOURCE_DIRS:
+        _chmod_tree(root / relative, writable=True)
+
+
 def deploy(root: Path, database_path: Path) -> str:
     from app.store import AutoReplyStore
 
@@ -116,6 +162,10 @@ def deploy(root: Path, database_path: Path) -> str:
         verification=lambda: verify_imports(root),
         health=wait_for_health,
     )
+    # Unlocked for exactly the checkout + build + verify window; the source
+    # tree is locked again in `finally` whether this succeeds, rolls back, or
+    # raises, so a deploy that dies mid-way never leaves it writable.
+    unlock_source_tree(root)
     try:
         result = updater.execute(operation)
     except UpgradePreconditionError as exc:
@@ -124,6 +174,8 @@ def deploy(root: Path, database_path: Path) -> str:
             # Another session deployed while this one waited for the lock.
             return f"another deploy got there first; production is at {moved[:8]}"
         raise SystemExit(f"nothing was deployed: {exc}") from None
+    finally:
+        lock_source_tree(root)
     return f"deployed {current[:8]} -> {result.installed_commit[:8]}"
 
 

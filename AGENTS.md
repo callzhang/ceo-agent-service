@@ -78,10 +78,15 @@ When only a setting changed and there is no commit (some settings, such as an em
 account's, are read when a worker starts), restart with `python -m app.deploy --restart`;
 it waits for no work in flight, restarts through launchd and waits for health.
 Do not run `launchctl kickstart` or `kill` on the job by hand. Do not edit,
-build in, or run tests in `~/Services/ceo-agent-service`. Both are enforced:
-the deploy installs git hooks there that refuse any commit, merge commit or
-rebase, and `tests/conftest.py` exits when pytest starts in that checkout. If a
-deploy reports the checkout diverged, move the listed commits to main and reset
+build in, or run tests in `~/Services/ceo-agent-service`. This is enforced
+three ways: the deploy installs git hooks there that refuse any commit, merge
+commit or rebase; `tests/conftest.py` exits when pytest starts in that
+checkout; and `app/, frontend/src/, tests/` are chmod read-only there between
+deploys (Derek 2026-09-28) — a deploy unlocks them for exactly its checkout
++ build + verify window and relocks them in `finally`, success or failure.
+`data/`, `.env` and build output outside those trees stay writable, since the
+running service and the build step genuinely write there. If a deploy reports
+the checkout diverged, move the listed commits to main and reset
 production to `origin/main`. Committed-but-unpushed
 work never goes live, so a restart no longer carries another session's
 half-written edits.
