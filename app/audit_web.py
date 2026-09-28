@@ -3478,6 +3478,25 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   and error_event.kind <> 'codex_capacity_pause'
                   and not exists (
                     select 1
+                    from errors newer_error
+                    where newer_error.conversation_id=error_event.conversation_id
+                      and coalesce(newer_error.message_id, '')=
+                          coalesce(error_event.message_id, '')
+                      and newer_error.kind=error_event.kind
+                      and newer_error.id>error_event.id
+                      and coalesce(newer_error.resolved_at, '')=''
+                  )
+                  and not (
+                    error_event.conversation_id='work_summary_input'
+                    and exists (
+                      select 1
+                      from work_summary_inputs as completed_input
+                      where cast(completed_input.id as text)=error_event.message_id
+                        and lower(completed_input.status) in ('done', 'skipped')
+                    )
+                  )
+                  and not exists (
+                    select 1
                     from reply_attempts recovery
                     where recovery.conversation_id=error_event.conversation_id
                       and recovery.trigger_message_id=error_event.message_id

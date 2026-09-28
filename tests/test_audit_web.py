@@ -11624,6 +11624,34 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
         assert db.execute("select count(*) from errors where resolved_at='' ").fetchone()[0] == 2
 
 
+def test_attention_projects_only_latest_live_task_agent_error(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    input_id = store.enqueue_work_summary_input(
+        source_type="ai_minutes", source_ref="minutes:1", payload_json='{"summary":"work"}'
+    )
+    with store._connect() as db:
+        db.execute(
+            "insert into errors (conversation_id, message_id, kind, detail) "
+            "values ('work_summary_input', ?, 'task_agent', 'old')",
+            (str(input_id),),
+        )
+        db.execute(
+            "insert into errors (conversation_id, message_id, kind, detail) "
+            "values ('work_summary_input', ?, 'task_agent', 'latest')",
+            (str(input_id),),
+        )
+    rows = audit_web_module._queue_attention_rows(store)
+    task_errors = [row for row in rows if row.get("root_cause") == "task_agent"]
+    assert len(task_errors) == 1
+    assert task_errors[0]["error"] == "latest"
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set status='done', updated_at=current_timestamp where id=?",
+            (input_id,),
+        )
+    assert not any(row.get("root_cause") == "task_agent" for row in audit_web_module._queue_attention_rows(store))
+
+
 def test_service_component_catalog_lists_runtime_attempt_reclaim(tmp_path: Path):
     # Derek 2026-09-28: cli.py's run_service starts a "runtime-attempt-reclaim"
     # thread, but this hardcoded catalog is what the console actually renders --
