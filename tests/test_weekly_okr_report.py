@@ -1937,6 +1937,10 @@ def test_the_output_schema_pins_the_exact_kr_row_count(tmp_path: Path) -> None:
         assert rows["minItems"] == rows["maxItems"] == 1
         manager_rows = schema["properties"]["manager_reviews"]
         assert manager_rows["minItems"] == manager_rows["maxItems"] == 1
+        culture_rows = schema["properties"]["manager_reviews"]["items"][
+            "properties"
+        ]["culture_dimensions"]
+        assert culture_rows["minItems"] == culture_rows["maxItems"] == 3
 
 
 def test_a_member_the_model_cannot_score_withholds_the_report(

@@ -599,6 +599,15 @@ def _schema_requiring_exact_kr_rows(
     ]
     reviews["minItems"] = expected_kr_count
     reviews["maxItems"] = expected_kr_count
+    # Every roster member is scored against the same three culture-value
+    # dimensions.  Pin that shape in structured output so a model cannot
+    # return a partial culture section that only fails after the provider turn
+    # has spent its full timeout.
+    culture = schema["properties"]["manager_reviews"]["items"]["properties"][
+        "culture_dimensions"
+    ]
+    culture["minItems"] = 3
+    culture["maxItems"] = 3
     manager_reviews = schema["properties"]["manager_reviews"]
     manager_reviews["minItems"] = 1
     manager_reviews["maxItems"] = 1
