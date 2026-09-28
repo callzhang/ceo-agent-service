@@ -701,7 +701,7 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 
 `ceo-sales-weekly-report` 没有独立 producer 或功能开关。它由 Consumer 根据明确的销售周报请求动态选择，直接使用安装用户已有的 `sharecrm` 登录态；CRM 只读限制由 Skill 和 Codex automatic review 约束，不表示 service 建立了 `sharecrm` 命令白名单。
 
-### Task-first 工作跟踪（Task 6 与 Task 7；代码未部署）
+### Task-first 工作跟踪（Task 6 与 Task 7；已上线）
 
 Task-first 的正式 Project 注册表和当前 Task 状态以最近一次确认的正式周报为
 首要来源，尤其是项目管理部或管理层周报中明确列出的项目、负责人、目标、
@@ -721,7 +721,7 @@ Task 提取使用稳定的 `task-agent:work-tracking:v1` 会话范围；每个 W
 
 **定时完成检查已停用**（Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：定期入队路径（`enqueue_todo_completion_evidence_checks`、`check-follow-up-completions` 命令及维护循环/每日维护中的调用）已删除。Task 只在新信息到来时更新——消息、会议由各来源扫描交给 Task Agent；钉钉待办的完成由定时任务「补查遗漏的钉钉消息和日历更新」列出新完成的待办，已链接的直接关闭对应 TODO 或业务 Task（确定性，不经 Agent，证据记为 `dingtalk_todo:<taskId>`），不再逐条轮询每个链接。停用前，定时检查把每条开放 TODO 连同其快照重发给 Task Agent，16 次中 15 次一次都没检索就以自身编号为来源而失败。关闭来源上的 Task 后，Attention 成员在领域提交后更新；同一关注项中仍开放的兄弟 Task 继续保留。
 
-这是代码分支的运行时契约，不等于服务已部署或发布。Task 6 不得单独部署；Task 7 在 Task 键控的执行表中实现 TODO 镜像、follow-up、回执和完成转换。只有正式、未关闭、来源支持明确负责人且已接受承诺，并有来源支持的可解析 `committed_deadline_at` 的 Task 才排入 TODO 创建 outbox；不得由请求期限、估算或下次检查日期推算镜像期限。创建后保存外部 ID 并读回；若首次读回失败但 provider ID 已知，后续状态拉取会按该 ID 重新读回并收口链接/outbox；若创建结果未知且没有 ID，不会以新的操作键再次创建。同一 Task 有未结清创建 intent 时不再排第二个创建；已知的 `failed` 操作使用有界退避，未到 `next_attempt_at` 时不被再次领取。缺少可信 producer 提供的 `external_task_id` 时也不猜测该 ID。
+Task 6 与 Task 7 已随 `46ba55eb`（2026-09-24）一起部署上线，不是未发布的代码分支契约：控制台 `/tasks` 页面读取的候选/正式 Task、听记行动项扫描、CEO 需关注投影、Task 7 在 Task 键控的执行表中实现的 TODO 镜像、follow-up、回执和完成转换，都是本节描述的运行时机制在生产环境实际运行的样子。Task 6 仍不得脱离 Task 7 单独部署（下线或回滚同理）。只有正式、未关闭、来源支持明确负责人且已接受承诺，并有来源支持的可解析 `committed_deadline_at` 的 Task 才排入 TODO 创建 outbox；不得由请求期限、估算或下次检查日期推算镜像期限。创建后保存外部 ID 并读回；若首次读回失败但 provider ID 已知，后续状态拉取会按该 ID 重新读回并收口链接/outbox；若创建结果未知且没有 ID，不会以新的操作键再次创建。同一 Task 有未结清创建 intent 时不再排第二个创建；已知的 `failed` 操作使用有界退避，未到 `next_attempt_at` 时不被再次领取。缺少可信 producer 提供的 `external_task_id` 时也不猜测该 ID。
 
 新 follow-up 只有在已链接来源信号提供精确会话目标和可解析 `next_check_at` 时才创建；问题可概括 Task 状态，但目标与检查时间不能从截止日或历史会话推断。群聊在精确来源群中发送并提及 Task 的证据化负责人；单聊只发送给来源明确指定的负责人账号，来源会话 ID 保留作核对，不把消息误发给可能不是任务负责人的原发件人。follow-up 只由 Derek 在 Task 详情页点按钮发送（Derek 2026-09-25），`next_check_at` 只是建议时间，到点不会自动发送；定时任务「投递到期的跟进事项」（`process-follow-ups`）已于 2026-09-25 退役并由 seeding 删除。发送尝试以 Task follow-up 的 revision、租约和幂等 UUID 留存，成功记录回执；发送中断或租约过期的结果标为未知、该 follow-up 显示为 `failed`，不自动重发，也不排 Agent 核查，再发由 Derek 再点一次。外部 TODO 完成仅关闭其明确链接的 Task 和 follow-up，不触及同一聚类的兄弟 Task。历史 `work_todos`、`follow_up_drafts` 和旧 outbox 仍可读取；旧 `follow_up_drafts` 只是历史，永远不会再发送，也不再有修复/取消表单，质检与安装向导不把它们算作积压。
 
