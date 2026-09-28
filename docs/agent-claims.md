@@ -28,8 +28,6 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| codex-weekly-okr-complete-roster | app/weekly_okr_report.py, tests/test_weekly_okr_report.py, docs/agent-claims.md | Require weekly OKR analysis output and publication to cover every roster member; constrain isolated analysis to one manager and resolve KR rows by stable IDs before title anchors. | 2026-09-28 |
-
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
 | codex-needs-human-rule-options | app/agent_contracts.py, app/consumer_agent.py, app/audit_agent.py, tests/test_agent_contracts.py, tests/test_consumer_agent.py, tests/test_audit_agent.py, docs/architecture.md, docs/runtime-mechanism.md, docs/agent-claims.md | Require human decision options to target reusable task-class rules, preventing current-instance approval/rejection choices from becoming needs_human. | 2026-09-25 |
