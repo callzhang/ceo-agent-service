@@ -1132,7 +1132,6 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
     assert [review.name for review in analysis.manager_reviews] == ["甲", "乙"]
     assert all(review.kr_reviews[0].kr_id == "kr-1" for review in analysis.manager_reviews)
 
-
     refreshed_source = json.loads(source_path.read_text(encoding="utf-8"))
     for item in refreshed_source["managers"]:
         item["liveOkr"]["source"]["fetchedAt"] = "2026-07-30T04:00:00+08:00"
@@ -1154,6 +1153,21 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
 
     assert len(seen) == 2
     assert [review.name for review in cached.manager_reviews] == ["甲", "乙"]
+
+
+def test_codex_agent_parent_lease_covers_turn_and_validation_retry(tmp_path):
+    store = AutoReplyStore(tmp_path / "weekly-lease.sqlite3")
+    agent = CodexWeeklyOkrAgent(
+        workspace=tmp_path,
+        store=store,
+        routed_execution=CallbackRouted(lambda *_: ""),
+        timeout_seconds=300,
+        idle_timeout_seconds=300,
+    )
+
+    # The routed attempt lease is 300 + 300 + 300 seconds.  The parent job
+    # must not expire earlier while the model is still running or retrying.
+    assert agent._job_lease_seconds == 900
 
 
 def test_kr_binding_uses_live_order_when_model_paraphrases_all_titles():

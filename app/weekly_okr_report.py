@@ -284,7 +284,16 @@ class CodexWeeklyOkrAgent:
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
         self._now = now or (lambda: datetime.now(UTC))
-        self._job_lease_seconds = max(int(timeout_seconds) + 60, 1)
+        # A manager job can spend the full bounded turn in the provider and
+        # then use the one permitted structured-output correction retry.  The
+        # runtime attempt lease already spans total timeout + idle timeout +
+        # its recovery margin; the parent OKR job must be at least that long
+        # as well, otherwise the maintenance sweep can reclaim a live job
+        # before its result is written back.
+        self._job_lease_seconds = max(
+            int(timeout_seconds) + int(idle_timeout_seconds) + 300,
+            1,
+        )
 
     def analyze(
         self,
