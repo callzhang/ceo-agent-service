@@ -1618,3 +1618,25 @@ def test_provider_observation_read_failures_keep_stage_context(tmp_path, method,
         job.run_once(({"account_id": "account-1"},))
     assert caught.value.ceo_training_stage == stage
     assert caught.value.ceo_training_account_id == "account-1"
+
+
+def test_provider_observation_close_failure_keeps_stage_context(tmp_path):
+    from app.email_training_observer import ProviderTrainingObservationJob
+
+    class Source:
+        def list_folders(self):
+            return ()
+
+        def logout(self):
+            raise LookupError("provider close unavailable")
+
+    job = ProviderTrainingObservationJob(
+        state_path=tmp_path / "observer.json",
+        source_factory=lambda _account: Source(),
+        email_store=_Store(),
+        batch_size=10,
+    )
+    with pytest.raises(LookupError, match="provider close unavailable") as caught:
+        job.run_once(({"account_id": "account-1"},))
+    assert caught.value.ceo_training_stage == "provider_close"
+    assert caught.value.ceo_training_account_id == "account-1"

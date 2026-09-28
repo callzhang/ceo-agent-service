@@ -120,7 +120,13 @@ class ProviderTrainingObservationJob:
             capped_folders = _cap_cached_category_samples(
                 updated, limit=self.max_category_samples
             )
-            bindings = tuple(self.email_store.list_account_folder_bindings())
+            bindings = tuple(
+                _provider_call(
+                    self.email_store.list_account_folder_bindings,
+                    stage="account_lookup",
+                    account_id="unknown",
+                )
+            )
             more_available = False
             unavailable: list[str] = []
             authoritative_folders: set[str] = set()
@@ -362,7 +368,11 @@ class ProviderTrainingObservationJob:
                             more_available or len(messages) == self.batch_size
                         )
                 finally:
-                    _close_source(source)
+                    _provider_call(
+                        lambda: _close_source(source),
+                        stage="provider_close",
+                        account_id=account_id,
+                    )
             for removed_account in set(updated["accounts"]) - active_account_ids:
                 del updated["accounts"][removed_account]
             if not more_available:
@@ -543,7 +553,11 @@ class ProviderTrainingObservationJob:
                                     )
                                 )
                 finally:
-                    _close_source(source)
+                    _provider_call(
+                        lambda: _close_source(source),
+                        stage="provider_close",
+                        account_id=account_id,
+                    )
             if existed and set(updated["accounts"]) != active_account_ids:
                 changed = True
                 change_evidence.append(
