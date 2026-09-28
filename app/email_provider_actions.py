@@ -139,6 +139,7 @@ class DeterministicEmailActionExecutor:
         *,
         readback_provider_factory: Callable[[], DeterministicEmailProvider] | None = None,
         hand_over_session: Callable[[DeterministicEmailProvider], object] | None = None,
+        discard_session: Callable[[DeterministicEmailProvider], object] | None = None,
     ):
         self.provider = provider
         self._readback_provider_factory = readback_provider_factory
@@ -147,6 +148,21 @@ class DeterministicEmailActionExecutor:
         # the write connection when the server's own reply was enough, and the
         # read-back connection when a read-back was needed.
         self._hand_over_session = hand_over_session
+        # Called instead of closing a connection that will not be reused
+        # (discarded write session before a read-back, a failed read-back
+        # session, a write session that wasn't worth keeping). Defaults to
+        # today's plain close; a caller pairing this with a connector's
+        # checkout()/checkin() passes both this and hand_over_session so
+        # every checkout is matched by exactly one checkin.
+        self._discard_session = discard_session
+
+    def _release(self, provider: DeterministicEmailProvider, *, keep: bool) -> None:
+        if keep and self._hand_over_session is not None:
+            self._hand_over_session(provider)
+        elif not keep and self._discard_session is not None:
+            self._discard_session(provider)
+        else:
+            _close_provider(provider)
 
     def execute(self, action: StoredEmailAction) -> ProviderActionResult:
         operation = _provider_operation(action.action_type)
@@ -219,7 +235,7 @@ class DeterministicEmailActionExecutor:
             readback_locator = applied_locator or current_locator
             try:
                 if self._readback_provider_factory is not None:
-                    _close_provider(self.provider)
+                    self._release(self.provider, keep=False)
                     provider_closed = True
                     readback_provider = self._readback_provider_factory()
                 verification_provider = readback_provider or self.provider
@@ -263,15 +279,9 @@ class DeterministicEmailActionExecutor:
             )
         finally:
             if readback_provider is not None:
-                if keep_readback_session and self._hand_over_session is not None:
-                    self._hand_over_session(readback_provider)
-                else:
-                    _close_provider(readback_provider)
+                self._release(readback_provider, keep=keep_readback_session)
             if not provider_closed:
-                if keep_write_session and self._hand_over_session is not None:
-                    self._hand_over_session(self.provider)
-                else:
-                    _close_provider(self.provider)
+                self._release(self.provider, keep=keep_write_session)
 
     @staticmethod
     def _server_reply_is_enough(

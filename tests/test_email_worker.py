@@ -6363,7 +6363,7 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     monkeypatch.setattr(
         module,
         "_build_imap_direct_action_executor_factory",
-        lambda _store: direct_factory,
+        lambda _store, _registry: direct_factory,
     )
     from app.email_model_registry import EmailModelRegistry
 
@@ -8127,16 +8127,33 @@ def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
     monkeypatch.setenv("CEO_EMAIL_B_IMAP_SECRET", "imap-secret-b")
     monkeypatch.setenv("CEO_EMAIL_A_SMTP_SECRET", "must-not-be-read-a")
     monkeypatch.setenv("CEO_EMAIL_B_SMTP_SECRET", "must-not-be-read-b")
+    class FakeSession:
+        def capability(self):
+            return ("OK", [b"IMAP4rev1 UIDPLUS MOVE"])
+
+        def noop(self):
+            return ("OK", [b""])
+
+        def logout(self):
+            return ("BYE", [b""])
+
     monkeypatch.setattr(
         "app.email_provider_actions.ImapDeterministicProvider.connect",
         lambda host, username, password, **kwargs: (
-            calls.append((host, username, password, kwargs)) or SimpleNamespace()
+            calls.append((host, username, password, kwargs))
+            or SimpleNamespace(session=FakeSession())
         ),
     )
 
-    factory = module._build_imap_direct_action_executor_factory(Store())
+    store = Store()
+    registry = module._build_email_connector_registry(store)
+    factory = module._build_imap_direct_action_executor_factory(store, registry)
     executor_a = factory("account-a")
     executor_b = factory("account-b")
+    # Mirrors execute()'s own sequencing: the write session is checked in
+    # (discarded) before the read-back session is checked out -- the two
+    # are never held at once, so this is safe to call directly here.
+    executor_a._discard_session(executor_a.provider)
     readback_provider_a = executor_a._readback_provider_factory()
 
     assert executor_a.provider is not executor_b.provider
@@ -8170,6 +8187,99 @@ def test_production_direct_action_factory_uses_each_accounts_imap_secret_only(
         ),
     ]
     assert all("must-not-be-read" not in repr(call) for call in calls)
+
+
+def test_production_direct_action_factory_never_opens_two_connections_for_one_account(
+    monkeypatch,
+) -> None:
+    """Two threads racing the same account's direct-action factory must
+    serialize on the shared connector, not each dial their own connection --
+    the exact race that put two live sockets on the same Gmail account on
+    2026-09-28.
+    """
+
+    import threading
+    import time
+
+    module = _module()
+    account = {
+        "account_id": "account-race",
+        "enabled": True,
+        "imap_tls": True,
+        "imap_host": "imap.example.test",
+        "imap_port": 993,
+        "imap_username": "race@example.com",
+        "imap_secret_reference": "CEO_EMAIL_RACE_IMAP_SECRET",
+        "imap_move_mode": "move",
+    }
+
+    class Store:
+        def get_account(self, _account_id):
+            return account
+
+    monkeypatch.setenv("CEO_EMAIL_RACE_IMAP_SECRET", "imap-secret-race")
+
+    class FakeSession:
+        def capability(self):
+            return ("OK", [b"IMAP4rev1 UIDPLUS MOVE"])
+
+        def noop(self):
+            return ("OK", [b""])
+
+        def logout(self):
+            return ("BYE", [b""])
+
+    connect_calls: list[int] = []
+    overlap_detected = threading.Event()
+    inside_connect = threading.Lock()
+    release_first = threading.Event()
+
+    def fake_connect(host, username, password, **kwargs):
+        if not inside_connect.acquire(blocking=False):
+            # A second caller reached connect() while the first was still
+            # inside it -- exactly the unmutexed race from 2026-09-28.
+            overlap_detected.set()
+            return SimpleNamespace(session=FakeSession())
+        try:
+            connect_calls.append(1)
+            release_first.wait(timeout=2)
+        finally:
+            inside_connect.release()
+        return SimpleNamespace(session=FakeSession())
+
+    monkeypatch.setattr(
+        "app.email_provider_actions.ImapDeterministicProvider.connect", fake_connect
+    )
+
+    store = Store()
+    registry = module._build_email_connector_registry(store)
+    factory = module._build_imap_direct_action_executor_factory(store, registry)
+
+    results: list[object] = []
+
+    def worker() -> None:
+        executor = factory("account-race")
+        results.append(executor)
+        # Release the account's connection the same way execute() would
+        # once it has nothing left to verify, so the next racer can proceed.
+        executor._discard_session(executor.provider)
+
+    first = threading.Thread(target=worker)
+    first.start()
+    time.sleep(0.1)  # first is now blocked inside fake_connect, holding it
+
+    second = threading.Thread(target=worker)
+    second.start()
+    time.sleep(0.1)  # second must be queued on the connector's mutex, not
+    # concurrently inside fake_connect
+
+    release_first.set()
+    first.join(timeout=3)
+    second.join(timeout=3)
+
+    assert not overlap_detected.is_set()
+    assert len(connect_calls) == 2
+    assert len(results) == 2
 
 
 def _seed_direct_move_action(database: Path):
@@ -10360,117 +10470,6 @@ def test_the_operation_still_runs_when_the_effect_ignores_executed(tmp_path):
     )
     bound.apply_defaults()
     assert bound.arguments["executed"] is None
-
-
-class _StubImapProvider:
-    def __init__(self, name: str, *, dead: bool = False) -> None:
-        self.name = name
-        self.closed = False
-        self._dead = dead
-        outer = self
-
-        class _Session:
-            def noop(self):
-                if outer._dead:
-                    raise OSError("connection reset")
-                return "OK", [b"done"]
-
-        self.session = _Session()
-
-    def close(self) -> None:
-        self.closed = True
-
-
-def _warm_session_factory(monkeypatch, clock):
-    import app.email_worker as worker
-    from app import email_provider_actions
-
-    connections: list[_StubImapProvider] = []
-
-    def connect(*_args, **_kwargs):
-        provider = _StubImapProvider(f"login-{len(connections) + 1}")
-        connections.append(provider)
-        return provider
-
-    monkeypatch.setattr(email_provider_actions.ImapDeterministicProvider, "connect", connect)
-    monkeypatch.setenv("CEO_EMAIL_WARM_TEST_IMAP_SECRET", "secret")
-
-    class Store:
-        def get_account(self, account_id):
-            return {
-                "account_id": account_id, "enabled": True, "imap_tls": True,
-                "imap_secret_reference": "CEO_EMAIL_WARM_TEST_IMAP_SECRET", "imap_host": "imap.example.test",
-                "imap_username": "u", "imap_port": 993, "imap_move_mode": "move",
-            }
-
-    return worker._build_imap_direct_action_executor_factory(Store(), clock=clock), connections
-
-
-def test_the_verifying_connection_becomes_the_next_actions_writer(monkeypatch) -> None:
-    now = [1000.0]
-    factory, connections = _warm_session_factory(monkeypatch, lambda: now[0])
-
-    first = factory("account-1")
-    assert [c.name for c in connections] == ["login-1"]
-    verifier = _StubImapProvider("verifier")
-    first._hand_over_session(verifier)
-
-    second = factory("account-1")
-
-    # No second login for the write: the connection that verified the first
-    # action is the one that writes the second.
-    assert second.provider is verifier
-    assert [c.name for c in connections] == ["login-1"]
-    assert verifier.closed is False
-
-
-def test_a_warm_connection_is_per_account(monkeypatch) -> None:
-    factory, connections = _warm_session_factory(monkeypatch, lambda: 1000.0)
-    factory("account-1")._hand_over_session(_StubImapProvider("verifier"))
-
-    other = factory("account-2")
-
-    assert other.provider is connections[-1]
-    assert len(connections) == 2
-
-
-def test_a_warm_connection_that_sat_idle_is_replaced(monkeypatch) -> None:
-    now = [1000.0]
-    factory, connections = _warm_session_factory(monkeypatch, lambda: now[0])
-    stale = _StubImapProvider("stale")
-    factory("account-1")._hand_over_session(stale)
-    now[0] += 46.0
-
-    executor = factory("account-1")
-
-    assert stale.closed is True
-    assert executor.provider is connections[-1]
-    assert len(connections) == 2
-
-
-def test_a_warm_connection_older_than_its_chain_limit_is_replaced(monkeypatch) -> None:
-    now = [1000.0]
-    factory, connections = _warm_session_factory(monkeypatch, lambda: now[0])
-    executor = factory("account-1")
-    for _ in range(7):
-        now[0] += 44.0
-        executor._hand_over_session(_StubImapProvider("kept"))
-        executor = factory("account-1")
-
-    # Each hand-over was fresh, but the chain began over 300 seconds ago.
-    assert len(connections) == 2
-
-
-def test_a_dead_warm_connection_is_replaced(monkeypatch) -> None:
-    factory, connections = _warm_session_factory(monkeypatch, lambda: 1000.0)
-    dead = _StubImapProvider("dead", dead=True)
-    factory("account-1")._hand_over_session(dead)
-
-    executor = factory("account-1")
-
-    assert dead.closed is True
-    assert executor.provider is connections[-1]
-    assert len(connections) == 2
 
 
 def test_the_unsubscribe_page_judge_runs_in_the_service_workspace_not_the_database_directory(
