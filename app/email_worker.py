@@ -4012,7 +4012,9 @@ def build_email_worker_dependencies(
 
         observation_job = ProviderTrainingObservationJob(
             state_path=registry.root / "provider-training-observations.json",
-            source_factory=source_factory,
+            source_factory=_build_training_observation_source_factory(
+                email_connector_registry
+            ),
             email_store=email_store,
             batch_size=50,
             include_folder=provider_training_folder_is_relevant,
@@ -4202,6 +4204,64 @@ def _active_description_set_version(email_store: object) -> str:
         if descriptions
         else "description-set-unavailable"
     )
+
+
+class _ConnectorBackedTrainingSource:
+    """A `source_factory(account)` result that checks its connection back
+    in on close, instead of really logging out.
+
+    `ProviderTrainingObservationJob` (app/email_training_observer.py) always
+    calls `source.logout()`/`.close()` exactly once, unconditionally, in a
+    `finally` -- it never reuses a source across calls. That is also today's
+    connector contract for a checked-out session that will not be kept
+    (`checkin(keep=False)`), so this proxy lets the job's existing lifecycle
+    drive the connector without changing that module at all.
+    """
+
+    def __init__(self, connector: object, session: object, wrapped: object) -> None:
+        self._connector = connector
+        self._session = session
+        self._wrapped = wrapped
+        self._checked_in = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped, name)
+
+    def _checkin(self) -> None:
+        if not self._checked_in:
+            self._checked_in = True
+            self._connector.checkin(self._session, keep=False)
+
+    def logout(self) -> None:
+        self._checkin()
+
+    def close(self) -> None:
+        self._checkin()
+
+
+def _build_training_observation_source_factory(registry: object):
+    """`source_factory` for `ProviderTrainingObservationJob`, LOW priority.
+
+    Training observation is the background, bulk half of every account's
+    IMAP use (see `ConnectorPriority`) -- it queues behind anything the
+    owner is waiting on directly, and it was one of the two threads a
+    2026-09-28 `py-spy dump` caught holding a separate live connection to
+    the same account at once.
+    """
+
+    from app.email_account_connector import ConnectorPriority
+
+    def source_factory(account: Mapping[str, object]):
+        account_id = str(account["account_id"])
+        connector = registry.connector_for(account_id)
+        session, wrapped = connector.checkout(
+            "readonly",
+            ConnectorPriority.LOW,
+            mailbox_address=str(account.get("email_address") or ""),
+        )
+        return _ConnectorBackedTrainingSource(connector, session, wrapped)
+
+    return source_factory
 
 
 def _build_email_connector_registry(email_store: object):

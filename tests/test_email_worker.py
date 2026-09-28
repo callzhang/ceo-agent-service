@@ -8388,6 +8388,61 @@ def test_production_direct_action_factory_never_opens_two_connections_for_one_ac
     assert len(results) == 2
 
 
+def test_training_observation_source_factory_checks_the_connection_back_in() -> None:
+    """Task 4 of the single-connector plan: the training observation job's
+    source_factory must checkout/checkin through the shared connector at
+    LOW priority, and closing the returned source must check the
+    connection back in (discarded) rather than really log out -- so
+    ProviderTrainingObservationJob's own unconditional finally-close still
+    behaves exactly as before.
+    """
+
+    module = _module()
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def logout(self) -> None:
+            self.closed = True
+
+    checkout_calls = []
+    checkin_calls = []
+
+    class FakeConnector:
+        def checkout(self, kind, priority, **kwargs):
+            checkout_calls.append((kind, priority, kwargs))
+            return FakeSession(), object()
+
+        def checkin(self, session, *, keep):
+            checkin_calls.append((session, keep))
+
+    class FakeRegistry:
+        def connector_for(self, account_id):
+            assert account_id == "account-1"
+            return FakeConnector()
+
+    from app.email_account_connector import ConnectorPriority
+
+    source_factory = module._build_training_observation_source_factory(FakeRegistry())
+    source = source_factory({"account_id": "account-1", "email_address": "a@example.com"})
+
+    assert checkout_calls == [
+        ("readonly", ConnectorPriority.LOW, {"mailbox_address": "a@example.com"})
+    ]
+
+    source.logout()  # the job's own unconditional finally-close
+
+    assert len(checkin_calls) == 1
+    session, keep = checkin_calls[0]
+    assert keep is False
+    assert session.closed is False  # checked in, not really logged out
+
+    # Closing twice (defensive) must not check the connection in twice.
+    source.close()
+    assert len(checkin_calls) == 1
+
+
 def _seed_direct_move_action(database: Path):
     email_store = EmailStore(database)
     task_store = AutoReplyStore(database)
