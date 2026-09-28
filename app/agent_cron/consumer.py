@@ -179,9 +179,31 @@ class ScheduledAgentConsumer:
         run = self._store.get_scheduled_task_run_for_reply_execution(task.id)
         if run is None or run.dispatch_status != "dispatched":
             raise ValueError("scheduled trigger dispatch fact is missing")
-        built = ScheduledAgentContext.from_execution_json(
-            task.trigger_message_json, reply_task_id=task.id
-        )
+        try:
+            built = ScheduledAgentContext.from_execution_json(
+                task.trigger_message_json, reply_task_id=task.id
+            )
+        except ValueError as exc:
+            # A malformed persisted snapshot is a pre-Agent execution
+            # condition.  Do not hand it back to the dispatcher forever: the
+            # scheduled source has already been dispatched and must be closed
+            # with an auditable skip, just like any other unavailable context.
+            reason = f"{EXECUTION_UNAVAILABLE}: {exc}"
+            guard.assert_current(self._now().astimezone(UTC))
+            self._store.skip_scheduled_reply_task(
+                task.id,
+                reason,
+                expected_execution_generation=task.execution_generation,
+                dispatcher_owner=guard.token.owner,
+                dispatcher_generation=guard.token.generation,
+                now=self._now().astimezone(UTC),
+            )
+            self._store.record_error(
+                f"scheduled-task:{run.scheduled_task_id}", run.event_id,
+                EXECUTION_UNAVAILABLE, reason,
+            )
+            guard.accept_atomic_source_completion()
+            return
         try:
             validate_scheduled_execution_availability(self._option_service, built)
         except ValueError as exc:

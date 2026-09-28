@@ -629,6 +629,36 @@ def test_execution_uses_persisted_preflight_context_after_current_options_change
     assert observed[1] == ("Only snapshot", "Only snapshot")
 
 
+def test_malformed_persisted_execution_context_is_audited_skip(tmp_path):
+    store, run, options = fixture(tmp_path)
+    task_id = int(dispatch(store, run, options).execution_id)
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update reply_tasks set trigger_message_json=? where id=?",
+            ("{\"schema\":\"old_context\"}", task_id),
+        )
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, guard = claim(adapter, task_id, "execution")
+    ScheduledAgentConsumer(
+        store=store,
+        option_service=options,
+        orchestrator_factory=lambda _built: pytest.fail("Agent must not start"),
+        now=lambda: NOW,
+    )(envelope, guard)
+
+    task = store.get_reply_task(task_id)
+    attempt = store.get_latest_reply_attempt_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    )
+    assert task.status == "done"
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert "scheduled execution context schema is invalid" in attempt.send_error
+    assert store.list_agent_runs_for_task_generation(
+        task_id, task.execution_generation
+    ) == []
+
+
 @pytest.mark.parametrize(
     "loss_kind",
     [
