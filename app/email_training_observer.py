@@ -38,6 +38,15 @@ def _raise_with_stage(exc: Exception, stage: str, account_id: str) -> None:
     raise exc
 
 
+def _provider_call(
+    call: Callable[[], object], *, stage: str, account_id: str
+) -> object:
+    try:
+        return call()
+    except Exception as exc:  # noqa: BLE001 - preserve provider failure context
+        _raise_with_stage(exc, stage, account_id)
+
+
 def provider_training_folder_is_relevant(
     folder: object, binding: Mapping[str, object] | None
 ) -> bool:
@@ -117,14 +126,23 @@ class ProviderTrainingObservationJob:
             authoritative_folders: set[str] = set()
             active_account_ids: set[str] = set()
             for account in accounts:
-                account_id = _required_text(account.get("account_id"), "account_id")
+                try:
+                    account_id = _required_text(account.get("account_id"), "account_id")
+                except Exception as exc:  # noqa: BLE001 - stage invalid account input
+                    _raise_with_stage(exc, "account_lookup", "unknown")
                 active_account_ids.add(account_id)
                 try:
                     source = self.source_factory(account)
                 except Exception as exc:  # noqa: BLE001 - preserve provider failure
                     _raise_with_stage(exc, "provider_connect", account_id)
                 try:
-                    inventory = tuple(source.list_folders())
+                    inventory = tuple(
+                        _provider_call(
+                            source.list_folders,
+                            stage="folder_inventory",
+                            account_id=account_id,
+                        )
+                    )
                     inventory = tuple(
                         folder
                         for folder in inventory
@@ -207,10 +225,14 @@ class ProviderTrainingObservationJob:
                                 folder_state,
                                 limit=self.reconciliation_batch_size,
                             )
-                            membership = membership_reader(
-                                folder.display_name,
-                                cursor_uidvalidity=cursor_uidvalidity,
-                                uids=selected_uids,
+                            membership = _provider_call(
+                                lambda: membership_reader(
+                                    folder.display_name,
+                                    cursor_uidvalidity=cursor_uidvalidity,
+                                    uids=selected_uids,
+                                ),
+                                stage="folder_membership",
+                                account_id=account_id,
                             )
                             membership_uidvalidity = getattr(
                                 membership, "uidvalidity", None
@@ -249,11 +271,15 @@ class ProviderTrainingObservationJob:
                                     more_available
                                     or int(folder_state["reconcile_after_uid"]) > 0
                                 )
-                        batch = source.fetch_uid_batch(
-                            folder.display_name,
-                            cursor_uidvalidity=cursor_uidvalidity,
-                            last_seen_uid=highest_uid,
-                            limit=self.batch_size,
+                        batch = _provider_call(
+                            lambda: source.fetch_uid_batch(
+                                folder.display_name,
+                                cursor_uidvalidity=cursor_uidvalidity,
+                                last_seen_uid=highest_uid,
+                                limit=self.batch_size,
+                            ),
+                            stage="message_batch",
+                            account_id=account_id,
                         )
                         uidvalidity = getattr(batch, "uidvalidity", None)
                         if (
@@ -410,7 +436,11 @@ class ProviderTrainingObservationJob:
                 try:
                     inventory = tuple(
                         folder
-                        for folder in source.list_folders()
+                        for folder in _provider_call(
+                            source.list_folders,
+                            stage="folder_inventory",
+                            account_id=account_id,
+                        )
                         if folder.role not in {FolderRole.SENT, FolderRole.DRAFT}
                     )
                     account_preexisted = account_id in updated["accounts"]
@@ -434,8 +464,12 @@ class ProviderTrainingObservationJob:
                         folder_state = folder_states.setdefault(
                             folder_id, _new_folder_state()
                         )
-                        fingerprint = source.fetch_folder_fingerprint(
-                            folder.display_name
+                        fingerprint = _provider_call(
+                            lambda folder_name=folder.display_name: source.fetch_folder_fingerprint(
+                                folder_name
+                            ),
+                            stage="folder_fingerprint",
+                            account_id=account_id,
                         )
                         if type(fingerprint) is not ProviderFolderFingerprint:
                             raise TypeError("provider folder fingerprint is invalid")
@@ -475,10 +509,14 @@ class ProviderTrainingObservationJob:
                                 folder_state,
                                 limit=self.reconciliation_batch_size,
                             )
-                            membership = source.fetch_uid_membership(
-                                folder.display_name,
-                                cursor_uidvalidity=fingerprint.uidvalidity,
-                                uids=selected_uids,
+                            membership = _provider_call(
+                                lambda: source.fetch_uid_membership(
+                                    folder.display_name,
+                                    cursor_uidvalidity=fingerprint.uidvalidity,
+                                    uids=selected_uids,
+                                ),
+                                stage="folder_membership",
+                                account_id=account_id,
                             )
                             if _membership_differs(
                                 folder_state,

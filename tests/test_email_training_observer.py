@@ -1584,3 +1584,37 @@ def test_provider_connect_failure_keeps_original_error_and_adds_diagnostic_stage
 
     assert caught.value.ceo_training_stage == "provider_connect"
     assert caught.value.ceo_training_account_id == "missing-account"
+
+
+@pytest.mark.parametrize(
+    ("method", "stage"),
+    [("list_folders", "folder_inventory"),
+     ("fetch_uid_batch", "message_batch")],
+)
+def test_provider_observation_read_failures_keep_stage_context(tmp_path, method, stage):
+    from app.email_training_observer import ProviderTrainingObservationJob
+
+    class Source:
+        def list_folders(self):
+            if method == "list_folders":
+                raise LookupError("provider read unavailable")
+            return (_folder(),)
+
+        def fetch_uid_batch(self, _folder_name, **_kwargs):
+            if method == "fetch_uid_batch":
+                raise LookupError("provider read unavailable")
+            raise AssertionError("unexpected provider call")
+
+        def logout(self):
+            return None
+
+    job = ProviderTrainingObservationJob(
+        state_path=tmp_path / "observer.json",
+        source_factory=lambda _account: Source(),
+        email_store=_Store(),
+        batch_size=10,
+    )
+    with pytest.raises(LookupError, match="provider read unavailable") as caught:
+        job.run_once(({"account_id": "account-1"},))
+    assert caught.value.ceo_training_stage == stage
+    assert caught.value.ceo_training_account_id == "account-1"
