@@ -29,17 +29,19 @@ workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime a
 ## 标准生命周期
 
 ```text
-pending -> running -> done
-                  -> failed
-                  -> needs_human
+pending -> processing -> done
+                     -> failed
+                     -> needs_human
+                     -> skipped
 ```
 
 - `pending`：已持久化，等待执行。
-- `processing`：历史兼容名称；新任务统一使用 `running`。
-- `needs_feedback`：审核 Agent 已完成审阅，反馈已持久化，执行 Agent 需要修改原结果。
-- `revision_pending`：修正版已排队；修正版必须有新的 revision 标识，并保留原结果和反馈的关联。
+- `processing`：正在执行，或正处于“审核 Agent 要求修改、执行 Agent 重跑”的反馈闭环中；
+  闭环期间任务始终停留在这个状态，不切到单独的“待反馈”“待修正”状态——修改请求记在
+  `AuditAgentResult.feedback`（`rule`/`observation`/`requested_revision`），修正次数记在
+  `proposal_revision` 计数器上。
 - `done`：逻辑完成且结果已持久化。
-- `sent`：历史兼容名称；新任务以 `done` 表示完成，provider 发送结果保存在 trace。
+- `skipped`：判定为不可执行或不必执行，主动收口，不再重试。
 - `needs_human`：只能是有可追溯 Agent run 的完整结构化规则/Skill 缺口：
   `information_completeness>=0.5`，且 `(risk=high 且 confidence<0.5)` 或
   `rule_coverage<0.5`，并附 2--4 个互斥、可执行选项。技术读取、provider、receipt、
@@ -688,7 +690,7 @@ consumer、训练三个组件都至少成功完成一轮后才发布 `ready`。
 
 ### Email folder classifier live verification
 
-Console 的“模型训练”提供版本化门槛配置及显式主模型开关。四项默认值为 Macro F1 0.95、
+Console 的”模型训练”提供版本化门槛配置及显式主模型开关。四项默认值为 Micro F1 0.95、
 逐类别 Precision 0.95、逐类别独立测试样本 20、常驻端到端 P95 500ms；缺失测量不能达标。
 达标显示红点，用户操作开关才调用 runtime-mode API。运行状态和切换身份/历史在同一个
 online-active.json 中原子提交，expected mode/model 冲突返回 409；关闭模型保留证据和历史。
@@ -794,8 +796,6 @@ URL 查询参数。外部反馈页可以收集评分，但不能通过链接、�
 旧版本若在浏览器预检查阶段失败并错误留下 `uncertain/effect_uncertain` claim，可通过显式恢复命令释放，但必须精确绑定失败 Audit，且确认没有浏览器步骤、完成记录、续跑记录或多个 effect；释放后仍需单独发起正式任务重试。
 当前退订执行只投影明确成功或失败。浏览器动作返回失败且没有持久化步骤、完成记录或续跑记录时，释放本轮 claim 并交给统一重试；不得先写入不可重试的中间状态再让下一次 Audit 撞上 claim 冲突。
 退订浏览器仅把固定的内部失败类别投影到错误码；已识别的导航超时和页面状态缺失必须与兜底 `email_unsubscribe_browser_failed` 区分，错误码、步骤日志和页面原文里不得写入 URL 或凭证。结果的 `error_detail` 记下失败是什么：已识别的 `UnsubscribeBrowserError` 写固定枚举 `category=<名称>`（没有专属错误码的类别共用兜底码 `email_unsubscribe_browser_failed`，这里是唯一说明具体类别的地方，2026-09-25 有 6 次失败只剩这个兜底码）；未预期异常（兜底）会留下异常类名和截断到 240 字符的消息：URL、cookie/token/session 一类字段和 32 位以上的长串都先替换掉，再写入回执 evidence、这次尝试的 `audit_summary` 和任务的错误文本（`<码>: <类名: 消息>`，重试判断只看第一个冒号前的码）。此前该兜底只留下码，任务 384835（2026-09-25）两次失败因此查不出原因。外部原因造成的退订失败（第三方页面拒绝表单或一键请求、页面操作失败或超时、导航目标无效、控件不可用，清单在 `app/external_failures.py`，靠任务错误文本里的 `category=` 判断，不加字段）保持 `failed`，History 照常列出，但不进 Attention（Derek 2026-09-25）：这些是我们改不了的，同一页面重跑结果不变。钉钉 OKR 登录失效（`okr_headless_session_expired…`、`okr_authorization_required…`）同样是外部原因：只有人能重新登录，也保持 `failed`、不进 Attention；只有标准错误码 `authorization_required` 才能承载「需要人工」的授权决定，OKR 自己的错误码不行，所以它记为失败而不是人工决定。唯一例外是 `email_unsubscribe_receipts.entry_url`：该列按 Derek 的明确要求保存这次实际打开的完整私密 URL（含 query 与 token），用于人工复现同一个退订入口。写入前校验它的 sha256 等于 `entry_reference` 的摘要，因此不能与生命周期认定的身份漂移；它不经过 `assert_no_credentials`，因为被保存的正是那类 token。打开该 URL 会真实执行退订，任何能读这张表或这个页面的人都能替当事人退订。该列只在本次变更之后产生的 receipt 上有值，历史行为空且无法补全。退订浏览器不再对页面发出的网络请求做 origin 白名单、跳转或资源家族限制。
-Google Workspace 邮件使用的 `c.gle` 短入口只允许桥接到 `google.com` provider family；该精确映射不能作为通用短链放行规则。
-Google 退订页面只允许从 `google.com` 和 `gstatic.com` provider dependency family 加载 HTTPS 公网资源；页面中的普通跨站链接不进入许可集合，仍在请求发出前拒绝。
 同一 generation、同一 proposal revision 内，Consumer 或 Audit 每个 worker pass 最多跑 2 次 turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的通用失败时该 pass 以 `failed_retryable` 结束，并给出 `retry_after_seconds`（共享指数退避：60 秒、120 秒、240 秒……封顶 15 分钟，`external_retry.retry_delay_seconds`）。编排层按持久化的 run 计数该角色在这个 revision 上**连续**失败的 turn 数，满 `MAX_CONSECUTIVE_FAILED_TURNS`（6 = 3 个 pass × 2）后，下一次 pass 耗尽时结果是 `failed_terminal`：错误码不变（例如 `agent_reported_failure`），Agent 原文 `source_code` 保留在错误诊断和结果摘要里，任务结束为 `failed`，不再重新入队。计数遇到 `completed` run 或等待类错误（授权、`runtime_*`、`codex_provider_*`）即中断。这条上限对所有调用方生效：DingTalk worker 的 3 次 attempts 恰好对应同一数字；定时执行与 Email 任务延期时会归还 attempts，此前没有任何计数，2026-09-26 定时周报任务 385880 因 Audit 反复报告 `proposal_already_executed`（`agent_reported_failure`）在同一 generation 里被重跑 310 次，每 12 秒一次。如果 Audit 的内容反馈轮次耗尽且最后一次 Audit 保留了具体修改意见，编排结果进入 `needs_human`，提供“按审计意见修订”或“停止不执行”两个明确选择，避免把可继续处理的审计修订误投影为 opaque failed。
 
 ## 周期性工作的归属
@@ -945,7 +945,7 @@ Agent run，并把它作为有效进展证据；stderr 和未完成的 stdout �
 
 应用层不审核 Agent 使用的命令、MCP 工具、Skill、读写模式或工具名称，也不维护
 `side_effect_state`、`unknown`、`reconciled` 等业务状态。应用层只校验最终 typed result 的形状，
-推进 `done`、`failed`、`needs_feedback` 和 `needs_human`，并保存去重所需的最小外部事实：
+推进 `done`、`failed`、`skipped` 和 `needs_human`（反馈闭环期间任务停留在 `processing`），并保存去重所需的最小外部事实：
 `operation`、`target`、provider 稳定结果标识。纯读取不需要 receipt；写入中断时由下一次 Agent turn
 按业务 Skill 读取目标状态，服务不启动专门的只读核对回合，也不因“未知工具”阻断执行。
 

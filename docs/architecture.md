@@ -9,21 +9,20 @@
 本节是所有任务类型的统一运行契约。每个任务都遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务只能替换输入和工具能力，不能改变这条基本链路。外部系统的读取、写入和重试由 Agent 按业务 Skill 完成，服务只保存结果投影和去重所需的事实。
 
 ```text
-pending -> running -> done
-                  -> failed
-                  -> needs_human
+pending -> processing -> done
+                     -> failed
+                     -> needs_human
+                     -> skipped
 ```
 
 - `pending`：任务已持久化，等待执行。
-- `processing`：历史兼容名称；新任务统一使用 `running`。
-- `needs_feedback`：审核 Agent 已发现结果需要修改，反馈已持久化并等待执行 Agent 修正。
-- `revision_pending`：修正版已排队；必须有新的 revision，并保留原 run、反馈、session 和外部回执的关系。
+- `processing`：正在执行或正处于“审核 Agent 要求修改、执行 Agent 重跑”的反馈闭环中；task 在整个闭环期间都停留在这个状态，不会切换到单独的“待反馈”“待修正”状态——修改请求本身记在 `AuditAgentResult.feedback`（`AuditFeedback.rule/observation/requested_revision`），修正次数记在 `proposal_revision` 计数器上。
 - `done`：任务逻辑完成且结果已持久化。
-- `sent`：历史兼容名称；新任务以 `done` 表示完成，provider 发送结果保存在 trace。
+- `skipped`：判定为不可执行或不必执行，主动收口，不再重试。
 - `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；不是技术读取失败的兜底状态。每个结果必须附带面向用户的 `needs_human_reason` 和可追溯 `decision_basis`（已核验事实、适用规则、质量分值解释、未发生外部动作的依据和结论）。若理由只是技术、路由、schema、Audit 或重试失败，该投影无效并收口为 `failed`。高风险外部动作还必须提供匹配当前对象的单一 `authorization_plan`，说明动作、影响、明确排除的动作及执行后读回；详情页只展示由当前 Attempt 所指 run 的有效结构化依据。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败，并保留失败阶段和原因。
 
-审核闭环如下：
+审核闭环如下（task 状态全程停留在 `processing`，直到最终收口为 `done`/`failed`/`needs_human`/`skipped`）：
 
 ```text
 执行 Agent 生成 R0
@@ -134,9 +133,12 @@ DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。统�
 继续负责自己的生命周期和外部事实。Dispatcher 的有界等待是跨进程恢复机制，不是用户 Cron，
 也没有用户可编辑的 polling/settle 设置。空队列只显示零指标，不生成 run。
 
-启动时以稳定 migration key 幂等创建八个默认任务：钉钉消息、每小时 `:30` 的钉钉近期消息恢复、
-会议、微信 reader、OA、每日工作来源、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）运行的
-AI 听记同步。八项全部以服务命令形式 seed；早先以 Agent 形式创建的同一
+启动时以稳定 migration key 幂等创建默认任务，清单以 `app/agent_cron/seeds.py::seed_scheduled_tasks`
+为准（当前 14 项）：分类新邮件、处理新的钉钉消息、处理新的钉钉日历邀请、补查遗漏的钉钉消息和
+日历更新、同步会议结论与管理者视角、处理已授权会话的新微信消息、处理新的钉钉 OA 审批、将会议
+行动项整理到 Tasks、生成并发送每周 OKR 管理周报、准备 CEO 管理周报、发送 CEO 每日总结、同步
+Chrome 登录态、申请读不到的钉钉 AI 听记，以及下载新增的钉钉 AI 听记（每天 `20:00`，`Asia/Shanghai`）。
+全部以服务命令形式 seed；早先以 Agent 形式创建的同一
 migration key 任务在启动时原地转换为命令形式，
 保留名称、Cron 和时区，已删除的旧任务不动，其命令通过 Console API 不可修改。新安装创建的全部
 默认任务都是**暂停**状态，由用户配好连接器后自行启用（Derek 2026-09-23）；seed 从不改变已有任务的
@@ -311,7 +313,7 @@ agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显�
 ### 用户反馈处理投影与重新打开
 
 用户反馈处理使用稳定的 `pending -> processing -> resolved` 当前投影；
-这组状态与普通 Agent 任务的 `pending -> running -> done` 不是同一状态机。
+这组状态与普通 Agent 任务的 `pending -> processing -> done` 不是同一状态机。
 `pending` 表示未领取，`processing` 表示已被一个批次原子领取，`resolved`
 表示当前处理轮次已用完整回执结案。页面上的“未完成”是
 `{pending, processing}` 的合集，不增加第四个存储状态。
@@ -342,7 +344,7 @@ provider 文件夹”绑定并单向创建/校验目标文件夹；分类结果�
 表示尚未分类，Spam/Trash 固定为内部 `junk`，Sent/Draft 不参加训练。`important` 不是类别，
 而是独立注意信号：兼容 provider 的 Starred/Important/Flagged 信号与成熟模型信号取并集，
 但 junk 始终抑制 important。控制台详情页的 Star / Flag 图标是主人本人的手动点击，直接让服务连上邮箱增删 `\Flagged` / `$Important` 这一个关键字并读回确认，不经过 ActionPlan；观察到的状态随后更新，下一轮扫描再对账。分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。确定性动作清单是
-`label`、`mark_read`、`archive`、`move`、`trash`；它们属于 Email 子系统，由独立
+`label`、`mark_read`、`archive`、`move`、`trash`、`flag_important`；它们属于 Email 子系统，由独立
 Email worker 领取、执行动作，并以服务器的应答为结果（Derek, 2026-09-25：不需要回读，服务器接受就够了）。
 执行前仍先读一次当前状态，已满足就不写。改标记的动作（标已读、标星、贴标签）在服务器接受 STORE 后即完成；
 移动、归档、删除在服务器回了 `COPYUID`（新位置已知）时同样即完成。只有服务器没说邮件去了哪里时，
@@ -452,7 +454,7 @@ fallback code 写入 `EmailStore`；Web 进程只读取这些跨进程聚合，�
 classification detail 从该投影读取当前文件夹事实，不从冻结训练 snapshot 推断，也不在 API 请求中
 访问邮箱网络。训练相关字段明确使用 snapshot 命名，避免把历史冻结状态误称为当前状态。
 
-Email Console 的“模型训练”页读取后端统一计算的晋升资格。默认门槛为 Macro F1 ≥ 0.95、
+Email Console 的“模型训练”页读取后端统一计算的晋升资格。默认门槛为 Micro F1 ≥ 0.95、
 每个启用类别 Precision ≥ 0.95、逐类独立测试 support ≥ 20、常驻端到端 P95 ≤ 500ms。
 门槛通过带 expected-current version 的接口追加新版本；修改门槛不激活模型。
 现有双候选、important 和完整性条件继续适用，并比较候选与当前描述集和类别集合。
@@ -543,7 +545,7 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
 - 定时命令（`scheduled_task_runs`）：失败的触发一律显示；同一定时任务之后有一次成功
   运行的，失败显示为 `recovered`（服务在那次成功时解决它的 Attention 条目），否则为
   `failed`。成功的运行只显示结果不会出现在别处的命令（`consumer_prompt_enabled=False`：
-  听记同步、听记权限申请、OKR 周报），显示为 `done`，结果行是命令的一行摘要；把结果
+  同步 Chrome 登录态、听记同步、听记权限申请、OKR 周报），显示为 `done`，结果行是命令的一行摘要；把结果
   交给 Agent 的生产命令（读取新钉钉消息、日历邀请、邮件等，每天数千次且几乎都是
   「没找到」）成功时不显示，它们排入的每一项自己就是一条 History。Agent 形式任务因
   运行时或 Skill 不可用而跳过的触发显示为 `skipped`；上一次还在运行而跳过
