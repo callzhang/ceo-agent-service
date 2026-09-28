@@ -475,6 +475,12 @@ class CodexWeeklyOkrAgent:
                 analysis = WeeklyOkrAnalysis.model_validate(
                     _extract_report_payload(raw)
                 )
+                # Each child prompt contains exactly one roster member. Some
+                # models transliterate or translate that member's name even
+                # though the rest of the review is for the requested person;
+                # the isolated job identity is authoritative here.
+                if len(analysis.manager_reviews) == 1:
+                    analysis.manager_reviews[0].name = manager.name
                 _validate_manager_coverage(analysis, [manager])
                 _validate_kr_coverage(analysis, filtered_payload["managers"])
             except (ValueError, ValidationError) as exc:
