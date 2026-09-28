@@ -33,7 +33,11 @@ from app.agent_runtime_contracts import (
     RuntimeKind,
     RuntimeRoute,
 )
-from app.agent_runtime_router import AgentRuntimeRouter, route_unavailable_code
+from app.agent_runtime_router import (
+    AgentRuntimeRouter,
+    RoutedCodexExecutionError,
+    route_unavailable_code,
+)
 from app.claude_runtime_adapter import (
     ClaudeEventNormalizer,
     CLAUDE_MAX_TURNS_PER_INVOCATION,
@@ -1446,6 +1450,35 @@ class AgentTurnProcess(Generic[ResultT]):
                 session_continuable=True,
             )
             raise
+        except RoutedCodexExecutionError as exc:
+            if active_attempt is not None:
+                persisted_attempt = self.store.get_agent_runtime_attempt(
+                    active_attempt.id
+                )
+                if persisted_attempt is not None and persisted_attempt.status in {
+                    "starting",
+                    "running",
+                }:
+                    self.store.fail_agent_runtime_attempt(
+                        active_attempt.id,
+                        (
+                            exc.failure_class.value
+                            if exc.failure_class is not None
+                            else RuntimeFailureClass.PROCESS.value
+                        ),
+                        exc.failure_code or exc.code,
+                        exc.retryable_external_dependency,
+                    )
+            self._fail_running(
+                run,
+                exc.failure_code or exc.code,
+                detail=exc.reason or str(exc),
+                stage="execution",
+                source="runtime",
+                source_code=exc.failure_code or exc.code,
+                session_continuable=True,
+            )
+            raise
         except Exception as exc:
             self._fail_runtime_attempt_unclassified(active_attempt, exc)
             provider_recovery = _agent_process_error_code(exc)
@@ -1690,6 +1723,18 @@ class AgentTurnProcess(Generic[ResultT]):
                 RuntimeFailureClass.RESULT.value,
                 failure_code,
                 False,
+            )
+            return
+        if isinstance(exc, RoutedCodexExecutionError):
+            self.store.fail_agent_runtime_attempt(
+                attempt.id,
+                (
+                    exc.failure_class.value
+                    if exc.failure_class is not None
+                    else RuntimeFailureClass.PROCESS.value
+                ),
+                exc.failure_code or exc.code,
+                exc.retryable_external_dependency,
             )
             return
         self.store.fail_agent_runtime_attempt(

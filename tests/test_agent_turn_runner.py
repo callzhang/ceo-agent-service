@@ -40,6 +40,32 @@ def test_result_parse_failure_preserves_runtime_attempt_code():
     assert calls == [(17, "result", "codex_result_missing", False)]
 
 
+def test_routed_runtime_failure_preserves_router_failure_code():
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    calls = []
+
+    class Store:
+        def get_agent_runtime_attempt(self, attempt_id):
+            return SimpleNamespace(id=attempt_id, status="running")
+
+        def fail_agent_runtime_attempt(self, *args):
+            calls.append(args)
+
+    runner = object.__new__(AgentTurnProcess)
+    runner.store = Store()
+    runner._fail_runtime_attempt_unclassified(
+        SimpleNamespace(id=18),
+        RoutedCodexExecutionError(
+            "runtime_executor_failed",
+            "executor raised",
+            failure_code="runtime_executor_failed",
+        ),
+    )
+
+    assert calls == [(18, "process", "runtime_executor_failed", False)]
+
+
 def test_same_route_capacity_retry_resumes_observed_audit_session():
     assert _fallback_requested_session_id(
         previous_route_name="codex_oauth",
