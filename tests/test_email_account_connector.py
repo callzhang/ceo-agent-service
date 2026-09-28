@@ -289,3 +289,54 @@ def test_registry_creates_one_connector_per_account_lazily() -> None:
         pass
 
     assert connect_log == ["account-a", "account-b"]
+
+
+def test_checkout_checkin_lets_a_caller_decide_reuse_per_outcome() -> None:
+    connect_calls: list[int] = []
+    sessions = [FakeSession(), FakeSession()]
+    connector = _connector(connect_calls=connect_calls, sessions=sessions)
+
+    session, wrapped = connector.checkout(kind="raw")
+    assert wrapped is sessions[0]
+    connector.checkin(session, keep=False)
+
+    session2, wrapped2 = connector.checkout(kind="raw")
+    connector.checkin(session2, keep=True)
+
+    assert sessions[0].closed is True
+    assert wrapped2 is sessions[1]
+    assert sessions[1].closed is False
+    assert len(connect_calls) == 2
+
+
+def test_checkout_then_checkin_discard_then_checkout_again_never_holds_two_at_once() -> None:
+    """Models the direct-action write-then-readback flow: the write session
+
+    is fully checked in (discarded) before the read-back session is checked
+    out -- the two are never open at the same time, so this must not need a
+    reentrant lock.
+    """
+
+    connect_calls: list[int] = []
+    sessions = [FakeSession(), FakeSession()]
+    connector = _connector(connect_calls=connect_calls, sessions=sessions)
+
+    write_session, _ = connector.checkout(kind="raw", priority=ConnectorPriority.HIGH)
+    connector.checkin(write_session, keep=False)  # server reply was not enough
+    readback_session, _ = connector.checkout(kind="raw", priority=ConnectorPriority.HIGH)
+    connector.checkin(readback_session, keep=True)
+
+    assert write_session is sessions[0]
+    assert readback_session is sessions[1]
+    assert len(connect_calls) == 2
+
+
+def test_checkout_releases_the_slot_if_wrapping_fails() -> None:
+    connector = _connector(connect_calls=[])
+
+    with pytest.raises(ValueError):
+        connector.checkout(kind="not-a-real-kind")
+
+    # The failed checkout must not leave the connector permanently busy.
+    session, _ = connector.checkout(kind="raw")
+    connector.checkin(session, keep=True)

@@ -189,24 +189,55 @@ class EmailAccountConnector:
         that is one cheap IMAP command and capabilities cannot go stale
         across a reused session's lifetime otherwise). Extra keyword
         arguments pass through to the wrapper's constructor.
+
+        Kept for reuse on a normal return; discarded on an exception. A
+        caller that needs finer control than that (direct action delivery
+        decides per outcome whether *this* session is worth keeping, and its
+        read-back path checks one connection back in before checking a
+        second one out -- never holding two at once) should use
+        `checkout()`/`checkin()` instead.
         """
 
-        self._wait_for_turn(priority)
-        session: Any | None = None
+        session, wrapped = self.checkout(kind, priority, **wrap_kwargs)
         ok = False
         try:
-            session = self._take_or_connect()
-            wrapped = self._wrap(session, kind, **wrap_kwargs)
             yield wrapped
             ok = True
         finally:
-            if ok:
-                self._session = session
-                self._kept_at = self._clock()
-            elif session is not None:
-                self._close(session)
-                self._session = None
+            self.checkin(session, keep=ok)
+
+    def checkout(
+        self,
+        kind: str,
+        priority: ConnectorPriority = ConnectorPriority.LOW,
+        **wrap_kwargs: Any,
+    ) -> tuple[Any, Any]:
+        """Block for this account's connection; return (raw session, wrapped adapter).
+
+        The connector stays busy until `checkin()` is called with this same
+        raw session. Pairs with `checkin()`, not with `acquire()`'s `with`.
+        """
+
+        self._wait_for_turn(priority)
+        try:
+            session = self._take_or_connect()
+            wrapped = self._wrap(session, kind, **wrap_kwargs)
+        except BaseException:
             self._release()
+            raise
+        return session, wrapped
+
+    def checkin(self, session: Any, *, keep: bool) -> None:
+        """Return a session checked out with `checkout()`; must be called exactly once."""
+
+        if keep:
+            self._session = session
+            self._kept_at = self._clock()
+        else:
+            self._close(session)
+            if self._session is session:
+                self._session = None
+        self._release()
 
     def _wrap(self, session: Any, kind: str, **wrap_kwargs: Any) -> Any:
         if kind == "raw":
@@ -252,7 +283,14 @@ class EmailConnectorRegistry:
         self._lock = threading.Lock()
         self._connectors: dict[str, EmailAccountConnector] = {}
 
-    def _connector_for(self, account_id: str) -> EmailAccountConnector:
+    def connector_for(self, account_id: str) -> EmailAccountConnector:
+        """The one connector for this account, created the first time it is asked for.
+
+        Most callers just want `acquire()`; this is for callers that instead
+        need `checkout()`/`checkin()` (see `EmailAccountConnector.acquire`'s
+        docstring for why).
+        """
+
         with self._lock:
             connector = self._connectors.get(account_id)
             if connector is None:
@@ -274,6 +312,6 @@ class EmailConnectorRegistry:
         priority: ConnectorPriority = ConnectorPriority.LOW,
         **wrap_kwargs: Any,
     ):
-        return self._connector_for(account_id).acquire(
+        return self.connector_for(account_id).acquire(
             kind, priority, **wrap_kwargs
         )
