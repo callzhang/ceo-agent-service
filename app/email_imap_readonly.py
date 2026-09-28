@@ -307,7 +307,17 @@ class ImapReadonlyAdapter:
         password: str,
         *,
         port: int = 993,
-        timeout: float | None = 20.0,
+        # 20s was too tight for at least one real account: fetching a single
+        # message's headers reliably took 5-6s on a slow path to it (measured
+        # 2026-09-28), and a busy folder's own SEARCH can add more on top,
+        # which surfaced as a socket TimeoutError that aborted the whole scan
+        # or training-observation batch -- and, because the batch never
+        # completes, the same slow point is retried and times out again on
+        # every future attempt. A raw socket timeout mid-command cannot be
+        # caught and continued on the same session (the read desyncs from
+        # the server's still-pending response), so widening the ceiling is
+        # the safe fix here, not a catch-and-skip.
+        timeout: float | None = 90.0,
         account_id: str,
         mailbox_address: str = "",
         trusted_authserv_domain: str = "",

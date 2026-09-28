@@ -1902,3 +1902,39 @@ def test_imap_batch_reports_no_attempt_when_nothing_matched() -> None:
 
     assert batch.messages == []
     assert batch.attempted_max_uid is None
+
+
+def test_imap_connect_defaults_to_a_wide_socket_timeout(monkeypatch) -> None:
+    """20s was too tight for at least one real account (2026-09-28): a message
+
+    fetch reliably took 5-6s on a slow path, and the resulting TimeoutError
+    aborted the whole batch every attempt since the same slow point was
+    retried forever. The ceiling must stay wide by default.
+    """
+
+    captured = {}
+
+    class FakeSSL:
+        def __init__(self, host, port, timeout=None):
+            captured["timeout"] = timeout
+
+        def login(self, username, password):
+            return "OK", [b""]
+
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", FakeSSL)
+
+    ImapReadonlyAdapter.connect(
+        "imap.example.test", "user@example.test", "secret", account_id="account-a"
+    )
+
+    assert captured["timeout"] == 90.0
+
+    ImapReadonlyAdapter.connect(
+        "imap.example.test",
+        "user@example.test",
+        "secret",
+        account_id="account-a",
+        timeout=5.0,
+    )
+
+    assert captured["timeout"] == 5.0
