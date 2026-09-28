@@ -55,7 +55,27 @@ class _WireBase(BaseModel):
 
 class _ConsumerWireBase(_WireBase):
     # Required so every turn has to consider it; an empty list is an answer.
-    durable_memories: list[DurableMemory]
+    # The array itself carries no prompt otherwise -- only its item schema
+    # (DurableMemory) describes what a well-formed entry looks like, which
+    # never prompted the model to look back over the turn and ask whether one
+    # applies. Every completed Consumer run has come back with durable_memories
+    # entirely empty since the field shipped (Derek 2026-09-28: "参考 hook 的
+    # prompt"), so this description is written the same way the memory-connector
+    # Stop hook prompts an active check, not a passive field description.
+    durable_memories: list[DurableMemory] = Field(
+        description=(
+            "Before you finish, check whether this turn confirmed anything "
+            "durable: a person's preference, a decision that was made, a "
+            "reusable rule or convention, an accepted project rule, a stable "
+            "business fact, long-term context, or the explicit next step of "
+            "unfinished work. If it did, list each one as its own item here. "
+            "Skip temporary tasks, logs, code, one-off errors, unconfirmed "
+            "guesses, sensitive original text, secrets or tokens, unauthorized "
+            "document content, and anything already in Memory. An empty list "
+            "is the right answer when nothing durable came up this turn -- "
+            "but check every turn, don't default to empty."
+        )
+    )
 
 
 class _ConsumerProposalWire(_ConsumerWireBase):
