@@ -71,7 +71,7 @@ export function EmailReadingPanel(props: Props) {
   const editable = item?.status === "pending_feedback" || item?.status === "processed";
   const events = detail?.observability || [];
   const newestUnsubscribe = [...events].reverse().find(event => event.kind === "unsubscribe");
-  const unsubscribe = newestUnsubscribe ? unsubscribeStateLabel({status: newestUnsubscribe.status, outcome: newestUnsubscribe.outcome ?? null}) : null;
+  const unsubscribe = newestUnsubscribe ? unsubscribeStateLabel({status: newestUnsubscribe.status, outcome: newestUnsubscribe.outcome ?? null, error: newestUnsubscribe.error ?? null}) : null;
   const ranked = Object.entries(item?.probabilities || {}).sort(([, a], [, b]) => b - a);
   const shown = ranked.slice(0, 5);
   const restTotal = ranked.slice(5).reduce((sum, [, value]) => sum + value, 0);
@@ -90,7 +90,7 @@ export function EmailReadingPanel(props: Props) {
           <span className="email-chip">{label(item.category)}</span>
           <span className="email-chip quiet">{sourceLabel(item.classification_source)} · {measured(item.confidence)}</span>
           <span className={`email-chip ${item.status === "pending_feedback" ? "pending" : "quiet"}`}>{statusLabel(item.status)}</span>
-          {unsubscribe && <span className={`email-chip ${unsubscribe.tone}`}>{unsubscribe.text}</span>}
+          {unsubscribe && <span className={`email-chip ${unsubscribe.tone}`} title={unsubscribe.reason || undefined}>{unsubscribe.text}{unsubscribe.reason && `：${unsubscribe.reason}`}</span>}
         </div>
         {!!item.mailbox_actions?.length && <p className="email-mailbox-actions" aria-label="邮箱动作">邮箱动作：{item.mailbox_actions.map((action, index) => <span key={index} className={`email-mailbox-action ${action.status}`}>{index > 0 && "；"}{ACTION_TYPE_LABELS[action.type] || action.type}{" "}{ACTION_STATUS_LABELS[action.status] || action.status}{action.status === "failed" && action.retriable !== undefined && (action.retriable ? "，会重试" : "，不会重试")}{action.error && `：${action.error}`}{action.retry_note && `（${action.retry_note}）`}</span>)}</p>}
         <div className="email-reading-actions">

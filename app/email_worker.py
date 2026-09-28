@@ -1915,9 +1915,20 @@ def _finalize_direct_email_unsubscribe_task(
                 str(getattr(task, "error", "") or ""), error_code
             ) + 1
             if spent >= TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
+                # The generic fallback code names nothing on its own -- the
+                # category behind it (already in task_error, computed above)
+                # is what says whether a rerun could ever succeed, and is
+                # what app/external_failures.py matches on exactly. A code
+                # with its own dedicated name (browser_timeout, ...) already
+                # carries that meaning and keeps its bare match.
+                terminal_error = (
+                    task_error
+                    if error_code == "email_unsubscribe_browser_failed"
+                    else error_code
+                )
                 store.fail_reply_task(
                     task.id,
-                    error_code,
+                    terminal_error,
                     expected_execution_generation=task.execution_generation,
                 )
                 return

@@ -53,12 +53,37 @@ export function unsubscribeReason(outcome: string | null | undefined): string | 
   return null;
 }
 
-export function unsubscribeStateLabel(state: {status: string; outcome?: string | null} | null | undefined): {text: string; tone: "success" | "failure" | "pending"; reason: string | null} {
+// A task that failed before any page produced a receipt has no outcome to
+// explain it (only its own task error, e.g. "email_unsubscribe_browser_timeout"
+// or "email_unsubscribe_browser_failed: category=form_response_rejected").
+// Known shapes get plain text; anything else shows the code itself rather
+// than nothing.
+export function unsubscribeTaskFailureReason(taskError: string | null | undefined): string | null {
+  const error = (taskError || "").trim();
+  if (!error) return null;
+  if (error === "email_unsubscribe_browser_timeout") return "退订页面响应超时。";
+  if (error === "email_unsubscribe_browser_session_unavailable") return "退订浏览器暂时无法打开。";
+  const category = error.match(/^email_unsubscribe_browser_failed: category=(\w+)$/)?.[1];
+  const categoryText: Record<string, string> = {
+    form_response_rejected: "退订表单被对方网站拒绝。",
+    one_click_response_rejected: "一键退订被对方网站拒绝。",
+    operation_failed: "退订操作未能完成。",
+    operation_timeout: "退订页面响应超时。",
+    navigation_target_invalid: "退订链接指向了不可信的地址。",
+    control_unavailable: "退订页面上的控件已失效。",
+  };
+  if (category) return categoryText[category] || `退订失败：${category}。`;
+  if (error.startsWith("email_unsubscribe_")) return `退订失败（${error}）。`;
+  return null;
+}
+
+export function unsubscribeStateLabel(state: {status: string; outcome?: string | null; error?: string | null} | null | undefined): {text: string; tone: "success" | "failure" | "pending"; reason: string | null} {
   if (!state) return {text: "退订状态未知", tone: "pending", reason: null};
   const event = {kind: "unsubscribe", operation: "unsubscribe", status: state.status, outcome: state.outcome ?? undefined};
   const success = ["done", "already_unsubscribed"].includes(event.outcome || "");
   const failed = event.status === "failed" || !!event.outcome?.startsWith("failed");
-  return {text: actionResultLabel(event), tone: success ? "success" : failed ? "failure" : "pending", reason: unsubscribeReason(event.outcome)};
+  const reason = unsubscribeReason(event.outcome) || (failed ? unsubscribeTaskFailureReason(state.error) : null);
+  return {text: actionResultLabel(event), tone: success ? "success" : failed ? "failure" : "pending", reason};
 }
 
 function UnsubscribeEvidence({ event, classificationId, entry }: { event: EmailObservabilityEvent; classificationId: string; entry?: {available: boolean; reason: string | null} }) {
@@ -107,7 +132,7 @@ export function ObservabilityDetails({ events, classificationId, entry }: { even
     const recordedAt=eventTime(event);
     const success=event.kind === "unsubscribe" ? ["done", "already_unsubscribed"].includes(event.outcome || "") : ["done","succeeded"].includes(event.status);
     const failed=event.status === "failed" || event.outcome?.startsWith("failed");
-    const reason = event.kind === "unsubscribe" ? (unsubscribeReason(event.outcome) ?? (event.outcome === "done" ? "已记录退订成功结果。" : event.status === "done" && !event.outcome ? "历史记录未提供明确的退订结果。" : null)) : null;
+    const reason = event.kind === "unsubscribe" ? (unsubscribeReason(event.outcome) ?? (event.outcome === "done" ? "已记录退订成功结果。" : event.status === "done" && !event.outcome ? "历史记录未提供明确的退订结果。" : failed ? unsubscribeTaskFailureReason(event.error) : null)) : null;
     const text = event.result_text ? pageText(event.result_text) : "";
     return <article className="email-observability-item" key={event.action_identity || event.action_id || index}>
       <div className="email-event-heading"><span className={success ? "email-event-icon success" : failed ? "email-event-icon failure" : "email-event-icon"}>{success ? "✓" : failed ? "!" : "—"}</span><h3>{actionResultLabel(event)}</h3>{recordedAt && <time>{localTime(recordedAt)}</time>}</div>

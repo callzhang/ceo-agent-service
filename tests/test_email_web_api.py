@@ -310,8 +310,8 @@ def test_email_unsubscribe_filter_reports_each_rows_newest_unsubscribe_state(tmp
 
     assert response.status_code == 200, response.text
     assert [item["unsubscribe_state"] for item in response.json()["items"]] == [
-        {"status": "done", "outcome": "done"},
-        {"status": "processing", "outcome": None},
+        {"status": "done", "outcome": "done", "error": ""},
+        {"status": "processing", "outcome": None, "error": ""},
     ]
 
 
@@ -2705,6 +2705,7 @@ def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
             "consumer_run_ids": [fixture.consumer.id],
             "audit_run_ids": [fixture.audit.id],
             "status": "processing",
+            "error": "",
         }
     ]
     serialized = json.dumps(response.json()["observability"], sort_keys=True)

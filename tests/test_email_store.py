@@ -1772,7 +1772,84 @@ def test_unsubscribe_state_is_the_newest_unsubscribe_event_of_the_detail(tmp_pat
     newest = [event for event in events if event["kind"] == "unsubscribe"][-1]
 
     assert store.list_unsubscribe_states([classification_id]) == {
-        classification_id: {"status": newest["status"], "outcome": newest["outcome"]}
+        classification_id: {
+            "status": newest["status"],
+            "outcome": newest["outcome"],
+            "error": newest.get("error", ""),
+        }
+    }
+
+
+def test_a_failed_unsubscribe_task_without_a_receipt_carries_its_own_error(
+    tmp_path: Path,
+) -> None:
+    # No page ever produced a receipt (the browser faulted before reading
+    # one), so this is the only place the reason for the failure lives.
+    database = tmp_path / "inflight-unsubscribe-error.sqlite3"
+    email_store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    authorization = _unsubscribe_authorization(email_store)
+    from app.email_task_adapter import email_conversation_id
+
+    conversation_id = email_conversation_id(
+        str(authorization["account_id"]), str(authorization["thread_identity"])
+    )
+    payload = {
+        "schema": "email_agent_action.v1",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "action_type": "unsubscribe",
+        "action_identity": authorization["action_identity"],
+        "action_plan_id": authorization["action_plan_id"],
+        "action_plan_version": authorization["action_plan_version"],
+        "classification_id": authorization["classification_id"],
+        "account_id": authorization["account_id"],
+        "stable_message_identity": authorization["stable_message_identity"],
+        "thread_identity": authorization["thread_identity"],
+    }
+    task = task_store.ensure_reply_task(
+        channel="email",
+        conversation_id=conversation_id,
+        conversation_title="Email unsubscribe",
+        single_chat=False,
+        trigger_message_id=authorization["action_identity"],
+        trigger_create_time="2026-09-26T21:57:14+00:00",
+        trigger_sender="claw@mail.beehiiv.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+        trigger_message_json=json.dumps(payload, sort_keys=True),
+        execution_generation="generation:inflight-unsubscribe-error",
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update reply_tasks set status='failed', error=? where id=?",
+            ("email_unsubscribe_browser_timeout", task.id),
+        )
+
+    events = email_store.list_email_classification_observability(
+        int(authorization["classification_id"])
+    )
+    unsubscribe_events = [event for event in events if event["kind"] == "unsubscribe"]
+
+    assert unsubscribe_events == [
+        {
+            "kind": "unsubscribe",
+            "operation": "unsubscribe",
+            "lifecycle_version": "email_unsubscribe_audited_v2",
+            "task_id": task.id,
+            "task_status": "failed",
+            "consumer_run_ids": [],
+            "audit_run_ids": [],
+            "status": "failed",
+            "error": "email_unsubscribe_browser_timeout",
+        }
+    ]
+    assert email_store.list_unsubscribe_states(
+        [int(authorization["classification_id"])]
+    ) == {
+        int(authorization["classification_id"]): {
+            "status": "failed",
+            "outcome": None,
+            "error": "email_unsubscribe_browser_timeout",
+        }
     }
 
 

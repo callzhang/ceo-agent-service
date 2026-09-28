@@ -2505,6 +2505,10 @@ def _current_unsubscribe_task_lineage(
         ],
         "audit_run_ids": [int(row["id"]) for row in runs if row["role"] == "audit"],
         "status": str(task["status"]),
+        # A task that failed before any page produced a receipt has no
+        # outcome to explain it (unsubscribeStateLabel only maps outcomes):
+        # its own error is the only record of why, so it rides along here.
+        "error": str(task["error"] or ""),
         "_sort_created_at": str(task["created_at"] or ""),
     }
     if continuation is not None:
@@ -13494,6 +13498,7 @@ class EmailStore:
                     else {
                         "status": latest.get("status"),
                         "outcome": latest.get("outcome"),
+                        "error": latest.get("error", ""),
                     }
                 )
         return states
@@ -13591,7 +13596,7 @@ class EmailStore:
                     """
                     select id, conversation_id, trigger_message_id,
                            trigger_message_json, execution_generation,
-                           status, created_at
+                           status, error, created_at
                     from reply_tasks
                     where channel='email'
                       and json_valid(trigger_message_json)

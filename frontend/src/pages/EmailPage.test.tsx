@@ -103,7 +103,7 @@ it("keeps each row's unsubscribe state through the real list response mapper",as
   const actual=await vi.importActual<typeof import("../api/console")>("../api/console");
   const fetchMock=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({items:[{id:"1",status:"processed",unsubscribe_state:{status:"done",outcome:"skipped_login_required"}},{id:"2",status:"processed",unsubscribe_state:null}],meta:{page:1,page_size:20,total:2,next_cursor:"",has_more:false,snapshot_at:""}}),{status:200}));
   const result=await actual.listEmailClassifications("unsubscribe",{page:1,page_size:20});
-  expect(result.items[0].unsubscribe_state).toEqual({status:"done",outcome:"skipped_login_required"});
+  expect(result.items[0].unsubscribe_state).toEqual({status:"done",outcome:"skipped_login_required",error:""});
   expect(result.items[1].unsubscribe_state).toBeNull();
   fetchMock.mockRestore();
 });
@@ -659,6 +659,14 @@ it("shows the mailbox actions of a message in its detail, with whether a failed 
   show("/email?tab=all&selected=1");
   const line=await screen.findByLabelText("邮箱动作");
   expect(line).toHaveTextContent("移动 失败，不会重试：provider_read_failed:ImapMessageUnavailable（已试 3 次仍失败，不再自动重试）；标已读 待执行");
+});
+it("shows why an unsubscribe task failed even without a page receipt to explain it",async()=>{
+  api.getEmailUnsubscribeEntryUrl.mockResolvedValue("https://example.test/unsubscribe?token=fixture");
+  api.getEmailClassification.mockResolvedValue({item:{...row("1"),message_text:"正文",recipients:[]},observability:[{kind:"unsubscribe",operation:"unsubscribe",status:"failed",task_id:99,task_status:"failed",error:"email_unsubscribe_browser_timeout"}]});
+  show("/email?tab=all&selected=1");
+  const chip=(await screen.findAllByText(/退订执行失败/))[0];
+  expect(chip).toHaveTextContent("退订执行失败：退订页面响应超时。");
+  expect(chip.closest(".email-chip")).toHaveAttribute("title", "退订页面响应超时。");
 });
 it("links each half of the failed action count to its own filter",async()=>{
   api.getEmailProcessingProgress.mockResolvedValue({window_hours:24,throughput:{window_minutes:30,finished:0,per_minute:0,median_seconds:null},provider_actions:{done:1,pending:0,processing:0,failed:32,skipped:0,failed_retriable:5,failed_not_retriable:27},classification_queue:{pending:0,processing:0},unsubscribe_queue:{pending:0,processing:0},waiting_for_owner:0,scans:[]});

@@ -6193,7 +6193,9 @@ def test_direct_unsubscribe_failure_detail_reaches_the_attempt_and_task():
         id=93,
         execution_generation="generation-93",
         channel="email",
-        error="email_unsubscribe_browser_failed",
+        attempts=1,
+        # Already spent the retry budget: this call is the exhausting one.
+        error=f"email_unsubscribe_browser_failed:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES - 1}",
         conversation_id="email-thread:93",
         conversation_title="Email unsubscribe",
         trigger_message_id="email-action:unexpected-93",
@@ -6232,6 +6234,107 @@ def test_direct_unsubscribe_failure_detail_reaches_the_attempt_and_task():
             "email_unsubscribe_browser_failed: ConnectionResetError: peer reset while loading [url]",
         ),
     ]
+
+
+def test_direct_unsubscribe_exhaustion_keeps_the_category_that_names_an_external_cause():
+    # form_response_rejected is one of the categories app/external_failures.py
+    # treats as external (the site rejected the submission, not our fault);
+    # it only matches that list's exact string when the category survives.
+    module = _module()
+    task = SimpleNamespace(
+        id=97,
+        execution_generation="generation-97",
+        channel="email",
+        attempts=1,
+        error=f"email_unsubscribe_browser_failed:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES - 1}",
+        conversation_id="email-thread:97",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-action:rejected-97",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    calls = []
+
+    class Store:
+        def record_reply_attempt(self, **kwargs):
+            calls.append(("attempt", kwargs["audit_summary"]))
+
+        def fail_reply_task(self, task_id, error, **kwargs):
+            calls.append(("fail", task_id, error))
+
+        def defer_reply_task(self, *args, **kwargs):
+            calls.append(("defer", args, kwargs))
+
+    module._finalize_direct_email_unsubscribe_task(
+        Store(),
+        task,
+        {
+            "status": "failed",
+            "outcome": "failed_browser",
+            "summary": "failed_browser",
+            "evidence": "category=form_response_rejected",
+            "error": {"code": "email_unsubscribe_browser_failed", "retryable": True},
+        },
+    )
+
+    assert calls[1] == (
+        "fail",
+        97,
+        "email_unsubscribe_browser_failed: category=form_response_rejected",
+    )
+    from app.external_failures import external_task_error_sql
+
+    import sqlite3
+
+    db = sqlite3.connect(":memory:")
+    db.execute("create table reply_tasks (error text)")
+    db.execute("insert into reply_tasks values (?)", (calls[1][2],))
+    assert db.execute(
+        f"select {external_task_error_sql()} from reply_tasks"
+    ).fetchone()[0]
+
+
+def test_direct_unsubscribe_exhaustion_keeps_a_dedicated_code_bare():
+    # email_unsubscribe_browser_timeout already names the condition on its
+    # own; app/external_failures.py matches it bare, with no category suffix.
+    module = _module()
+    task = SimpleNamespace(
+        id=98,
+        execution_generation="generation-98",
+        channel="email",
+        attempts=1,
+        error=f"email_unsubscribe_browser_timeout:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES - 1}",
+        conversation_id="email-thread:98",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-action:timeout-98",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    calls = []
+
+    class Store:
+        def record_reply_attempt(self, **kwargs):
+            calls.append(("attempt", kwargs["audit_summary"]))
+
+        def fail_reply_task(self, task_id, error, **kwargs):
+            calls.append(("fail", task_id, error))
+
+        def defer_reply_task(self, *args, **kwargs):
+            calls.append(("defer", args, kwargs))
+
+    module._finalize_direct_email_unsubscribe_task(
+        Store(),
+        task,
+        {
+            "status": "failed",
+            "outcome": "failed_browser",
+            "summary": "failed_browser",
+            "evidence": "category=operation_timeout",
+            "error": {"code": "email_unsubscribe_browser_timeout", "retryable": True},
+        },
+    )
+
+    assert calls[1] == ("fail", 98, "email_unsubscribe_browser_timeout")
 
 
 def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
