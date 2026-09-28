@@ -198,6 +198,7 @@ class CodexRuntimeAdapter:
                 failure_class=RuntimeFailureClass.UNCLASSIFIED,
                 code="runtime_unclassified",
                 detail="Codex completed without a classified runtime failure.",
+                failover_permitted=True,
             )
         if timed_out:
             timeout_code = {
@@ -302,6 +303,7 @@ class CodexRuntimeAdapter:
             failure_class=RuntimeFailureClass.UNCLASSIFIED,
             code="runtime_unclassified",
             detail=_unclassified_failure_detail(returncode),
+            failover_permitted=True,
         )
 
     def _configured_route(self, route: RuntimeRoute) -> RuntimeRoute:

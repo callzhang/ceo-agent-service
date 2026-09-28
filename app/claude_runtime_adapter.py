@@ -427,7 +427,7 @@ class ClaudeRuntimeAdapter:
                 if returncode != 0
                 else "Claude completed without a classified runtime result."
             ),
-            failover_permitted=returncode != 0,
+            failover_permitted=True,
         )
 
     def _invocation_boundary(self, policy: ClaudeCommandPolicy) -> tuple[str, str]:
