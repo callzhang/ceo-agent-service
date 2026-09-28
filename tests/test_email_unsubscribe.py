@@ -12,6 +12,8 @@ from threading import Thread, get_ident
 
 import pytest
 
+import app.email_unsubscribe as unsubscribe
+
 from app.agent_contracts import ProposedAction
 from app.email_task_adapter import accepted_email_unsubscribe_effect
 from app.email_classifier_contracts import (
@@ -1330,6 +1332,10 @@ def test_technical_failures_use_fixed_redacted_errors(
     assert result.disposition == UnsubscribeDisposition("failed", True, True)
     assert "private-token" not in repr(result)
     assert "token=" not in json.dumps(result.redacted, sort_keys=True)
+
+
+def test_default_unsubscribe_browser_timeout_allows_slow_provider_redirects() -> None:
+    assert unsubscribe.DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS == 60_000
 
 
 def test_no_reliable_browser_entry_is_skipped_without_calling_browser(

@@ -414,7 +414,11 @@ TRANSIENT_BROWSER_ERROR_CODES = frozenset(
 _VISIBLE_TEXT_WAIT_MS = 5_000
 _VISIBLE_TEXT_POLL_MS = 250
 _STABLE_TEXT_MS = 1_000
-DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS = 30_000
+# Some provider unsubscribe endpoints complete their navigation only after a
+# slow redirect chain. Keep the operation bounded, but leave enough time for
+# that provider-side work before the existing transient retry ladder takes
+# over.
+DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS = 60_000
 
 
 # A page the browser reached and read, but whose controls this service will
