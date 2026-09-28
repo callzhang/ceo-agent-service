@@ -328,6 +328,13 @@ class ProviderTrainingObservationJob:
                                 "observation": _encode_observation(observation),
                             }
                             highest_uid = max(highest_uid, uid)
+                        attempted_max_uid = getattr(batch, "attempted_max_uid", None)
+                        if isinstance(attempted_max_uid, int) and attempted_max_uid > 0:
+                            # A message this batch attempted but could not parse
+                            # is not in `messages`, so it must still advance the
+                            # cursor here or the same malformed message is
+                            # retried and skipped forever, stalling this folder.
+                            highest_uid = max(highest_uid, attempted_max_uid)
                         folder_state["uidvalidity"] = uidvalidity
                         folder_state["highest_uid"] = highest_uid
                         folder_state["status"] = "ready"

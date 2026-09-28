@@ -315,6 +315,12 @@ def scan_agent_classification_batch(
             else:
                 enqueue_agent(None)
         enqueued += 1
+    attempted_max_uid = getattr(batch, "attempted_max_uid", None)
+    if isinstance(attempted_max_uid, int) and attempted_max_uid > 0:
+        # A message the source attempted but could not parse is not in
+        # batch.messages, so it must still advance the cursor here or the
+        # same malformed message is retried and skipped forever.
+        highest_uid = max(highest_uid, attempted_max_uid)
     uidvalidity = batch.uidvalidity
     record_cursor = getattr(store, "record_scan_cursor", None)
     if callable(record_cursor):
@@ -528,7 +534,13 @@ def scan_model_classification_batch(
                 f"model history classification failed: {result.fallback_reason}"
             )
         persisted += 1
-    if batch.messages:
+    attempted_max_uid = getattr(batch, "attempted_max_uid", None)
+    if isinstance(attempted_max_uid, int) and attempted_max_uid > 0:
+        # A message the source attempted but could not parse is not in
+        # batch.messages, so it must still advance the cursor here or the
+        # same malformed message is retried and skipped forever.
+        highest_uid = max(highest_uid, attempted_max_uid)
+    if batch.messages or (isinstance(attempted_max_uid, int) and attempted_max_uid > 0):
         store.record_scan_cursor(
             account_id=batch.account_id,
             folder=batch.folder,

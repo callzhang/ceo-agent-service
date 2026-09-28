@@ -1640,3 +1640,61 @@ def test_provider_observation_close_failure_keeps_stage_context(tmp_path):
         job.run_once(({"account_id": "account-1"},))
     assert caught.value.ceo_training_stage == "provider_close"
     assert caught.value.ceo_training_account_id == "account-1"
+
+
+def test_observer_advances_past_a_message_the_source_skipped_as_unparseable(tmp_path):
+    """A UID the source attempted but could not parse is absent from
+
+    `messages`, so it must still be reflected in the folder's watermark
+    (`ImapUidBatch.attempted_max_uid`) or the next tick re-fetches and skips
+    the same message forever. Observed 2026-09-28: exactly this silently
+    failed a Gmail account's training-observation batch every attempt, for
+    days, once the source itself was made to skip rather than crash.
+    """
+
+    from app.email_training_observer import ProviderTrainingObservationJob
+
+    calls = []
+    batches = [
+        SimpleNamespace(
+            uidvalidity=10,
+            messages=(_message(1, "one"),),
+            attempted_max_uid=3,
+        ),
+        SimpleNamespace(uidvalidity=10, messages=(_message(4, "four"),)),
+    ]
+
+    class Source:
+        def list_folders(self):
+            return (_folder(),)
+
+        def fetch_uid_membership(self, _folder, *, cursor_uidvalidity, uids):
+            return SimpleNamespace(
+                uidvalidity=cursor_uidvalidity,
+                existing_uids=frozenset(uids),
+                important_signals_by_uid={
+                    uid: ImportantSignals((), False) for uid in uids
+                },
+            )
+
+        def fetch_uid_batch(self, folder, *, cursor_uidvalidity, last_seen_uid, limit):
+            calls.append((folder, cursor_uidvalidity, last_seen_uid, limit))
+            return batches.pop(0)
+
+        def logout(self):
+            return None
+
+    store = _Store()
+    arguments = dict(
+        state_path=tmp_path / "observer-skip.json",
+        source_factory=lambda _account: Source(),
+        email_store=store,
+        batch_size=2,
+    )
+    ProviderTrainingObservationJob(**arguments).run_once(({"account_id": "account-1"},))
+    ProviderTrainingObservationJob(**arguments).run_once(({"account_id": "account-1"},))
+
+    # The second call starts after UID 3 (the skipped message), not after 1
+    # (the last real message it kept) -- otherwise UID 2 would be retried
+    # and skipped again on every future tick.
+    assert calls == [("inbox", None, 0, 2), ("inbox", 10, 3, 2)]

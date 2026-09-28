@@ -1967,3 +1967,110 @@ def test_model_scan_reports_the_backlog_it_left_for_the_progress_bar(tmp_path):
     )
 
     assert reported == [(3, 7)]
+
+
+def test_model_history_scan_cursor_advances_past_a_skipped_unparseable_message(tmp_path):
+    """A message the source attempted but could not parse is not in `messages`,
+
+    so the cursor must still move past its UID or the source retries and
+    skips the same message every scan, forever (observed 2026-09-28 on a
+    Gmail training-observation batch: this silently repeated for days).
+    """
+
+    message = _message() | {
+        "uid": 1,
+        "providerUnread": False,
+        "date": "2025-10-01T12:00:00+00:00",
+    }
+
+    class HistorySource:
+        account_id = "dingtalk-account"
+
+        def fetch_uid_batch(self, mailbox, **kwargs):
+            return ImapUidBatch(
+                account_id=self.account_id,
+                folder=mailbox,
+                uidvalidity=42,
+                previous_uidvalidity=kwargs["cursor_uidvalidity"],
+                messages=(message,),
+                attempted_max_uid=5,
+            )
+
+    runtime = SimpleNamespace(
+        snapshot=lambda: RuntimeSnapshot.model_primary(
+            predictor=lambda _value: OnlineClassificationResult(
+                source="model", value=SimpleNamespace(category="work")
+            ),
+            model_id="email-embedding-mlp-ready",
+            input_schema_version="email-folder-model-input-v4",
+            compatibility={"embedding_revision": "r1"},
+        )
+    )
+    store = EmailStore(tmp_path / "model-history-skip.sqlite3")
+
+    scan_model_classification_batch(
+        HistorySource(),
+        store,
+        AgentScanContext(
+            allowed_category_keys=("work",),
+            category_descriptions={"work": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        mailbox="INBOX",
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        lookback_days=365,
+        today=lambda: date(2026, 9, 21),
+        online_runtime=runtime,
+        accept_model=lambda *args: None,
+        enqueue_agent=lambda *args: None,
+        request_feedback=lambda *args: None,
+    )
+
+    assert store.get_scan_cursor("dingtalk-account", "INBOX")["last_seen_uid"] == 5
+
+
+def test_agent_scan_cursor_advances_past_a_skipped_unparseable_message(tmp_path):
+    """Same guarantee as the model-history path: a UID the source attempted
+
+    but could not parse still moves the cursor, so it is not retried and
+    skipped forever.
+    """
+
+    message = _message() | {"providerUnread": True, "uid": 1}
+
+    class Source:
+        account_id = "dingtalk-account"
+
+        def fetch_uid_batch(self, mailbox="INBOX", **kwargs):
+            return ImapUidBatch(
+                account_id=self.account_id,
+                folder=mailbox,
+                uidvalidity=int(message["uidValidity"]),
+                previous_uidvalidity=kwargs.get("cursor_uidvalidity"),
+                messages=(message,),
+                attempted_max_uid=9,
+            )
+
+    store = EmailStore(tmp_path / "agent-scan-skip.sqlite3")
+    producer = SimpleNamespace(
+        adapter=SimpleNamespace(has_stable_record=lambda _identity: False),
+        produce=lambda *_args, **_kwargs: None,
+    )
+
+    scan_agent_classification_batch(
+        Source(),
+        store,
+        producer,
+        AgentScanContext(
+            allowed_category_keys=("work", "junk"),
+            category_descriptions={"work": {}, "junk": {}},
+            folder_targets={"work": "Work"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+    )
+
+    assert store.get_scan_cursor("dingtalk-account", "INBOX")["last_seen_uid"] == 9

@@ -56,6 +56,10 @@ class ImapUidBatch:
     # Messages that matched the search and were not excluded, but did not fit
     # in this batch. None when the source cannot say.
     remaining: int | None = None
+    # The highest UID this call attempted, whether or not it produced a
+    # message (a malformed message this Python cannot parse is attempted and
+    # skipped, not fetched again next time). None when nothing was attempted.
+    attempted_max_uid: int | None = None
 
 
 @dataclass(frozen=True)
@@ -470,71 +474,20 @@ class ImapReadonlyAdapter:
         not_in_batch = len(matched) - len(uids)
         messages: list[dict[str, object]] = []
         for uid in uids:
-            status, structure_data = self.session.uid("FETCH", uid, "(BODYSTRUCTURE)")
-            _require_ok(status, "IMAP BODYSTRUCTURE fetch failed")
-            structure = _parse_bodystructure(structure_data)
-            status, header_data = self.session.uid("FETCH", uid, _HEADER_FETCH)
-            _require_ok(status, "IMAP header fetch failed")
-            headers = email.message_from_bytes(
-                _fetch_payload(header_data), policy=email.policy.default
-            )
-            provider_unread = all(
-                flag.casefold() != "\\seen"
-                for flag in parse_imap_fetch_flags(header_data)
-            )
-            important_signals = _imap_important_signals(header_data)
-            remaining = _MAX_TEXT_FETCH_BYTES
-            body_parts: list[str] = []
-            html_parts: list[str] = []
-            selected_text_sections = {
-                part.section for part in _selected_text_parts(structure)
-            }
-            selected_parts = {
-                part.section: part
-                for part in (
-                    *_selected_text_parts(structure),
-                    *_selected_html_parts(structure),
+            try:
+                messages.append(
+                    self._fetch_one_message(uid, mailbox=mailbox, uidvalidity=uidvalidity)
                 )
-            }
-            for part in selected_parts.values():
-                if remaining <= 0:
-                    break
-                status, body_data = self.session.uid(
-                    "FETCH",
-                    uid,
-                    f"(BODY.PEEK[{part.section}]<0.{remaining}>)",
-                )
-                _require_ok(status, "IMAP text section fetch failed")
-                payload = _fetch_payload(body_data)[:remaining]
-                remaining -= len(payload)
-                decoded = _decode_fetched_content(payload, part)
-                if part.mime_type == "text/html" and decoded.strip():
-                    html_parts.append(decoded)
-                    text = (
-                        html_to_text(decoded)
-                        if part.section in selected_text_sections
-                        else ""
-                    )
-                else:
-                    text = decoded if part.section in selected_text_sections else ""
-                if text := text.strip():
-                    body_parts.append(text)
-            body = "\n".join(body_parts).strip()
-            body_html = "\n".join(html_parts).strip()
-            messages.append(
-                _normalized_message_record(
-                    headers,
-                    body=body,
-                    body_html=body_html,
-                    attachments=_bodystructure_attachment_metadata(structure),
-                    account_id=self.account_id,
-                    folder=mailbox,
-                    uidvalidity=uidvalidity,
-                    uid=int(uid),
-                    important_signals=important_signals,
-                    provider_unread=provider_unread,
-                )
-            )
+            except LookupError:
+                # A provider occasionally sends a header Python's email package
+                # cannot parse -- e.g. a structured header (In-Reply-To,
+                # References) carrying a charset name Python does not know,
+                # which _decode_header's own guard does not reach because
+                # nothing there calls it on those headers. Observed 2026-09-28:
+                # this silently failed the whole Gmail training-observation
+                # batch, every attempt, for days. One bad message must not
+                # cost the rest of a bounded batch.
+                not_in_batch += 1
         return ImapUidBatch(
             account_id=self.account_id,
             folder=mailbox,
@@ -542,6 +495,74 @@ class ImapReadonlyAdapter:
             previous_uidvalidity=cursor_uidvalidity,
             messages=messages,
             remaining=not_in_batch,
+            attempted_max_uid=max((int(uid) for uid in uids), default=None),
+        )
+
+    def _fetch_one_message(
+        self, uid: bytes, *, mailbox: str, uidvalidity: int
+    ) -> dict[str, object]:
+        status, structure_data = self.session.uid("FETCH", uid, "(BODYSTRUCTURE)")
+        _require_ok(status, "IMAP BODYSTRUCTURE fetch failed")
+        structure = _parse_bodystructure(structure_data)
+        status, header_data = self.session.uid("FETCH", uid, _HEADER_FETCH)
+        _require_ok(status, "IMAP header fetch failed")
+        headers = email.message_from_bytes(
+            _fetch_payload(header_data), policy=email.policy.default
+        )
+        provider_unread = all(
+            flag.casefold() != "\\seen"
+            for flag in parse_imap_fetch_flags(header_data)
+        )
+        important_signals = _imap_important_signals(header_data)
+        remaining = _MAX_TEXT_FETCH_BYTES
+        body_parts: list[str] = []
+        html_parts: list[str] = []
+        selected_text_sections = {
+            part.section for part in _selected_text_parts(structure)
+        }
+        selected_parts = {
+            part.section: part
+            for part in (
+                *_selected_text_parts(structure),
+                *_selected_html_parts(structure),
+            )
+        }
+        for part in selected_parts.values():
+            if remaining <= 0:
+                break
+            status, body_data = self.session.uid(
+                "FETCH",
+                uid,
+                f"(BODY.PEEK[{part.section}]<0.{remaining}>)",
+            )
+            _require_ok(status, "IMAP text section fetch failed")
+            payload = _fetch_payload(body_data)[:remaining]
+            remaining -= len(payload)
+            decoded = _decode_fetched_content(payload, part)
+            if part.mime_type == "text/html" and decoded.strip():
+                html_parts.append(decoded)
+                text = (
+                    html_to_text(decoded)
+                    if part.section in selected_text_sections
+                    else ""
+                )
+            else:
+                text = decoded if part.section in selected_text_sections else ""
+            if text := text.strip():
+                body_parts.append(text)
+        body = "\n".join(body_parts).strip()
+        body_html = "\n".join(html_parts).strip()
+        return _normalized_message_record(
+            headers,
+            body=body,
+            body_html=body_html,
+            attachments=_bodystructure_attachment_metadata(structure),
+            account_id=self.account_id,
+            folder=mailbox,
+            uidvalidity=uidvalidity,
+            uid=int(uid),
+            important_signals=important_signals,
+            provider_unread=provider_unread,
         )
 
     def fetch_uid_membership(

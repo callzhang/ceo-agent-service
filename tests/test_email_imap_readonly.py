@@ -696,6 +696,7 @@ def test_imap_adapter_fetches_only_headers_bodystructure_and_bounded_text_sectio
         previous_uidvalidity=42,
         messages=messages,
         remaining=0,
+        attempted_max_uid=1,
     )
     assert messages[0] == parse_rfc822_message(
         _raw_message(),
@@ -1856,3 +1857,48 @@ def test_unknown_mime_charset_does_not_abort_message_parsing() -> None:
     )
 
     assert parsed["textBody"] == "provider body"
+
+
+def test_imap_batch_skips_one_unparseable_message_and_keeps_the_rest(monkeypatch) -> None:
+    """A header this Python's email package cannot parse must not crash the whole batch.
+
+    Observed 2026-09-28: a Gmail training-observation batch failed with
+    LookupError every attempt for days because of exactly one message; the
+    other messages in that batch, and every other folder, are unaffected by
+    it and must still come back.
+    """
+
+    adapter = ImapReadonlyAdapter(
+        _plain_session(search_result=b"1 2 3"), account_id="account-a"
+    )
+    original = adapter._fetch_one_message
+
+    def flaky(uid, **kwargs):
+        if uid == b"2":
+            raise LookupError("unknown encoding: bogus-charset")
+        return original(uid, **kwargs)
+
+    monkeypatch.setattr(adapter, "_fetch_one_message", flaky)
+
+    batch = adapter.fetch_uid_batch(
+        "INBOX", cursor_uidvalidity=42, last_seen_uid=0, limit=3
+    )
+
+    assert [message["uid"] for message in batch.messages] == [1, 3]
+    assert batch.remaining == 1
+    # The skipped UID is still the highest one this call touched, so the
+    # caller can advance its cursor past it and never retry it forever.
+    assert batch.attempted_max_uid == 3
+
+
+def test_imap_batch_reports_no_attempt_when_nothing_matched() -> None:
+    adapter = ImapReadonlyAdapter(
+        _plain_session(search_result=b""), account_id="account-a"
+    )
+
+    batch = adapter.fetch_uid_batch(
+        "INBOX", cursor_uidvalidity=42, last_seen_uid=0, limit=3
+    )
+
+    assert batch.messages == []
+    assert batch.attempted_max_uid is None
