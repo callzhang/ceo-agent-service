@@ -529,6 +529,11 @@ NON-NEGOTIABLE VALIDATION CHECK (apply this before returning JSON):
   `acceptance_polarity=accepted` with the cited signal id.
 - For ordinary source-backed work with no lifecycle change, omit both
   `status` and `business_relevance` rather than guessing an update.
+- For an AI Minutes Work Item, do not emit `date_evidence` for dates spoken
+  in the meeting (`requested_deadline_at`, `external_deadline_at`,
+  `estimated_deadline_at`, or `committed_deadline_at`): speaker identity is
+  not trusted for those facts. Only emit `next_check_at` when it is authored
+  by the CEO Agent itself; otherwise leave `date_evidence` empty.
 Return the envelope only after checking every item against these rules.
 """
 
