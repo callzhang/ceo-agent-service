@@ -556,14 +556,8 @@ def test_force_run_publishes_verified_document_then_group_summary(tmp_path):
     assert store.state["weekly_okr_report:last_success_date"] == "2026-07-30"
 
 
-def test_a_report_with_one_isolated_manager_still_publishes(tmp_path):
-    """The exact failure this pipeline had on 2026-09-12: analyze() correctly
-    isolated a manager it could not score, but run_weekly_okr_report's own
-    coverage check, and the rendering calls after it, still assumed every
-    requested manager had a review -- so the whole run raised
-    "manager coverage mismatch" and published nothing, discarding the other
-    manager's finished section along with it.
-    """
+def test_a_report_with_one_isolated_manager_does_not_publish(tmp_path):
+    """A partial roster must stop publication until every member is scored."""
     store = FakeStore()
     gateway = FakeGateway(managers())
     source = FakeSource()
@@ -583,40 +577,21 @@ def test_a_report_with_one_isolated_manager_still_publishes(tmp_path):
                 }
             )
 
-    result = run_weekly_okr_report(
-        store=store,
-        gateway=gateway,
-        source=source,
-        agent=PartiallyIsolatingAgent(),
-        workspace=tmp_path,
-        now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
-        force=True,
-        deliver=True,
-        period_label="2026 Q3",
-    )
+    with pytest.raises(ValueError, match="manager coverage mismatch"):
+        run_weekly_okr_report(
+            store=store,
+            gateway=gateway,
+            source=source,
+            agent=PartiallyIsolatingAgent(),
+            workspace=tmp_path,
+            now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True,
+            deliver=True,
+            period_label="2026 Q3",
+        )
 
-    assert result.status == "sent"
-    published = next(
-        content
-        for name, content, _folder_id in gateway.published
-        if "评分附录" not in name
-    )
-    assert "甲" in published
-    appendix_section = published.split("## 逐人评分附录", 1)[1].split(
-        "## 数据覆盖与限制", 1
-    )[0]
-    # 乙 is named as a known gap in the executive summary and the limits
-    # section, but never gets a scorecard row or an appendix entry -- there
-    # is no section of theirs to link to.
-    assert "乙" not in appendix_section
-    assert "本次未能完成评分的成员：乙" in published
-    # Only the analyzed manager gets an appendix document; the isolated one
-    # never had a section to publish.
-    appendix_names = {
-        name for name, _content, _folder_id in gateway.published if "评分附录" in name
-    }
-    assert appendix_names == {"CEO-2 管理者 OKR 进度周报（2026-07-27—2026-07-30）｜评分附录｜甲"}
-    assert store.state["weekly_okr_report:last_success_date"] == "2026-07-30"
+    assert gateway.published == []
+    assert "weekly_okr_report:last_success_date" not in store.state
 
 
 def test_report_orchestration_returns_typed_wait_result_for_in_progress(tmp_path):
@@ -1878,16 +1853,14 @@ def test_the_output_schema_pins_the_exact_kr_row_count(tmp_path: Path) -> None:
             "kr_reviews"
         ]
         assert rows["minItems"] == rows["maxItems"] == 1
+        manager_rows = schema["properties"]["manager_reviews"]
+        assert manager_rows["minItems"] == manager_rows["maxItems"] == 1
 
 
-def test_a_member_the_model_cannot_score_does_not_withhold_the_report(
+def test_a_member_the_model_cannot_score_withholds_the_report(
     tmp_path: Path,
 ) -> None:
-    """Fifteen finished sections are worth more than none.
-
-    Before this, one member's validation failure propagated out of the thread
-    pool and aborted the whole weekly report.
-    """
+    """A weekly report cannot publish while any roster member is missing."""
     roster = (
         ManagerIdentity("甲", "总监", "u1", "o1"),
         ManagerIdentity("乙", "经理", "u2", "o2"),
@@ -1900,23 +1873,18 @@ def test_a_member_the_model_cannot_score_does_not_withhold_the_report(
             raise RuntimeError("runtime_result_validation_failed")
         return json.dumps(_weekly_payload_for(name), ensure_ascii=False)
 
-    analysis = CodexWeeklyOkrAgent(
-        workspace=tmp_path,
-        store=AutoReplyStore(tmp_path / "weekly-partial.sqlite3"),
-        routed_execution=CallbackRouted(executor),
-    ).analyze(
-        source_path=source_path,
-        managers=roster,
-        period_label="2026 Q3",
-        week_start=datetime(2026, 7, 27).date(),
-        week_end=datetime(2026, 7, 30).date(),
-    )
-
-    assert [review.name for review in analysis.manager_reviews] == ["甲"]
-    # The absence is stated where a reader will see it, not silently dropped.
-    assert "1 / 2" in analysis.executive_summary
-    assert "乙" in analysis.executive_summary
-    assert any("乙" in warning for warning in analysis.warnings)
+    with pytest.raises(RuntimeError, match="did not cover every roster member"):
+        CodexWeeklyOkrAgent(
+            workspace=tmp_path,
+            store=AutoReplyStore(tmp_path / "weekly-partial.sqlite3"),
+            routed_execution=CallbackRouted(executor),
+        ).analyze(
+            source_path=source_path,
+            managers=roster,
+            period_label="2026 Q3",
+            week_start=datetime(2026, 7, 27).date(),
+            week_end=datetime(2026, 7, 30).date(),
+        )
 
 
 def test_the_report_still_fails_when_no_member_could_be_scored(
@@ -1928,7 +1896,7 @@ def test_the_report_still_fails_when_no_member_could_be_scored(
     def executor(_command, _prompt, _env):
         raise RuntimeError("runtime_result_validation_failed")
 
-    with pytest.raises(RuntimeError, match="no member section"):
+    with pytest.raises(RuntimeError, match="did not cover every roster member"):
         CodexWeeklyOkrAgent(
             workspace=tmp_path,
             store=AutoReplyStore(tmp_path / "weekly-none.sqlite3"),

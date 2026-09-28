@@ -360,26 +360,16 @@ class CodexWeeklyOkrAgent:
             executor.shutdown(wait=False, cancel_futures=True)
             raise
         executor.shutdown(wait=True)
-        if not results:
+        if unanalyzed:
             raise RuntimeError(
-                "weekly OKR analysis produced no member section: "
+                "weekly OKR analysis did not cover every roster member: "
                 + "; ".join(f"{manager.name}: {reason}" for manager, reason in unanalyzed)
             )
-
-        missing_note = (
-            ""
-            if not unanalyzed
-            else (
-                "；本次未能完成评分的成员："
-                + "、".join(manager.name for manager, _ in unanalyzed)
-                + "，其区块缺失，不代表这些成员没有进展"
-            )
-        )
         return WeeklyOkrAnalysis(
             executive_summary=(
                 f"已完成 {len(results)} / {len(managers)} 位 CEO-2 成员的逐 KR 综合证据评分；"
-                "系统进度仅作为线索，最终判断以评论/进展、独立证据、实际效果和完成时间为准"
-                f"{missing_note}。"
+                "系统进度仅作为线索，最终判断以评论/进展、独立证据、实际效果和完成时间为准；"
+                "没有本周进展的成员仍保留完整评分区块，并按无新增进展和证据缺口评分。"
             ),
             company_progress=_unique_strings(
                 item for result in results for item in result.company_progress[:1]
@@ -391,13 +381,7 @@ class CodexWeeklyOkrAgent:
             source_coverage=_unique_strings(
                 item for result in results for item in result.source_coverage
             ),
-            warnings=_unique_strings(
-                [item for result in results for item in result.warnings]
-                + [
-                    f"{manager.name} 的 KR 评分未完成，本次报告缺少该成员区块：{reason}"
-                    for manager, reason in unanalyzed
-                ]
-            ),
+            warnings=_unique_strings(item for result in results for item in result.warnings),
         )
 
     def _analyze_one(
@@ -601,6 +585,9 @@ def _schema_requiring_exact_kr_rows(
     ]
     reviews["minItems"] = expected_kr_count
     reviews["maxItems"] = expected_kr_count
+    manager_reviews = schema["properties"]["manager_reviews"]
+    manager_reviews["minItems"] = 1
+    manager_reviews["maxItems"] = 1
     destination.write_text(json.dumps(schema, ensure_ascii=False), encoding="utf-8")
     return destination
 
@@ -1204,7 +1191,7 @@ def run_weekly_okr_report(
             period_label=resolved_period,
             manager_count=len(roster.managers),
         )
-    _validate_manager_coverage(analysis, roster.managers, allow_missing=True)
+    _validate_manager_coverage(analysis, roster.managers)
     _validate_kr_coverage(analysis, manager_payloads)
     # A member analyze() isolated has no review to render: everything below
     # renders and appendices *from* analysis.manager_reviews, so it must walk
@@ -1835,34 +1822,14 @@ def _validate_live_okr_payload(payload: object, *, manager: ManagerIdentity) -> 
 def _validate_manager_coverage(
     analysis: WeeklyOkrAnalysis,
     managers: list[ManagerIdentity],
-    *,
-    allow_missing: bool = False,
 ) -> None:
-    """Reject rows the model invented, duplicated, or dropped.
-
-    The single-manager call in ``_analyze_one`` asks the model about exactly
-    one manager and must get exactly that one back (``allow_missing=False``,
-    the default) -- a model that returns zero or the wrong manager for a
-    single-manager prompt is a real failure, not a gap to isolate.
-
-    The aggregate call in ``run_weekly_okr_report`` is different: by the time
-    it runs, ``analyze`` has already isolated any member whose analysis call
-    kept failing instead of discarding the whole report, and recorded exactly
-    who was skipped and why in ``warnings`` -- a real, deliberate, visible
-    gap, not a bug. Requiring every roster member to appear here too
-    (``allow_missing=True``) would undo that isolation at the very next line
-    of the pipeline: a report with fifteen finished sections would still be
-    thrown away because three could not be produced. What this still has to
-    catch there is a manager who should not be in the report at all, or a
-    name duplicated across two reviews -- both would mean something upstream
-    fabricated or split a row, and no known-gap accounting excuses that.
-    """
+    """Reject rows the model invented, duplicated, or dropped."""
     expected = {manager.name for manager in managers}
     actual = [review.name for review in analysis.manager_reviews]
     if len(actual) != len(set(actual)):
         raise ValueError("weekly OKR analysis contains duplicate manager rows")
     extra = sorted(set(actual) - expected)
-    missing = [] if allow_missing else sorted(expected - set(actual))
+    missing = sorted(expected - set(actual))
     if extra or missing:
         raise ValueError(
             f"weekly OKR analysis manager coverage mismatch: missing={missing}, extra={extra}"
@@ -1924,6 +1891,9 @@ def _bind_kr_reviews_to_live_rows(
         ids_by_titles.setdefault(key, []).append(kr_id)
     resolved_ids: dict[int, str] = {}
     for index, item in enumerate(review.kr_reviews):
+        if item.kr_id in expected_rows and item.kr_id not in resolved_ids.values():
+            resolved_ids[index] = item.kr_id
+            continue
         key = (
             _normalized_title(item.objective_title),
             _normalized_title(item.kr_title),

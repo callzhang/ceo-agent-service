@@ -28,6 +28,10 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-weekly-okr-complete-roster | app/weekly_okr_report.py, tests/test_weekly_okr_report.py, docs/agent-claims.md | Require weekly OKR analysis output and publication to cover every roster member; constrain isolated analysis to one manager and resolve KR rows by stable IDs before title anchors. | 2026-09-28 |
+
+| Owner | Files | What | Since |
+| --- | --- | --- | --- |
 | codex-needs-human-rule-options | app/agent_contracts.py, app/consumer_agent.py, app/audit_agent.py, tests/test_agent_contracts.py, tests/test_consumer_agent.py, tests/test_audit_agent.py, docs/architecture.md, docs/runtime-mechanism.md, docs/agent-claims.md | Require human decision options to target reusable task-class rules, preventing current-instance approval/rejection choices from becoming needs_human. | 2026-09-25 |
 | codex-needs-human-attention-current-run | app/audit_web.py (_human_decision_attention_rows only), tests/test_audit_web.py (current attempt/run projection regression only), docs/runtime-mechanism.md (Attention projection note only), docs/agent-claims.md | Ensure the Rule decision Attention projection follows the current reply_attempt's linked completed run instead of hiding it behind an unrelated latest run ordering. | 2026-09-24 |
 | codex-task-first-meeting-project-authority | app/task_agent.py, tests/test_task_agent.py, docs/task-semantic-storage.md, docs/architecture.md, docs/runtime-mechanism.md, docs/agent-claims.md | Make the confirmed Task-first project authority explicit: projects named in meeting evidence are the canonical registry basis; chat evidence supplements and cannot create an official Project alone. | 2026-09-24 |
