@@ -11524,3 +11524,16 @@ def test_attention_skips_an_expired_dingteam_okr_login(tmp_path: Path):
         assert db.execute(
             "select count(*) from reply_tasks where status='failed'"
         ).fetchone()[0] == 1
+
+
+def test_service_component_catalog_lists_runtime_attempt_reclaim(tmp_path: Path):
+    # Derek 2026-09-28: cli.py's run_service starts a "runtime-attempt-reclaim"
+    # thread, but this hardcoded catalog is what the console actually renders --
+    # a thread missing from here ticks invisibly, same failure mode as a
+    # hidden loop even though the thread itself is properly named and monitored.
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    names = [
+        component["name"]
+        for component in audit_web_module._service_component_snapshots(store)
+    ]
+    assert "runtime-attempt-reclaim" in names

@@ -2371,6 +2371,7 @@ def _service_component_snapshots(
         {"name": "audit-web", "role": "UI/API", "cadence": "always on"},
         {"name": "email-worker", "role": "IMAP scan and email actions", "cadence": "account configured"},
         {"name": "database-backup", "role": "sqlite backup", "cadence": "periodic"},
+        {"name": "runtime-attempt-reclaim", "role": "stale runtime attempt lease reclaim", "cadence": "periodic"},
         {"name": "agent-cron-scheduler", "role": "business trigger scheduling", "cadence": "task configured"},
         {"name": "agent-cron-dispatcher", "role": f"queue dispatch x{consumer_worker_count()}", "cadence": "internal"},
         {"name": "meeting-delivery", "role": "meeting conclusion delivery", "cadence": "internal"},
