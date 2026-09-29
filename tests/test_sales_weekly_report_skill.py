@@ -137,7 +137,7 @@ def test_sales_weekly_report_skill_writes_only_one_final_workspace_report() -> N
     text = " ".join(raw_text.split())
 
     for required in (
-        "`CEO_WORKSPACE`",
+        "configured workspace root",
         "`01_业务与客户/销售周报/YYYY/`",
         "`YYYY-MM-DD-HHmm-销售周报.md`",
         "Never overwrite an existing report",

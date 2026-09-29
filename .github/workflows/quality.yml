@@ -11,8 +11,15 @@ jobs:
     env:
       CEO_PYTHON: python
       CEO_RUFF: ruff
+      CEO_SKILLS_ROOT: ${{ github.workspace }}/.ci/agents/skills
     steps:
       - uses: actions/checkout@v7
+      - name: Install shared CEO Skills
+        uses: actions/checkout@v7
+        with:
+          repository: callzhang/.agents
+          ref: 461f0f86ce38a319698e8d04a615857202225a21
+          path: .ci/agents
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
