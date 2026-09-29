@@ -124,6 +124,23 @@ def test_feature_status_reports_missing_skill_dependency(tmp_path):
     assert catalog.feature_status("meeting_summary", set()) == "incomplete"
 
 
+def test_repository_registry_exposes_generic_oa_and_object_skills(tmp_path):
+    catalog = FeatureRegistry(
+        registry_path="data/config/skill-features.json",
+        state_path=tmp_path / "state.json",
+    )
+
+    assert catalog.skills_for("dingtalk_oa_approval") == (
+        "dingtalk-oa-approval",
+        "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-finance-review",
+        "stardust-oa-people-review",
+        "stardust-oa-project-review",
+    )
+
+
 def test_list_project_skill_names_only_includes_real_skill_files(tmp_path):
     skills_root = tmp_path / "skills"
     (skills_root / "valid").mkdir(parents=True)

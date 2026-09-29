@@ -55,6 +55,21 @@
       "description": "从消息、会议或决策中提取并跟踪可交付工作。",
       "skills": ["ceo-work-tracking"],
       "default_enabled": true
+    },
+    {
+      "feature_id": "dingtalk_oa_approval",
+      "name": "DingTalk OA Approval",
+      "description": "审阅钉钉 OA 审批，并按审批对象加载对应的 Stardust 规则 Skill。",
+      "skills": [
+        "dingtalk-oa-approval",
+        "stardust-oa-attendance-travel-review",
+        "stardust-oa-cloud-resource-review",
+        "stardust-oa-contract-review",
+        "stardust-oa-finance-review",
+        "stardust-oa-people-review",
+        "stardust-oa-project-review"
+      ],
+      "default_enabled": true
     }
   ]
 }
