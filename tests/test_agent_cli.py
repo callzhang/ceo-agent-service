@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import subprocess
 import threading
@@ -63,19 +64,39 @@ def test_approved_dingtalk_message_tool_reaches_service_helper(monkeypatch, tmp_
 
 
 @pytest.mark.parametrize(
-    ("channel", "proposal_target", "sent_to"),
+    ("channel", "proposal_target", "sent_to", "trigger_message_json"),
     [
         ("dingtalk", {"open_dingtalk_id": "open-recipient"},
-         ("open_dingtalk_id", "open-recipient")),
+         ("user_id", "user-recipient"), json.dumps({
+             "open_conversation_id": "cid-trigger",
+             "open_message_id": "msg-trigger",
+             "conversation_title": "Direct chat",
+             "single_chat": True,
+             "sender_name": "Sender",
+             "sender_open_dingtalk_id": "open-recipient",
+             "sender_user_id": None,
+             "create_time": "2026-09-21 10:00:00",
+             "content": "Please clarify",
+         })),
         ("dingtalk", {"conversation_id": "cid-trigger", "open_dingtalk_id": "open-recipient"},
-         ("open_dingtalk_id", "open-recipient")),
+         ("user_id", "user-recipient"), json.dumps({
+             "open_conversation_id": "cid-trigger",
+             "open_message_id": "msg-trigger",
+             "conversation_title": "Direct chat",
+             "single_chat": True,
+             "sender_name": "Sender",
+             "sender_open_dingtalk_id": "open-recipient",
+             "sender_user_id": None,
+             "create_time": "2026-09-21 10:00:00",
+             "content": "Please clarify",
+         })),
         # A scheduled task (the CEO daily report) messages Derek by user id
         # from his own account (Derek 2026-09-24).
-        ("scheduled", {"user_id": "derek-user"}, ("user_id", "derek-user")),
+        ("scheduled", {"user_id": "derek-user"}, ("user_id", "derek-user"), None),
     ],
 )
 def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(
-    tmp_path, channel, proposal_target, sent_to
+    tmp_path, channel, proposal_target, sent_to, trigger_message_json
 ):
     from app.service_message_sender import agent_message_delivery_key
     from app.store import AgentRole, AutoReplyStore
@@ -89,6 +110,7 @@ def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(
         trigger_create_time="2026-09-21 10:00:00",
         trigger_sender="Sender",
         trigger_text="Please clarify",
+        trigger_message_json=trigger_message_json or "",
         execution_generation="generation-1",
         channel=channel,
     )
@@ -167,6 +189,11 @@ def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(
         def send_message(self, conversation_id, text, **target):
             self.calls.append((conversation_id, text, target))
             return {"success": True, "result": {"openTaskId": "task-1"}}
+
+        @staticmethod
+        def resolve_message_sender(message):
+            assert message.sender_open_dingtalk_id == "open-recipient"
+            return "user-recipient"
 
         @staticmethod
         def verify_message_send_result(result):

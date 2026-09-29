@@ -220,6 +220,31 @@ def send_approved_dingtalk_message(
     ):
         conversation_id = None
     dws = dws_client or DwsClient()
+    # DWS accepts an openDingTalkId for reads and mentions, but its single-chat
+    # send endpoint requires receiverUid (the user's userId).  A direct
+    # message trigger is the one place where the service has both a verified
+    # recipient open ID and the recipient's display name, so resolve that exact
+    # participant through the contact API instead of guessing by name or
+    # forwarding an unsupported open ID to the provider.
+    if open_dingtalk_id and not user_id:
+        try:
+            trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        except ValueError:
+            trigger = None
+        if (
+            trigger is not None
+            and trigger.sender_open_dingtalk_id == open_dingtalk_id
+        ):
+            if trigger.sender_user_id:
+                user_id = trigger.sender_user_id.strip()
+            else:
+                resolve_sender = getattr(dws, "resolve_message_sender", None)
+                if callable(resolve_sender):
+                    user_id = str(resolve_sender(trigger) or "").strip()
+        if not user_id:
+            raise AgentReadOnlyViolationError(
+                "dingtalk_message_recipient_user_id_unresolved"
+            )
     sender = ServiceMessageSender(store=store, dingtalk=dws)
     if dingtalk_chat_delivery(action.operation) == "reply":
         message_id = str(
@@ -257,7 +282,7 @@ def send_approved_dingtalk_message(
         receipt = sender.send_dingtalk_prepared(
             prepared,
             conversation_id=conversation_id,
-            open_dingtalk_id=open_dingtalk_id or None,
+            open_dingtalk_id=(open_dingtalk_id or None) if not user_id else None,
             user_id=user_id or None,
         )
     provider_result = receipt.provider_result
