@@ -3812,6 +3812,17 @@ def build_email_worker_dependencies(
                 source = low_priority_source_factory(account)
                 try:
                     inventory = tuple(source.list_folders())
+                    # Released here, not only in the outer finally below: the
+                    # per-candidate reads inside this loop (read_state/execute)
+                    # check out this same account's connector again through
+                    # their own low_priority_source_factory call, and the
+                    # connector is not reentrant -- holding this one across
+                    # the whole loop deadlocked every candidate on itself
+                    # (2026-09-29, first real run_historical_once call since
+                    # the single-connector migration). _close_email_source is
+                    # safe to call again in the outer finally: it checks in
+                    # (or really closes) at most once.
+                    _close_email_source(source)
                     for folder_name in account["scan_folders"]:
                         if len(outcomes) >= MAX_HISTORICAL_BATCH_SIZE:
                             break

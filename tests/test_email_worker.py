@@ -2039,27 +2039,52 @@ def test_run_historical_once_uses_provider_rereads_cached_batch_and_durable_hist
                 updated_locator=updated,
             )
 
-    class FakeConnectorRegistry:
-        def connector_for(self, _account_id):
-            return self
+    class _FakeConnector:
+        def __init__(self, registry, account_id):
+            self._registry = registry
+            self._account_id = account_id
 
         def checkout(self, _kind, _priority=None, **_kwargs):
+            # Enforces the real connector's mutual-exclusion contract: a
+            # nested checkout for the same account while the first is still
+            # held is exactly the 2026-09-29 run_historical_once deadlock
+            # (its own per-candidate reads used to check out the account
+            # they were already listing folders under).
+            if self._registry.busy.get(self._account_id):
+                raise AssertionError(
+                    f"connector for {self._account_id!r} was checked out again "
+                    "while already checked out (reentrancy bug)"
+                )
+            self._registry.busy[self._account_id] = True
             return object(), Source()
 
         def checkin(self, _session, *, keep):
-            return None
+            self._registry.busy[self._account_id] = False
+
+    class FakeConnectorRegistry:
+        def __init__(self):
+            self.busy: dict[str, bool] = {}
+
+        def connector_for(self, account_id):
+            return _FakeConnector(self, account_id)
 
         @contextmanager
-        def acquire(self, _account_id, _kind, _priority=None, **_kwargs):
-            yield Source()
+        def acquire(self, account_id, _kind, _priority=None, **_kwargs):
+            connector = self.connector_for(account_id)
+            session, wrapped = connector.checkout(_kind, _priority, **_kwargs)
+            try:
+                yield wrapped
+            finally:
+                connector.checkin(session, keep=True)
 
+    fake_connector_registry = FakeConnectorRegistry()
     monkeypatch.setattr(
         module, "_build_email_source_factory", lambda _settings: lambda _account: Source()
     )
     monkeypatch.setattr(
         module,
         "_build_email_connector_registry",
-        lambda _store: FakeConnectorRegistry(),
+        lambda _store: fake_connector_registry,
     )
     monkeypatch.setattr(module, "_build_agent_orchestrator", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(
