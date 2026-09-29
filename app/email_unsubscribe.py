@@ -3004,7 +3004,13 @@ class PlaywrightUnsubscribeBrowser:
                 )
             self._dismiss_unique_blocking_dialog(button)
             try:
-                button.click(timeout=self.timeout_ms)
+                # Some unsubscribe providers submit the confirmation through
+                # an async handler or a redirect that never reaches a
+                # navigation commit.  The page readback below is the
+                # authoritative completion check, so waiting for Playwright's
+                # implicit navigation here turns a successful click into a
+                # timeout before we can inspect the result.
+                button.click(timeout=self.timeout_ms, no_wait_after=True)
             except Exception:
                 self._raise_if_blocked()
                 raise
