@@ -24,6 +24,23 @@ def extract_oa_url(text: str) -> str:
     return ""
 
 
+def resolve_oa_url(
+    *, stored_url: str = "", trigger_text: str = "", trigger_message_json: str = ""
+) -> str:
+    """Return the most actionable OA link available for an approval record.
+
+    The scanner stores a shortened ``/detail`` URL, while DingTalk's original
+    notification often contains the full mobile approval URL needed to open
+    the approval in the DingTalk client.  Prefer the original trigger text,
+    then its serialized payload, and only then the stored projection.
+    """
+    for source in (trigger_text, trigger_message_json, stored_url):
+        url = extract_oa_url(source)
+        if url:
+            return url
+    return str(stored_url or "").strip()
+
+
 def _urlish_candidates(text: str) -> list[str]:
     candidates: list[str] = []
     text = unescape(text).replace("\\/", "/").replace("\\u0026", "&")

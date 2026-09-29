@@ -372,6 +372,52 @@ def test_email_attempt_is_not_presented_as_a_dingtalk_conversation(tmp_path: Pat
     assert item["actions"]["dingtalk_url"] == ""
 
 
+def test_oa_attempt_detail_opens_the_original_approval_link(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    approval_url = (
+        "https://aflow.dingtalk.com/dingtalk/mobile/homepage.htm?"
+        "corpid=ding-example&procInstId=proc-1&taskId=&dinghash=approval#approval"
+    )
+    stored_url = "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId="
+    trigger_text = f"审批通知\n[{approval_url}]({approval_url})"
+    trigger_json = json.dumps(
+        {"content": trigger_text, "raw_payload": {"source": "dingtalk_notification"}},
+        ensure_ascii=False,
+    )
+    store.enqueue_reply_task(
+        conversation_id="cid-oa-link",
+        conversation_title="OA审批",
+        single_chat=False,
+        trigger_message_id="msg-oa-link",
+        trigger_create_time="2026-09-28 09:00:00",
+        trigger_sender="OA审批",
+        trigger_text=trigger_text,
+        trigger_message_json=trigger_json,
+        oa_url=stored_url,
+        channel="dingtalk",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-oa-link",
+        conversation_title="OA审批",
+        trigger_message_id="msg-oa-link",
+        trigger_sender="OA审批",
+        trigger_text=trigger_text,
+        action="oa_approval",
+        sensitivity_kind="general",
+        send_status="completed",
+        channel="dingtalk",
+        oa_process_instance_id="proc-1",
+        oa_url=stored_url,
+    )
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    assert item["oa"]["url"] == approval_url
+    assert item["actions"]["dingtalk_url"] == approval_url
+
+
 def test_attempt_detail_reaches_every_role_transcript(
     tmp_path: Path, readable_transcripts
 ):

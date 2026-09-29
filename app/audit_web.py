@@ -12338,13 +12338,22 @@ def _attempt_chat_action(
     attempt: ReplyAttempt,
     reply_task: ReplyTask | None,
 ) -> str:
+    from app.oa_approval import resolve_oa_url
+
+    oa_url = resolve_oa_url(
+        stored_url=attempt.oa_url,
+        trigger_text=reply_task.trigger_text if reply_task is not None else "",
+        trigger_message_json=(
+            reply_task.trigger_message_json if reply_task is not None else ""
+        ),
+    )
+    if oa_url:
+        return (
+            f'<a class="compact-button open-dingtalk-action" '
+            f'href="{escape(oa_url, quote=True)}" '
+            'target="_blank" rel="noopener">查看审批</a>'
+        )
     if _reply_task_is_service_task(reply_task):
-        if attempt.oa_url.strip():
-            return (
-                f'<a class="compact-button open-dingtalk-action" '
-                f'href="{escape(attempt.oa_url, quote=True)}" '
-                'target="_blank" rel="noopener">查看审批</a>'
-            )
         return '<span class="disabled-action">无可打开会话</span>'
     dingtalk_href = (
         "/open-dingtalk-popup?"

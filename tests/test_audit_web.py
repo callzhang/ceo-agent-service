@@ -9741,6 +9741,48 @@ def test_render_attempt_detail_does_not_open_synthetic_service_task_as_chat(
     assert "https://aflow.dingtalk.com/detail?procInstId=proc-1&amp;taskId=task-1" in html
 
 
+def test_render_attempt_detail_uses_original_oa_link_even_without_service_marker(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    approval_url = (
+        "https://aflow.dingtalk.com/dingtalk/mobile/homepage.htm?"
+        "corpid=ding-example&procInstId=proc-2&taskId=&dinghash=approval#approval"
+    )
+    trigger_text = f"审批通知\n[{approval_url}]({approval_url})"
+    store.enqueue_reply_task(
+        conversation_id="cid-oa-link",
+        conversation_title="OA审批",
+        single_chat=False,
+        trigger_message_id="msg-oa-link",
+        trigger_create_time="2026-09-28 09:00:00",
+        trigger_sender="OA审批",
+        trigger_text=trigger_text,
+        trigger_message_json=json.dumps({"content": trigger_text}, ensure_ascii=False),
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-2&taskId=",
+        channel="dingtalk",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-oa-link",
+        conversation_title="OA审批",
+        trigger_message_id="msg-oa-link",
+        trigger_sender="OA审批",
+        trigger_text=trigger_text,
+        action="oa_approval",
+        sensitivity_kind="general",
+        send_status="completed",
+        channel="dingtalk",
+        oa_process_instance_id="proc-2",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-2&taskId=",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert f'href="{approval_url.replace("&", "&amp;")}"' in html
+    assert "/open-dingtalk-popup?conversation_id=cid-oa-link" not in html
+
+
 def test_attempt_list_uses_single_review_feedback_entrypoint(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)

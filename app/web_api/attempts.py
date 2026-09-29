@@ -394,6 +394,20 @@ def _references_payload(attempt: Any) -> list[dict[str, str]]:
     return references
 
 
+def _oa_url(attempt: Any, reply_task: Any) -> str:
+    from app.oa_approval import resolve_oa_url
+
+    return resolve_oa_url(
+        stored_url=str(getattr(attempt, "oa_url", "") or ""),
+        trigger_text=str(getattr(reply_task, "trigger_text", "") or "")
+        if reply_task is not None
+        else "",
+        trigger_message_json=str(getattr(reply_task, "trigger_message_json", "") or "")
+        if reply_task is not None
+        else "",
+    )
+
+
 def _feedback_payload(events: list[Any]) -> list[dict[str, str]]:
     from app.audit_web import _feedback_rating_stars_for_rating
 
@@ -433,17 +447,11 @@ def _action_links(
 
     status = str(getattr(attempt, "send_status", "") or "").strip().lower()
     terminal = status in {"sent", "skipped", "completed", "commented", "calendar", "document", "reacted"}
-    service_task = False
-    if reply_task is not None:
-        trigger = _stored_json(getattr(reply_task, "trigger_message_json", ""), {})
-        raw = trigger.get("raw_payload") if isinstance(trigger, dict) else None
-        service_task = isinstance(raw, dict) and (
-            bool(raw.get("service_task")) or str(raw.get("source") or "").strip() == "oa_pending_scan"
-        )
     dingtalk_url = ""
-    if service_task and str(getattr(attempt, "oa_url", "") or "").strip():
-        dingtalk_url = str(attempt.oa_url).strip()
-    elif not service_task and str(getattr(attempt, "channel", "") or "") == "dingtalk":
+    approval_url = _oa_url(attempt, reply_task)
+    if approval_url:
+        dingtalk_url = approval_url
+    elif str(getattr(attempt, "channel", "") or "") == "dingtalk":
         # Only a DingTalk conversation id can open a DingTalk conversation. An
         # email or WeChat attempt carries its own channel identity, and sending
         # that to the popup produces a link that cannot resolve.
@@ -814,7 +822,7 @@ def build_attempt_detail(
         "oa": {
             "process_instance_id": normalize_display_value(attempt.oa_process_instance_id),
             "task_id": normalize_display_value(attempt.oa_task_id),
-            "url": normalize_display_value(attempt.oa_url),
+            "url": normalize_display_value(_oa_url(attempt, reply_task)),
             "action": normalize_display_value(attempt.oa_action),
             "remark": normalize_display_value(attempt.oa_remark),
             "result": _stored_json(attempt.oa_action_result_json, {}),
