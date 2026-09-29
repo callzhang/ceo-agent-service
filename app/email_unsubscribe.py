@@ -3382,7 +3382,28 @@ class PlaywrightUnsubscribeBrowser:
                     current_url = str(getattr(self.page, "url", ""))
                     if "ERR_ABORTED" not in str(exc) or current_url == "about:blank":
                         raise
-                    self._document_url = self._validate_navigation_target(current_url)
+                    # A GET unsubscribe endpoint may be treated as a download
+                    # or abort its provisional document during a redirect.
+                    # Re-read it through the same browser context without
+                    # issuing any write, then let the normal page observer
+                    # decide whether a control or terminal receipt exists.
+                    response = self._context.request.get(
+                        self._validate_navigation_target(private_url),
+                        max_redirects=10,
+                        timeout=self.timeout_ms,
+                    )
+                    response_url = self._validate_navigation_target(response.url)
+                    if response.status < 200 or response.status >= 300:
+                        raise
+                    body = response.body()
+                    if len(body) > 1_048_576:
+                        raise
+                    self.page.set_content(
+                        response.text(),
+                        wait_until="domcontentloaded",
+                        timeout=self.timeout_ms,
+                    )
+                    self._document_url = response_url
                 self._raise_if_blocked()
                 if not self._document_url:
                     self._document_url = self._validate_navigation_target(
