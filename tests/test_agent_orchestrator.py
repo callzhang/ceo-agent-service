@@ -1279,7 +1279,9 @@ def test_a_proposal_that_escalates_is_executed_then_ends_needs_human(store):
 def _decision_basis_for_escalation():
     from app.agent_contracts import DecisionBasis
 
-    fact = lambda text: {"assertion": text, "references": ["oa:task:1"]}
+    def fact(text):
+        return {"assertion": text, "references": ["oa:task:1"]}
+
     return DecisionBasis.model_validate(
         {
             "verified_facts": [fact("The contract has no signing-authority rule.")],

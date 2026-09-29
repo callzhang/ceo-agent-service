@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import sys
-import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass

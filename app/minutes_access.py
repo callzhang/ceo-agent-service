@@ -18,7 +18,7 @@ of its own, and there is nothing here that expires or has to be renewed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from typing import Any, Protocol

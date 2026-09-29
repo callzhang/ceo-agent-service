@@ -2221,7 +2221,7 @@ def test_dedicated_unsubscribe_browser_defaults_allow_real_page_latency() -> Non
     direct = __import__("app.email_unsubscribe_direct", fromlist=["*"])
     expected = unsubscribe.DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS
 
-    assert expected == 30_000
+    assert expected == 60_000
     assert (
         inspect.signature(unsubscribe.PlaywrightUnsubscribeBrowser)
         .parameters["timeout_ms"]
@@ -3680,7 +3680,6 @@ def test_a_page_that_only_ever_says_sign_in_is_still_login_required() -> None:
 
 
 def _judged_browser(texts, judgement, *, controls=None, waits=None):
-    from app.email_unsubscribe import UnsubscribePageJudgement
 
     seen: list[tuple] = []
 

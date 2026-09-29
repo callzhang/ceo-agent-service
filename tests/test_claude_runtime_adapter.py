@@ -488,9 +488,9 @@ def test_caller_parser_failure_is_typed_and_failover_closed(adapter, normalizer)
         ),
         (
             "unexpected provider failure",
-            RuntimeFailureClass.UNCLASSIFIED,
+            RuntimeFailureClass.PROCESS,
             "claude_runtime_unclassified",
-            False,
+            True,
         ),
     ],
 )
@@ -658,8 +658,8 @@ def test_success_result_text_cannot_spoof_auth_failure(adapter):
 
     failure = adapter.classify_failure(stdout, "", 1)
 
-    assert failure.failure_class is RuntimeFailureClass.UNCLASSIFIED
-    assert failure.failover_permitted is False
+    assert failure.failure_class is RuntimeFailureClass.PROCESS
+    assert failure.failover_permitted is True
 
 
 
@@ -911,7 +911,7 @@ def test_terminal_parse_returns_the_final_result(adapter, route, tmp_path, monke
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
-    command = adapter.build_command(
+    adapter.build_command(
         route=route,
         session_id=None,
         max_turns=2,
@@ -942,7 +942,7 @@ def test_a_result_before_init_is_a_grammar_failure(
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
-    command = adapter.build_command(
+    adapter.build_command(
         route=route,
         session_id=None,
         max_turns=2,

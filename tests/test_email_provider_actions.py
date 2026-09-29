@@ -150,7 +150,7 @@ def test_mark_read_trusts_the_reply_and_a_move_without_a_new_location_is_read_ba
     module = import_module("app.email_provider_actions")
     cases = (
         # In place: the server's acceptance settles it.
-        (EmailAction.MARK_READ, {}, "STORE \\Seen", "STORE \\Seen", False, f"server-reply:mark_read:7"),
+        (EmailAction.MARK_READ, {}, "STORE \\Seen", "STORE \\Seen", False, "server-reply:mark_read:7"),
         # Moves: this fake does not say where the message went, so it is looked up.
         (EmailAction.ARCHIVE, {}, "MOVE ARCHIVE", "MOVE ARCHIVE", True, "revision-1"),
         (EmailAction.MOVE, {"target_folder": "Projects"}, "MOVE", "MOVE", True, "revision-1"),

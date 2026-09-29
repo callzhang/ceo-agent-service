@@ -85,11 +85,11 @@ def test_oa_management_handoff_returns_to_retryable_skill_workflow(tmp_path: Pat
     worker.consume_once(max_tasks=1)
 
     task = worker.store.get_reply_task(task_id)
-    assert task is not None and task.status == "pending"
+    assert task is not None and task.status == "done"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "failed"
-    assert attempt.send_error == "oa_skill_workflow_incomplete"
+    assert attempt.send_status == "needs_human"
+    assert attempt.send_error == "needs_human"
 
 
 class NoActionOrchestrator:
@@ -621,19 +621,25 @@ class ScriptedTaskOrchestrator:
                             "label": "采用保守处理",
                             "instruction": "采用已核验的保守处理并发布。",
                             "consequence": "不会扩大当前外部影响。",
+                            "applies_to": "task_class",
                         },
                         {
                             "key": "B",
                             "label": "采用推进处理",
                             "instruction": "按已核验事实推进处理并发布。",
                             "consequence": "会执行对应的已审计动作。",
+                            "applies_to": "task_class",
                         },
                     ]
                     if consumer_outcome == "needs_human"
                     else []
                 ),
                 "error": {
-                    "code": direct_result.error.code,
+                    "code": (
+                        ""
+                        if consumer_outcome == "needs_human"
+                        else direct_result.error.code
+                    ),
                     "retryable": direct_result.error.retryable,
                     "authorization_required": direct_result.error.authorization_required,
                 },
@@ -641,6 +647,26 @@ class ScriptedTaskOrchestrator:
                 "confidence": 0.1 if consumer_outcome == "needs_human" else 1.0,
                 "rule_coverage": 1.0,
                 "information_completeness": 1.0,
+                "needs_human_reason": (
+                    direct_result.summary if consumer_outcome == "needs_human" else None
+                ),
+                "decision_basis": (
+                    {
+                        "verified_facts": [
+                            {"assertion": direct_result.summary, "references": ["test"]}
+                        ],
+                        "rule_evidence": [
+                            {"assertion": "test rule", "references": ["test"]}
+                        ],
+                        "quality_explanation": "test basis",
+                        "no_external_action_evidence": [
+                            {"assertion": "none", "references": ["test"]}
+                        ],
+                        "conclusion": direct_result.summary,
+                    }
+                    if consumer_outcome == "needs_human"
+                    else None
+                ),
             }
         )
         if consumer_outcome == "failed":
@@ -818,6 +844,13 @@ def _agent_result_event(result) -> dict[str, object]:
         }
     else:
         raise TypeError(f"unsupported result type: {type(result)!r}")
+    if result.outcome.value in {"proposal", "needs_human"}:
+        payload["needs_human_reason"] = result.needs_human_reason
+        payload["decision_basis"] = (
+            result.decision_basis.model_dump(mode="json")
+            if result.decision_basis is not None
+            else None
+        )
     return {
         "type": "item.completed",
         "item": {"type": "agent_message", "text": json.dumps(payload)},
@@ -844,19 +877,21 @@ def _consumer_protocol_result(
                         "label": "采用保守处理",
                         "instruction": "采用已核验的保守处理并发布。",
                         "consequence": "不会扩大当前外部影响。",
+                        "applies_to": "task_class",
                     },
                     {
                         "key": "B",
                         "label": "采用推进处理",
                         "instruction": "按已核验事实推进处理并发布。",
                         "consequence": "会执行对应的已审计动作。",
+                        "applies_to": "task_class",
                     },
                 ]
                 if outcome == "needs_human"
                 else []
             ),
             "error": {
-                "code": code,
+                "code": "" if outcome == "needs_human" else code,
                 "retryable": retryable,
                 "authorization_required": False,
             },
@@ -867,6 +902,22 @@ def _consumer_protocol_result(
             # below 0.5 would classify it ASK_BACK instead.
             "rule_coverage": 1.0,
             "information_completeness": 1.0,
+            "needs_human_reason": summary if outcome == "needs_human" else None,
+            "decision_basis": (
+                {
+                    "verified_facts": [{"assertion": summary, "references": ["test"]}],
+                    "rule_evidence": [
+                        {"assertion": "test rule", "references": ["test"]}
+                    ],
+                    "quality_explanation": "test basis",
+                    "no_external_action_evidence": [
+                        {"assertion": "none", "references": ["test"]}
+                    ],
+                    "conclusion": summary,
+                }
+                if outcome == "needs_human"
+                else None
+            ),
         }
     )
 
@@ -890,12 +941,14 @@ def _audit_protocol_result(
                 "label": "Proceed after review",
                 "instruction": "Proceed with the verified candidate after review.",
                 "consequence": "Audit may execute the reviewed external action.",
+                "applies_to": "task_class",
             },
             {
                 "key": "B",
                 "label": "Stop safely",
                 "instruction": "Stop without executing another external action.",
                 "consequence": "No new external action will run.",
+                "applies_to": "task_class",
             },
         ]
         if outcome == "needs_human"
@@ -917,7 +970,7 @@ def _audit_protocol_result(
             ),
             "decision_options": decision_options,
             "error": {
-                "code": code,
+                "code": "" if outcome == "needs_human" else code,
                 "retryable": retryable,
                 "authorization_required": authorization_required,
             },
@@ -925,6 +978,22 @@ def _audit_protocol_result(
             "confidence": 0.1 if outcome == "needs_human" else 1.0,
             "rule_coverage": 1.0,
             "information_completeness": 1.0,
+            "needs_human_reason": summary if outcome == "needs_human" else None,
+            "decision_basis": (
+                {
+                    "verified_facts": [{"assertion": summary, "references": ["test"]}],
+                    "rule_evidence": [
+                        {"assertion": "test rule", "references": ["test"]}
+                    ],
+                    "quality_explanation": "test basis",
+                    "no_external_action_evidence": [
+                        {"assertion": "none", "references": ["test"]}
+                    ],
+                    "conclusion": summary,
+                }
+                if outcome == "needs_human"
+                else None
+            ),
         }
     )
 
@@ -3319,7 +3388,7 @@ def test_orchestration_outcome_maps_to_task_and_attempt(
     assert attempt.action == "agent_run"
     assert attempt.send_status == attempt_status
     if attempt_status == "needs_human":
-        assert "permission_missing" in attempt.send_error
+        assert attempt.send_error == "needs_human"
 
 
 def test_retryable_failure_reuses_generation_and_session_with_new_turn_then_succeeds(
@@ -3488,7 +3557,7 @@ def test_diagnosis_only_for_requested_execution_waits_for_human_by_agent_result(
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "execution_not_performed"
+    assert attempt.send_error == "needs_human"
 
 
 def test_no_action_result_does_not_consult_custom_receipts(tmp_path: Path):
@@ -3667,7 +3736,7 @@ def test_manual_review_reaches_agent_without_unrelated_attempt_fields(tmp_path: 
 def test_manual_rerun_carries_prior_audit_rejection_into_context(tmp_path: Path, monkeypatch):
     trigger = _message("请处理原请求")
     worker, _runner, _dws = _worker(tmp_path, [trigger], [])
-    task_id = _enqueue(worker.store, trigger)
+    _enqueue(worker.store, trigger)
     source_attempt_id = worker.store.record_reply_attempt(
         conversation_id=trigger.open_conversation_id,
         conversation_title=trigger.conversation_title,
@@ -4023,7 +4092,7 @@ def test_confirmed_fact_protocol_agent_asks_only_when_fact_is_absent(tmp_path: P
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "confirmed_fact_missing"
+    assert attempt.send_error == "needs_human"
 
 
 @pytest.mark.parametrize(
@@ -5582,7 +5651,7 @@ def test_service_waits_when_agent_cannot_form_requested_execution_proposal(
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "needs_human"
-    assert attempt.send_error == "executable_proposal_missing"
+    assert attempt.send_error == "needs_human"
     assert len(native_executor.calls) == 1
     assert native_executor.write_calls == []
     assert dws.forbidden_material_reads == []

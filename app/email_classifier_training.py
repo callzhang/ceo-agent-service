@@ -387,7 +387,9 @@ def train_frozen_embedding_candidate(
     for repeat in range(CROSS_VALIDATION_REPEATS):
         fold_of_group = _group_folds(evaluation_rows, important_rows, repeat)
         for fold in range(CROSS_VALIDATION_FOLDS):
-            in_fold = lambda row: fold_of_group[str(row["group_key"])] == fold
+            def in_fold(row: Mapping[str, object]) -> bool:
+                return fold_of_group[str(row["group_key"])] == fold
+
             fit_rows = [row for row in evaluation_rows if not in_fold(row)]
             score_rows = [row for row in evaluation_rows if in_fold(row)]
             important_fit = [row for row in important_rows if not in_fold(row)]

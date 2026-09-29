@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
 
+from app.attempt_what_happened import build_what_happened
 from app.web_api.common import json_safe, normalize_display_value
 
 
@@ -502,10 +503,6 @@ def _action_links(
         "terminal": terminal,
         "action_label": "无需操作" if terminal else "需要处理",
     }
-
-
-from app.attempt_what_happened import build_what_happened
-
 
 def _external_effect_sentence(what_happened: dict[str, Any]) -> str:
     """Say plainly that the action completed, without reciting identifiers.

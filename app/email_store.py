@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.message import Message
 from email.parser import Parser
-from email.utils import getaddresses
 from hashlib import sha256
 import json
 import math

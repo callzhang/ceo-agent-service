@@ -23,7 +23,6 @@ from app.email_folder_truth import (
 )
 from app.email_important import (
     ImportantSignals,
-    important_effective,
     important_training_label,
 )
 from app.email_embedding_cache import EMBEDDING_INPUT_MAX_CHARS

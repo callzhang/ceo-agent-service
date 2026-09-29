@@ -969,7 +969,6 @@ def test_readiness_is_not_ready_when_no_category_is_proven() -> None:
 
 
 def test_others_is_never_promoted_and_a_weak_important_head_only_disables_flagging() -> None:
-    from app.email_model_registry import PromotionThresholds
 
     def candidate(model_id):
         more = 1 if model_id.endswith("2") else 0

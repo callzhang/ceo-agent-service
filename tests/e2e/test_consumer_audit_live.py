@@ -489,7 +489,6 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     monkeypatch,
 ):
     skills_root = tmp_path / "installed-skills"
-    repository_root = Path(__file__).resolve().parents[2]
     skill_contents = {
         "ceo-calendar-invite": (
             bundled_business_skills_root() / "ceo-calendar-invite" / "SKILL.md"
@@ -606,7 +605,6 @@ def test_deterministic_silent_meeting_reads_material_then_accepts(
     monkeypatch,
 ):
     skills_root = tmp_path / "installed-skills"
-    repository_root = Path(__file__).resolve().parents[2]
     skill_contents = {
         "ceo-calendar-invite": (
             bundled_business_skills_root() / "ceo-calendar-invite" / "SKILL.md"

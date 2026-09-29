@@ -90,7 +90,6 @@ from app.oa_approval import extract_oa_url
 from app.oa_notification_routing import (
     OA_APPROVAL_LINK_PATTERN as DINGTALK_APPROVAL_LINK_PATTERN,
     OA_CHAT_REMINDER_PATTERN as DINGTALK_APPROVAL_REMINDER_PATTERN,
-    OaNotificationKind,
     classify_oa_notification,
     render_oa_result_reply,
 )

@@ -142,7 +142,7 @@ def test_dead_probe_forces_a_reconnect_even_within_idle_window() -> None:
     sessions = [FakeSession(alive=False), FakeSession()]
     connector = _connector(clock=clock, connect_calls=connect_calls, sessions=sessions)
 
-    with connector.acquire(kind="raw") as first:
+    with connector.acquire(kind="raw"):
         pass
     # First session reports alive=False on NOOP; even one second later it must
     # be discarded and replaced, not reused.
