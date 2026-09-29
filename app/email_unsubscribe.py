@@ -3368,13 +3368,22 @@ class PlaywrightUnsubscribeBrowser:
                         wait_until="domcontentloaded",
                         timeout=self.timeout_ms,
                     )
-                except Exception:
+                except Exception as exc:
                     self._raise_if_blocked()
-                    raise
+                    # Some unsubscribe endpoints abort the provisional
+                    # navigation while replacing it with their redirect or
+                    # client-rendered page. If Playwright has already left
+                    # about:blank, the URL and subsequent page readback are
+                    # stronger evidence than the aborted wait itself.
+                    current_url = str(getattr(self.page, "url", ""))
+                    if "ERR_ABORTED" not in str(exc) or current_url == "about:blank":
+                        raise
+                    self._document_url = self._validate_navigation_target(current_url)
                 self._raise_if_blocked()
-                self._document_url = self._validate_navigation_target(
-                    getattr(self.page, "url")
-                )
+                if not self._document_url:
+                    self._document_url = self._validate_navigation_target(
+                        getattr(self.page, "url")
+                    )
             elif operation.kind is UnsubscribeOperationKind.FOLLOW_REDIRECT:
                 self._raise_if_blocked()
                 self._document_url = self._validate_navigation_target(
