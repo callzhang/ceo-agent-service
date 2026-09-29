@@ -2680,6 +2680,19 @@ class PlaywrightUnsubscribeBrowser:
                 ) from exc
             state = judgement.state
             judged_evidence = judgement.evidence
+            # The page's own terminal wording is stronger evidence than a
+            # conservative action_required judgement. Providers such as
+            # beehiiv render the confirmation sentence together with the
+            # subscription-management shell, and the page judge can otherwise
+            # send an already-completed unsubscribe back into control discovery.
+            textual_state = self._state_from_text(text)
+            if textual_state in {
+                UnsubscribePageState.DONE,
+                UnsubscribePageState.ALREADY_UNSUBSCRIBED,
+            }:
+                state = textual_state
+                if not judged_evidence:
+                    judged_evidence = text[:400]
             if state is UnsubscribePageState.ACTION_REQUIRED and not controls:
                 state = None
         else:

@@ -3720,6 +3720,26 @@ def test_an_agents_judgement_decides_the_state_and_travels_with_the_record() -> 
     assert seen[0][1] == "news.example.com" and seen[0][2] == text
 
 
+def test_terminal_page_text_overrides_conservative_action_required_judgement() -> None:
+    from app.email_unsubscribe import UnsubscribePageJudgement
+
+    text = (
+        "Your current plan Active. By unsubscribing, you will no longer receive "
+        "this newsletter."
+    )
+    browser, _seen = _judged_browser(
+        [text],
+        UnsubscribePageJudgement(
+            UnsubscribePageState.ACTION_REQUIRED,
+            "The page shows an unsubscribe action.",
+        ),
+    )
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert discovery.state is UnsubscribePageState.DONE
+
+
 def test_the_agent_reads_the_page_only_after_its_text_stops_changing() -> None:
     from app.email_unsubscribe import UnsubscribePageJudgement
 
