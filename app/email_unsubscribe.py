@@ -3031,7 +3031,19 @@ class PlaywrightUnsubscribeBrowser:
                 # authoritative completion check, so waiting for Playwright's
                 # implicit navigation here turns a successful click into a
                 # timeout before we can inspect the result.
-                button.click(timeout=self.timeout_ms, no_wait_after=True)
+                # The control was already selected from the audited, exact
+                # model and any unique blocking dialog was dismissed. Some
+                # providers keep a transparent overlay or report the button
+                # as not actionable while their own handler is ready; waiting
+                # for Playwright actionability then turns a valid click into
+                # an operation timeout. Force only this already-authorized
+                # exact control, and rely on the page readback below to prove
+                # whether the provider accepted it.
+                button.click(
+                    timeout=self.timeout_ms,
+                    no_wait_after=True,
+                    force=True,
+                )
             except Exception:
                 self._raise_if_blocked()
                 raise

@@ -3246,6 +3246,7 @@ def test_confirmation_button_clicks_only_its_modelled_exact_selector() -> None:
 
         def click(self, **kwargs):
             assert kwargs["no_wait_after"] is True
+            assert kwargs["force"] is True
             clicks.append("click")
 
     class NoDialog:
