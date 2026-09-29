@@ -3365,7 +3365,11 @@ class PlaywrightUnsubscribeBrowser:
                 try:
                     self.page.goto(
                         self._validate_navigation_target(private_url),
-                        wait_until="domcontentloaded",
+                        # The provider may abort the provisional document while
+                        # replacing it with the unsubscribe redirect. Commit is
+                        # the earliest reliable navigation boundary; the
+                        # subsequent page read waits for usable, stable text.
+                        wait_until="commit",
                         timeout=self.timeout_ms,
                     )
                 except Exception as exc:
