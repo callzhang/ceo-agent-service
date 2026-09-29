@@ -1341,6 +1341,11 @@ def test_frozen_snapshot_embedding_training_stages_metrics_without_activation(
     persisted = registry.get_staged_evidence(result.model_id)
     assert persisted["hashes"]["snapshot_sha256"] == snapshot.snapshot_digest
     assert persisted["parameters"]["alpha"] >= 0
+    # Reads the actually-trained head's width, not a hardcoded literal that
+    # stayed at 8 after the class default moved to 32 (commit dcdc8d30).
+    from app.email_embedding_classifier import CATEGORY_HIDDEN_UNITS
+
+    assert persisted["parameters"]["hidden_layer_sizes"] == [CATEGORY_HIDDEN_UNITS]
     assert persisted["dependencies"]["embedding_model_revision"] == "gpu4-r1"
     assert persisted["compatibility"]["description_version"] == description_set_version
     assert persisted["head_latency_ms"].keys() >= {"p50", "p95", "p99", "sample_count"}

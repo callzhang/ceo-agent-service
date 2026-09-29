@@ -725,7 +725,7 @@ def train_frozen_embedding_candidate(
             "category_thresholds": thresholds,
             "important_threshold": important_threshold,
             "head_format": CANDIDATE_HEAD_FORMAT,
-            "hidden_layer_sizes": [8],
+            "hidden_layer_sizes": [classifier.category_hidden_units],
             "solver": "lbfgs",
             "regularization_alpha": 0.001,
             "max_iter": 1000,

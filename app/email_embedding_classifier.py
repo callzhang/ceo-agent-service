@@ -689,6 +689,12 @@ class DescriptionAwareEmailClassifier:
             random_state=20260905,
         )
 
+    @property
+    def category_hidden_units(self) -> int:
+        """The category head's actual trained hidden width, not the module default."""
+
+        return int(self._require_category_head().hidden_layer_sizes[0])
+
     def _require_category_head(self) -> MLPClassifier:
         if self._category_head is None:
             raise RuntimeError("classifier is not fitted")
