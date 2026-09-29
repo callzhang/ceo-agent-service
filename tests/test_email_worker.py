@@ -9705,12 +9705,14 @@ def test_structured_authorization_result_keeps_needs_human_options():
             label="授权",
             instruction="允许继续处理。",
             consequence="服务继续执行当前操作。",
+            applies_to="task_class",
         ),
         DecisionOption(
             key="stop",
             label="停止",
             instruction="停止当前操作。",
             consequence="不再继续处理。",
+            applies_to="task_class",
         ),
     )
     result = SimpleNamespace(
@@ -9725,8 +9727,14 @@ def test_structured_authorization_result_keeps_needs_human_options():
 
     assert captured["task_status"] == "done"
     assert captured["send_status"] == "needs_human"
+    # _decision_options_json persists only the four fields a person reads;
+    # `applies_to` is a constant literal (always "task_class"), not data.
     assert json.loads(captured["human_decision_options_json"]) == [
-        option.model_dump(mode="json") for option in options
+        {
+            field: getattr(option, field)
+            for field in ("key", "label", "instruction", "consequence")
+        }
+        for option in options
     ]
 
 

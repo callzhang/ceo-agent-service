@@ -106,12 +106,14 @@ def _bounded_needs_human_result() -> ConsumerAgentResult:
                     "label": "仅作事实调研",
                     "instruction": "仅询问字段和价格，不构成采购、预算或合作承诺，不得下单或付款。",
                     "consequence": "补齐事实后再决定。",
+                    "applies_to": "task_class",
                 },
                 {
                     "key": "stop",
                     "label": "暂停",
                     "instruction": "暂不联系。",
                     "consequence": "等待后续确认。",
+                    "applies_to": "task_class",
                 },
             ],
             "risk": "high",
@@ -179,12 +181,14 @@ def _audit_result(
                 "label": "Proceed after confirmation",
                 "instruction": "Proceed with the verified recovery path.",
                 "consequence": "Audit will verify the recovered action.",
+                "applies_to": "task_class",
             },
             {
                 "key": "B",
                 "label": "Stop safely",
                 "instruction": "Stop without executing another external action.",
                 "consequence": "No new external action will run.",
+                "applies_to": "task_class",
             },
         ]
     elif outcome == "dry_run":
@@ -197,6 +201,35 @@ def _audit_result(
             "feedback": feedback,
             "external_result": external_result,
             "decision_options": decision_options,
+            **(
+                {
+                    "needs_human_reason": "当前规则没有覆盖这次外部动作恢复后的确认方式。",
+                    "decision_basis": {
+                        "verified_facts": [
+                            {
+                                "assertion": "上一轮外部动作已经完成。",
+                                "references": ["agent_run:recovered"],
+                            }
+                        ],
+                        "rule_evidence": [
+                            {
+                                "assertion": "现有规则没有定义这类已完成动作的确认方式。",
+                                "references": ["skill:test-rule"],
+                            }
+                        ],
+                        "quality_explanation": "事实完整，但确认路径没有可复用规则。",
+                        "no_external_action_evidence": [
+                            {
+                                "assertion": "本轮 Audit 不会再次执行外部动作。",
+                                "references": ["agent_run:current"],
+                            }
+                        ],
+                        "conclusion": "需要针对可复用规则作出选择。",
+                    },
+                }
+                if outcome == "needs_human"
+                else {}
+            ),
             "error": {
                 "code": code,
                 "retryable": retryable,

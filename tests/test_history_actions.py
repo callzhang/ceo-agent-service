@@ -196,12 +196,14 @@ def test_manual_oa_rerun_replaces_old_human_choice_with_automatic_recovery():
                 label="同意",
                 instruction="同意",
                 consequence="审批继续",
+                applies_to="task_class",
             ),
             DecisionOption(
                 key="reject",
                 label="拒绝",
                 instruction="拒绝",
                 consequence="审批结束",
+                applies_to="task_class",
             ),
         ),
     )
@@ -223,12 +225,14 @@ def test_agent_supplied_choices_are_preserved_for_general_needs_human():
             label="Use plan A",
             instruction="Use plan A",
             consequence="Publishes plan A",
+            applies_to="task_class",
         ),
         DecisionOption(
             key="B",
             label="Use plan B",
             instruction="Use plan B",
             consequence="Publishes plan B",
+            applies_to="task_class",
         ),
     )
 
@@ -269,12 +273,14 @@ def test_confirmed_external_effect_only_keeps_agent_choices_and_read_only_action
             label="Confirm complete",
             instruction="Confirm the completed action.",
             consequence="No external action is repeated.",
+            applies_to="task_class",
         ),
         DecisionOption(
             key="B",
             label="Escalate manually",
             instruction="Escalate for manual review without replay.",
             consequence="No automatic replay occurs.",
+            applies_to="task_class",
         ),
     )
 
