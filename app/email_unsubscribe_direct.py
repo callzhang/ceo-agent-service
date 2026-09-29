@@ -202,6 +202,8 @@ def _redacted(visible_text: str) -> tuple[str, str]:
 def _failure(
     journal: list[RedactedUnsubscribeStep],
     exc: Exception,
+    *,
+    operation: UnsubscribeOperation | None = None,
 ) -> UnsubscribeExecutionResult:
     return make_unsubscribe_result(
         UnsubscribeOutcome.FAILED_BROWSER,
@@ -210,7 +212,10 @@ def _failure(
         error_category=browser_failure_category(exc),
         # An exception outside the modelled browser failures otherwise leaves
         # only the fallback code behind (reply task 384835, 2026-09-25).
-        error_detail=browser_failure_detail(exc),
+        error_detail=browser_failure_detail(
+            exc,
+            operation=operation.kind if operation is not None else None,
+        ),
         # The same field a success uses for the page it read: a failure that
         # records nothing cannot be diagnosed later.
         **browser_failure_observation_fields(exc),
@@ -266,7 +271,7 @@ def run_direct_unsubscribe(
                     evidence="page-not-operable",
                     visible_text=_observation_text(exc),
                 )
-            return _failure(journal, exc)
+            return _failure(journal, exc, operation=operation)
         performed.append(operation)
         journal.append(
             RedactedUnsubscribeStep(

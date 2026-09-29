@@ -736,7 +736,23 @@ def test_a_modelled_browser_failure_names_its_category_as_the_detail() -> None:
     result = run_direct_unsubscribe(browser, _effect(), ENTRY)
 
     assert result.error_code == "email_unsubscribe_browser_timeout"
-    assert result.error_detail == "category=operation_timeout"
+    assert result.error_detail == "category=operation_timeout;operation=open_entry"
+
+
+def test_a_browser_failure_records_the_safe_operation_stage() -> None:
+    browser = ScriptedBrowser(
+        [
+            UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
+                "browser operation timed out",
+            )
+        ]
+    )
+
+    effect = _effect()
+    result = run_direct_unsubscribe(browser, effect, ENTRY)
+
+    assert result.error_detail == "category=operation_timeout;operation=open_entry"
 
 
 def test_a_category_without_its_own_code_still_says_which_it_was() -> None:
@@ -752,7 +768,7 @@ def test_a_category_without_its_own_code_still_says_which_it_was() -> None:
     result = run_direct_unsubscribe(browser, _effect(), ENTRY)
 
     assert result.error_code == "email_unsubscribe_browser_failed"
-    assert result.error_detail == "category=control_unavailable"
+    assert result.error_detail == "category=control_unavailable;operation=open_entry"
 
 
 def test_a_missing_task_fails_closed(tmp_path: Path) -> None:

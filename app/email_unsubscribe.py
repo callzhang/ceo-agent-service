@@ -480,7 +480,11 @@ _DETAIL_SECRET_FIELD = re.compile(
 _DETAIL_TOKENISH = re.compile(r"[A-Za-z0-9_\-+/=]{32,}")
 
 
-def _browser_failure_detail(error: Exception) -> str:
+def _browser_failure_detail(
+    error: Exception,
+    *,
+    operation: UnsubscribeOperationKind | str | None = None,
+) -> str:
     """Name an unexpected exception so its failure can be diagnosed later.
 
     Reply task 384835 (2026-09-25) failed twice as email_unsubscribe_browser_failed
@@ -495,13 +499,30 @@ def _browser_failure_detail(error: Exception) -> str:
         # email_unsubscribe_browser_failed, so this is the only place that
         # says which condition it was (six failures on 2026-09-25 showed the
         # generic code and nothing else).
-        return f"category={error.category.value}"
+        detail = f"category={error.category.value}"
+        if operation is not None:
+            operation_value = (
+                operation.value
+                if isinstance(operation, UnsubscribeOperationKind)
+                else str(operation)
+            )
+            if operation_value in {item.value for item in UnsubscribeOperationKind}:
+                detail += f";operation={operation_value}"
+        return detail
     message = " ".join(str(error).split())
     message = _DETAIL_URL.sub("[url]", message)
     message = _DETAIL_SECRET_FIELD.sub(lambda match: f"{match.group(1)}=[redacted]", message)
     message = _DETAIL_TOKENISH.sub("[redacted]", message)
     name = type(error).__name__
     detail = f"{name}: {message}" if message else name
+    if operation is not None:
+        operation_value = (
+            operation.value
+            if isinstance(operation, UnsubscribeOperationKind)
+            else str(operation)
+        )
+        if operation_value in {item.value for item in UnsubscribeOperationKind}:
+            detail = f"{detail};operation={operation_value}"
     if len(detail) > MAX_BROWSER_FAILURE_DETAIL:
         detail = detail[: MAX_BROWSER_FAILURE_DETAIL - 1] + "…"
     return detail
@@ -4610,7 +4631,10 @@ class UnsubscribeExecutor:
                     journal,
                     error_code=_browser_failure_code(exc),
                     error_category=_browser_failure_category(exc),
-                    error_detail=_browser_failure_detail(exc),
+                    error_detail=_browser_failure_detail(
+                        exc,
+                        operation=operation.kind,
+                    ),
                     **_browser_failure_observation_fields(exc),
                 )
             operation_step = RedactedUnsubscribeStep(
