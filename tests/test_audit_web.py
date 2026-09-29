@@ -3,6 +3,7 @@ import os
 import re
 import sqlite3
 import subprocess
+from urllib.parse import quote
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -5392,6 +5393,48 @@ def test_open_dingtalk_popup_fetches_open_route_and_auto_closes(tmp_path: Path):
     assert "window.close()" in response.text
 
 
+def test_open_dingtalk_oa_popup_fetches_native_oa_route(tmp_path: Path):
+    approval_url = (
+        "https://aflow.dingtalk.com/dingtalk/pc/query/pchomepage.htm?"
+        "corpid=ding-example&procInstId=proc-1&taskId=task-1#/approval"
+    )
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/open-dingtalk-oa-popup", params={"url": approval_url})
+
+    assert response.status_code == 200
+    assert "正在打开钉钉审批" in response.text
+    assert "/open-dingtalk-oa?url=" in response.text
+    assert "window.close()" in response.text
+
+
+def test_open_dingtalk_oa_uses_native_client_link(tmp_path: Path, monkeypatch):
+    commands = []
+
+    def fake_run(command, check):
+        commands.append((command, check))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("app.audit_web.subprocess.run", fake_run)
+    approval_url = (
+        "https://aflow.dingtalk.com/dingtalk/pc/query/pchomepage.htm?"
+        "corpid=ding-example&procInstId=proc-1&taskId=task-1#/approval"
+    )
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post("/open-dingtalk-oa", params={"url": approval_url})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["oa_url"] == approval_url
+    assert payload["dingtalk_url"].startswith(
+        "dingtalk://dingtalkclient/page/link?url="
+    )
+    assert "&pc_slide=true" in payload["dingtalk_url"]
+    assert commands == [(["/usr/bin/open", payload["dingtalk_url"]], False)]
+
+
 def test_open_dingtalk_popup_rejects_missing_target(tmp_path: Path):
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
 
@@ -9779,7 +9822,10 @@ def test_render_attempt_detail_uses_original_oa_link_even_without_service_marker
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert f'href="{approval_url.replace("&", "&amp;")}"' in html
+    assert (
+        f'href="/open-dingtalk-oa-popup?url={quote(approval_url, safe="")}"'
+        in html
+    )
     assert "/open-dingtalk-popup?conversation_id=cid-oa-link" not in html
 
 

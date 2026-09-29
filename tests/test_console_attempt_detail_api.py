@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -415,7 +416,9 @@ def test_oa_attempt_detail_opens_the_original_approval_link(tmp_path: Path):
     assert status == 200
     assert item is not None
     assert item["oa"]["url"] == approval_url
-    assert item["actions"]["dingtalk_url"] == approval_url
+    assert item["actions"]["dingtalk_url"] == (
+        "/open-dingtalk-oa-popup?url=" + quote(approval_url, safe="")
+    )
 
 
 def test_attempt_detail_reaches_every_role_transcript(

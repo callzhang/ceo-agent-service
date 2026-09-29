@@ -2020,6 +2020,47 @@ def render_dingtalk_open_chat_bridge(open_conversation_id: str) -> str:
 </html>"""
 
 
+def render_dingtalk_open_oa_popup(oa_url: str) -> str:
+    open_url = f"/open-dingtalk-oa?{urlencode({'url': oa_url})}"
+    escaped_open_url = json.dumps(open_url)
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>打开钉钉审批</title>
+  <style>
+    body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:22px;background:#fff;color:#111;line-height:1.45}}
+    .card{{border:1px solid #e5e5e5;border-radius:12px;padding:16px;background:#fafafa}}
+    h1{{margin:0 0 8px;font-size:16px}}
+    p{{margin:0;color:#555;font-size:13px}}
+  </style>
+</head>
+<body>
+  <section class="card">
+    <h1>正在打开钉钉审批</h1>
+    <p id="status">请稍候...</p>
+  </section>
+  <script>
+    const statusEl = document.getElementById("status");
+    function closeSoon() {{
+      setTimeout(() => window.close(), 900);
+    }}
+    fetch({escaped_open_url}, {{method: "POST", cache: "no-store"}})
+      .then((response) => response.json())
+      .then((payload) => {{
+        statusEl.textContent = payload && payload.ok ? "已发送打开请求，即将关闭。" : "打开请求失败，即将关闭。";
+        closeSoon();
+      }})
+      .catch(() => {{
+        statusEl.textContent = "打开请求失败，即将关闭。";
+        closeSoon();
+      }});
+  </script>
+</body>
+</html>"""
+
+
 def render_dingtalk_open_popup(*, cid: str = "", conversation_id: str = "") -> str:
     query: dict[str, str] = {}
     if conversation_id.strip():
@@ -10847,6 +10888,15 @@ def create_audit_app(
             render_dingtalk_open_popup(cid=cid, conversation_id=conversation_id)
         )
 
+    @app.get("/open-dingtalk-oa-popup", response_class=HTMLResponse)
+    def open_dingtalk_oa_popup(url: str = "") -> HTMLResponse:
+        from app.oa_approval import extract_oa_url
+
+        cleaned_url = extract_oa_url(url)
+        if not cleaned_url:
+            return HTMLResponse("missing or invalid oa url", status_code=400)
+        return HTMLResponse(render_dingtalk_open_oa_popup(cleaned_url))
+
     @app.post("/open-attempt")
     def open_attempt(request: Request, attempt_id: int) -> JSONResponse:
         if attempt_id <= 0:
@@ -10902,6 +10952,27 @@ def create_audit_app(
             {
                 "ok": completed.returncode == 0,
                 "dingtalk_url": dingtalk_url,
+                "open_returncode": completed.returncode,
+            }
+        )
+
+    @app.post("/open-dingtalk-oa")
+    def open_dingtalk_oa(url: str = "") -> JSONResponse:
+        from app.oa_approval import extract_oa_url
+
+        cleaned_url = extract_oa_url(url)
+        if not cleaned_url:
+            return JSONResponse(
+                {"ok": False, "error": "missing_or_invalid_oa_url"},
+                status_code=400,
+            )
+        dingtalk_url = _dingtalk_pc_slide_link_url(cleaned_url)
+        completed = subprocess.run(["/usr/bin/open", dingtalk_url], check=False)
+        return JSONResponse(
+            {
+                "ok": completed.returncode == 0,
+                "dingtalk_url": dingtalk_url,
+                "oa_url": cleaned_url,
                 "open_returncode": completed.returncode,
             }
         )
@@ -12350,7 +12421,7 @@ def _attempt_chat_action(
     if oa_url:
         return (
             f'<a class="compact-button open-dingtalk-action" '
-            f'href="{escape(oa_url, quote=True)}" '
+            f'href="/open-dingtalk-oa-popup?url={quote(oa_url, safe="")}" '
             'target="_blank" rel="noopener">查看审批</a>'
         )
     if _reply_task_is_service_task(reply_task):

@@ -451,7 +451,9 @@ def _action_links(
     dingtalk_url = ""
     approval_url = _oa_url(attempt, reply_task)
     if approval_url:
-        dingtalk_url = approval_url
+        dingtalk_url = (
+            "/open-dingtalk-oa-popup?url=" + quote(approval_url, safe="")
+        )
     elif str(getattr(attempt, "channel", "") or "") == "dingtalk":
         # Only a DingTalk conversation id can open a DingTalk conversation. An
         # email or WeChat attempt carries its own channel identity, and sending
