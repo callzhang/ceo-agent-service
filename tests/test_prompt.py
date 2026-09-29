@@ -28,6 +28,7 @@ from app.prompt import (
     build_turn_prompt,
     ceo_agent_thread_prompt,
     message_lines,
+    runtime_context_instruction,
     sanitize_dingtalk_prompt_text,
     write_work_profile,
     work_profile_instruction,
@@ -36,10 +37,25 @@ from app.consumer_agent import (
     AGENT_CAPABILITY_INSTRUCTIONS,
     CORE_DYNAMIC_SKILL_BODY,
 )
+from app.business_skills import bundled_business_skills_root
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS
 from tests.prompt_structure import validate_prompt_structure
 
-from app.business_skills import bundled_business_skills_root
+
+def test_runtime_context_injects_deployment_values_without_skill_literals(monkeypatch, tmp_path):
+    workspace = tmp_path / "workspace"
+    skills = tmp_path / "installed-skills"
+    monkeypatch.setenv("CEO_WORKSPACE", str(workspace))
+    monkeypatch.setenv("CEO_SKILLS_ROOT", str(skills))
+    monkeypatch.setenv("USER_ALIAS", "Configured Principal")
+
+    rendered = runtime_context_instruction()
+
+    assert "Configured Principal" in rendered
+    assert str(workspace) in rendered
+    assert str(skills) in rendered
+    assert "CEO_WORKSPACE" not in rendered
+    assert "CEO_SKILLS_ROOT" not in rendered
 
 SKILLS_ROOT = bundled_business_skills_root()
 

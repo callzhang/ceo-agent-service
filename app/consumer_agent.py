@@ -53,7 +53,7 @@ from app.codex_history import find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
-from app.prompt import work_profile_instruction
+from app.prompt import runtime_context_instruction, work_profile_instruction
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import make_consumer_agent_command
@@ -992,6 +992,7 @@ def consumer_developer_instructions(
             DECISION_QUALITY_GATE_INSTRUCTIONS,
             _CONSUMER_AGENT_RULES,
             skill_protocol,
+            runtime_context_instruction(),
             work_profile_instruction(),
         )
         if part
@@ -1099,6 +1100,7 @@ def audit_developer_instructions(
             DECISION_QUALITY_GATE_INSTRUCTIONS,
             _AUDIT_AGENT_RULES,
             AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION,
+            runtime_context_instruction(),
             work_profile_instruction(),
         )
     )

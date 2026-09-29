@@ -9,6 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 from app.config import (
     principal_display_name,
     work_profile_path,
+    workspace_path,
 )
 from app.developer_prompt import render_user_prompt
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
@@ -66,6 +67,26 @@ def work_profile_instruction() -> str:
 Profile 内容:
 {profile}
 """
+
+
+def runtime_context_instruction() -> str:
+    """Inject deployment-specific values into the system prompt.
+
+    Skills stay portable and contain no machine paths, environment variable
+    names, or personal identity literals. Values needed to interpret those
+    Skills are supplied by the running service instead.
+    """
+    from app.business_skills import bundled_business_skills_root
+
+    return (
+        "## Runtime context\n"
+        f"- Configured principal: {principal_display_name()}\n"
+        f"- Configured workspace root: {workspace_path()}\n"
+        f"- Installed business Skill root: {bundled_business_skills_root()}\n"
+        "- Capability identities, browser profiles, and IPC endpoints are the "
+        "runtime values supplied by the available capability; do not infer or "
+        "hard-code them from a Skill."
+    )
 
 
 def write_work_profile(profile: str) -> Path:
