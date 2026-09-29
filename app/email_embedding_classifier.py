@@ -57,6 +57,14 @@ NGRAM_RANGE = (2, 4)
 # simpler two-way blend shipped (2026-09-19, commit dcdc8d30); this is the
 # missing third member.
 NGRAM_SVD_MAX_COMPONENTS = 512
+# A dense (components x vocabulary) SVD matrix is the artifact's dominant
+# cost -- at the surface head's full 200k-feature vocabulary it alone would
+# be ~410MB, far past the safety cap below. The same 2026-09-19 experiment
+# measured a 20k-feature version at 91.0% (against 91.2% at full width, and
+# a noted "legal 更脆" -- more fragile) for a fused-head vocabulary two
+# orders of magnitude smaller; this keeps that trade-off, not the surface
+# head's own (much smaller per row) vocabulary.
+NGRAM_FUSED_MAX_FEATURES = 20_000
 NGRAM_MIN_DOCUMENT_FREQUENCY = 2
 _MAX_ARTIFACT_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
 _MAX_MANIFEST_BYTES = 1024 * 1024
@@ -994,7 +1002,7 @@ def _fit_fused_head(
         analyzer="char_wb",
         ngram_range=NGRAM_RANGE,
         min_df=NGRAM_MIN_DOCUMENT_FREQUENCY,
-        max_features=NGRAM_MAX_FEATURES,
+        max_features=NGRAM_FUSED_MAX_FEATURES,
         sublinear_tf=True,
     )
     ngram_matrix = vectorizer.fit_transform([ngram_text(item) for item in texts])
