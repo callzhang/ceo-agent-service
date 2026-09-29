@@ -155,6 +155,44 @@ class TaskDecisionRepairExhausted(RepairableTaskDecisionValidationError):
     on a later pass with a fresh session.
     """
 
+
+def _canonicalize_current_source_provenance(
+    decision: TaskAgentDecision, *, work_item: WorkItem
+) -> TaskAgentDecision:
+    """Bind current-source evidence to the immutable Work Item identity.
+
+    The model may describe the current source, but it does not own its identity.
+    Session and memory evidence keeps its original reference and is therefore
+    deliberately excluded from this normalization.
+    """
+    source_ref = work_item.source.ref
+    decisions: list[TaskDecision] = []
+    for item in decision.task_decisions:
+        if item.evidence_origin != "current" or item.action == "skip":
+            decisions.append(item)
+            continue
+        owner_evidence = dict(item.owner_evidence)
+        if owner_evidence:
+            owner_evidence["source_ref"] = source_ref
+        date_evidence = [
+            fact.model_copy(update={"source_ref": source_ref})
+            for fact in item.date_evidence
+        ]
+        formal_basis = item.formal_basis
+        if (
+            formal_basis is FormalTaskBasis.EXTERNAL_TODO
+            and work_item.source.type is WorkItemSourceType.AI_MINUTES
+            and "#todos-sha256=" in source_ref
+        ):
+            formal_basis = FormalTaskBasis.MEETING_ACTION_ITEM
+        decisions.append(item.model_copy(update={
+            "source_ref": source_ref,
+            "owner_evidence": owner_evidence,
+            "date_evidence": date_evidence,
+            "formal_basis": formal_basis,
+        }))
+    return decision.model_copy(update={"task_decisions": decisions})
+
 class TaskCodex(Protocol):
     last_session_id: str
     last_transcript_start_line: int
@@ -1500,6 +1538,9 @@ def process_work_item(
             memory_issue=memory_connector_config_issue(),
             run_id=active_run_id,
             session_scope_id=TASK_AGENT_SESSION_SCOPE_ID,
+        )
+        decision = _canonicalize_current_source_provenance(
+            decision, work_item=work_item
         )
         _validate_task_agent_decision(decision, work_item=work_item, now=now)
         session_id = getattr(runner.codex, "last_session_id", None) or ""

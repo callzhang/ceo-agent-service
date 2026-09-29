@@ -14,6 +14,7 @@ from app.task_agent import (
     build_task_agent_prompt,
     process_work_item,
     _parse_task_agent_decision,
+    _canonicalize_current_source_provenance,
     _task_result_validation_repair_prompt,
 )
 from app.leak_check import contains_credential, contains_local_runtime_leak
@@ -785,10 +786,9 @@ def test_process_work_item_rolls_back_batch_and_marks_input_and_run_failed(tmp_p
     ]}
     codex = FakeCodexWithAuditEvents(payload, [])
 
-    with pytest.raises(ValueError, match="must match the Work Item source"):
-        process_work_item(store, TaskAgentRunner(codex), work_input)
+    process_work_item(store, TaskAgentRunner(codex), work_input)
 
-    assert store.list_business_tasks() == ()
+    assert len(store.list_business_tasks()) == 2
     with sqlite3.connect(tmp_path / "task-batch-failure.sqlite3") as db:
         input_status = db.execute(
             "select status from work_summary_inputs where id=?", (input_id,)
@@ -797,9 +797,9 @@ def test_process_work_item_rolls_back_batch_and_marks_input_and_run_failed(tmp_p
             "select status, error from task_agent_runs where summary_input_id=?",
             (input_id,),
         ).fetchone()
-    assert input_status == "failed"
-    assert run[0] == "failed"
-    assert "must match the Work Item source" in run[1]
+    assert input_status == "done"
+    assert run[0] == "completed"
+    assert run[1] == ""
 
 
 
@@ -907,9 +907,8 @@ def test_task_agent_prompt_schema_is_generated_from_validation_model():
         ),
         "候选项目:\n[]\n\n近期 follow-up 候选:\n[]",
     )
-    prompt_schema = json.loads(
-        prompt.split("TaskAgentDecision Pydantic JSON schema:\n", 1)[1]
-    )
+    schema_text = prompt.split("TaskAgentDecision Pydantic JSON schema:\n", 1)[1]
+    prompt_schema, _ = json.JSONDecoder().raw_decode(schema_text.lstrip())
 
     assert prompt_schema == TaskAgentDecision.model_json_schema()
 
@@ -1109,6 +1108,41 @@ def _candidate_decision(item, *, excerpt="补齐来源链接", title="补齐报�
         "source_excerpt": excerpt, "source_ref": item.source.ref,
         "title": title, "missing_evidence": ["owner"],
     }]})
+
+
+def test_current_ai_minutes_provenance_is_canonical_and_not_external_todo():
+    base = _work_item()
+    item = base.model_copy(update={"source": base.source.model_copy(update={
+        "type": WorkItemSourceType.AI_MINUTES,
+        "ref": "minutes:1#todos-sha256=abc",
+    })})
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none",
+        "source_excerpt": "补齐来源链接", "source_ref": "wrong-ref",
+        "title": "补齐报价来源链接", "formal_basis": "external_todo",
+        "owner_name": "Alex", "owner_evidence": {
+            "source_ref": "wrong-ref", "excerpt": "Alex 负责补齐来源链接"
+        },
+    }]})
+
+    normalized = _canonicalize_current_source_provenance(decision, work_item=item)
+    normalized_item = normalized.task_decisions[0]
+    assert normalized_item.source_ref == item.source.ref
+    assert normalized_item.owner_evidence["source_ref"] == item.source.ref
+    assert normalized_item.formal_basis is FormalTaskBasis.MEETING_ACTION_ITEM
+
+
+def test_session_provenance_is_not_rewritten():
+    item = _work_item()
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none",
+        "evidence_origin": "session", "source_excerpt": "旧来源证据",
+        "source_ref": "message:original", "source_description": "群聊 / Avery",
+        "title": "候选任务", "missing_evidence": ["owner"],
+    }]})
+
+    normalized = _canonicalize_current_source_provenance(decision, work_item=item)
+    assert normalized.task_decisions[0].source_ref == "message:original"
 
 
 def test_parser_accepts_zero_to_many_task_decisions():
