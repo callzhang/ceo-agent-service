@@ -3380,7 +3380,7 @@ class PlaywrightUnsubscribeBrowser:
                     # about:blank, the URL and subsequent page readback are
                     # stronger evidence than the aborted wait itself.
                     current_url = str(getattr(self.page, "url", ""))
-                    if "ERR_ABORTED" not in str(exc) or current_url == "about:blank":
+                    if "ERR_ABORTED" not in str(exc):
                         raise
                     # A GET unsubscribe endpoint may be treated as a download
                     # or abort its provisional document during a redirect.
