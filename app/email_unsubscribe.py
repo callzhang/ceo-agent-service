@@ -500,6 +500,16 @@ def _browser_failure_detail(
         # says which condition it was (six failures on 2026-09-25 showed the
         # generic code and nothing else).
         detail = f"category={error.category.value}"
+        message = " ".join(str(error).split())
+        if message and message != error.category.value and ": " in message:
+            message = _DETAIL_URL.sub("[url]", message)
+            message = _DETAIL_SECRET_FIELD.sub(
+                lambda match: f"{match.group(1)}=[redacted]", message
+            )
+            message = _DETAIL_TOKENISH.sub("[redacted]", message)
+            if len(message) > 160:
+                message = message[:159] + "…"
+            detail += f";detail={message}"
         if operation is not None:
             operation_value = (
                 operation.value
@@ -3497,11 +3507,11 @@ class PlaywrightUnsubscribeBrowser:
             if "timeout" in type(exc).__name__.casefold():
                 raise UnsubscribeBrowserError(
                     UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
-                    "browser operation timed out",
+                    f"browser operation timed out: {type(exc).__name__}: {exc}",
                 ) from None
             raise UnsubscribeBrowserError(
                 UnsubscribeBrowserFailure.OPERATION_FAILED,
-                "browser operation failed",
+                f"browser operation failed: {type(exc).__name__}: {exc}",
             ) from None
 
 
