@@ -3099,7 +3099,11 @@ class PlaywrightUnsubscribeBrowser:
             binding.target_url,
             data=encoded,
             headers={"Content-Type": binding.enctype},
-            max_redirects=0,
+            # Form unsubscribe endpoints commonly answer with a 302/303 to
+            # their confirmation page. Following that bounded redirect chain
+            # lets the terminal page readback prove the result instead of
+            # treating a normal provider handoff as a rejected form.
+            max_redirects=10,
             timeout=self.timeout_ms,
         )
         response_url = self._validate_navigation_target(response.url)
