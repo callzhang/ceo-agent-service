@@ -3812,16 +3812,18 @@ def build_email_worker_dependencies(
                 source = low_priority_source_factory(account)
                 try:
                     inventory = tuple(source.list_folders())
-                    # Released here, not only in the outer finally below: the
-                    # per-candidate reads inside this loop (read_state/execute)
-                    # check out this same account's connector again through
-                    # their own low_priority_source_factory call, and the
-                    # connector is not reentrant -- holding this one across
-                    # the whole loop deadlocked every candidate on itself
-                    # (2026-09-29, first real run_historical_once call since
-                    # the single-connector migration). _close_email_source is
-                    # safe to call again in the outer finally: it checks in
-                    # (or really closes) at most once.
+                    # Released right after use: each folder below checks its
+                    # own connection back out for enumerate_historical_page,
+                    # then releases it again before the per-candidate reads
+                    # (read_state/execute) check the same account's connector
+                    # out a third time. The connector is not reentrant
+                    # (app/email_account_connector.py) -- holding this one
+                    # across the whole loop deadlocked every candidate on
+                    # itself (2026-09-29, first real run against the live
+                    # connector since the single-connector migration).
+                    # _close_email_source is safe to call again in the outer
+                    # finally below: it checks in (or really closes) at most
+                    # once.
                     _close_email_source(source)
                     for folder_name in account["scan_folders"]:
                         if len(outcomes) >= MAX_HISTORICAL_BATCH_SIZE:
@@ -3847,14 +3849,18 @@ def build_email_worker_dependencies(
                             folder=folder_name,
                             model_id=model_id,
                         )
-                        page = enumerate_historical_page(
-                            source,
-                            mailbox=folder_name,
-                            folder_role=role,
-                            configured_unclassified_source=configured_source,
-                            cursor_uidvalidity=cursor["uidvalidity"],
-                            last_seen_uid=cursor["last_seen_uid"],
-                        )
+                        source = low_priority_source_factory(account)
+                        try:
+                            page = enumerate_historical_page(
+                                source,
+                                mailbox=folder_name,
+                                folder_role=role,
+                                configured_unclassified_source=configured_source,
+                                cursor_uidvalidity=cursor["uidvalidity"],
+                                last_seen_uid=cursor["last_seen_uid"],
+                            )
+                        finally:
+                            _close_email_source(source)
                         email_store.enqueue_historical_page(
                             account_id=str(account["account_id"]),
                             folder=folder_name,
