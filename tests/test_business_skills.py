@@ -454,6 +454,25 @@ def test_runtime_scan_filters_to_the_requested_names(tmp_path: Path):
     assert [item.name for item in entries] == ["wanted"]
 
 
+def test_runtime_scan_accepts_service_frontmatter_colons(tmp_path: Path):
+    root = tmp_path / "skills"
+    _skill_file(
+        root,
+        "ceo-wechat",
+        "ceo-wechat",
+        "Use for the local personal WeChat channel: reading messages.",
+    )
+
+    entries = installed_runtime_skills(root)
+
+    assert [(item.name, item.description) for item in entries] == [
+        (
+            "ceo-wechat",
+            "Use for the local personal WeChat channel: reading messages.",
+        )
+    ]
+
+
 def test_codex_override_enables_the_allow_set_and_disables_everything_else(
     tmp_path: Path,
 ):

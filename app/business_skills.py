@@ -9,7 +9,6 @@ from pathlib import Path
 import shutil
 import tempfile
 
-import yaml
 
 
 BUNDLED_BUSINESS_SKILL_NAMES = (
@@ -306,13 +305,16 @@ def installed_runtime_skill_paths(target_root: Path | None = None) -> tuple[Path
 
 
 def _describe_skill_file(path: Path) -> tuple[str, str] | None:
-    """Return (name, description) from real YAML frontmatter, or None."""
+    """Return (name, description) from the service-supported frontmatter, or None.
+
+    Runtime managed Skills use the same compact frontmatter parser as the
+    installer and validator.  In particular, descriptions may contain a colon
+    without YAML quoting; using a stricter YAML loader here made an installed
+    Skill disappear from the catalog even though the service could load it.
+    """
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        if not lines or lines[0].strip() != "---":
-            return None
-        frontmatter = yaml.safe_load("\n".join(lines[1 : lines.index("---", 1)]))
-    except (OSError, UnicodeError, ValueError, yaml.YAMLError):
+        frontmatter = _parse_frontmatter(path.read_text(encoding="utf-8"), path)
+    except (OSError, UnicodeError, BusinessSkillValidationError):
         return None
     if not isinstance(frontmatter, dict):
         return None
