@@ -30,8 +30,6 @@ reverts committed work they did not author.
 
 | codex-progress-watchdog | app/agent_effects.py, app/process_runner.py, app/agent_runtime_router.py, launchd/com.ceo-agent-service.main.plist, tests/test_process_runner.py, tests/test_cli.py, tests/test_hourly_dry_run_launchd.py, docs/architecture.md, docs/runtime-mechanism.md, docs/superpowers/specs/2026-09-28-agent-progress-watchdog-design.md, docs/superpowers/plans/2026-09-28-agent-progress-watchdog.md, docs/agent-claims.md | Replace the normal task-agent total timeout with a high emergency ceiling and keep the five-minute structured-progress watchdog as the normal liveness boundary for long tasks. | 2026-09-28 |
 
-| codex-settings-oa-skill-group | data/config/skill-features.json, tests/test_skill_features.py, docs/agent-claims.md | Register the generic DingTalk OA Skill and six Stardust approval-object Skills as one Settings feature group so the Skills page exposes the managed OA set. | 2026-09-29 |
-
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
 | codex-weekly-okr-title-binding | app/weekly_okr_report.py, tests/test_weekly_okr_report.py, docs/architecture.md, docs/runtime-mechanism.md, docs/agent-claims.md | Bind model KR reviews to the live KR order when the model omits usable IDs and title anchors, while keeping exact count and order validation. | 2026-09-28 |
