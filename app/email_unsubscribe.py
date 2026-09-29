@@ -2692,6 +2692,13 @@ class PlaywrightUnsubscribeBrowser:
                     # form POST returned the confirmation page.
                     state = textual_state
                     judged_evidence = text[:400]
+                elif controls:
+                    # The controls have already passed the deterministic
+                    # unsubscribe model and exact binding checks. If the
+                    # optional page-judge route is unavailable, it is safe to
+                    # continue with those controls; an empty-control page
+                    # still fails closed because its intent is unknown.
+                    state = UnsubscribePageState.ACTION_REQUIRED
                 else:
                     # Nothing was learned about the page, so nothing is
                     # recorded as if it had been: the task fails as a browser

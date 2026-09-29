@@ -3811,6 +3811,26 @@ def test_terminal_readback_does_not_require_a_second_agent_route() -> None:
     assert discovery.state is UnsubscribePageState.DONE
 
 
+def test_modelled_controls_can_continue_when_page_judge_route_is_unavailable() -> None:
+    from app.email_unsubscribe import UnsubscribePageJudgement
+
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [_unsubscribe_form_snapshot()], "links": []}],
+        structures=[{"textLength": 60, "controlCount": 1}],
+        texts=["Manage your subscription preferences"],
+    )
+
+    def unavailable(*_args):
+        raise RuntimeError("every runtime route is paused")
+
+    browser.page_judge = unavailable
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert discovery.state is UnsubscribePageState.ACTION_REQUIRED
+    assert [item.kind for item in discovery.controls] == ["form"]
+
+
 def test_without_an_agent_the_page_is_still_read_by_wording() -> None:
     browser = _discovery_browser(
         control_snapshots=[{"blocked": False, "forms": [], "links": []}],
