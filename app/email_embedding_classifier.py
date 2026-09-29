@@ -19,6 +19,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 import numpy as np
+from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
@@ -38,11 +39,24 @@ _MAX_ARTIFACT_PAYLOAD_BYTES = 64 * 1024 * 1024
 # finance, legal and work each proved nothing at all, and the cross-validated
 # accuracy was 87.8% against 88.9% at thirty-two. Older artifacts still load.
 CATEGORY_HIDDEN_UNITS = 32
-SUPPORTED_HIDDEN_UNITS = frozenset({8, 32})
+# The fused head (see _FusedHead) needs its own, wider hidden layer: it reads
+# a much larger input (the embedding plus a reduced n-gram vector).
+FUSED_HIDDEN_UNITS = 256
+SUPPORTED_HIDDEN_UNITS = frozenset({8, 32, FUSED_HIDDEN_UNITS})
 
 # The surface model reads the same message the embedding does, as plain text.
 NGRAM_MAX_FEATURES = 200_000
 NGRAM_RANGE = (2, 4)
+
+# 2026-09-19 offline experiment (see memory note email-ngrams-beat-the-embedding):
+# concatenating the embedding with an SVD-reduced character n-gram vector and
+# feeding both into one MLP, then averaging that model's probabilities with
+# the two already-shipped ones (embedding+MLP+description, n-gram+LR surface
+# head), reached 91.2% offline against 89.3% for embedding+MLP alone -- and
+# was the only combination that could prove legal and work at once. Only the
+# simpler two-way blend shipped (2026-09-19, commit dcdc8d30); this is the
+# missing third member.
+NGRAM_SVD_MAX_COMPONENTS = 512
 NGRAM_MIN_DOCUMENT_FREQUENCY = 2
 _MAX_ARTIFACT_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
 _MAX_MANIFEST_BYTES = 1024 * 1024
@@ -159,6 +173,7 @@ class DescriptionAwareEmailClassifier:
         self._category_head: MLPClassifier | None = None
         self._important_head: MLPClassifier | None = None
         self._surface_head: _SurfaceHead | None = None
+        self._fused_head: _FusedHead | None = None
         self.artifact_checksum = ""
 
     def fit(
@@ -170,6 +185,7 @@ class DescriptionAwareEmailClassifier:
         important_embeddings: np.ndarray | None = None,
         tuning_folds: Sequence[tuple[np.ndarray, np.ndarray]] = (),
         texts: Sequence[str] | None = None,
+        fit_fused_head: bool = True,
     ) -> "DescriptionAwareEmailClassifier":
         matrix = self._matrix(embeddings)
         important_matrix = (
@@ -200,6 +216,12 @@ class DescriptionAwareEmailClassifier:
             if len(texts) != len(labels):
                 raise ValueError("model inputs must align with category labels")
             self._surface_head = _fit_surface_head(texts, labels)
+            # Same messages, same labels -- reads them a third way. Callers
+            # with too little data to size an SVD (unit tests, thin category
+            # folds) pass fit_fused_head=False rather than fail outright.
+            self._fused_head = (
+                _fit_fused_head(matrix, texts, labels) if fit_fused_head else None
+            )
         return self
 
     def mlp_logits(self, embedding: np.ndarray) -> np.ndarray:
@@ -243,14 +265,26 @@ class DescriptionAwareEmailClassifier:
         if self._surface_head is not None:
             if text is None:
                 raise ValueError("this model scores the message text as well")
+            sources = [probabilities]
             surface = self._surface_head.probabilities(text)
-            probabilities = np.asarray(
-                [
-                    (float(probabilities[index]) + surface.get(category, 0.0)) / 2.0
-                    for index, category in enumerate(self.enabled_categories)
-                ],
-                dtype=np.float64,
+            sources.append(
+                np.asarray(
+                    [surface.get(category, 0.0) for category in self.enabled_categories],
+                    dtype=np.float64,
+                )
             )
+            if self._fused_head is not None:
+                fused = self._fused_head.probabilities(self._row(embedding)[0], text)
+                sources.append(
+                    np.asarray(
+                        [
+                            fused.get(category, 0.0)
+                            for category in self.enabled_categories
+                        ],
+                        dtype=np.float64,
+                    )
+                )
+            probabilities = np.mean(sources, axis=0)
         top = int(np.argmax(probabilities))
         category = self.enabled_categories[top]
         important_head = self._require_important_head()
@@ -355,44 +389,27 @@ class DescriptionAwareEmailClassifier:
     def load(cls, path: str | Path) -> "DescriptionAwareEmailClassifier":
         payload_bytes, checksum = _read_verified_artifact_frame(path)
         manifest, arrays = _read_safe_npz_payload(payload_bytes)
-        _validate_exact_keys(
-            manifest,
-            {
-                "schema",
-                "format_version",
-                "enabled_categories",
-                "category_thresholds",
-                "important_threshold",
-                "descriptions",
-                "dimension",
-                "input_schema_version",
-                "embedding_model_id",
-                "embedding_revision",
-                "alpha",
-                "beta",
-                "category_head",
-                "important_head",
-                "surface_head",
-            }
-            if "surface_head" in manifest
-            else {
-                "schema",
-                "format_version",
-                "enabled_categories",
-                "category_thresholds",
-                "important_threshold",
-                "descriptions",
-                "dimension",
-                "input_schema_version",
-                "embedding_model_id",
-                "embedding_revision",
-                "alpha",
-                "beta",
-                "category_head",
-                "important_head",
-            },
-            "artifact manifest",
-        )
+        expected_manifest_keys = {
+            "schema",
+            "format_version",
+            "enabled_categories",
+            "category_thresholds",
+            "important_threshold",
+            "descriptions",
+            "dimension",
+            "input_schema_version",
+            "embedding_model_id",
+            "embedding_revision",
+            "alpha",
+            "beta",
+            "category_head",
+            "important_head",
+        }
+        if isinstance(manifest, Mapping) and "surface_head" in manifest:
+            expected_manifest_keys.add("surface_head")
+        if isinstance(manifest, Mapping) and "fused_head" in manifest:
+            expected_manifest_keys.add("fused_head")
+        _validate_exact_keys(manifest, expected_manifest_keys, "artifact manifest")
         if manifest["schema"] != _ARTIFACT_SCHEMA:
             raise ValueError("unsupported embedding classifier artifact schema")
         if (
@@ -432,12 +449,22 @@ class DescriptionAwareEmailClassifier:
                 arrays,
                 expected_classes=enabled_categories,
             )
+        fused_head: _FusedHead | None = None
+        fused_keys: frozenset[str] = frozenset()
+        if manifest.get("fused_head") is not None:
+            fused_head, fused_keys = _load_fused_head(
+                manifest["fused_head"],
+                arrays,
+                expected_classes=enabled_categories,
+                dimension=dimension,
+            )
         expected_array_keys = {
             "manifest",
             *description_keys,
             *category_keys,
             *important_keys,
             *surface_keys,
+            *fused_keys,
         }
         if set(arrays) != expected_array_keys or len(arrays) != len(
             expected_array_keys
@@ -469,6 +496,7 @@ class DescriptionAwareEmailClassifier:
         result._category_head = category_head
         result._important_head = important_head
         result._surface_head = surface_head
+        result._fused_head = fused_head
         result.artifact_checksum = checksum
         return result
 
@@ -512,6 +540,14 @@ class DescriptionAwareEmailClassifier:
                 self._surface_head, expected_classes=self.enabled_categories
             )
             arrays.update(surface_arrays)
+        fused_head: dict[str, object] | None = None
+        if self._fused_head is not None:
+            fused_head, fused_arrays = _serialize_fused_head(
+                self._fused_head,
+                expected_classes=self.enabled_categories,
+                dimension=self.dimension,
+            )
+            arrays.update(fused_arrays)
         return (
             {
                 "schema": _ARTIFACT_SCHEMA,
@@ -529,6 +565,7 @@ class DescriptionAwareEmailClassifier:
                 "category_head": category_head,
                 "important_head": important_head,
                 "surface_head": surface_head,
+                "fused_head": fused_head,
             },
             arrays,
         )
@@ -912,6 +949,77 @@ def _fit_surface_head(texts: Sequence[str], labels: Sequence[str]) -> _SurfaceHe
     )
 
 
+class _FusedHead:
+    """One MLP reading the embedding and a reduced n-gram vector together.
+
+    Unlike the surface head (its own independent model, blended in at the
+    end), this one lets the two signals interact inside a single hidden
+    layer -- the combination the 2026-09-19 offline experiment found best
+    (see NGRAM_SVD_MAX_COMPONENTS above).
+    """
+
+    def __init__(
+        self,
+        *,
+        vectorizer: TfidfVectorizer,
+        svd_components: np.ndarray,
+        mlp: MLPClassifier,
+    ) -> None:
+        self.vectorizer = vectorizer
+        # TruncatedSVD does not center its input, so `X @ components_.T` is
+        # its whole transform -- no fitted mean or explained variance needed.
+        self.svd_components = svd_components
+        self.mlp = mlp
+
+    def _fused_row(self, embedding_row: np.ndarray, text: str) -> np.ndarray:
+        ngram_matrix = self.vectorizer.transform([ngram_text(text)])
+        reduced = np.asarray(ngram_matrix @ self.svd_components.T, dtype=np.float64)
+        return np.concatenate([embedding_row.reshape(1, -1), reduced], axis=1)
+
+    def probabilities(self, embedding_row: np.ndarray, text: str) -> dict[str, float]:
+        row = self._fused_row(embedding_row, text)
+        proba = self.mlp.predict_proba(row)[0]
+        return {str(key): float(value) for key, value in zip(self.mlp.classes_, proba)}
+
+
+def _fit_fused_head(
+    embeddings: np.ndarray,
+    texts: Sequence[str],
+    labels: Sequence[str],
+    *,
+    max_components: int = NGRAM_SVD_MAX_COMPONENTS,
+    hidden_units: int = FUSED_HIDDEN_UNITS,
+) -> _FusedHead:
+    vectorizer = TfidfVectorizer(
+        analyzer="char_wb",
+        ngram_range=NGRAM_RANGE,
+        min_df=NGRAM_MIN_DOCUMENT_FREQUENCY,
+        max_features=NGRAM_MAX_FEATURES,
+        sublinear_tf=True,
+    )
+    ngram_matrix = vectorizer.fit_transform([ngram_text(item) for item in texts])
+    # TruncatedSVD needs strictly fewer components than either axis of its
+    # input; small training folds (a thin category, a unit test) cap lower.
+    n_components = min(
+        max_components, ngram_matrix.shape[0] - 1, ngram_matrix.shape[1] - 1
+    )
+    if n_components < 1:
+        raise ValueError("not enough data to fit the fused n-gram/embedding head")
+    svd = TruncatedSVD(n_components=n_components, random_state=20260905)
+    reduced = svd.fit_transform(ngram_matrix)
+    fused_features = np.concatenate(
+        [np.asarray(embeddings, dtype=np.float64), reduced], axis=1
+    )
+    mlp = DescriptionAwareEmailClassifier._new_head(hidden_units).fit(
+        fused_features, list(labels)
+    )
+    return _FusedHead(
+        vectorizer=vectorizer,
+        svd_components=np.asarray(svd.components_, dtype=np.float64),
+        mlp=mlp,
+    )
+
+
 def _serialize_mlp_head(
     head: MLPClassifier,
     *,
@@ -1086,6 +1194,122 @@ def _load_surface_head(
     )
     return head, frozenset(
         {"surface_vocabulary", "surface_idf", "surface_coef", "surface_intercept"}
+    )
+
+
+def _serialize_fused_head(
+    head: _FusedHead, *, expected_classes: Sequence[str], dimension: int
+) -> tuple[dict[str, object], dict[str, np.ndarray]]:
+    vocabulary = head.vectorizer.vocabulary_
+    terms = [term for term, _ in sorted(vocabulary.items(), key=lambda item: item[1])]
+    if any("\n" in term for term in terms):
+        raise ValueError("fused head vocabulary is not line separable")
+    width = len(terms)
+    n_components = head.svd_components.shape[0]
+    if head.svd_components.shape != (n_components, width):
+        raise ValueError("fused head SVD components have an invalid shape")
+    mlp_manifest, mlp_arrays = _serialize_mlp_head(
+        head.mlp,
+        prefix="fused",
+        expected_classes=expected_classes,
+        dimension=dimension + n_components,
+    )
+    encoded = "\n".join(terms).encode("utf-8")
+    arrays = {
+        "fused_vocabulary": np.frombuffer(encoded, dtype=np.uint8),
+        "fused_idf": np.asarray(head.vectorizer.idf_, dtype=np.float32),
+        "fused_svd_components": np.asarray(head.svd_components, dtype=np.float32),
+    }
+    arrays.update(mlp_arrays)
+    return (
+        {
+            "ngram": {
+                "analyzer": "char_wb",
+                "ngram_range": list(NGRAM_RANGE),
+                "sublinear_tf": True,
+                "vocabulary_size": width,
+            },
+            "svd_components": n_components,
+            "mlp": mlp_manifest,
+        },
+        arrays,
+    )
+
+
+def _load_fused_head(
+    value: object,
+    arrays: Mapping[str, np.ndarray],
+    *,
+    expected_classes: Sequence[str],
+    dimension: int,
+) -> tuple[_FusedHead, frozenset[str]]:
+    _validate_exact_keys(
+        value, {"ngram", "svd_components", "mlp"}, "fused head manifest"
+    )
+    assert isinstance(value, Mapping)
+    ngram = value["ngram"]
+    _validate_exact_keys(
+        ngram,
+        {"analyzer", "ngram_range", "sublinear_tf", "vocabulary_size"},
+        "fused head n-gram manifest",
+    )
+    assert isinstance(ngram, Mapping)
+    ngram_range = ngram["ngram_range"]
+    if (
+        ngram["analyzer"] != "char_wb"
+        or ngram["sublinear_tf"] is not True
+        or not isinstance(ngram_range, list)
+        or [int(item) for item in ngram_range] != list(NGRAM_RANGE)
+    ):
+        raise ValueError("fused head n-gram configuration is unsupported")
+    width = _manifest_positive_int(ngram["vocabulary_size"], "vocabulary_size")
+    n_components = _manifest_positive_int(
+        value["svd_components"], "svd_components"
+    )
+    if n_components > NGRAM_SVD_MAX_COMPONENTS:
+        raise ValueError("fused head SVD width is unsupported")
+    encoded = arrays.get("fused_vocabulary")
+    if (
+        encoded is None
+        or encoded.dtype != np.uint8
+        or encoded.ndim != 1
+        or not encoded.size
+    ):
+        raise ValueError("fused head vocabulary is invalid")
+    terms = encoded.tobytes().decode("utf-8").split("\n")
+    if len(terms) != width or len(set(terms)) != width:
+        raise ValueError("fused head vocabulary is inconsistent")
+    idf = _artifact_float_array(
+        arrays, "fused_idf", expected_dtype=np.float32, expected_shape=(width,)
+    )
+    svd_components = _artifact_float_array(
+        arrays,
+        "fused_svd_components",
+        expected_dtype=np.float32,
+        expected_shape=(n_components, width),
+    )
+    vectorizer = TfidfVectorizer(
+        analyzer="char_wb",
+        ngram_range=NGRAM_RANGE,
+        sublinear_tf=True,
+        vocabulary={term: index for index, term in enumerate(terms)},
+    )
+    vectorizer._validate_vocabulary()
+    vectorizer.idf_ = np.asarray(idf, dtype=np.float64)
+    mlp, mlp_keys = _load_mlp_head(
+        value["mlp"],
+        arrays,
+        prefix="fused",
+        dimension=dimension + n_components,
+        expected_classes=expected_classes,
+    )
+    head = _FusedHead(
+        vectorizer=vectorizer,
+        svd_components=np.asarray(svd_components, dtype=np.float64),
+        mlp=mlp,
+    )
+    return head, frozenset(
+        {"fused_vocabulary", "fused_idf", "fused_svd_components", *mlp_keys}
     )
 
 

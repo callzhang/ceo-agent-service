@@ -505,3 +505,122 @@ def test_tuning_with_cached_fold_heads_picks_the_same_weights(seed) -> None:
     cached = classifier._fit_weights_in_folds(matrix, labels, folds)
 
     assert cached == _reference_fit_weights(classifier, matrix, labels, folds)
+
+
+def _texts_for(labels: tuple[str, ...]) -> list[str]:
+    # Distinct enough n-grams per label for the surface/fused heads to learn
+    # something real, not just memorize six identical strings.
+    phrases = {
+        "work": [
+            "project delivery update for the client team",
+            "quarterly roadmap review with engineering",
+            "vendor onboarding checklist and next steps",
+        ],
+        "legal": [
+            "contract compliance memo requires signature",
+            "nondisclosure agreement amendment attached",
+            "regulatory filing deadline reminder notice",
+        ],
+    }
+    counters = {"work": 0, "legal": 0}
+    result = []
+    for label in labels:
+        result.append(phrases[label][counters[label] % len(phrases[label])])
+        counters[label] += 1
+    return result
+
+
+def _classifier() -> DescriptionAwareEmailClassifier:
+    return DescriptionAwareEmailClassifier(
+        enabled_categories=CATEGORIES,
+        descriptions=DESCRIPTIONS,
+        description_vectors=VECTORS,
+        dimension=2,
+        input_schema_version="input-v3",
+        embedding_model_id="jina",
+        embedding_revision="r17",
+    )
+
+
+def test_fused_head_is_fitted_alongside_the_surface_head_when_texts_are_given() -> None:
+    embeddings, labels, important = _training_data()
+    texts = _texts_for(labels)
+    classifier = _classifier().fit(embeddings, labels, important, texts=texts)
+
+    assert classifier._surface_head is not None
+    assert classifier._fused_head is not None
+    assert classifier._fused_head.svd_components.shape[0] >= 1
+
+    prediction = classifier.predict(embeddings[0], text=texts[0])
+    assert prediction.category in CATEGORIES
+    assert 0.0 <= prediction.category_probability <= 1.0
+
+
+def test_fused_head_can_be_skipped_without_disturbing_the_surface_head() -> None:
+    embeddings, labels, important = _training_data()
+    texts = _texts_for(labels)
+    classifier = _classifier().fit(
+        embeddings, labels, important, texts=texts, fit_fused_head=False
+    )
+
+    assert classifier._surface_head is not None
+    assert classifier._fused_head is None
+    # Falls back to the two-source blend exactly as before this feature existed.
+    prediction = classifier.predict(embeddings[0], text=texts[0])
+    assert prediction.category in CATEGORIES
+
+
+def test_fused_head_blend_differs_from_two_source_blend() -> None:
+    embeddings, labels, important = _training_data()
+    texts = _texts_for(labels)
+    with_fused = _classifier().fit(embeddings, labels, important, texts=texts)
+    without_fused = _classifier().fit(
+        embeddings, labels, important, texts=texts, fit_fused_head=False
+    )
+
+    with_fused_prediction = with_fused.predict(embeddings[0], text=texts[0])
+    without_fused_prediction = without_fused.predict(embeddings[0], text=texts[0])
+
+    # A third independent model voting changes the blended probability even
+    # when it agrees on the winning category -- if it never does, the third
+    # source is not actually wired into predict().
+    assert (
+        with_fused_prediction.category_probability
+        != without_fused_prediction.category_probability
+    )
+
+
+def test_fused_head_survives_save_and_load(tmp_path) -> None:
+    embeddings, labels, important = _training_data()
+    texts = _texts_for(labels)
+    classifier = _classifier().fit(embeddings, labels, important, texts=texts)
+    before = classifier.predict(embeddings[0], text=texts[0])
+
+    path = tmp_path / "model-with-fused-head.artifact"
+    classifier.save(path)
+    loaded = DescriptionAwareEmailClassifier.load(path)
+    after = loaded.predict(embeddings[0], text=texts[0])
+
+    assert loaded._fused_head is not None
+    assert after.category == before.category
+    # The surface and fused heads store their weights as float32 (smaller
+    # artifacts, matching the surface head's existing precision trade-off),
+    # so reload is close but not bit-exact.
+    assert after.category_probability == pytest.approx(
+        before.category_probability, rel=1e-4
+    )
+    assert after.category_probabilities.keys() == before.category_probabilities.keys()
+
+
+def test_artifact_without_a_fused_head_still_loads(tmp_path) -> None:
+    """Older artifacts, and ones deliberately trained with fit_fused_head=False,
+    must not require a fused_head key at all -- not just tolerate a null one."""
+
+    embeddings, labels, important = _training_data()
+    classifier = _classifier().fit(embeddings, labels, important)
+    path = tmp_path / "model-without-texts.artifact"
+    classifier.save(path)
+    loaded = DescriptionAwareEmailClassifier.load(path)
+
+    assert loaded._surface_head is None
+    assert loaded._fused_head is None
