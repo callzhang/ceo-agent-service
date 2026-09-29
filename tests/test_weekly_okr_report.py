@@ -545,7 +545,7 @@ def test_force_run_publishes_verified_document_then_group_summary(tmp_path):
     assert gateway.ensured == [
         (
             "folder-1",
-            "CEO-2 管理者 OKR 进度周报（2026-07-27—2026-07-30）",
+            "CEO-2 管理者 OKR 进度周报（2026 Q3 至今：2026-07-01—2026-07-30）",
         )
     ]
     assert {
@@ -735,7 +735,10 @@ def test_scheduled_run_recovers_a_missed_sunday_on_monday(tmp_path):
     assert result.report_date == "2026-08-02"
     assert store.state["weekly_okr_report:last_success_date"] == "2026-08-02"
     assert gateway.ensured == [
-        ("folder-1", "CEO-2 管理者 OKR 进度周报（2026-07-27—2026-08-02）")
+        (
+            "folder-1",
+            "CEO-2 管理者 OKR 进度周报（2026 Q3 至今：2026-07-01—2026-08-02）",
+        )
     ]
     assert weekly_okr_report_window_open(
         datetime(2026, 8, 3, 9, tzinfo=SHANGHAI),

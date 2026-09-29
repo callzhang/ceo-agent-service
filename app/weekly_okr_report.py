@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field, ValidationError
 
 from app.dws_client import DwsClient, DwsError
-from app.okr_review import DwsLiveOkrSource, current_quarter_period
+from app.okr_review import DwsLiveOkrSource, current_quarter_period, requested_okr_period
 from app.service_message_sender import ServiceMessageSender
 
 DEFAULT_GROUP_NAME = "CEO-2 管理群"
@@ -1100,7 +1100,7 @@ def build_weekly_okr_prompt(
 
 报告范围：
 - OKR 周期：{period_label}
-- 本周窗口：{week_start.isoformat()} 至 {week_end.isoformat()}
+- 评分范围（OKR 周期至今）：{week_start.isoformat()} 至 {week_end.isoformat()}
 - 管理者名单：{json.dumps(roster, ensure_ascii=False)}
 - 实时叮当 OKR 聚合文件：{source_path}
 
@@ -1154,15 +1154,19 @@ def run_weekly_okr_report(
     if not roster.managers:
         raise RuntimeError("CEO-2 manager roster is empty")
 
-    resolved_period = period_label.strip() or current_quarter_period(
-        local_now.date().isoformat()
-    ).period_label
-    week_start = (
-        local_now.date() - timedelta(days=local_now.weekday())
-        if force
-        else report_end - timedelta(days=6)
+    period = (
+        requested_okr_period(period_label.strip(), today=local_now.date().isoformat())
+        if period_label.strip()
+        else current_quarter_period(local_now.date().isoformat())
     )
+    resolved_period = period.period_label
+    score_start = date.fromisoformat(period.period_start)
+    # The scoring range is the OKR period-to-date. Keep the current-week
+    # boundary separately in the prompt so evidence summaries can still say
+    # what changed this week without narrowing the score to one week.
+    week_start = score_start
     week_end = report_end
+    current_week_start = report_end - timedelta(days=6)
     run_dir = workspace / "OKR周报运行" / report_date
     run_dir.mkdir(parents=True, exist_ok=True)
     raw_path = run_dir / "live_okr.json"
@@ -1190,8 +1194,10 @@ def run_weekly_okr_report(
             {
                 "generatedAt": local_now.isoformat(),
                 "periodLabel": resolved_period,
-                "weekStart": week_start.isoformat(),
-                "weekEnd": week_end.isoformat(),
+                "scoreStart": score_start.isoformat(),
+                "scoreEnd": week_end.isoformat(),
+                "currentWeekStart": current_week_start.isoformat(),
+                "currentWeekEnd": week_end.isoformat(),
                 "group": roster.name,
                 "managers": manager_payloads,
             },
@@ -1227,7 +1233,8 @@ def run_weekly_okr_report(
         manager for manager in roster.managers if manager.name in analyzed_names
     ]
     report_title = (
-        f"CEO-2 管理者 OKR 进度周报（{week_start.isoformat()}—{week_end.isoformat()}）"
+        f"CEO-2 管理者 OKR 进度周报（{resolved_period} 至今："
+        f"{score_start.isoformat()}—{week_end.isoformat()}）"
     )
     report_markdown = render_weekly_okr_report(
         title=report_title,
