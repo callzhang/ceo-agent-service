@@ -2663,6 +2663,7 @@ class PlaywrightUnsubscribeBrowser:
         # reading the button first recorded a completed unsubscribe as
         # skipped_login_required.
         judged_evidence = ""
+        textual_state = self._state_from_text(text)
         if self.page_judge is not None:
             try:
                 judgement = self.page_judge(
@@ -2672,20 +2673,31 @@ class PlaywrightUnsubscribeBrowser:
                     tuple(f"{item.kind}:{item.intent}" for item in controls),
                 )
             except Exception as exc:  # noqa: BLE001 - a route outage or a reply that is no judgement
-                # Nothing was learned about the page, so nothing is recorded as
-                # if it had been: the task fails as a browser fault and retries.
-                raise UnsubscribeBrowserError(
-                    UnsubscribeBrowserFailure.PAGE_JUDGE_UNAVAILABLE,
-                    "unsubscribe page judgement unavailable",
-                ) from exc
-            state = judgement.state
-            judged_evidence = judgement.evidence
+                if textual_state in {
+                    UnsubscribePageState.DONE,
+                    UnsubscribePageState.ALREADY_UNSUBSCRIBED,
+                }:
+                    # A terminal sentence is already a provider readback. Do
+                    # not make success depend on a second Agent route after a
+                    # form POST returned the confirmation page.
+                    state = textual_state
+                    judged_evidence = text[:400]
+                else:
+                    # Nothing was learned about the page, so nothing is
+                    # recorded as if it had been: the task fails as a browser
+                    # fault and retries.
+                    raise UnsubscribeBrowserError(
+                        UnsubscribeBrowserFailure.PAGE_JUDGE_UNAVAILABLE,
+                        "unsubscribe page judgement unavailable",
+                    ) from exc
+            else:
+                state = judgement.state
+                judged_evidence = judgement.evidence
             # The page's own terminal wording is stronger evidence than a
             # conservative action_required judgement. Providers such as
             # beehiiv render the confirmation sentence together with the
             # subscription-management shell, and the page judge can otherwise
             # send an already-completed unsubscribe back into control discovery.
-            textual_state = self._state_from_text(text)
             if textual_state in {
                 UnsubscribePageState.DONE,
                 UnsubscribePageState.ALREADY_UNSUBSCRIBED,

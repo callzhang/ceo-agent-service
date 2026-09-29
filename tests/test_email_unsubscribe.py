@@ -3794,6 +3794,23 @@ def test_an_unavailable_agent_fails_the_read_it_does_not_guess_a_state() -> None
     assert browser_failure_code(raised.value) == "email_unsubscribe_browser_failed"
 
 
+def test_terminal_readback_does_not_require_a_second_agent_route() -> None:
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": 60, "controlCount": 0}],
+        texts=["By unsubscribing, you will no longer receive this newsletter."],
+    )
+
+    def unavailable(*_args):
+        raise RuntimeError("every runtime route is paused")
+
+    browser.page_judge = unavailable
+
+    discovery = browser.discover_current_page(_effect())
+
+    assert discovery.state is UnsubscribePageState.DONE
+
+
 def test_without_an_agent_the_page_is_still_read_by_wording() -> None:
     browser = _discovery_browser(
         control_snapshots=[{"blocked": False, "forms": [], "links": []}],
