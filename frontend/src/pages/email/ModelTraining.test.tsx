@@ -731,8 +731,8 @@ it("lists a run that produced no model in the version table with its reason", as
 
   const row = (await screen.findByText("run-88")).closest("tr")!;
   expect(row).toHaveTextContent("训练失败");
-  // A run has no model family: that column stays empty rather than inventing one.
-  expect(row).toHaveTextContent("—");
+  // A run with no explicit selection only ever trains embedding-mlp.
+  expect(row).toHaveTextContent("embedding-mlp");
   expect(row).toHaveTextContent("training selection categories are unavailable");
 });
 
@@ -793,20 +793,29 @@ it("lists model versions and failed runs newest first", () => {
 
   const table = screen.getByRole("table", { name: "模型版本" });
   const ids = Array.from(table.querySelectorAll("tbody tr td:first-child")).map((cell) => cell.getAttribute("title"));
-  expect(ids).toEqual(["email-embedding-mlp-newest", "run-middle", "email-embedding-mlp-older"]);
-  // A failed run shows each family's own recorded outcome, one column each;
-  // a family never requested (TF-IDF here) stays a plain "—".
-  const runRow = Array.from(table.querySelectorAll("tbody tr")).find((row) => row.querySelector("td")?.getAttribute("title") === "run-middle");
-  const runCells = runRow?.querySelectorAll("td");
-  expect(runCells?.[1]).toHaveTextContent("RuntimeError:boom");
-  expect(runCells?.[2]).toHaveTextContent("RuntimeError:Encountered NaN.");
-  expect(runCells?.[3]).toHaveTextContent("—");
+  // A run that trained two families becomes two rows, both at the run's
+  // own position in the newest-first order — one model attempt per row.
+  expect(ids).toEqual([
+    "email-embedding-mlp-newest",
+    "run-middle",
+    "run-middle",
+    "email-embedding-mlp-older",
+  ]);
+  const runRows = Array.from(table.querySelectorAll("tbody tr")).filter(
+    (row) => row.querySelector("td")?.getAttribute("title") === "run-middle",
+  );
+  expect(runRows).toHaveLength(2);
+  const families = runRows.map((row) => row.querySelectorAll("td")[1]?.textContent);
+  expect(families).toEqual(["embedding-mlp", "fasttext"]);
+  expect(runRows[0]).toHaveTextContent("RuntimeError:boom");
+  expect(runRows[1]).toHaveTextContent("RuntimeError:Encountered NaN.");
 });
 
-it("shows \"—\" rather than a family name for a run that crashed before recording any outcome", () => {
+it("shows each requested family as its own row even when the run recorded no outcome for it", () => {
   // A run's family_results is only written when the run finishes; a total
-  // crash (e.g. a missing snapshot) leaves it empty. That must not look
-  // the same as a family still quietly succeeding.
+  // crash (e.g. a missing snapshot) leaves it empty. Each requested family
+  // still gets its own row, carrying the run's own failed status — the
+  // family column names the attempt, the status column carries the outcome.
   const crashed = {
     ...learning,
     training_runs_without_model: [
@@ -825,11 +834,16 @@ it("shows \"—\" rather than a family name for a run that crashed before record
   );
 
   const table = screen.getByRole("table", { name: "模型版本" });
-  const runRow = Array.from(table.querySelectorAll("tbody tr")).find((row) => row.querySelector("td")?.getAttribute("title") === "run-crashed");
-  const runCells = runRow?.querySelectorAll("td");
-  expect(runCells?.[1]).toHaveTextContent("—");
-  expect(runCells?.[2]).toHaveTextContent("—");
-  expect(runCells?.[3]).toHaveTextContent("—");
+  const runRows = Array.from(table.querySelectorAll("tbody tr")).filter(
+    (row) => row.querySelector("td")?.getAttribute("title") === "run-crashed",
+  );
+  expect(runRows).toHaveLength(3);
+  const families = runRows.map((row) => row.querySelectorAll("td")[1]?.textContent);
+  expect(families).toEqual(["embedding-mlp", "fasttext", "tfidf-logistic-regression"]);
+  for (const row of runRows) {
+    expect(row).toHaveTextContent("训练失败");
+    expect(row).toHaveTextContent("frozen training snapshot is unavailable");
+  }
 });
 
 

@@ -47,45 +47,35 @@ type RefreshLearning = () => Promise<EmailLearningEvidence | undefined>;
 // is called. Showing the key told the owner nothing, and this one no longer
 // describes the model. A run carries several keys joined with "、".
 const FamilyNames = createContext<Record<string, string>>({});
-// A run trains these families together; each gets its own column so one
-// family's failure never disappears into another's merged reason text.
+// A run trains these families together; each becomes its own row in the
+// version table rather than a value squeezed into one cell.
 const TRAINING_FAMILY_ORDER = [
   "embedding-mlp",
   "fasttext",
   "tfidf-logistic-regression",
 ] as const;
 
-function familyOutcomeLabel(
-  outcome: {status?: string; model_id?: string; error?: string} | undefined,
-) {
-  if (!outcome || !outcome.status) return "—";
-  if (outcome.status === "succeeded") return "✓";
-  return outcome.error ? `✗ ${outcome.error}` : "✗";
-}
-
 const RUN_IN_PROGRESS_STATUSES = ["queued", "launching", "running"];
 
-// A run's family_results is only written when the run finishes, so a
-// still-running run has none yet. Showing the bare family name then would
-// be indistinguishable from a terminal run whose family never got a
-// recorded outcome (a crash before it started) — that must read as
-// "no data", not as a quiet success. Only a run still in progress may show
-// the family name as "this one is pending".
-function familyCellLabel(
-  status: string,
-  familyResults: Record<string, {status?: string; model_id?: string; error?: string}> | undefined,
-  requestedFamilies: string[],
-  familyLabelFor: (key: string) => string,
-  key: string,
-) {
-  const outcome = familyResults?.[key];
-  if (outcome) return familyOutcomeLabel(outcome);
-  const requested =
-    requestedFamilies.length > 0
-      ? requestedFamilies.includes(key)
-      : key === "embedding-mlp"; // a plain retrain with no explicit selection only ever trains this one
-  if (requested && RUN_IN_PROGRESS_STATUSES.includes(status)) return familyLabelFor(key);
-  return "—";
+// Which family rows a training run should expand into: prefer the families
+// it actually recorded an outcome for (a run still in progress has none
+// yet), falling back to what it was asked to train, falling back to the
+// implicit single family a plain retrain (no explicit selection) trains.
+function familiesForRun(run: {
+  model_families?: string[];
+  family_results?: Record<string, {status?: string; model_id?: string; error?: string}>;
+}): string[] {
+  const recorded = Object.keys(run.family_results || {});
+  const requested = run.model_families && run.model_families.length
+    ? run.model_families
+    : recorded.length
+      ? recorded
+      : ["embedding-mlp"];
+  const known = TRAINING_FAMILY_ORDER.filter(
+    (key) => recorded.includes(key) || requested.includes(key),
+  );
+  const extra = requested.filter((key) => !(TRAINING_FAMILY_ORDER as readonly string[]).includes(key));
+  return [...known, ...extra];
 }
 
 function useFamilyLabel() {
@@ -148,27 +138,40 @@ export function ModelTraining({
     null;
   const allVersions = useMemo(
     () => [
-      ...models.map((model) => ({ kind: "staged" as const, model })),
+      ...models.map((model) => ({
+        kind: "staged" as const,
+        rowKey: model.model_id,
+        model,
+      })),
       ...(learning.models || [])
         .filter(
           (model) => !models.some((item) => item.model_id === model.model_id),
         )
-        .map((model) => ({ kind: "historical" as const, model })),
+        .map((model) => ({
+          kind: "historical" as const,
+          rowKey: model.model_id,
+          model,
+        })),
       // A run that produced no model still belongs here: otherwise a training
-      // attempt that failed leaves no trace of having happened at all.
-      ...(learning.training_runs_without_model || []).map((run) => ({
-        kind: "run" as const,
-        model: {
-          model_id: run.run_id,
-          // The families the run was asked to train; its status column says
-          // what happened to it.
-          model_family: (run.model_families || []).join("、"),
-          status: run.status,
-          trained_at: run.started_at,
-        },
-        reason: run.reason,
-        family_results: run.family_results || {},
-      })),
+      // attempt that failed leaves no trace of having happened at all. A run
+      // that trained several families at once becomes one row per family —
+      // each is its own model attempt, not a value squeezed into one cell.
+      ...(learning.training_runs_without_model || []).flatMap((run) =>
+        familiesForRun(run).map((family) => {
+          const outcome = (run.family_results || {})[family];
+          return {
+            kind: "run" as const,
+            rowKey: `${run.run_id}::${family}`,
+            model: {
+              model_id: run.run_id,
+              model_family: family,
+              status: outcome?.status || run.status,
+              trained_at: run.started_at,
+            },
+            reason: outcome?.error || run.reason,
+          };
+        }),
+      ),
       // Newest first, across models and failed runs alike: the three sources
       // arrive in different orders and read as scrambled when concatenated.
     ].sort((a, b) => (b.model.trained_at || "").localeCompare(a.model.trained_at || "")),
@@ -584,9 +587,7 @@ export function ModelTraining({
               <thead>
                 <tr>
                   <th>完整模型 ID</th>
-                  {TRAINING_FAMILY_ORDER.map((key) => (
-                    <th key={key}>{familyNames[key] || key}</th>
-                  ))}
+                  <th>家族</th>
                   <th>状态</th>
                   <th>训练时间</th>
                   <th>样本数</th>
@@ -598,33 +599,20 @@ export function ModelTraining({
               </thead>
               <tbody>
                 {pagedVersions.map((item) => (
-                  <tr key={item.model.model_id}>
+                  <tr key={item.rowKey}>
                     <td title={item.model.model_id}>
                       {shortModelId(item.model.model_id)}
                     </td>
-                    {TRAINING_FAMILY_ORDER.map((key) => (
-                      <td key={key}>
-                        {item.kind === "run"
-                          ? familyCellLabel(
-                              item.model.status,
-                              item.family_results,
-                              (item.model.model_family || "").split("、").filter(Boolean),
-                              (k) => familyNames[k] || k,
-                              key,
-                            )
-                          : item.model.model_family === (familyNames[key] || key) ||
-                              item.model.model_family === key
-                            ? familyNames[key] || key
-                            : "—"}
-                      </td>
-                    ))}
+                    <td>{familyLabel(item.model.model_family || "未提供")}</td>
                     <td>
                       {item.kind === "run"
                         ? item.model.status === "failed"
                           ? "训练失败"
-                          : ["queued", "launching", "running"].includes(item.model.status)
-                            ? "训练中"
-                            : `训练${item.model.status || "未提供"}`
+                          : item.model.status === "succeeded"
+                            ? "已产出，未上线"
+                            : RUN_IN_PROGRESS_STATUSES.includes(item.model.status)
+                              ? "训练中"
+                              : `训练${item.model.status || "未提供"}`
                         : item.kind === "historical"
                         ? `历史版本 · ${item.model.status || "未提供"}`
                         : `${statusLabel(item.model.status)}${runtime?.active_model_id === item.model.model_id ? " · 当前运行主模型" : ""}`}
