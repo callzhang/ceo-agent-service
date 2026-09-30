@@ -837,7 +837,21 @@ def daily_report_prompt() -> str:
         "按 $ceo-daily-report 生成 CEO 每日总结。"
         f"先运行 `{facts_command}` 取得报告窗口和服务记录的事实，再用 $dingtalk-chat 扫描窗口内全部群消息，"
         "按需用 $dingtalk-minutes 补读会议摘要；写成报告后用 $dingtalk-wiki 与 $dingtalk-doc "
-        "发布到钉钉文档并读回核对，最后由机器人单聊把要点和文档链接发给 Derek。"
+        "发布到钉钉文档并读回核对，最后提出 dingtalk-chat 单聊动作；"
+        "审核轮只能调用服务提供的 send_approved_dingtalk_message 发送，不能用机器人或 dws 绕过投递台账。"
+        "某个来源读不到时写进覆盖说明，照常发布，不要向 Derek 追问材料。"
+    )
+
+
+def _legacy_daily_report_prompt() -> str:
+    """Prompt stored by the pre-approved-DingTalk delivery seed."""
+    return (
+        "按 $ceo-daily-report 生成 CEO 每日总结。先运行 "
+        "`/Users/derek/miniforge3/bin/python -m app.cli daily-report-facts "
+        "--scheduled-run <本次触发的 scheduled_task_run_id>` 取得报告窗口和服务记录的事实，"
+        "再用 $dingtalk-chat 扫描窗口内全部群消息，按需用 $dingtalk-minutes 补读会议摘要；"
+        "写成报告后用 $dingtalk-wiki 与 $dingtalk-doc 发布到钉钉文档并读回核对，"
+        "最后由机器人单聊把要点和文档链接发给 Derek。"
         "某个来源读不到时写进覆盖说明，照常发布，不要向 Derek 追问材料。"
     )
 
@@ -858,6 +872,15 @@ def _seed_daily_report_task(
     del working_directory
     existing = _existing_task(store, DAILY_REPORT_MIGRATION_KEY, now=now)
     if existing is not None:
+        # This is a repository-owned delivery-contract migration.  Only
+        # replace the exact legacy seed; preserve any operator-edited prompt.
+        if existing.prompt == _legacy_daily_report_prompt():
+            return store.update_scheduled_task(
+                existing.id,
+                expected_version=existing.version,
+                prompt=daily_report_prompt(),
+                now=now,
+            )
         return existing
     skill_refs = _consumer_skill_refs(
         options,

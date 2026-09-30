@@ -1589,6 +1589,37 @@ def test_seed_is_idempotent_and_preserves_user_edits(tmp_path: Path) -> None:
     )
 
 
+def test_seed_migrates_legacy_daily_report_delivery_prompt(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "daily-report-prompt.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    seeded = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path, now=NOW
+    )
+    daily = _task_by_key(seeded, "ceo-daily-report-daily-v1")
+    # Use the production-era prompt verbatim, then seed again as an upgrade.
+    legacy = (
+        "按 $ceo-daily-report 生成 CEO 每日总结。"
+        "先运行 `/Users/derek/miniforge3/bin/python -m app.cli daily-report-facts "
+        "--scheduled-run <本次触发的 scheduled_task_run_id>` 取得报告窗口和服务记录的事实，"
+        "再用 $dingtalk-chat 扫描窗口内全部群消息，按需用 $dingtalk-minutes 补读会议摘要；"
+        "写成报告后用 $dingtalk-wiki 与 $dingtalk-doc 发布到钉钉文档并读回核对，"
+        "最后由机器人单聊把要点和文档链接发给 Derek。"
+        "某个来源读不到时写进覆盖说明，照常发布，不要向 Derek 追问材料。"
+    )
+    legacy = store.update_scheduled_task(
+        daily.id, expected_version=daily.version, prompt=legacy, now=NOW
+    )
+    migrated = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "ceo-daily-report-daily-v1",
+    )
+    assert migrated.version == legacy.version + 1
+    assert "send_approved_dingtalk_message" in migrated.prompt
+    assert "机器人单聊" not in migrated.prompt
+
+
 def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
     """No seed needs a Runtime, so an unhealthy fleet cannot disable one.
 
