@@ -23,6 +23,18 @@ from app.dingtalk_models import DingTalkConversation
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.dispatcher.models import ClaimGuard
 from app.external_retry import is_external_dependency_error, retry_delay_seconds
+from app.group_discovery import (
+    DingTalkGroupDiscoveryProvider,
+    DiscussionEvidence,
+    GroupCandidate,
+    GroupDiscoveryRequest,
+    GroupDiscoveryService,
+    GroupMessage,
+    MemberRef,
+    ParticipantCoverageEvidence,
+    ProviderScope,
+    RetryableProviderError,
+)
 from app.meeting_alignment_agent import (
     MeetingAlignmentAgent,
     MeetingAlignmentTargetError,
@@ -786,7 +798,65 @@ def _meeting_fts_text(text: str) -> str:
     return " ".join(token for token in tokens if token)
 
 
-def _search_meeting_group_candidates(
+class _MeetingGroupDiscoveryPolicy:
+    def __init__(self, title_terms: list[str], summary_text: str) -> None:
+        self.title_terms = title_terms
+        self.summary_text = summary_text
+        self.topic_terms = set(_meeting_topic_terms(summary_text)) | set(title_terms)
+
+    def build_queries(self, request: GroupDiscoveryRequest) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                [
+                    term
+                    for term in _meeting_topic_terms(self.summary_text)
+                    if term.isascii() and term.isalpha()
+                    and term.casefold() not in {
+                        value.casefold() for value in request.source_context.get("participant_names", "").split("\n")
+                    }
+                    and term.casefold() not in {value.casefold() for value in self.title_terms}
+                ][:2]
+                + self.title_terms[:3]
+            )
+        )
+
+    def participant_coverage(
+        self, request: GroupDiscoveryRequest, members: list[MemberRef] | tuple[MemberRef, ...]
+    ) -> ParticipantCoverageEvidence:
+        expected = {member.scoped_key for member in request.audience}
+        actual = {member.scoped_key for member in members}
+        matched = len(expected & actual)
+        eligible = matched >= 2 and matched * 5 >= len(expected) * 3
+        return ParticipantCoverageEvidence(matched, len(expected), "eligible" if eligible else "ineligible")
+
+    def title_score(self, request: GroupDiscoveryRequest, title: str) -> float:
+        return float(len(self.topic_terms & set(_meeting_topic_terms(title))))
+
+    def minimum_title_score(self, request: GroupDiscoveryRequest) -> float:
+        return 1.0
+
+    def discussion_score(
+        self, request: GroupDiscoveryRequest, messages: list[GroupMessage] | tuple[GroupMessage, ...]
+    ) -> DiscussionEvidence:
+        matches: list[tuple[float, int, str]] = []
+        for message in messages:
+            message_terms = set(_meeting_topic_terms(message.text_excerpt[:1200]))
+            overlap = len(self.topic_terms & message_terms)
+            if overlap >= 3:
+                matches.append((overlap * overlap / len(message_terms), overlap, message.text_excerpt[:500]))
+        matches.sort(reverse=True)
+        return DiscussionEvidence(
+            score=matches[0][0] if matches else 0.0,
+            excerpts=tuple(item[2] for item in matches[:2]),
+        )
+
+    def accepts(self, request: GroupDiscoveryRequest, candidate: GroupCandidate) -> bool:
+        # The meeting Agent receives all hard-filtered candidates, including a
+        # candidate without discussion evidence, and makes the business choice.
+        return True
+
+
+def _search_meeting_group_candidates_legacy(
     dws: Any, source: MeetingSource, store: AutoReplyStore
 ) -> list[dict[str, Any]]:
     title_terms = _meeting_topic_terms(source.title)
@@ -941,6 +1011,83 @@ def _search_meeting_group_candidates(
             item.get("member_count", 0),
         ),
     )
+
+
+def _search_meeting_group_candidates(
+    dws: Any, source: MeetingSource, store: AutoReplyStore
+) -> list[dict[str, Any]]:
+    """Run meeting discovery through the shared provider-neutral service."""
+    title_terms = _meeting_topic_terms(source.title)
+    summary_text = "\n".join(
+        line for line in source.summary.splitlines()
+        if not line.lstrip().startswith((">", "![")) and "http" not in line
+    )[:2000]
+    participants = tuple(
+        MemberRef(ProviderScope("dingtalk", "default"), participant.open_dingtalk_id)
+        for participant in source.participants
+        if participant.open_dingtalk_id
+    )
+    policy = _MeetingGroupDiscoveryPolicy(title_terms, summary_text)
+    provider = DingTalkGroupDiscoveryProvider(dws)
+    request = GroupDiscoveryRequest(
+        provider_scope=provider.scope,
+        subject=source.title,
+        body=summary_text,
+        audience=participants,
+        audience_is_complete=(
+            source.attendee_evidence == "calendar"
+            and source.attendee_roster_complete
+            and len(participants) >= 2
+        ),
+        source_context={
+            "participant_names": "\n".join(
+                participant.name for participant in source.participants if participant.name
+            )
+        },
+    )
+    try:
+        result = GroupDiscoveryService(provider, policy).discover(request)
+    except RetryableProviderError as exc:
+        raise DwsError(str(exc)) from exc
+    if result.outcome.value == "retryable_failure":
+        raise DwsError(result.provider_error or "meeting group discovery failed")
+
+    recurring_by_id = {
+        group_id: (group_title, sent_count)
+        for group_id, group_title, sent_count in store.recurring_meeting_group_targets(source.title)
+    }
+    candidates: list[dict[str, Any]] = []
+    for item in result.candidates:
+        evidence = item.evidence
+        candidate: dict[str, Any] = {
+            "conversation_id": item.group.external_group_id,
+            "title": item.group.display_name,
+            "summary_title_overlap": int(evidence.title_score or 0),
+            "search_query": source.title,
+        }
+        coverage = evidence.participant_coverage
+        if coverage is not None:
+            candidate.update(
+                attendee_overlap=coverage.matched or 0,
+                member_count=coverage.total or 0,
+                participant_coverage=f"{coverage.matched}/{coverage.total}",
+            )
+        discussion = evidence.discussion
+        if discussion and discussion.excerpts:
+            candidate["topic_discussion_evidence"] = [
+                {
+                    "create_time": "",
+                    "text": excerpt,
+                    "shared_topic_terms": 0,
+                    "topic_match_score": round(discussion.score, 3),
+                }
+                for excerpt in discussion.excerpts
+            ]
+        if item.group.external_group_id in recurring_by_id:
+            _group_title, sent_count = recurring_by_id[item.group.external_group_id]
+            candidate.update(verified_recurring_group=True, prior_sent_count=sent_count)
+        candidates.append(candidate)
+    return candidates
 
 
 def _meeting_topic_terms(text: str) -> list[str]:
