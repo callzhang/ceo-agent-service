@@ -876,7 +876,10 @@ def _report_project_registry_title(work_item: WorkItem, item: TaskDecision) -> s
         return ""
     try:
         payload = json.loads(work_item.summary)
-        markdown = payload.get("report", {}).get("markdown", "")
+        report = payload.get("report", {})
+        markdown = payload.get("markdown", "") or (
+            report.get("markdown", "") if isinstance(report, dict) else ""
+        )
     except (TypeError, ValueError, AttributeError):
         return ""
     if not isinstance(markdown, str) or not item.source_excerpt.strip():

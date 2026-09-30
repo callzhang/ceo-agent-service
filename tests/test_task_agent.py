@@ -1364,7 +1364,8 @@ def test_project_weekly_report_registry_row_becomes_project_candidate(tmp_path):
             "ref": "report:project-weekly",
         }),
         "summary": json.dumps({
-            "report": {"markdown": f"## **手头项目**\n\n| 项目名 | 负责内容 |\n|---|---|\n{row}\n"},
+            "report": {"title": "项目周报"},
+            "markdown": f"## **手头项目**\n\n| 项目名 | 负责内容 |\n|---|---|\n{row}\n",
         }, ensure_ascii=False),
     })
     decision = TaskAgentDecision.model_validate({"task_decisions": [{
