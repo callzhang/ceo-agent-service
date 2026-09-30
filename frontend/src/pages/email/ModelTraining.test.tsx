@@ -301,11 +301,23 @@ it("has no progress bar until the scan has reported, and says when the sweep is 
 });
 
 it("shows a family by the name the catalog gives it, not by its stored key", () => {
+  // The version table's family columns are fixed to the three real
+  // families; anchor this on one of them ("fasttext") rather than a
+  // fictional key so the display-name lookup is still exercised.
+  const named = {
+    ...learning,
+    staged_models: [
+      { ...learning.staged_models[0], model_family: "fasttext" },
+    ],
+    model_families: [
+      { family: "fasttext", display_name: "Linear", supported: true, configured: true },
+    ],
+  };
   render(
     <ModelTraining
-      learning={learning}
+      learning={named}
       configs={[]}
-      reload={async () => learning}
+      reload={async () => named}
       runtimeVerified
       onRuntimeUnverified={vi.fn()}
       onBusy={vi.fn()}
@@ -313,9 +325,9 @@ it("shows a family by the name the catalog gives it, not by its stored key", () 
   );
 
   expect(screen.getByRole("option", { name: "Linear" })).toBeInTheDocument();
-  expect(screen.queryByRole("option", { name: "linear" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "fasttext" })).not.toBeInTheDocument();
   expect(screen.getAllByRole("cell", { name: "Linear" }).length).toBeGreaterThan(0);
-  expect(screen.queryByRole("cell", { name: "linear" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("cell", { name: "fasttext" })).not.toBeInTheDocument();
 });
 
 it("uses measurable historical registry models when no staged model is available", () => {
@@ -771,9 +783,12 @@ it("lists model versions and failed runs newest first", () => {
   const table = screen.getByRole("table", { name: "模型版本" });
   const ids = Array.from(table.querySelectorAll("tbody tr td:first-child")).map((cell) => cell.getAttribute("title"));
   expect(ids).toEqual(["email-embedding-mlp-newest", "run-middle", "email-embedding-mlp-older"]);
-  // A failed run shows the families it was asked to train.
+  // A failed run shows the families it was asked to train, one column each.
   const runRow = Array.from(table.querySelectorAll("tbody tr")).find((row) => row.querySelector("td")?.getAttribute("title") === "run-middle");
-  expect(runRow?.querySelectorAll("td")[1]).toHaveTextContent("embedding-mlp、fasttext");
+  const runCells = runRow?.querySelectorAll("td");
+  expect(runCells?.[1]).toHaveTextContent("embedding-mlp");
+  expect(runCells?.[2]).toHaveTextContent("fasttext");
+  expect(runCells?.[3]).toHaveTextContent("—");
 });
 
 

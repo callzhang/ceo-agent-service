@@ -47,6 +47,21 @@ type RefreshLearning = () => Promise<EmailLearningEvidence | undefined>;
 // is called. Showing the key told the owner nothing, and this one no longer
 // describes the model. A run carries several keys joined with "、".
 const FamilyNames = createContext<Record<string, string>>({});
+// A run trains these families together; each gets its own column so one
+// family's failure never disappears into another's merged reason text.
+const TRAINING_FAMILY_ORDER = [
+  "embedding-mlp",
+  "fasttext",
+  "tfidf-logistic-regression",
+] as const;
+
+function familyOutcomeLabel(
+  outcome: {status?: string; model_id?: string; error?: string} | undefined,
+) {
+  if (!outcome || !outcome.status) return "—";
+  if (outcome.status === "succeeded") return "✓";
+  return outcome.error ? `✗ ${outcome.error}` : "✗";
+}
 
 function useFamilyLabel() {
   const names = useContext(FamilyNames);
@@ -127,6 +142,7 @@ export function ModelTraining({
           trained_at: run.started_at,
         },
         reason: run.reason,
+        family_results: run.family_results || {},
       })),
       // Newest first, across models and failed runs alike: the three sources
       // arrive in different orders and read as scrambled when concatenated.
@@ -543,7 +559,9 @@ export function ModelTraining({
               <thead>
                 <tr>
                   <th>完整模型 ID</th>
-                  <th>家族</th>
+                  {TRAINING_FAMILY_ORDER.map((key) => (
+                    <th key={key}>{familyNames[key] || key}</th>
+                  ))}
                   <th>状态</th>
                   <th>训练时间</th>
                   <th>样本数</th>
@@ -559,13 +577,20 @@ export function ModelTraining({
                     <td title={item.model.model_id}>
                       {shortModelId(item.model.model_id)}
                     </td>
-                    <td>
-                      {familyLabel(
-                        item.kind === "run"
-                          ? item.model.model_family || "—"
-                          : item.model.model_family || "未提供",
-                      )}
-                    </td>
+                    {TRAINING_FAMILY_ORDER.map((key) => (
+                      <td key={key}>
+                        {item.kind === "run"
+                          ? item.family_results?.[key]
+                            ? familyOutcomeLabel(item.family_results[key])
+                            : (item.model.model_family || "").split("、").includes(key)
+                              ? familyNames[key] || key
+                              : "—"
+                          : item.model.model_family === (familyNames[key] || key) ||
+                              item.model.model_family === key
+                            ? familyNames[key] || key
+                            : "—"}
+                      </td>
+                    ))}
                     <td>
                       {item.kind === "run"
                         ? item.model.status === "failed"

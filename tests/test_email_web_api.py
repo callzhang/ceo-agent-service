@@ -4281,6 +4281,58 @@ def test_learning_reports_the_active_run_only_while_it_is_still_running(tmp_path
     assert running_rows[0]["model_families"] == ["embedding-mlp"]
 
 
+def test_learning_reports_each_trained_family_s_own_outcome(tmp_path: Path):
+    """A classic family's failure must not merge into one unreadable string."""
+
+    database = tmp_path / "family-results.sqlite3"
+    registry = EmailModelRegistry(tmp_path / "models")
+    state_path = tmp_path / "models" / "retrain-state.json"
+    service = SimpleNamespace(
+        registry=registry,
+        retrain_state_path=state_path,
+        controller=SimpleNamespace(registry=registry),
+    )
+    app = FastAPI()
+    register_email_routes(app, lambda: EmailStore(database), email_learning_factory=lambda: service)
+
+    (registry.runs / "run-mixed.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-mixed",
+                "status": "failed",
+                "started_at": "2026-09-30T07:00:00+00:00",
+                "finished_at": "2026-09-30T07:05:00+00:00",
+                "reason": "every requested model family failed",
+                "model_ids": [],
+                "training_selection": {
+                    "model_families": ["embedding-mlp", "fasttext", "tfidf-logistic-regression"]
+                },
+                "family_results": {
+                    "embedding-mlp": {"status": "failed", "error": "RuntimeError:boom"},
+                    "fasttext": {"status": "failed", "error": "RuntimeError:Encountered NaN."},
+                    "tfidf-logistic-regression": {
+                        "status": "failed",
+                        "error": "ValueError:'finance' is not a valid EmailCategory",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with TestClient(app) as client:
+        learning = client.get("/api/console/email/learning").json()["learning"]
+
+    rows = [row for row in learning["training_runs_without_model"] if row["run_id"] == "run-mixed"]
+    assert len(rows) == 1
+    family_results = rows[0]["family_results"]
+    assert family_results["fasttext"] == {
+        "status": "failed",
+        "error": "RuntimeError:Encountered NaN.",
+    }
+    assert family_results["tfidf-logistic-regression"]["status"] == "failed"
+    assert family_results["embedding-mlp"]["error"] == "RuntimeError:boom"
+
+
 def test_action_throughput_is_the_whole_action_over_the_recent_window(tmp_path: Path):
     from datetime import datetime, timedelta, timezone
 

@@ -2075,6 +2075,15 @@ def register_email_routes(
                         )
                         or []
                     ],
+                    # Per-family outcome, so a classic family's own failure
+                    # does not disappear into one merged reason string.
+                    "family_results": {
+                        str(family): {
+                            str(key): str(value) for key, value in outcome.items()
+                        }
+                        for family, outcome in (row.get("family_results") or {}).items()
+                        if isinstance(outcome, dict)
+                    },
                 }
             )
         rows.sort(key=lambda row: str(row["started_at"]), reverse=True)

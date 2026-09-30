@@ -11,7 +11,7 @@ import sys
 import tempfile
 import threading
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
@@ -379,6 +379,7 @@ class TrainingSubprocessRun:
     launch_attempt: int = 0
     launch_lease_expires_at: str | None = None
     training_selection: dict[str, object] | None = None
+    family_results: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 def _launch_training_process(command: Sequence[str]) -> subprocess.Popen:
@@ -1037,6 +1038,7 @@ def _run_training_job(
         # embedding-mlp candidate the run already trained. Only embedding-mlp
         # failing still fails the whole run.
         family_failures: dict[str, str] = {}
+        family_results: dict[str, dict[str, str]] = {}
         for family in (
             model_families if training_selection is not None else ["embedding-mlp"]
         ):
@@ -1096,6 +1098,10 @@ def _run_training_job(
                     promotion_thresholds=_console_promotion_thresholds(store),
                 )
                 model_ids.append(result.model_id)
+                family_results[family] = {
+                    "status": "succeeded",
+                    "model_id": result.model_id,
+                }
                 if description_overlay is not None:
                     proposal_repository.record_evaluation(
                         description_overlay.proposal_id, model_id=result.model_id
@@ -1112,9 +1118,15 @@ def _run_training_job(
                         selected_message_identities=selected_message_identities,
                     )
                 except Exception as exc:  # noqa: BLE001 - isolate one unstable experiment family
-                    family_failures[family] = f"{type(exc).__name__}:{exc}"
+                    failure = f"{type(exc).__name__}:{exc}"
+                    family_failures[family] = failure
+                    family_results[family] = {"status": "failed", "error": failure}
                     continue
                 model_ids.append(classic.model_id)
+                family_results[family] = {
+                    "status": "succeeded",
+                    "model_id": classic.model_id,
+                }
         if not model_ids:
             raise RuntimeError(
                 "every requested model family failed: "
@@ -1134,6 +1146,7 @@ def _run_training_job(
             model_id=model_ids[-1] if model_ids else None,
             model_ids=tuple(model_ids),
             reason=reason,
+            family_results=family_results,
         )
         controller._save_run(terminal)
         return 0

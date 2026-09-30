@@ -537,7 +537,7 @@ export interface EmailLearningEvidence {
   last_trained_at: string | null;
   last_feedback_at: string | null;
   active_run_id: string | null;
-  training_runs_without_model?: Array<{run_id: string; status: string; started_at: string; finished_at: string; reason: string; model_families?: string[]}>;
+  training_runs_without_model?: Array<{run_id: string; status: string; started_at: string; finished_at: string; reason: string; model_families?: string[]; family_results?: Record<string, {status?: string; model_id?: string; error?: string}>}>;
   models: EmailModelEvidence[];
   training_snapshot?: { sample_count: number; [key: string]: unknown } | null;
   registry_issues: Array<{ model_id: string; integrity_status: "corrupt"; integrity_error: string }>;

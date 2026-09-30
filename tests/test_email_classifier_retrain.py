@@ -1130,6 +1130,10 @@ def test_one_unstable_classic_family_does_not_discard_the_embedding_candidate(
     assert run.model_ids == ["email-embedding-mlp-mixed"]
     assert run.model_id == "email-embedding-mlp-mixed"
     assert "fasttext=RuntimeError:Encountered NaN." in run.reason
+    assert run.family_results == {
+        "embedding-mlp": {"status": "succeeded", "model_id": "email-embedding-mlp-mixed"},
+        "fasttext": {"status": "failed", "error": "RuntimeError:Encountered NaN."},
+    }
 
 
 def test_every_family_failing_still_fails_the_run(tmp_path, monkeypatch):
