@@ -25,6 +25,7 @@ REPORT_SEARCHES = (
     "项目管理部周报",
     "产研管理周报",
 )
+REPORT_SEARCH_PAGE_SIZE = 30
 _PERIOD_PATTERNS = (
     re.compile(r"(?P<year>20\d{2})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日"),
     re.compile(r"(?P<year>20\d{2})[.-](?P<month>\d{1,2})[.-](?P<day>\d{1,2})"),
@@ -79,7 +80,7 @@ def report_period(title: str, markdown: str = "") -> str:
 def _search_results(dws: Any) -> list[DwsDocumentSearchResult]:
     by_node: dict[str, DwsDocumentSearchResult] = {}
     for query in REPORT_SEARCHES:
-        results = dws.search_documents(query, page_size=50)
+        results = dws.search_documents(query, page_size=REPORT_SEARCH_PAGE_SIZE)
         for result in results:
             if isinstance(result, DwsDocumentSearchResult):
                 document = result

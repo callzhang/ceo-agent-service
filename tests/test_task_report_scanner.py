@@ -15,6 +15,7 @@ from app.task_report_scanner import (
 
 class FakeDws:
     def __init__(self) -> None:
+        self.page_sizes: list[int] = []
         self.documents = {
             "management": (
                 DwsDocumentSearchResult(
@@ -48,6 +49,7 @@ class FakeDws:
         }
 
     def search_documents(self, query: str, *, page_size: int) -> list[DwsDocumentSearchResult]:
+        self.page_sizes.append(page_size)
         return list(self.documents.get({
             "管理周报": "management",
             "项目管理部周报": "project",
@@ -78,6 +80,7 @@ def test_scan_task_reports_is_idempotent_and_preserves_report_provenance(tmp_pat
 
     assert scan_task_reports(store, dws) == 3
     assert scan_task_reports(store, dws) == 0
+    assert dws.page_sizes == [30, 30, 30, 30, 30, 30]
 
     with store._connect() as db:
         rows = db.execute(
