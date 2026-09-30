@@ -241,7 +241,7 @@ class HistoricalClassifier:
         vector = self.cache.get(key)
         if vector is None:
             return self._outcome(candidate, action_outcome="exact_cache_miss")
-        prediction = self.model.predict(vector)
+        prediction = self.model.predict(vector, candidate.normalized_text)
         if type(prediction) is not EmbeddingModelPrediction:
             raise TypeError("historical model prediction is invalid")
         category = validate_email_category_key(prediction.category)

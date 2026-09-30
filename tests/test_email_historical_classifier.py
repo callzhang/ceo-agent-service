@@ -37,8 +37,8 @@ class _Model:
         self.prediction = prediction
         self.calls = []
 
-    def predict(self, vector):
-        self.calls.append(vector)
+    def predict(self, vector, text):
+        self.calls.append((vector, text))
         return self.prediction
 
 

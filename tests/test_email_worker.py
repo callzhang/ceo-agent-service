@@ -1867,7 +1867,7 @@ def test_manual_historical_batch_persists_prediction_threshold_and_outcome(tmp_p
         embedding_model_id="jina",
         embedding_revision="r17",
         category_thresholds={"work": 0.8},
-        predict=lambda _vector: _accepted_model_prediction(important=False),
+        predict=lambda _vector, _text: _accepted_model_prediction(important=False),
     )
     state = HistoricalClassificationState(
         folder_role=FolderRole.INBOX,
@@ -2098,7 +2098,7 @@ def test_run_historical_once_uses_provider_rereads_cached_batch_and_durable_hist
         embedding_model_id="jina",
         embedding_revision="r17",
         category_thresholds={"work": 0.8, "junk": 0.9},
-        predict=lambda _vector: EmbeddingModelPrediction(
+        predict=lambda _vector, _text: EmbeddingModelPrediction(
             category="work",
             category_probability=0.97,
             category_probabilities={"work": 0.97, "junk": 0.03},
@@ -2380,7 +2380,7 @@ def test_historical_candidate_warms_its_own_missing_embedding(tmp_path, monkeypa
         embedding_model_id="jina",
         embedding_revision="r17",
         category_thresholds={"work": 0.8, "junk": 0.9},
-        predict=lambda _vector: EmbeddingModelPrediction(
+        predict=lambda _vector, _text: EmbeddingModelPrediction(
             category="work",
             category_probability=0.97,
             category_probabilities={"work": 0.97, "junk": 0.03},
