@@ -1328,6 +1328,32 @@ def test_generic_department_project_proposal_is_not_promoted(tmp_path):
     assert store.list_business_task_anchor_links(task_id=result.task_ids[0]) == ()
 
 
+def test_weekly_report_task_section_project_proposal_is_not_promoted(tmp_path):
+    store = AutoReplyStore(tmp_path / "report-task-section-project.sqlite3")
+    item = _work_item(assignment_authorized=True).model_copy(update={
+        "source": _work_item().source.model_copy(update={
+            "type": WorkItemSourceType.PROJECT_WEEKLY_REPORT,
+        }),
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none",
+        "source_excerpt": "补齐来源链接；owner 是 Alex。",
+        "source_ref": item.source.ref, "title": "中汽对账",
+        "formal_basis": "explicit_assignment", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": "owner 是 Alex"},
+        "project_proposal": {
+            "title": "中汽对账", "reason": "周报将“中汽对账”列为下周工作重点",
+            "authority": "project_weekly_report",
+        },
+    }]})
+
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+                                       decision=decision, record_run=False)
+
+    assert len(result.task_ids) == 1
+    assert store.list_business_projects() == []
+
+
 def test_source_dedupe_distinguishes_owner_but_replays_identical_decision(tmp_path):
     store = AutoReplyStore(tmp_path / "owner-sensitive-dedupe.sqlite3")
     excerpt = "Alex and Bob are assigned to prepare the release report."

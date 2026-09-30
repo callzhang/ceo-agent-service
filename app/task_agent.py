@@ -461,6 +461,12 @@ instead of leaving every report row as an ungrouped candidate. Any
 `date_evidence.source_excerpt` must be copied literally from the report text,
 including spaces, punctuation, and date wording; never normalize or paraphrase
 it. If no literal source substring is available, omit that date evidence item.
+Treat sections titled “本周工作重点”, “下周工作重点”, “团队管理和分工”,
+“周度待办追踪”, or “行动项” as Task sections: their rows create or update
+Tasks only, never an official Project. Only a separately named project list,
+project portfolio, milestone/roadmap entry, or explicit meeting decision can
+justify a Project proposal; a task that happens to mention a customer, team, or
+workstream is not enough.
 """
     effective_current_time = current_time.strip() or datetime.now(
         timezone.utc
@@ -831,11 +837,36 @@ _GENERIC_PROJECT_TITLES = frozenset({
     "团队",
 })
 
+_REPORT_TASK_SECTION_MARKERS = (
+    "本周工作重点",
+    "下周工作重点",
+    "团队管理和分工",
+    "周度待办追踪",
+    "行动项",
+)
+
 
 def _is_generic_project_title(title: str) -> bool:
     """Do not promote a department/team label to an official Project."""
     normalized = "".join(title.casefold().split()).strip(" ：:、，,。")
     return normalized in _GENERIC_PROJECT_TITLES
+
+
+def _is_report_task_section_project_proposal(
+    work_item: WorkItem, proposal: object
+) -> bool:
+    """Weekly-report task sections must not create one official Project per row."""
+    if work_item.source.type not in {
+        WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT,
+        WorkItemSourceType.PROJECT_WEEKLY_REPORT,
+        WorkItemSourceType.DEPARTMENT_WEEKLY_REPORT,
+    }:
+        return False
+    authority = getattr(proposal, "authority", "")
+    reason = getattr(proposal, "reason", "")
+    if not authority.endswith("weekly_report"):
+        return False
+    return any(marker in reason for marker in _REPORT_TASK_SECTION_MARKERS)
 
 
 def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal:
@@ -1486,8 +1517,12 @@ def apply_task_agent_decision(
                     task_id=task_id, anchor_id=anchor_match.anchor_id,
                     evidence_signal_id=result.signal_id, reason=anchor_match.reason, _db=db,
                 )
-            if item.project_proposal is not None and not _is_generic_project_title(
-                item.project_proposal.title
+            if (
+                item.project_proposal is not None
+                and not _is_generic_project_title(item.project_proposal.title)
+                and not _is_report_task_section_project_proposal(
+                    work_item, item.project_proposal
+                )
             ):
                 proposal = item.project_proposal
                 import hashlib

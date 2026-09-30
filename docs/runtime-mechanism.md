@@ -223,7 +223,9 @@ Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_propo
 部门/团队标签（例如“项目管理部”“算法团队”）即使被模型误放进
 `project_proposal` 也不会注册为正式 Project；它们仍可作为 Task 的上下文或候选聚类。
 所有 `date_evidence.source_excerpt` 都必须是当前 Work Item 文本中逐字连续的子串，
-包括原始空格与标点，无法逐字引用时省略日期证据。
+包括原始空格与标点，无法逐字引用时省略日期证据。周报“本周工作重点”“下周工作重点”、
+“团队管理和分工”“周度待办追踪”“行动项”章节是 Task 来源，不是 Project 注册表；
+只有单独的项目清单/项目组合、里程碑/路线图条目或明确会议立项才可注册正式 Project。
 更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
 
 Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。完成由新证据驱动
