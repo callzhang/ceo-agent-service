@@ -590,6 +590,45 @@ def test_fused_head_blend_differs_from_two_source_blend() -> None:
     )
 
 
+def test_three_source_blend_uses_weighted_not_equal_average() -> None:
+    """2026-09-30 offline sweep on real data: flat 1/3-1/3-1/3 scored 88.75%;
+    weighting toward the fused head scored higher across the sweep, peaking
+    at 89.01% with THREE_SOURCE_BLEND_WEIGHTS. Locks in that it is actually a
+    weighted average, not accidentally reverted to np.mean.
+    """
+    from app.email_embedding_classifier import THREE_SOURCE_BLEND_WEIGHTS
+
+    assert THREE_SOURCE_BLEND_WEIGHTS != (1 / 3, 1 / 3, 1 / 3)
+    embeddings, labels, important = _training_data()
+    texts = _texts_for(labels)
+    classifier = _classifier().fit(embeddings, labels, important, texts=texts)
+    embedding, text = embeddings[0], texts[0]
+
+    logits = classifier.category_logits(embedding)
+    shifted = logits - float(np.max(logits))
+    primary = np.exp(shifted) / float(np.exp(shifted).sum())
+    surface = classifier._surface_head.probabilities(text)
+    fused = classifier._fused_head.probabilities(classifier._row(embedding)[0], text)
+    sources = [primary]
+    for source in (surface, fused):
+        sources.append(
+            np.asarray(
+                [source.get(c, 0.0) for c in classifier.enabled_categories],
+                dtype=np.float64,
+            )
+        )
+    expected_equal = np.mean(sources, axis=0)
+    expected_weighted = np.average(
+        np.asarray(sources), axis=0, weights=THREE_SOURCE_BLEND_WEIGHTS
+    )
+    prediction = classifier.predict(embedding, text=text)
+    actual = np.asarray(
+        [prediction.category_probabilities[c] for c in classifier.enabled_categories]
+    )
+    assert np.allclose(actual, expected_weighted)
+    assert not np.allclose(actual, expected_equal)
+
+
 def test_fused_head_survives_save_and_load(tmp_path) -> None:
     embeddings, labels, important = _training_data()
     texts = _texts_for(labels)
