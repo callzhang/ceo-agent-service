@@ -3742,6 +3742,30 @@ def build_email_worker_dependencies(
                 enumerate_historical_page,
             )
             from app.email_embedding_cache import EmbeddingCacheKey
+            from app.email_embedding_client import EmailEmbeddingClient
+
+            # A historical candidate is, by definition, mail the regular
+            # scan/training snapshot never touched -- its embedding is
+            # essentially never already cached. Built lazily (only once a
+            # candidate actually misses the cache) and reused for the rest
+            # of this call; closed in the outer finally below.
+            embedding_client_box: list[EmailEmbeddingClient] = []
+
+            def warm_embedding(key: EmbeddingCacheKey, text: str) -> bool:
+                try:
+                    if not embedding_client_box:
+                        embedding_client_box.append(
+                            EmailEmbeddingClient.from_environment(
+                                embedding_revision=key.embedding_revision,
+                                dimension=cache.dimension,
+                            )
+                        )
+                    result = embedding_client_box[0].embed([embedding_input_text(text)])
+                except Exception:  # noqa: BLE001 - unconfigured or unreachable just
+                    # defers this candidate exactly as an exact_cache_miss always did
+                    return False
+                cache.put(key, result.vectors[0])
+                return True
 
             evidence = registry.get_staged_evidence(model_id)
             artifact = registry.embedding_artifacts / f"{model_id}.artifact"
@@ -3991,7 +4015,9 @@ def build_email_worker_dependencies(
                                 embedding_model_id=str(model.embedding_model_id),
                                 embedding_revision=str(model.embedding_revision),
                             )
-                            if cache.get(key) is None:
+                            if cache.get(key) is None and not warm_embedding(
+                                key, candidate.normalized_text
+                            ):
                                 email_store.set_historical_candidate_state(
                                     account_id=str(account["account_id"]),
                                     folder=folder_name,
@@ -4030,6 +4056,10 @@ def build_email_worker_dependencies(
                             )
                 finally:
                     _close_email_source(source)
+            if embedding_client_box:
+                close = getattr(embedding_client_box[0], "close", None)
+                if callable(close):
+                    close()
             return tuple(outcomes)
 
         from app.email_training_observer import (

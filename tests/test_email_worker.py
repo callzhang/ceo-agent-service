@@ -2262,6 +2262,207 @@ def test_run_historical_once_uses_provider_rereads_cached_batch_and_durable_hist
     assert fetches[-1][1]["last_seen_uid"] > 0
 
 
+def test_historical_candidate_warms_its_own_missing_embedding(tmp_path, monkeypatch):
+    """A historical candidate is, by definition, mail the normal scan/training
+    snapshot never embedded -- run_historical_once must compute its embedding
+    on demand instead of deferring every new candidate forever as an
+    exact_cache_miss (2026-09-29: caught running it for real for the first
+    time, every discovered candidate deferred, nothing was ever processable).
+    """
+    import numpy as np
+
+    from app.email_embedding_classifier import DescriptionAwareEmailClassifier
+    from app.email_embedding_client import EmailEmbeddingClient, EmbeddingResult, EmbeddingTiming
+    from app.email_imap_readonly import ImapUidBatch
+    from app.email_model_registry import EmailModelRegistry
+
+    module = _module()
+    account = {"account_id": "account-1", "enabled": True, "scan_folders": ["INBOX"]}
+    message = {
+        "messageId": "<never-embedded@example.com>",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 1,
+        "providerUnread": False,
+        "from": {"email": "sender@example.com"},
+        "subject": "Never embedded before",
+        "textBody": "A completed business thread.",
+        "date": "2026-09-01T12:00:00+00:00",
+    }
+    action_calls = []
+
+    class Source:
+        account_id = "account-1"
+
+        def list_folders(self):
+            return (
+                ProviderFolder("inbox-id", "INBOX", FolderRole.INBOX),
+                ProviderFolder("work-id", "Work", FolderRole.UNBOUND),
+            )
+
+        def fetch_uid_batch(self, mailbox, **kwargs):
+            current = (
+                [message]
+                if mailbox == "INBOX" and int(kwargs["last_seen_uid"]) < 1
+                else []
+            )
+            return ImapUidBatch(
+                account_id=self.account_id,
+                folder=mailbox,
+                uidvalidity=42,
+                previous_uidvalidity=kwargs["cursor_uidvalidity"],
+                messages=tuple(current[: kwargs["limit"]]),
+            )
+
+        def logout(self):
+            return None
+
+    class Executor:
+        def execute(self, action):
+            action_calls.append(action)
+            return ProviderActionResult(
+                status="done",
+                provider_operation=action.action_type.value,
+                provider_target=action.locator.stable_message_identity,
+                provider_result_id="receipt-1",
+                updated_locator=None,
+            )
+
+    class FakeConnectorRegistry:
+        def connector_for(self, _account_id):
+            return self
+
+        def checkout(self, _kind, _priority=None, **_kwargs):
+            return object(), Source()
+
+        def checkin(self, _session, *, keep):
+            return None
+
+    embed_calls = []
+
+    class FakeEmbeddingClient:
+        def embed(self, texts, **_kwargs):
+            embed_calls.append(tuple(texts))
+            vectors = np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(texts), 1))
+            return EmbeddingResult(
+                vectors=vectors,
+                timing=EmbeddingTiming(
+                    queue_ms=0.0, http_ms=0.0, embedding_ms=0.0, head_ms=0.0, total_ms=0.0
+                ),
+            )
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        module,
+        "_build_email_source_factory",
+        lambda _settings: lambda _account: Source(),
+    )
+    monkeypatch.setattr(
+        module, "_build_email_connector_registry", lambda _store: FakeConnectorRegistry()
+    )
+    monkeypatch.setattr(module, "_build_agent_orchestrator", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        EmailEmbeddingClient,
+        "from_environment",
+        classmethod(lambda _cls, **_kwargs: FakeEmbeddingClient()),
+    )
+    model = SimpleNamespace(
+        enabled_categories=("work", "junk"),
+        dimension=2,
+        input_schema_version="input-v3",
+        embedding_model_id="jina",
+        embedding_revision="r17",
+        category_thresholds={"work": 0.8, "junk": 0.9},
+        predict=lambda _vector: EmbeddingModelPrediction(
+            category="work",
+            category_probability=0.97,
+            category_probabilities={"work": 0.97, "junk": 0.03},
+            category_accepted=True,
+            important=True,
+            important_probability=0.96,
+            head_ms=1.0,
+        ),
+    )
+    monkeypatch.setattr(
+        DescriptionAwareEmailClassifier, "load", classmethod(lambda _cls, _path: model)
+    )
+    monkeypatch.setattr(
+        EmailModelRegistry,
+        "get_staged_evidence",
+        lambda _self, model_id: {
+            "model_id": model_id,
+            "historical_eligibility": {
+                "categories": {
+                    "work": {"eligible": True},
+                    "junk": {"eligible": False},
+                }
+            },
+        },
+    )
+    settings = SimpleNamespace(
+        db_path=tmp_path / "historical-embedding-warmup.sqlite3", workspace=tmp_path, dry_run=False
+    )
+    bootstrap = module.build_email_worker_dependencies(
+        settings, direct_action_executor_factory=lambda _account_id: Executor()
+    )
+    store = bootstrap.email_store
+    monkeypatch.setattr(
+        store,
+        "list_category_configs",
+        lambda: [
+            {
+                "category_key": "work",
+                "enabled": True,
+                "core_description": "Business work.",
+                "include": ["delivery"],
+                "exclude": ["promotion"],
+                "config_version": "config-v1",
+            },
+            {
+                "category_key": "junk",
+                "enabled": True,
+                "core_description": "Unwanted mail.",
+                "include": ["promotion"],
+                "exclude": ["delivery"],
+                "config_version": "config-v1",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        store,
+        "list_account_folder_bindings",
+        lambda: [
+            {
+                "account_id": "account-1",
+                "category_key": "work",
+                "provider_folder_id": "work-id",
+                "provider_folder_name": "Work",
+                "binding_status": "active",
+            }
+        ],
+    )
+    # Deliberately no cache.put() call: this message's embedding has never
+    # been computed by anything, matching a genuinely new historical candidate.
+    dependencies = bootstrap.build_dependencies((account,), object())
+
+    outcomes = dependencies.run_historical_once(
+        "email-embedding-mlp-ready", account_id="account-1"
+    )
+
+    assert len(embed_calls) == 1
+    assert [item.stable_message_identity for item in outcomes] == [
+        "account-1:message-id:<never-embedded@example.com>"
+    ]
+    assert len(action_calls) >= 1
+
+
 def test_historical_deferred_queue_is_fair_durable_and_not_a_busy_loop(tmp_path):
     database = tmp_path / "historical-fair-queue.sqlite3"
     store = EmailStore(database)
