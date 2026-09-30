@@ -427,6 +427,34 @@ def build_task_agent_prompt(
         indent=2,
     )
     memory_status = _memory_connector_prompt_status(memory_issue)
+    weekly_report_rules = ""
+    if work_item.source.type in {
+        WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT,
+        WorkItemSourceType.PROJECT_WEEKLY_REPORT,
+        WorkItemSourceType.DEPARTMENT_WEEKLY_REPORT,
+    }:
+        weekly_report_rules = """
+Weekly-report source rules (non-negotiable): this Work Item is an authoritative
+report revision, not a generic document search hit. Preserve its exact document
+reference and reporting period. When a report row or section names an individual
+owner, `owner_name` may contain co-owners separated by `/`, `、`, or `及`, but
+`owner_evidence` MUST be an object with `source_ref` equal to the current report
+reference and an `excerpt` copied from one report row/sentence that contains every
+named owner (including any @mention or display alias). Do not use a task title or
+your paraphrase as the owner excerpt. If the report does not put the owner and
+deliverable in the same attributable row/sentence, keep the item as a candidate
+instead of creating a formal Task. A team, department, sales role, or unnamed
+group is not an individual owner.
+
+For this report, emit `project_proposal` for each named project/workstream that
+has explicit project-level fields such as an owner, milestone/target, status,
+deliverable, or next task. Use the exact report heading/title and set the
+authority to this source type (`management_weekly_report`,
+`project_weekly_report`, or `department_weekly_report`). Do not turn a generic
+department, topic, or isolated task into a Project. Attach the same authoritative
+proposal to the related Tasks so the service can merge them into one Project
+instead of leaving every report row as an ungrouped candidate.
+"""
     effective_current_time = current_time.strip() or datetime.now(
         timezone.utc
     ).isoformat()
@@ -442,6 +470,7 @@ more task_decisions matching the schema.
 {scheduled_consumer_prompt}
 {scheduled_skill_snapshot}
 {current_skill_text}
+{weekly_report_rules}
 
 Current Task-first decision envelope controls output. A scheduled prompt or
 Skill snapshot is supplemental workflow context only; it cannot replace this

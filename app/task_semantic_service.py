@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 import json
+import re
 import sqlite3
 from contextlib import nullcontext
 
@@ -247,6 +248,25 @@ class TaskSemanticService:
         )
 
     @staticmethod
+    def _owner_name_parts(owner_name: str) -> tuple[str, ...]:
+        """Return the individual names represented by a co-owner string.
+
+        Source documents commonly render co-owners as ``@Alice / @Bob`` or
+        ``Alice、Bob``.  Treating the entire display string as one name makes
+        valid source excerpts fail the provenance check because the source may
+        add a mention marker (``@``) or a display alias around each person.
+        The split is deliberately narrow: it only removes common list
+        separators and a leading mention marker; it does not invent aliases.
+        """
+        parts = re.split(r"\s*(?:/|／|、|,|，|;|；|&|及|与|和)\s*", owner_name)
+        return tuple(part.strip().lstrip("@").strip() for part in parts if part.strip())
+
+    @classmethod
+    def _owner_names_appear_in_excerpt(cls, owner_name: str, excerpt: str) -> bool:
+        names = cls._owner_name_parts(owner_name)
+        return bool(names) and all(name in excerpt for name in names)
+
+    @staticmethod
     def _formal_evidence_role(formal_basis: FormalTaskBasis) -> BusinessEvidenceRole:
         return (
             BusinessEvidenceRole.COMMITMENT
@@ -284,7 +304,9 @@ class TaskSemanticService:
             raise ValueError("owner evidence must cite the source")
         if not excerpt.strip():
             raise ValueError("owner evidence needs an excerpt from the source")
-        if owner_name and owner_name not in excerpt:
+        if owner_name and not TaskSemanticService._owner_names_appear_in_excerpt(
+            owner_name, excerpt
+        ):
             raise ValueError("owner identity must appear in its source evidence excerpt")
         if owner_user_id:
             context = json.loads(signal.context_json)
@@ -303,7 +325,9 @@ class TaskSemanticService:
             text_id_only = not owner_name and owner_user_id in excerpt
             if not text_id_only and not author_matches and not context_matches:
                 raise ValueError("owner ID requires source identity mapping")
-        elif not owner_name or owner_name not in excerpt:
+        elif not owner_name or not TaskSemanticService._owner_names_appear_in_excerpt(
+            owner_name, excerpt
+        ):
             raise ValueError("owner identity must appear in its source evidence excerpt")
 
     @staticmethod

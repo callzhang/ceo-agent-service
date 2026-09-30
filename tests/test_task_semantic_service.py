@@ -136,6 +136,33 @@ def test_formal_task_requires_source_backed_identified_owner(service):
     assert semantic_state(service)[0:2] == ((), ())
 
 
+def test_formal_task_accepts_dingtalk_mention_markers_for_coowners(service):
+    source = SourceSignal(
+        source_type="dingtalk_doc",
+        source_ref="dingtalk-doc:weekly-report",
+        evidence_text=(
+            "金融首版 / Subway Phase 1｜负责人：@ET(张毅倜(ET)) / "
+            "@张晓民(Xiaomin张晓民)｜交付物：冻结版 spec。"
+        ),
+        dedupe_key="dingtalk-doc:weekly-report",
+    )
+    result = service.record_formal_task(
+        RecordFormalTask(
+            title="冻结金融首版与 Subway Phase 1 产品 spec",
+            signal=source,
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_name="张毅倜(ET) / 张晓民(Xiaomin张晓民)",
+            owner_evidence_json=json.dumps({
+                "source_ref": source.source_ref,
+                "excerpt": source.evidence_text,
+            }, ensure_ascii=False),
+        )
+    )
+    assert service.store.get_business_task(result.task_id).owner_name == (
+        "张毅倜(ET) / 张晓民(Xiaomin张晓民)"
+    )
+
+
 def test_candidate_command_joins_existing_task_domain_transaction(service, monkeypatch):
     command = RecordCandidate(
         title="补齐报价来源链接",

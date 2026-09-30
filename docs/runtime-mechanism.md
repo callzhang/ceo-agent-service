@@ -215,6 +215,11 @@ Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返�
 或立项的会议行动项可以创建带会议证据的正式 Project；普通项目提及只形成项目线索。
 来源冲突时先取
 最新明确周报字段，再取最新确认的会议决策，并保留精确来源引用。
+周报中的命名项目/工作流若有明确的负责人、目标/里程碑、状态、交付物或下一步，
+Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_proposal`；孤立任务、
+部门或话题不能直接注册 Project。多位个人负责人可以用名单表示，但其
+`owner_evidence.excerpt` 必须包含每个人名和当前报告的来源引用；校验忽略
+钉钉 `@` 标记和常见名单分隔符，不把多人整串当作一个名字。
 更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
 
 Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。完成由新证据驱动

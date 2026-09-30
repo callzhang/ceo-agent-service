@@ -646,6 +646,18 @@ def test_task_agent_prompt_prioritizes_weekly_report_then_meeting_evidence():
     assert "Read the complete meeting_summary, transcript_excerpts, and action item text" in prompt
 
 
+def test_task_agent_prompt_requires_report_owner_rows_and_project_proposals():
+    item = _work_item()
+    item.source.type = WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT
+    item.source.ref = "dingtalk-doc:weekly#sha256=abc"
+    prompt = build_task_agent_prompt(item, "候选上下文为空。")
+
+    assert "Weekly-report source rules (non-negotiable)" in prompt
+    assert "contains every\nnamed owner" in prompt
+    assert "emit `project_proposal` for each named project/workstream" in prompt
+    assert "authority to this source type" in prompt
+
+
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():
     payload = _work_item().model_dump(mode="json")
     payload["scheduled_consumer"] = {
