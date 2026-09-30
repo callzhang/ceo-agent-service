@@ -175,14 +175,20 @@ launchd service. The main service calls a strict owner-only Unix socket (mode
 text send, and best-effort recall operations. Build and install it with:
 
 ```sh
-CEO_WECHAT_READER_SIGNING_IDENTITY='CEO WeChat Reader Local Signing' \
+CEO_WECHAT_SENDER_SIGNING_IDENTITY='CEO WeChat Reader Local Signing' \
   ./scripts/build-wechat-sender-app.sh
 ./scripts/install-wechat-sender-app.sh
 ```
 
 The stable signing identity prevents ordinary rebuilds from producing a new TCC
-identity. After first install, add the dedicated app once in System Settings →
-Privacy & Security → Accessibility and restart its LaunchAgent. The AX runner
+identity. The Sender asks for Accessibility itself: at every start, and again
+whenever a send is blocked on `accessibility_not_trusted`, it raises the macOS
+prompt and, because macOS shows that prompt only once per app, also opens
+System Settings → Privacy & Security → Accessibility itself, at most once every
+30 minutes (Derek, 2026-09-30: nobody opens that page on their own). An already
+trusted Sender shows nothing. The
+installed app was ad-hoc signed until 2026-09-30; its first build with the
+stable identity needed one fresh grant. The AX runner
 does not inspect or foreground WeChat during background health/status polling
 or Tutorial connection checks. On each periodic sender pass, the service reads
 the local `ready_to_send` queue first; an empty queue makes no WeChat UI

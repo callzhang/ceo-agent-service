@@ -312,6 +312,20 @@ def _open_target(
     )
 
 
+def _open_accessibility_settings() -> None:
+    import subprocess
+    subprocess.run(
+        [
+            "/usr/bin/open",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=5,
+    )
+
+
 class WechatSender:
     def __init__(self, store, runner, *, user_initiated: bool = False):
         self.store = store
@@ -466,6 +480,7 @@ class MacWechatAccessibility:
     tested (needs a live GUI). Sends only after WechatSender's binding guard.
     """
     BUNDLE_ID = "com.tencent.xinWeChat"
+    SETTINGS_REMINDER_SECONDS = 30 * 60
 
     def __init__(self, *, settle: float = 1.4, restore_focus: bool = True,
                  idle_seconds: float | None = None, idle_max_wait: float = 120.0,
@@ -494,6 +509,7 @@ class MacWechatAccessibility:
                 min_interaction_interval = 1.0
         self.min_interaction_interval = max(0.0, min_interaction_interval)
         self._last_interaction_started_at: float | None = None
+        self._settings_opened_at: float | None = None
 
     def _wait_for_interaction_slot(self, *, sleep, monotonic) -> None:
         """Keep foreground navigation spaced even when several deliveries queue."""
@@ -647,7 +663,10 @@ class MacWechatAccessibility:
             break
         return "wechat_window_unavailable"
 
-    def request_accessibility(self) -> str:
+    def request_accessibility(self, *, monotonic=system_time.monotonic, open_settings=None) -> str:
+        """Ask for the grant. macOS shows its own prompt only once per app, so an
+        untrusted Sender also opens the Accessibility settings page, at most
+        once per ``SETTINGS_REMINDER_SECONDS``."""
         try:
             from ApplicationServices import (
                 AXIsProcessTrustedWithOptions,
@@ -655,8 +674,14 @@ class MacWechatAccessibility:
             )
         except Exception:
             return "pyobjc_unavailable"
-        trusted = AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True})
-        return "ready" if trusted else "accessibility_not_trusted"
+        if AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True}):
+            return "ready"
+        now = monotonic()
+        if (self._settings_opened_at is None
+                or now - self._settings_opened_at >= self.SETTINGS_REMINDER_SECONDS):
+            self._settings_opened_at = now
+            (open_settings or _open_accessibility_settings)()
+        return "accessibility_not_trusted"
 
     def send(
         self, target_label: str, reply_text: str, *, search_query: str | None = None,
@@ -672,6 +697,8 @@ class MacWechatAccessibility:
         """
         (time, AXIsProcessTrusted, mk_app, get_attr, set_attr, perform, Quartz) = self._ax()
         if not AXIsProcessTrusted():
+            # Nobody opens System Settings unprompted: raise the macOS prompt.
+            self.request_accessibility()
             return AccessibilityResult(
                 False,
                 False,

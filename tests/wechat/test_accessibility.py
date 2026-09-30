@@ -995,3 +995,50 @@ def test_request_accessibility_only_reports_existing_permission(monkeypatch):
     )
 
     assert runner.request_accessibility() == "ready"
+
+
+def test_untrusted_sender_opens_accessibility_settings_at_most_every_30_minutes(
+    monkeypatch,
+):
+    monkeypatch.setitem(
+        sys.modules,
+        "ApplicationServices",
+        SimpleNamespace(
+            AXIsProcessTrustedWithOptions=lambda _options: False,
+            kAXTrustedCheckOptionPrompt="prompt",
+        ),
+    )
+    runner = MacWechatAccessibility(idle_seconds=0, min_interaction_interval=0)
+    opened = []
+    now = [1000.0]
+
+    def ask():
+        return runner.request_accessibility(
+            monotonic=lambda: now[0], open_settings=lambda: opened.append(now[0]),
+        )
+
+    assert ask() == "accessibility_not_trusted"
+    now[0] += 60
+    assert ask() == "accessibility_not_trusted"
+    now[0] += 30 * 60
+    ask()
+
+    assert opened == [1000.0, 2860.0]
+
+
+def test_trusted_sender_never_opens_settings(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "ApplicationServices",
+        SimpleNamespace(
+            AXIsProcessTrustedWithOptions=lambda _options: True,
+            kAXTrustedCheckOptionPrompt="prompt",
+        ),
+    )
+    opened = []
+    runner = MacWechatAccessibility(idle_seconds=0, min_interaction_interval=0)
+
+    assert runner.request_accessibility(
+        open_settings=lambda: opened.append(True),
+    ) == "ready"
+    assert opened == []

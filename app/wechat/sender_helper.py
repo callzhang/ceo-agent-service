@@ -66,6 +66,9 @@ def main(argv: list[str] | None = None) -> int:
         idle_seconds=max(0.0, args.idle_seconds),
         min_interaction_interval=max(0.0, args.min_interaction_interval),
     )
+    # A rebuild or first install leaves the Sender without the grant; ask at
+    # start so the macOS prompt appears instead of sends silently failing.
+    LOGGER.info("wechat_sender_accessibility status=%s", runner.request_accessibility())
     server = WechatSenderUnixServer(
         args.socket, WechatSenderRpcService(runner),
     )
