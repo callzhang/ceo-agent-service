@@ -926,6 +926,7 @@ def _report_project_registry_snapshot(
             lines = section.splitlines()
             header_cells: list[str] = []
             row_cells: list[str] | None = None
+            row_excerpt = ""
             for index, line in enumerate(lines[:-1]):
                 if not line.strip().startswith("|") or not lines[index + 1].strip().startswith("|"):
                     continue
@@ -938,6 +939,7 @@ def _report_project_registry_snapshot(
                     cells = [cell.strip() for cell in candidate.strip().strip("|").split("|")]
                     if cells and _normalized_project_cell(cells[0]) == target:
                         row_cells = cells
+                        row_excerpt = candidate
                         break
                 if row_cells is not None:
                     break
@@ -968,7 +970,7 @@ def _report_project_registry_snapshot(
                 "source_title": str(report.get("title") or ""),
                 "reporting_period": period,
                 "source_url": str(report.get("url") or ""),
-                "source_excerpt": " | ".join(row_cells),
+                "source_excerpt": row_excerpt,
             }))
     if not matches:
         return {}

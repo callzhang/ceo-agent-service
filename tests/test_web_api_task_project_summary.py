@@ -56,5 +56,6 @@ def test_project_summary_reads_latest_report_registry_fields(tmp_path):
     assert summary.source_title == "项目管理部周报｜2026-W40"
     assert summary.reporting_period == "2026-W40"
     assert summary.source_url == "https://example.test/report"
+    assert summary.source_excerpt == row
     assert summary.open_task_count == 1
     assert summary.done_task_count == 0
