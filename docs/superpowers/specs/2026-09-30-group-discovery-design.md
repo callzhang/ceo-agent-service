@@ -1,268 +1,159 @@
-# Reusable DingTalk Group Discovery Design
+# Cross-Platform Group Discovery Design
 
-**Status:** design approved for review; runtime implementation has not started.
+**Status:** design revised for review; runtime implementation has not started.
 
-**Scope:** provide a reusable capability for finding DingTalk groups with
-verifiable evidence. The capability does not choose the final outbound target,
-compose a message, or send it.
+**Scope:** provide a reusable capability for finding collaboration-platform groups with inspectable evidence. It does not choose the final outbound target, compose a message, or send it.
 
 ## Context
 
-Meeting summaries currently combine DingTalk search, group-member checks,
-title matching, recent-message reads, evidence ranking, and business fallback
-logic in the meeting-alignment path. The low-level DWS reads are reusable, but
-the discovery flow is not. The immediate incident exposed two requirements:
+Meeting summaries currently combine provider search, group-member checks, title matching, recent-message reads, evidence ranking, and business fallback logic in the meeting-alignment path. The staged flow is reusable, but its low-level implementation is DingTalk-specific. The incident exposed two requirements:
 
 1. Search order must not hide a valid group behind unrelated results.
-2. Recent-message reads are the expensive semantic step and should run only
-   after cheaper hard filters reduce the candidate set.
+2. Recent-message reads are the expensive semantic step and should run only after cheaper hard filters reduce the candidate set.
 
-The reusable boundary is therefore group discovery, not general target
-selection. A meeting, sales notice, or another caller remains responsible for
-deciding whether to send, where to fall back, and what content is allowed.
+The reusable boundary is **group discovery**, not general target selection. A meeting, sales notice, or another caller remains responsible for deciding whether to send, where to fall back, and what content is allowed.
+
+The current service has a live DingTalk read surface through DWS. Lark and Slack adapters are reserved by this design but are not live integrations in this repository yet. An interface or fixture for a provider is not evidence of production support.
 
 ## Goals
 
-- Return candidate groups with explicit, inspectable evidence.
-- Reuse one staged discovery flow across meeting, sales, and future group-based
-  notifications.
-- Apply hard filters before recent-message reads when the source has a complete
-  participant or audience roster.
-- Preserve semantic verification for the remaining candidates; member overlap
-  and group-name similarity alone do not prove business ownership.
-- Distinguish no verified group from a retryable DingTalk/provider failure.
-- Keep caller-specific fallback and authorization rules outside the discovery
-  service.
+- Return candidate groups with explicit, bounded, inspectable evidence.
+- Reuse one staged discovery flow across meeting, sales, and future group-based notifications.
+- Keep core models and policy independent of DingTalk, Lark, and Slack field names.
+- Apply hard filters before recent-message reads when the source has a complete participant or audience roster.
+- Preserve semantic verification; member overlap and group-name similarity alone do not prove business ownership.
+- Distinguish no verified group from a retryable provider failure.
+- Keep caller-specific fallback, authorization, platform preference, and final target selection outside discovery.
 - Make provider reads request-scoped and deduplicated.
 
 ## Non-goals
 
 - Selecting a person or deciding between group and direct delivery.
-- Sending, withdrawing, or retrying a DingTalk message.
+- Sending, withdrawing, or retrying a message.
 - Generating message content or invoking an Agent.
-- Building a universal discovery framework for documents, projects, people, and
-  groups in one abstraction.
-- Adding a cross-task long-lived cache before request-scoped deduplication is
-  measured.
+- Comparing groups by raw IDs or names across providers.
+- Building one universal abstraction for documents, projects, people, and groups.
+- Adding a long-lived cross-request cache before read volume and freshness requirements are measured.
+
+## Platform and identity rules
+
+The first version accepts one provider scope per discovery request. A scope is the combination of platform and the provider account, workspace, tenant, or organization used for the read. The provider adapter owns authentication and translates external responses into neutral models.
+
+Neutral models:
+
+- PlatformKind = dingtalk | lark | slack
+- ProviderScope = platform + opaque workspace_key
+- GroupRef = provider scope + opaque external_group_id + display name + optional group type/external flag
+- MemberRef = provider scope + opaque external_user_id
+- GroupMessage = provider scope + opaque message ID + group + optional author + timestamp + bounded text excerpt + optional thread key
+
+All external IDs are opaque and valid only inside their provider scope. The domain must not expose open_conversation_id, open_dingtalk_id, Lark chat_id, Slack channel IDs, provider-specific receipt fields, or provider command names. Candidate deduplication is by (platform, workspace_key, external_group_id), never by a display name.
 
 ## Architecture
 
-```text
-Business caller
-  └─ GroupDiscoveryRequest + GroupDiscoveryPolicy
-       └─ GroupDiscoveryService
-            ├─ query generation
-            ├─ group search and deduplication
-            ├─ hard filters
-            │    ├─ participant/audience coverage
-            │    ├─ title/topic match
-            │    └─ sendability
-            ├─ recent-message evidence for survivors
-            └─ ranked GroupDiscoveryResult
-```
+Business caller -> GroupDiscoveryRequest + GroupDiscoveryPolicy -> GroupDiscoveryService -> provider search, scoped deduplication, hard filters, recent-message evidence, and ranked GroupDiscoveryResult -> caller-specific target decision and delivery.
 
 ### Provider boundary
 
-The service depends on a small provider protocol rather than the concrete DWS
-client:
+The provider protocol exposes:
 
-```python
-class GroupDiscoveryProvider(Protocol):
-    def search_groups(self, query: str) -> tuple[GroupRef, ...]: ...
-    def list_group_members(self, conversation_id: str) -> frozenset[str]: ...
-    def read_recent_group_messages(
-        self, conversation_id: str, *, limit: int
-    ) -> tuple[GroupMessage, ...]: ...
-    def get_group_sendability(self, conversation_id: str) -> Sendability: ...
-```
+- search_groups(query) -> GroupRef[]
+- list_group_members(group) -> MemberRef[]
+- read_recent_group_messages(group, limit) -> GroupMessage[]
+- get_group_sendability(group) -> Sendability
+- capabilities -> member_lists, message_history, sendability, pagination, threads
 
-The first implementation adapts the existing DWS methods. The provider owns
-transport and response parsing; the discovery service owns ordering, filtering,
-deduplication, and evidence assembly.
+The provider owns transport, authentication, pagination, rate limits, and response parsing. The discovery service owns ordering, filtering, deduplication, evidence assembly, and bounded error classification. A capability a provider cannot supply is returned as unavailable; it is never silently converted to false or an empty response.
 
-### Policy boundary
+The first adapter wraps existing DingTalk DWS methods. Lark and Slack adapters can be added independently against the same neutral fixtures. Their presence in the protocol does not enable runtime use until authentication, reads, and external readback are verified.
 
-Business-specific rules are injected through a policy object:
+### Request and policy boundary
 
-```python
-class GroupDiscoveryPolicy(Protocol):
-    def build_queries(self, request: GroupDiscoveryRequest) -> tuple[str, ...]: ...
-    def participant_eligible(
-        self,
-        request: GroupDiscoveryRequest,
-        group_members: frozenset[str],
-    ) -> bool: ...
-    def title_score(self, request: GroupDiscoveryRequest, group_title: str) -> float: ...
-    def discussion_score(
-        self,
-        request: GroupDiscoveryRequest,
-        messages: tuple[GroupMessage, ...],
-    ) -> DiscussionEvidence: ...
-    def minimum_evidence(self, request: GroupDiscoveryRequest) -> EvidenceRequirement: ...
-```
+GroupDiscoveryRequest contains provider scope, subject, body, audience member references, an audience-complete flag, and source context. GroupDiscoveryPolicy supplies query generation, participant eligibility, title scoring, discussion scoring, and minimum evidence.
 
-The policy defines thresholds and evidence semantics. The service does not
-know what “sales”, “recruiting”, or “meeting” means.
+Policies are business-specific but provider-agnostic. Meeting and sales/recruiting policies can use different audience thresholds, title terms, discussion evidence, and minimum scores without changing the service.
 
 ## Discovery flow
 
 ### Complete audience roster
 
-When the caller supplies a complete, stable roster:
+search within one provider scope -> paginate and deduplicate -> read member lists and apply audience coverage -> score title against subject/body -> check sendability -> read recent messages for survivors -> rank by policy evidence.
 
-```text
-search groups
-→ deduplicate by conversation_id
-→ read member lists and apply audience coverage
-→ score group title against subject/body
-→ check sendability
-→ read recent messages for survivors
-→ rank candidates by policy evidence
-```
-
-The participant filter comes first because it is the strongest cheap audience
-constraint. A group-name match is only a discovery signal. Recent messages are
-still required for the surviving unique candidate because audience overlap does
-not prove that the group currently owns the business topic.
+The participant filter comes first because it is the strongest cheap audience constraint. A group-name match is only a discovery signal. Recent messages are still required for a surviving unique candidate because audience overlap does not prove that the group currently owns the business topic.
 
 ### Incomplete audience roster
 
-When the roster is missing or cannot be verified:
+search within one provider scope -> paginate and deduplicate -> score title -> check sendability -> read recent messages for survivors -> return participant coverage as unavailable.
 
-```text
-search groups
-→ deduplicate by conversation_id
-→ score group title against subject/body
-→ check sendability
-→ read recent messages for survivors
-→ return participant_coverage=unavailable
-```
-
-The service must not invent coverage from member counts or display names. The
-caller may require human confirmation or decline to send when the evidence is
-insufficient.
+The service must not invent coverage from member counts or display names. The caller may require confirmation or decline to send when evidence is insufficient.
 
 ### Candidate outcomes
 
-```python
-class GroupDiscoveryOutcome(str, Enum):
-    VERIFIED = "verified"
-    AMBIGUOUS = "ambiguous"
-    NO_VERIFIED_GROUP = "no_verified_group"
-    RETRYABLE_FAILURE = "retryable_failure"
-```
+- VERIFIED: one candidate clearly meets the policy evidence requirement.
+- AMBIGUOUS: multiple candidates remain materially plausible.
+- NO_VERIFIED_GROUP: reads completed, but no candidate met the requirement.
+- RETRYABLE_FAILURE: a provider read failed in a retryable way, or a partial result cannot support a conclusion.
 
-- `VERIFIED`: one candidate clearly meets the policy evidence requirement.
-- `AMBIGUOUS`: multiple candidates remain materially plausible.
-- `NO_VERIFIED_GROUP`: reads completed, but no candidate met the requirement.
-- `RETRYABLE_FAILURE`: search, member, message, or sendability reads failed in
-  a retryable way.
-
-`NO_VERIFIED_GROUP` never means “send to the organizer”. That decision remains
-with the business caller.
+NO_VERIFIED_GROUP never means “send to the organizer”. That decision remains with the business caller.
 
 ## Evidence model
 
-Each candidate contains:
+Each candidate contains title-match evidence, participant-coverage evidence, discussion evidence, recurring-delivery evidence, and sendability evidence. Evidence preserves positive and negative facts that affect the decision: coverage such as 3/4, matched subject terms, bounded recent excerpts with timestamps, prior successful delivery, and reasons a candidate was filtered. Raw message bodies remain internal; callers receive bounded excerpts.
 
-```python
-class GroupEvidence:
-    title_match: TitleMatchEvidence | None
-    participant_coverage: ParticipantCoverageEvidence | None
-    discussion: DiscussionEvidence | None
-    recurring_delivery: RecurringDeliveryEvidence | None
-    sendability: SendabilityEvidence | None
-```
+## Single-platform first, multi-platform later
 
-Evidence must preserve both positive and negative facts where they affect the
-decision. Examples include `3/4` participant coverage, the matched subject
-terms, recent message excerpts with timestamps, prior successful delivery, and
-the reason a candidate was filtered.
+Discovery should not fan out to all platforms automatically in its first implementation. Provider search cost, identity semantics, permissions, and message history differ. A caller chooses one provider scope and receives explicit provenance.
 
-The service returns a `GroupCandidate` with its rank and evidence, plus a
-request-level summary containing search queries, counts, and provider reads.
-Raw message bodies remain internal; callers receive bounded evidence excerpts.
+When at least two providers have read and evidence parity, a separate MultiPlatformGroupDiscoveryCoordinator may fan out to selected adapters. It preserves provenance, applies a caller-supplied platform preference and tie-breaker, and returns ambiguity when equally supported candidates remain. It must not merge candidates solely because names match or silently prefer the adapter that returned first.
 
 ## Caller integration
 
 ### Meeting summaries
 
-The meeting path will convert `MeetingSource` into a
-`GroupDiscoveryRequest` and use a `MeetingGroupDiscoveryPolicy`. The existing
-Meeting Alignment Agent continues to decide:
-
-- `audience_scope`;
-- public versus sensitive content;
-- how to interpret multiple business candidates;
-- whether a caller-specific fallback is allowed.
-
-The Agent may only select a group from the returned candidates. It cannot invent
-a conversation ID. Existing target validation and delivery idempotency remain
-in the meeting path.
+The meeting path converts MeetingSource into a GroupDiscoveryRequest and uses a MeetingGroupDiscoveryPolicy. The existing Meeting Alignment Agent continues to decide audience scope, public versus sensitive content, interpretation of multiple candidates, and whether a caller-specific fallback is allowed. The Agent may only select a returned candidate and cannot invent an external group ID. Existing target validation and delivery idempotency remain in the meeting path.
 
 ### Sales notifications
 
-A future sales or recruiting notification will provide a sales policy with its
-own audience roster, title terms, message evidence rules, and minimum coverage.
-It may choose a sales group, request human confirmation for ambiguity, or use a
-separately defined direct fallback. None of those choices are embedded in the
-discovery service.
+A future sales or recruiting notification supplies its own policy with audience roster, title terms, message evidence rules, and minimum coverage. It may choose a sales group, request confirmation for ambiguity, or use a separately defined direct fallback. None of those choices are embedded in discovery.
 
 ## Error handling and operational boundaries
 
-- Provider search/member/message failures retain their provider error and return
-  `RETRYABLE_FAILURE` when retryable.
+- Provider search/member/message failures retain provider error metadata and return RETRYABLE_FAILURE when retryable.
 - A partial provider response is not treated as an empty search.
-- A missing stable participant identity lowers evidence; it does not become a
-  guessed identity.
-- The service does not downgrade a provider failure into
-  `NO_VERIFIED_GROUP`.
-- Request-scoped memoization prevents duplicate search, member, message, and
-  sendability reads for the same identifiers.
-- Long-lived caching is deferred until read volume and freshness requirements
-  are measured.
+- A missing stable participant identity lowers evidence; it does not become a guessed identity.
+- The service does not downgrade a provider failure into NO_VERIFIED_GROUP.
+- Request-scoped memoization prevents duplicate reads for the same scoped identifiers.
+- Delivery remains outside discovery and uses the selected candidate's provider-scoped reference through the caller's delivery path.
 
 ## Migration plan
 
-### Phase 1: extract the meeting behavior
+### Phase 1: neutral extraction with DingTalk
 
-- Add the shared request, result, evidence, provider, and policy models.
-- Adapt DWS to the provider protocol.
-- Implement the staged service while preserving current meeting thresholds.
-- Convert meeting alignment to the service and retain existing target and
-  delivery validation.
+Add neutral request, result, evidence, provider, capability, and policy models; adapt DWS without leaking DWS field names; implement the staged service while preserving current meeting thresholds; convert meeting alignment while retaining target and delivery validation.
 
-### Phase 2: establish reusable verification
+### Phase 2: reusable verification
 
-Add focused tests for:
+Add focused tests for pagination and deduplication, audience coverage, title-filter order, one-candidate versus multi-candidate message reads, incomplete-roster behavior, capability gaps, retryable failures, bounded evidence, scoped read deduplication, and no implicit direct fallback.
 
-- search deduplication;
-- audience coverage filtering;
-- title filtering after audience filtering;
-- one-candidate versus multi-candidate message reads;
-- incomplete-roster behavior;
-- no verified group versus retryable provider failure;
-- bounded evidence and request-scoped read deduplication;
-- no implicit direct fallback.
+### Phase 3: Lark adapter
 
-### Phase 3: add one second caller
+Add a read-only Lark adapter, provider contract tests, authentication and workspace-scope configuration, and external readback. Do not advertise Lark support until those gates pass.
 
-Integrate one real sales notification flow only after the meeting migration is
-stable. Compare provider read counts, ambiguous outcomes, false group choices,
-and delivery outcomes against the existing meeting path before broadening the
-abstraction.
+### Phase 4: Slack adapter
+
+Add a read-only Slack adapter with the same contract and evidence gates. Keep Slack channel and thread IDs inside the adapter boundary.
+
+### Phase 5: second caller and optional coordinator
+
+Integrate one real sales notification flow after meeting migration is stable. Compare read counts, ambiguous outcomes, false group choices, and delivery outcomes. Add multi-platform coordination only after two production adapters have comparable evidence behavior.
 
 ## Acceptance criteria
 
-The design is ready for implementation when:
-
-1. Meeting discovery produces the same or better target evidence for existing
-   cases, including the KA sales roundtable case.
-2. A valid group after the first raw search page remains discoverable.
-3. A unique roster- and title-qualified candidate causes one recent-message
-   read, not a read of every raw search result.
+1. Core models contain no provider-specific ID fields.
+2. A valid group after the first raw search page remains discoverable within a provider scope.
+3. A unique roster- and title-qualified candidate causes one recent-message read, not a read of every raw search result.
 4. Multiple candidates receive comparable discussion evidence before ranking.
-5. Provider failures remain retryable and never silently trigger direct sending.
+5. Provider capability gaps and failures remain explicit and never silently trigger direct sending.
 6. The meeting caller retains control over final target and fallback policy.
-7. A second caller can supply a different policy without changing the service.
-
+7. A sales caller can supply a different policy without changing the service.
+8. Lark and Slack are added through provider adapters and contract tests, with no provider identity leaking into the neutral service.
