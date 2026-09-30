@@ -39,3 +39,16 @@ def test_prompt_exposes_processing_time_and_requires_freshness_check():
     assert "2026-07-18T09:00:00+08:00" in prompt
     assert "比较当前处理时间与消息时间" in prompt
     assert "已经失去沟通目的" in prompt
+
+
+def test_manual_rerun_overrides_freshness_only_no_reply_rule():
+    trigger = _msg("t", "他为啥这么贵")
+    prompt = build_wechat_turn_prompt(
+        trigger,
+        [_msg("later", "后续上下文")],
+        current_time="2026-09-26T14:39:23-07:00",
+        manual_rerun=True,
+    )
+
+    assert "Derek 明确要求的手动重跑" in prompt
+    assert "不要仅因为消息有延迟或后续已有上下文就返回 no_reply" in prompt

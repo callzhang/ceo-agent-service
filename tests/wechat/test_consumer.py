@@ -113,6 +113,29 @@ def test_consumer_applies_scheduled_prompt_and_targeted_skill_protocol(
     assert "TARGETED WECHAT SKILL" in fake_codex.prompts[0]
 
 
+def test_consumer_marks_manual_rerun_in_prompt(store, fake_codex, account):
+    store.enqueue_reply_task(
+        conversation_id="u9",
+        conversation_title="Alex",
+        single_chat=True,
+        trigger_message_id="manual-1",
+        trigger_create_time="2026-07-17T10:00:00",
+        trigger_sender="Alex",
+        trigger_text="他为啥这么贵",
+        trigger_message_json="{}",
+        force_new_decision=True,
+        manual_rerun_attempt_id=123,
+        channel="wechat",
+    )
+    fake_codex.decision = CodexDecision(
+        action=CodexAction.NO_REPLY, audit_summary="测试"
+    )
+
+    consumer = WechatReplyConsumer(store, fake_codex, reader=None, account=account)
+    assert consumer.run_once(limit=1) == 1
+    assert "Derek 明确要求的手动重跑" in fake_codex.prompts[0]
+
+
 def test_no_reply_completes_without_delivery(fake_codex, consumer, store):
     fake_codex.decision = CodexDecision(action=CodexAction.NO_REPLY, audit_summary="无需回复")
     assert consumer.run_once(limit=1) == 1

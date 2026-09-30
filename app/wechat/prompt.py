@@ -22,9 +22,17 @@ def build_wechat_turn_prompt(
     context: list[WechatMessage],
     *,
     current_time: str = "",
+    manual_rerun: bool = False,
 ) -> str:
+    instructions = WECHAT_TURN_INSTRUCTIONS
+    if manual_rerun:
+        instructions += (
+            "\n- 这是 Derek 明确要求的手动重跑；请重新回答原触发消息。"
+            "不要仅因为消息有延迟或后续已有上下文就返回 no_reply；"
+            "把后续消息作为补充上下文，仍针对原问题给出当前可用的回复。"
+        )
     lines = [
-        WECHAT_TURN_INSTRUCTIONS,
+        instructions,
         "",
         f"当前处理时间: {current_time}",
         "",

@@ -166,6 +166,7 @@ class WechatReplyConsumer:
             trigger,
             context,
             current_time=self.now_provider().isoformat(),
+            manual_rerun=bool(task.manual_rerun_attempt_id),
         )
         from app.agent_cron.commands import ServiceCommandConsumerContext
 
