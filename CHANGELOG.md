@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-30
+
+- Fixed meeting group discovery's DingTalk conversation shim so provider message
+  reads receive the complete conversation contract, including the optional last
+  message timestamp. This prevents a runtime attribute error from cascading
+  into SQLite error handling and worker restarts.
+
 ## Unreleased
 
 - 2026-09-24: The weekly CEO report now produces output. Runs 384443/384444

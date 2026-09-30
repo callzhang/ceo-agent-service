@@ -121,6 +121,7 @@ def test_dingtalk_adapter_scopes_ids_and_messages():
             return {"open-u1"}
         def read_recent_messages(self, conversation, limit):
             assert conversation.open_conversation_id == "cid"
+            assert conversation.last_message_create_at is None
             return [type("Message", (), {"content": "销售招聘进展"})()]
     adapter = DingTalkGroupDiscoveryProvider(Dws(), workspace_key="workspace-a")
     group = adapter.search_groups("销售招聘")[0]

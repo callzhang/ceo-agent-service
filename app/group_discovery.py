@@ -340,3 +340,6 @@ class DingTalkConversationShim:
     title: str
     single_chat: bool = False
     unread_point: int = 0
+    # DWS message-list reads use the same conversation contract as the worker.
+    # Meeting discovery has no cursor, so an unset timestamp means "recent".
+    last_message_create_at: int | None = None
