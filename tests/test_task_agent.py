@@ -15,6 +15,7 @@ from app.task_agent import (
     process_work_item,
     _parse_task_agent_decision,
     _canonicalize_current_source_provenance,
+    _report_project_registry_title,
     _task_result_validation_repair_prompt,
 )
 from app.leak_check import contains_credential, contains_local_runtime_leak
@@ -1352,6 +1353,44 @@ def test_weekly_report_task_section_project_proposal_is_not_promoted(tmp_path):
 
     assert len(result.task_ids) == 1
     assert store.list_business_projects() == []
+
+
+def test_project_weekly_report_registry_row_becomes_project_candidate(tmp_path):
+    store = AutoReplyStore(tmp_path / "report-project-candidate.sqlite3")
+    row = "| 大众底盘采集 | 100 张内部试标 | 下周起量 | 下周 | ⌛️进行中 |"
+    item = _work_item().model_copy(update={
+        "source": _work_item().source.model_copy(update={
+            "type": WorkItemSourceType.PROJECT_WEEKLY_REPORT,
+            "ref": "report:project-weekly",
+        }),
+        "summary": json.dumps({
+            "report": {"markdown": f"## **手头项目**\n\n| 项目名 | 负责内容 |\n|---|---|\n{row}\n"},
+        }, ensure_ascii=False),
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none",
+        "source_excerpt": row, "source_ref": item.source.ref,
+        "title": "完成大众底盘采集内部试标、规则固化、数据打包与算法预标注",
+        "missing_evidence": ["owner"],
+    }]})
+
+    assert _report_project_registry_title(item, decision.task_decisions[0]) == "大众底盘采集"
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+                                       decision=decision, record_run=False)
+
+    assert len(result.task_ids) == 1
+    with store._connect() as db:
+        candidate = db.execute(
+            "select title,reason from business_project_candidates"
+        ).fetchone()
+        cluster = db.execute(
+            "select title from business_work_clusters"
+        ).fetchone()
+    assert tuple(candidate) == (
+        "大众底盘采集",
+        "项目管理周报的“手头项目”清单行，先与 Task 聚类，待确认后注册正式 Project。",
+    )
+    assert cluster["title"] == "大众底盘采集"
 
 
 def test_source_dedupe_distinguishes_owner_but_replays_identical_decision(tmp_path):

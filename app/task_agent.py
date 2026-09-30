@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -869,6 +870,42 @@ def _is_report_task_section_project_proposal(
     return any(marker in reason for marker in _REPORT_TASK_SECTION_MARKERS)
 
 
+def _report_project_registry_title(work_item: WorkItem, item: TaskDecision) -> str:
+    """Return a project name only when the cited row is in a report project registry."""
+    if work_item.source.type is not WorkItemSourceType.PROJECT_WEEKLY_REPORT:
+        return ""
+    try:
+        payload = json.loads(work_item.summary)
+        markdown = payload.get("report", {}).get("markdown", "")
+    except (TypeError, ValueError, AttributeError):
+        return ""
+    if not isinstance(markdown, str) or not item.source_excerpt.strip():
+        return ""
+    row_start = markdown.find(item.source_excerpt)
+    if row_start < 0:
+        return ""
+    registry_match = re.search(
+        r"(?m)^##\s+\**(?:手头项目|项目清单|项目组合)\**\s*$",
+        markdown,
+    )
+    if registry_match is None or row_start < registry_match.end():
+        return ""
+    next_section = re.search(r"(?m)^##\s+", markdown[registry_match.end():])
+    registry_end = (
+        registry_match.end() + next_section.start()
+        if next_section is not None
+        else len(markdown)
+    )
+    if row_start >= registry_end:
+        return ""
+    first_row = next((line for line in item.source_excerpt.splitlines()
+                      if line.strip().startswith("|")), "")
+    cells = [cell.strip() for cell in first_row.strip().strip("|").split("|")]
+    if not cells or not cells[0] or cells[0] in {"项目名", "项目", "Project"}:
+        return ""
+    return cells[0]
+
+
 def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal:
     import hashlib
 
@@ -1512,6 +1549,22 @@ def apply_task_agent_decision(
                         )
             else:
                 cluster_id = None
+            report_project_title = _report_project_registry_title(work_item, item)
+            if report_project_title and cluster_id is None:
+                existing_cluster = db.execute(
+                    """
+                    select c.id from business_work_clusters c
+                    join business_work_cluster_tasks ct on ct.cluster_id=c.id
+                    where c.title=? and ct.task_id=? limit 1
+                    """,
+                    (report_project_title, task_id),
+                ).fetchone()
+                if existing_cluster is not None:
+                    cluster_id = int(existing_cluster["id"])
+                else:
+                    cluster_id = resolution.create_cluster(
+                        title=report_project_title, task_ids=[task_id], _db=db
+                    )
             for anchor_match in item.anchor_match_proposals:
                 resolution.propose_anchor_match(
                     task_id=task_id, anchor_id=anchor_match.anchor_id,
@@ -1553,12 +1606,32 @@ def apply_task_agent_decision(
                     relevance=BusinessRelevance.RELEVANT,
                     _db=db,
                 )
-            if item.project_candidate_proposal is not None:
-                proposal = item.project_candidate_proposal
-                resolution.propose_project(
-                    cluster_id=proposal.cluster_id, title=proposal.title,
-                    reason=proposal.reason, _db=db,
+            project_candidate = item.project_candidate_proposal
+            if project_candidate is not None or report_project_title:
+                candidate_cluster_id = (
+                    project_candidate.cluster_id if project_candidate is not None else cluster_id
                 )
+                if candidate_cluster_id is not None:
+                    candidate_title = (
+                        project_candidate.title if project_candidate is not None
+                        else report_project_title
+                    )
+                    candidate_reason = (
+                        project_candidate.reason if project_candidate is not None
+                        else "项目管理周报的“手头项目”清单行，先与 Task 聚类，待确认后注册正式 Project。"
+                    )
+                    existing_candidate = db.execute(
+                        """
+                        select id from business_project_candidates
+                        where cluster_id=? and title=? and status='proposed' limit 1
+                        """,
+                        (candidate_cluster_id, candidate_title),
+                    ).fetchone()
+                    if existing_candidate is None:
+                        resolution.propose_project(
+                            cluster_id=candidate_cluster_id, title=candidate_title,
+                            reason=candidate_reason, _db=db,
+                        )
             if item.attention_proposal is not None:
                 attention.append((item, task_id, result.signal_id))
 
