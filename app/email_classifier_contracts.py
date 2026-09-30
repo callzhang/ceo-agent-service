@@ -130,6 +130,8 @@ class EmailCategory(StrEnum):
     SHOPPING = "shopping"
     SUBSCRIPTION = "subscription"
     JUNK = "junk"
+    FINANCE = "finance"
+    INVOICE = "invoice"
 
 
 class EmailAction(StrEnum):
