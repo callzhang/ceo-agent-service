@@ -173,6 +173,7 @@ def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
     assert "task_decisions" in prompt
     assert "apply_acceptance requires accepted polarity" in prompt
     assert "verified reply-to source reference" in prompt
+    assert "Any non-empty owner_name or owner_user_id requires owner_evidence" in prompt
     assert "memory_recall" in prompt
     assert "live directory read" in prompt
     assert (
