@@ -26,6 +26,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-group-discovery-design | docs/superpowers/specs/2026-09-30-group-discovery-design.md, docs/agent-claims.md | Write and review the approved design for a reusable evidence-based DingTalk group discovery service; no runtime implementation yet. | 2026-09-30 |
+
 | codex-quality-lint-repair | app/email_action_reconcile.py, app/email_classifier_training.py, app/email_store.py, app/email_training_snapshot.py, app/email_worker.py, app/minutes_access.py, app/task_scanners.py, app/web_api/attempts.py, app/worker.py, tests/e2e/test_consumer_audit_live.py, tests/test_agent_orchestrator.py, tests/test_agent_runtime_worker.py, tests/test_claude_runtime_adapter.py, tests/test_email_account_connector.py, tests/test_email_model_registry.py, tests/test_email_provider_actions.py, tests/test_email_unsubscribe.py, tests/test_minutes_access.py, tests/test_task_scanners.py, docs/agent-claims.md | Repair the Quality workflow's 22 ruff errors on main and verify the full CI lint/test command. | 2026-09-29 |
 
 | codex-progress-watchdog | app/agent_effects.py, app/process_runner.py, app/agent_runtime_router.py, launchd/com.ceo-agent-service.main.plist, tests/test_process_runner.py, tests/test_cli.py, tests/test_hourly_dry_run_launchd.py, docs/architecture.md, docs/runtime-mechanism.md, docs/superpowers/specs/2026-09-28-agent-progress-watchdog-design.md, docs/superpowers/plans/2026-09-28-agent-progress-watchdog.md, docs/agent-claims.md | Replace the normal task-agent total timeout with a high emergency ceiling and keep the five-minute structured-progress watchdog as the normal liveness boundary for long tasks. | 2026-09-28 |
