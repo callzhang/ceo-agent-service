@@ -27,7 +27,7 @@ MODEL_FAMILY_CATALOG: Final[tuple[dict[str, object], ...]] = (
         "display_name": "语义嵌入 + 字片模型",
         "supported": True,
         "configured": True,
-        "reason": "两种读法各判一次再取平均：语义嵌入读这封信在讲什么，字片模型读它是怎么写的",
+        "reason": "三种读法各判一次再加权：语义嵌入读这封信在讲什么，字片模型读它是怎么写的，再加一个把两者放一起看的融合读法，权重更偏向融合读法",
     },
 )
 MODEL_FAMILY_BY_KEY: Final[dict[str, dict[str, object]]] = {
