@@ -841,6 +841,10 @@ export function sendBusinessTaskFollowUp(taskId: string, followUpId: string, rev
 export function decideCandidateTask(taskId: string, action: "ignore" | "restore") {
   return command(`/api/console/tasks/items/${encodeURIComponent(taskId)}/candidate-decision`, { action });
 }
+/** Confirm a project lead as a new official Project. The command is idempotent. */
+export function confirmBusinessProjectCandidate(candidateId: string, projectId?: string) {
+  return command(`/api/console/tasks/project-candidates/${encodeURIComponent(candidateId)}/confirm`, projectId ? { project_id: Number(projectId) } : {});
+}
 export function getBusinessProjectDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessProjectDetail>> {
   return request<unknown>(`/api/console/tasks/projects/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessProjectDetail>(value, "project", (item) => isRecord(item.summary) && isProjectSummary(item.summary) && Array.isArray(item.confirmed_tasks)));
 }

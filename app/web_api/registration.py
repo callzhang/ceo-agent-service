@@ -481,6 +481,48 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "invalid_action", "message": str(exc), "details": {}}, status_code=400)
         return command_result(item={"status": status.value}, message="已忽略这个候选任务" if status.value == "cancelled" else "已恢复这个候选任务")
 
+    @app.post("/api/console/tasks/project-candidates/{candidate_id}/confirm")
+    async def console_business_project_candidate_confirm(candidate_id: int, request: Request):
+        from app.task_project_candidate_actions import (
+            ProjectCandidateActionNotApplicable,
+            confirm_project_candidate,
+        )
+        payload = await json_object(request)
+        raw_project_id = payload.get("project_id")
+        if raw_project_id in (None, ""):
+            project_id = None
+        else:
+            try:
+                project_id = int(raw_project_id)
+            except (TypeError, ValueError):
+                return JSONResponse(
+                    {"ok": False, "code": "invalid_project", "message": "正式项目 ID 无效", "details": {}},
+                    status_code=400,
+                )
+        try:
+            confirmed_project_id = confirm_project_candidate(
+                store_factory(), candidate_id, project_id=project_id
+            )
+        except LookupError:
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "这个项目线索不存在", "details": {}},
+                status_code=404,
+            )
+        except ProjectCandidateActionNotApplicable as exc:
+            return JSONResponse(
+                {"ok": False, "code": "not_applicable", "message": str(exc), "details": {}},
+                status_code=409,
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                {"ok": False, "code": "invalid_candidate", "message": str(exc), "details": {}},
+                status_code=409,
+            )
+        return command_result(
+            item={"candidate_id": candidate_id, "project_id": confirmed_project_id},
+            message="项目线索已确认，正式项目和关联任务已更新",
+        )
+
     @app.get("/api/console/tasks/projects/{project_id}", response_model=ConsoleBusinessProjectDetailEnvelope)
     def console_business_project_detail(project_id: int):
         store = store_factory()

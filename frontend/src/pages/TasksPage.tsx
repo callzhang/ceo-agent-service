@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { listBusinessAttention, listBusinessProjects, listBusinessTasks, type AttentionCategory, type BusinessAttentionSummary, type BusinessProjectCandidateSummary, type BusinessProjectSummary, type BusinessTaskSummary, type TaskView } from "../api/console";
+import { confirmBusinessProjectCandidate, listBusinessAttention, listBusinessProjects, listBusinessTasks, type AttentionCategory, type BusinessAttentionSummary, type BusinessProjectCandidateSummary, type BusinessProjectSummary, type BusinessTaskSummary, type TaskView } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { CandidateAction, TaskSkeleton } from "./TaskParts";
@@ -50,8 +50,21 @@ function ProjectRow({ item }: { item: BusinessProjectSummary }) {
   return <li className="business-project-row"><div className="business-task-row-main"><Link to={item.detail_url}>{item.title}</Link><span className="business-stage formal">正式项目</span></div><span className="business-task-time">{item.confirmed_task_count} 个确认关联任务</span><p className="business-task-meta"><span>登记来源：{item.registry_source}</span></p></li>;
 }
 
-function ProjectCandidateRow({ item }: { item: BusinessProjectCandidateSummary }) {
-  return <li className="business-project-row is-provisional"><div className="business-task-row-main"><strong>{item.title}</strong><span className="business-stage">候选项目 · 尚未确认</span></div><p className="business-task-meta"><span>{item.reason}</span></p></li>;
+function ProjectCandidateRow({ item, onChanged }: { item: BusinessProjectCandidateSummary; onChanged: () => void }) {
+  const [state, setState] = useState<"idle" | "saving" | "error">("idle");
+  const [error, setError] = useState("");
+  const confirm = async () => {
+    setState("saving");
+    setError("");
+    try {
+      await confirmBusinessProjectCandidate(String(item.id));
+      onChanged();
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "确认失败");
+      setState("error");
+    }
+  };
+  return <li className="business-project-row is-provisional"><div className="business-task-row-main"><strong>{item.title}</strong><span className="business-stage">候选项目 · 尚未确认</span></div><div className="business-task-time"><button type="button" className="secondary-button" disabled={state === "saving"} onClick={() => void confirm()}>{state === "saving" ? "确认中…" : "确认正式项目"}</button></div><p className="business-task-meta"><span>{item.reason}</span>{error && <span role="alert">{error}</span>}</p></li>;
 }
 
 function Pagination({ label, page, pages, previous, next, previousLabel = "上一页", nextLabel = "下一页" }: { label: string; page: number; pages: number; previous: () => void; next: () => void; previousLabel?: string; nextLabel?: string }) {
@@ -150,7 +163,7 @@ export function TasksPage() {
     {data.items.length ? <ul className="business-task-list">{(data.items as BusinessProjectSummary[]).map((item) => <ProjectRow key={item.id} item={item} />)}</ul> : empty(filtered ? "没有符合条件的项目。" : "暂无正式项目。")}
     {candidateMeta.total > 0 && <details className="business-project-candidates" open={data.items.length === 0}>
       <summary><h2>待确认的项目线索 <span>{candidateMeta.total}</span></h2></summary>
-      <ul className="business-task-list">{data.candidates.map((item) => <ProjectCandidateRow key={item.id} item={item} />)}</ul>
+      <ul className="business-task-list">{data.candidates.map((item) => <ProjectCandidateRow key={item.id} item={item} onChanged={() => setReloadKey((key) => key + 1)} />)}</ul>
       <Pagination label="项目线索分页" page={candidatePage} pages={candidatePages} previous={() => update("candidate_page", candidatePage - 1)} next={() => update("candidate_page", candidatePage + 1)} previousLabel="项目线索上一页" nextLabel="项目线索下一页" />
     </details>}
   </>;

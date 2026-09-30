@@ -345,6 +345,33 @@ class BusinessResolutionService:
                         _db=db,
                     )
                 )
+            project_row = db.execute(
+                "select canonical_anchor_id from business_projects where id=?",
+                (resolved_project_id,),
+            ).fetchone()
+            assert project_row is not None
+            cluster_row = db.execute(
+                "select cluster_id from business_project_candidates where id=?",
+                (candidate_id,),
+            ).fetchone()
+            assert cluster_row is not None
+            task_rows = db.execute(
+                """
+                select task_id
+                from business_work_cluster_tasks
+                where cluster_id=?
+                order by task_id
+                """,
+                (int(cluster_row["cluster_id"]),),
+            ).fetchall()
+            for task_row in task_rows:
+                self.confirm_anchor_match(
+                    task_id=int(task_row["task_id"]),
+                    anchor_id=int(project_row["canonical_anchor_id"]),
+                    evidence_signal_id=evidence_signal_id,
+                    reason="候选项目确认后，将聚类中的任务关联到正式项目。",
+                    _db=db,
+                )
             self.store.confirm_business_project_candidate_in_transaction(
                 candidate_id=candidate_id,
                 project_id=resolved_project_id,

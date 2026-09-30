@@ -136,6 +136,7 @@ def test_explicit_confirmation_atomically_creates_official_project_and_is_idempo
     assert project is not None
     assert project.canonical_anchor_id == anchor_id
     assert project.registry_source == f"explicit_confirmation:{signal_id}"
+    assert [item.id for item in resolver.store.list_business_task_project_links(task_id=task_id)] == [project.id]
 
     assert resolver.confirm_project_candidate(
         candidate_id=candidate_id,

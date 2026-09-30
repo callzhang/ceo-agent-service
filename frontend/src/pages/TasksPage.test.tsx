@@ -3,13 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const api = vi.hoisted(() => ({ attention: vi.fn(), tasks: vi.fn(), projects: vi.fn(), decide: vi.fn() }));
+const api = vi.hoisted(() => ({ attention: vi.fn(), tasks: vi.fn(), projects: vi.fn(), decide: vi.fn(), confirmProject: vi.fn() }));
 vi.mock("../api/console", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/console")>()),
   listBusinessAttention: api.attention,
   listBusinessTasks: api.tasks,
   listBusinessProjects: api.projects,
   decideCandidateTask: api.decide,
+  confirmBusinessProjectCandidate: api.confirmProject,
 }));
 import { TasksPage } from "./TasksPage";
 
@@ -82,6 +83,18 @@ describe("TasksPage", () => {
     expect(screen.getByText("候选项目 · 尚未确认")).toBeInTheDocument();
     expect(screen.getByText("正式项目 0 个")).toBeInTheDocument();
     expect(screen.queryByText("已确认候选记录")).not.toBeInTheDocument();
+  });
+
+  it("confirms a project candidate and refreshes the project list", async () => {
+    const user = userEvent.setup();
+    const candidate = { id: "4", title: "海外渠道拓展", reason: "两项关联任务", status: "proposed", cluster_id: 2, provisional: true, confirmed_project_id: null };
+    api.projects.mockResolvedValue({ items: [], candidates: [candidate], candidate_meta: { ...meta, total: 1 }, meta: { ...meta, total: 0 } });
+    api.confirmProject.mockResolvedValue({ ok: true, item: { candidate_id: 4, project_id: 8 }, message: "已确认", meta: { updated_at: "" } });
+    render(<MemoryRouter initialEntries={["/tasks?view=projects"]}><TasksPage /></MemoryRouter>);
+    await screen.findByText("海外渠道拓展");
+    await user.click(screen.getByRole("button", { name: "确认正式项目" }));
+    expect(api.confirmProject).toHaveBeenCalledWith("4");
+    expect(api.projects).toHaveBeenCalledTimes(2);
   });
 
   it("pages project candidates independently from official projects", async () => {
