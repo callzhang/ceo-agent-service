@@ -197,6 +197,18 @@ at a time and spaces foreground navigation attempts by 1 second by default
 causing concurrent or burst UI interaction. This affects only navigation pacing;
 it does not relax target binding, compose, or send confirmation checks.
 
+Within one delivery every UI step also pauses for a randomized, person-like
+interval, because WeChat flags back-to-back events as non-human use (Derek,
+2026-09-30). The ranges are the `PAUSE_*` constants at the top of
+`app/wechat/accessibility.py`: a click moves the pointer first, hovers, holds
+the button down, and settles afterwards; typed keys are held and spaced; after
+activation, before writing the composer, and before Return the Sender waits,
+and when the composer text is set in one Accessibility write it waits about as
+long as typing it would take (capped at 4 seconds). These pauses add up to
+roughly 3–12 seconds per delivery, so the service-side sender timeout
+(`CEO_WECHAT_SENDER_TIMEOUT_SECONDS`) defaults to 180 seconds to leave room
+for the 120-second idle wait plus navigation.
+
 Preflight is ready only when both a visible WeChat process window and a usable
 Accessibility `AXWindows` tree are present. A composited but inaccessible
 window is reported as `wechat_window_unavailable`; delivery is paused before a

@@ -17,12 +17,38 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import random
 import sys
 import time as system_time
 from dataclasses import dataclass
 
 
 LOGGER = logging.getLogger(__name__)
+
+# WeChat treats back-to-back UI events as non-human use, so every step pauses
+# for a randomized, person-like interval (seconds) before the next one.
+PAUSE_AFTER_ACTIVATE = (0.6, 1.4)
+PAUSE_BEFORE_CLICK = (0.25, 0.7)
+PAUSE_CLICK_HOLD = (0.06, 0.15)
+PAUSE_BETWEEN_CLICKS = (0.08, 0.18)
+PAUSE_AFTER_CLICK = (0.4, 1.0)
+PAUSE_PER_KEY = (0.06, 0.2)
+PAUSE_KEY_HOLD = (0.04, 0.11)
+PAUSE_BEFORE_COMPOSE = (0.6, 1.5)
+PAUSE_PER_COMPOSED_CHAR = 0.04
+PAUSE_COMPOSE_CAP = 4.0
+PAUSE_BEFORE_RETURN = (0.5, 1.2)
+PAUSE_BETWEEN_SCROLLS = (0.35, 0.9)
+
+
+def _pause(sleep, bounds, *, uniform=random.uniform) -> None:
+    sleep(uniform(*bounds))
+
+
+def _compose_pause(sleep, text: str, *, uniform=random.uniform) -> None:
+    """Wait roughly as long as typing and rereading ``text`` would take."""
+    typing = min(PAUSE_COMPOSE_CAP, PAUSE_PER_COMPOSED_CHAR * len(text))
+    sleep(typing * uniform(0.8, 1.2) + uniform(*PAUSE_BEFORE_RETURN))
 
 
 @dataclass
@@ -75,6 +101,7 @@ def _activate_wait(pid, *, first, sleep, reactivate, attempts=4) -> bool:
         sleep(0.6 + 0.35 * i)
         if (first(role="AXTextArea", title_contains="搜索") is not None
                 or first(id_eq="session_list") is not None):
+            _pause(sleep, PAUSE_AFTER_ACTIVATE)
             return True
     return False
 
@@ -169,13 +196,22 @@ def _click_at_accessibility_center(element, *, center, quartz, sleep, count=1) -
     point = center(element)
     if point is None:
         return False
-    for _ in range(count):
+    # Move to the target, hover briefly, then press and hold like a person.
+    quartz.CGEventPost(quartz.kCGHIDEventTap, quartz.CGEventCreateMouseEvent(
+        None, quartz.kCGEventMouseMoved, point, quartz.kCGMouseButtonLeft,
+    ))
+    _pause(sleep, PAUSE_BEFORE_CLICK)
+    for index in range(count):
+        if index:
+            _pause(sleep, PAUSE_BETWEEN_CLICKS)
         for event_type in (quartz.kCGEventLeftMouseDown, quartz.kCGEventLeftMouseUp):
             event = quartz.CGEventCreateMouseEvent(
                 None, event_type, point, quartz.kCGMouseButtonLeft,
             )
             quartz.CGEventPost(quartz.kCGHIDEventTap, event)
-        sleep(0.04)
+            if event_type == quartz.kCGEventLeftMouseDown:
+                _pause(sleep, PAUSE_CLICK_HOLD)
+    _pause(sleep, PAUSE_AFTER_CLICK)
     return True
 
 
@@ -260,7 +296,6 @@ def _open_target(
     if search is None:
         return None
     click(search, 3)              # triple-click selects any residual text
-    sleep(0.2)
     type_fn(navigation_query)
     sleep(settle)
     result = _poll_value(
@@ -737,7 +772,7 @@ class MacWechatAccessibility:
                 -6,
             )
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
-            time.sleep(0.2)
+            _pause(time.sleep, PAUSE_BETWEEN_SCROLLS)
             return True
 
         def type_to_wechat(s):
@@ -747,12 +782,13 @@ class MacWechatAccessibility:
                     e = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
                     Quartz.CGEventKeyboardSetUnicodeString(e, 1, ch)
                     Quartz.CGEventPostToPid(pid, e)
-                    time.sleep(0.008)
+                    _pause(time.sleep, PAUSE_KEY_HOLD if down else PAUSE_PER_KEY)
 
         def key_to_wechat(keycode):
             for down in (True, False):
                 Quartz.CGEventPostToPid(pid, Quartz.CGEventCreateKeyboardEvent(None, keycode, down))
-                time.sleep(0.03)
+                if down:
+                    _pause(time.sleep, PAUSE_KEY_HOLD)
 
         prev_app = self._frontmost_app()
         try:
@@ -797,10 +833,14 @@ class MacWechatAccessibility:
                 )
 
             # --- compose (PURE AX) + send (key to pid, no focus steal) ---
+            _pause(time.sleep, PAUSE_BEFORE_COMPOSE)
             set_attr(composer, "AXFocused", True)
             set_attr(composer, "AXValue", reply_text)
             time.sleep(0.3)
-            if reply_text not in (g(composer, "AXValue") or ""):
+            if reply_text in (g(composer, "AXValue") or ""):
+                # The text appeared at once; take the time typing it would have.
+                _compose_pause(time.sleep, reply_text)
+            else:
                 # fallback: some builds ignore AXValue set -> type into WeChat
                 type_to_wechat(reply_text)
                 time.sleep(0.4)
@@ -810,6 +850,7 @@ class MacWechatAccessibility:
                         False,
                         failure_reason="composer_input_unconfirmed",
                     )
+                _pause(time.sleep, PAUSE_BEFORE_RETURN)
             if g(first(id_eq="chat_input_field"), "AXTitle") != target_label:
                 return AccessibilityResult(
                     False,
@@ -939,7 +980,7 @@ class MacWechatAccessibility:
                 -6,
             )
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
-            time.sleep(0.2)
+            _pause(time.sleep, PAUSE_BETWEEN_SCROLLS)
             return True
 
         def type_to_wechat(text):
@@ -948,7 +989,7 @@ class MacWechatAccessibility:
                     e = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
                     Quartz.CGEventKeyboardSetUnicodeString(e, 1, ch)
                     Quartz.CGEventPostToPid(pid, e)
-                    time.sleep(0.008)
+                    _pause(time.sleep, PAUSE_KEY_HOLD if down else PAUSE_PER_KEY)
 
         prev_app = self._frontmost_app()
         try:
@@ -1030,11 +1071,15 @@ class MacWechatAccessibility:
             if not (okp and oks):
                 return False
             cx, cy = p.x + s.width / 2, p.y + s.height / 2
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, Quartz.CGEventCreateMouseEvent(
+                None, Quartz.kCGEventMouseMoved, (cx, cy), Quartz.kCGMouseButtonLeft,
+            ))
+            _pause(time.sleep, PAUSE_BEFORE_CLICK)
             for ev in (Quartz.kCGEventRightMouseDown, Quartz.kCGEventRightMouseUp):
                 e = Quartz.CGEventCreateMouseEvent(None, ev, (cx, cy), Quartz.kCGMouseButtonRight)
                 Quartz.CGEventPost(Quartz.kCGHIDEventTap, e)
-                time.sleep(0.05)
-            time.sleep(0.4)
+                _pause(time.sleep, PAUSE_CLICK_HOLD)
+            _pause(time.sleep, PAUSE_AFTER_CLICK)
             recall_item = next(
                 (el for el in walk(app)
                  if g(el, "AXRole") == "AXMenuItem" and "撤回" in (g(el, "AXTitle") or "")),
@@ -1042,14 +1087,16 @@ class MacWechatAccessibility:
             )
             if recall_item is None:
                 return False
+            _pause(time.sleep, PAUSE_BEFORE_CLICK)
             perform(recall_item, "AXPress")
-            time.sleep(0.4)
+            _pause(time.sleep, PAUSE_AFTER_CLICK)
             confirm = next(
                 (el for el in walk(app)
                  if g(el, "AXRole") == "AXButton" and (g(el, "AXTitle") or "") in ("确定", "确认", "撤回")),
                 None,
             )
             if confirm is not None:
+                _pause(time.sleep, PAUSE_BEFORE_CLICK)
                 perform(confirm, "AXPress")
             return True
         finally:

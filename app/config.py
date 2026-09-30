@@ -551,9 +551,9 @@ def wechat_sender_socket() -> Path:
 
 def wechat_sender_timeout_seconds() -> float:
     try:
-        return max(1.0, float(os.getenv("CEO_WECHAT_SENDER_TIMEOUT_SECONDS", "140")))
+        return max(1.0, float(os.getenv("CEO_WECHAT_SENDER_TIMEOUT_SECONDS", "180")))
     except ValueError:
-        return 140.0
+        return 180.0
 
 
 def wechat_snapshot_dir() -> Path:

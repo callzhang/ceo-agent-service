@@ -48,6 +48,7 @@ def test_session_row_click_uses_pointer_events_even_when_ax_press_would_be_noop(
     events = []
 
     class Quartz:
+        kCGEventMouseMoved = "move"
         kCGEventLeftMouseDown = "down"
         kCGEventLeftMouseUp = "up"
         kCGMouseButtonLeft = "left"
@@ -66,9 +67,59 @@ def test_session_row_click_uses_pointer_events_even_when_ax_press_would_be_noop(
         sleep=lambda _seconds: None,
     ) is True
     assert events == [
+        ("tap", ("move", (110, 220), "left")),
         ("tap", ("down", (110, 220), "left")),
         ("tap", ("up", (110, 220), "left")),
     ]
+
+
+def test_click_pauses_like_a_person_between_every_step():
+    events = []
+    sleeps = []
+
+    class Quartz:
+        kCGEventMouseMoved = "move"
+        kCGEventLeftMouseDown = "down"
+        kCGEventLeftMouseUp = "up"
+        kCGMouseButtonLeft = "left"
+        kCGHIDEventTap = "tap"
+
+        @staticmethod
+        def CGEventCreateMouseEvent(_source, event_type, _point, _button):
+            return event_type
+
+        @staticmethod
+        def CGEventPost(_tap, event):
+            events.append(event)
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        events.append("pause")
+
+    _click_at_accessibility_center(
+        object(), center=lambda _element: (1, 2), quartz=Quartz,
+        sleep=sleep, count=2,
+    )
+
+    assert events == [
+        "move", "pause",
+        "down", "pause", "up",
+        "pause",
+        "down", "pause", "up",
+        "pause",
+    ]
+    assert all(seconds > 0 for seconds in sleeps)
+
+
+def test_compose_pause_scales_with_text_and_is_capped():
+    short, long = [], []
+    accessibility._compose_pause(short.append, "好的", uniform=lambda low, _high: low)
+    accessibility._compose_pause(long.append, "字" * 5000, uniform=lambda low, _high: low)
+
+    assert short[0] < long[0]
+    assert long[0] <= (
+        accessibility.PAUSE_COMPOSE_CAP * 1.2 + accessibility.PAUSE_BEFORE_RETURN[1]
+    )
 
 
 def _scope(binding_status):
