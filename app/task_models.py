@@ -130,6 +130,9 @@ def owner_identity_is_supported(
 class WorkItemSourceType(StrEnum):
     REPLY_ATTEMPT = "reply_attempt"
     AI_MINUTES = "ai_minutes"
+    MANAGEMENT_WEEKLY_REPORT = "management_weekly_report"
+    PROJECT_WEEKLY_REPORT = "project_weekly_report"
+    DEPARTMENT_WEEKLY_REPORT = "department_weekly_report"
     LOCAL_FILE = "local_file"
     MEMORY_RECALL = "memory_recall"
     FOLLOW_UP_COMPLETION_CHECK = "follow_up_completion_check"

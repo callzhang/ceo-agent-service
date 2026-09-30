@@ -2451,8 +2451,9 @@ def scan_meeting_todos_once_command(
     *,
     max_new_items: int | None = None,
 ) -> int:
-    """Read meeting Todos and queue new revisions for the Tasks consumer."""
+    """Read meeting Todos and authoritative weekly reports for Tasks."""
     from app.task_scanners import MEETING_TODO_SCANNER, scan_meeting_todos
+    from app.task_report_scanner import REPORT_SCANNER, scan_task_reports
 
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
@@ -2468,8 +2469,17 @@ def scan_meeting_todos_once_command(
     scan_state = store.get_daily_scan_state(MEETING_TODO_SCANNER) or {}
     if scan_error := str(scan_state.get("last_error") or "").strip():
         raise RuntimeError(f"scan-meeting-todos-once incomplete: {scan_error}")
-    print(f"scan-meeting-todos-once queued={queued}", flush=True)
-    return queued
+    report_limit = (
+        None if max_new_items is None else max(0, max_new_items - queued)
+    )
+    report_queued = scan_task_reports(store, dws, max_new_items=report_limit)
+    report_state = store.get_daily_scan_state(REPORT_SCANNER) or {}
+    if report_error := str(report_state.get("last_error") or "").strip():
+        raise RuntimeError(f"scan-task-reports incomplete: {report_error}")
+    total = queued + report_queued
+    suffix = f" reports={report_queued}" if report_queued else ""
+    print(f"scan-meeting-todos-once queued={total}{suffix}", flush=True)
+    return total
 
 
 def sync_minutes_once_command(settings: WorkerSettings) -> str:

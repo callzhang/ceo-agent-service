@@ -92,6 +92,8 @@ DingTalk 消息、DingTalk 近期消息恢复、微信消息、会议、OA、工
 Runtime、Skill 或工作目录。判断标准是这次执行本身有没有判断空间：确定性的发现或同步工作属于
 服务命令，需要 Skill 判断的才是 Agent 任务。AI 听记同步的分页读取、归档和内容游标都由
 `app/minutes_sync.py` 确定性完成，因此它也是服务命令。
+“工作来源”扫描还会只读发现管理周报、项目管理部周报和部门产研周报，按文档 ID、链接、统计周期和内容 digest
+建立 Task-first `work_summary` 输入；同一文档版本重复扫描保持幂等，报告内容仍由 Task Agent 提取 Project 和 Task。
 scheduled adapter 领取 trigger 后，Dispatcher 在本进程内直接运行该命令；成功时把
 `service_command + 命令名` 记为 trigger 的 execution link、保存命令返回的单行结果摘要并标记 `dispatched`，失败时 trigger
 以 `failed` 结束并进入 Attention。服务命令任务不创建 synthetic scheduled reply task、agent run
