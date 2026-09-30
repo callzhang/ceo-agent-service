@@ -264,7 +264,17 @@ class TaskSemanticService:
     @classmethod
     def _owner_names_appear_in_excerpt(cls, owner_name: str, excerpt: str) -> bool:
         names = cls._owner_name_parts(owner_name)
-        return bool(names) and all(name in excerpt for name in names)
+        if not names:
+            return False
+        for name in names:
+            # DingTalk may render the same person as ``中文名(English Name)``
+            # in one table and ``English Name(中文名)`` in another.  Require
+            # both identity fragments, but not their display order.
+            match = re.fullmatch(r"(.+?)\((.+)\)", name)
+            fragments = match.groups() if match else (name,)
+            if not all(fragment.strip() in excerpt for fragment in fragments):
+                return False
+        return True
 
     @staticmethod
     def _formal_evidence_role(formal_basis: FormalTaskBasis) -> BusinessEvidenceRole:

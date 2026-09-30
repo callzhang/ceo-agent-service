@@ -163,6 +163,28 @@ def test_formal_task_accepts_dingtalk_mention_markers_for_coowners(service):
     )
 
 
+def test_formal_task_accepts_reversed_display_alias_order(service):
+    source = SourceSignal(
+        source_type="dingtalk_doc",
+        source_ref="dingtalk-doc:weekly-runtime",
+        evidence_text="Friday Runtime 联调｜负责人：@张晓民(Xiaomin张晓民) / @Gary Yu(于海龙)",
+        dedupe_key="dingtalk-doc:weekly-runtime",
+    )
+    result = service.record_formal_task(
+        RecordFormalTask(
+            title="完成 Friday Runtime 联调",
+            signal=source,
+            formality=formality_evidence(FormalTaskBasis.EXPLICIT_ASSIGNMENT),
+            owner_name="张晓民(Xiaomin张晓民) / 于海龙(Gary Yu)",
+            owner_evidence_json=json.dumps({
+                "source_ref": source.source_ref,
+                "excerpt": source.evidence_text,
+            }, ensure_ascii=False),
+        )
+    )
+    assert result.task_id > 0
+
+
 def test_candidate_command_joins_existing_task_domain_transaction(service, monkeypatch):
     command = RecordCandidate(
         title="补齐报价来源链接",
