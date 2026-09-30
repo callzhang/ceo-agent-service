@@ -32,7 +32,6 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| codex-project-candidate-confirmation | app/task_business_resolution.py, app/task_project_candidate_actions.py, app/web_api/registration.py, frontend/src/api/console.ts, frontend/src/pages/TasksPage.tsx, tests/test_task_business_resolution.py, tests/test_task_console_project_candidate.py, frontend/src/pages/TasksPage.test.tsx, docs/architecture.md, docs/runtime-mechanism.md, docs/agent-claims.md | Close the explicit project-candidate confirmation path: link clustered Tasks to the confirmed Project, expose an idempotent console confirmation command, and render the action in the Projects view. | 2026-09-30 |
 | codex-weekly-okr-title-binding | app/weekly_okr_report.py, tests/test_weekly_okr_report.py, docs/architecture.md, docs/runtime-mechanism.md, docs/agent-claims.md | Bind model KR reviews to the live KR order when the model omits usable IDs and title anchors, while keeping exact count and order validation. | 2026-09-28 |
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
