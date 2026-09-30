@@ -861,7 +861,11 @@ def _search_meeting_group_candidates(
                     participant_coverage=f"{overlap}/{len(attendees)}",
                 )
     topic_terms = set(_meeting_topic_terms(summary_text))
-    for candidate in list(candidates.values())[:12]:
+    # Search results are not ranked by whether they discuss this meeting's
+    # business line.  Every candidate must therefore receive the same live
+    # message check before the final evidence-based sort; truncating the raw
+    # search order can hide the correct group behind unrelated conversations.
+    for candidate in candidates.values():
         candidate["summary_title_overlap"] = len(
             topic_terms & set(_meeting_topic_terms(candidate["title"]))
         )

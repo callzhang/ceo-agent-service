@@ -1841,6 +1841,55 @@ def test_meeting_group_candidates_prioritize_topic_discussion_over_roster(tmp_pa
     assert candidates[1]["participant_coverage"] == "3/3"
 
 
+def test_meeting_group_candidates_check_discussion_after_raw_search_page(tmp_path):
+    """A relevant group must not disappear because unrelated search hits came first."""
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    source = MeetingSource.model_validate({
+        "meeting_id": "late-candidate", "title": "销售项目进展", "status": "ended",
+        "started_at": "2026-07-14T09:00:00+08:00",
+        "ended_at": "2026-07-14T10:00:00+08:00",
+        "participants": [
+            {"name": "A", "user_id": "a", "open_dingtalk_id": "open-a"},
+            {"name": "B", "user_id": "b", "open_dingtalk_id": "open-b"},
+        ],
+        "attendee_evidence": "calendar", "attendee_roster_complete": True,
+        "current_user_id": "a", "summary": "销售项目进展", "transcript": [],
+    })
+    candidates = [
+        DingTalkConversation(
+            open_conversation_id=f"cid-{index}",
+            title=f"无关群{index}",
+            single_chat=False,
+            unread_point=0,
+        )
+        for index in range(12)
+    ]
+    candidates.append(DingTalkConversation(
+        open_conversation_id="cid-sales-hiring",
+        title="销售招聘进度沟通",
+        single_chat=False,
+        unread_point=0,
+    ))
+    dws = ConsumerDws()
+    dws.search_conversations = lambda query: candidates
+    dws.list_group_member_open_dingtalk_ids = lambda _conversation_id: {
+        "open-a", "open-b"
+    }
+    dws.read_recent_messages = lambda conversation, limit=50: [SimpleNamespace(
+        content="销售项目进展：招聘候选人面试结论和后续招聘安排",
+        create_time="2026-07-13 10:00:00",
+    )] if conversation.open_conversation_id == "cid-sales-hiring" else []
+
+    discovered = meeting_alignment._search_meeting_group_candidates(
+        dws, source, store
+    )
+
+    selected = next(
+        item for item in discovered if item["conversation_id"] == "cid-sales-hiring"
+    )
+    assert selected["topic_discussion_evidence"]
+
+
 def test_live_group_member_failure_retries_before_meeting_decision(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
