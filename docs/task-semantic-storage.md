@@ -246,7 +246,11 @@ A cluster groups existing Tasks through membership rows. It never rewrites a
 member's owner, deadline, lifecycle status, or commitment status. Proposing a
 Project for a cluster creates only a `business_project_candidates` row. An
 official `business_projects` row can be registered from an active canonical
-anchor whose type is `project`, with a nonblank canonical registry source. For
+anchor whose type is `project`, with a nonblank canonical registry source. An
+explicit meeting decision to start or approve a named project is also a valid
+registry source; the service records the meeting source reference and links
+the affected Task to the new Project Anchor in the same transaction. A mere
+project mention still produces only a candidate. For
 Task-first extraction, the canonical registry and current Task state use the
 most recent confirmed official weekly report first, especially a project-
 management or management weekly report with explicit project, owner, target,

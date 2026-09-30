@@ -640,6 +640,8 @@ def test_task_agent_prompt_prioritizes_weekly_report_then_meeting_evidence():
     assert "Chat or message evidence only supplements" in prompt
     assert "cannot create an official Project or override an explicit weekly-report field" in prompt
     assert "preserve the exact source reference/excerpt" in prompt
+    assert "emit `project_proposal`" in prompt
+    assert "explicitly decides to start, approve, 立项" in prompt
 
 
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():
@@ -1234,6 +1236,57 @@ def test_multi_decision_batch_records_each_source_grounded_item(tmp_path):
     assert len(result.task_ids) == 2
     assert [task.stage.value for task in store.list_business_tasks()] == ["candidate", "formal"]
     assert len(store.list_business_task_signals()) == 2
+
+
+def test_explicit_meeting_project_proposal_registers_project_and_links_task(tmp_path):
+    store = AutoReplyStore(tmp_path / "meeting-project.sqlite3")
+    item = _work_item(assignment_authorized=True)
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none",
+        "source_excerpt": "会议明确决定启动美国客户成交项目，并由 Alex 负责报价",
+        "source_ref": item.source.ref, "title": "准备美国客户报价",
+        "formal_basis": "explicit_assignment", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": "Alex 负责报价"},
+        "project_proposal": {
+            "title": "美国客户成交", "reason": "会议明确决定启动该项目",
+            "authority": "meeting_decision",
+        },
+    }]})
+
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+
+    assert len(result.task_ids) == 1
+    projects = store.list_business_projects()
+    assert len(projects) == 1
+    assert projects[0].title == "美国客户成交"
+    assert projects[0].registry_source.startswith("meeting_decision:")
+    assert [link.anchor_id for link in store.list_business_task_anchor_links(task_id=result.task_ids[0])] == [
+        projects[0].canonical_anchor_id
+    ]
+    assert store.get_business_task(result.task_ids[0]).business_relevance.value == "relevant"
+
+    replay = apply_task_agent_decision(store, summary_input_id=2, work_item=item, decision=decision, record_run=False)
+    assert replay.task_ids == result.task_ids
+    assert len(store.list_business_projects()) == 1
+    assert len(store.list_business_task_anchor_links(task_id=result.task_ids[0])) == 1
+
+    second_item = item.model_copy(update={
+        "source": item.source.model_copy(update={"ref": "minutes:second"}),
+    })
+    second_decision = decision.model_copy(update={
+        "task_decisions": [decision.task_decisions[0].model_copy(update={
+            "source_ref": second_item.source.ref,
+            "owner_evidence": {
+                "source_ref": second_item.source.ref,
+                "excerpt": "Alex 负责报价",
+            },
+        })],
+    })
+    second_result = apply_task_agent_decision(
+        store, summary_input_id=3, work_item=second_item, decision=second_decision, record_run=False
+    )
+    assert len(store.list_business_projects()) == 1
+    assert len(store.list_business_task_anchor_links(task_id=second_result.task_ids[0])) == 1
 
 
 def test_source_dedupe_distinguishes_owner_but_replays_identical_decision(tmp_path):

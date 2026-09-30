@@ -546,6 +546,17 @@ reference/excerpt. Project candidates must cite an existing cluster and the
 authoritative weekly-report or meeting evidence; anchor and Project matches
 remain proposals.
 
+Project resolution is part of this scan. If the current meeting evidence explicitly
+decides to start, approve, 立项, or assign a named project/workstream (not merely
+mentioning it), emit `project_proposal` on each related Task with the exact project
+title, a reason grounded in the source sentence, and `authority="meeting_decision"`.
+The service will register that project and link the Task to it. If the source only
+mentions a project or several Tasks appear related without an explicit project
+decision, do not emit `project_proposal`; emit a `cluster_proposal` and a
+`project_candidate_proposal` instead when the existing cluster and evidence support
+that candidate. Never invent a project title from a generic department, topic, or
+single unrelated Task.
+
 Dates use typed date_evidence with an exact source excerpt/reference and actor.
 Normalized dates must equal the full exact parseable date phrase; do not add
 time precision absent from the source. assigned_at comes only from trusted
@@ -834,6 +845,13 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
                     "title": normalized(item.project_candidate_proposal.title),
                 }
                 if item.project_candidate_proposal else None
+            ),
+            "project": (
+                {
+                    "title": normalized(item.project_proposal.title),
+                    "authority": item.project_proposal.authority,
+                }
+                if item.project_proposal else None
             ),
             "date_effects": date_effects,
         }
@@ -1389,6 +1407,36 @@ def apply_task_agent_decision(
                 resolution.propose_anchor_match(
                     task_id=task_id, anchor_id=anchor_match.anchor_id,
                     evidence_signal_id=result.signal_id, reason=anchor_match.reason, _db=db,
+                )
+            if item.project_proposal is not None:
+                proposal = item.project_proposal
+                import hashlib
+
+                project_key = hashlib.sha256(
+                    " ".join(proposal.title.split()).casefold().encode("utf-8")
+                ).hexdigest()
+                anchor_id = resolution.register_anchor(
+                    anchor_type="project",
+                    anchor_ref=f"task-agent-project:{project_key}",
+                    title=proposal.title,
+                    _db=db,
+                )
+                if db.execute(
+                    "select 1 from business_projects where canonical_anchor_id=?",
+                    (anchor_id,),
+                ).fetchone() is None:
+                    resolution.register_official_project(
+                        anchor_id=anchor_id,
+                        registry_source=f"{proposal.authority}:{item.source_ref}",
+                        _db=db,
+                    )
+                resolution.confirm_anchor_match(
+                    task_id=task_id,
+                    anchor_id=anchor_id,
+                    evidence_signal_id=result.signal_id,
+                    reason=proposal.reason,
+                    relevance=BusinessRelevance.RELEVANT,
+                    _db=db,
                 )
             if item.project_candidate_proposal is not None:
                 proposal = item.project_candidate_proposal

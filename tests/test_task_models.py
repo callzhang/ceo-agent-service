@@ -145,13 +145,36 @@ def test_merge_proposal_requires_ids_and_structured_identity_evidence():
         ]})
 
 
-def test_project_candidate_requires_existing_cluster_id_and_cannot_create_project():
+def test_project_candidate_requires_existing_cluster_id_and_project_proposal_requires_authority():
     TaskAgentDecision.model_validate({"task_decisions": [
         _decision(project_candidate_proposal={"cluster_id": 3, "title": "美国客户成交", "reason": "相关任务持续"})
     ]})
     with pytest.raises(ValidationError):
         TaskAgentDecision.model_validate({"task_decisions": [
             _decision(project_candidate_proposal={"title": "美国客户成交", "reason": "相关任务持续"})
+        ]})
+    TaskAgentDecision.model_validate({"task_decisions": [
+        _decision(project_proposal={
+            "title": "美国客户成交",
+            "reason": "会议明确决定启动该项目",
+            "authority": "meeting_decision",
+        })
+    ]})
+    with pytest.raises(ValidationError):
+        TaskAgentDecision.model_validate({"task_decisions": [
+            _decision(project_proposal={"title": "美国客户成交", "reason": "相关讨论"})
+        ]})
+    with pytest.raises(ValidationError, match="both a formal Project"):
+        TaskAgentDecision.model_validate({"task_decisions": [
+            _decision(
+                project_proposal={
+                    "title": "美国客户成交", "reason": "会议明确决定启动该项目",
+                    "authority": "meeting_decision",
+                },
+                project_candidate_proposal={
+                    "cluster_id": 3, "title": "美国客户成交", "reason": "相关任务持续",
+                },
+            )
         ]})
 
 

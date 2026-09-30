@@ -354,6 +354,23 @@ class ProjectCandidateProposal(StrictTaskModel):
     reason: str
 
 
+class ProjectProposal(StrictTaskModel):
+    """A source-backed Project decision attached to one current Task."""
+
+    title: str
+    reason: str
+    authority: Literal[
+        "management_weekly_report", "project_weekly_report",
+        "department_weekly_report", "meeting_decision",
+    ]
+
+    @model_validator(mode="after")
+    def nonblank(self) -> "ProjectProposal":
+        if not self.title.strip() or not self.reason.strip():
+            raise ValueError("project proposal requires a title and reason")
+        return self
+
+
 class TaskAttentionProposal(StrictTaskModel):
     category: Literal["fyi", "watch", "decision", "push"]
     title: str
@@ -424,6 +441,7 @@ class TaskDecision(StrictTaskModel):
     cluster_proposal: TaskClusterProposal | None = None
     anchor_match_proposals: list[TaskAnchorMatchProposal] = Field(default_factory=list)
     project_candidate_proposal: ProjectCandidateProposal | None = None
+    project_proposal: ProjectProposal | None = None
     attention_proposal: TaskAttentionProposal | None = None
     update_summary: str = ""
     memory_recall_used: bool = False
@@ -473,6 +491,10 @@ class TaskDecision(StrictTaskModel):
             raise ValueError("formal Task creation requires formal_basis")
         if self.action == "record_candidate" and self.formal_basis is not None:
             raise ValueError("candidate cannot carry formal_basis")
+        if self.project_proposal is not None and self.evidence_origin != "current":
+            raise ValueError("formal Project proposals require the current Work Item evidence")
+        if self.project_proposal is not None and self.project_candidate_proposal is not None:
+            raise ValueError("a decision cannot contain both a formal Project and a Project candidate proposal")
         if (self.owner_user_id.strip() or self.owner_name.strip()) and not self.owner_evidence:
             raise ValueError("source-backed owner assignment requires owner_evidence")
         if self.action in {"skip", "record_candidate", "create_task"} and self.transition != "none":
