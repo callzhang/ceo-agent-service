@@ -400,6 +400,23 @@ class TaskDecision(StrictTaskModel):
     owner_user_id: str = ""
     owner_name: str = ""
     owner_evidence: dict[str, Any] = Field(default_factory=dict)
+    owner_kind: Literal["individual", "team", "unknown"] | None = Field(
+        default=None,
+        description=(
+            "Whether the source identifies one individual owner, a team, or no resolvable owner. "
+            "A team is not sufficient for formal Task creation."
+        ),
+    )
+    owner_relation: Literal[
+        "explicit_assignment", "self_commitment", "meeting_summary_action_item",
+        "speaker_only", "unknown",
+    ] | None = Field(
+        default=None,
+        description=(
+            "How the source connects the named owner to the deliverable. "
+            "speaker_only means the person merely spoke and is not an assignment."
+        ),
+    )
     date_evidence: list[TaskDateEvidence] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
     identity_proposal: TaskIdentityProposal | None = None

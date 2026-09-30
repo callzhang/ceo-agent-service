@@ -37,6 +37,23 @@ describe("TasksPage", () => {
     expect(api.tasks).not.toHaveBeenCalled();
   });
 
+  it("separates formal Tasks from candidate evidence instead of making candidates the default task list", async () => {
+    api.tasks.mockResolvedValue({ items: [routine], meta });
+    render(<MemoryRouter initialEntries={["/tasks?view=formal"]}><TasksPage /></MemoryRouter>);
+    expect(await screen.findByRole("link", { name: "整理办公室绿植" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "正式任务" })).toHaveAttribute("href", "/tasks?view=formal");
+    expect(screen.getByRole("link", { name: "待确认线索" })).toHaveAttribute("href", "/tasks?view=candidates");
+    expect(api.tasks).toHaveBeenCalledWith(expect.objectContaining({ stage: "formal" }), expect.anything());
+  });
+
+  it("gives candidate evidence its own view", async () => {
+    const candidate = { ...routine, id: "10", title: "讨论拓展方案", stage: "candidate", detail_url: "/tasks/item/10" };
+    api.tasks.mockResolvedValue({ items: [candidate], meta });
+    render(<MemoryRouter initialEntries={["/tasks?view=candidates"]}><TasksPage /></MemoryRouter>);
+    expect(await screen.findByRole("link", { name: "讨论拓展方案" })).toBeInTheDocument();
+    expect(api.tasks).toHaveBeenCalledWith(expect.objectContaining({ stage: "candidate" }), expect.anything());
+  });
+
   it("filters the four attention categories", async () => {
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={["/tasks"]}><TasksPage /></MemoryRouter>);

@@ -166,6 +166,9 @@ def _canonicalize_current_source_provenance(
     deliberately excluded from this normalization.
     """
     source_ref = work_item.source.ref
+    ai_minutes_owner_relations = frozenset(
+        {"explicit_assignment", "self_commitment", "meeting_summary_action_item"}
+    )
     decisions: list[TaskDecision] = []
     for item in decision.task_decisions:
         if item.evidence_origin != "current" or item.action == "skip":
@@ -185,7 +188,21 @@ def _canonicalize_current_source_provenance(
             and "#todos-sha256=" in source_ref
         ):
             formal_basis = FormalTaskBasis.MEETING_ACTION_ITEM
+        action = item.action
+        if (
+            action == "record_candidate"
+            and work_item.source.type is WorkItemSourceType.AI_MINUTES
+            and work_item.context.source_conversation_kind is WorkItemSourceKind.MINUTES
+            and "#todos-sha256=" in source_ref
+            and item.owner_kind == "individual"
+            and item.owner_relation in ai_minutes_owner_relations
+            and item.owner_name.strip()
+            and str(owner_evidence.get("excerpt") or "").strip()
+        ):
+            action = "create_task"
+            formal_basis = FormalTaskBasis.MEETING_ACTION_ITEM
         decisions.append(item.model_copy(update={
+            "action": action,
             "source_ref": source_ref,
             "owner_evidence": owner_evidence,
             "date_evidence": date_evidence,
@@ -493,6 +510,17 @@ individual DingTalk gave a name to, not a team or department ("研发", "算法�
 "Product Marketing") and not a placeholder like "发言人 N". When neither the
 transcript window nor the summary names an individual, leave the owner empty:
 that is the source's limit, not something to fill in.
+
+For every AI Minutes item with an owner, also classify the owner evidence:
+`owner_kind` is `individual`, `team`, or `unknown`; `owner_relation` is
+`explicit_assignment` when someone assigns the work to that person,
+`self_commitment` when the named person takes it on, `meeting_summary_action_item`
+when the structured meeting summary names that person for the action item,
+`speaker_only` when the person merely speaks, or `unknown`. A named individual
+with one of the first three relations is a formal `meeting_action_item` Task
+with `assigned_unaccepted` semantics, even when a stable ID, date, or completion
+standard still needs enrichment. A team, speaker-only mention, or unresolved
+relation remains a candidate.
 
 An assignment creates an assigned_unaccepted Task. Only explicit evidence from
 that identified owner may apply_acceptance to exactly one existing formal Task;
@@ -971,6 +999,12 @@ def _validate_formal_basis_source(item: TaskDecision, work_item: WorkItem) -> No
             and "#todos-sha256=" in work_item.source.ref
         ):
             raise ValueError("meeting action item requires a sourced meeting action-item record")
+        if item.owner_kind != "individual" or item.owner_relation not in {
+            "explicit_assignment", "self_commitment", "meeting_summary_action_item",
+        }:
+            raise ValueError(
+                "meeting action item requires an explicit individual owner relation"
+            )
         return
     if basis is FormalTaskBasis.EXTERNAL_TODO:
         if not (

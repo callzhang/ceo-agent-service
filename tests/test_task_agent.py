@@ -18,7 +18,7 @@ from app.task_agent import (
     _task_result_validation_repair_prompt,
 )
 from app.leak_check import contains_credential, contains_local_runtime_leak
-from app.task_models import TaskAgentDecision, WorkItem, WorkItemSourceType
+from app.task_models import TaskAgentDecision, WorkItem, WorkItemSourceKind, WorkItemSourceType
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_service import (
     RecordCandidate,
@@ -1132,6 +1132,64 @@ def test_current_ai_minutes_provenance_is_canonical_and_not_external_todo():
     assert normalized_item.formal_basis is FormalTaskBasis.MEETING_ACTION_ITEM
 
 
+@pytest.mark.parametrize(
+    "owner_kind, owner_relation, expected_action",
+    [
+        ("individual", "explicit_assignment", "create_task"),
+        ("individual", "self_commitment", "create_task"),
+        ("individual", "meeting_summary_action_item", "create_task"),
+        ("team", "explicit_assignment", "record_candidate"),
+        ("individual", "speaker_only", "record_candidate"),
+    ],
+)
+def test_ai_minutes_owner_relation_controls_formal_task_promotion(
+    owner_kind, owner_relation, expected_action
+):
+    base = _work_item()
+    item = base.model_copy(
+        update={
+            "source": base.source.model_copy(
+                update={
+                    "type": WorkItemSourceType.AI_MINUTES,
+                    "ref": "minutes:marketing#todos-sha256=abc",
+                }
+            ),
+            "context": base.context.model_copy(
+                update={"source_conversation_kind": WorkItemSourceKind.MINUTES}
+            ),
+        }
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "task_decisions": [
+                {
+                    "action": "record_candidate",
+                    "transition": "none",
+                    "source_excerpt": "明天补齐技术问题并预约沟通",
+                    "source_ref": "wrong-ref",
+                    "title": "补齐技术问题并预约沟通",
+                    "owner_name": "Alex",
+                    "owner_evidence": {
+                        "source_ref": "wrong-ref",
+                        "excerpt": "Alex：我来负责补齐技术问题并预约沟通",
+                    },
+                    "owner_kind": owner_kind,
+                    "owner_relation": owner_relation,
+                }
+            ]
+        }
+    )
+
+    normalized = _canonicalize_current_source_provenance(decision, work_item=item)
+
+    normalized_item = normalized.task_decisions[0]
+    assert normalized_item.action == expected_action
+    if expected_action == "create_task":
+        assert normalized_item.formal_basis is FormalTaskBasis.MEETING_ACTION_ITEM
+    else:
+        assert normalized_item.formal_basis is None
+
+
 def test_session_provenance_is_not_rewritten():
     item = _work_item()
     decision = TaskAgentDecision.model_validate({"task_decisions": [{
@@ -1742,11 +1800,12 @@ def test_meeting_action_item_requires_minutes_action_item_source(tmp_path):
     })
     decision = TaskAgentDecision.model_validate({"task_decisions": [{
         "action": "create_task", "transition": "none", "formal_basis": "meeting_action_item",
-        "source_excerpt": "Alex 负责补齐报价来源链接。", "source_ref": item.source.ref,
-        "title": "补齐报价来源链接", "owner_name": "Alex",
-        "owner_evidence": {"source_ref": item.source.ref,
-            "excerpt": "Alex 负责补齐报价来源链接。", "name": "Alex", "user_id": "alex-id"},
-    }]})
+            "source_excerpt": "Alex 负责补齐报价来源链接。", "source_ref": item.source.ref,
+            "title": "补齐报价来源链接", "owner_name": "Alex",
+            "owner_evidence": {"source_ref": item.source.ref,
+                "excerpt": "Alex 负责补齐报价来源链接。", "name": "Alex", "user_id": "alex-id"},
+            "owner_kind": "individual", "owner_relation": "meeting_summary_action_item",
+        }]})
 
     (task_id,) = apply_task_agent_decision(
         store, summary_input_id=1, work_item=item, decision=decision, record_run=False

@@ -88,7 +88,7 @@ function query(params: Record<string, string | number | undefined>) {
 }
 
 export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; integrity_issues?: string[]; }
-export type TaskView = "attention" | "all" | "projects";
+export type TaskView = "attention" | "formal" | "candidates" | "all" | "projects";
 export type AttentionCategory = "fyi" | "watch" | "decision" | "push";
 export interface BusinessAttentionSummary {
   id: string;

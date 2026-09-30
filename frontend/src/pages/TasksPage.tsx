@@ -69,7 +69,8 @@ interface Loaded {
 export function TasksPage() {
   const [params, setParams] = useSearchParams();
   const requestedView = params.get("view");
-  const view: TaskView = requestedView === "all" || requestedView === "projects" ? requestedView : "attention";
+  const view: TaskView = requestedView === "formal" || requestedView === "candidates"
+    || requestedView === "all" || requestedView === "projects" ? requestedView : "attention";
   const category = params.get("category") || "";
   const q = params.get("q") || "";
   const stage = params.get("stage") || "";
@@ -86,6 +87,8 @@ export function TasksPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const workspace = useRef<HTMLDivElement>(null);
   const firstRender = useRef(true);
+  const fixedStage = view === "formal" ? "formal" : view === "candidates" ? "candidate" : "";
+  const taskView = view === "formal" || view === "candidates" || view === "all";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -93,8 +96,8 @@ export function TasksPage() {
     setError("");
     const request = view === "attention"
       ? listBusinessAttention({ category, page, page_size: 20 }, controller.signal)
-      : view === "all"
-        ? listBusinessTasks({ q, stage, status, owner, sort, page, page_size: 20 }, controller.signal)
+      : taskView
+        ? listBusinessTasks({ q, stage: fixedStage || stage, status, owner, sort, page, page_size: 20 }, controller.signal)
         : listBusinessProjects({ q, page, page_size: 20, candidate_page: candidatePage, candidate_page_size: 20 }, controller.signal);
     request.then((result) => {
       if (controller.signal.aborted) return;
@@ -133,7 +136,7 @@ export function TasksPage() {
   const candidatePages = Math.max(1, Math.ceil(candidateMeta.total / candidateMeta.page_size));
   // Rows of another tab must never be drawn by this tab's renderer; within one tab, the previous page stays (dimmed) while the next loads.
   const data = loaded?.view === view ? loaded : null;
-  const filtered = view === "all" ? Boolean(q || stage || status || owner) : view === "projects" ? Boolean(q) : Boolean(category);
+  const filtered = taskView ? Boolean(q || stage || status || owner) : view === "projects" ? Boolean(q) : Boolean(category);
   const clearFilters = () => setParams(new URLSearchParams(view === "attention" ? { } : { view }));
 
   const empty = (message: string) => <div className="business-empty"><p>{message}</p>{filtered ? <button type="button" className="secondary-button" onClick={clearFilters}>清除筛选</button> : view === "attention" ? <Link className="secondary-button" to="/tasks?view=all">查看全部任务</Link> : null}</div>;
@@ -142,7 +145,7 @@ export function TasksPage() {
   if (state === "error") body = <div className="page-state page-state-error" role="alert">{error}</div>;
   else if (!data) body = <TaskSkeleton />;
   else if (view === "attention") body = data.items.length ? <div className="business-attention-list">{(data.items as BusinessAttentionSummary[]).map((item) => <AttentionCard key={item.id} item={item} />)}</div> : empty(filtered ? "该类别下没有事项。" : "当前没有需要关注的事项。");
-  else if (view === "all") body = data.items.length ? <ul className="business-task-list">{(data.items as BusinessTaskSummary[]).map((item) => <TaskRow key={item.id} item={item} onChanged={() => setReloadKey((key) => key + 1)} />)}</ul> : empty(filtered ? "没有符合条件的任务。" : "暂无任务。");
+  else if (taskView) body = data.items.length ? <ul className="business-task-list">{(data.items as BusinessTaskSummary[]).map((item) => <TaskRow key={item.id} item={item} onChanged={() => setReloadKey((key) => key + 1)} />)}</ul> : empty(filtered ? "没有符合条件的任务。" : view === "formal" ? "暂无正式任务。" : view === "candidates" ? "暂无待确认线索。" : "暂无任务。");
   else body = <>
     {data.items.length ? <ul className="business-task-list">{(data.items as BusinessProjectSummary[]).map((item) => <ProjectRow key={item.id} item={item} />)}</ul> : empty(filtered ? "没有符合条件的项目。" : "暂无正式项目。")}
     {candidateMeta.total > 0 && <details className="business-project-candidates" open={data.items.length === 0}>
@@ -156,6 +159,8 @@ export function TasksPage() {
     <div className="tasks-page task-domain-page" role="region" aria-label="Tasks workspace" ref={workspace}>
       <nav className="business-task-tabs" aria-label="Tasks 视图">
         <Link to="/tasks" aria-current={view === "attention" ? "page" : undefined}>需关注</Link>
+        <Link to="/tasks?view=formal" aria-current={view === "formal" ? "page" : undefined}>正式任务</Link>
+        <Link to="/tasks?view=candidates" aria-current={view === "candidates" ? "page" : undefined}>待确认线索</Link>
         <Link to="/tasks?view=all" aria-current={view === "all" ? "page" : undefined}>全部任务</Link>
         <Link to="/tasks?view=projects" aria-current={view === "projects" ? "page" : undefined}>正式项目</Link>
       </nav>
@@ -163,14 +168,14 @@ export function TasksPage() {
         <button type="button" aria-pressed={!category} onClick={() => update("category", "")}>全部关注</button>
         {categoryOrder.map((value: AttentionCategory) => <button key={value} type="button" aria-pressed={category === value} onClick={() => update("category", value)}>{categoryLabels[value]}</button>)}
       </div> : <div className="business-task-filters">
-        <label className="business-task-search"><span className="sr-only">搜索{view === "all" ? "任务" : "项目"}</span><input type="search" aria-label={`搜索${view === "all" ? "任务" : "项目"}`} value={q} onChange={(event) => update("q", event.target.value)} placeholder={`按名称搜索${view === "all" ? "任务" : "项目"}`} /></label>
+        <label className="business-task-search"><span className="sr-only">搜索{taskView ? "任务" : "项目"}</span><input type="search" aria-label={`搜索${taskView ? "任务" : "项目"}`} value={q} onChange={(event) => update("q", event.target.value)} placeholder={`按名称搜索${taskView ? "任务" : "项目"}`} /></label>
         {view === "all" && <>
           <select aria-label="任务阶段" value={stage} onChange={(event) => update("stage", event.target.value)}><option value="">全部阶段</option>{stageOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
           <select aria-label="任务状态" value={status} onChange={(event) => update("status", event.target.value)}><option value="">全部状态</option>{statusOptions.map((value) => <option key={value} value={value}>{taskStatusLabels[value]}</option>)}</select>
           <select aria-label="负责人" value={owner} onChange={(event) => update("owner", event.target.value)}><option value="">全部负责人</option>{ownerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
           <select aria-label="排序" value={sort} onChange={(event) => update("sort", event.target.value)}>{sortOptions.map((option) => <option key={option.value} value={option.value === "updated" ? "" : option.value}>{option.label}</option>)}</select>
         </>}
-        {state !== "error" && data && <span className="business-task-count">{view === "all" ? "共" : "正式项目"} {total} {view === "all" ? "个任务" : "个"}</span>}
+        {state !== "error" && data && <span className="business-task-count">{view === "formal" ? "正式任务" : view === "candidates" ? "待确认线索" : view === "all" ? "全部记录" : "正式项目"} {total} 个</span>}
       </div>}
       <div className="business-list-body" aria-busy={state === "loading"} data-refreshing={state === "loading" && data ? "true" : undefined}>{body}</div>
       {state !== "error" && data && <Pagination label="Tasks 分页" page={page} pages={pages} previous={() => update("page", page - 1)} next={() => update("page", page + 1)} />}

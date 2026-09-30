@@ -1038,6 +1038,8 @@ Derek 2026-09-25 定的规则。Task Agent 用同一个长期 session 是为了�
 
 **问题**：钉钉从听记抽出的行动项，`executorList` 恒为空，负责人不在行动项里。最初只从对话里找：每条行动项带 `createdTime`（在录音里的毫秒位置），逐字稿每段带说话人昵称和起止毫秒，截一段窗口出来找负责人；但窗口只锚定在行动项被抽取的那一刻，指派往往发生在窗口之外——9-28 复查发现至少 4/7 条“无负责人”候选任务，负责人其实写在钉钉自己生成的会议摘要里，只是不在这个窗口内（Derek：肯定是信息没有挖掘全）。所以负责人来源现在有两处：转录窗口，和整份会议摘要。
 
+Task Agent 会把负责人证据再结构化为 `owner_kind`（`individual` / `team` / `unknown`）和 `owner_relation`（明确分派、自承诺、会议行动项、仅发言或未知）。只有明确指向单个个人且关系为前三种之一的行动项，才记录为正式 `meeting_action_item` Task，并保持 `assigned_unaccepted`；团队负责人、仅发言或关系不明仍是候选。缺少稳定 ID、日期或完成标准属于后续补充，不会单独把已经明确指派的行动项降级为候选。AI Minutes 行动项不以 `external_todo` 作为正式依据。
+
 **做法**（`app/minutes_todo_context.py`，由 `scan_meeting_todos` 调用）：
 
 1. 入队前读完整份逐字稿，**再读一次这场会议自己的 DingTalk 摘要**（`get_minutes_summary`，`minutes_full_summary` 取其 `result.fullSummary`）。
@@ -1057,9 +1059,9 @@ Derek 2026-09-25 定的规则。Task Agent 用同一个长期 session 是为了�
 
 ### 控制台对候选 Task 的操作
 
-Derek 2026-09-25。候选只是没确认的猜测，所以可以在控制台“忽略”，也可以“恢复”。
+Derek 2026-09-25。候选只是没确认的猜测，所以可以在控制台“忽略”，也可以“恢复”。Tasks 页面将“正式任务”和“待确认线索”分成独立视图；“全部任务”保留为诊断入口，可同时查看两种 stage，但不作为正式任务的语义替代。默认关注页仍只展示 CEO 需关注投影，正式项目单独展示。
 
-- Tasks 页“全部任务”的候选行和候选 Task 详情页有忽略按钮，调用 `POST /api/console/tasks/items/{task_id}/candidate-decision`（`action` 为 `ignore` 或 `restore`，实现在 `app/task_console_actions.py`）。
+- Tasks 页“待确认线索”（以及诊断入口“全部任务”）的候选行和候选 Task 详情页有忽略按钮，调用 `POST /api/console/tasks/items/{task_id}/candidate-decision`（`action` 为 `ignore` 或 `restore`，实现在 `app/task_console_actions.py`）。
 - 忽略把 Task 状态改为 `cancelled`（阶段仍是 `candidate`），恢复改回 `open`。走普通的 `TaskSemanticService.update_task`，留下与其他变更相同的痕迹：一条 Derek 署名的 `console` 来源信号（`author_kind=human`）、`correction` 证据链接和 `status_changed` 事件。原发现证据不动，什么都不删除。
 - 来源引用带上一次的 `updated_at`，同一状态下重复点击返回 409 `not_applicable`，不重复记录。提交后照 Task Agent 的做法重算受影响的关注成员。
 - 只有候选可以忽略：正式 Task 有负责人和来源引文，状态只能由证据推动。控制台**不提供**“确认为正式任务”——晋升要求已识别的负责人和来自来源的负责人原话，点击给不出这两样，见 `docs/task-semantic-storage.md`。
