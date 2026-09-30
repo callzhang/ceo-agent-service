@@ -818,6 +818,33 @@ def _search_meeting_group_candidates(
                     "search_query": query,
                 },
             )
+    topic_terms = set(_meeting_topic_terms(summary_text)) | set(title_terms)
+    for candidate in candidates.values():
+        candidate["summary_title_overlap"] = len(
+            topic_terms & set(_meeting_topic_terms(candidate["title"]))
+        )
+
+    # Compute the title signal up front. Complete calendar rosters are used
+    # first below to remove groups without attendee coverage; the title signal
+    # then narrows the surviving groups before any recent-message reads.
+    title_candidates = [
+        candidate
+        for candidate in candidates.values()
+        if candidate["summary_title_overlap"] > 0
+        or candidate.get("verified_recurring_group") is True
+    ]
+    if not title_candidates:
+        # A zero title hit is still a live discovery result, not proof that
+        # the search failed. Keep it for the roster check so a provider error
+        # remains retryable and a generic group title is not silently skipped.
+        title_candidates = list(candidates.values())
+    title_candidates.sort(
+        key=lambda candidate: (
+            -candidate["summary_title_overlap"],
+            -candidate.get("prior_sent_count", 0),
+        )
+    )
+
     if source.attendee_evidence == "calendar" and source.attendee_roster_complete:
         attendees = {
             participant.open_dingtalk_id
@@ -825,10 +852,12 @@ def _search_meeting_group_candidates(
             if participant.open_dingtalk_id
         }
         if len(attendees) >= 2:
-            member_sets: dict[str, set[str]] = {}
-            for group_id, group_title, sent_count in store.recurring_meeting_group_targets(
-                source.title
-            ):
+            recurring_targets = store.recurring_meeting_group_targets(source.title)
+            recurring_by_id = {
+                group_id: (group_title, sent_count)
+                for group_id, group_title, sent_count in recurring_targets
+            }
+            for group_id, (group_title, sent_count) in recurring_by_id.items():
                 if group_id not in candidates:
                     for conversation in dws.search_conversations(group_title):
                         if conversation.open_conversation_id == group_id:
@@ -836,39 +865,45 @@ def _search_meeting_group_candidates(
                                 "conversation_id": group_id,
                                 "title": conversation.title,
                                 "search_query": group_title,
+                                "summary_title_overlap": len(
+                                    topic_terms
+                                    & set(_meeting_topic_terms(conversation.title))
+                                ),
                             }
-                if group_id not in candidates:
-                    continue
+                            title_candidates.append(candidates[group_id])
+                            break
+
+            qualified_candidates: list[dict[str, Any]] = []
+            for candidate in candidates.values():
+                group_id = candidate["conversation_id"]
                 members = set(dws.list_group_member_open_dingtalk_ids(group_id))
-                member_sets[group_id] = members
-                overlap = len(attendees & members)
-                if overlap >= 2 and overlap * 5 >= len(attendees) * 3:
-                    candidates[group_id].update(
-                        verified_recurring_group=True,
-                        prior_sent_count=sent_count,
-                        participant_coverage=f"{overlap}/{len(attendees)}",
-                        attendee_overlap=overlap,
-                        member_count=len(members),
-                    )
-            for group_id, candidate in list(candidates.items())[:12]:
-                members = member_sets.get(group_id)
-                if members is None:
-                    members = set(dws.list_group_member_open_dingtalk_ids(group_id))
                 overlap = len(attendees & members)
                 candidate.update(
                     attendee_overlap=overlap,
                     member_count=len(members),
                     participant_coverage=f"{overlap}/{len(attendees)}",
                 )
-    topic_terms = set(_meeting_topic_terms(summary_text))
-    # Search results are not ranked by whether they discuss this meeting's
-    # business line.  Every candidate must therefore receive the same live
-    # message check before the final evidence-based sort; truncating the raw
-    # search order can hide the correct group behind unrelated conversations.
-    for candidate in candidates.values():
-        candidate["summary_title_overlap"] = len(
-            topic_terms & set(_meeting_topic_terms(candidate["title"]))
-        )
+                if overlap >= 2 and overlap * 5 >= len(attendees) * 3:
+                    qualified_candidates.append(candidate)
+                    if group_id in recurring_by_id:
+                        group_title, sent_count = recurring_by_id[group_id]
+                        candidate.update(
+                            verified_recurring_group=True,
+                            prior_sent_count=sent_count,
+                        )
+            title_candidates = [
+                candidate
+                for candidate in qualified_candidates
+                if candidate["summary_title_overlap"] > 0
+                or candidate.get("verified_recurring_group") is True
+            ]
+            if not title_candidates:
+                title_candidates = qualified_candidates
+
+    # Only the attendee- and title-qualified candidates reach message reads.
+    # A unique candidate still gets one live message check; multiple candidates
+    # get the full evidence comparison below.
+    for candidate in title_candidates:
         conversation = DingTalkConversation(
             open_conversation_id=candidate["conversation_id"],
             title=candidate["title"],

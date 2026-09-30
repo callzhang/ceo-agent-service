@@ -1835,7 +1835,7 @@ def test_meeting_group_candidates_prioritize_topic_discussion_over_roster(tmp_pa
 
     assert candidates[0]["conversation_id"] == "cid-marketing"
     assert candidates[0]["summary_title_overlap"] >= 1
-    assert candidates[1]["summary_title_overlap"] == 0
+    assert candidates[1]["summary_title_overlap"] == 1
     assert candidates[0]["topic_discussion_evidence"]
     assert candidates[0]["participant_coverage"] == "2/3"
     assert candidates[1]["participant_coverage"] == "3/3"
@@ -1872,13 +1872,18 @@ def test_meeting_group_candidates_check_discussion_after_raw_search_page(tmp_pat
     ))
     dws = ConsumerDws()
     dws.search_conversations = lambda query: candidates
+    member_reads: list[str] = []
     dws.list_group_member_open_dingtalk_ids = lambda _conversation_id: {
         "open-a", "open-b"
     }
-    dws.read_recent_messages = lambda conversation, limit=50: [SimpleNamespace(
-        content="销售项目进展：招聘候选人面试结论和后续招聘安排",
-        create_time="2026-07-13 10:00:00",
-    )] if conversation.open_conversation_id == "cid-sales-hiring" else []
+    def read_recent_messages(conversation, limit=50):
+        member_reads.append(conversation.open_conversation_id)
+        return [SimpleNamespace(
+            content="销售项目进展：招聘候选人面试结论和后续招聘安排",
+            create_time="2026-07-13 10:00:00",
+        )] if conversation.open_conversation_id == "cid-sales-hiring" else []
+
+    dws.read_recent_messages = read_recent_messages
 
     discovered = meeting_alignment._search_meeting_group_candidates(
         dws, source, store
@@ -1888,6 +1893,7 @@ def test_meeting_group_candidates_check_discussion_after_raw_search_page(tmp_pat
         item for item in discovered if item["conversation_id"] == "cid-sales-hiring"
     )
     assert selected["topic_discussion_evidence"]
+    assert member_reads == ["cid-sales-hiring"]
 
 
 def test_live_group_member_failure_retries_before_meeting_decision(tmp_path):
