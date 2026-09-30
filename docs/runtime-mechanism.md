@@ -245,6 +245,9 @@ session，同一 route 上的后续输入续接既有 session。`process-work-it
 旧 `task:<run_id>` 会话记录不会迁移或覆盖。Task Agent prompt 将此前会话内容限定为背景，决定须依据当轮
 Work Item、当前存储/检索状态和新来源证据。Codex CLI 自己管理上下文自动压缩；其他 route 使用其自身
 会话能力，压缩后的会话仍不能替代 Work Item、数据库或来源证据。
+检索上下文中的历史 source signal 保留来源、时间、作者和上下文，但对可能包含完整会议
+JSON 的 `evidence_text` 使用有界的首尾摘录；原始证据仍在数据库中，避免重复信号把单次
+Agent 输入推过 provider 的输入契约。
 若 CLI 明确报告 compaction 自身因模型 context window 超限而失败，当前 run 会清除此 route 的共享
 session 指针并在同一路由的新 session 重试一次；若 fresh session 仍超限，则转入既有 runtime route
 fallback，不循环创建 session。普通会话冲突或其他错误不会清除共享 session。

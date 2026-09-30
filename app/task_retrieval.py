@@ -15,6 +15,12 @@ from app.task_semantic_models import (
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
+# Source signals can contain the complete provider payload (for example, an AI
+# Minutes meeting JSON document) and the same signal may be linked to many
+# Tasks.  The database keeps that evidence verbatim; the Agent context gets a
+# bounded head/tail projection so repeated source payloads cannot exceed the
+# provider input contract.
+SIGNAL_EVIDENCE_CONTEXT_LIMIT = 2048
 
 
 @dataclass(frozen=True)
@@ -293,13 +299,24 @@ def retrieve_task_semantic_context(
 
 
 def render_task_semantic_context(context: TaskSemanticContext) -> str:
+    def signal_payload(signal: BusinessTaskSignal) -> dict[str, Any]:
+        payload = _model_payload(signal)
+        evidence = str(payload.get("evidence_text") or "")
+        if len(evidence) > SIGNAL_EVIDENCE_CONTEXT_LIMIT:
+            marker = "\n...[source evidence truncated for Agent context]...\n"
+            budget = SIGNAL_EVIDENCE_CONTEXT_LIMIT - len(marker)
+            head = budget // 2
+            tail = budget - head
+            payload["evidence_text"] = evidence[:head] + marker + evidence[-tail:]
+        return payload
+
     payload = {
         "notice": "Similarity rank is context only; never authority or confirmation for identity, acceptance, anchor match, or official Project creation. Legacy formal rows without source-backed owner evidence are unverified, not owner commitments.",
         "task_candidates": [_model_payload(value) for value in context.task_candidates],
         "existing_formal_tasks": [_model_payload(value) for value in context.formal_tasks],
         "unverified_formal_tasks": [_model_payload(value) for value in context.unverified_formal_tasks],
         "task_evidence": [_model_payload(value) for value in context.task_evidence],
-        "source_signals": [_model_payload(value) for value in context.evidence_signals],
+        "source_signals": [signal_payload(value) for value in context.evidence_signals],
         "task_relations": [_model_payload(value) for value in context.task_relations],
         "task_anchor_links": [_model_payload(value) for value in context.task_anchor_links],
         "work_clusters": [_model_payload(value) for value in context.clusters],

@@ -61,6 +61,32 @@ def test_semantic_context_keeps_legacy_ownerless_formal_searchable_but_unverifie
     assert "owner" in payload["notice"]
 
 
+def test_render_semantic_context_bounds_repeated_source_signal_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "semantic-signal-bound.sqlite3")
+    task_id = store.create_business_task(title="美国客户报价", stage="candidate")
+    long_evidence = "开头证据\n" + ("完整会议原文。" * 5000) + "\n结尾证据"
+    signal_id = store.create_business_task_signal(
+        source_type="ai_minutes",
+        source_ref="meeting:long#todos-sha256=one",
+        evidence_text=long_evidence,
+        dedupe_key="meeting:long:signal",
+    )
+    store.link_business_task_evidence(
+        task_id=task_id, signal_id=signal_id, evidence_role="discovery"
+    )
+
+    context = retrieve_task_semantic_context(
+        store, _work_item("美国客户报价"), limit_per_kind=1
+    )
+    payload = json.loads(render_task_semantic_context(context))
+    rendered_signal = payload["source_signals"][0]
+
+    assert len(rendered_signal["evidence_text"]) <= 4096
+    assert rendered_signal["evidence_text"].startswith("开头证据")
+    assert rendered_signal["evidence_text"].endswith("结尾证据")
+    assert rendered_signal["source_ref"] == "meeting:long#todos-sha256=one"
+
+
 def test_semantic_context_requires_attached_owner_source_not_merely_owner_fields(tmp_path):
     store = AutoReplyStore(tmp_path / "semantic-uncited-owner.sqlite3")
     task_id = store.create_business_task(
