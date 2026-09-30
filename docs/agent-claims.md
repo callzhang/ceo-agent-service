@@ -33,7 +33,6 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| codex-wechat-manual-rerun-freshness | app/wechat/prompt.py, app/wechat/consumer.py, tests/wechat/test_prompt.py, tests/wechat/test_consumer.py, docs/runtime-mechanism.md, docs/agent-claims.md | Preserve explicit manual WeChat reruns for delayed messages instead of allowing ordinary freshness guidance to force no_reply | 2026-09-30 |
 | codex-weekly-okr-title-binding | app/weekly_okr_report.py, tests/test_weekly_okr_report.py, docs/architecture.md, docs/runtime-mechanism.md, docs/agent-claims.md | Bind model KR reviews to the live KR order when the model omits usable IDs and title anchors, while keeping exact count and order validation. | 2026-09-28 |
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
