@@ -457,7 +457,10 @@ authority to this source type (`management_weekly_report`,
 `project_weekly_report`, or `department_weekly_report`). Do not turn a generic
 department, topic, or isolated task into a Project. Attach the same authoritative
 proposal to the related Tasks so the service can merge them into one Project
-instead of leaving every report row as an ungrouped candidate.
+instead of leaving every report row as an ungrouped candidate. Any
+`date_evidence.source_excerpt` must be copied literally from the report text,
+including spaces, punctuation, and date wording; never normalize or paraphrase
+it. If no literal source substring is available, omit that date evidence item.
 """
     effective_current_time = current_time.strip() or datetime.now(
         timezone.utc
@@ -651,6 +654,10 @@ NON-NEGOTIABLE VALIDATION CHECK (apply this before returning JSON):
   `estimated_deadline_at`, or `committed_deadline_at`): speaker identity is
   not trusted for those facts. Only emit `next_check_at` when it is authored
   by the CEO Agent itself; otherwise leave `date_evidence` empty.
+- For every other source, every `date_evidence.source_excerpt` must be a
+  literal substring copied from the current Work Item text, preserving exact
+  spaces and punctuation. If you cannot quote it exactly, omit the date
+  evidence rather than paraphrasing it.
 Return the envelope only after checking every item against these rules.
 """
 
@@ -798,6 +805,37 @@ def _source_locator(work_item: WorkItem, item: TaskDecision) -> tuple[str, str, 
     if isinstance(share_url, str) and share_url.strip():
         return share_url.strip(), group, person, description
     return link, group or work_item.source.conversation_title, person or work_item.context.sender, description
+
+
+_GENERIC_PROJECT_TITLES = frozenset({
+    "项目管理部",
+    "项目团队",
+    "管理部",
+    "产品部",
+    "产品团队",
+    "研发部",
+    "研发团队",
+    "技术部",
+    "技术团队",
+    "算法部",
+    "算法团队",
+    "测试部",
+    "测试团队",
+    "销售部",
+    "销售团队",
+    "市场部",
+    "运营部",
+    "财务部",
+    "人力资源部",
+    "部门",
+    "团队",
+})
+
+
+def _is_generic_project_title(title: str) -> bool:
+    """Do not promote a department/team label to an official Project."""
+    normalized = "".join(title.casefold().split()).strip(" ：:、，,。")
+    return normalized in _GENERIC_PROJECT_TITLES
 
 
 def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal:
@@ -1448,7 +1486,9 @@ def apply_task_agent_decision(
                     task_id=task_id, anchor_id=anchor_match.anchor_id,
                     evidence_signal_id=result.signal_id, reason=anchor_match.reason, _db=db,
                 )
-            if item.project_proposal is not None:
+            if item.project_proposal is not None and not _is_generic_project_title(
+                item.project_proposal.title
+            ):
                 proposal = item.project_proposal
                 import hashlib
 

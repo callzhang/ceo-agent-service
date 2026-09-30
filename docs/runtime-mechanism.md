@@ -220,6 +220,10 @@ Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_propo
 部门或话题不能直接注册 Project。多位个人负责人可以用名单表示，但其
 `owner_evidence.excerpt` 必须包含每个人名和当前报告的来源引用；校验忽略
 钉钉 `@` 标记和常见名单分隔符，不把多人整串当作一个名字。
+部门/团队标签（例如“项目管理部”“算法团队”）即使被模型误放进
+`project_proposal` 也不会注册为正式 Project；它们仍可作为 Task 的上下文或候选聚类。
+所有 `date_evidence.source_excerpt` 都必须是当前 Work Item 文本中逐字连续的子串，
+包括原始空格与标点，无法逐字引用时省略日期证据。
 更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
 
 Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。完成由新证据驱动
@@ -1031,7 +1035,7 @@ Derek 2026-09-25 定的规则。Task Agent 用同一个长期 session 是为了�
 | --- | --- |
 | `evidence_origin` | `current`（当前 Work Item，默认）、`session`（此前 session 里读到的）、`memory`（Memory provenance 指向的原始来源） |
 | `source_ref` | 来源引用；`session` / `memory` 时是**原始来源**的引用 |
-| `source_excerpt` | 取自原文的一句话，可以摘取，**不必逐字** |
+| `source_excerpt` | 取自原文的一句话；普通任务引文可以摘取，日期证据的 `source_excerpt` 必须逐字连续匹配 |
 | `source_link` | 来源有链接就必须给 |
 | `source_description` | 没有链接时用文字描述在哪里，例如钉钉消息写“群 + 发送人”；`source_group` 加 `source_person` 也算 |
 

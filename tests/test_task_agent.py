@@ -657,6 +657,8 @@ def test_task_agent_prompt_requires_report_owner_rows_and_project_proposals():
     assert "contains every\nnamed owner" in prompt
     assert "emit `project_proposal` for each named project/workstream" in prompt
     assert "authority to this source type" in prompt
+    assert "`date_evidence.source_excerpt` must be copied literally" in prompt
+    assert "preserving exact spaces and punctuation" in " ".join(prompt.split())
 
 
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():
@@ -1302,6 +1304,28 @@ def test_explicit_meeting_project_proposal_registers_project_and_links_task(tmp_
     )
     assert len(store.list_business_projects()) == 1
     assert len(store.list_business_task_anchor_links(task_id=second_result.task_ids[0])) == 1
+
+
+def test_generic_department_project_proposal_is_not_promoted(tmp_path):
+    store = AutoReplyStore(tmp_path / "generic-project.sqlite3")
+    item = _work_item(assignment_authorized=True)
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none",
+        "source_excerpt": "补齐来源链接；owner 是 Alex。",
+        "source_ref": item.source.ref, "title": "补齐交付清单",
+        "formal_basis": "explicit_assignment", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": "owner 是 Alex"},
+        "project_proposal": {
+            "title": "项目管理部", "reason": "报告章节标题", "authority": "project_weekly_report",
+        },
+    }]})
+
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+                                       decision=decision, record_run=False)
+
+    assert len(result.task_ids) == 1
+    assert store.list_business_projects() == []
+    assert store.list_business_task_anchor_links(task_id=result.task_ids[0]) == ()
 
 
 def test_source_dedupe_distinguishes_owner_but_replays_identical_decision(tmp_path):
