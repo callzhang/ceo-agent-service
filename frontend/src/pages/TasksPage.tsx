@@ -47,7 +47,19 @@ function TaskRow({ item, onChanged }: { item: BusinessTaskSummary; onChanged: ()
 }
 
 function ProjectRow({ item }: { item: BusinessProjectSummary }) {
-  return <li className="business-project-row"><div className="business-task-row-main"><Link to={item.detail_url}>{item.title}</Link><span className="business-stage formal">正式项目</span></div><span className="business-task-time">{item.confirmed_task_count} 个确认关联任务</span><p className="business-task-meta"><span>登记来源：{item.registry_source}</span></p></li>;
+  const taskFacts = [
+    item.current_status ? `状态 ${item.current_status}` : "",
+    item.deadline ? `DDL ${item.deadline}` : "",
+    item.open_task_count !== undefined ? `进行中 ${item.open_task_count}` : "",
+    item.done_task_count ? `已完成 ${item.done_task_count}` : "",
+  ].filter(Boolean);
+  const sourceLabel = item.source_title || item.registry_source || "权威周报";
+  return <li className="business-project-row"><div className="business-task-row-main"><Link to={item.detail_url}>{item.title}</Link><span className="business-stage formal">正式项目</span></div><span className="business-task-time">{item.confirmed_task_count} 个确认关联任务</span><p className="business-task-meta">
+    {item.goal && <span>目标：{item.goal}</span>}
+    {item.responsible_content && <span>负责内容：{item.responsible_content}</span>}
+    {taskFacts.map((fact) => <span key={fact}>{fact}</span>)}
+    {item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">来源：{sourceLabel}{item.reporting_period ? ` · ${item.reporting_period}` : ""}</a> : <span>登记依据：{sourceLabel}</span>}
+  </p></li>;
 }
 
 function ProjectCandidateRow({ item, onChanged }: { item: BusinessProjectCandidateSummary; onChanged: () => void }) {

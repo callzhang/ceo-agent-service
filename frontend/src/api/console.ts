@@ -123,6 +123,16 @@ export interface BusinessProjectSummary {
   canonical_anchor_id: number;
   confirmed_task_count: number;
   detail_url: string;
+  responsible_content?: string;
+  goal?: string;
+  deadline?: string;
+  current_status?: string;
+  source_title?: string;
+  reporting_period?: string;
+  source_url?: string;
+  source_excerpt?: string;
+  open_task_count?: number;
+  done_task_count?: number;
 }
 export interface BusinessProjectCandidateSummary { id: string; title: string; reason: string; status: string; cluster_id: number; provisional: boolean; confirmed_project_id: number | null; }
 export interface BusinessProjectList extends ConsoleList<BusinessProjectSummary> {
@@ -806,7 +816,9 @@ const isTaskSummary = (item: Record<string, unknown>) => isIdentity(item.id)
   && Array.isArray(item.anchor_labels) && item.anchor_labels.every(isString);
 const isProjectSummary = (item: Record<string, unknown>) => isIdentity(item.id)
   && ["title", "registry_source", "detail_url"].every((field) => isString(item[field]))
-  && typeof item.canonical_anchor_id === "number" && typeof item.confirmed_task_count === "number";
+  && typeof item.canonical_anchor_id === "number" && typeof item.confirmed_task_count === "number"
+  && ["responsible_content", "goal", "deadline", "current_status", "source_title", "reporting_period", "source_url", "source_excerpt"].every((field) => item[field] === undefined || isString(item[field]))
+  && ["open_task_count", "done_task_count"].every((field) => item[field] === undefined || typeof item[field] === "number");
 
 export function listBusinessAttention(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal): Promise<BusinessAttentionList> {
   return request<unknown>(`/api/console/tasks/attention${query(params)}`, { signal }).then((value) => semanticList<BusinessAttentionSummary>(value, "attention", isAttentionSummary));

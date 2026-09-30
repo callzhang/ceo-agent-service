@@ -9,7 +9,7 @@ import { TaskProjectDetailPage } from "./TaskProjectDetailPage";
 describe("TaskProjectDetailPage", () => {
   it("shows official registry evidence and confirmed linked Tasks", async () => {
     getBusinessProjectDetail.mockResolvedValue({ item: {
-      summary: { id: "2", title: "美国市场拓展", registry_source: "经营会确认美国市场拓展为正式项目", canonical_anchor_id: 3, confirmed_task_count: 1, detail_url: "/tasks/project/2" },
+      summary: { id: "2", title: "美国市场拓展", registry_source: "经营会确认美国市场拓展为正式项目", canonical_anchor_id: 3, confirmed_task_count: 1, detail_url: "/tasks/project/2", responsible_content: "销售与交付", goal: "完成首轮验证", deadline: "2026-10-03", current_status: "进行中", source_title: "管理周报", reporting_period: "2026-W39", source_url: "https://dingtalk.example/report/2", open_task_count: 1, done_task_count: 0 },
       anchor: { id: 3, title: "美国市场" },
       confirmed_tasks: [{ id: "42", title: "交付报价首版", stage: "formal", status: "open", commitment_status: "accepted", owner: "王明", deadline_at: "", business_relevance: "relevant", anchor_labels: ["美国市场"], updated_at: "2026-09-24", detail_url: "/tasks/item/42" }],
     }, meta: { snapshot_at: "2026-09-24" } });
@@ -17,6 +17,12 @@ describe("TaskProjectDetailPage", () => {
     expect(await screen.findByRole("heading", { name: "美国市场拓展" })).toBeInTheDocument();
     expect(screen.getByText("经营会确认美国市场拓展为正式项目")).toBeInTheDocument();
     expect(screen.getByText("美国市场")).toBeInTheDocument();
+    expect(screen.getByText("销售与交付")).toBeInTheDocument();
+    expect(screen.getByText("完成首轮验证")).toBeInTheDocument();
+    expect(screen.getByText("2026-10-03")).toBeInTheDocument();
+    expect(screen.getByText("进行中")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "管理周报 · 2026-W39" })).toHaveAttribute("href", "https://dingtalk.example/report/2");
+    expect(screen.getByText("1 个（进行中 1 · 已完成 0）")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "交付报价首版" })).toHaveAttribute("href", "/tasks/item/42");
   });
 });

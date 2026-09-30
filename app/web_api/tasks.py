@@ -1,6 +1,7 @@
 """Task management DTOs and read-only console payload builders."""
 
 import json
+import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -732,6 +733,16 @@ class ConsoleBusinessProjectSummary(BaseModel):
     canonical_anchor_id: int
     confirmed_task_count: int
     detail_url: str
+    responsible_content: str = ""
+    goal: str = ""
+    deadline: str = ""
+    current_status: str = ""
+    source_title: str = ""
+    reporting_period: str = ""
+    source_url: str = ""
+    source_excerpt: str = ""
+    open_task_count: int = 0
+    done_task_count: int = 0
 
 
 class ConsoleBusinessProjectCandidate(BaseModel):
@@ -865,6 +876,106 @@ def _task_summary_payload(store: Any, task: Any, anchors: dict[int, Any]) -> dic
     }
 
 
+_REPORT_PROJECT_SOURCES = {
+    "management_weekly_report",
+    "project_weekly_report",
+    "department_weekly_report",
+}
+
+
+def _normalized_project_cell(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", value)).strip().casefold()
+
+
+def _report_project_registry_snapshot(
+    store: Any, project: Any, tasks: list[Any]
+) -> dict[str, str]:
+    """Read the latest explicit report row backing a Project.
+
+    Project rows are kept as immutable Task-signal evidence.  This read path
+    deliberately derives the display summary from that evidence instead of
+    copying model text into a second mutable Project record.
+    """
+    matches: list[tuple[str, dict[str, str]]] = []
+    target = _normalized_project_cell(project.title)
+    for task in tasks:
+        for link in store.list_business_task_anchor_links(task_id=task.id):
+            if link.anchor_id != project.canonical_anchor_id or link.status.value != "confirmed":
+                continue
+            signal = store.get_business_task_signal(link.evidence_signal_id)
+            if signal is None or signal.source_type not in _REPORT_PROJECT_SOURCES:
+                continue
+            try:
+                source = json.loads(signal.evidence_text)
+            except (TypeError, ValueError):
+                continue
+            report = source.get("report") if isinstance(source, dict) else None
+            markdown = source.get("markdown", "") if isinstance(source, dict) else ""
+            if not isinstance(report, dict) or not isinstance(markdown, str):
+                continue
+            heading = re.search(
+                r"(?mi)^##\s+\**(?:手头项目|项目清单|项目组合)\**\s*$",
+                markdown,
+            )
+            if heading is None:
+                continue
+            section = markdown[heading.end():]
+            next_section = re.search(r"(?m)^##\s+", section)
+            if next_section is not None:
+                section = section[: next_section.start()]
+            lines = section.splitlines()
+            header_cells: list[str] = []
+            row_cells: list[str] | None = None
+            for index, line in enumerate(lines[:-1]):
+                if not line.strip().startswith("|") or not lines[index + 1].strip().startswith("|"):
+                    continue
+                if not re.fullmatch(r"\|[\s:|\-]+\|", lines[index + 1].strip()):
+                    continue
+                header_cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                for candidate in lines[index + 2:]:
+                    if not candidate.strip().startswith("|"):
+                        break
+                    cells = [cell.strip() for cell in candidate.strip().strip("|").split("|")]
+                    if cells and _normalized_project_cell(cells[0]) == target:
+                        row_cells = cells
+                        break
+                if row_cells is not None:
+                    break
+            if not header_cells or row_cells is None:
+                continue
+            values = {
+                _normalized_project_cell(header): row_cells[index]
+                for index, header in enumerate(header_cells)
+                if index < len(row_cells)
+            }
+
+            def value_for(*names: str, contains: tuple[str, ...] = ()) -> str:
+                for name in names:
+                    value = values.get(_normalized_project_cell(name), "").strip()
+                    if value:
+                        return value
+                for header, value in values.items():
+                    if value and any(token in header for token in contains):
+                        return value.strip()
+                return ""
+
+            period = str(report.get("reporting_period") or "")
+            matches.append((period, {
+                "responsible_content": value_for("负责内容", "负责人", "负责事项", contains=("负责",)),
+                "goal": value_for("目标", "目的", "Goal", contains=("目标",)),
+                "deadline": value_for("DDL", "截止", "截止时间", "目标时间", "Deadline", contains=("ddl", "截止", "时间")),
+                "current_status": value_for("状态", "当前状态", "Status", contains=("状态",)),
+                "source_title": str(report.get("title") or ""),
+                "reporting_period": period,
+                "source_url": str(report.get("url") or ""),
+                "source_excerpt": " | ".join(row_cells),
+            }))
+    if not matches:
+        return {}
+    matches.sort(key=lambda item: (item[0], item[1]["source_title"]), reverse=True)
+    return matches[0][1]
+
+
 def business_task_list_response(store: Any, *, page: int, page_size: int,
                                 query: str = "", stage: str = "", status: str = "",
                                 business_relevance: str = "", owner: str = "",
@@ -920,9 +1031,22 @@ def business_attention_list_response(store: Any, *, page: int, page_size: int,
 
 def _project_summary_payload(store: Any, project: Any, tasks: list[Any]) -> dict[str, Any]:
     count = sum(project.id in {linked.id for linked in store.list_business_task_project_links(task_id=task.id)} for task in tasks)
-    return {"id": project.id, "title": project.title, "registry_source": project.registry_source,
-            "canonical_anchor_id": project.canonical_anchor_id, "confirmed_task_count": count,
-            "detail_url": f"/tasks/project/{project.id}"}
+    linked_tasks = [
+        task for task in tasks
+        if project.id in {linked.id for linked in store.list_business_task_project_links(task_id=task.id)}
+    ]
+    report = _report_project_registry_snapshot(store, project, linked_tasks)
+    return {
+        "id": project.id,
+        "title": project.title,
+        "registry_source": project.registry_source,
+        "canonical_anchor_id": project.canonical_anchor_id,
+        "confirmed_task_count": count,
+        "detail_url": f"/tasks/project/{project.id}",
+        **report,
+        "open_task_count": sum(task.status.value not in {"done", "cancelled"} for task in linked_tasks),
+        "done_task_count": sum(task.status.value == "done" for task in linked_tasks),
+    }
 
 
 def business_project_list_response(store: Any, *, page: int, page_size: int, query: str = "",

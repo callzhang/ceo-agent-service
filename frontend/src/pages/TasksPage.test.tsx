@@ -154,12 +154,17 @@ describe("TasksPage", () => {
   });
 
   it("folds project leads once official projects exist and shows the count", async () => {
-    const project = { id: "1", title: "美国市场拓展", registry_source: "经营会确认", canonical_anchor_id: 1, confirmed_task_count: 2, detail_url: "/tasks/project/1" };
+    const project = { id: "1", title: "美国市场拓展", registry_source: "经营会确认", canonical_anchor_id: 1, confirmed_task_count: 2, detail_url: "/tasks/project/1", goal: "完成美国客户首轮验证", responsible_content: "销售与交付", deadline: "2026-10-03", current_status: "进行中", source_title: "管理周报", reporting_period: "2026-W39", source_url: "https://dingtalk.example/report/1", open_task_count: 1, done_task_count: 1 };
     api.projects.mockResolvedValue({ items: [project], candidates: [{ id: "4", title: "海外渠道拓展", reason: "待确认", status: "proposed", cluster_id: 2, provisional: true, confirmed_project_id: null }], candidate_meta: { ...meta, total: 1 }, meta });
     render(<MemoryRouter initialEntries={["/tasks?view=projects"]}><TasksPage /></MemoryRouter>);
     expect(await screen.findByRole("link", { name: "美国市场拓展" })).toBeInTheDocument();
     expect(screen.getByText("待确认的项目线索").closest("details")).not.toHaveAttribute("open");
     expect(screen.getByText("正式项目 1 个")).toBeInTheDocument();
+    expect(screen.getByText("目标：完成美国客户首轮验证")).toBeInTheDocument();
+    expect(screen.getByText("负责内容：销售与交付")).toBeInTheDocument();
+    expect(screen.getByText("状态 进行中")).toBeInTheDocument();
+    expect(screen.getByText("DDL 2026-10-03")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "来源：管理周报 · 2026-W39" })).toHaveAttribute("href", "https://dingtalk.example/report/1");
   });
 
   it("filters by owner and sort through the API", async () => {
