@@ -2463,6 +2463,230 @@ def test_historical_candidate_warms_its_own_missing_embedding(tmp_path, monkeypa
     assert len(action_calls) >= 1
 
 
+def test_historical_candidate_already_decided_by_agent_or_user_is_skipped_not_fatal(
+    tmp_path, monkeypatch
+):
+    """A historical candidate is mail the model has never scored -- but it may
+    already carry an agent or user decision (2026-09-29: 205 of 322 real
+    queued candidates did, since a historical candidate only has to look
+    unclassified from the provider folder, not actually be unclassified).
+    persist_model_primary_classification correctly refuses to let a model
+    silently overwrite that existing decision (OnlineModelDurableConflict);
+    execute_historical_model_actions previously let that exception crash the
+    whole run_historical_once call on the very first such message, instead
+    of marking that one candidate terminal and continuing.
+    """
+    import numpy as np
+
+    from app.email_classifier_runtime import OnlineModelDurableConflict
+    from app.email_embedding_classifier import DescriptionAwareEmailClassifier
+    from app.email_embedding_client import EmailEmbeddingClient, EmbeddingResult, EmbeddingTiming
+    from app.email_imap_readonly import ImapUidBatch
+    from app.email_model_registry import EmailModelRegistry
+
+    module = _module()
+    account = {"account_id": "account-1", "enabled": True, "scan_folders": ["INBOX"]}
+    message = {
+        "messageId": "<already-decided@example.com>",
+        "accountId": "account-1",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 1,
+        "providerUnread": False,
+        "from": {"email": "sender@example.com"},
+        "subject": "Already decided by someone else",
+        "textBody": "A completed business thread.",
+        "date": "2026-09-01T12:00:00+00:00",
+    }
+
+    class Source:
+        account_id = "account-1"
+
+        def list_folders(self):
+            return (
+                ProviderFolder("inbox-id", "INBOX", FolderRole.INBOX),
+                ProviderFolder("work-id", "Work", FolderRole.UNBOUND),
+            )
+
+        def fetch_uid_batch(self, mailbox, **kwargs):
+            current = (
+                [message]
+                if mailbox == "INBOX" and int(kwargs["last_seen_uid"]) < 1
+                else []
+            )
+            return ImapUidBatch(
+                account_id=self.account_id,
+                folder=mailbox,
+                uidvalidity=42,
+                previous_uidvalidity=kwargs["cursor_uidvalidity"],
+                messages=tuple(current[: kwargs["limit"]]),
+            )
+
+        def logout(self):
+            return None
+
+    class FakeConnectorRegistry:
+        def connector_for(self, _account_id):
+            return self
+
+        def checkout(self, _kind, _priority=None, **_kwargs):
+            return object(), Source()
+
+        def checkin(self, _session, *, keep):
+            return None
+
+    class FakeEmbeddingClient:
+        def embed(self, texts, **_kwargs):
+            vectors = np.tile(np.array([[1.0, 0.0]], dtype=np.float32), (len(texts), 1))
+            return EmbeddingResult(
+                vectors=vectors,
+                timing=EmbeddingTiming(
+                    queue_ms=0.0, http_ms=0.0, embedding_ms=0.0, head_ms=0.0, total_ms=0.0
+                ),
+            )
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        module,
+        "_build_email_source_factory",
+        lambda _settings: lambda _account: Source(),
+    )
+    monkeypatch.setattr(
+        module, "_build_email_connector_registry", lambda _store: FakeConnectorRegistry()
+    )
+    monkeypatch.setattr(module, "_build_agent_orchestrator", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_routed_codex_execution",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        EmailEmbeddingClient,
+        "from_environment",
+        classmethod(lambda _cls, **_kwargs: FakeEmbeddingClient()),
+    )
+    monkeypatch.setattr(
+        module,
+        "persist_model_primary_classification",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OnlineModelDurableConflict(
+                "stable identity is bound to a different durable model decision"
+            )
+        ),
+    )
+    # In real use there would already be an agent/user classification record
+    # for this identity (that is the whole scenario), so the readback used to
+    # report whether the message is still read would see it and reflect the
+    # message's real (unchanged) read state. This test never lets the mocked
+    # persist_model_primary_classification actually write one, so the
+    # readback is stubbed here to the same effect.
+    from app.email_historical_classifier import HistoricalClassificationState
+    from app.email_provider_folders import FolderRole as _FolderRole
+
+    monkeypatch.setattr(
+        module,
+        "_read_persisted_historical_state",
+        lambda *_args, **_kwargs: HistoricalClassificationState(
+            folder_role=_FolderRole.INBOX,
+            configured_unclassified_source=False,
+            is_read=True,
+            is_unclassified=True,
+        ),
+    )
+    model = SimpleNamespace(
+        enabled_categories=("work", "junk"),
+        dimension=2,
+        input_schema_version="input-v3",
+        embedding_model_id="jina",
+        embedding_revision="r17",
+        category_thresholds={"work": 0.8, "junk": 0.9},
+        predict=lambda _vector, _text: EmbeddingModelPrediction(
+            category="work",
+            category_probability=0.97,
+            category_probabilities={"work": 0.97, "junk": 0.03},
+            category_accepted=True,
+            important=True,
+            important_probability=0.96,
+            head_ms=1.0,
+        ),
+    )
+    monkeypatch.setattr(
+        DescriptionAwareEmailClassifier, "load", classmethod(lambda _cls, _path: model)
+    )
+    monkeypatch.setattr(
+        EmailModelRegistry,
+        "get_staged_evidence",
+        lambda _self, model_id: {
+            "model_id": model_id,
+            "historical_eligibility": {
+                "categories": {
+                    "work": {"eligible": True},
+                    "junk": {"eligible": False},
+                }
+            },
+        },
+    )
+    settings = SimpleNamespace(
+        db_path=tmp_path / "historical-durable-conflict.sqlite3", workspace=tmp_path, dry_run=False
+    )
+    bootstrap = module.build_email_worker_dependencies(
+        settings, direct_action_executor_factory=lambda _account_id: object()
+    )
+    store = bootstrap.email_store
+    monkeypatch.setattr(
+        store,
+        "list_category_configs",
+        lambda: [
+            {
+                "category_key": "work",
+                "enabled": True,
+                "core_description": "Business work.",
+                "include": ["delivery"],
+                "exclude": ["promotion"],
+                "config_version": "config-v1",
+            },
+            {
+                "category_key": "junk",
+                "enabled": True,
+                "core_description": "Unwanted mail.",
+                "include": ["promotion"],
+                "exclude": ["delivery"],
+                "config_version": "config-v1",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        store,
+        "list_account_folder_bindings",
+        lambda: [
+            {
+                "account_id": "account-1",
+                "category_key": "work",
+                "provider_folder_id": "work-id",
+                "provider_folder_name": "Work",
+                "binding_status": "active",
+            }
+        ],
+    )
+    dependencies = bootstrap.build_dependencies((account,), object())
+
+    # Must not raise: the conflict is expected, common, and terminal for this
+    # one candidate -- not a reason to crash the rest of the batch.
+    outcomes = dependencies.run_historical_once(
+        "email-embedding-mlp-ready", account_id="account-1"
+    )
+
+    assert [item.action_outcome for item in outcomes] == ["durable_conflict"]
+    with sqlite3.connect(settings.db_path) as db:
+        state, reason = db.execute(
+            "select state, reason from email_historical_candidates "
+            "where stable_message_identity=?",
+            ("account-1:message-id:<already-decided@example.com>",),
+        ).fetchone()
+    assert (state, reason) == ("terminal", "durable_conflict")
+
+
 def test_historical_deferred_queue_is_fair_durable_and_not_a_busy_loop(tmp_path):
     database = tmp_path / "historical-fair-queue.sqlite3"
     store = EmailStore(database)

@@ -567,19 +567,42 @@ def execute_historical_model_actions(
 ) -> object:
     """Persist and synchronously read back a bounded historical action plan."""
 
+    from app.email_classifier_runtime import OnlineModelAcceptError, OnlineModelDurableConflict
     from app.email_historical_classifier import HistoricalActionResult
 
-    persisted = persist_model_primary_classification(
-        email_store,
-        action_task_producer,
-        message=message,
-        prediction=prediction,
-        context=context,
-        model_id=model_id,
-        model_text=model_text,
-        unsubscribe_entries=unsubscribe_entries,
-        preserve_read=True,
-    )
+    def current_read_state() -> bool:
+        state = read_after()
+        is_read = getattr(state, "is_read", None)
+        if type(is_read) is not bool:
+            raise TypeError("historical action readback must expose strict is_read")
+        return is_read
+
+    try:
+        persisted = persist_model_primary_classification(
+            email_store,
+            action_task_producer,
+            message=message,
+            prediction=prediction,
+            context=context,
+            model_id=model_id,
+            model_text=model_text,
+            unsubscribe_entries=unsubscribe_entries,
+            preserve_read=True,
+        )
+    except OnlineModelAcceptError as exc:
+        # A historical candidate is, by definition, mail the model has never
+        # scored before -- but it may well already carry an agent or user
+        # decision (2026-09-29: 205 of 322 queued candidates did). That is
+        # not this candidate's fault and not retryable: the existing decision
+        # will not go away, so this is terminal, not deferred. Previously
+        # uncaught, this crashed the whole batch on the first such message
+        # instead of just skipping it.
+        outcome = (
+            "durable_conflict"
+            if isinstance(exc, OnlineModelDurableConflict)
+            else "model_accept_failed"
+        )
+        return HistoricalActionResult(outcome, is_read=current_read_state())
     action_plan = persisted.persisted["action_plan"]
     actions = tuple(action_plan["actions"])
     action_ids = email_store.direct_action_ids_for_plan(
@@ -599,13 +622,6 @@ def execute_historical_model_actions(
         probability=float(prediction.category_probability),
         important=bool(prediction.important),
     )
-    def current_read_state() -> bool:
-        state = read_after()
-        is_read = getattr(state, "is_read", None)
-        if type(is_read) is not bool:
-            raise TypeError("historical action readback must expose strict is_read")
-        return is_read
-
     for action_id in action_ids:
         statuses = email_store.direct_action_statuses_for_plan(
             action_plan["action_plan_id"]
