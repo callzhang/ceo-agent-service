@@ -747,10 +747,11 @@ Task/cluster 或 Project candidate 中）；同一正式 Project 的多个周报
 保留空格和标点，无法逐字引用时不写日期证据。周报的“本周工作重点”“下周工作重点”、
 “团队管理和分工”“周度待办追踪”“行动项”章节只生成 Task；只有单独的项目清单、
 项目组合、里程碑/路线图条目或明确会议立项才可注册正式 Project。项目周报的
-“手头项目/项目清单/项目组合”行先从 Task 建立 cluster 和 Project candidate，
-经后续确认后才进入正式 Project 注册表。控制台的“确认正式项目”命令只能引用该
-candidate cluster 已有的来源证据；确认时会把 cluster 中的 Task 统一关联到该 Project，
-重复点击是幂等的，不能把同一 candidate 改绑到另一个 Project。
+项目周报或管理周报中有明确项目列的“手头项目/项目清单/项目组合”行，会先从 Task
+建立 cluster，再依据该登记表来源自动进入正式 Project 注册表，并把 cluster 中的
+Task 关联到该 Project；同一项目标题跨周报复用同一 anchor。普通项目提及、客户/部门
+标签和孤立 Task 仍只形成 Project candidate，只有候选项目的明确确认命令才会升级。
+确认命令只能引用 candidate cluster 已有的来源证据，重复点击幂等，不能改绑到另一个 Project。
 一行列出多位个人负责人时，来源证据须覆盖每个人名；钉钉 `@` 标记及名单分隔符
 不应把有效的负责人引用误判为缺失，团队或部门名称仍不能充当个人负责人。
 

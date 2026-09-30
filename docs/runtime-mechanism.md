@@ -226,10 +226,12 @@ Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_propo
 包括原始空格与标点，无法逐字引用时省略日期证据。周报“本周工作重点”“下周工作重点”、
 “团队管理和分工”“周度待办追踪”“行动项”章节是 Task 来源，不是 Project 注册表；
 只有单独的项目清单/项目组合、里程碑/路线图条目或明确会议立项才可注册正式 Project。
-项目周报的“手头项目/项目清单/项目组合”行先由 Task Agent 建立 cluster 和
-`business_project_candidates`，不会直接注册正式 Project；确认后才进入正式 Project。
-控制台确认只从 cluster 的已有 Task evidence 选择来源信号，不凭空制造证据；事务会同时
-把 cluster 中的 Task 关联到 Project，重复确认保持幂等，不能把已确认 candidate 改绑到另一个 Project。
+项目/管理周报中有明确项目列的“手头项目/项目清单/项目组合”行先由 Task Agent 建立
+cluster，再依据登记表来源直接注册正式 Project，并把 cluster 中的 Task 关联到 Project；
+同一标题复用同一 anchor。普通项目提及、客户/部门标签和孤立 Task 只形成
+`business_project_candidates`，不会直接注册正式 Project。控制台确认只从 cluster 的已有
+Task evidence 选择来源信号，不凭空制造证据；事务会同时把 cluster 中的 Task 关联到 Project，
+重复确认保持幂等，不能把已确认 candidate 改绑到另一个 Project。
 更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
 
 Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。完成由新证据驱动

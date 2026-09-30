@@ -1355,8 +1355,8 @@ def test_weekly_report_task_section_project_proposal_is_not_promoted(tmp_path):
     assert store.list_business_projects() == []
 
 
-def test_project_weekly_report_registry_row_becomes_project_candidate(tmp_path):
-    store = AutoReplyStore(tmp_path / "report-project-candidate.sqlite3")
+def test_project_weekly_report_registry_row_becomes_official_project(tmp_path):
+    store = AutoReplyStore(tmp_path / "report-project.sqlite3")
     row = "| 大众底盘采集 | 100 张内部试标 | 下周起量 | 下周 | ⌛️进行中 |"
     item = _work_item().model_copy(update={
         "source": _work_item().source.model_copy(update={
@@ -1380,18 +1380,38 @@ def test_project_weekly_report_registry_row_becomes_project_candidate(tmp_path):
                                        decision=decision, record_run=False)
 
     assert len(result.task_ids) == 1
+    projects = store.list_business_projects()
+    assert [project.title for project in projects] == ["大众底盘采集"]
     with store._connect() as db:
-        candidate = db.execute(
-            "select title,reason from business_project_candidates"
-        ).fetchone()
-        cluster = db.execute(
-            "select title from business_work_clusters"
-        ).fetchone()
-    assert tuple(candidate) == (
-        "大众底盘采集",
-        "项目管理周报的“手头项目”清单行，先与 Task 聚类，待确认后注册正式 Project。",
-    )
-    assert cluster["title"] == "大众底盘采集"
+        assert db.execute("select count(*) from business_project_candidates").fetchone()[0] == 0
+    assert [project.id for project in store.list_business_task_project_links(task_id=result.task_ids[0])] == [projects[0].id]
+
+
+def test_management_weekly_report_registry_row_becomes_official_project(tmp_path):
+    store = AutoReplyStore(tmp_path / "management-report-project.sqlite3")
+    row = "| 陈凯 | 江淮私有化 | 本周交付与合同边界确认 | ⌛️进行中 |"
+    item = _work_item().model_copy(update={
+        "source": _work_item().source.model_copy(update={
+            "type": WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT,
+            "ref": "report:management-weekly",
+        }),
+        "summary": json.dumps({
+            "report": {"title": "管理周报"},
+            "markdown": f"## **手头项目**\n\n| 负责人 | 项目 | 当前状态 |\n|---|---|---|\n{row}\n",
+        }, ensure_ascii=False),
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none",
+        "source_excerpt": row, "source_ref": item.source.ref,
+        "title": "完成江淮私有化本周交付和合同边界确认",
+        "missing_evidence": ["owner"],
+    }]})
+
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+                                       decision=decision, record_run=False)
+
+    assert len(result.task_ids) == 1
+    assert [project.title for project in store.list_business_projects()] == ["江淮私有化"]
 
 
 def test_source_dedupe_distinguishes_owner_but_replays_identical_decision(tmp_path):
