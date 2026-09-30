@@ -642,6 +642,8 @@ def test_task_agent_prompt_prioritizes_weekly_report_then_meeting_evidence():
     assert "preserve the exact source reference/excerpt" in prompt
     assert "emit `project_proposal`" in prompt
     assert "explicitly decides to start, approve, 立项" in prompt
+    assert "required even when the related Task is an `update_task`" in prompt
+    assert "Read the complete meeting_summary, transcript_excerpts, and action item text" in prompt
 
 
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():

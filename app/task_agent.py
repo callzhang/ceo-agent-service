@@ -550,7 +550,14 @@ Project resolution is part of this scan. If the current meeting evidence explici
 decides to start, approve, 立项, or assign a named project/workstream (not merely
 mentioning it), emit `project_proposal` on each related Task with the exact project
 title, a reason grounded in the source sentence, and `authority="meeting_decision"`.
-The service will register that project and link the Task to it. If the source only
+This is required even when the related Task is an `update_task` or a previously
+recorded meeting action: update the Task and attach the project proposal in the
+same decision. Read the complete meeting_summary, transcript_excerpts, and action
+item text before deciding that a project was only mentioned. When a sentence
+explicitly asks for a named product or workstream to be planned or set up, use
+that source-named item as the Project title; do not leave the proposal null merely
+because the current Task already exists. The service will register that project
+and link the Task to it. If the source only
 mentions a project or several Tasks appear related without an explicit project
 decision, do not emit `project_proposal`; emit a `cluster_proposal` and a
 `project_candidate_proposal` instead when the existing cluster and evidence support
