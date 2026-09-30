@@ -905,8 +905,11 @@ def _report_project_registry_title(work_item: WorkItem, item: TaskDecision) -> s
     )
     if row_start >= registry_end:
         return ""
+    # The model's evidence excerpt may preserve a Markdown table row with or
+    # without the leading pipe.  The report itself is authoritative; the
+    # excerpt is only a locator, so accept either representation.
     first_row = next((line for line in item.source_excerpt.splitlines()
-                      if line.strip().startswith("|")), "")
+                      if "|" in line), "")
     cells = [cell.strip() for cell in first_row.strip().strip("|").split("|")]
     if not cells:
         return ""

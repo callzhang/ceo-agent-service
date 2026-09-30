@@ -1414,6 +1414,34 @@ def test_management_weekly_report_registry_row_becomes_official_project(tmp_path
     assert [project.title for project in store.list_business_projects()] == ["江淮私有化"]
 
 
+def test_weekly_report_registry_accepts_excerpt_without_leading_pipe(tmp_path):
+    store = AutoReplyStore(tmp_path / "report-project-unwrapped-row.sqlite3")
+    row = "标注工厂（大同标注基地） | 亏损类型止损和后续产能确认 | 停止 OD，仅保留可持平或盈利的 LD、OCC | 待客户确认 | ⌛️待确认"
+    item = _work_item().model_copy(update={
+        "source": _work_item().source.model_copy(update={
+            "type": WorkItemSourceType.PROJECT_WEEKLY_REPORT,
+            "ref": "report:project-weekly-unwrapped",
+        }),
+        "summary": json.dumps({
+            "report": {"title": "项目周报"},
+            "markdown": "## **手头项目**\n\n| 项目名 | 负责内容 | 目标 | DDL | 状态 |\n|---|---|---|---|---|\n| " + row + " |\n",
+        }, ensure_ascii=False),
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "record_candidate", "transition": "none",
+        "source_excerpt": row, "source_ref": item.source.ref,
+        "title": "停止大同标注基地亏损业务类型并确认后续产能量级",
+        "missing_evidence": ["owner"],
+    }]})
+
+    assert _report_project_registry_title(item, decision.task_decisions[0]) == "标注工厂（大同标注基地）"
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+                                       decision=decision, record_run=False)
+
+    assert len(result.task_ids) == 1
+    assert [project.title for project in store.list_business_projects()] == ["标注工厂（大同标注基地）"]
+
+
 def test_source_dedupe_distinguishes_owner_but_replays_identical_decision(tmp_path):
     store = AutoReplyStore(tmp_path / "owner-sensitive-dedupe.sqlite3")
     excerpt = "Alex and Bob are assigned to prepare the release report."
