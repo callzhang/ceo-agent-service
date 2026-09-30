@@ -32,7 +32,6 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| codex-report-project-promotion | app/task_agent.py, tests/test_task_agent.py, docs/architecture.md, docs/runtime-mechanism.md, docs/agent-claims.md | Promote explicit project/management weekly-report registry rows to official Projects, migrate their existing candidates idempotently, and keep ordinary mentions as candidates. | 2026-09-30 |
 | codex-weekly-okr-title-binding | app/weekly_okr_report.py, tests/test_weekly_okr_report.py, docs/architecture.md, docs/runtime-mechanism.md, docs/agent-claims.md | Bind model KR reviews to the live KR order when the model omits usable IDs and title anchors, while keeping exact count and order validation. | 2026-09-28 |
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
