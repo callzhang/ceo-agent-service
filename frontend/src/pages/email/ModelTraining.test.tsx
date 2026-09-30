@@ -773,7 +773,18 @@ it("lists model versions and failed runs newest first", () => {
       { ...learning.staged_models[0], model_id: "email-embedding-mlp-newest", trained_at: "2026-09-17T08:00:00Z" },
     ],
     training_runs_without_model: [
-      { run_id: "run-middle", status: "failed", started_at: "2026-09-16T08:00:00Z", finished_at: "2026-09-16T08:01:00Z", reason: "boom", model_families: ["embedding-mlp", "fasttext"] },
+      {
+        run_id: "run-middle",
+        status: "failed",
+        started_at: "2026-09-16T08:00:00Z",
+        finished_at: "2026-09-16T08:01:00Z",
+        reason: "boom",
+        model_families: ["embedding-mlp", "fasttext"],
+        family_results: {
+          "embedding-mlp": { status: "failed", error: "RuntimeError:boom" },
+          fasttext: { status: "failed", error: "RuntimeError:Encountered NaN." },
+        },
+      },
     ],
   };
   render(
@@ -783,11 +794,41 @@ it("lists model versions and failed runs newest first", () => {
   const table = screen.getByRole("table", { name: "模型版本" });
   const ids = Array.from(table.querySelectorAll("tbody tr td:first-child")).map((cell) => cell.getAttribute("title"));
   expect(ids).toEqual(["email-embedding-mlp-newest", "run-middle", "email-embedding-mlp-older"]);
-  // A failed run shows the families it was asked to train, one column each.
+  // A failed run shows each family's own recorded outcome, one column each;
+  // a family never requested (TF-IDF here) stays a plain "—".
   const runRow = Array.from(table.querySelectorAll("tbody tr")).find((row) => row.querySelector("td")?.getAttribute("title") === "run-middle");
   const runCells = runRow?.querySelectorAll("td");
-  expect(runCells?.[1]).toHaveTextContent("embedding-mlp");
-  expect(runCells?.[2]).toHaveTextContent("fasttext");
+  expect(runCells?.[1]).toHaveTextContent("RuntimeError:boom");
+  expect(runCells?.[2]).toHaveTextContent("RuntimeError:Encountered NaN.");
+  expect(runCells?.[3]).toHaveTextContent("—");
+});
+
+it("shows \"—\" rather than a family name for a run that crashed before recording any outcome", () => {
+  // A run's family_results is only written when the run finishes; a total
+  // crash (e.g. a missing snapshot) leaves it empty. That must not look
+  // the same as a family still quietly succeeding.
+  const crashed = {
+    ...learning,
+    training_runs_without_model: [
+      {
+        run_id: "run-crashed",
+        status: "failed",
+        started_at: "2026-09-16T08:00:00Z",
+        finished_at: "2026-09-16T08:01:00Z",
+        reason: "RuntimeError:frozen training snapshot is unavailable",
+        model_families: ["embedding-mlp", "fasttext", "tfidf-logistic-regression"],
+      },
+    ],
+  };
+  render(
+    <ModelTraining learning={crashed} configs={[]} reload={async () => crashed} runtimeVerified onRuntimeUnverified={vi.fn()} onBusy={vi.fn()} />,
+  );
+
+  const table = screen.getByRole("table", { name: "模型版本" });
+  const runRow = Array.from(table.querySelectorAll("tbody tr")).find((row) => row.querySelector("td")?.getAttribute("title") === "run-crashed");
+  const runCells = runRow?.querySelectorAll("td");
+  expect(runCells?.[1]).toHaveTextContent("—");
+  expect(runCells?.[2]).toHaveTextContent("—");
   expect(runCells?.[3]).toHaveTextContent("—");
 });
 

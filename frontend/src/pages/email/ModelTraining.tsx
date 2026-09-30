@@ -63,6 +63,31 @@ function familyOutcomeLabel(
   return outcome.error ? `✗ ${outcome.error}` : "✗";
 }
 
+const RUN_IN_PROGRESS_STATUSES = ["queued", "launching", "running"];
+
+// A run's family_results is only written when the run finishes, so a
+// still-running run has none yet. Showing the bare family name then would
+// be indistinguishable from a terminal run whose family never got a
+// recorded outcome (a crash before it started) — that must read as
+// "no data", not as a quiet success. Only a run still in progress may show
+// the family name as "this one is pending".
+function familyCellLabel(
+  status: string,
+  familyResults: Record<string, {status?: string; model_id?: string; error?: string}> | undefined,
+  requestedFamilies: string[],
+  familyLabelFor: (key: string) => string,
+  key: string,
+) {
+  const outcome = familyResults?.[key];
+  if (outcome) return familyOutcomeLabel(outcome);
+  const requested =
+    requestedFamilies.length > 0
+      ? requestedFamilies.includes(key)
+      : key === "embedding-mlp"; // a plain retrain with no explicit selection only ever trains this one
+  if (requested && RUN_IN_PROGRESS_STATUSES.includes(status)) return familyLabelFor(key);
+  return "—";
+}
+
 function useFamilyLabel() {
   const names = useContext(FamilyNames);
   return (value: string) =>
@@ -580,11 +605,13 @@ export function ModelTraining({
                     {TRAINING_FAMILY_ORDER.map((key) => (
                       <td key={key}>
                         {item.kind === "run"
-                          ? item.family_results?.[key]
-                            ? familyOutcomeLabel(item.family_results[key])
-                            : (item.model.model_family || "").split("、").includes(key)
-                              ? familyNames[key] || key
-                              : "—"
+                          ? familyCellLabel(
+                              item.model.status,
+                              item.family_results,
+                              (item.model.model_family || "").split("、").filter(Boolean),
+                              (k) => familyNames[k] || k,
+                              key,
+                            )
                           : item.model.model_family === (familyNames[key] || key) ||
                               item.model.model_family === key
                             ? familyNames[key] || key
