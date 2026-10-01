@@ -189,6 +189,16 @@ def _canonicalize_current_source_provenance(
             and "#todos-sha256=" in source_ref
         ):
             formal_basis = FormalTaskBasis.MEETING_ACTION_ITEM
+        if (
+            formal_basis is FormalTaskBasis.EXPLICIT_COMMITMENT
+            and work_item.source.type is WorkItemSourceType.AI_MINUTES
+            and "#todos-sha256=" in source_ref
+            and item.owner_kind == "individual"
+            and item.owner_relation in ai_minutes_owner_relations
+        ):
+            # AI Minutes is a meeting action source, not an owner-authored
+            # reply channel. Preserve the named owner as assigned_unaccepted.
+            formal_basis = FormalTaskBasis.MEETING_ACTION_ITEM
         action = item.action
         if (
             action == "record_candidate"

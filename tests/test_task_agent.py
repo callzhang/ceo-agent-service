@@ -1152,6 +1152,32 @@ def test_current_ai_minutes_provenance_is_canonical_and_not_external_todo():
     assert normalized_item.formal_basis is FormalTaskBasis.MEETING_ACTION_ITEM
 
 
+def test_current_ai_minutes_commitment_is_canonicalized_to_meeting_action_item():
+    base = _work_item()
+    item = base.model_copy(update={
+        "source": base.source.model_copy(update={
+            "type": WorkItemSourceType.AI_MINUTES,
+            "ref": "minutes:health-metrics#todos-sha256=abc",
+        }),
+        "context": base.context.model_copy(update={
+            "source_conversation_kind": WorkItemSourceKind.MINUTES,
+        }),
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none",
+        "source_excerpt": "张玲玲更新数据",
+        "source_ref": item.source.ref,
+        "title": "更新健康度数据",
+        "formal_basis": "explicit_commitment",
+        "owner_name": "张玲玲",
+        "owner_kind": "individual",
+        "owner_relation": "self_commitment",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": "张玲玲更新数据"},
+    }]})
+    normalized = _canonicalize_current_source_provenance(decision, work_item=item)
+    assert normalized.task_decisions[0].formal_basis is FormalTaskBasis.MEETING_ACTION_ITEM
+
+
 @pytest.mark.parametrize(
     "owner_kind, owner_relation, expected_action",
     [
