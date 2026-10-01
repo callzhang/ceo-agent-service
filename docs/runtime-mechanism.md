@@ -9,6 +9,10 @@
 
 每个需要 Agent 处理的任务都经过两个职责不同的角色：
 
+Consumer 的未审核外部效果检测只把写入操作的 provider 回执视作副作用；
+群消息列表中的 `conversationMessagesList[*].messages[*].openMessageId` 是历史消息身份，
+不能据此判定 Consumer 发送了消息或阻止后续安全恢复。
+
 1. 执行 Agent 读取上下文和证据，形成候选结果或任务结果。
 2. 审核 Agent 独立检查执行结果，决定通过、反馈修改或升级人工处理。
 

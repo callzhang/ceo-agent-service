@@ -41,6 +41,10 @@ def _receipts_in(value: Any, found: list[str], depth: int = 0) -> None:
         return
     if isinstance(value, dict):
         for key, item in value.items():
+            # Chat history returns openMessageId for each existing message.
+            # Those identifiers are evidence of a read, not a new send.
+            if key == "conversationMessagesList":
+                continue
             if key in PROVIDER_RECEIPT_FIELDS and isinstance(item, str) and item.strip():
                 found.append(item.strip())
             else:

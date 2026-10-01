@@ -33,6 +33,13 @@ def test_a_read_only_turn_reports_nothing() -> None:
     assert provider_receipts(events) == ()
 
 
+def test_paginated_chat_history_ids_are_not_send_receipts() -> None:
+    history = {"result": {"conversationMessagesList": [{"messages": [
+        {"content": "existing message", "messageId": "msg-old", "openMessageId": "msg-old"}
+    ]}]}}
+    assert provider_receipts([_command(json.dumps(history))]) == ()
+
+
 def test_a_failed_command_is_not_treated_as_an_effect() -> None:
     """A non-zero exit has no provider acceptance to record."""
     output = json.dumps({"data": {"result": {"openTaskId": "not-accepted"}}})
