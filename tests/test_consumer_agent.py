@@ -644,6 +644,15 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert "decision_options is" in instructions
     assert "error_code, error_retryable, and error_authorization_required" in instructions
     assert "Do not return a nested error object" in instructions
+
+
+def test_consumer_document_action_keeps_body_out_of_description():
+    instructions = consumer_developer_instructions()
+
+    assert "dingtalk-doc" in instructions
+    assert "payload.content" in instructions
+    assert "description" in instructions
+    assert "2048" in instructions
     assert "pass that stable user id to" in instructions
     assert "originatorOpenDingTalkId" in instructions
     assert "display-name search" in instructions

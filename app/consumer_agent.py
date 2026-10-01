@@ -346,6 +346,11 @@ done. Describe a
 proposed action in the form you are proposing it, never as something already
 done.
 
+For a `dingtalk-doc` `create_document` action, put the complete, exact document
+body in `payload.content`. Keep `description` to a short action summary of at
+most 2048 characters; never put the document body there. The next stage reads
+`payload.content` to create and verify the document.
+
 Concretely, these commands are the next stage's to run, never yours:
 `dws chat +dm`, `dws chat +messages-send`, `dws chat +send-to-group`,
 `dws chat message edit`, `dws chat message recall`, `dws mail send|reply|forward`,
