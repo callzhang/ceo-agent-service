@@ -13,6 +13,17 @@ from app.developer_prompt import DeveloperPromptTemplateError
 from app.store import AgentRole
 
 
+@pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
+def test_publication_scope_contract_is_present_even_with_saved_rules(tmp_path, role):
+    path = tmp_path / "rules.md"
+    path.write_text("Distinguish access from publication authority.")
+    rendered = render_audit_rules(role, path)
+    assert "all-staff public OKRs" in rendered
+    assert "not a separate privacy authorization requirement" in rendered
+    assert "nonpublic individual assessments" in rendered
+    assert "unconfirmed conclusions or completion dates" in rendered
+
+
 def test_same_saved_rules_render_under_fixed_role_wrappers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -298,6 +298,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_iteration_decision_items",
     "outbound_postfixes",
     "outbound_postfix_receipts",
+    "native_reply_dispatches",
     "business_task_signals",
     "business_tasks",
     "business_task_dingtalk_links",
@@ -5706,6 +5707,16 @@ class AutoReplyStore:
                 )
                 """
             )
+            db.execute(
+                """create table if not exists native_reply_dispatches (
+                    channel text not null,
+                    delivery_key text not null,
+                    created_at text not null default current_timestamp,
+                    primary key(channel, delivery_key),
+                    foreign key(channel, delivery_key)
+                        references outbound_postfixes(channel, delivery_key)
+                )"""
+            )
             legacy_ready_deliveries = db.execute(
                 """
                 select deliveries.id, deliveries.reply_text, tasks.trigger_text
@@ -5861,6 +5872,16 @@ class AutoReplyStore:
                 (normalized_channel, since),
             ).fetchall()
         return {outbound_body_echo_key(str(row["final_body"])) for row in rows}
+
+    def claim_native_reply_dispatch(self, channel: str, delivery_key: str) -> bool:
+        """Commit the possible-effect boundary before calling the provider."""
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                "insert or ignore into native_reply_dispatches (channel, delivery_key) "
+                "values (?, ?)",
+                (channel, delivery_key),
+            )
+            return cursor.rowcount == 1
 
     def get_outbound_postfix_receipt(
         self,

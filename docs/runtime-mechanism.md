@@ -1142,6 +1142,30 @@ again with launchd `bootstrap` after verification, then performs the normal
 health and queue readback. This prevents the deployment process and worker
 process from writing the same SQLite database concurrently.
 
+### Public information and native reply recovery
+
+The fixed Consumer/Audit rules now distinguish established public disclosure
+scope from factual support. All-staff public OKRs and ordinary coordination
+within their established audience do not require an additional personnel
+privacy grant. A privacy refusal must identify concrete nonpublic information
+and an audience mismatch. Public visibility still does not support invented
+conclusions, dates, commitments, or nonpublic individual assessments. This
+contract is included even when a persisted custom Audit Rules template exists.
+
+Native DingTalk replies persist `native_reply_dispatches` before the provider
+call. After an interrupted call, another invocation of the same prepared
+delivery automatically performs read-only reconciliation instead of sending
+again. A confirmed match requires exactly one unrecalled message with the
+original conversation, quoted trigger, prepared body (rendered whitespace
+normalized), and authenticated current sender. Its message ID and readback are
+persisted as the normal outbound receipt. Empty, duplicate, mismatched, or
+unavailable reads remain inconclusive; a bounded recent-message read cannot
+prove absence and never releases the dispatch guard. This is recovery on
+invocation, not a new background retry scheduler. A pre-send Audit rejection
+does not create a dispatch or bypass authorization. Existing failed generations
+without this new boundary still require the formal evidence-based recovery
+path; their historical dispatch state is not fabricated.
+
 ### Runtime result failure evidence
 
 Successful multi-family email training runs use the successful `embedding-mlp`

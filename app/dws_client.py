@@ -3162,6 +3162,32 @@ class DwsClient:
             self.build_query_message_send_status_command(open_task_id)
         )
 
+    def reconcile_reply_to_trigger(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        text: str,
+    ) -> dict[str, Any] | None:
+        """Positive-only readback: a bounded empty page never authorizes resend."""
+        from app.outbound_postfix import outbound_body_echo_key
+
+        matches = [
+            message for message in self.read_recent_messages(conversation)
+            if message.open_conversation_id == conversation.open_conversation_id
+            and message.quoted_message_id == trigger.open_message_id
+            and outbound_body_echo_key(message.content) == outbound_body_echo_key(text)
+            and not message.is_recalled()
+            and self.is_current_user_message(message)
+        ]
+        if len(matches) != 1:
+            return None
+        message = matches[0]
+        return {
+            "success": True,
+            "result": {"openMessageId": message.open_message_id},
+            "readback": message.model_dump(mode="json"),
+        }
+
     def verify_message_send_result(
         self, send_result: dict[str, Any]
     ) -> dict[str, Any]:

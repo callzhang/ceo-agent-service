@@ -25,6 +25,16 @@ AUDIT_RULE_WRAPPER = (
     "candidate exactly as authored. If business meaning must change, return concrete "
     "feedback; do not rewrite the candidate yourself."
 )
+PUBLICATION_SCOPE_CONTRACT = (
+    "Classify the actual information, not the group name or the person's role. "
+    "In the principal's organization, all-staff public OKRs and ordinary business coordination within "
+    "their established audience are not a separate privacy authorization requirement. "
+    "Existing public source context establishes disclosure scope; identify concrete "
+    "nonpublic information and the audience mismatch before refusing on privacy grounds. "
+    "Do not extend this to nonpublic individual assessments or personnel details. "
+    "Public visibility does not establish factual accuracy: do not invent "
+    "unconfirmed conclusions or completion dates, or turn progress into a new commitment."
+)
 # Asked of both roles, at the end of the turn. Reading from Memory was always
 # instructed and is healthy -- 144 Consumer recalls and 30 Audit recalls over
 # the fourteen days to 2026-09-19 -- but nothing ever asked a turn to write,
@@ -165,7 +175,7 @@ def render_audit_rules(role: AgentRole, path: Path | None = None) -> str:
         if role is AgentRole.CONSUMER
         else AUDIT_RULE_WRAPPER
     )
-    return f"{wrapper}\n\n{custom}\n\n{memory_write_reminder()}"
+    return f"{wrapper}\n\n{PUBLICATION_SCOPE_CONTRACT}\n\n{custom}\n\n{memory_write_reminder()}"
 
 
 def _render_audit_variables(body: str) -> str:

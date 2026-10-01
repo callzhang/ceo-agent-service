@@ -143,11 +143,16 @@ class ServiceMessageSender:
         )
         if persisted_receipt is not None:
             return SendReceipt(message=message, provider_result=persisted_receipt)
-        provider_result = self.dingtalk.send_reply_to_trigger(
-            conversation,
-            trigger,
-            message.final_body,
-        )
+        if self.store.claim_native_reply_dispatch(message.channel, message.delivery_key):
+            provider_result = self.dingtalk.send_reply_to_trigger(
+                conversation, trigger, message.final_body,
+            )
+        else:
+            provider_result = self.dingtalk.reconcile_reply_to_trigger(
+                conversation, trigger, message.final_body,
+            )
+            if provider_result is None:
+                raise RuntimeError("dingtalk_reply_reconciliation_inconclusive")
         verification = self._verify_native_reply_result(provider_result)
         if verification != "sent":
             raise RuntimeError(f"native DingTalk reply send is {verification}")
