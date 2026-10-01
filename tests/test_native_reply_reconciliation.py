@@ -51,7 +51,7 @@ def test_readback_requires_one_matching_message_from_current_sender(monkeypatch,
     client = DwsClient()
     conversation = DingTalkConversation(open_conversation_id="cid", title="Group", single_chat=False, unread_point=0)
     trigger = DingTalkMessage(open_conversation_id="cid", open_message_id="trigger", conversation_title="Group", single_chat=False, sender_name="Mina", create_time="2026-10-01T21:00:00Z", content="Status?")
-    message = trigger.model_copy(update={"open_message_id": "sent-id", "quoted_message_id": "trigger", "sender_user_id": "self", "content": "Public  status"})
+    message = trigger.model_copy(update={"open_message_id": "sent-id", "quoted_message_id": "trigger", "sender_user_id": "self", "content": "@Mina Public  status"})
     updates = {
         "conversation": {"open_conversation_id": "other"},
         "trigger": {"quoted_message_id": "other"},
@@ -83,3 +83,14 @@ def test_readback_failure_never_dispatches_again(tmp_path):
     with pytest.raises(TimeoutError, match="readback unavailable"):
         sender.send_dingtalk_reply_to_trigger_prepared(prepared, conversation="cid", trigger="msg")
     assert adapter.sends == 1
+
+
+def test_native_reply_readback_matches_provider_rendered_mentions_and_list_breaks(monkeypatch):
+    client = DwsClient()
+    conversation = DingTalkConversation(open_conversation_id="cid", title="Group", single_chat=False, unread_point=0)
+    trigger = DingTalkMessage(open_conversation_id="cid", open_message_id="trigger", conversation_title="Group", single_chat=False, sender_name="Mina Zou", create_time="2026-10-01T21:00:00Z", content="Status?")
+    sent = trigger.model_copy(update={"open_message_id": "sent", "quoted_message_id": "trigger", "sender_user_id": "self", "content": "@Mina Zou **Status**  \n- One- Two"})
+    monkeypatch.setattr(client, "read_recent_messages", lambda _: [sent])
+    monkeypatch.setattr(client, "get_current_user_id", lambda: "self")
+    result = client.reconcile_reply_to_trigger(conversation, trigger, "**Status**\n\n- One\n- Two")
+    assert result is not None

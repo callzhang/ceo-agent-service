@@ -1156,8 +1156,9 @@ Native DingTalk replies persist `native_reply_dispatches` before the provider
 call. After an interrupted call, another invocation of the same prepared
 delivery automatically performs read-only reconciliation instead of sending
 again. A confirmed match requires exactly one unrecalled message with the
-original conversation, quoted trigger, prepared body (rendered whitespace
-normalized), and authenticated current sender. Its message ID and readback are
+original conversation, quoted trigger, prepared body with the provider's
+native mention of the verified trigger sender (rendered whitespace ignored),
+and authenticated current sender. Its message ID and readback are
 persisted as the normal outbound receipt. Empty, duplicate, mismatched, or
 unavailable reads remain inconclusive; a bounded recent-message read cannot
 prove absence and never releases the dispatch guard. This is recovery on

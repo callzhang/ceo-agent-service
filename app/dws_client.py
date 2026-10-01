@@ -3169,13 +3169,12 @@ class DwsClient:
         text: str,
     ) -> dict[str, Any] | None:
         """Positive-only readback: a bounded empty page never authorizes resend."""
-        from app.outbound_postfix import outbound_body_echo_key
-
+        expected_body = "".join(f"@{trigger.sender_name} {text}".split())
         matches = [
             message for message in self.read_recent_messages(conversation)
             if message.open_conversation_id == conversation.open_conversation_id
             and message.quoted_message_id == trigger.open_message_id
-            and outbound_body_echo_key(message.content) == outbound_body_echo_key(text)
+            and "".join(message.content.split()) == expected_body
             and not message.is_recalled()
             and self.is_current_user_message(message)
         ]
