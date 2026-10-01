@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
+from hashlib import sha256
 import json
 from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 from typing import Protocol
 from uuid import uuid4
 
@@ -57,6 +60,40 @@ from app.store import (
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
+
+
+@contextmanager
+def _audit_document_materials(workspace: Path, actions):
+    document_actions = [
+        (index, action, action.payload.get("content"))
+        for index, action in enumerate(actions)
+        if action.capability == "dingtalk-doc"
+        and action.operation == "create_document"
+        and isinstance(action.payload, Mapping)
+        and isinstance(action.payload.get("content"), str)
+    ]
+    if not document_actions:
+        yield ""
+        return
+    with TemporaryDirectory(prefix=".ceo-audit-doc-", dir=workspace) as directory:
+        root = Path(directory)
+        lines = [
+            "\n\n### Exact Document Payloads",
+            "The document body is materialized from the durable Consumer proposal. "
+            "For dws doc +create, use --content with the listed @relative path "
+            "from the task workspace; do not retype or rewrite the body. "
+            "These files disappear when this Audit turn ends.",
+        ]
+        for index, action, content in document_actions:
+            path = root / f"{index}.md"
+            path.write_text(content, encoding="utf-8")
+            path.chmod(0o600)
+            relative = path.relative_to(workspace)
+            lines.append(
+                f"action_identity={action.action_identity} "
+                f"content=@{relative} sha256={sha256(content.encode('utf-8')).hexdigest()}"
+            )
+        yield "\n".join(lines)
 
 
 class ExecutionEvidenceDriver(Protocol):
@@ -287,39 +324,40 @@ class AuditAgentRunner:
                 raw,
                 has_typed_actions=bool(expected_actions),
             )
-        return process.execute(
-            run=run,
-            skill_names=context.task.skill_names,
-            prompt=prompt,
-            session_id=run.codex_session_id or None,
-            developer_instructions="\n\n".join(
-                part for part in (
-                    audit_developer_instructions(rendered_rules),
-                    self.skill_protocol_override,
-                ) if part
-            ),
-            configure_command=lambda command: make_audit_agent_command(
-                command,
-                controlled_cli=ControlledCliConfig(
-                    command=sys.executable,
-                    args=("-m", "app.agent_cli"),
-                    cwd=str(SERVICE_ROOT),
-                ) if email_unsubscribe_tools or dingtalk_message_tools else None,
-            ),
-            parse_result=self._parse_evidenced_result(
-                task,
-                run,
-                parse_result=parse_result,
-                delivery_keys=tuple(
-                    str(expected.get("delivery_key") or "")
-                    for expected in expected_actions
+        with _audit_document_materials(self.workspace, context.proposal.actions) as materials:
+            return process.execute(
+                run=run,
+                skill_names=context.task.skill_names,
+                prompt=prompt + materials,
+                session_id=run.codex_session_id or None,
+                developer_instructions="\n\n".join(
+                    part for part in (
+                        audit_developer_instructions(rendered_rules),
+                        self.skill_protocol_override,
+                    ) if part
                 ),
-            ),
-            persist_conversation_session=False,
-            expected_actions=expected_actions,
-            image_paths=[Path(path) for path in context.task.image_paths],
-            required_capabilities=self._required_capabilities(context),
-        )
+                configure_command=lambda command: make_audit_agent_command(
+                    command,
+                    controlled_cli=ControlledCliConfig(
+                        command=sys.executable,
+                        args=("-m", "app.agent_cli"),
+                        cwd=str(SERVICE_ROOT),
+                    ) if email_unsubscribe_tools or dingtalk_message_tools else None,
+                ),
+                parse_result=self._parse_evidenced_result(
+                    task,
+                    run,
+                    parse_result=parse_result,
+                    delivery_keys=tuple(
+                        str(expected.get("delivery_key") or "")
+                        for expected in expected_actions
+                    ),
+                ),
+                persist_conversation_session=False,
+                expected_actions=expected_actions,
+                image_paths=[Path(path) for path in context.task.image_paths],
+                required_capabilities=self._required_capabilities(context),
+            )
 
     def _prepared_bodies(self, delivery_keys: tuple[str, ...]) -> list[str]:
         """The exact bodies the service prepared for this proposal's actions."""

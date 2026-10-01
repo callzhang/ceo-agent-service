@@ -36,6 +36,27 @@ from app.wechat.codex_safety import (
 from tests.runtime_route_env import codex_api_env
 
 
+def test_audit_document_material_preserves_exact_candidate_body_and_cleans_up(tmp_path):
+    from types import SimpleNamespace
+
+    from app.audit_agent import _audit_document_materials
+
+    body = "# CEO 每日总结\n\n准确正文。\n" * 500
+    action = SimpleNamespace(
+        action_identity="daily-report-doc",
+        capability="dingtalk-doc",
+        operation="create_document",
+        payload={"content": body},
+    )
+    with _audit_document_materials(tmp_path, [action]) as instructions:
+        files = list(tmp_path.glob(".ceo-audit-doc-*/0.md"))
+        assert len(files) == 1
+        assert files[0].read_text(encoding="utf-8") == body
+        assert f"@{files[0].relative_to(tmp_path)}" in instructions
+        assert "daily-report-doc" in instructions
+    assert not list(tmp_path.glob(".ceo-audit-doc-*"))
+
+
 class CapturingExecutor:
     def __init__(
         self,
