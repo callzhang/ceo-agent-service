@@ -49,8 +49,12 @@ EXTERNAL_TASK_ERROR_PREFIXES = (
 def external_task_error_sql(column: str = "reply_tasks.error") -> str:
     """SQL condition true when ``column`` holds an external-cause error text."""
     quoted = ", ".join("'" + error.replace("'", "''") + "'" for error in EXTERNAL_TASK_ERRORS)
+    operation_context = (
+        f"(instr({column}, ';operation=') > 0 and "
+        f"substr({column}, 1, instr({column}, ';operation=') - 1) in ({quoted}))"
+    )
     prefixes = " or ".join(
         f"{column} like '{prefix.replace(chr(39), chr(39) * 2)}%'"
         for prefix in EXTERNAL_TASK_ERROR_PREFIXES
     )
-    return f"({column} in ({quoted}) or {prefixes})"
+    return f"({column} in ({quoted}) or {operation_context} or {prefixes})"

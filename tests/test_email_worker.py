@@ -6935,6 +6935,22 @@ def test_direct_unsubscribe_exhaustion_keeps_the_category_that_names_an_external
     ).fetchone()[0]
 
 
+def test_external_unsubscribe_failure_with_operation_context_is_classified():
+    from app.external_failures import external_task_error_sql
+
+    import sqlite3
+
+    db = sqlite3.connect(":memory:")
+    db.execute("create table reply_tasks (error text)")
+    db.executemany("insert into reply_tasks values (?)", [
+        ("email_unsubscribe_browser_failed: category=form_response_rejected;operation=submit_form",),
+        ("email_unsubscribe_browser_failed: category=runtime_unavailable;operation=submit_form",),
+    ])
+    assert [row[0] for row in db.execute(
+        f"select {external_task_error_sql()} from reply_tasks order by rowid"
+    )] == [1, 0]
+
+
 def test_direct_unsubscribe_exhaustion_keeps_a_dedicated_code_bare():
     # email_unsubscribe_browser_timeout already names the condition on its
     # own; app/external_failures.py matches it bare, with no category suffix.

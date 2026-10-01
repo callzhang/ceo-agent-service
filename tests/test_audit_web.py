@@ -11573,6 +11573,7 @@ def test_attention_skips_unsubscribe_failures_caused_by_the_external_page(tmp_pa
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     errors = {
         "external-form": "email_unsubscribe_browser_failed: category=form_response_rejected",
+        "external-form-operation": "email_unsubscribe_browser_failed: category=form_response_rejected;operation=submit_form",
         "external-op": "email_unsubscribe_browser_failed: category=operation_failed",
         "external-timeout": "unsubscribe_operation_rejected:TimeoutError",
         "ours-runtime": "email_unsubscribe_browser_failed: category=runtime_unavailable",
@@ -11622,7 +11623,7 @@ def test_attention_skips_unsubscribe_failures_caused_by_the_external_page(tmp_pa
     with store._connect() as db:
         assert db.execute(
             "select count(*) from reply_tasks where status='failed'"
-        ).fetchone()[0] == 5
+        ).fetchone()[0] == 6
 
 
 def test_attention_skips_an_expired_dingteam_okr_login(tmp_path: Path):
