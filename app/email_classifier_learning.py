@@ -556,9 +556,20 @@ class EmailClassifierLearningService:
                 )
             else:
                 proposals = ()
-                if self.description_optimizer is not None and run.model_id is not None:
+                embedding_result = run.family_results.get("embedding-mlp", {})
+                optimizer_model_id = (
+                    embedding_result.get("model_id")
+                    if embedding_result.get("status") == "succeeded"
+                    else None
+                )
+                # Legacy single-family runs predate the family result ledger.
+                if not run.family_results and (run.model_id or "").startswith(
+                    "email-embedding-mlp-"
+                ):
+                    optimizer_model_id = run.model_id
+                if self.description_optimizer is not None and optimizer_model_id:
                     proposals = self.description_optimizer.observe_candidate(
-                        run.model_id
+                        optimizer_model_id
                     )
                     if not proposals:
                         from app.email_description_optimizer import (

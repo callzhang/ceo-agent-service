@@ -1144,6 +1144,13 @@ process from writing the same SQLite database concurrently.
 
 ### Runtime result failure evidence
 
+Successful multi-family email training runs use the successful `embedding-mlp`
+entry in `family_results` for description optimization. The compatibility
+`model_id` field may point at a traditional classifier and does not imply
+embedding staged evidence. Classic-only runs complete without description
+optimization; missing or corrupt evidence for a successful embedding candidate
+still fails closed rather than silently clearing the training run.
+
 When a Codex turn produces no typed result or an invalid typed result, the
 runtime attempt is recorded with the result-stage failure code
 (`codex_result_missing` or `codex_result_invalid`) rather than the generic

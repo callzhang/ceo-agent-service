@@ -21,6 +21,7 @@ from app.email_classifier_learning import (
     _selection_provenance,
 )
 from app.email_classifier_retrain import (
+    RetrainState,
     RetrainPolicy,
     TrainingSubprocessController,
     TrainingSubprocessRun,
@@ -34,6 +35,44 @@ from app.email_store import EmailStore
 CURRENT_EMAIL_CATEGORIES = tuple(
     EmailCategory(category) for category in INITIAL_EMAIL_CATEGORY_KEYS
 )
+
+
+@pytest.mark.parametrize("has_embedding", [True, False])
+def test_multifamily_success_observes_only_embedding_candidate(tmp_path, has_embedding):
+    embedding_id = "email-embedding-mlp-source"
+    classic_id = "email-tfidf-lr-source"
+    families = {"tfidf-logistic-regression": {"status": "succeeded", "model_id": classic_id}}
+    if has_embedding:
+        families["embedding-mlp"] = {"status": "succeeded", "model_id": embedding_id}
+    run = TrainingSubprocessRun(
+        run_id="multi", status="succeeded", pid=0, started_at="2026-10-01T00:00:00Z",
+        model_id=classic_id, family_results=families,
+        snapshot_sha="a" * 64, description_version="v1",
+    )
+
+    class Controller:
+        def poll(self, run_id, *, now):
+            return run
+
+    class Optimizer:
+        def observe_candidate(self, model_id):
+            assert has_embedding and model_id == embedding_id
+            observed.append(model_id)
+            return ()
+
+    observed = []
+    registry = EmailModelRegistry(tmp_path / "models")
+    state_path = tmp_path / "state.json"
+    save_retrain_state(state_path, RetrainState().with_active_run("multi"))
+    service = EmailClassifierLearningService(
+        EmailStore(tmp_path / "email.sqlite3"), registry=registry,
+        retrain_state_path=state_path, controller=Controller(),
+        description_optimizer=Optimizer(),
+    )
+    result = service.poll_retrain()
+    assert observed == ([embedding_id] if has_embedding else [])
+    assert result.state.active_run_id is None
+    assert load_retrain_state(state_path).active_run_id is None
 
 
 def test_selection_provenance_rejects_empty_selection_by_default() -> None:
