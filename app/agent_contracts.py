@@ -199,6 +199,10 @@ class ProposedAction(BaseModel):
 
     @model_validator(mode="after")
     def validate_dingtalk_message_target(self) -> "ProposedAction":
+        if self.capability == "dingtalk-doc" and self.operation == "create_document":
+            content = self.payload.get("content")
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("dingtalk-doc create_document requires payload.content")
         if self.capability != "dingtalk-chat":
             return self
         if {"open_conversation_id", "reply_to_message_id"}.intersection(self.target):

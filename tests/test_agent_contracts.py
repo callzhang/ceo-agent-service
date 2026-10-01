@@ -231,6 +231,23 @@ def test_proposed_action_requires_stable_action_identity():
         ProposedAction.model_validate(action)
 
 
+def test_document_create_requires_body_in_payload_not_description():
+    action = {
+        "description": "# Daily report\n" * 300,
+        "action_identity": "report-doc",
+        "capability": "dingtalk-doc",
+        "operation": "create_document",
+        "target": {"folder_id": "folder-1"},
+        "payload": {"content_format": "markdown"},
+    }
+    with pytest.raises(ValidationError, match="payload.content"):
+        ProposedAction.model_validate(action)
+
+    action["description"] = "Create the daily report"
+    action["payload"]["content"] = "# Daily report\n" * 300
+    assert ProposedAction.model_validate(action).payload["content"].startswith("# Daily")
+
+
 def test_needs_human_follows_decision_quality_classification_for_all_task_types():
     consumer_payload = _explainable_needs_human_payload(ConsumerAgentResult)
     accepted = ConsumerAgentResult.model_validate(consumer_payload)
