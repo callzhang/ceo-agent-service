@@ -1150,6 +1150,9 @@ entry in `family_results` for description optimization. The compatibility
 embedding staged evidence. Classic-only runs complete without description
 optimization; missing or corrupt evidence for a successful embedding candidate
 still fails closed rather than silently clearing the training run.
+Each scheduler cycle performs independent model maintenance before provider
+observation, so the initial completion poll does not wait for IMAP inventory
+or message reads. Observation failures retain their separate health record.
 
 When a Codex turn produces no typed result or an invalid typed result, the
 runtime attempt is recorded with the result-stage failure code

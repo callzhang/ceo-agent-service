@@ -10741,6 +10741,22 @@ def test_training_failure_is_sanitized_isolated_and_heartbeated():
     assert "https://" not in repr(health)
 
 
+def test_training_maintenance_runs_before_provider_observation() -> None:
+    calls = []
+
+    def observation_tick():
+        assert calls == ["maintenance"]
+        calls.append("observation")
+
+    _module().run_training_scheduler_loop(
+        lambda: calls.append("maintenance"),
+        training_observation_tick=observation_tick,
+        record_health=lambda scope, payload: None,
+        max_cycles=1,
+    )
+    assert calls == ["maintenance", "observation"]
+
+
 def test_training_observation_success_replaces_stale_failure_health() -> None:
     calls = 0
     health = []

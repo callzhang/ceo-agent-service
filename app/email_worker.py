@@ -2114,6 +2114,18 @@ def run_training_scheduler_loop(
 ) -> None:
     cycles = 0
     while max_cycles is None or cycles < max_cycles:
+        # Model maintenance does not need a fresh provider observation.
+        try:
+            training_tick()
+        except Exception as exc:  # noqa: BLE001 - keep the component alive
+            record_health("component:email-training", _training_health_error(exc))
+        else:
+            record_health(
+                "component:email-training",
+                {"status": "ready", "failures": 0},
+            )
+            if component_ready is not None:
+                component_ready("email-training")
         if training_observation_tick is not None:
             try:
                 training_observation_tick()
@@ -2127,17 +2139,6 @@ def run_training_scheduler_loop(
                     "component:email-training-observation",
                     {"status": "ready", "failures": 0},
                 )
-        try:
-            training_tick()
-        except Exception as exc:  # noqa: BLE001 - keep the component alive
-            record_health("component:email-training", _training_health_error(exc))
-        else:
-            record_health(
-                "component:email-training",
-                {"status": "ready", "failures": 0},
-            )
-            if component_ready is not None:
-                component_ready("email-training")
         cycles += 1
         if max_cycles is None or cycles < max_cycles:
             sleep(TRAINING_INTERVAL_SECONDS)
