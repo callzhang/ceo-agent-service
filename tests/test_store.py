@@ -13138,6 +13138,8 @@ def test_an_answered_question_can_close(tmp_path: Path):
 
 
 def test_scheduled_task_ids_for_reply_tasks_maps_only_reply_task_runs(tmp_path: Path):
+    from app.agent_cron.models import ScheduledTaskSnapshot
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     with store._connect() as db:
         db.execute(
@@ -13145,12 +13147,21 @@ def test_scheduled_task_ids_for_reply_tasks_maps_only_reply_task_runs(tmp_path: 
             "timezone, runtime_id, enabled) values (13, '准备 CEO 管理周报', 'p', '', "
             "'0 12 * * 6', 'America/Los_Angeles', '', 1)"
         )
+    task = store.get_scheduled_task(13)
+    assert task is not None
+    snapshot_json = ScheduledTaskSnapshot.from_task(task).to_json()
+    with store._connect() as db:
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
             "scheduled_for, first_scheduled_for, dispatch_status, execution_kind, "
-            "execution_id, created_at) values "
-            "('e1', 13, 'scheduled', 't', 't', 'dispatched', 'reply_task', '9001', 't'), "
-            "('e2', 13, 'scheduled', 't', 't', 'dispatched', 'service_command', 'produce-once', 't')"
+            "execution_id, created_at, snapshot_json) values "
+            "('e1', 13, 'scheduled', '2026-10-01T12:00:00+00:00', "
+            "'2026-10-01T12:00:00+00:00', 'dispatched', 'reply_task', '9001', "
+            "'2026-10-01T12:00:00+00:00', ?), "
+            "('e2', 13, 'scheduled', '2026-10-01T13:00:00+00:00', "
+            "'2026-10-01T13:00:00+00:00', 'dispatched', 'service_command', 'produce-once', "
+            "'2026-10-01T13:00:00+00:00', ?)",
+            (snapshot_json, snapshot_json),
         )
 
     mapped = store.scheduled_task_ids_for_reply_tasks((9001, 9002))

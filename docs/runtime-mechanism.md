@@ -913,6 +913,11 @@ Agent Cron 保存任务定义及其结构化 Skill refs、首选 Runtime route/m
 手动运行只追加一次 manual trigger，不改变 `next_run_at`。若上一轮关联 execution 尚未终态，
 本轮以 `skipped` 和稳定原因结束，不等待后补。
 
+`scheduled_task_runs` 必须保存非空 `snapshot_json`；测试夹具也使用
+`ScheduledTaskSnapshot.from_task(task).to_json()` 生成冻结定义，不省略快照。
+同一任务的不同运行使用不同 `scheduled_for`，遵守任务 ID 与调度时间的唯一约束；
+验证 execution 映射时也不得通过放宽这些生产约束来构造夹具。
+
 一次正常到期分为两个可恢复阶段：`scheduled` adapter 领取 `scheduled_task_runs.pending`，在一个
 事务中创建或复用唯一 `reply_tasks.channel=scheduled` 输入、保存 execution link，并把 trigger
 标记 `dispatched`；`scheduled_execution` adapter 再领取该 execution source，按派发时冻结的
