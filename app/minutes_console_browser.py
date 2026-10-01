@@ -7,8 +7,10 @@ browser, and so everything that knows about page structure sits in one file.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.minutes_access import (
     MINUTES_CONSOLE_HOST,
@@ -126,8 +128,21 @@ class PlaywrightMinutesConsole:
     def __init__(self, page) -> None:
         self._page = page
 
+    def _apply_history_window(self, *, now: datetime | None = None) -> None:
+        day = (now or datetime.now(ZoneInfo("Asia/Shanghai"))).date()
+        for placeholder, value in (
+            ("开始日期", day - timedelta(days=30)),
+            ("结束日期", day + timedelta(days=1)),
+        ):
+            field = self._page.get_by_placeholder(placeholder)
+            field.click()
+            field.fill(f"{value:%Y-%m-%d} 00:00:00")
+            self._page.get_by_text("确定", exact=True).last.click()
+        self._page.get_by_role("button", name="查询", exact=True).click()
+
     def list_backend_minutes(self) -> list[dict[str, Any]]:
         self._page.goto(HISTORY_URL, wait_until="domcontentloaded")
+        self._apply_history_window()
         state = self._settle_table()
         if state is None:
             # Which of the two it is, is decided by where the browser ended up,

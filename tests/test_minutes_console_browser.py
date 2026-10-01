@@ -1,6 +1,46 @@
 from app.minutes_console_browser import PlaywrightMinutesConsole
 
 
+def test_history_scan_sets_a_rolling_window_before_querying():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    class Locator:
+        def __init__(self, name, calls):
+            self.name, self.calls = name, calls
+
+        def click(self):
+            self.calls.append((self.name, "click"))
+
+        def fill(self, value):
+            self.calls.append((self.name, "fill", value))
+
+        @property
+        def last(self):
+            return self
+
+    class Page:
+        def __init__(self):
+            self.calls = []
+
+        def get_by_placeholder(self, name):
+            return Locator(name, self.calls)
+
+        def get_by_text(self, name, exact=False):
+            return Locator(name, self.calls)
+
+        def get_by_role(self, role, name, exact=False):
+            return Locator(name, self.calls)
+
+    page = Page()
+    PlaywrightMinutesConsole(page)._apply_history_window(
+        now=datetime(2026, 10, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
+    )
+    assert ("开始日期", "fill", "2026-09-01 00:00:00") in page.calls
+    assert ("结束日期", "fill", "2026-10-02 00:00:00") in page.calls
+    assert page.calls[-1] == ("查询", "click")
+
+
 class _PanelPage:
     def __init__(self):
         self.reads = 0
