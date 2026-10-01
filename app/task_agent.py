@@ -190,7 +190,10 @@ def _canonicalize_current_source_provenance(
         ):
             formal_basis = FormalTaskBasis.MEETING_ACTION_ITEM
         if (
-            formal_basis is FormalTaskBasis.EXPLICIT_COMMITMENT
+            formal_basis in {
+                FormalTaskBasis.EXPLICIT_ASSIGNMENT,
+                FormalTaskBasis.EXPLICIT_COMMITMENT,
+            }
             and work_item.source.type is WorkItemSourceType.AI_MINUTES
             and "#todos-sha256=" in source_ref
             and item.owner_kind == "individual"
