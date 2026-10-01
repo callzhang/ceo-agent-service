@@ -310,13 +310,22 @@ class TaskSemanticService:
         if not isinstance(evidence, dict):
             raise ValueError("owner evidence must be an object")
         excerpt = evidence.get("excerpt")
-        if evidence.get("source_ref") != signal.source_ref or not isinstance(excerpt, str):
-            raise ValueError("owner evidence must cite the source")
-        if not excerpt.strip():
-            raise ValueError("owner evidence needs an excerpt from the source")
-        if owner_name and not TaskSemanticService._owner_names_appear_in_excerpt(
-            owner_name, excerpt
+        memory_excerpt = evidence.get("memory_excerpt")
+        episode_id = str(evidence.get("episode_id") or "").strip()
+        is_bound_memory = (
+            bool(episode_id)
+            and isinstance(memory_excerpt, str)
+            and bool(memory_excerpt.strip())
+            and evidence.get("linked_source_ref") == signal.source_ref
+        )
+        if not is_bound_memory and (
+            evidence.get("source_ref") != signal.source_ref or not isinstance(excerpt, str)
         ):
+            raise ValueError("owner evidence must cite the source")
+        if not is_bound_memory and not excerpt.strip():
+            raise ValueError("owner evidence needs an excerpt from the source")
+        identity_excerpt = memory_excerpt if is_bound_memory else excerpt
+        if owner_name and not TaskSemanticService._owner_names_appear_in_excerpt(owner_name, identity_excerpt):
             raise ValueError("owner identity must appear in its source evidence excerpt")
         if owner_user_id:
             context = json.loads(signal.context_json)
@@ -332,11 +341,12 @@ class TaskSemanticService:
                 mapped.get("user_id") == owner_user_id
                 and (not owner_name or mapped.get("name") == owner_name)
             )
-            text_id_only = not owner_name and owner_user_id in excerpt
+            text_id_only = not owner_name and owner_user_id in identity_excerpt
             if not text_id_only and not author_matches and not context_matches:
                 raise ValueError("owner ID requires source identity mapping")
-        elif not owner_name or not TaskSemanticService._owner_names_appear_in_excerpt(
-            owner_name, excerpt
+        elif not is_bound_memory and (
+            not owner_name
+            or not TaskSemanticService._owner_names_appear_in_excerpt(owner_name, excerpt)
         ):
             raise ValueError("owner identity must appear in its source evidence excerpt")
 

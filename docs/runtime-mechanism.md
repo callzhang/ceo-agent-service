@@ -217,8 +217,10 @@ Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返�
 最新明确周报字段，再取最新确认的会议决策，并保留精确来源引用。
 周报中的命名项目/工作流若有明确的负责人、目标/里程碑、状态、交付物或下一步，
 Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_proposal`；孤立任务、
-部门或话题不能直接注册 Project。多位个人负责人可以用名单表示，但其
-`owner_evidence.excerpt` 必须包含每个人名和当前报告的来源引用；校验忽略
+部门或话题不能直接注册 Project。多位个人负责人可以用名单表示。通常其
+`owner_evidence.excerpt` 必须包含每个人名和当前报告的来源引用；如果负责人关系来自已绑定的
+权威 memory 或 session 上下文，则可使用 `linked_source_ref`、稳定的 `episode_id`/`thread_id`
+和包含明确负责人-行动关系的 `memory_excerpt`；校验忽略
 钉钉 `@` 标记和常见名单分隔符，不把多人整串当作一个名字。
 部门/团队标签（例如“项目管理部”“算法团队”）即使被模型误放进
 `project_proposal` 也不会注册为正式 Project；它们仍可作为 Task 的上下文或候选聚类。

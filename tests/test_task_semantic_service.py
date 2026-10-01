@@ -136,6 +136,37 @@ def test_formal_task_requires_source_backed_identified_owner(service):
     assert semantic_state(service)[0:2] == ((), ())
 
 
+def test_owner_may_be_bound_to_authoritative_memory_episode(service):
+    signal = assignment_signal(dedupe_key="minutes:health-metrics")
+    evidence = json.dumps({
+        "linked_source_ref": signal.source_ref,
+        "episode_id": "c858860e-a64d-45ab-ac95-aaa31ce1b657",
+        "memory_excerpt": "张玲玲更新数据并季末同步OKR",
+    }, ensure_ascii=False)
+    TaskSemanticService._require_source_backed_owner(
+        signal=signal,
+        owner_user_id="",
+        owner_name="张玲玲",
+        owner_evidence_json=evidence,
+    )
+
+
+def test_owner_rejects_unbound_topically_similar_memory(service):
+    signal = assignment_signal(dedupe_key="minutes:health-metrics")
+    evidence = json.dumps({
+        "linked_source_ref": "minutes:other-meeting",
+        "episode_id": "c858860e-a64d-45ab-ac95-aaa31ce1b657",
+        "memory_excerpt": "张玲玲更新数据并季末同步OKR",
+    }, ensure_ascii=False)
+    with pytest.raises(ValueError, match="owner evidence must cite the source"):
+        TaskSemanticService._require_source_backed_owner(
+            signal=signal,
+            owner_user_id="",
+            owner_name="张玲玲",
+            owner_evidence_json=evidence,
+        )
+
+
 def test_formal_task_accepts_dingtalk_mention_markers_for_coowners(service):
     source = SourceSignal(
         source_type="dingtalk_doc",
