@@ -398,3 +398,33 @@ Task261 的健康指标文档更新有来源，标题中额外 ISO 内容也需�
 项目管理卡有低验收率与统计口径缺失的真实引用；第三张卡不是仅凭数量即可认定误关注。
 仍不改 alias、静态业务规则、来源、旧 runs 或生产状态；最新完整九样本、精确副本幂等、
 PR/合并/push、部署、全局 Skill、生产回放与页面验收均未完成。
+
+## 当前权威 Project 身份：登记与复用修复（效果验证待完成）
+
+功能提交 `f4566806`，释放子 claim 后冻结代码 `394fac8c`。报告与明确会议登记现在
+共用 `register_source_project`：复用唯一活动且精确同名的正式 Project 实际 anchor，
+保留原登记 provenance；无匹配沿原标题 hash 登记；多个活动同名正式对象使事务因
+身份冲突回滚。不改通用 anchor 的 type/ref 身份，也不把短名称推断为别名。
+Project proposal 的字段、prompt、CI Skill 与架构/运行/设计文档同步解释为采用当前
+权威定义并登记或复用，不仅用于新建。当前不同的正式名称不能因行动简称被旧名称替代。
+
+新增回归旧行为 `7 failed / 2 passed`；开发 Agent 五个相关文件 `351 passed`。
+主 Agent 独立运行最终新测试文件 `9 passed in 6.86s`，覆盖报告和会议实际 Attention
+投影的 canonical anchor、成员、stable key 与重复卡/事件身份，以及旧 ref 复用、
+不同短名称、活动正式对象选择和同名冲突回滚。独立规格和质量复核尚待完成。
+
+独立 version 1 竞争样例 `tests/fixtures/task_attention_project_identity.json` 的
+SHA256 为 `9b56eec4bb74999a40448b1992ea0aed7caa7fff195c7c0c9e8a1acd859dfdf6`；
+当前 CI Skill SHA256 为
+`2b557b4754c39c688bc0533f04e152157b70fcc519bb4647f12bdbe330bb8d70`。
+原九样例和 replay tool 未改；该新增样例的 pinned baseline/candidate native 对比、
+最新完整九样例和真实 W39 新副本验证尚未通过，不能继承旧版本结果。
+生产、全局 Skill 和原失败副本均未修改。
+
+新增竞争样例 pinned baseline `7bf7be5e` 的 native 结果已完成：codex_oauth /
+gpt-5.6-luna、concurrency=1、900s 总时限/300s idle，一次 normal attempt completed，
+input done、run completed，但业务验收失败。旧版把已有「示例创智」再次登记成第三个
+Project，把已有行动再建为第二个 candidate Task，且没有 Attention；失败项为
+`attention_project_mismatch`、`official_project_mismatch`、`task_count_mismatch`、
+`project_registry_changed`。这是一份真实失败基线，不以队列 done 替代业务通过。
+结果保存在本工作流独立 `baseline-project-identity.sqlite3`，候选对比尚待复核后运行。
