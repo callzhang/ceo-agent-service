@@ -26,6 +26,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-task-title-whitespace | Isolated task-attention-multisource: app/task_models.py (update title shape), tests/test_task_agent.py (title boundaries), docs/architecture.md and docs/runtime-mechanism.md (title sentence) | Authorized review correction: reject nonempty whitespace update titles in shape, preserve omitted/empty and valid updates; no native or Attention changes. | 2026-10-02 |
+
 
 
 

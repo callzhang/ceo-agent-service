@@ -471,7 +471,7 @@ class TaskDecision(StrictTaskModel):
             "For session and memory, source_ref is the ORIGINAL source's reference and source_excerpt an exact quote of its text."
         ),
     )
-    title: str = Field(default="", description="Name the independently completable deliverable; an addition to an existing Task's scope is an update, not a new deliverable. Required nonblank for create_task/record_candidate. Existing-ID updates may omit it; only update_fields changes a provided title. Promotion, acceptance and merge preserve the stored title.")
+    title: str = Field(default="", description="Name the independently completable deliverable; an addition to an existing Task's scope is an update, not a new deliverable. Required nonblank for create_task/record_candidate. Existing-ID updates may omit it or use empty string; a nonempty provided update title must not be whitespace-only. Only update_fields changes a provided title. Promotion, acceptance and merge preserve the stored title.")
     description: str = Field(default="", description="Describe this deliverable or the existing Task's actual scope/content update; do not split additions into duplicate Tasks.")
     formal_basis: FormalTaskBasis | None = None
     acceptance_polarity: Literal["accepted", "declined", "ambiguous"] | None = None
@@ -538,6 +538,8 @@ class TaskDecision(StrictTaskModel):
     def validate_transition_shape(self) -> "TaskDecision":
         if self.action in {"record_candidate", "create_task"} and not self.title.strip():
             raise ValueError("new task decision requires title")
+        if self.action == "update_task" and self.title and not self.title.strip():
+            raise ValueError("provided update title must be nonblank")
         if self.action != "skip" and (not self.source_excerpt.strip() or not self.source_ref.strip()):
             raise ValueError("task decisions require a source excerpt (a sentence taken from the source) and reference")
         if self.action == "update_task" and any(

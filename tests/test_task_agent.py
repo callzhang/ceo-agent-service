@@ -1924,6 +1924,39 @@ def test_new_task_requires_title_in_decision_shape(action, title):
         TaskAgentDecision.model_validate({"task_decisions": [payload]})
 
 
+def test_update_whitespace_title_rejected_in_shape_before_domain_write(tmp_path):
+    store = AutoReplyStore(tmp_path / "whitespace-title.sqlite3")
+    seed = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="提交报价", signal=SourceSignal(source_type="seed", source_ref="seed:whitespace",
+            evidence_text="提交报价", dedupe_key="seed:whitespace")))
+    original = store.get_business_task(seed.task_id)
+    signals = store.list_business_task_signals()
+    payload = {"action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+        "source_ref": "source:update", "source_excerpt": "报价等待回复", "title": "   ", "status": "waiting"}
+    with pytest.raises(ValidationError, match="provided update title must be nonblank"):
+        TaskAgentDecision.model_validate({"task_decisions": [payload]})
+    assert store.get_business_task(seed.task_id) == original
+    assert store.list_business_task_signals() == signals
+
+
+@pytest.mark.parametrize("title", [None, "", "核对报价"])
+def test_update_title_boundary_preserves_omitted_empty_or_applies_valid_title(tmp_path, title):
+    store = AutoReplyStore(tmp_path / "title-boundary.sqlite3")
+    seed = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="提交报价", signal=SourceSignal(source_type="seed", source_ref="seed:boundary",
+            evidence_text="提交报价", dedupe_key="seed:boundary")))
+    item = _work_item().model_copy(update={"summary": "报价等待客户回复"})
+    payload = {"action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+        "source_ref": item.source.ref, "source_excerpt": item.summary, "status": "waiting"}
+    if title is not None:
+        payload["title"] = title
+    apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=TaskAgentDecision.model_validate({"task_decisions": [payload]}), record_run=False)
+    task = store.get_business_task(seed.task_id)
+    assert task.title == (title if title else "提交报价")
+    assert task.status.value == "waiting"
+
+
 def test_missing_new_task_title_uses_existing_same_session_repair():
     valid = {"task_decisions": [{"action": "record_candidate", "transition": "none",
         "source_ref": "source:1", "source_excerpt": "Submit the quote", "title": "Submit quote"}]}
