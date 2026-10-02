@@ -750,8 +750,9 @@ Task/cluster 或 Project candidate 中）；同一正式 Project 的多个周报
 正式周报中有明确项目列的“手头项目/项目清单/项目组合”行，必须由相关 Task 的
 `project_proposal.source_excerpt` 独立引用；服务核验实际来源类型与 authority 一致、
 提案标题与原文项目列一致，才建立 cluster 并注册正式 Project，把 cluster 中的
-Task 关联到该 Project；同一项目标题跨周报复用同一 anchor。普通项目提及、客户/部门
-标签和孤立 Task 仍只形成 Project candidate，只有候选项目的明确确认命令才会升级。
+Task 关联到该 Project；同一项目标题跨周报复用同一 anchor。
+登记摘录仅用于定位原文行，列值从完整原文行解析；部分列摘录不能移动项目列的位置。
+普通项目提及、客户/部门标签和孤立 Task 仍只形成 Project candidate，只有候选项目的明确确认命令才会升级。
 确认命令只能引用 candidate cluster 已有的来源证据，重复点击幂等，不能改绑到另一个 Project。
 控制台的正式项目列表和详情从已关联 Task 的最新权威周报证据投影负责人/负责内容、目标、DDL 或统计周期、当前状态、报告标题与周期、原文摘录和来源链接，并同时显示进行中与已完成的关联 Task 数量；这些字段是只读证据投影，不会反向推断或修改 Project 注册表。
 一行列出多位个人负责人时，来源证据须覆盖每个人名；钉钉 `@` 标记及名单分隔符

@@ -869,6 +869,10 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
     row_start = markdown.find(source_excerpt)
     if row_start < 0:
         return ""
+    row_start = markdown.rfind("\n", 0, row_start) + 1
+    row_end = markdown.find("\n", row_start)
+    if row_end < 0:
+        row_end = len(markdown)
     registry_match = re.search(
         r"(?m)^##\s+\**(?:手头项目|项目清单|项目组合)\**\s*$",
         markdown,
@@ -883,11 +887,9 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
     )
     if row_start >= registry_end:
         return ""
-    # The model's evidence excerpt may preserve a Markdown table row with or
-    # without the leading pipe.  The report itself is authoritative; the
-    # excerpt is only a locator, so accept either representation.
-    first_row = next((line for line in source_excerpt.splitlines()
-                      if "|" in line), "")
+    # The excerpt only locates the original row. Parse its columns from the
+    # report so a partial quote cannot shift the authoritative project column.
+    first_row = markdown[row_start:row_end]
     cells = [cell.strip() for cell in first_row.strip().strip("|").split("|")]
     if not cells:
         return ""

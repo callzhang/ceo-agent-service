@@ -84,9 +84,16 @@ def test_omitted_anchor_accepts_this_decisions_project_proposal():
     assert parsed.attention_proposal.anchor_id is None
 
 
-def test_apply_independent_registry_proof_registers_project_and_reuses_task(tmp_path):
+@pytest.mark.parametrize("registration_excerpt", [
+    PROJECT_ROW,
+    PROJECT_ROW.lstrip("| "),
+    "回款复核 | 降低现金流风险 | 09-30 | 有风险 |",
+])
+def test_apply_independent_registry_proof_registers_project_and_reuses_task(tmp_path, registration_excerpt):
     store = AutoReplyStore(tmp_path / "registry.sqlite3")
-    decision = TaskAgentDecision.model_validate(decision_payload())
+    payload = decision_payload()
+    payload["task_decisions"][0]["project_proposal"]["source_excerpt"] = registration_excerpt
+    decision = TaskAgentDecision.model_validate(payload)
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(),
                                        decision=decision, record_run=False)
     project, = store.list_business_projects()
@@ -113,6 +120,7 @@ def test_apply_independent_registry_proof_registers_project_and_reuses_task(tmp_
     {"source_excerpt": TASK_QUOTE},
     {"source_excerpt": "| 虚构项目 | 无来源 |"},
     {"authority": "management_weekly_report"},
+    {"title": "回款复核", "source_excerpt": "回款复核 | 降低现金流风险 | 09-30 | 有风险 |"},
 ])
 def test_invalid_registry_proof_rolls_back_domain_transaction(tmp_path, change):
     store = AutoReplyStore(tmp_path / "invalid-registry.sqlite3")
