@@ -1,5 +1,11 @@
 # Concurrent agent file claims
 
+## Current assessment implementation coordination
+
+| Owner | Files | What | Since |
+| --- | --- | --- | --- |
+| codex-project-attention-assessment-plan | Isolated task-attention-multisource worktree: docs/superpowers/plans/2026-10-02-task-project-attention-assessment.md and approved spec metadata only | Record Derek's approval and the sequential implementation/evaluation steps. Parent core claim owns runtime files; delegate one writer at a time. | 2026-10-02 |
+
 Several agents (Claude Code sessions and Codex) edit this working tree at the
 same time. This file is the shared claim board: it exists so that two agents
 do not rewrite the same file from different assumptions, and so that nobody

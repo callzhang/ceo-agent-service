@@ -1,0 +1,196 @@
+# Explicit Project Attention Assessment Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Make every relevant Project's attention judgment explicit and inspectable in the same Task Agent run, without manufacturing Tasks or cards.
+
+**Architecture:** Add required `project_assessments` to the current result envelope. Preserve the existing Task transaction, no-field-change guard and Attention proposal projection; resolve assessment references against actual stored identities and save their application results in the independent receipt. No second Agent, periodic maintenance, recovery loop, automatic card or business keyword classifier.
+
+**Tech Stack:** Python, Pydantic v2, SQLite, pytest, native routed Agent CLI; current React/Vite console for unchanged card display verification.
+
+---
+
+## Working boundary and file map
+
+Approved design: `docs/superpowers/specs/2026-10-02-task-project-attention-assessment-design.md`.
+Work only in `/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`.
+One core writer at a time, with spec review followed by quality review between tasks.
+Parent claims authorize narrow child claims; read the shared claim board before each edit.
+
+- `app/task_models.py`: required wire model, structural references and receipt result model.
+- `app/task_agent.py`: current result parsing/correction/prompt, known-project coverage, actual identity resolution and receipt recording. Existing Task application boundaries stay intact.
+- `scripts/inspect_task_attention.py`: read-only exact-input assessment/receipt inspection; no store initialization or historical rewriting.
+- `tests/test_task_models.py`, `tests/test_task_agent.py`, `tests/test_task_agent_runtime.py`, `tests/test_inspect_task_attention.py`: focused regression tests. Update only current result producers in other focused Task tests where the required envelope changes; do not reinterpret historical records.
+- `ci/shared-skills/ceo-work-tracking/SKILL.md`, `docs/architecture.md`, `docs/runtime-mechanism.md`: current behavior, field guidance, and separation of judgment from application.
+- `scripts/replay_task_attention.py`, fixed fixtures and `docs/task-attention-phase1-validation.md`: fixed semantic oracle and exact W39 readback, separate from parser success.
+
+The current production baseline remains `7bf7be5e`; latest W39 experiment `c87752c0` correctly bound the named Projects but returned six null proposals and no project-specific negative explanations. Preserve that failed business result.
+
+## Task 1: Required judgment wire model
+
+**Files:** `app/task_models.py`, `tests/test_task_models.py`, Task/Attention paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md`.
+
+- [ ] Write RED tests before changing the model. Missing `project_assessments` must fail; `[]` is explicit no-related-project output. A zero-based decision index is valid; boolean/negative indexes and guessed nonpositive persisted IDs fail. Reasons and project titles cannot be whitespace. Current/historical citation shape follows the existing proposal rules.
+
+```python
+def test_project_assessments_are_required_in_current_result():
+    with pytest.raises(ValidationError, match="project_assessments"):
+        TaskAgentDecision.model_validate({"task_decisions": []})
+    result = TaskAgentDecision.model_validate({
+        "task_decisions": [], "project_assessments": [],
+        "update_summary": "本轮没有相关业务项目",
+    })
+    assert result.project_assessments == []
+
+def test_project_assessment_retains_negative_reason_and_original_quote():
+    from app.task_models import TaskProjectAssessment
+    result = TaskProjectAssessment.model_validate({
+        "project_title": "示例项目", "anchor_id": 3,
+        "outcome": "not_needed", "reason": "本轮验收按原计划完成，没有新增经营影响",
+        "assessment_basis": "current_observation",
+        "evidence": [{"source_ref": "message:42", "source_excerpt": "验收按计划完成"}],
+        "decision_indexes": [0], "task_ids": [7],
+    })
+    assert result.decision_indexes == [0]
+    assert result.task_ids == [7]
+    assert result.outcome == "not_needed"
+```
+
+- [ ] Run `python -m pytest -q tests/test_task_models.py -k project_assessment`. Expect missing model/required-field regression failure, not infrastructure failure.
+- [ ] Implement this wire type before `TaskAgentDecision` and add required `project_assessments: list[TaskProjectAssessment]` to that envelope. Current test result fixtures must explicitly supply real assessments or `[]`; no automatic default, legacy union or payload synthesis.
+
+```python
+class TaskProjectAssessment(StrictTaskModel):
+    project_title: str
+    anchor_id: int | None = Field(default=None, strict=True, gt=0)
+    project_decision_index: int | None = Field(default=None, strict=True, ge=0)
+    outcome: Literal["needs_attention", "not_needed", "insufficient_evidence"]
+    reason: str
+    assessment_basis: Literal["current_observation", "historical_comparison"]
+    evidence: list[TaskAttentionEvidence] = Field(min_length=1)
+    decision_indexes: list[Annotated[int, Field(strict=True, ge=0)]] = Field(default_factory=list)
+    task_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(default_factory=list)
+    existing_attention_id: int | None = Field(default=None, strict=True, gt=0)
+
+    @model_validator(mode="after")
+    def valid_assessment(self) -> "TaskProjectAssessment":
+        if not self.project_title.strip() or not self.reason.strip():
+            raise ValueError("project assessment requires a nonblank title and reason")
+        if self.anchor_id is not None and self.project_decision_index is not None:
+            raise ValueError("project assessment requires one Project identity")
+        if self.anchor_id is None and self.project_decision_index is None:
+            if self.outcome != "insufficient_evidence":
+                raise ValueError("unconfirmed Project requires insufficient_evidence")
+        if self.existing_attention_id is not None and self.outcome != "needs_attention":
+            raise ValueError("existing Attention reference requires needs_attention")
+        if len(set(self.decision_indexes)) != len(self.decision_indexes):
+            raise ValueError("project assessment decision indexes must be unique")
+        if len(set(self.task_ids)) != len(self.task_ids):
+            raise ValueError("project assessment Task IDs must be unique")
+        current = any(item.signal_id is None for item in self.evidence)
+        historical = any(item.signal_id is not None for item in self.evidence)
+        if not current:
+            raise ValueError("project assessment requires current null-ID evidence")
+        if self.assessment_basis == "historical_comparison" and not historical:
+            raise ValueError("historical_comparison requires positive persisted-ID evidence")
+        return self
+```
+
+- [ ] Add field descriptions explaining stored IDs versus decision positions, factual quotes versus inference, candidate eligibility and unknown-project evidence-only scope. Do not use classifiers to reject vague reasons; test nonblank structurally and quality in native evals.
+- [ ] Run `python -m pytest -q tests/test_task_models.py`; expect all model tests passing after deliberate fixture upgrades. Record other test files still awaiting the new envelope rather than reporting full integration done.
+- [ ] Document the required result shape as development-only, then commit owned files. Spec and quality reviews must both pass before Task 2.
+
+## Task 2: Bind judgments to this run's actual decisions and Projects
+
+**Files:** `app/task_models.py`, `app/task_agent.py`, current result producers in `tests/test_task_agent.py` and `tests/test_task_agent_runtime.py`, `ci/shared-skills/ceo-work-tracking/SKILL.md`, the two behavior documents.
+
+- [ ] Write failing regressions in the existing source/Project fixtures for: omitted known Project, out-of-range decision position, no ProjectProposal at `project_decision_index`, duplicate assessments for the same known Project, positive judgment without proposal or exact existing card, negative judgment with a proposal, and two related decisions sharing one judgment. A plain-source unconfirmed Project with `insufficient_evidence` must be accepted without registering it.
+- [ ] Run `python -m pytest -q tests/test_task_models.py tests/test_task_agent.py tests/test_task_agent_runtime.py`; preserve the RED evidence for the added assertions.
+- [ ] In `TaskAgentDecision`'s existing after-validation, resolve only structural references: every index addresses this envelope; a project decision index addresses a non-skip ProjectProposal; proposals and outcomes agree; one structured identity has one assessment. Relevant known anchors from `project_link_proposal` and positive attention anchors, plus current `project_proposal` positions, require coverage. Same exact-title ProjectProposals can share one assessment; this is not a fuzzy identity merger.
+- [ ] In the existing pre-application domain validation, include confirmed Project links of current real Task IDs in coverage. Verify assessment cites against the current WorkItem and stored original Signals using the existing provenance semantics; historical citations are actual original IDs. Verify referenced existing active cards and their actual Project/supporting Task/assessment evidence before treating them as already represented. Reject a guessed or unrelated existing card. Use existing bounded correction mechanisms; add no retry loop.
+- [ ] Preserve `apply_task_agent_decision`'s no-field-change guard. Collect actual applied decision-to-Task and decision-to-Project identities during the ordinary transaction for receipt resolution. No independently created Signal, Task or Project for negative/unresolved assessments, no event for a no-change assessment, no auto-close for `not_needed`.
+- [ ] Extend the prompt, schema descriptions, existing correction instructions and CI Skill together. Require explicit per-Project judgment, concrete reason and original evidence from any current source (meeting, chat, report). An explicit empty set explains no relevant Project in `update_summary`; no full-history coverage assertion.
+
+The exact Agent output for a negative known-Project judgment is:
+
+```json
+{
+  "task_decisions": [],
+  "project_assessments": [{
+    "project_title": "示例项目", "anchor_id": 3,
+    "outcome": "not_needed", "reason": "本轮只确认按计划验收，未出现新增经营影响",
+    "assessment_basis": "current_observation",
+    "evidence": [{"source_ref": "message:42", "source_excerpt": "验收按计划完成"}],
+    "decision_indexes": [], "task_ids": [7]
+  }],
+  "update_summary": "已判断示例项目本轮不需新增关注"
+}
+```
+
+- [ ] Upgrade current fake Agent outputs intentionally, retaining original Task semantics and original negative tests. Tests must prove candidate stage unchanged, exact source rejection, proposal application rejection distinguishable from a negative judgment, normal no-change idempotence, and historical rows untouched.
+- [ ] Re-run the three focused test files, add relevant projection/retrieval tests if their interface changes, update behavior docs in the same commit. Complete spec then quality review before Task 3.
+
+## Task 3: Persist application readback and expose read-only diagnosis
+
+**Files:** `app/task_models.py`, `app/task_agent.py`, `scripts/inspect_task_attention.py`, `tests/test_inspect_task_attention.py`, focused Task/projection tests, architecture/runtime docs.
+
+- [ ] Write RED tests for a negative assessment with no proposal, unresolved Project, rejected proposal from an unapplied Task decision, applied folded proposals, matching existing card, projection error, and old run without assessments. Ensure no-change repeated input preserves actual IDs/events and negative judgment cannot close a card.
+- [ ] Add receipt assessment results with `assessment_index`, actual `anchor_id`, actual `task_ids`, actual `attention_id`, `status` (`recorded`, `applied`, `existing`, `rejected`, `error`) and application `reason`. Raw judgment remains in `decision_json`; receipt results are independent of the business `outcome`. Resolve new identities from actual successful decisions, never assumed future counters. Existing proposal rejection/recompute reasons propagate; unresolved evidence-only assessment is `recorded` with no fake anchor/card. `no_proposal` still describes proposals only.
+- [ ] Finalize assessment receipt results after the existing projection consumer, using its actual outcomes; do not turn an unapplied positive judgment into successful negative judgment. Save through the existing independent projection receipt storage, not a new persistence table or background repair.
+- [ ] Extend the read-only script's exact-run select with `decision_json` and emit only the raw `project_assessments` plus the projection readback. Tests use valid stored JSON (`{}` for historical records), not an invented old judgment. Historical missing field is clearly shown as absent, not `not_needed`.
+
+Inspection output for a current negative judgment must expose this relationship:
+
+```json
+{
+  "run_id": 11,
+  "project_assessments": [{
+    "project_title": "示例项目", "anchor_id": 3, "outcome": "not_needed",
+    "reason": "验收按计划完成，没有新增经营影响",
+    "assessment_basis": "current_observation",
+    "evidence": [{"source_ref": "message:42", "source_excerpt": "验收按计划完成"}],
+    "decision_indexes": [], "task_ids": [7]
+  }],
+  "projection": {
+    "status": "no_proposal", "proposal_count": 0,
+    "project_assessments": [{
+      "assessment_index": 0, "anchor_id": 3, "task_ids": [7],
+      "attention_id": null, "status": "recorded", "reason": ""
+    }]
+  }
+}
+```
+
+- [ ] Run `python -m pytest -q tests/test_inspect_task_attention.py tests/test_task_models.py tests/test_task_agent.py tests/test_task_agent_runtime.py tests/test_task_attention_projection.py`. Expected focused tests green and inspection database bytes unchanged.
+- [ ] Update inspection instructions and outcome meanings in behavior docs, commit, spec review, quality review.
+
+## Task 4: Fixed native semantic comparison and exact W39
+
+**Files:** `scripts/replay_task_attention.py`, `tests/test_replay_task_attention.py`, existing versioned fixtures, `docs/task-attention-phase1-validation.md`, this plan's progress boxes.
+
+- [ ] Add independent oracle assertions for assessment coverage, cited source and negative explanation; do not inject expected outcomes into Agent input. Keep original nine case expectations and project-name competition expectations. Add meeting/chat/report assessment cases, vague-risk/no-Task/no-confirmed-Project/routine negatives, same-Project two Tasks and already-represented-card idempotence.
+- [ ] Run `python -m pytest -q tests/test_replay_task_attention.py` first RED then GREEN. Use existing eval harness, not a new runtime, provider, route, retry or concurrency policy.
+- [ ] Freeze commit and Skill hash. Use the existing native replay script for pinned baseline and candidate with identical model/route/timeout/concurrency. Baseline's missing field is observable baseline behavior, not silently reinterpreted by the candidate model.
+- [ ] Create a fresh SQLite copy of the verified immutable baseline; replay only input `27465` with exact source ref `dingtalk-doc:a9E05BDRVQvy7QEacPZLB4anJ63zgkYA#sha256=21661643562265ca27e3369112a7ce3e91d9cbb6d21733050b5c3e7a9d42bf1e`. Expected: original Tasks reused, source-defined 中汽创智/岚图 identities, explicit risk judgments with cited经营影响, correctly supported cards, no unrelated promotion. Inspect with the existing command below, then replay the identical input a second time and compare Task/Project/Card/event identities.
+
+```sh
+python scripts/inspect_task_attention.py --db /var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-attention-eval-40j4skvv/w39-project-assessment-candidate.sqlite3 --input-id 27465
+```
+
+- [ ] Record code/tests, mechanical completion, business oracle, actual source/entity/card readback separately. If business judgments fail, diagnose saved reasons; do not force cards, weaken the oracle or report parser success as business acceptance.
+- [ ] Run current focused backend tests and existing two page test files, frontend production build and imports. No whole serial suite and no tests in the production checkout.
+
+## Task 5: Continue the existing approved release gates
+
+**Files:** existing phase-one implementation plan and validation report; no new release mechanism.
+
+- [ ] Final review and fixed comparison before PR/merge for this product-behavior change. Preserve foreign edits and commits; attach any created PR to this chat.
+- [ ] Push a complete commit and verify remote SHA, then use `python -m app.deploy` only. Verify actual production checkout/PID/health/queues/Attention/History; no direct process killing or manual production edits.
+- [ ] Publish the matching global Skill through the existing approved Skill release workflow only after code deployment. Verify content/version/hash and preserve other agents' Skill changes.
+- [ ] Verify the new production backup before exact, bounded requeue of input 27465; retain every original input payload, attempt and run. Ordinary service processing/readback must prove applied judgment/cards; acceptance of requeue does not prove completion.
+- [ ] Inspect real browser Tasks/需关注 and card evidence details in light/dark/narrow layouts. No new business list or assessment audit page is part of this patch.
+- [ ] Validate a genuine non-report production source when available; otherwise state that missing gate. Clean only this workflow's explicit owned temporary copies/worktrees after verified backup retention. Release claims and mark the original goal complete only when all required gates have evidence.
+
+## Plan self-review
+
+The approved spec maps to Tasks 1–3 (wire/coverage/provenance/application/inspection), Task 4 (positive and negative semantic acceptance, exact W39 twice) and Task 5 (publication and live readback). Same-Project grouping and existing-card idempotence preserve the ordinary Task/Attention path; historical data is inspected raw. No hidden classifier, completion Agent, safety-policy layer or full-company scan. All new wire names use `project_assessments`, `project_decision_index`, `decision_indexes`, `task_ids` and the three stated outcomes consistently. Runtime completion and business acceptance remain distinct.
