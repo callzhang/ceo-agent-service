@@ -104,7 +104,9 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    Do not infer aliases or identity from a title prefix or similarity; judge whether
    the source explicitly names this existing Project. Quote/title checks establish
    current provenance and a name reference, not independent semantic identity proof.
-8. Merge only identical deliverables supported by explicit identity evidence.
+8. Create only independently completable deliverables; scope/content additions to an existing
+   deliverable update that Task by its real ID. Identical source quotes alone do not establish
+   Task identity. Merge only identical deliverables supported by explicit identity evidence.
    Distinct deliverables with a shared goal may be clustered or linked; they
    retain independent owners, dates, and completion. When identity is uncertain,
    link or keep separate rather than merge.
@@ -126,13 +128,16 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    from Task action and Project registration excerpts. Current evidence uses
    null `signal_id` and the current `source_ref`; historical evidence requires
    a real positive persisted Signal ID, matching reference, and exact quote.
-   When an assessment relies on comparison, continuity, escalation, or conflict with earlier stored facts,
-   cite the relevant persisted original Signals alongside the current source in `evidence`, using
-   positive actual signal IDs, matching source_refs, and exact original quotes. A current source's
-   reference to an earlier report is a current claim, not a citation of that original report.
-   Do not cite all retrieved sources or require any particular source type. A first assessment
+   Set required `assessment_basis`: `current_observation` asserts only current-source facts;
+   `historical_comparison` uses comparison, continuity, escalation or conflict with stored history
+   and requires both current null-ID and positive persisted-ID original evidence.
+   When the current source explicitly compares earlier facts and matching original Signals
+   are delivered, verify that comparison against the originals and use historical_comparison;
+   do not reduce it to merely repeating the current source's historical claim.
+   A current source's reference to an earlier report is a current claim, not a citation of that original report.
+   Select relevant originals, not all retrieved sources or a required source type. A first assessment
    based only on current facts remains allowed. If the original history is unavailable, mark
-   the comparison uncertain; never invent historical evidence or substitute session/Memory provenance.
+   the comparison uncertain and assert only current facts; never invent historical evidence.
    Attention cannot use cited-only session/Memory provenance as observed truth.
    Use a real existing anchor, or null only with this same decision's new
    Project proposal. Return at most one unique assessment/card per Project per round.

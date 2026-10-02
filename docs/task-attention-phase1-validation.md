@@ -206,3 +206,28 @@ Task Agent、混合来源投影、检索和 session 的聚焦回归共 268 项�
 供应商本周不能付款将停交的当前事实可以独立支持 watch，并不要求历史周报才能形成风险。
 但原始历史的延续/升级/冲突比较需要比较两侧的实际引用，本固定样本专门验证此能力，
 保留双来源要求；不能把“当前风险有效”等同于“多来源综合归因已通过”。
+
+## 必填评估依据与新行动关联的输出契约修订
+
+在两次真实失败之后，新增必填 assessment_basis，不提供旧输出兼容默认：
+current_observation 只断言当前事实，需要 null-ID 当前引用，允许历史佐证；
+historical_comparison 依赖历史比较、延续、升级或冲突，必须同时引用当前 null-ID 与
+实际持久化原始 positive-ID 来源。只检查此输出形状，不查询 Store 或用关键词机器分类。
+原始 ID/ref/原文及支持成员有效性仍由现有投影核验。assessment_json 保存 basis，
+同轮提案折叠自然包含该字段，API 原样读回，不新增 UI 标签或服务判断规则。
+
+新行动 record_candidate/create_task 对已有正 anchor 提出 Attention 时必须有同目标
+project_link_proposal；有效同决定新注册继续走 project_proposal，已知 confirmed Task
+按真实 ID 更新并复用链接。检查既有 dedupe 路径：仅按同来源信号的 dedupe key 与事件
+重放原创建结果，不按标题自动复用；有效新行动提案保留链接可重放，不增加 linkless fallback。
+字段旁描述明确独立可完成交付才创建 Task，既有范围/内容补充更新同 Task；不用同引文
+机械去重。prompt/CI Skill 替换旧比较段，要求已交付匹配原始 Signals 的显式来源比较实际
+核对两侧，不以复述当前转述替代；相关历史缺失则比较待核对，仅当前事实有效。
+
+必填模式、双侧引用及新行动链接的通用模型回归先 RED 后 GREEN；模拟现有同会话纠正
+回归验证缺 link 或历史比较缺历史引用均成为具体字段错误，原输出拒绝、一次修正后接受。
+合法当前/比较、当前附带历史佐证、已有 confirmed Task 复用、新注册、创建重放、无变化
+update guard、混合来源存储及 API basis 读回均保留聚焦验证。真实模型效果仍待主 Agent
+独立规格/质量复核后冻结相同输入/model 原生重跑，不将确定性测试当作语义通过或上线。
+本次指定 9 文件聚焦验证 805 项通过（32.56 秒），补充 API basis 读回后该文件 7 项通过；
+ruff、diff 检查及服务 CLI/worker/supervisor imports 通过。未执行全套测试或本次原生 turn。

@@ -610,7 +610,10 @@ transitions with existing IDs. Similarity rank is context only. Generic updates
 cannot set commitment status.
 
 Only identical deliverables may be proposed for identity merge; related tasks
-remain linked or clustered. Reports, meetings, and chats all supply Task and risk evidence;
+remain linked or clustered. Create only independently completable deliverables;
+scope/content additions to an existing deliverable update that Task by its real ID.
+Identical source quotes alone do not establish Task identity.
+Reports, meetings, and chats all supply Task and risk evidence;
 a weekly report is neither the sole risk source nor a prerequisite for Attention.
 Attention.anchor_id selects the Project assessment; it does not confirm a Task's Project link.
 For a new or unconfirmed Task explicitly belonging to an existing official Project,
@@ -687,13 +690,16 @@ source or historical persisted original Signals, separately from Task action
 source_excerpt and ProjectProposal.source_excerpt registration evidence.
 For current evidence use null signal_id and the current source_ref; historical evidence
 requires a real positive persisted signal_id, matching source_ref, and an exact quote.
-When an assessment relies on comparison, continuity, escalation, or conflict with earlier stored facts,
-cite the relevant persisted original Signals alongside the current source in `evidence`, using
-positive actual signal IDs, matching source_refs, and exact original quotes. A current source's
-reference to an earlier report is a current claim, not a citation of that original report.
-Do not cite all retrieved sources or require any particular source type. A first assessment
+Set required `assessment_basis`: `current_observation` asserts only current-source facts;
+`historical_comparison` uses comparison, continuity, escalation or conflict with stored history
+and requires both current null-ID and positive persisted-ID original evidence.
+When the current source explicitly compares earlier facts and matching original Signals
+are delivered, verify that comparison against the originals and use historical_comparison;
+do not reduce it to merely repeating the current source's historical claim.
+A current source's reference to an earlier report is a current claim, not a citation of that original report.
+Select relevant originals, not all retrieved sources or a required source type. A first assessment
 based only on current facts remains allowed. If the original history is unavailable, mark
-the comparison uncertain; never invent historical evidence or substitute session/Memory provenance.
+the comparison uncertain and assert only current facts; never invent historical evidence.
 Session/memory cited-only provenance cannot support Attention; use stored observed
 original Signals. Labels, relevance, routine progress, and date proximity alone
 do not explain material impact. Return at most one unique assessment/card per Project per round.
@@ -2002,6 +2008,7 @@ def _project_task_attention(
                 task_ids=tuple(sorted(task_ids)),
                 evidence_signal_id=signal_id,
                 assessment_json=json.dumps({
+                    "assessment_basis": proposal.assessment_basis,
                     "material_trigger": proposal.material_trigger,
                     "inference": proposal.why_attention,
                     "evidence": [verified[key] for key in sorted(

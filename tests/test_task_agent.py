@@ -274,6 +274,46 @@ class FakeRoutedTaskExecution:
         )
 
 
+@pytest.mark.parametrize("fault,problem", [
+    ("link", "new Task Attention requires"),
+    ("history", "historical_comparison requires"),
+])
+def test_attention_shape_omissions_use_existing_same_session_repair(fault, problem):
+    import copy
+
+    attention = {"assessment_basis": "historical_comparison", "category": "watch", "title": "交付风险",
+        "why_attention": "当前延期较原计划扩大", "current_state": "验收再次延期", "ceo_action": "观察验收",
+        "anchor_id": 3, "material_trigger": "risk_escalation", "evidence": [
+            {"source_ref": "chat:current", "source_excerpt": "验收再次延期"},
+            {"signal_id": 7, "source_ref": "report:prior", "source_excerpt": "原计划延期"}]}
+    valid = {"task_decisions": [{"action": "record_candidate", "transition": "none", "title": "核对验收计划",
+        "source_ref": "chat:current", "source_excerpt": "复核示例项目验收计划", "attention_proposal": attention,
+        "project_link_proposal": {"anchor_id": 3, "source_excerpt": "复核示例项目验收计划", "reason": "明确项目行动"}}]}
+    invalid = copy.deepcopy(valid)
+    if fault == "link":
+        invalid["task_decisions"][0].pop("project_link_proposal")
+    else:
+        invalid["task_decisions"][0]["attention_proposal"]["evidence"].pop()
+
+    class RepairingExecution:
+        def execute(self, **kwargs):
+            retry = kwargs["result_validation_retry"]
+            assert retry.resume_same_session
+            assert kwargs["conversation_id"] == "contract-repair-session"
+            raw = _agent_message_jsonl(json.dumps(invalid))
+            with pytest.raises(RoutedResultValidationError):
+                kwargs["parser"](raw)
+            correction = retry.correction_prompt(raw)
+            assert problem in correction
+            assert "same task decision" in correction
+            value = kwargs["parser"](_agent_message_jsonl(json.dumps(valid)))
+            return SimpleNamespace(value=value, session_id="contract-repair-session", transcript_start=0, transcript_end=2)
+
+    decision = TaskAgentCodexRunner(routed_execution=RepairingExecution()).decide(
+        prompt="decide", workload_key="1", session_scope_id="contract-repair-session")
+    assert decision == TaskAgentDecision.model_validate(valid)
+
+
 def _work_item(project_name="售前知识库"):
     return WorkItem.model_validate(
         {
@@ -672,11 +712,11 @@ def test_task_agent_comparison_assessments_cite_selective_original_history(monke
     text = (build_task_agent_prompt(_work_item(), "候选上下文为空。") if surface == "prompt"
         else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8"))
     text = " ".join(text.split())
-    assert "When an assessment relies on comparison, continuity, escalation, or conflict with earlier stored facts" in text
-    assert "cite the relevant persisted original Signals alongside the current source in `evidence`" in text
-    assert "positive actual signal IDs, matching source_refs, and exact original quotes" in text
+    assert "Set required `assessment_basis`" in text
+    assert "requires both current null-ID and positive persisted-ID original evidence" in text
+    assert "verify that comparison against the originals and use historical_comparison" in text
     assert "A current source's reference to an earlier report is a current claim, not a citation of that original report" in text
-    assert "Do not cite all retrieved sources or require any particular source type" in text
+    assert "Select relevant originals, not all retrieved sources or a required source type" in text
     assert "A first assessment based only on current facts remains allowed" in text
     assert "If the original history is unavailable, mark the comparison uncertain" in text
 
@@ -793,10 +833,12 @@ def test_fresh_task_agent_loads_initial_risk_rules_from_selected_skill_root(monk
     assert "Project registration scope, objectives, and categories are not separate Tasks" in skill_text
     assert "repeat the identical `attention_proposal` on each supporting TaskDecision" in skill_text
     assert "Attention.anchor_id selects the Project assessment" in skill_text
-    assert "cite the relevant persisted original Signals alongside the current source in `evidence`" in skill_text
+    assert "requires both current null-ID and positive persisted-ID original evidence" in skill_text
     assert "A current source's reference to an earlier report is a current claim" in skill_text
     assert "A first assessment based only on current facts remains allowed" in skill_text
     assert "If the original history is unavailable, mark the comparison uncertain" in skill_text
+    assert "verify that comparison against the originals and use historical_comparison" in skill_text
+    assert "scope/content additions to an existing deliverable update that Task by its real ID" in skill_text
 
 
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(monkeypatch):
@@ -1949,7 +1991,7 @@ def test_same_task_multiple_decisions_keep_positional_task_signal_mapping(tmp_pa
          "source_excerpt": "补齐来源链接", "source_ref": item.source.ref, "title": "报价跟进", "status": "waiting",
          "attention_proposal": {"category": "watch", "title": "报价延期风险", "why_attention": "有明确风险",
          "current_state": "待补来源", "ceo_action": "确认推进", "anchor_id": 1,
-         "material_trigger": "risk_escalation", "evidence": [
+         "assessment_basis": "current_observation", "material_trigger": "risk_escalation", "evidence": [
              {"source_ref": item.source.ref, "source_excerpt": "补齐来源链接"}]}},
         {"action": "update_task", "transition": "update_fields", "task_id": created.task_id,
          "source_excerpt": "owner 是 Alex", "source_ref": item.source.ref, "title": "报价跟进",
@@ -2002,7 +2044,7 @@ def test_attention_projection_runs_after_outer_domain_transaction_commit(tmp_pat
         "title": "报价方案", "business_relevance": "relevant",
         "attention_proposal": {"category": "watch", "title": "承诺交付风险", "why_attention": "负责人报告已接受承诺有风险",
          "current_state": "交付存在风险", "ceo_action": "核实交付状态", "anchor_id": anchor_id,
-         "material_trigger": "threatened_commitment", "evidence": [
+         "assessment_basis": "current_observation", "material_trigger": "threatened_commitment", "evidence": [
              {"source_ref": item.source.ref, "source_excerpt": "delivery is at risk"}]},
     }]})
     seen = []

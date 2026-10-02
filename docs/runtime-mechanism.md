@@ -261,11 +261,20 @@ Attention 应用结果使用冻结的 `AppliedTaskAttention(decision, task_id, s
 投影支持新注册 Project、完整当前来源中的风险引文、历史持久化原始信号与显式相关 Task，
 统一按 `project:{canonical_anchor_id}` 复用卡片身份，不按 Task/trigger 新建卡。
 当前 null signal ID 只解析为该 AppliedTaskAttention.signal_id；历史正整数 ID 精确读取持久化信号。
+Attention 必填 assessment_basis（无兼容默认）：current_observation 需要当前 null-ID 引文，
+只断言当前事实而非确认其中转述的历史；historical_comparison 必须同时有当前 null-ID 与
+历史正 ID 引文。仅检查该模式的引用形状，不以关键词/Store 查询分类语义，也不禁止当前模式
+附带历史佐证。assessment_json 保存 basis，便于读回；同轮折叠比较自然包含此字段。
+新行动 record_candidate/create_task 对已有正 anchor 提出 Attention 必须提供匹配链接提案，
+新注册仍走同决定 project_proposal；已有 confirmed Task 可按真实 ID 更新并复用链接。
+独立可完成交付才是新 Task；既有交付的范围/内容补充更新原 Task，不按相同引文机械合并。
 Agent 若以既有事实的比较、延续、升级或冲突形成评估，应同时引用当前来源和实际相关的
 持久化原始 Signals，使用真实正 ID、匹配 source_ref 和逐字原文；当前来源提到旧报告不等于
 引用原报告。不全量引用检索结果，也不强制特定来源类型；首次仅依据当前事实仍允许。
 历史原始来源不可用时标明比较不确定，不编造历史或替代为 session/memory provenance。
 此为 Agent 的选择性证据归因契约，不新增检索、领域投影或服务判断规则。
+当前来源明确对照以前事实且上下文交付匹配原始 Signals 时，Agent 核对原文完成比较并
+使用 historical_comparison 及两侧引用，不只复述转述；任意历史存在不意味着必须比较。
 每条引文核对 source_ref、原始文本中的连续子串或 JSON 解码后的单个字符串叶子，禁止拼接叶子；
 无需包含在 Task 行动摘录中。历史信号必须链接到本次支持的 relevant/open/waiting Task，且该 Task
 确认关联同一正式 Project 的活动规范 anchor。session_provenance/memory_provenance 是 cited-only，

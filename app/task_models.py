@@ -412,6 +412,9 @@ class TaskAttentionEvidence(StrictTaskModel):
 
 
 class TaskAttentionProposal(StrictTaskModel):
+    assessment_basis: Literal["current_observation", "historical_comparison"] = Field(
+        description="current_observation asserts only current-source facts, not confirmation of history merely retold there. historical_comparison relies on comparison, continuity, escalation or conflict with stored history and requires current null-ID evidence plus positive persisted-ID original evidence.",
+    )
     category: Literal["fyi", "watch", "decision", "push"]
     title: str
     why_attention: str
@@ -426,11 +429,23 @@ class TaskAttentionProposal(StrictTaskModel):
         "threatened_commitment", "material_change", "material_dispute",
         "ceo_decision", "ceo_push", "required_gate", "risk_escalation",
     ]
-    evidence: list[TaskAttentionEvidence] = Field(min_length=1)
+    evidence: list[TaskAttentionEvidence] = Field(min_length=1,
+        description="Exact original citations covering the actual assessment claims; historical comparison cites relevant original persisted Signals alongside current evidence, not all retrieved sources.")
+
+    @model_validator(mode="after")
+    def validate_assessment_basis(self) -> "TaskAttentionProposal":
+        current = any(item.signal_id is None for item in self.evidence)
+        historical = any(item.signal_id is not None for item in self.evidence)
+        if self.assessment_basis == "historical_comparison" and not (current and historical):
+            raise ValueError("historical_comparison requires current null-ID and positive persisted-ID evidence")
+        if self.assessment_basis == "current_observation" and not current:
+            raise ValueError("current_observation requires current null-ID evidence")
+        return self
 
 
 class TaskDecision(StrictTaskModel):
-    action: Literal["skip", "record_candidate", "create_task", "update_task"]
+    action: Literal["skip", "record_candidate", "create_task", "update_task"] = Field(
+        description="Create/record only independently completable deliverables. Scope/content additions to an existing deliverable update that Task by its real ID, not a second Task; identical quotes alone do not establish identity.")
     transition: Literal[
         "none", "promote_candidate", "apply_acceptance", "update_fields", "merge_identity"
     ]
@@ -451,8 +466,8 @@ class TaskDecision(StrictTaskModel):
             "For session and memory, source_ref is the ORIGINAL source's reference and source_excerpt an exact quote of its text."
         ),
     )
-    title: str = ""
-    description: str = ""
+    title: str = Field(default="", description="Name the independently completable deliverable; an addition to an existing Task's scope is an update, not a new deliverable.")
+    description: str = Field(default="", description="Describe this deliverable or the existing Task's actual scope/content update; do not split additions into duplicate Tasks.")
     formal_basis: FormalTaskBasis | None = None
     acceptance_polarity: Literal["accepted", "declined", "ambiguous"] | None = None
     acceptance_target_signal_id: int | None = Field(default=None, gt=0)
@@ -486,7 +501,8 @@ class TaskDecision(StrictTaskModel):
     anchor_match_proposals: list[TaskAnchorMatchProposal] = Field(default_factory=list)
     project_candidate_proposal: ProjectCandidateProposal | None = None
     project_proposal: ProjectProposal | None = None
-    project_link_proposal: TaskProjectLinkProposal | None = None
+    project_link_proposal: TaskProjectLinkProposal | None = Field(default=None,
+        description="Required for a new-action Task supporting Attention at an existing positive Project anchor. Existing confirmed Task links may be reused with update_task; Attention anchor alone does not confirm a link.")
     attention_proposal: TaskAttentionProposal | None = None
     update_summary: str = ""
     memory_recall_used: bool = False
@@ -548,6 +564,10 @@ class TaskDecision(StrictTaskModel):
             if (self.attention_proposal is not None
                 and self.attention_proposal.anchor_id != self.project_link_proposal.anchor_id):
                 raise ValueError("Attention anchor must match the existing Project link target")
+        if (self.action in {"record_candidate", "create_task"}
+            and self.attention_proposal is not None and self.attention_proposal.anchor_id is not None
+            and self.project_proposal is None and self.project_link_proposal is None):
+            raise ValueError("new Task Attention requires matching project_link_proposal for an existing Project")
         if (
             self.attention_proposal is not None
             and self.attention_proposal.anchor_id is None

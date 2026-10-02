@@ -812,6 +812,9 @@ cited-only session/memory 代替行动关联证据。名字引用和原文核对
 TaskProjectLinkProposal 应用所得 anchor 计入本轮 project_link_count；已有 confirmed 关联可复用，
 普通 anchor_match_proposals 仍仅 proposed。原无实际字段变化的 update guard 保留在确认前，
 不增 evidence-only update；新 Task 的 business_relevance 由关联确认派生，不在创建决定直接设置。
+record_candidate/create_task 新行动对已有正 anchor 提出 Attention 时必须同决定给出匹配
+project_link_proposal；新注册沿用同决定的 project_proposal。已知 Task 应按真实 ID 更新，
+只有独立可完成交付才创建 Task，既有交付的范围/内容补充不拆成重复 Task；不机械按同引文合并。
 update 来源身份包含实际 Project link 的目标和引用，不把 reason 措辞纳入效果；
 创建 Task 身份仍沿用行动/标题/负责人，不因关联说明改写而重复创建。
 
@@ -819,7 +822,11 @@ update 来源身份包含实际 Project link 的目标和引用，不把 reason 
 `ProjectProposal.source_excerpt` 必填且非空，独立引用项目登记依据，不借用
 `TaskDecision.source_excerpt` 的行动项摘录。Attention 使用至少一条 `evidence`，每条包含
 非空 `source_ref`、`source_excerpt` 和可选的严格正整数 `signal_id`；`why_attention` 保留为
-Agent 的推断。`anchor_id` 可省略或为 null，但只能指向同一 TaskDecision 本轮的
+Agent 的推断。`assessment_basis` 必填且无兼容默认：current_observation 只断言当前来源事实，
+需要当前 null-ID 引文；historical_comparison 依赖历史比较/延续/升级/冲突，必须同时有当前
+null-ID 和历史正 ID 引文。模式校验只检查引用形状，不用关键词或 Store 查询推断语义；
+当前模式可保留历史佐证，不因额外历史引文自动转换模式。原文事实与判断仍由 Agent 负责。
+`anchor_id` 可省略或为 null，但只能指向同一 TaskDecision 本轮的
 `project_proposal`，不能按标题猜测其他 Project。`related_task_ids` 默认空列表，只接受
 严格正整数。旧 `trigger_evidence` 不再接受，历史 `decision_json` 不迁移。候选 Task 可表达
 风险证据而不补造负责人或升级正式 Task。Project 注册必须引用当前来源：周报提案严格匹配
@@ -837,10 +844,12 @@ Agent 若依赖与既有事实的比较、延续、升级或冲突形成评估�
 转述只是当前陈述，不能替代原报告引用。只选实际用于判断的来源，不要求某类来源或全量引用
 检索结果；首次仅依据当前事实的评估仍允许。原始历史不可用时标明比较不确定，不编造历史
 引文或以 session/memory 充当原始来源。这是 Agent 归因契约，不增加检索或领域投影规则。
+当前来源明确对照以前事实且上下文已交付匹配原始 Signals 时，Agent 核对原文完成比较，
+使用 historical_comparison 及两侧引用，不降为只复述当前转述；不因任意历史存在就要求比较。
 引文可来自完整当前来源或 JSON 解码后的某个字符串叶子，不要求包含在 Task 行动摘录中，
 也不能拼接不同 JSON 字段。session/memory 的 cited-only provenance 不充当已观察原始来源。
 任一引文或关联无效就拒绝整项提案。`assessment_json` 按键排序保存 material_trigger、
-inference（纯 why_attention 推断）及精确引文的 signal ID/source_ref/source_time/source_link，
+assessment_basis、inference（纯 why_attention 推断）及精确引文的 signal ID/source_ref/source_time/source_link，
 时间和链接只来自持久化信号，不复制报告或检索全文；assessment 改变会产生事件，重复回放幂等。
 每个当前或显式 related Task 都必须 relevant、open/waiting，且确认关联同一活动规范 anchor；
 related_task_ids 只指定实际风险支持 Task，不自动包含所有项目 Task。合并本轮支持 Task 与旧卡

@@ -16,6 +16,71 @@ def _decision(**changes):
     }
 
 
+def _attention(**changes):
+    return {"anchor_id": 3, "category": "watch", "title": "交付风险", "why_attention": "影响交付",
+        "current_state": "验收延期", "ceo_action": "观察验收", "assessment_basis": "current_observation", "material_trigger": "risk_escalation",
+        "evidence": [{"source_ref": "message:42", "source_excerpt": "验收延期"}], **changes}
+
+
+def test_attention_requires_explicit_assessment_basis():
+    from app.task_models import TaskAttentionProposal
+    payload = _attention()
+    payload.pop("assessment_basis")
+    with pytest.raises(ValidationError, match="assessment_basis"):
+        TaskAttentionProposal.model_validate(payload)
+
+
+@pytest.mark.parametrize("evidence", [
+    [{"source_ref": "message:42", "source_excerpt": "验收延期"}],
+    [{"signal_id": 7, "source_ref": "report:7", "source_excerpt": "原计划延期"}],
+])
+def test_historical_comparison_requires_current_and_persisted_citations(evidence):
+    from app.task_models import TaskAttentionProposal
+    with pytest.raises(ValidationError, match="historical_comparison requires"):
+        TaskAttentionProposal.model_validate(_attention(assessment_basis="historical_comparison", evidence=evidence))
+
+
+@pytest.mark.parametrize("action", ["record_candidate", "create_task"])
+def test_new_action_attention_requires_matching_existing_project_link(action):
+    with pytest.raises(ValidationError, match="new Task Attention requires"):
+        TaskAgentDecision.model_validate({"task_decisions": [_decision(action=action,
+            formal_basis="meeting_action_item" if action == "create_task" else None,
+            attention_proposal=_attention())]})
+
+
+def test_existing_task_attention_reuses_link_without_new_proposal():
+    decision = TaskAgentDecision.model_validate({"task_decisions": [_decision(action="update_task",
+        transition="update_fields", task_id=1, attention_proposal=_attention())]})
+    assert decision.task_decisions[0].project_link_proposal is None
+
+
+def test_historical_comparison_accepts_two_original_citation_shapes():
+    from app.task_models import TaskAttentionProposal
+    payload = _attention(assessment_basis="historical_comparison")
+    payload["evidence"].append({"signal_id": 7, "source_ref": "report:7", "source_excerpt": "原计划延期"})
+    proposal = TaskAttentionProposal.model_validate(payload)
+    assert proposal.assessment_basis == "historical_comparison"
+    schema = TaskAttentionProposal.model_json_schema()
+    assert "assessment_basis" in schema["required"]
+    assert "default" not in schema["properties"]["assessment_basis"]
+
+
+def test_current_observation_can_include_original_history_as_corroboration():
+    from app.task_models import TaskAttentionProposal
+    payload = _attention()
+    payload["evidence"].append({"signal_id": 7, "source_ref": "report:7", "source_excerpt": "原计划延期"})
+    assert TaskAttentionProposal.model_validate(payload).assessment_basis == "current_observation"
+
+
+@pytest.mark.parametrize("action", ["record_candidate", "create_task"])
+def test_new_action_attention_accepts_explicit_project_link(action):
+    decision = TaskAgentDecision.model_validate({"task_decisions": [_decision(action=action,
+        formal_basis="meeting_action_item" if action == "create_task" else None,
+        project_link_proposal={"anchor_id": 3, "source_excerpt": "复核示例项目验收计划", "reason": "当前项目行动"},
+        attention_proposal=_attention())]})
+    assert decision.task_decisions[0].project_link_proposal.anchor_id == 3
+
+
 def test_work_item_does_not_require_project_name():
     item = WorkItem.model_validate({
         "source": {"type": "reply_attempt", "ref": "42"},
@@ -58,7 +123,7 @@ def test_existing_project_link_and_attention_must_reference_same_anchor():
         TaskAgentDecision.model_validate({"task_decisions": [_decision(
             project_link_proposal={"anchor_id": 3, "source_excerpt": "复核示例项目验收计划。", "reason": "明确关联"},
             attention_proposal={"anchor_id": 4, "category": "watch", "title": "风险", "why_attention": "有经营影响",
-                "current_state": "验收延期", "ceo_action": "观察验收", "material_trigger": "risk_escalation",
+                "current_state": "验收延期", "ceo_action": "观察验收", "assessment_basis": "current_observation", "material_trigger": "risk_escalation",
                 "evidence": [{"source_ref": "message:42", "source_excerpt": "验收延期"}]},
         )]})
 

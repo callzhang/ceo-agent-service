@@ -83,7 +83,7 @@ def test_attention_detail_returns_saved_assessment_and_all_referenced_signals(tm
             source_type="meeting", source_ref=f"minutes-{i}", evidence_text=f"Exact quote {i}", dedupe_key=f"signal-{i}", source_time=now,
             context_json=json.dumps({"source_link": f"https://example.com/minutes/{i}"}), _db=db,
         ) for i in range(3)]
-        assessment = {"material_trigger": "risk_escalation", "inference": "Observe delivery", "evidence": [
+        assessment = {"assessment_basis": "historical_comparison", "material_trigger": "risk_escalation", "inference": "Observe delivery", "evidence": [
             {"signal_id": primary_id, "source_ref": "Multisource", "source_excerpt": "Multisource", "source_time": now, "source_link": ""},
             {"signal_id": ids[0], "source_ref": "minutes-0", "source_excerpt": "Exact quote 0", "source_time": now, "source_link": "https://example.com/minutes/0"},
         ]}

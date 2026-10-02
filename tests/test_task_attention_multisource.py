@@ -195,11 +195,10 @@ def test_evaluation_new_risk_cannot_pass_with_only_historical_evidence(tmp_path)
         "minimum_evidence_sources": 1, "reuse_attention": True,
         "required_source_refs": [item.source.ref],
     })
-    assert result["run_status"] == "completed", result.get("execution_error")
-    assert result["projection"]["status"] == "completed"
-    assert result["evidence_valid"]
+    assert result["run_status"] == "failed"
+    assert "requires current null-ID evidence" in result["execution_error"]
+    assert store.list_business_attention_items()[0] == original_card
     assert result["passed"] is False
-    assert "missing_required_source" in result["failures"]
 
 
 def test_evaluation_requires_source_on_each_target_project_card(tmp_path):
@@ -331,7 +330,7 @@ def decision_payload():
             "why_attention": "收入确认延迟与付款安排可能影响现金流",
             "current_state": "收入确认延迟",
             "ceo_action": "当前无需你处理；观察客户确认及付款安排是否恢复。",
-            "anchor_id": None, "material_trigger": "risk_escalation",
+            "anchor_id": None, "assessment_basis": "current_observation", "material_trigger": "risk_escalation",
             "evidence": [{"source_ref": "report:fixture", "source_excerpt": RISK_QUOTE}],
         },
     }]}
@@ -395,8 +394,13 @@ def update_risk(store, seed, *, source_type="reply_attempt", evidence=None, rela
         "context": {"source_conversation_kind": "group"}, "summary": quote,
     })
     proposal = decision_payload()["task_decisions"][0]["attention_proposal"]
+    citations = evidence or [{"source_ref": item.source.ref, "source_excerpt": quote}]
+    historical = any(entry.get("signal_id") is not None for entry in citations)
+    if historical and not any(entry.get("signal_id") is None for entry in citations):
+        citations = [{"source_ref": item.source.ref, "source_excerpt": quote}, *citations]
     proposal.update(anchor_id=seed.attention_proposals[0].anchor_id,
-                    evidence=evidence or [{"source_ref": item.source.ref, "source_excerpt": quote}],
+                    assessment_basis="historical_comparison" if historical else "current_observation",
+                    evidence=citations,
                     related_task_ids=related_ids or [])
     decision = TaskAgentDecision.model_validate({"task_decisions": [{
         "action": "update_task", "transition": "update_fields", "task_id": seed.task_ids[0],
@@ -550,6 +554,7 @@ def test_new_source_risk_reuses_project_card_and_preserves_report_fields(tmp_pat
                       "source_ref": "report:fixture", "source_excerpt": RISK_QUOTE}
         proposal = decision.task_decisions[0].attention_proposal
         proposal.evidence.append(type(proposal.evidence[0]).model_validate(historical))
+        proposal.assessment_basis = "historical_comparison"
     result = apply_task_agent_decision(store, summary_input_id=2, work_item=item, decision=decision, record_run=False)
     assert result.projection_receipt.status == "completed"
     assert result.projection_receipt.registry_row_count is None
@@ -559,6 +564,8 @@ def test_new_source_risk_reuses_project_card_and_preserves_report_fields(tmp_pat
     assert store.list_business_projects() == [project]
     assert store.get_business_task(seed.task_ids[0]).description == item.summary
     evidence = json.loads(card.assessment_json)["evidence"]
+    assert json.loads(card.assessment_json)["assessment_basis"] == (
+        "historical_comparison" if source_type == "reply_attempt" else "current_observation")
     assert evidence[0]["source_time"] == "2026-10-01T15:00:00Z"
     if source_type == "reply_attempt":
         assert evidence[1]["source_time"] == "2026-09-30T12:00:00Z"
@@ -901,7 +908,9 @@ def test_each_decision_keeps_its_own_applied_project_anchor(tmp_path, new_projec
         source["markdown"] += f"\n{second_quote}"
         item = item.model_copy(update={"summary": json.dumps(source, ensure_ascii=False)})
     else:
+        seed = seed_report(store)
         del second["project_proposal"]
+        second.update(action="update_task", transition="update_fields", task_id=seed.task_ids[0])
         second["attention_proposal"]["anchor_id"] = 987
     payload["task_decisions"].append(second)
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
@@ -948,10 +957,13 @@ def test_existing_anchor_does_not_require_new_project_proposal():
     decision = payload["task_decisions"][0]
     del decision["project_proposal"]
     decision["attention_proposal"].update(anchor_id=8, related_task_ids=[3, 9])
-    decision["attention_proposal"]["evidence"][0]["signal_id"] = 11
+    decision["attention_proposal"].update(assessment_basis="historical_comparison")
+    decision["attention_proposal"]["evidence"].append({"signal_id": 11,
+        "source_ref": "report:earlier", "source_excerpt": RISK_QUOTE})
+    decision["project_link_proposal"] = {"anchor_id": 8, "source_excerpt": TASK_QUOTE, "reason": "当前项目行动"}
     parsed = TaskAgentDecision.model_validate(payload).task_decisions[0]
     assert parsed.attention_proposal.related_task_ids == [3, 9]
-    assert parsed.attention_proposal.evidence[0].signal_id == 11
+    assert parsed.attention_proposal.evidence[1].signal_id == 11
 
 
 @pytest.mark.parametrize("field,value", [
@@ -1044,7 +1056,7 @@ def existing_project_link_case(tmp_path, source_type="ai_minutes"):
     })
     assessment = {"category": "watch", "title": "验收取消与付款风险", "why_attention": "验收取消及回款延期影响付款",
         "current_state": risk, "ceo_action": "当前无需你处理；观察延期付款安排", "anchor_id": anchor_id,
-        "material_trigger": "risk_escalation", "evidence": [{"source_ref": item.source.ref, "source_excerpt": risk}]}
+        "assessment_basis": "current_observation", "material_trigger": "risk_escalation", "evidence": [{"source_ref": item.source.ref, "source_excerpt": risk}]}
     new_task = {"action": "record_candidate", "transition": "none", "title": action[:-1],
         "source_ref": item.source.ref, "source_excerpt": action, "description": action,
         "project_link_proposal": {"anchor_id": anchor_id, "source_excerpt": action, "reason": "当前行动明确指出已有项目"},
@@ -1083,6 +1095,11 @@ def test_current_source_links_new_task_to_existing_project_and_updates_one_card(
     assert receipt["status"] == "completed"
     assert receipt["project_link_count"] == 1
     assert link["status"] == "confirmed" and link["anchor_id"] == anchor_id
+    replay = apply_task_agent_decision(store, summary_input_id=input_id, work_item=item,
+        decision=TaskAgentDecision.model_validate({"task_decisions": [new_task]}), record_run=False)
+    assert replay.projection_receipt.status == "completed"
+    assert store.list_business_tasks() == tasks
+    assert store.list_business_attention_items()[0].id == old_card_id
 
 
 @pytest.mark.parametrize("failure", ["missing", "unofficial", "inactive", "cross_project", "wrong_quote", "wrong_task_quote", "source_ref"])
