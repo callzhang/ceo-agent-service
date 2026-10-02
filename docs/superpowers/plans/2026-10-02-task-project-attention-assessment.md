@@ -20,7 +20,7 @@ Parent claims authorize narrow child claims; read the shared claim board before 
 - `app/task_models.py`: required wire model, structural references and receipt result model.
 - `app/task_agent.py`: current result parsing/correction/prompt, known-project coverage, actual identity resolution and receipt recording. Existing Task application boundaries stay intact.
 - `scripts/inspect_task_attention.py`: read-only exact-input assessment/receipt inspection; no store initialization or historical rewriting.
-- `tests/test_task_models.py`, `tests/test_task_agent.py`, `tests/test_task_agent_runtime.py`, `tests/test_inspect_task_attention.py`: focused regression tests. Update only current result producers in other focused Task tests where the required envelope changes; do not reinterpret historical records.
+- `tests/test_task_models.py`, `tests/test_task_agent.py` (including routed runtime/correction cases), `tests/test_task_agent_session.py`, `tests/test_inspect_task_attention.py`: focused regression tests. Update only current result producers in other focused Task tests where the required envelope changes; do not reinterpret historical records.
 - `ci/shared-skills/ceo-work-tracking/SKILL.md`, `docs/architecture.md`, `docs/runtime-mechanism.md`: current behavior, field guidance, and separation of judgment from application.
 - `scripts/replay_task_attention.py`, fixed fixtures and `docs/task-attention-phase1-validation.md`: fixed semantic oracle and exact W39 readback, separate from parser success.
 
@@ -102,10 +102,10 @@ class TaskProjectAssessment(StrictTaskModel):
 
 ## Task 2: Bind judgments to this run's actual decisions and Projects
 
-**Files:** `app/task_models.py`, `app/task_agent.py`, current result producers in `tests/test_task_agent.py` and `tests/test_task_agent_runtime.py`, `ci/shared-skills/ceo-work-tracking/SKILL.md`, the two behavior documents.
+**Files:** `app/task_models.py`, `app/task_agent.py`, current result producers and runtime/correction cases in `tests/test_task_agent.py`, `tests/test_task_agent_session.py` (session fixtures only), `ci/shared-skills/ceo-work-tracking/SKILL.md`, the two behavior documents.
 
 - [ ] Write failing regressions in the existing source/Project fixtures for: omitted known Project, out-of-range decision position, no ProjectProposal at `project_decision_index`, duplicate assessments for the same known Project, positive judgment without proposal or exact existing card, negative judgment with a proposal, and two related decisions sharing one judgment. A plain-source unconfirmed Project with `insufficient_evidence` must be accepted without registering it.
-- [ ] Run `python -m pytest -q tests/test_task_models.py tests/test_task_agent.py tests/test_task_agent_runtime.py`; preserve the RED evidence for the added assertions.
+- [ ] Run `python -m pytest -q tests/test_task_models.py tests/test_task_agent.py tests/test_task_agent_session.py`; preserve the RED evidence for the added assertions.
 - [ ] In `TaskAgentDecision`'s existing after-validation, resolve only structural references: every index addresses this envelope; a project decision index addresses a non-skip ProjectProposal; proposals and outcomes agree; one structured identity has one assessment. Relevant known anchors from `project_link_proposal` and positive attention anchors, plus current `project_proposal` positions, require coverage. Same exact-title ProjectProposals can share one assessment; this is not a fuzzy identity merger.
 - [ ] In the existing pre-application domain validation, include confirmed Project links of current real Task IDs in coverage. Verify assessment cites against the current WorkItem and stored original Signals using the existing provenance semantics; historical citations are actual original IDs. Verify referenced existing active cards and their actual Project/supporting Task/assessment evidence before treating them as already represented. Reject a guessed or unrelated existing card. Use existing bounded correction mechanisms; add no retry loop.
 - [ ] Preserve `apply_task_agent_decision`'s no-field-change guard. Collect actual applied decision-to-Task and decision-to-Project identities during the ordinary transaction for receipt resolution. No independently created Signal, Task or Project for negative/unresolved assessments, no event for a no-change assessment, no auto-close for `not_needed`.
@@ -161,7 +161,7 @@ Inspection output for a current negative judgment must expose this relationship:
 }
 ```
 
-- [ ] Run `python -m pytest -q tests/test_inspect_task_attention.py tests/test_task_models.py tests/test_task_agent.py tests/test_task_agent_runtime.py tests/test_task_attention_projection.py`. Expected focused tests green and inspection database bytes unchanged.
+- [ ] Run `python -m pytest -q tests/test_inspect_task_attention.py tests/test_task_models.py tests/test_task_agent.py tests/test_task_agent_session.py tests/test_task_attention_projection.py`. Expected focused tests green and inspection database bytes unchanged.
 - [ ] Update inspection instructions and outcome meanings in behavior docs, commit, spec review, quality review.
 
 ## Task 4: Fixed native semantic comparison and exact W39
