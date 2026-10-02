@@ -1216,3 +1216,10 @@ runtime attempt is recorded with the result-stage failure code
 `runtime_unclassified` code. This keeps Task Agent retries and Attention
 classification tied to the actual failure stage; genuinely unknown execution
 exceptions remain fail-closed as `runtime_unclassified`.
+
+Unsubscribe page judgment accepts a terminal parent only when that exact email
+action has one of the direct executor's existing retryable skipped receipts.
+This lets the authorized direct reread obtain new provider evidence without
+rewriting a completed reply task to pending. A successful receipt, missing
+receipt, or failed terminal parent does not authorize this runtime operation;
+the action plan and browser effect authorization remain unchanged.

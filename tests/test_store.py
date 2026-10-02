@@ -23,6 +23,38 @@ from app.store import (
 )
 
 
+def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts():
+    with sqlite3.connect(":memory:") as db:
+        db.execute(
+            "create table reply_tasks (channel text, trigger_message_id text, status text)"
+        )
+        db.execute(
+            "create table email_unsubscribe_receipts (action_identity text, outcome text)"
+        )
+        identity = "email-action:" + "a" * 64
+        key = "email-unsubscribe-page:" + identity + ":" + "b" * 64
+        db.execute("insert into reply_tasks values ('email', ?, 'done')", (identity,))
+        assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
+            db, "email_unsubscribe_page", key
+        )
+        db.execute(
+            "insert into email_unsubscribe_receipts values (?, 'skipped_no_reliable_entry')",
+            (identity,),
+        )
+        assert store_module.AutoReplyStore._runtime_operation_parent_exists(
+            db, "email_unsubscribe_page", key
+        )
+        db.execute("update email_unsubscribe_receipts set outcome='done'")
+        assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
+            db, "email_unsubscribe_page", key
+        )
+        db.execute("update reply_tasks set status='failed'")
+        db.execute("update email_unsubscribe_receipts set outcome='skipped_no_reliable_entry'")
+        assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
+            db, "email_unsubscribe_page", key
+        )
+
+
 def _sqlite_failure(
     message: str,
     *,
