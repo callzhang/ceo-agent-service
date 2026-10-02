@@ -1251,3 +1251,11 @@ Manual reruns of scheduled Agent work preserve the saved scheduled execution
 context, including its route and pinned Skill content. A missing or invalid
 scheduled payload is rejected instead of being rebuilt as a DingTalk message;
 the original scheduled run is the authoritative source for explicit recovery.
+
+The approved DingTalk send tool persists its exact prepared body and verified
+provider receipt into `sent_replies` as soon as provider verification reports
+`sent`, before returning to the Audit turn. A later invalid Audit result cannot
+erase this delivery evidence. Pending or ambiguous verification produces no
+successful History projection. This records one message's actual effect, not
+completion of the whole proposal: the task and external-action completion
+ledger still require the existing Audit lifecycle and evidence checks.
