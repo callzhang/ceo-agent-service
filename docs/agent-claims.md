@@ -26,8 +26,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-attention-new-task-membership-prompt | Delegated isolated candidate slices: app/task_agent.py (prompt text only), ci/shared-skills/ceo-work-tracking/SKILL.md, tests/test_task_agent.py (generic prompt/Skill contracts), docs/architecture.md and docs/runtime-mechanism.md (Task Attention text), docs/task-attention-phase1-validation.md (case 9 native failure) | Clarify registry scope versus real actions and identical assessment repetition for newly created supporting Tasks; no core/API/model/global Skill/oracle edits. Native rerun remains with root. | 2026-10-02 |
-
 
 | codex-attention-multisource-browser-fixture | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: frontend/dev-mock/tasksMock.ts (synthetic Attention evidence fixtures only) | Reuse existing isolated Tasks mock preview to verify two-source detail, watch/decision labels, light/dark and narrow readability; synthetic UI evidence is not business or production verification. | 2026-10-02 |
 
