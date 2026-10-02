@@ -26,6 +26,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-project-attention-assessment-design | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: docs/superpowers/specs/2026-10-02-task-project-attention-assessment-design.md (new), docs/agent-claims.md (own row only) | Derek selected A: document explicit project attention judgments in the same Task Agent turn; design only, no runtime/schema/global Skill/production implementation before written spec review. | 2026-10-02 |
+
 
 
 
