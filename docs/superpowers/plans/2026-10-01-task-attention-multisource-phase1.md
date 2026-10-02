@@ -44,7 +44,7 @@
 
 开始代码前重新读取 `docs/agent-claims.md`，逐任务认领涉及文件。已有 claim 要先与 owner 协调，只改已协调的函数/段落。测试仅跑本计划列出的文件；不在运行服务的开发机执行串行全套。每次提交只暂存自己的文件或 hunks；不用 `git add -A`。当前另两份未跟踪文件不属于本计划。
 
-执行工作区：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`，分支 `codex/task-attention-multisource`。基线 `tests/test_task_models.py` + `tests/test_task_attention_projection.py`：47 passed。Task 1 已提交 `79c8c38c`；Task 2 已提交到 `9efcab15`，201 项聚焦回归通过；Task 3 已提交 `29f492f2`，553 项相关测试及 7 项 Store 测试通过。Task 4 已提交到 `bdd2e524`，239 项聚焦回归通过，折叠证据保留与两项计数修正均经独立复核。前四步均已通过规格与质量检查，正在执行 Task 5。未合并、未部署、未回放生产数据。
+执行工作区：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`，分支 `codex/task-attention-multisource`。基线 `tests/test_task_models.py` + `tests/test_task_attention_projection.py`：47 passed。Task 1 已提交 `79c8c38c`；Task 2 已提交到 `9efcab15`，201 项聚焦回归通过；Task 3 已提交 `29f492f2`，553 项相关测试及 7 项 Store 测试通过。Task 4 已提交到 `bdd2e524`，239 项聚焦回归通过，折叠证据保留与两项计数修正均经独立复核。Task 5 已提交到 `00527ba7`，140 项 Agent/检索/会话测试通过，规格与质量复核通过。前五步已完成，正在执行 Task 6。未合并、未部署、未回放生产数据，全局 Skill 仍为原版本。
 
 ## Task 1：明确来源引用和同轮项目选择的契约
 
@@ -359,8 +359,8 @@ Task 4 复核记录：`2bb67cd2` 实现完整投影；`0b9eabd8` 修正相同提
 
 **Files:** Modify `app/task_agent.py`, `app/task_retrieval.py`, `ci/shared-skills/ceo-work-tracking/SKILL.md`, `tests/test_task_retrieval.py`, `tests/test_task_agent.py`, `docs/architecture.md`, `docs/runtime-mechanism.md`。
 
-- [ ] **1. 写检索测试。** 用 Task 4 的已落库项目卡，在同项目聊天 WorkItem 的 context JSON 中读到该卡及 evidence 引用；无关项目卡不出现。新测试 `test_semantic_context_includes_related_current_project_attention`、`test_semantic_context_excludes_unrelated_attention`。命令 `python -m pytest -q tests/test_task_retrieval.py -k project_attention`，预期当前没有该字段。
-- [ ] **2. 最小扩展检索。** TaskSemanticContext 增加 `attention_items: tuple[BusinessAttentionItem, ...]`；只选择现有 context.official_projects 的 canonical_anchor_id 对应当前卡，沿用 limit_per_kind 有界限制。render 加 `current_project_attention`，包含 id、anchor_id、why_attention、current_state、assessment_json、updated_at。不扩大 source_signals 全文预算，不增加独立检索 Agent。
+- [x] **1. 写检索测试。** 用 Task 4 的已落库项目卡，在同项目聊天 WorkItem 的 context JSON 中读到该卡及 evidence 引用；无关项目卡不出现。新测试 `test_semantic_context_includes_related_current_project_attention`、`test_semantic_context_excludes_unrelated_attention`。命令 `python -m pytest -q tests/test_task_retrieval.py -k project_attention`，预期当前没有该字段。
+- [x] **2. 最小扩展检索。** TaskSemanticContext 增加 `attention_items: tuple[BusinessAttentionItem, ...]`；只选择现有 context.official_projects 的 canonical_anchor_id 对应当前卡，沿用 limit_per_kind 有界限制。render 加 `current_project_attention`，包含 id、anchor_id、why_attention、current_state、assessment_json、updated_at。不扩大 source_signals 全文预算，不增加独立检索 Agent。
 
 ```python
 project_anchor_ids = {project.canonical_anchor_id for project in projects}
@@ -374,7 +374,7 @@ attention_items = tuple(
 ```
 
 被上下文截断的信号仍不可靠 Agent 猜原文；它可引用当前可见的精确文本，服务再在 DB 原文核对。现有共享 session 只提供背景，不替代证据 ID。
-- [ ] **3. 将下列统一说明放进 build_task_agent_prompt 和 Skill 的生命周期7/9及来源章节。** 替换旧“只有当前 Task 摘录/必须 CEO action/周报覆盖一切状态”的段落，删除相互矛盾的旧文字，不另加并行规则。
+- [x] **3. 将下列统一说明放进 build_task_agent_prompt 和 Skill 的生命周期7/9及来源章节。** 替换旧“只有当前 Task 摘录/必须 CEO action/周报覆盖一切状态”的段落，删除相互矛盾的旧文字，不另加并行规则。
 
 ```text
 周报、会议和聊天都是 Task 与风险证据来源，不能等待周报才记录新风险。
@@ -394,9 +394,11 @@ watch 可写“当前无需你处理”，并指出接下来观察的结果；�
 只通过本次结构化决定更新本地 Tasks；不得自行通过 CLI/API/MCP 写外部系统。
 ```
 
-- [ ] **4. 清除业务 Skill 中已停用的 completion turn 说明。** 与现行架构一致写成：一个共享 Task Agent 消费新来源，判断新建/更新/完成；不产生三类旧 completion Work Item，枚举仅保留历史；DingTalk TODO 人类完成反馈确定性更新。保留已确认的 prompt-only 只读说明，不新增权限实现。此处是规则一致性修正，不恢复 completion orchestration。
-- [ ] **5. 测试 prompt 契约与运行 Skill 加载。** 更新 `tests/test_task_agent.py` 的 prompt 测试为上述新字段和规则；候选测试显式设置 `CEO_SKILLS_ROOT` 到隔离工作区的 `ci/shared-skills` 并验证 runner 实际读取新规则。全局权威 Skill 的 metadata/version 随 Task 8 发布更新，开发期间不提前修改。`python -m pytest -q tests/test_task_agent.py tests/test_task_retrieval.py tests/test_task_agent_session.py`，预期通过。检查 `rg -n 'completion|trigger_evidence|明确 CEO action'` 的命中逐项判断，代码/当前规则不得残留已删除路径；历史叙述可以明确标为历史。
-- [ ] **6. 提交。** `feat(tasks): align multisource attention prompt retrieval and skill`，包含准确的架构/运行说明。
+- [x] **4. 清除业务 Skill 中已停用的 completion turn 说明。** 与现行架构一致写成：一个共享 Task Agent 消费新来源，判断新建/更新/完成；不产生三类旧 completion Work Item，枚举仅保留历史；DingTalk TODO 人类完成反馈确定性更新。保留已确认的 prompt-only 只读说明，不新增权限实现。此处是规则一致性修正，不恢复 completion orchestration。
+- [x] **5. 测试 prompt 契约与运行 Skill 加载。** 更新 `tests/test_task_agent.py` 的 prompt 测试为上述新字段和规则；候选测试显式设置 `CEO_SKILLS_ROOT` 到隔离工作区的 `ci/shared-skills` 并验证 runner 实际读取新规则。全局权威 Skill 的 metadata/version 随 Task 8 发布更新，开发期间不提前修改。`python -m pytest -q tests/test_task_agent.py tests/test_task_retrieval.py tests/test_task_agent_session.py`，预期通过。检查 `rg -n 'completion|trigger_evidence|明确 CEO action'` 的命中逐项判断，代码/当前规则不得残留已删除路径；历史叙述可以明确标为历史。
+- [x] **6. 提交。** `feat(tasks): align multisource attention prompt retrieval and skill`，包含准确的架构/运行说明。
+
+Task 5 复核记录：`2cc1f56d` 接线 prompt、当前卡片上下文与隔离 Skill revision 3；`68fc7a98` 明示分支尚未部署；`00527ba7` 补强筛选回归，将无关/已解决卡放在有效卡之前。删除任一实际筛选条件均会让该回归失败，原实现通过。独立复核及主 Agent 各重跑 140 项相关测试通过；旧定时快照不入指令、业务范围/元数据与原 payload 保留，全局 Skill 文件 hash 未变。
 
 Task 5 Skill 发布边界：当前 `app.business_skills.bundled_business_skills_root()` 默认读取全局 `~/.agents/skills`，CI 副本不是生产权威来源。开发测试及候选语义评估显式设置 `CEO_SKILLS_ROOT` 指向隔离工作区 `ci/shared-skills`，不在开发时修改运行中的全局 Skill。Task 8 先完成代码部署，再按现有 Skill 仓库流程发布相同内容到权威文件，核对实际加载路径、内容及版本；在两份规则一致之前不宣称发布完成。不得为此另建 Skill 代理、临时配置文件、复制循环或永久切换生产到 CI 副本。
 
