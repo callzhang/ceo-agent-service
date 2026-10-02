@@ -1229,3 +1229,10 @@ after lifecycle recovery starts. These read-only scans populate the existing
 caches but do not gate the HTTP listener or launchd startup health checks.
 Health readiness is not evidence that History prewarming or business actions
 have completed; their APIs and provider receipts must still be read back.
+
+DingTalk meeting group searches explicitly request 100 candidates per page,
+the provider's supported maximum, while retaining the complete-source check.
+The CLI's default 20-item pages exhausted its 50-page budget for large
+participant queries such as Melody; retrying the same bounded query could
+never reach the remaining candidates. A partial response still fails closed;
+larger pages do not change recipient ranking or authorize a send.

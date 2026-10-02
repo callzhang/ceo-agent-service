@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-02: Meeting group discovery requests the supported 100-item DWS
+  search pages so large participant queries finish within the pagination budget.
+  Incomplete provider results still block recipient selection.
+
 - 2026-09-24: The weekly CEO report now produces output. Runs 384443/384444
   stopped because the Skill wanted the target document's link as an input the
   trigger never had, blocked on any missing business-line report, and forbade
