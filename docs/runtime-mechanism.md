@@ -1187,6 +1187,9 @@ the provider's submit handlers; the service does not reconstruct a GET or POST
 from the form attributes. A Salesloft page returned HTTP 405 to a reconstructed
 POST but confirmed successful opt-out after native submission. Completion still
 requires the page's terminal readback, not merely a click or HTTP 2xx response.
+An HTTP 204 from the exact bound form target and method is an explicit no-content
+submission receipt. Native forms wait for browser navigation completion; async
+submit handlers remain responsible for their visible terminal readback.
 
 Rejected provider responses retain their numeric HTTP status in the
 sanitized failure detail when supplied by the executor. Private response URLs and

@@ -3265,6 +3265,12 @@ def test_form_submission_uses_its_native_audited_submitter() -> None:
     class Page:
         url = "https://news.example.com/unsubscribe"
 
+        def on(self, event, callback):
+            assert event == "response"
+
+        def remove_listener(self, event, callback):
+            assert event == "response"
+
         def locator(self, selector):
             assert selector == _unsubscribe_form_snapshot()["submitterSelector"]
             return Control()
@@ -3277,7 +3283,7 @@ def test_form_submission_uses_its_native_audited_submitter() -> None:
     browser._context = SimpleNamespace(request=SimpleNamespace(post=forbidden_post))
     browser._execute_audited_control(binding)
     assert len(clicks) == 1
-    assert clicks[0]["no_wait_after"] is True
+    assert clicks[0]["no_wait_after"] is False
 
 
 def test_confirmation_button_clicks_only_its_modelled_exact_selector() -> None:

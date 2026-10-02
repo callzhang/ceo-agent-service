@@ -3069,6 +3069,18 @@ class PlaywrightUnsubscribeBrowser:
                     "accepted browser control is unavailable",
                 )
             self._dismiss_unique_blocking_dialog(button)
+            receipts: list[str] = []
+
+            def observe_submission(response: object) -> None:
+                if (
+                    response.url == binding.target_url
+                    and response.request.method == binding.method
+                    and response.status == 204
+                ):
+                    receipts.append("form-submit-provider-http-204")
+
+            if binding.control.kind == "form":
+                self.page.on("response", observe_submission)
             try:
                 # Some unsubscribe providers submit the confirmation through
                 # an async handler or a redirect that never reaches a
@@ -3086,17 +3098,20 @@ class PlaywrightUnsubscribeBrowser:
                 # whether the provider accepted it.
                 button.click(
                     timeout=self.timeout_ms,
-                    no_wait_after=True,
+                    no_wait_after=binding.control.kind != "form",
                     force=True,
                 )
             except Exception:
                 self._raise_if_blocked()
                 raise
+            finally:
+                if binding.control.kind == "form":
+                    self.page.remove_listener("response", observe_submission)
             self._raise_if_blocked()
             self._document_url = self._validate_navigation_target(
                 str(getattr(self.page, "url"))
             )
-            return None
+            return receipts[-1] if receipts else None
         raise UnsubscribeBrowserError(
             UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
             "accepted browser control is unavailable",

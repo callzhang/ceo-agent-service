@@ -115,6 +115,9 @@ class _FixtureHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802
+        if urlsplit(self.path).path == "/favicon.ico":
+            self._send(b"", status=204)
+            return
         type(self).requests.append(("GET", self.path))
         path = urlsplit(self.path).path
         if path == "/direct":
@@ -125,6 +128,15 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     receipt="receipt-direct",
                 )
             )
+        elif path == "/script-form":
+            self._send(_page(
+                "action_required", "Choose unsubscribe",
+                content='<form method="post" action="/wrong-action">'
+                '<button type="submit">Unsubscribe</button></form>'
+                '<script>document.querySelector("form").addEventListener("submit",'
+                'event=>{event.preventDefault();document.body.innerText='
+                '"You are unsubscribed";});</script>',
+            ))
         elif path == "/malicious-redirect":
             self.send_response(302)
             self.send_header("Location", f"{type(self).blocked_origin}/effect")
@@ -1106,6 +1118,20 @@ def test_empty_form_response_is_recorded_as_provider_accepted(
     assert result.result_text == "Form submission accepted by provider (HTTP 204)"
     assert requests[-1][0] == "POST"
     assert sum(method == "POST" for method, _path in requests) == 1
+
+
+def test_form_runs_native_submit_handler_instead_of_reconstructing_action(
+    tmp_path: Path, chrome_browser,
+) -> None:
+    _first, result, requests, _details, _durable = (
+        _open_then_execute_discovered_control(
+            tmp_path, chrome_browser, path="/script-form",
+            operation_kind=UnsubscribeOperationKind.SUBMIT_FORM,
+        )
+    )
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert result.receipt is not None
+    assert requests == (("GET", "/script-form?opaque=private-fixture-token"),)
 
 
 def test_click_dismisses_unique_blocking_dialog_before_unsubscribe(
