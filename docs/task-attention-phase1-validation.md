@@ -1,14 +1,14 @@
 # 多来源项目关注第一版验收
 
-状态：baseline 完整九样本为 4/9 通过；最后一次完整冻结候选 `233b9667` 为 8/9 通过。后续 `e4a66ae8` 字段指导修订的同项目两行动两次独立重跑均通过，W39 通过；会议样本因新 Task 关系端点错误未提交，尚未完成该修订的完整九样本。正在修正本轮尚未知 Task ID 的关系表达契约，不将旧版或部分通过替代最新验证。W39 生产数据库副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
+状态：baseline 完整九样本为 4/9 通过；最新冻结候选 `fc58e803` 完整九样本为 9/9 通过。真实 W39 数据库副本首次精确回放未通过：非跳过更新缺少 title，被提交前校验拒绝，259 Tasks / 16 Projects / 0 Attention 保持不变；原生输出也没有 Attention 提案，仍需诊断真实输入与样本的差异。重复副本回放及上线未完成。本文件不表示已发布，不用样本通过或 native 运行完成替代实际业务效果。
 
 ## 四个独立门槛
 
 | 门槛 | 当前证据 | 仍需完成 |
 | --- | --- | --- |
 | 代码测试 | Tasks 1–6 已独立复核。Task 6 的 `128ea5b4` / `f92d0a92`：7 项 API、22 项页面测试与构建通过；主 Agent 检查模拟列表及 decision/watch 详情，桌面及 390×844 窄屏亮/暗色可读。Task 7 的固定输入、精确回放、旧 run 保留、幂等卡片/事件、落库依据与 expected 隔离回归先 RED 后 GREEN。 | 合并前重跑本次有关文件；模拟页面及 fake runner 不证明真实业务效果。 |
-| 语义评估 | 固定 version 1 的 9 个 case；expected 与输入分开。baseline `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0` 为 4/9 通过。最新冻结候选 `233b9667` 为 8/9 通过，两聊天综合/冲突、W39、会议和四负例通过；同项目两行动因错误日期 actor 提交前失败，且原输出存在多余登记范围 Task。具体比较及旧失败均见末尾记录。 | 保持同 `codex_oauth`/`gpt-5.6-luna`、timeout、初始事实、concurrency=1，限定修订后 fresh copy 重跑完整样本及失败 case 重复验证；不能用此前修订或部分通过替代最新版本验证。 |
-| W39 数据库副本 | 主 Agent 用 SQLite backup 创建唯一完整性验证副本，`integrity_check=ok`，3,223,863,296 bytes；259 Tasks、16 Projects、0 Attention。精确输入 27465 已核对 source_ref，状态 done、attempts=1。原有 W39 Tasks 129–134；中汽 anchor 23 不代表中汽创智别名。 | 从这份不可变初态另建候选副本，回放两次；比较真实 Task/Project/card IDs、关联、依据及事件。不得为落卡编造字段变化、强行合并简称或忽略额外 Task。副本尚未回放。 |
+| 语义评估 | 固定 version 1 的 9 个 case；expected 与输入分开。baseline `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0` 为 4/9 通过。最新冻结候选 `fc58e803` 为 9/9 通过，全部同一 code/Skill、模型/路由、timeout、concurrency=1。两聊天实际引用历史和当前原文；同项目两行动确为两 Task 同一卡成员，四负例无误关注。具体比较及旧失败保留于末尾。 | 真实副本尚未通过；如再改核心、schema 或 Skill，最新修订须重新验证，不能继承本轮通过。 |
+| W39 数据库副本 | SQLite backup 初态完整性验证通过，259 Tasks、16 Projects、0 Attention。精确输入 27465/ref、原 run 10634 已保留。候选首次回放生成 run 10662，提交前因 title 缺失失败，无领域部分写入；见末尾。 | 修正已确认契约问题并诊断 Attention 提案缺失后，再实际回放及重复验证 IDs、关联、依据和事件。不得为落卡编造字段变化、强行合并简称或忽略额外 Task。 |
 | 上线 | 全局权威 Skill 仍为 version 2，SHA256 `5c2bcbee182ed0872a55f35193c8815a51dd3e0ba0ca92b8e1eaa55e20cc1992`；候选使用隔离 `ci/shared-skills` version 3。 | PR + 固定 eval 对比通过后按既有部署流程发布、读回运行健康及队列、发布权威 Skill、单输入生产回放及真实页面核对。尚未上线。 |
 
 SQLite backup 初态由主 Agent 持有：
@@ -293,3 +293,47 @@ update 按原 guard 跳过；新候选行动附 `relation_proposals` 为 from_ta
 Task ID 后派生旧领域命令的 from/to；不猜测编号、不增加 Agent/队列、兼容分支或新业务门禁。
 同一原始输出的项目链接 quote 也只选了新行动子句，未包含正式项目名；完整当前行动句
 包含项目名及该行动，应作为关联引用。下一修订只明确该字段的既有出处要求，不放宽核验。
+
+## 相对 Task 关系契约：完整九样本通过，真实副本尚未通过
+
+功能 `f9667d2c`，冻结 HEAD `fc58e803cdc260546463aafc6e382a60a1dd65a0`；
+CI Skill SHA256 `e5a04572acbe5e9657d50b9a76ff4db3cd8531ea2410ac02a1651c147ddaa8e5`，
+fixture SHA256 `c2d0846919ffe9452906a6c08b2d17b729db120c102c7ec00e72c9f2ee703338`。
+Worker 九文件聚焦 827 passed，独立规格 31 passed、质量 42 passed、主 Agent 专项
+18 passed。质量复核另外在四个隔离数据库验证 merge + relation 双方向及实际 target-self
+回滚。均未改变 Graph SQL、原无变化 update guard、计数 oracle 或模型路由。
+
+完整 fresh `candidate-relative-*` 九案例仍使用 codex_oauth / gpt-5.6-luna、有效 timeout
+900 秒、idle 300 秒、concurrency=1。两聊天案例沿既有一次形状修正，各有 superseded
+和 completed attempt；其他七项单次 completed。没有新增重试或替换模型。
+
+| case | Tasks / Projects / active cards | 实际结果 |
+| --- | --- | --- |
+| meeting-new-risk | 2 / 1 / 1 | 通过；旧任务与新增供应商付款任务同一卡成员，同时引用当前会议及历史报告。 |
+| same-project-two-actions | 2 / 1 / 1 | 通过；两个实际行动均为卡片成员，没有多余登记范围 Task。 |
+| w39-project-risk | 4 / 2 / 2 | 通过；中汽创智复核计划一项、岚图对账及法律商务沟通两项；NPS 无 Project/Attention。 |
+| chat-with-report-context | 1 / 1 / 1 | 通过；既有 Task 更新，当前聊天及历史原文共同支持升级风险。 |
+| newer-conflicting-chat | 1 / 1 / 1 | 通过；保留新旧不同时间的原文，记录验收、回款冲突待核对。 |
+| risk-label-only | 1 / 1 / 0 | 通过；单独风险标签不足以进入关注。 |
+| routine-progress | 1 / 1 / 0 | 通过；例行进展无误关注。 |
+| unconfirmed-project | 1 / 0 / 0 | 通过；不因聊天自动登记项目。 |
+| no-real-task | 0 / 1 / 0 | 通过；没有编造任务或关注。 |
+
+全部五正例的 projection 为 completed，四负例为 no_proposal；引文原文、source_ref、
+来源时间及成员关联均通过落库核验。此 9/9 相对 baseline 4/9 是同固定样本比较，
+不替代真实数据库历史任务的业务效果。
+
+首次真实副本回放：`w39-candidate.sqlite3`，精确 input 27465/source_ref 不变，
+保留历史 run 10634；新增 run 10662、attempt 18952。native 正常 completed，
+Task run/input 为 failed，错误 `non-skip task decision requires title`。
+原输出七项决定：Task 129 promote_candidate 带 title；130–134 的 update_fields
+省略 title；另有 Einride POC 新候选。所有决定均未给 Attention 提案。
+原输出保留在 attempt.result_envelope_json；没有补造 field、alias 或 card。
+
+实测契约不一致：TaskDecision.title 仍默认空，形状解析接受省略；process_work_item
+在 runner 返回后用 _validate_task_agent_decision 要求非跳过 title 非空，因而未走
+既有形状一次修正。必须先诊断并统一契约，不能增加另一重试层掩盖。
+Attention 缺失原因尚未确认，需比较真实 WorkItem/既有六 Task 的 context 与固定样本。
+失败前后领域计数、IDs/events 不变：259 Tasks / 16 Projects / 0 cards / 434 Task events；
+原 Task 129–134 未修改。第二次副本回放、PR/合并/push、部署、全局 Skill 发布、
+精确生产回放和真实页面验收均未执行。
