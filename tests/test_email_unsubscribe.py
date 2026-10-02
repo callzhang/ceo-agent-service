@@ -3116,6 +3116,7 @@ def _unsubscribe_form_snapshot(label: str = "Unsubscribe") -> dict[str, object]:
             "value": label,
         },
         "submitterLabel": label,
+        "submitterSelector": "html > body > form > input[type=submit]",
         "target": "",
     }
 
@@ -3231,30 +3232,52 @@ def test_discover_current_page_models_a_standalone_unsubscribe_button() -> None:
 
 
 def test_rejected_form_records_http_status_without_provider_url() -> None:
-    from types import SimpleNamespace
     from app.email_unsubscribe import browser_failure_detail
+    error = UnsubscribeBrowserError(
+        UnsubscribeBrowserFailure.FORM_RESPONSE_REJECTED,
+        "form provider response rejected: HTTP 405",
+    )
+    detail = browser_failure_detail(error, operation="submit_form")
+    assert "HTTP 405" in detail
+    assert "private-value" not in detail
+    assert "https://" not in detail
+
+
+def test_form_submission_uses_its_native_audited_submitter() -> None:
+    from types import SimpleNamespace
 
     browser = _discovery_browser(
         control_snapshots=[{"blocked": False, "forms": [], "links": []}],
         structures=[{"textLength": 24, "controlCount": 1}],
         texts=["Manage your preferences"],
     )
-    snapshot = _unsubscribe_form_snapshot()
-    snapshot["method"] = "post"
-    binding = browser._form_binding(snapshot)
+    binding = browser._form_binding(_unsubscribe_form_snapshot())
     assert binding is not None
-    response = SimpleNamespace(
-        status=405, url="https://news.example.com/confirm?token=private-value"
-    )
-    browser._context = SimpleNamespace(
-        request=SimpleNamespace(post=lambda *args, **kwargs: response)
-    )
-    with pytest.raises(UnsubscribeBrowserError) as caught:
-        browser._execute_audited_control(binding)
-    detail = browser_failure_detail(caught.value, operation="submit_form")
-    assert "HTTP 405" in detail
-    assert "private-value" not in detail
-    assert "https://" not in detail
+    clicks = []
+
+    class Control:
+        def count(self):
+            return 1
+
+        def click(self, **kwargs):
+            clicks.append(kwargs)
+
+    class Page:
+        url = "https://news.example.com/unsubscribe"
+
+        def locator(self, selector):
+            assert selector == _unsubscribe_form_snapshot()["submitterSelector"]
+            return Control()
+
+    def forbidden_post(*args, **kwargs):
+        raise AssertionError("form submission must run the provider's event handler")
+
+    browser.page = Page()
+    browser._dismiss_unique_blocking_dialog = lambda control: None
+    browser._context = SimpleNamespace(request=SimpleNamespace(post=forbidden_post))
+    browser._execute_audited_control(binding)
+    assert len(clicks) == 1
+    assert clicks[0]["no_wait_after"] is True
 
 
 def test_confirmation_button_clicks_only_its_modelled_exact_selector() -> None:

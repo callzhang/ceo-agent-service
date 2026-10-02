@@ -1956,6 +1956,7 @@ class PlaywrightUnsubscribeBrowser:
                 for name, field_type, value in fields
             ],
             "submitter": snapshot["submitter"],
+            "submitter_selector": snapshot["submitterSelector"],
             "version": 1,
         }
         control = UnsubscribeDiscoveredControl(
@@ -1969,6 +1970,7 @@ class PlaywrightUnsubscribeBrowser:
             method=method,
             enctype=enctype,
             successful_controls=fields,
+            click_selector=str(snapshot["submitterSelector"]),
         )
 
     def _ordinary_controls(self) -> tuple[_AuditedControlBinding, ...]:
@@ -2288,6 +2290,7 @@ class PlaywrightUnsubscribeBrowser:
                     ? (readValue(node) || trustedGetAttribute(node, 'aria-label') || '')
                     : (reflectApply(htmlInnerText, node, []) ||
                       trustedGetAttribute(node, 'aria-label') || ''),
+                  submitterSelector: elementPath(node),
                   target
                 });
               }
@@ -3053,7 +3056,7 @@ class PlaywrightUnsubscribeBrowser:
                 str(getattr(self.page, "url"))
             )
             return None
-        if binding.control.kind == "button":
+        if binding.control.kind in {"button", "form"}:
             if not binding.click_selector:
                 raise UnsubscribeBrowserError(
                     UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
@@ -3094,74 +3097,10 @@ class PlaywrightUnsubscribeBrowser:
                 str(getattr(self.page, "url"))
             )
             return None
-        if binding.control.kind != "form":
-            raise UnsubscribeBrowserError(
-                UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
-                "accepted browser control is unavailable",
-            )
-        pairs = [
-            (name, value) for name, _field_type, value in binding.successful_controls
-        ]
-        encoded = urlencode(pairs)
-        if binding.method == "GET":
-            parsed = urlsplit(binding.target_url)
-            query = "&".join(item for item in (parsed.query, encoded) if item)
-            target = parsed._replace(query=query).geturl()
-            self.page.goto(
-                self._validate_navigation_target(target),
-                wait_until="domcontentloaded",
-                timeout=self.timeout_ms,
-            )
-            self._raise_if_blocked()
-            self._document_url = self._validate_navigation_target(
-                str(getattr(self.page, "url"))
-            )
-            return None
-        if binding.method != "POST" or binding.enctype != (
-            "application/x-www-form-urlencoded"
-        ):
-            raise UnsubscribeBrowserError(
-                UnsubscribeBrowserFailure.CONTROL_SEMANTICS_REJECTED,
-                "browser control semantics rejected",
-            )
-        response = self._context.request.post(
-            binding.target_url,
-            data=encoded,
-            headers={"Content-Type": binding.enctype},
-            # Form unsubscribe endpoints commonly answer with a 302/303 to
-            # their confirmation page. Following that bounded redirect chain
-            # lets the terminal page readback prove the result instead of
-            # treating a normal provider handoff as a rejected form.
-            max_redirects=10,
-            timeout=self.timeout_ms,
+        raise UnsubscribeBrowserError(
+            UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+            "accepted browser control is unavailable",
         )
-        response_url = self._validate_navigation_target(response.url)
-        if response.status < 200 or response.status >= 300:
-            raise UnsubscribeBrowserError(
-                UnsubscribeBrowserFailure.FORM_RESPONSE_REJECTED,
-                f"form provider response rejected: HTTP {response.status}",
-            )
-        body = response.body()
-        if len(body) > 1_048_576:
-            raise UnsubscribeBrowserError(
-                UnsubscribeBrowserFailure.FORM_RESPONSE_REJECTED,
-                "form provider response rejected",
-            )
-        self._document_url = response_url
-        self.page.set_content(
-            response.text(),
-            wait_until="domcontentloaded",
-            timeout=self.timeout_ms,
-        )
-        self._raise_if_blocked()
-        # Some list providers accept the form POST and return an empty 2xx
-        # response instead of rendering a confirmation page.  The request
-        # itself is the provider receipt in that case; letting the subsequent
-        # page read classify the blank document as ``page-not-operable`` loses
-        # the successful write and causes needless retries.
-        if not body.strip():
-            return f"form-submit-provider-http-{response.status}"
-        return None
 
     def _dismiss_unique_blocking_dialog(self, target: object) -> None:
         """Close one modal that visibly covers the accepted control.

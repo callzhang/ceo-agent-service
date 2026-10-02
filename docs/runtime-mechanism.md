@@ -1180,8 +1180,16 @@ message/proposal bodies or repeat the window query for the timestamp. Recovery,
 execution-generation and business-object filters remain part of that same
 projection; physical historical failures are not current queue failures.
 
-Rejected unsubscribe form responses retain their numeric HTTP status in the
-sanitized failure detail (for example HTTP 405). Private response URLs and
+Unsubscribe forms execute through the exact native submitter selected by the
+audited DOM model. Its selector is included in the control identity alongside
+the form association, method, action and successful controls. The browser runs
+the provider's submit handlers; the service does not reconstruct a GET or POST
+from the form attributes. A Salesloft page returned HTTP 405 to a reconstructed
+POST but confirmed successful opt-out after native submission. Completion still
+requires the page's terminal readback, not merely a click or HTTP 2xx response.
+
+Rejected provider responses retain their numeric HTTP status in the
+sanitized failure detail when supplied by the executor. Private response URLs and
 subscription tokens remain excluded. A rejected response is not a success
 receipt and cannot terminalize the unsubscribe as done.
 
