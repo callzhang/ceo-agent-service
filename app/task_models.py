@@ -659,7 +659,76 @@ class CompletionFollowUpChange(StrictTaskModel):
     owner_evidence: dict[str, Any] = Field(default_factory=dict)
 
 
+class TaskProjectAssessment(StrictTaskModel):
+    project_title: str = Field(
+        description="Registered Project title when its identity is known; when identity is unresolved, preserve the source's Project clue without treating it as a registered Project.",
+    )
+    outcome: Literal["needs_attention", "not_needed", "insufficient_evidence"]
+    reason: str = Field(
+        description="Concrete reason for the outcome, grounded in the cited facts; do not restate an inference as an original quote.",
+    )
+    assessment_basis: Literal["current_observation", "historical_comparison"] = Field(
+        description="current_observation asserts current-source facts. historical_comparison compares them with original persisted evidence and therefore requires both citation shapes.",
+    )
+    evidence: list[TaskAttentionEvidence] = Field(
+        min_length=1,
+        description="Exact factual original quotes supporting the judgment, separated from the assessment's inference; current evidence has no persisted signal ID.",
+    )
+    anchor_id: int | None = Field(
+        default=None,
+        strict=True,
+        gt=0,
+        description="Positive persisted ID of a known registered Project anchor; never a list position or a guessed ID.",
+    )
+    project_decision_index: int | None = Field(
+        default=None,
+        strict=True,
+        ge=0,
+        description="Zero-based position in this result's task_decisions list whose project_proposal identifies the Project; never a persisted Project ID.",
+    )
+    existing_attention_id: int | None = Field(
+        default=None,
+        strict=True,
+        gt=0,
+        description="Positive persisted ID of the known existing Attention card retained by a needs_attention outcome; never a list position.",
+    )
+    decision_indexes: list[Annotated[int, Field(strict=True, ge=0)]] = Field(
+        default_factory=list,
+        description="Zero-based positions of supporting Task decisions in this result; a genuine candidate Task may support the assessment without being promoted.",
+    )
+    task_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(
+        default_factory=list,
+        description="Positive persisted IDs of supporting existing Tasks; never decision positions or guessed IDs.",
+    )
+
+    @model_validator(mode="after")
+    def validate_project_assessment(self) -> "TaskProjectAssessment":
+        if not self.project_title.strip() or not self.reason.strip():
+            raise ValueError("project assessment requires a nonblank title and reason")
+        if self.anchor_id is not None and self.project_decision_index is not None:
+            raise ValueError("project assessment accepts either anchor_id or project_decision_index, not both")
+        if self.anchor_id is None and self.project_decision_index is None and self.outcome != "insufficient_evidence":
+            raise ValueError("unknown Project may only have an insufficient_evidence outcome")
+        if self.existing_attention_id is not None and self.outcome != "needs_attention":
+            raise ValueError("existing_attention_id requires needs_attention outcome")
+        if len(set(self.decision_indexes)) != len(self.decision_indexes):
+            raise ValueError("project assessment rejects duplicate decision_indexes")
+        if len(set(self.task_ids)) != len(self.task_ids):
+            raise ValueError("project assessment rejects duplicate task_ids")
+
+        has_current = any(item.signal_id is None for item in self.evidence)
+        has_persisted = any(item.signal_id is not None for item in self.evidence)
+        if self.assessment_basis == "historical_comparison" and not (has_current and has_persisted):
+            raise ValueError("historical_comparison requires current null-ID and positive persisted-ID evidence")
+        if self.assessment_basis == "current_observation" and not has_current:
+            raise ValueError("current_observation requires current null-ID evidence")
+        return self
+
+
 class TaskAgentDecision(StrictTaskModel):
+    project_assessments: list[TaskProjectAssessment] = Field(
+        description="Explicit per-Project attention judgments for this result; use an empty list only when this round has no relevant Project, and explain that in update_summary.",
+    )
     task_decisions: list[TaskDecision] = Field(default_factory=list)
     todo_changes: list[CompletionTodoChange] = Field(default_factory=list)
     follow_up_changes: list[CompletionFollowUpChange] = Field(default_factory=list)

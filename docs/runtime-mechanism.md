@@ -351,7 +351,15 @@ Task evidence 选择来源信号，不凭空制造证据；事务会同时把 cl
 正式 Project 的列表和详情从已关联 Task 的最新权威周报 signal 生成只读摘要：负责人/负责内容、目标、DDL 或统计周期、当前状态、报告标题/周期、原文摘录、来源链接，以及进行中/已完成 Task 数量；没有可解析的周报字段时保留现有登记来源和关联 Task 数，不用普通聊天或孤立 Task 推断字段。
 更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
 
-Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。完成由新证据驱动
+Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。本开发分支的 wire schema
+同时要求每个当前结果显式返回无默认值的 `project_assessments`；只有本轮没有相关 Project 时才返回 `[]` 并在
+`update_summary` 解释，遗漏即结构校验失败，
+不做 legacy fallback 或 payload 合成。每项给出 `needs_attention`、`not_needed` 或 `insufficient_evidence`，并用已知
+`anchor_id`、本轮 `project_proposal` 所在的零基 `project_decision_index`，或仅限 `insufficient_evidence` 的未知 Project
+线索区分身份。`decision_indexes` 是本轮支持 Task 决定的位置，`task_ids` 是已有 Task ID；真实 candidate Task 可以支持
+判断但不会因此晋升。证据保存事实原文，reason 承载推断；`historical_comparison` 同时要求本轮无 signal ID 引用与已有正
+signal ID 的原始引用。当前仅完成 wire 类型和模型测试；其他 producer fixture、跨 envelope/domain 核验、prompt、持久化
+与 receipt 尚未接入，因此不是完整集成通过或部署证明。完成由新证据驱动
 （Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：新完成的
 钉钉待办由扫描直接关闭对应 Task（见下文「后台周期性工作」），消息、会议等新信息照常作为 Work Item 进入
 Task Agent。单独的 Task completion Agent（`app/task_completion_agent.py`）已删除，服务不再产生
