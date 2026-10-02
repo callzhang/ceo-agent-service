@@ -3069,6 +3069,9 @@ class PlaywrightUnsubscribeBrowser:
                     "accepted browser control is unavailable",
                 )
             self._dismiss_unique_blocking_dialog(button)
+            previous_text = (
+                self._visible_text() if binding.control.kind == "form" else ""
+            )
             receipts: list[str] = []
 
             def observe_submission(response: object) -> None:
@@ -3111,11 +3114,34 @@ class PlaywrightUnsubscribeBrowser:
             self._document_url = self._validate_navigation_target(
                 str(getattr(self.page, "url"))
             )
+            if binding.control.kind == "form" and not receipts:
+                self._await_form_transition(binding, previous_text)
             return receipts[-1] if receipts else None
         raise UnsubscribeBrowserError(
             UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
             "accepted browser control is unavailable",
         )
+
+    def _await_form_transition(
+        self, binding: _AuditedControlBinding, previous_text: str
+    ) -> None:
+        waited_ms = 0
+        budget_ms = min(self.timeout_ms, _VISIBLE_TEXT_WAIT_MS)
+        while True:
+            self._raise_if_blocked()
+            controls = self._ordinary_controls()
+            if self._visible_text() != previous_text or all(
+                control.control.reference != binding.control.reference
+                for control in controls
+            ):
+                return
+            if waited_ms >= budget_ms:
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
+                    "form submission produced no provider state transition",
+                )
+            self.page.wait_for_timeout(_VISIBLE_TEXT_POLL_MS)
+            waited_ms += _VISIBLE_TEXT_POLL_MS
 
     def _dismiss_unique_blocking_dialog(self, target: object) -> None:
         """Close one modal that visibly covers the accepted control.

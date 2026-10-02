@@ -134,8 +134,16 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                 content='<form method="post" action="/wrong-action">'
                 '<button type="submit">Unsubscribe</button></form>'
                 '<script>document.querySelector("form").addEventListener("submit",'
-                'event=>{event.preventDefault();document.body.innerText='
-                '"You are unsubscribed";});</script>',
+                'event=>{event.preventDefault();setTimeout(()=>{'
+                'document.body.innerText="You are unsubscribed";},2000);});</script>',
+            ))
+        elif path == "/unchanged-form":
+            self._send(_page(
+                "action_required", "Choose unsubscribe",
+                content='<form method="post" action="/wrong-action">'
+                '<button type="submit">Unsubscribe</button></form>'
+                '<script>document.querySelector("form").addEventListener("submit",'
+                'event=>event.preventDefault());</script>',
             ))
         elif path == "/malicious-redirect":
             self.send_response(302)
@@ -1132,6 +1140,21 @@ def test_form_runs_native_submit_handler_instead_of_reconstructing_action(
     assert result.outcome is UnsubscribeOutcome.DONE
     assert result.receipt is not None
     assert requests == (("GET", "/script-form?opaque=private-fixture-token"),)
+
+
+def test_unchanged_submitted_form_is_a_timeout_not_a_skipped_receipt(
+    tmp_path: Path, chrome_browser,
+) -> None:
+    _first, result, requests, _details, _durable = (
+        _open_then_execute_discovered_control(
+            tmp_path, chrome_browser, path="/unchanged-form",
+            operation_kind=UnsubscribeOperationKind.SUBMIT_FORM,
+        )
+    )
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert result.error_code == "email_unsubscribe_browser_timeout"
+    assert result.receipt is None
+    assert requests == (("GET", "/unchanged-form?opaque=private-fixture-token"),)
 
 
 def test_click_dismisses_unique_blocking_dialog_before_unsubscribe(

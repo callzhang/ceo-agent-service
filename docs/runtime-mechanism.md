@@ -1190,6 +1190,10 @@ requires the page's terminal readback, not merely a click or HTTP 2xx response.
 An HTTP 204 from the exact bound form target and method is an explicit no-content
 submission receipt. Native forms wait for browser navigation completion; async
 submit handlers remain responsible for their visible terminal readback.
+After a native form submission, the browser waits within its existing bounded
+readback budget for the submitted control identity or visible text to change.
+An unchanged form is an operation timeout, not evidence of "no reliable entry"
+or a reason to manufacture a skipped receipt before an async handler completes.
 
 Rejected provider responses retain their numeric HTTP status in the
 sanitized failure detail when supplied by the executor. Private response URLs and

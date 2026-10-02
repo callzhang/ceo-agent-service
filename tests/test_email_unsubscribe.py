@@ -3280,6 +3280,8 @@ def test_form_submission_uses_its_native_audited_submitter() -> None:
 
     browser.page = Page()
     browser._dismiss_unique_blocking_dialog = lambda control: None
+    browser._visible_text = lambda: ""
+    browser._ordinary_controls = lambda: ()
     browser._context = SimpleNamespace(request=SimpleNamespace(post=forbidden_post))
     browser._execute_audited_control(binding)
     assert len(clicks) == 1
