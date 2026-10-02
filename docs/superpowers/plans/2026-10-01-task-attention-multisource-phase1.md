@@ -207,9 +207,9 @@ if item.attention_proposal is not None:
 
 **Files:** Modify `app/task_models.py`, `app/task_semantic_models.py`, `app/store.py`, `tests/test_store.py`, `docs/runtime-mechanism.md`; Create `scripts/inspect_task_attention.py`。
 
-- [ ] **1. 添加存储回归。** 在 `tests/test_store.py` 的现有 Task Agent run lifecycle fixture 中：begin/finish 后写回 receipt，读取应与输入一致，run 的 status/decision_json/finished_at 不变。旧数据库升级后两列存在，历史行仍无回执，不显示成功。新测试名 `test_task_agent_projection_receipt_preserves_terminal_run`、`test_task_attention_receipt_migrates_without_claiming_historical_success`。
-- [ ] **2. 跑失败测试。** `python -m pytest -q tests/test_store.py -k 'projection_receipt or receipt_migrates'`。预期缺字段/方法。
-- [ ] **3. 在现有表增加两个 JSON 字段，不建新业务队列。** `task_agent_runs.projection_json text not null default '{}'`；`business_attention_items.assessment_json text not null default '{}'`。同时更新 create-table、现有逐列升级、业务表 column manifest、TaskAgentRun/BusinessAttentionItem 模型和 attention create/update SQL。`{}` 表示历史未记录，不表示通过或零提议。定义以下回执。
+- [x] **1. 添加存储回归。** 在 `tests/test_store.py` 的现有 Task Agent run lifecycle fixture 中：begin/finish 后写回 receipt，读取应与输入一致，run 的 status/decision_json/finished_at 不变。旧数据库升级后两列存在，历史行仍无回执，不显示成功。新测试名 `test_task_agent_projection_receipt_preserves_terminal_run`、`test_task_attention_receipt_migrates_without_claiming_historical_success`。
+- [x] **2. 跑失败测试。** `python -m pytest -q tests/test_store.py -k 'projection_receipt or receipt_migrates'`。预期缺字段/方法。
+- [x] **3. 在现有表增加两个 JSON 字段，不建新业务队列。** `task_agent_runs.projection_json text not null default '{}'`；`business_attention_items.assessment_json text not null default '{}'`。同时更新 create-table、现有逐列升级、业务表 column manifest、TaskAgentRun/BusinessAttentionItem 模型和 attention create/update SQL。`{}` 表示历史未记录，不表示通过或零提议。定义以下回执。
 
 ```python
 class TaskAttentionProjectionOutcome(BaseModel):
@@ -233,7 +233,7 @@ class TaskAttentionProjectionReceipt(BaseModel):
 
 `project_link_count` 是本轮成功确认 Task↔Project 关联数（去重后）；`registry_row_count` 是周报原文已有解析器识别的项目登记行数，非周报 null。前者不能代替后者；没有提议也要记原文行数。运行中断在 Task 提交之后、投影记录之前，receipt 留 pending，诊断必须说“投影尚未确认”。`applied_count` 计成功应用的不同项目卡，不按同项目 Task 数累加。
 
-- [ ] **4. 在已有 run 写事务提供回执写入方法。**
+- [x] **4. 在已有 run 写事务提供回执写入方法。**
 
 ```python
 def record_task_agent_projection(self, run_id: int, projection_json: str,
@@ -255,8 +255,8 @@ def record_task_agent_projection(self, run_id: int, projection_json: str,
 
 不改 completed/failed 定义，不重写已完成的 Agent 输出，也不把投影失败伪装成 Task 事务失败。Attention `assessment_json` 内容只含 trigger 类型、推断、已验证 quotes 的 signal_id/source_ref/source_time 和来源链接，不复制全文；现有事件快照自动包含该字段。只用当前提议引用的已验证证据，不把所有检索候选都说成依据。
 
-- [ ] **5. 写只读诊断脚本。** 参数 `--db PATH --input-id N`；只使用 `sqlite3.connect(f'file:{path}?mode=ro', uri=True)`，按 summary_input_id 读取 work_summary_inputs 和 task_agent_runs，不实例化可能执行升级的 Store。输出 JSON 为 input_id/run_id/source_type/input_status/run_status/projection/audit_summary；不输出 payload、完整 decision、凭证或原文。运行 `python scripts/inspect_task_attention.py --db <测试库绝对路径> --input-id 1` 应显示与测试一致的 counts；缺失输入以 exit 1 + `input_not_found` 退出。
-- [ ] **6. 验证并提交。** `python -m pytest -q tests/test_store.py -k 'task_agent or business_attention or receipt_migrates'`。同步运行文档描述投影回执，提交 `feat(tasks): persist attention projection outcomes per input run`。
+- [x] **5. 写只读诊断脚本。** 参数 `--db PATH --input-id N`；只使用 `sqlite3.connect(f'file:{path}?mode=ro', uri=True)`，按 summary_input_id 读取 work_summary_inputs 和 task_agent_runs，不实例化可能执行升级的 Store。输出 JSON 为 input_id/run_id/source_type/input_status/run_status/projection/audit_summary；不输出 payload、完整 decision、凭证或原文。运行 `python scripts/inspect_task_attention.py --db <测试库绝对路径> --input-id 1` 应显示与测试一致的 counts；缺失输入以 exit 1 + `input_not_found` 退出。
+- [x] **6. 验证并提交。** `python -m pytest -q tests/test_store.py -k 'task_agent or business_attention or receipt_migrates'`。同步运行文档描述投影回执，提交 `feat(tasks): persist attention projection outcomes per input run`。
 
 ## Task 4：综合相关证据，按 Project 更新同一张卡
 
@@ -397,6 +397,8 @@ watch 可写“当前无需你处理”，并指出接下来观察的结果；�
 - [ ] **6. 提交。** `feat(tasks): align multisource attention prompt retrieval and skill`，包含准确的架构/运行说明。
 
 Task 5 Skill 发布边界：当前 `app.business_skills.bundled_business_skills_root()` 默认读取全局 `~/.agents/skills`，CI 副本不是生产权威来源。开发测试及候选语义评估显式设置 `CEO_SKILLS_ROOT` 指向隔离工作区 `ci/shared-skills`，不在开发时修改运行中的全局 Skill。Task 8 先完成代码部署，再按现有 Skill 仓库流程发布相同内容到权威文件，核对实际加载路径、内容及版本；在两份规则一致之前不宣称发布完成。不得为此另建 Skill 代理、临时配置文件、复制循环或永久切换生产到 CI 副本。
+
+Task 5 还需统一当前执行规则的实际输入：`build_task_agent_prompt` 已从来源 JSON 移除 `scheduled_consumer.skill_protocol`，却仍把旧规则作为 `Scheduled Consumer Skill Snapshot` 再次加入 prompt；既有测试明确包含 `Return update_project with todo_changes.`。旧快照保留在输入/运行历史，不再作为本轮执行指令。保留定时来源的元数据与业务范围 prompt，实际工作规则仅加载当前权威 `ceo-work-tracking`。补一个旧快照不能进入新 prompt 的失败回归，不采用关键词清洗或新旧协议兼容分支。
 
 ## Task 6：用户能看到依据，watch 不误写成“你的动作”
 
