@@ -11770,18 +11770,27 @@ class AutoReplyStore:
             )
             args = (workload_key,)
         elif workload_kind == "email_unsubscribe_page":
-            from app.email_unsubscribe_direct import _RETRYABLE_SKIP_OUTCOMES
-
             action_identity, _, _ = workload_key.removeprefix(
                 "email-unsubscribe-page:"
             ).rpartition(":")
+            parent = db.execute(
+                "select status from reply_tasks where channel='email' "
+                "and trigger_message_id=?",
+                (action_identity,),
+            ).fetchone()
+            if parent is None:
+                return False
+            if parent[0] == "processing":
+                return True
+            if parent[0] != "done":
+                return False
+            from app.email_unsubscribe_direct import _RETRYABLE_SKIP_OUTCOMES
+
             query = (
-                "select 1 from reply_tasks as task where channel='email' "
-                "and trigger_message_id=? and (status='processing' or ("
-                "status='done' and exists (select 1 from email_unsubscribe_receipts "
-                "where action_identity=task.trigger_message_id and outcome in ("
+                "select 1 from email_unsubscribe_receipts "
+                "where action_identity=? and outcome in ("
                 + ",".join("?" for _ in _RETRYABLE_SKIP_OUTCOMES)
-                + "))))"
+                + ")"
             )
             args = (action_identity, *sorted(_RETRYABLE_SKIP_OUTCOMES))
         elif workload_kind == "email_description_optimization":
