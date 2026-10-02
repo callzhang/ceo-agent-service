@@ -411,7 +411,10 @@ Project proposal 的字段、prompt、CI Skill 与架构/运行/设计文档同�
 新增回归旧行为 `7 failed / 2 passed`；开发 Agent 五个相关文件 `351 passed`。
 主 Agent 独立运行最终新测试文件 `9 passed in 6.86s`，覆盖报告和会议实际 Attention
 投影的 canonical anchor、成员、stable key 与重复卡/事件身份，以及旧 ref 复用、
-不同短名称、活动正式对象选择和同名冲突回滚。独立规格和质量复核尚待完成。
+不同短名称、活动正式对象选择和同名冲突回滚。冻结 `394fac8c` 的独立规格复核
+`351 passed in 71.32s`、独立质量复核 `236 passed in 40.89s`，两者均 PASS。
+质量复核还逐一比较歧义 report/meeting 失败前后的全部 `business_*` 表，确认完整回滚；
+独立单次登记/重复登记实测同 ID、同 anchor、原 provenance 保留。上述复核没有运行 native。
 
 独立 version 1 竞争样例 `tests/fixtures/task_attention_project_identity.json` 的
 SHA256 为 `9b56eec4bb74999a40448b1992ea0aed7caa7fff195c7c0c9e8a1acd859dfdf6`；
@@ -427,4 +430,10 @@ input done、run completed，但业务验收失败。旧版把已有「示例创
 Project，把已有行动再建为第二个 candidate Task，且没有 Attention；失败项为
 `attention_project_mismatch`、`official_project_mismatch`、`task_count_mismatch`、
 `project_registry_changed`。这是一份真实失败基线，不以队列 done 替代业务通过。
-结果保存在本工作流独立 `baseline-project-identity.sqlite3`，候选对比尚待复核后运行。
+结果保存在本工作流独立 `baseline-project-identity.sqlite3`，候选最终对比待读回。
+
+真实 W39 新副本 `w39-project-identity-candidate.sqlite3` 从不可变初态通过 SQLite
+backup 创建并完成完整性核验 `ok`：259 Tasks、16 Projects、0 Attention；input27465
+仍为 done，完整来源 ref 与固定目标一致。它没有继承上轮错误投影；尚未原生重跑。
+候选竞争样例已在代码 `70e2cdf6` 上启动；该提交相对复核代码仅增加验证文档，
+code/CI Skill 无变化。运行最终结果仍待读回，不将启动或 shape/local 测试视为业务通过。

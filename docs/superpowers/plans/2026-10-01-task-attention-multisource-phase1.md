@@ -500,6 +500,8 @@ Task 7 中间读回（2026-10-02，尚未上线）：工具已支持逐条固定
 
 Task 7 最新进展（2026-10-02）：完整冻结 `fc58e803` 九样本全部通过，相同 baseline 为 4/9；后续真实副本揭示并修复新建/已有更新标题契约，`b5f9bd5f` 副本实际生成三张卡，但正式项目身份未对齐，不能继承旧九样本或工具 passed=true 宣称业务通过。正在以当前权威项目定义优先、唯一同名正式项目复用修正既有登记契约；不合并前缀、简称或修改 generic anchor 身份。新增质量改进/健康指标任务的交付边界仍需原文复核。最新修订的完整固定评估、精确副本重复幂等和全部上线步骤仍未完成。
 
+Project 身份修复现已提交 `f4566806` / claim release `394fac8c`，需求复核 351 项与质量复核 236 项均通过，主 Agent 最终新增回归 9 项通过。独立简称竞争样例的 pinned baseline native 实际重复 Project/Task 且没有 Attention，已记录失败；修复版原生对比正在运行。真实 W39 新副本完整性 `ok`，259 Tasks/16 Projects/0 Attention 初态已核对，尚未原生回放。仍不能勾选最新语义评估、真实业务幂等或上线门槛。
+
 ## Task 8：按现有流程上线、单输入生产回放和页面验收
 
 **Files:** Update `docs/task-attention-phase1-validation.md` only after verified outcomes；生产不编辑源码。
