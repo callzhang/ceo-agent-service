@@ -4040,6 +4040,8 @@ def test_search_conversations_parses_group_results():
             "+chat-search",
             "--query",
             "大模型项目经理",
+            "--limit",
+            "100",
             "--page-all",
             "--format",
             "json",

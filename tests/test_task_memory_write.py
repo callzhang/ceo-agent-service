@@ -245,3 +245,28 @@ def test_skipped_rows_are_never_claimed(tmp_path: Path):
     assert TaskMemoryWriteQueueAdapter(store).claim(
         NOW, owner="dispatcher", lease=timedelta(minutes=1)
     ) is None
+
+
+def test_written_content_carries_no_feedback_callbacks():
+    from types import SimpleNamespace
+
+    from app.task_memory_write import memory_write_arguments
+
+    memory = dict(
+        MEMORY,
+        content=(
+            f"{MEMORY['content']}\n\n反馈：[👍 有帮助](https://fb.example.test"
+            "/api/dingtalk-feedback-spike?feedback_token=spike_1_ab&rating=up)"
+        ),
+    )
+    task = SimpleNamespace(
+        id=1, channel="dingtalk", conversation_id="cid", conversation_title="t",
+        trigger_message_id="m",
+    )
+    event = SimpleNamespace(consumer_run_id=2, execution_generation="g")
+
+    arguments = memory_write_arguments(
+        memory, task=task, event=event, route="codex_oauth", model="m"
+    )
+
+    assert arguments["data"] == f"{MEMORY['title']}\n\n{MEMORY['content']}"

@@ -169,7 +169,42 @@ def test_meeting_memory_payload_contains_only_delivered_conclusion() -> None:
     assert "本周先完成客户验证" in payload["data"]
     assert "听记摘要" not in payload["data"]
     assert "这不是已发送文本" not in payload["data"]
-    assert payload["data"].endswith("[meeting-alignment:minutes-7]")
+    assert "minutes-7" not in payload["data"]
+    assert payload["source_metadata"]["payload"]["meeting_id"] == "minutes-7"
+    assert payload["source_metadata"]["payload"]["meeting_alignment_job_id"] == 7
+    assert payload["source_metadata"]["payload"]["meeting_title"] == "经营复盘"
+
+
+def test_meeting_memory_text_drops_what_every_follow_up_shares(monkeypatch) -> None:
+    # The live shape of a delivered follow-up (job 6519). Its header, signature
+    # and feedback links are identical across meetings; in Memory they made
+    # unrelated meetings embed as near-duplicates.
+    monkeypatch.setenv("CEO_ASSISTANT_SIGNATURE", "（by磊哥分身）")
+    job = _sent_job()
+    job.final_message = (
+        "# b n y mellon\n"
+        "*时间：2026-10-01 00:01-01:06*\n"
+        "*说明：第二次总结，已合并后续录制内容*\n\n"
+        "---\n\n"
+        "**会议结论**\n\n"
+        "本次交流形成了几条判断：\n\n"
+        "- 银行更倾向于基础模型外部采购、平台自建。私有数据是核心优势。\n\n"
+        "后续优先做可验证试用。（by磊哥分身）\n\n"
+        "反馈：[👍 有帮助](https://fb.example.test/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_ab&rating=up)｜[👎 需改进]"
+        "(https://fb.example.test/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_ab&rating=down)"
+    )
+
+    payload = meeting_memory_payload(job)
+
+    data = payload["data"]
+    for shared in ("feedback_token", "反馈：", "有帮助", "by磊哥分身", "时间：",
+                   "# b n y mellon", "---", "[meeting-alignment"):
+        assert shared not in data
+    assert data.endswith("后续优先做可验证试用。")
+    assert payload["source_description"] == "银行更倾向于基础模型外部采购、平台自建"
+    assert data.splitlines()[0] == payload["source_description"]
 
 
 def test_meeting_memory_title_uses_first_substantive_conclusion() -> None:
@@ -284,6 +319,7 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
     # The connector is called with the exact payload the event carried; there
     # is no prompt in between to restate it.
     assert writer.calls[0]["source_description"] == "本周先完成客户验证"
+    assert writer.calls[0]["source_metadata"]["payload"]["meeting_id"] == "minutes-7"
     assert writer.calls[0]["type"] == "text"
     assert "本周先完成客户验证" in str(writer.calls[0]["data"])
     with store._connect() as db:
@@ -1120,7 +1156,9 @@ def test_the_write_carries_the_payload_the_event_was_queued_with(tmp_path: Path)
     process_meeting_memory_writes(store, workspace=tmp_path, memory_writer=writer)
 
     [call] = writer.calls
-    assert set(call) == {"data", "type", "created_at", "source_description"}
+    assert set(call) == {
+        "data", "type", "created_at", "source_description", "source_metadata"
+    }
     assert call["source_description"] == "本周先完成客户验证"
 
 

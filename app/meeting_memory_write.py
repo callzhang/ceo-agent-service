@@ -20,6 +20,7 @@ from app.memory_connector_client import (
     MemoryConnectorNotAuthorized,
     write_memory,
 )
+from app.memory_text import memory_body
 from app.store import AutoReplyStore, MeetingMemoryWriteEvent
 
 
@@ -68,6 +69,9 @@ def _meeting_memory_content_title(final_message: str, decision_json: str = "") -
             continue
         if "](" in candidate:
             continue
+        if candidate.startswith("**") and candidate.endswith("**"):
+            continue
+        candidate = candidate.removeprefix("- ").lstrip()
         while candidate.startswith("@"):
             _, separator, remainder = candidate.partition(" ")
             if not separator:
@@ -127,27 +131,55 @@ def _turn_completed(store, workload_key: str) -> bool:
     )
 
 
-def meeting_memory_payload(job: Any) -> dict[str, str]:
+def meeting_memory_payload(job: Any) -> dict[str, Any]:
     """Build the only Memory payload: the conclusion that was delivered."""
     if str(job.status) != "sent" or not str(job.final_message).strip():
         raise ValueError("meeting Memory payload requires a sent conclusion")
     meeting_id = str(job.meeting_id).strip()
     if not meeting_id:
         raise ValueError("meeting Memory payload requires meeting_id")
+    body = _delivered_conclusion(str(job.final_message))
     content_title = _meeting_memory_content_title(
-        str(job.final_message),
+        body,
         str(getattr(job, "decision_json", "") or ""),
     )
     return {
-        "data": (
-            f"{content_title}\n\n"
-            f"{str(job.final_message).strip()}\n\n"
-            f"[meeting-alignment:{meeting_id}]"
-        ),
+        "data": f"{content_title}\n\n{body}",
         "type": "text",
         "created_at": str(job.ended_at).strip() or str(job.updated_at).strip(),
         "source_description": content_title,
+        # The meeting's identity lives here, not in the text: as a trailing
+        # `[meeting-alignment:<id>]` tag it made every meeting episode embed
+        # alike (memory-connector, 2026-10-02).
+        "source_metadata": {
+            "kind": "manual_source",
+            "schema_version": 1,
+            "payload": {
+                "channel": "dingtalk",
+                "meeting_id": meeting_id,
+                "meeting_alignment_job_id": job.id,
+                "meeting_title": " ".join(str(getattr(job, "title", "") or "").split()),
+            },
+        },
     }
+
+
+def _delivered_conclusion(final_message: str) -> str:
+    """The conclusion as written, without the follow-up header the sending layer adds.
+
+    Every follow-up opens with the meeting title, its time and a rule
+    (``meeting_followup_message``); the title and time are already the
+    payload's metadata and ``created_at``, and the shared shape outweighed the
+    few words that told two meetings apart.
+    """
+    body = memory_body(final_message)
+    header, rule, rest = body.partition("\n\n---\n\n")
+    header_lines = [line for line in header.splitlines() if line.strip()]
+    if rule and rest.strip() and all(
+        line.startswith(("# ", "*")) for line in header_lines
+    ):
+        return rest.strip()
+    return body
 
 
 def enqueue_sent_meeting_memory_writes(store: AutoReplyStore) -> int:
@@ -322,6 +354,7 @@ def _process_event(
                 type=_payload_type(payload),
                 created_at=_required_payload_text(payload, "created_at"),
                 source_description=_required_payload_text(payload, "source_description"),
+                source_metadata=payload["source_metadata"],
             )
         finally:
             heartbeat.stop()
@@ -563,14 +596,14 @@ def _meeting_memory_current_time(
     return value
 
 
-def _required_payload_text(payload: dict[str, object], key: str) -> str:
+def _required_payload_text(payload: dict[str, Any], key: str) -> str:
     value = str(payload.get(key) or "").strip()
     if not value:
         raise ValueError(f"meeting Memory payload is missing {key}")
     return value
 
 
-def _payload_type(payload: dict[str, object]) -> str:
+def _payload_type(payload: dict[str, Any]) -> str:
     value = _required_payload_text(payload, "type")
     if value not in {"text", "message"}:
         raise ValueError("meeting Memory payload has an invalid type")

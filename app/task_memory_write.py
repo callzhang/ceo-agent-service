@@ -17,6 +17,7 @@ from typing import Any
 
 from app.external_retry import retry_delay_seconds
 from app.memory_connector_client import MemoryConnectorError, write_memory
+from app.memory_text import memory_body
 from app.store import AutoReplyStore, ReplyTask, TaskMemoryWriteEvent
 
 
@@ -37,7 +38,7 @@ def memory_write_arguments(
 ) -> dict[str, Any]:
     """The memory_write call for one item: its content from the Agent, the rest from records."""
     arguments: dict[str, Any] = {
-        "data": f"{memory['title']}\n\n{memory['content']}",
+        "data": f"{memory['title']}\n\n{memory_body(memory['content'])}",
         "type": "text",
         "created_at": memory["source_time"],
         "source_description": memory["title"],

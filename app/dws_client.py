@@ -553,6 +553,8 @@ class DwsClient:
             "+chat-search",
             "--query",
             query,
+            "--limit",
+            "100",
             "--page-all",
             "--format",
             "json",

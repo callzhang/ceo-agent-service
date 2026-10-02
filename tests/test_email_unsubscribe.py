@@ -3870,8 +3870,6 @@ def test_terminal_readback_does_not_require_a_second_agent_route() -> None:
 
 
 def test_modelled_controls_can_continue_when_page_judge_route_is_unavailable() -> None:
-    from app.email_unsubscribe import UnsubscribePageJudgement
-
     browser = _discovery_browser(
         control_snapshots=[{"blocked": False, "forms": [_unsubscribe_form_snapshot()], "links": []}],
         structures=[{"textLength": 60, "controlCount": 1}],
