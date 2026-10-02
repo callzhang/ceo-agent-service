@@ -1,6 +1,8 @@
 """Contract fixtures shared by the staged multisource attention implementation."""
 
 import json
+import importlib.util
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -10,6 +12,132 @@ from app.task_agent import apply_task_agent_decision
 from app.store import AutoReplyStore
 from app.task_agent import process_work_item
 from app.task_attention_projection import BusinessAttentionProjection
+
+
+def evaluation_tool():
+    path = Path(__file__).parents[1] / "scripts/replay_task_attention.py"
+    assert path.exists(), "single-input native evaluation tool is missing"
+    spec = importlib.util.spec_from_file_location("attention_evaluation", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_fixed_evaluation_cases_have_independent_inputs_and_expectations():
+    tool = evaluation_tool()
+    cases = tool.load_cases(Path(__file__).parent / "fixtures/task_attention_multisource.json")
+    assert [case["case_id"] for case in cases] == [
+        "w39-project-risk", "meeting-new-risk", "chat-with-report-context",
+        "newer-conflicting-chat", "risk-label-only", "routine-progress",
+        "unconfirmed-project", "no-real-task", "same-project-two-actions",
+    ]
+    for case in cases:
+        assert set(case) == {"case_id", "work_item", "existing_context", "expected"}
+        WorkItem.model_validate(case["work_item"])
+        assert "expected" not in case["work_item"]
+        assert "expected" not in case["existing_context"]
+
+
+def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_runs(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "single.sqlite3")
+    item = report_item()
+    other = store.enqueue_work_summary_input("project_weekly_report", "other", item.model_dump_json())
+    target = store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
+    store.mark_work_summary_input_done(target)
+    old_run = store.record_task_agent_run(summary_input_id=target, decision_json='{}')
+    with store._connect() as db:
+        old = dict(db.execute("select * from task_agent_runs where id=?", (old_run,)).fetchone())
+
+    class Codex:
+        def decide(self, **kwargs):
+            assert kwargs["session_scope_id"] == tool.EVALUATION_SCOPE
+            assert "evaluation_only_secret_expectation" not in kwargs["prompt"]
+            return TaskAgentDecision.model_validate(decision_payload())
+
+    from app.task_agent import TaskAgentRunner
+    runner = tool.scoped_runner(TaskAgentRunner, Codex())
+    result = tool.replay_input(store, runner, target, source_ref=item.source.ref)
+    assert result["input_status"] == "done"
+    assert result["proposal_count"] == 1
+    assert result["persisted_attention_count"] == 1
+    assert result["evidence_valid"] is True
+    replay = tool.replay_input(store, runner, target, source_ref=item.source.ref)
+    assert replay["cards"][0]["id"] == result["cards"][0]["id"]
+    assert replay["changes"]["tasks"]["created_ids"] == []
+    assert replay["changes"]["projects"]["created_ids"] == []
+    assert replay["changes"]["attention_events"]["created_ids"] == []
+    assert store.get_work_summary_input(other).status == "pending"
+    assert store.get_work_summary_input(target).attempts == 0
+    with store._connect() as db:
+        assert dict(db.execute("select * from task_agent_runs where id=?", (old_run,)).fetchone()) == old
+    with pytest.raises(ValueError, match="source_ref"):
+        tool.replay_input(store, runner, target, source_ref="wrong")
+
+
+def test_evaluation_metrics_use_persisted_cards_and_detect_invalid_evidence(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "metrics.sqlite3")
+    seed_report(store)
+    before = tool.read_domain(store)
+    expected = {"attention_projects": ["示例项目"], "project_titles": ["示例项目"],
+                "task_count": 1, "minimum_evidence_sources": 1}
+    result = tool.readback(store, input_id=None, before=before, expected=expected)
+    assert result["passed"]
+    card, = store.list_business_attention_items()
+    assessment = json.loads(card.assessment_json)
+    assessment["evidence"][0]["source_link"] = "https://example.invalid/invented"
+    with store._connect() as db:
+        db.execute("update business_attention_items set assessment_json=?", (json.dumps(assessment),))
+    assert tool.readback(store, input_id=None, before=before, expected=expected)["evidence_valid"] is False
+    with store._connect() as db:
+        db.execute("update business_attention_items set assessment_json=?", (json.dumps({
+            "evidence": [{"signal_id": 999, "source_ref": "missing", "source_excerpt": "invented"}]
+        }),))
+    result = tool.readback(store, input_id=None, before=before, expected=expected)
+    assert result["evidence_valid"] is False
+    assert "unverifiable_attention_evidence" in result["failures"]
+
+
+def test_evaluation_refuses_worker_database_before_open(tmp_path, monkeypatch):
+    tool = evaluation_tool()
+    monkeypatch.setenv("CEO_WORKER_DB", str(tmp_path / "worker.sqlite3"))
+    with pytest.raises(ValueError, match="worker database"):
+        tool.require_copy(tmp_path / "worker.sqlite3")
+
+
+def test_fixed_cases_seed_only_existing_facts_and_never_send_expected_labels(tmp_path):
+    tool = evaluation_tool()
+    cases = tool.load_cases(Path(__file__).parent / "fixtures/task_attention_multisource.json")
+    for case in cases:
+        store = AutoReplyStore(tmp_path / f'{case["case_id"]}.sqlite3')
+        input_id = tool.seed_case(store, case)
+        domain = tool.read_domain(store)
+        assert len(domain["tasks"]) == len(case["existing_context"]["tasks"])
+        assert len(domain["projects"]) == len(case["existing_context"]["projects"])
+        assert len(domain["attention"]) == len(case["existing_context"]["attention"])
+        case["expected"]["secret_label"] = "evaluation_only_secret_expectation"
+
+        class Codex:
+            def decide(self, **kwargs):
+                assert "evaluation_only_secret_expectation" not in kwargs["prompt"]
+                return TaskAgentDecision.model_validate({"task_decisions": []})
+
+        from app.task_agent import TaskAgentRunner
+        result = tool.replay_input(store, tool.scoped_runner(TaskAgentRunner, Codex()),
+                                   input_id, source_ref=case["work_item"]["source"]["ref"])
+        assert result["run_status"] == "completed"
+
+
+def test_evaluation_missing_run_cannot_pass_a_negative_case(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "not-run.sqlite3")
+    item = report_item()
+    input_id = store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
+    result = tool.readback(store, input_id=input_id, before=tool.read_domain(store), expected={
+        "attention_projects": [], "project_titles": [], "task_count": 0, "minimum_evidence_sources": 1})
+    assert result["passed"] is False
+    assert "task_agent_run_missing" in result["failures"]
 
 
 PROJECT_ROW = "| 示例项目 | 回款复核 | 降低现金流风险 | 09-30 | 有风险 |"
