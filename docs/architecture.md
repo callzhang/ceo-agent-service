@@ -815,6 +815,14 @@ TaskProjectLinkProposal 应用所得 anchor 计入本轮 project_link_count；�
 record_candidate/create_task 新行动对已有正 anchor 提出 Attention 时必须同决定给出匹配
 project_link_proposal；新注册沿用同决定的 project_proposal。已知 Task 应按真实 ID 更新，
 只有独立可完成交付才创建 Task，既有交付的范围/内容补充不拆成重复 Task；不机械按同引文合并。
+TaskDecision.source_excerpt 的字段旁说明引用独立行动或既有 Task 的实际更新，不由已经被
+具体行动覆盖的 Project 登记范围另起 Task。TaskDateEvidence 字段旁说明仅摘录完整可解析
+日期短语（非整登记行），source-derived actor 使用可信 WorkItem.context.sender_user_id/sender；
+next_check_at 使用 task-agent/CEO Agent。报告/文档名不是行为人，无可信身份或完整日期则
+只保留来源原文，不输出 typed date，不把 Project 登记 DDL 转成 Task DDL。
+这些是模型字段指导，不增加语义验证器、关键词判断、机械去重或吞错；既有来源/行为人/
+日期及无变化 guard 原样保留。此前冻结版本原生 8/9、同项目两行动样本失败仍为真实记录，
+本次指导的原生效果待独立重跑，不能由 schema 描述测试证明语义根治。
 update 来源身份包含实际 Project link 的目标和引用，不把 reason 措辞纳入效果；
 创建 Task 身份仍沿用行动/标题/负责人，不因关联说明改写而重复创建。
 

@@ -63,12 +63,12 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
      committed to;
    - `estimated_deadline_at`: an estimate, never evidence of owner default;
    - `next_check_at`: the Agent's operational check time, never a due date.
-   Preserve source and actor for every source-derived date. A week-level or
-   otherwise non-parseable date phrase stays only in the linked original source
-   signal; do not create a typed date fact or manufacture a timestamp from it.
-   An estimate is attributed to the identified source speaker who made it,
-   never to the extracting Agent. `next_check_at` is Agent-authored only when
-   the source explicitly supplies a check date.
+   Quote only the complete parseable date phrase, not a registry row, in date_evidence.
+   Use trusted WorkItem.context.sender_user_id/sender for source-derived date actors;
+   next_check_at uses task-agent/CEO Agent. Report/document names are not date actors.
+   Without a trusted actor or complete parseable date phrase, retain the wording in the original source without typed date_evidence.
+   Normalized value must match that phrase; do not move Project registry deadlines onto Tasks or manufacture a timestamp.
+   An estimate is not the extracting Agent's estimate; next_check_at requires an explicit source check date.
    Do not turn “尽快”, “应该这周可以”, a guessed date, or a next-check
    schedule into a committed deadline.
    In the Task 6 Task Agent path, record `next_check_at` only when a check date
@@ -107,6 +107,7 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
 8. Create only independently completable deliverables; scope/content additions to an existing
    deliverable update that Task by its real ID. Identical source quotes alone do not establish
    Task identity. Merge only identical deliverables supported by explicit identity evidence.
+   Task action excerpts do not originate extra Tasks from Project registration scope already covered by concrete actions.
    Distinct deliverables with a shared goal may be clustered or linked; they
    retain independent owners, dates, and completion. When identity is uncertain,
    link or keep separate rather than merge.

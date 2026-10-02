@@ -289,11 +289,11 @@ class TaskDateEvidence(StrictTaskModel):
         "assigned_at", "requested_deadline_at", "external_deadline_at",
         "committed_deadline_at", "estimated_deadline_at", "next_check_at",
     ]
-    value: str = ""
+    value: str = Field(default="", description="Normalized value must equal the complete parseable date phrase quoted in source_excerpt; otherwise preserve source wording without typed date_evidence. Do not move Project registry deadlines onto Tasks.")
     source_ref: str
-    source_excerpt: str
-    actor_user_id: str = ""
-    actor_name: str = ""
+    source_excerpt: str = Field(description="Quote only the complete parseable date phrase, not a whole registry row or surrounding action prose.")
+    actor_user_id: str = Field(default="", description="For source-derived dates use trusted WorkItem.context.sender_user_id; next_check_at uses task-agent. Without trusted sender identity omit typed date_evidence.")
+    actor_name: str = Field(default="", description="Use trusted WorkItem.context.sender; next_check_at uses CEO Agent. Report/document names are not date actors.")
 
     @model_validator(mode="after")
     def source_is_explicit(self) -> "TaskDateEvidence":
@@ -452,7 +452,7 @@ class TaskDecision(StrictTaskModel):
     skip_reason: str = ""
     task_id: int | None = Field(default=None, gt=0)
     target_task_id: int | None = Field(default=None, gt=0)
-    source_excerpt: str = ""
+    source_excerpt: str = Field(default="", description="Exact quote of this independent Task action or this existing Task's actual update, not Project registration scope already covered by concrete actions; cite registration separately in project_proposal.")
     source_ref: str = ""
     source_link: str = Field(default="", description="A link to the source (a document, minutes page, message or thread URL). Required whenever the source has one.")
     source_description: str = Field(default="", description="Where a reader can find the source when there is no link, in words: e.g. a DingTalk message is its group and the person who sent it.")

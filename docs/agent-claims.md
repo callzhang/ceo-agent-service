@@ -26,6 +26,7 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-task-action-date-field-guidance | Delegated isolated candidate: app/task_models.py (field descriptions only), app/task_agent.py (prompt text), ci/shared-skills/ceo-work-tracking/SKILL.md, tests/test_task_agent.py (generic schema/fresh Skill assertions), docs/architecture.md and docs/runtime-mechanism.md (Task guidance) | Clarify action excerpts vs covered registration scope and trusted typed-date phrase/actor guidance; no validator/repair/domain/oracle/global Skill/production changes. Parent owns validation and plan updates. | 2026-10-02 |
 
 
 | codex-attention-multisource-browser-fixture | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: frontend/dev-mock/tasksMock.ts (synthetic Attention evidence fixtures only) | Reuse existing isolated Tasks mock preview to verify two-source detail, watch/decision labels, light/dark and narrow readability; synthetic UI evidence is not business or production verification. | 2026-10-02 |

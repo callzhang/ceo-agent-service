@@ -613,6 +613,7 @@ Only identical deliverables may be proposed for identity merge; related tasks
 remain linked or clustered. Create only independently completable deliverables;
 scope/content additions to an existing deliverable update that Task by its real ID.
 Identical source quotes alone do not establish Task identity.
+Task action excerpts do not originate extra Tasks from Project registration scope already covered by concrete actions.
 Reports, meetings, and chats all supply Task and risk evidence;
 a weekly report is neither the sole risk source nor a prerequisite for Attention.
 Attention.anchor_id selects the Project assessment; it does not confirm a Task's Project link.
@@ -658,12 +659,13 @@ decision, do not emit `project_proposal`; emit a `cluster_proposal` and a
 that candidate. Never invent a project title from a generic department, topic, or
 single unrelated Task.
 
-Dates use typed date_evidence with an exact source excerpt/reference and actor.
-Normalized dates must equal the full exact parseable date phrase; do not add
-time precision absent from the source. assigned_at comes only from trusted
-source timestamp metadata. An estimate keeps the identified source actor who
-made it; the extracting Agent is not its actor. Only next_check_at is
-Agent-authored, not an owner commitment. Other date facts need an identified source actor. AI Minutes
+Quote only the complete parseable date phrase, not a registry row, in date_evidence.
+Use trusted WorkItem.context.sender_user_id/sender for source-derived date actors;
+next_check_at uses task-agent/CEO Agent. Report/document names are not date actors.
+Without a trusted actor or complete parseable date phrase, retain the wording in the original source without typed date_evidence.
+Normalized value must match that phrase; do not move Project registry deadlines onto Tasks or add absent time precision.
+assigned_at comes only from trusted source timestamp metadata; an estimate is not
+the extracting Agent's estimate, and next_check_at is not an owner commitment. AI Minutes
 has no trusted speaker-to-identity mapping yet, so do not attribute a quoted
 speaker's date to the meeting host or to a model-selected identity (this limit
 is for dates; owners come from transcript_excerpts as above). Only owner

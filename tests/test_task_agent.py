@@ -704,6 +704,43 @@ def test_task_agent_prompt_requires_report_owner_rows_and_project_proposals():
     assert "preserving exact spaces and punctuation" in " ".join(prompt.split())
 
 
+def test_action_and_date_guidance_is_delivered_next_to_output_fields(monkeypatch):
+    import app.task_agent as task_agent
+    from app.task_models import TaskDecision, TaskDateEvidence
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    prompt = build_task_agent_prompt(_work_item(), "候选上下文为空。")
+    action_field = TaskDecision.model_json_schema()["properties"]["source_excerpt"]
+    date_fields = TaskDateEvidence.model_json_schema()["properties"]
+    checks = [
+        (action_field, "not Project registration scope already covered by concrete actions"),
+        (date_fields["value"], "Do not move Project registry deadlines onto Tasks"),
+        (date_fields["source_excerpt"], "Quote only the complete parseable date phrase"),
+        (date_fields["actor_user_id"], "trusted WorkItem.context.sender_user_id"),
+        (date_fields["actor_name"], "Report/document names are not date actors"),
+    ]
+    for field, rule in checks:
+        descriptions = [field.get("description", ""), *[
+            branch.get("description", "") for branch in field.get("anyOf", [])]]
+        assert any(rule in description for description in descriptions)
+        assert any(rule in description and description in prompt for description in descriptions)
+
+
+@pytest.mark.parametrize("surface", ["prompt", "skill"])
+def test_action_date_source_guidance_is_consistent(monkeypatch, surface):
+    import app.task_agent as task_agent
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    text = (build_task_agent_prompt(_work_item(), "候选上下文为空。") if surface == "prompt"
+        else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8"))
+    text = " ".join(text.split())
+    assert "Task action excerpts do not originate extra Tasks from Project registration scope already covered by concrete actions" in text
+    assert "Quote only the complete parseable date phrase, not a registry row" in text
+    assert "Use trusted WorkItem.context.sender_user_id/sender for source-derived date actors" in text
+    assert "Report/document names are not date actors" in text
+    assert "Without a trusted actor or complete parseable date phrase, retain the wording in the original source without typed date_evidence" in text
+
+
 @pytest.mark.parametrize("surface", ["prompt", "skill"])
 def test_task_agent_comparison_assessments_cite_selective_original_history(monkeypatch, surface):
     import app.task_agent as task_agent
@@ -839,6 +876,8 @@ def test_fresh_task_agent_loads_initial_risk_rules_from_selected_skill_root(monk
     assert "If the original history is unavailable, mark the comparison uncertain" in skill_text
     assert "verify that comparison against the originals and use historical_comparison" in skill_text
     assert "scope/content additions to an existing deliverable update that Task by its real ID" in skill_text
+    assert "Quote only the complete parseable date phrase, not a registry row" in skill_text
+    assert "Report/document names are not date actors" in skill_text
 
 
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(monkeypatch):

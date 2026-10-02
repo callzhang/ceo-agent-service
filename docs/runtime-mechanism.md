@@ -268,6 +268,11 @@ Attention 必填 assessment_basis（无兼容默认）：current_observation 需
 新行动 record_candidate/create_task 对已有正 anchor 提出 Attention 必须提供匹配链接提案，
 新注册仍走同决定 project_proposal；已有 confirmed Task 可按真实 ID 更新并复用链接。
 独立可完成交付才是新 Task；既有交付的范围/内容补充更新原 Task，不按相同引文机械合并。
+输出字段旁的模型指导要求 Task 行动引用不由已被具体行动覆盖的登记范围另起 Task；日期
+只摘录完整可解析短语，不摘整登记行、不迁移 Project 登记 DDL。source-derived actor 仅用
+可信 WorkItem.context.sender_user_id/sender，next_check_at 用 task-agent/CEO Agent，报告名
+不是 actor。缺可信身份或完整日期时仅留原文、不输出 typed date。未增加验证器或恢复行为；
+此前冻结版本原生 8/9、同项目两行动失败保留，本次字段指导效果尚待原生重跑。
 Agent 若以既有事实的比较、延续、升级或冲突形成评估，应同时引用当前来源和实际相关的
 持久化原始 Signals，使用真实正 ID、匹配 source_ref 和逐字原文；当前来源提到旧报告不等于
 引用原报告。不全量引用检索结果，也不强制特定来源类型；首次仅依据当前事实仍允许。
