@@ -1371,6 +1371,24 @@ def _validate_task_agent_decision(
             )
 
 
+def _confirmed_official_project_anchors(
+    store: AutoReplyStore, *, task_id: int, db: sqlite3.Connection
+) -> set[int]:
+    if store.get_business_task_in_transaction(task_id=task_id, _db=db) is None:
+        return set()
+    return {
+        int(row["anchor_id"])
+        for row in db.execute(
+            """select link.anchor_id from business_task_anchor_links link
+               join business_anchors anchor on anchor.id=link.anchor_id
+               join business_projects project on project.canonical_anchor_id=link.anchor_id
+               where link.task_id=? and link.status='confirmed' and link.active=1
+                 and anchor.anchor_type='project' and anchor.active=1""",
+            (task_id,),
+        ).fetchall()
+    }
+
+
 def _validate_stored_project_assessments(
     store: AutoReplyStore,
     decision: TaskAgentDecision,
@@ -1400,19 +1418,6 @@ def _validate_stored_project_assessments(
                 "Project identity conflict: multiple active official Projects have this exact title"
             )
         return rows[0] if rows else None
-
-    def confirmed_project_anchors(task_id: int) -> set[int]:
-        return {
-            int(row["anchor_id"])
-            for row in db.execute(
-                """select link.anchor_id from business_task_anchor_links link
-                   join business_anchors anchor on anchor.id=link.anchor_id
-                   join business_projects project on project.canonical_anchor_id=link.anchor_id
-                   where link.task_id=? and link.status='confirmed' and link.active=1
-                     and anchor.anchor_type='project' and anchor.active=1""",
-                (task_id,),
-            ).fetchall()
-        }
 
     existing_task_ids: set[int] = set()
     for item in decision.task_decisions:
@@ -1453,15 +1458,17 @@ def _validate_stored_project_assessments(
             if item.task_id is not None:
                 supporting_task_ids.add(item.task_id)
             if resolved_anchor is not None:
-                selected_anchor = (
-                    item.project_link_proposal.anchor_id
-                    if item.project_link_proposal is not None
-                    else resolved_anchor
-                    if item.project_proposal is not None
-                    and item.project_proposal.title == assessment.project_title
-                    else None
-                )
-                if selected_anchor is not None and selected_anchor != resolved_anchor:
+                explicit_anchors = {
+                    anchor_id
+                    for anchor_id in (
+                        item.project_link_proposal.anchor_id
+                        if item.project_link_proposal is not None else None,
+                        item.attention_proposal.anchor_id
+                        if item.attention_proposal is not None else None,
+                    )
+                    if anchor_id is not None
+                }
+                if any(anchor_id != resolved_anchor for anchor_id in explicit_anchors):
                     raise ValueError(
                         "supporting decision selects a different canonical stored Project"
                     )
@@ -1512,7 +1519,9 @@ def _validate_stored_project_assessments(
 
         if resolved_anchor is not None:
             for task_id in supporting_task_ids:
-                if resolved_anchor in confirmed_project_anchors(task_id):
+                if resolved_anchor in _confirmed_official_project_anchors(
+                    store, task_id=task_id, db=db
+                ):
                     continue
                 selected_by_current_decision = any(
                     index in assessment.decision_indexes
@@ -1534,6 +1543,20 @@ def _validate_stored_project_assessments(
                 if not selected_by_current_decision:
                     raise ValueError(
                         "supporting Task is not confirmed to the assessed Project"
+                    )
+        elif assessment.project_decision_index is not None:
+            for task_id in supporting_task_ids:
+                supported_by_matching_proposal = any(
+                    index in assessment.decision_indexes
+                    and decision.task_decisions[index].task_id == task_id
+                    and decision.task_decisions[index].project_proposal is not None
+                    and decision.task_decisions[index].project_proposal.title
+                    == assessment.project_title
+                    for index in range(len(decision.task_decisions))
+                )
+                if not supported_by_matching_proposal:
+                    raise ValueError(
+                        "supporting Task is not supported by a matching current Project decision"
                     )
 
         if assessment.existing_attention_id is not None:
@@ -1580,6 +1603,7 @@ def _validate_stored_project_assessments(
                     "existing Attention card lacks stored original assessment evidence"
                 )
             verified_signal_ids: set[int] = set()
+            stored_proofs: set[tuple[int, str, str]] = set()
             for proof in stored_evidence:
                 if not isinstance(proof, dict) or not isinstance(proof.get("signal_id"), int):
                     raise ValueError(
@@ -1615,9 +1639,32 @@ def _validate_stored_project_assessments(
                         "existing Attention original evidence is not linked to a current member"
                     )
                 verified_signal_ids.add(signal.id)
+                stored_proofs.add((
+                    signal.id,
+                    signal.source_ref,
+                    excerpt,
+                ))
             if card.evidence_signal_id not in verified_signal_ids:
                 raise ValueError(
                     "existing Attention primary evidence is absent from stored original evidence"
+                )
+            assessment_cites_card_proof = any(
+                (
+                    evidence.signal_id,
+                    evidence.source_ref,
+                    evidence.source_excerpt,
+                ) in stored_proofs
+                if evidence.signal_id is not None
+                else any(
+                    evidence.source_ref == proof_ref
+                    and evidence.source_excerpt == proof_excerpt
+                    for _proof_signal_id, proof_ref, proof_excerpt in stored_proofs
+                )
+                for evidence in assessment.evidence
+            )
+            if not assessment_cites_card_proof:
+                raise ValueError(
+                    "existing Attention assessment must cite this card's stored original evidence"
                 )
 
     canonical_assessment_counts: dict[int, int] = {}
@@ -1636,7 +1683,9 @@ def _validate_stored_project_assessments(
         )
 
     for task_id in existing_task_ids:
-        for anchor_id in confirmed_project_anchors(task_id):
+        for anchor_id in _confirmed_official_project_anchors(
+            store, task_id=task_id, db=db
+        ):
             if canonical_assessment_counts.get(anchor_id) != 1:
                 raise ValueError(
                     f"current Task {task_id} confirmed Project {anchor_id} requires exactly one assessment"
@@ -2152,15 +2201,21 @@ def apply_task_agent_decision(
                     decision=item, task_id=task_id, signal_id=result.signal_id,
                     anchor_id=attention_anchor_id,
                 ))
+            stored_anchor = stored_anchor_by_decision.get(decision_index)
+            actual_anchor = (
+                applied_project_anchor_id
+                if applied_project_anchor_id is not None
+                else stored_anchor
+                if stored_anchor in _confirmed_official_project_anchors(
+                    store, task_id=task_id, db=db
+                )
+                else None
+            )
             applied_decisions.append(AppliedTaskDecision(
                 decision_index=decision_index,
                 task_id=task_id,
                 signal_id=result.signal_id,
-                anchor_id=(
-                    applied_project_anchor_id
-                    if applied_project_anchor_id is not None
-                    else stored_anchor_by_decision.get(decision_index)
-                ),
+                anchor_id=actual_anchor,
             ))
 
     recorded_run_id = None
