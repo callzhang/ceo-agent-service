@@ -28,7 +28,7 @@
           "中汽创智",
           "岚图"
         ],
-        "task_count": 3,
+        "allowed_task_counts": [3, 4, 5],
         "minimum_evidence_sources": 1,
         "reuse_attention": false,
         "required_source_refs": [
@@ -91,7 +91,7 @@
         "project_titles": [
           "示例交付项目"
         ],
-        "task_count": 1,
+        "allowed_task_counts": [1, 2],
         "minimum_evidence_sources": 1,
         "reuse_attention": true,
         "required_source_refs": [

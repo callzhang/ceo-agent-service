@@ -26,6 +26,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-attention-eval-count-oracle | Isolated candidate: scripts/replay_task_attention.py, tests/fixtures/task_attention_multisource.json, tests/test_task_attention_multisource.py | Correct only two independently reviewed ambiguous count expectations; preserve exact counts for unambiguous cases and all evidence/member/card checks. No prompt or production edits. | 2026-10-02 |
+
 
 | codex-attention-multisource-browser-fixture | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: frontend/dev-mock/tasksMock.ts (synthetic Attention evidence fixtures only) | Reuse existing isolated Tasks mock preview to verify two-source detail, watch/decision labels, light/dark and narrow readability; synthetic UI evidence is not business or production verification. | 2026-10-02 |
 

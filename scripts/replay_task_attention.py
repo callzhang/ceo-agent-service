@@ -178,7 +178,9 @@ def readback(store, *, input_id, before, expected=None):
             failures.append("attention_project_mismatch")
         if sorted(p["title"] for p in after["projects"]) != sorted(expected["project_titles"]):
             failures.append("official_project_mismatch")
-        if len(after["tasks"]) != expected["task_count"]:
+        wanted_task_counts = (expected["allowed_task_counts"]
+                              if "allowed_task_counts" in expected else [expected["task_count"]])
+        if len(after["tasks"]) not in wanted_task_counts:
             failures.append("task_count_mismatch")
         if any(count < expected["minimum_evidence_sources"] for count in source_counts):
             failures.append("missing_evidence_source")

@@ -43,6 +43,9 @@ def test_fixed_evaluation_cases_have_independent_inputs_and_expectations():
             assert required_refs == []
         if case["case_id"] in ("chat-with-report-context", "newer-conflicting-chat"):
             assert "eval:historical-report" in required_refs
+        assert ("allowed_task_counts" in case["expected"]) is (
+            case["case_id"] in ("w39-project-risk", "meeting-new-risk")
+        )
 
 
 def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_runs(tmp_path):
@@ -104,6 +107,20 @@ def test_evaluation_metrics_use_persisted_cards_and_detect_invalid_evidence(tmp_
     result = tool.readback(store, input_id=None, before=before, expected=expected)
     assert result["evidence_valid"] is False
     assert "unverifiable_attention_evidence" in result["failures"]
+
+
+@pytest.mark.parametrize("allowed,passes", [([1, 2], True), ([2, 3], False), ([0], False)])
+def test_evaluation_allows_only_explicit_reviewed_task_counts(tmp_path, allowed, passes):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "counts.sqlite3")
+    seed_report(store)
+    expected = {
+        "attention_projects": ["示例项目"], "project_titles": ["示例项目"],
+        "allowed_task_counts": allowed, "minimum_evidence_sources": 1,
+    }
+    result = tool.readback(store, input_id=None, before=tool.read_domain(store), expected=expected)
+    assert result["passed"] is passes
+    assert ("task_count_mismatch" in result["failures"]) is (not passes)
 
 
 def test_evaluation_refuses_worker_database_before_open(tmp_path, monkeypatch):
