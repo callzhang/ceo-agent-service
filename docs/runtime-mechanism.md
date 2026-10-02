@@ -1246,3 +1246,8 @@ Typed result parsing preserves malformed or unclosed JSON as a result-stage
 invalid-result failure, including its syntax cause. It is not classified as a
 missing result. An earlier valid result in the same primary turn remains usable;
 no JSON repair or successful external-effect inference is performed.
+
+Manual reruns of scheduled Agent work preserve the saved scheduled execution
+context, including its route and pinned Skill content. A missing or invalid
+scheduled payload is rejected instead of being rebuilt as a DingTalk message;
+the original scheduled run is the authoritative source for explicit recovery.

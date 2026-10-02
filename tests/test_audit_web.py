@@ -10505,6 +10505,30 @@ def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation
     assert WechatMessage.model_validate_json(task.trigger_message_json) == trigger
 
 
+def test_scheduled_rerun_payload_is_valid_execution_context():
+    from app.audit_web import _is_valid_rerun_trigger_json
+
+    payload = {
+        "schema": "scheduled_agent_execution.v1",
+        "context": {
+            "conversation_id": "scheduled-task-run:1",
+            "conversation_title": "Daily report",
+            "single_chat": False,
+            "trigger_message_id": "event-1",
+            "trigger_sender": "Agent Cron",
+            "trigger_text": "Write report",
+            "trigger_create_time": "2026-10-02T13:00:00Z",
+            "trigger_raw_payload": {},
+        },
+        "route": {"name": "codex_oauth", "runtime_kind": "codex_cli", "credential_mode": "local_oauth", "model": "gpt-5"},
+        "workspace": "/tmp",
+        "reasoning_effort": "",
+        "skill_protocol": "",
+    }
+    assert _is_valid_rerun_trigger_json(json.dumps(payload), channel="scheduled")
+    assert not _is_valid_rerun_trigger_json("{}", channel="scheduled")
+
+
 def test_handle_rerun_attempt_post_replaces_invalid_legacy_task_json(
     tmp_path: Path,
 ):
