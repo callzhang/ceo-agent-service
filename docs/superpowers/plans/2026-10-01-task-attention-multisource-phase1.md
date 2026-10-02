@@ -488,6 +488,8 @@ class AttentionEvaluationRunner(TaskAgentRunner):
 - [ ] **3. 基线/候选用相同样本、模型、路由、timeout、concurrency=1。** 不切换模型来解释改进。评估输出 case_id、proposal 数、入库数、项目/Task 变化、evidence 核验、重复卡、缺失/误关注、失败原因。保存 readback 而非只看 Agent 说成功。先完成纯 fake-runner 确定性回归，再运行真实 runner 的固定样本。
 - [x] **4. 把 production DB 做 SQLite backup 到唯一临时目录。** 用 `sqlite3.Connection.backup`，不复制正在写入的裸 DB 文件。完整性检查 `pragma integrity_check` 返回 ok。记录副本基线 Task/Project 数及 W39 已有 Task IDs，不提交或打印全文。对 `27465` 精确回放；若 source_ref 不等于设计固定的 W39 ref，停止并重新定位，不能按旧 ID 误跑其他输入。
 
+此步骤只完成备份和精确输入定位：完整性 ok，259 Tasks、16 Projects、0 Attention，W39 Tasks 129–134 及输入 27465 的 source_ref 已核对。实际副本回放属于步骤 5，尚未执行；此勾选不表示副本语义或幂等验收通过。
+
 固定 source ref：`dingtalk-doc:a9E05BDRVQvy7QEacPZLB4anJ63zgkYA#sha256=21661643562265ca27e3369112a7ce3e91d9cbb6d21733050b5c3e7a9d42bf1e`。
 
 - [ ] **5. 连续回放两次验证身份，不只验卡片数。** W39 原有同一交付事项不新增重复 Task；新增官方 Project 只来源于有效登记行且复用已有同名 anchor；两张目标卡分别对应其正式项目、实际关联 Task 和准确原文依据。第二次卡 ID 不变，不重复 Task/Project，未变化不重复事件。若标题改写导致现有身份逻辑无法确认同一 Task，应使用已有 Task identity 契约修正决定或检索，不能强制同名 merge、删除旧记录或忽略额外 Task。
