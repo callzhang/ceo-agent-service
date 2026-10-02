@@ -106,7 +106,8 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    the source explicitly names this existing Project. Quote/title checks establish
    current provenance and a name reference, not independent semantic identity proof.
 8. Create only independently completable deliverables; scope/content additions to an existing
-   deliverable update that Task by its real ID. Identical source quotes alone do not establish
+   deliverable update that Task by its real ID. New Tasks require a nonblank title; existing-ID updates may omit it,
+   only update_fields changes a provided title, and promotion/acceptance/merge preserve the stored title. Identical source quotes alone do not establish
    Task identity. Merge only identical deliverables supported by explicit identity evidence.
    Task action excerpts do not originate extra Tasks from Project registration scope already covered by concrete actions.
    Relations name the existing `related_task_id` and direction relative to this applied Task:

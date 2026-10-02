@@ -26,6 +26,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-task-title-contract | Isolated task-attention-multisource: app/task_models.py (title shape), app/task_agent.py (title/formality only), tests/test_task_agent.py (title regressions), ci/shared-skills/ceo-work-tracking/SKILL.md (title sentence), docs/architecture.md and docs/runtime-mechanism.md (title contract) | Root core owner authorized narrow subclaim: new Task title required in shape; existing-ID updates preserve stored title. No Attention or live changes. | 2026-10-02 |
+
 
 
 | codex-attention-multisource-browser-fixture | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: frontend/dev-mock/tasksMock.ts (synthetic Attention evidence fixtures only) | Reuse existing isolated Tasks mock preview to verify two-source detail, watch/decision labels, light/dark and narrow readability; synthetic UI evidence is not business or production verification. | 2026-10-02 |

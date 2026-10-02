@@ -208,6 +208,7 @@ Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `
 Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
 
 Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返回 0..N 个 `task_decisions`。
+新建候选或正式 Task 必须在结构解析时提供非空白 title，缺失使用既有同 session 一次结果修正。已有真实 ID 的所有更新可省略 title；只有 update_fields 中提供的标题会修改标题，晋升、接受和合并保留持久化标题。晋升的交付明确性来自实际目标 Task 的标题，现有负责人、正式依据与来源校验不变。
 每个保留决策都必须引用准确来源；当前来源使用 WorkItem 的 `source_ref`，普通 Task 摘录可摘取。
 session/memory 背景用于完善已有 Task 或记录候选时，必须显式引用原始来源及可回溯位置；
 它们不能替代当前来源的授权与身份元数据，也不能替代 Attention 所需的已观察持久化原始 Signal。

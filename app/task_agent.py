@@ -502,7 +502,8 @@ workstream is not enough.
     )
     return f"""You are the CEO Agent Task extractor. Do not reply to the source.
 Always follow the current CEO Work Tracking Skill and return one TaskAgentDecision envelope with zero or
-more task_decisions matching the schema.
+more task_decisions matching the schema. New Tasks require a nonblank title; existing-ID updates may omit it,
+only update_fields changes a provided title, and promotion/acceptance/merge preserve the stored title.
 
 {scheduled_consumer_prompt}
 {current_skill_text}
@@ -1312,8 +1313,6 @@ def _validate_task_agent_decision(
     for item in decision.task_decisions:
         if item.action == "skip":
             continue
-        if not item.title.strip():
-            raise RepairableTaskDecisionValidationError("non-skip task decision requires title")
         if item.action == "create_task" and not (
             item.owner_user_id.strip() or item.owner_name.strip()
         ):
@@ -1428,18 +1427,21 @@ def apply_task_agent_decision(
                     owner_evidence["excerpt"] = item.source_excerpt
                 owner_evidence.setdefault("user_id", owner_user_id)
                 owner_evidence.setdefault("name", item.owner_name)
+            task_before = (
+                store.get_business_task_in_transaction(task_id=item.task_id, _db=db)
+                if item.task_id is not None else None
+            )
             formality = FormalityEvidence(
                 basis=item.formal_basis,
                 assigner_is_authorized=(
                     item.formal_basis is not FormalTaskBasis.EXPLICIT_ASSIGNMENT
                     or work_item.context.assignment_authorized
                 ),
-                deliverable_is_explicit=bool(item.title.strip()),
+                deliverable_is_explicit=(
+                    bool(task_before is not None and task_before.title.strip()) if item.action == "update_task"
+                    else bool(item.title.strip())
+                ),
                 owner_is_explicit=bool(item.owner_user_id.strip() or item.owner_name.strip()),
-            )
-            task_before = (
-                store.get_business_task_in_transaction(task_id=item.task_id, _db=db)
-                if item.task_id is not None else None
             )
             if item.action == "update_task" and item.transition == "update_fields" and item.owner_name:
                 # One item whose owner the source does not establish must not fail the

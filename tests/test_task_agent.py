@@ -1876,6 +1876,76 @@ def test_update_dedupe_identity_preserves_a_real_status_transition(tmp_path):
     assert len(store.list_business_task_signals()) == 3
 
 
+@pytest.mark.parametrize("change", ["owner", "status", "unchanged", "promotion"])
+def test_existing_task_update_can_omit_title(tmp_path, change):
+    store = AutoReplyStore(tmp_path / "title-update.sqlite3")
+    seed = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="提交报价", signal=SourceSignal(source_type="seed", source_ref="seed:title",
+            evidence_text="提交报价", dedupe_key="seed:title")))
+    item = _work_item(assignment_authorized=True,
+        owner_identity={"name": "Alex", "user_id": "alex-id"}).model_copy(update={
+            "summary": "Avery assigns Alex to submit the quote; the quote is waiting."})
+    payload = {"action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+        "source_ref": item.source.ref, "source_excerpt": item.summary}
+    if change in {"owner", "promotion"}:
+        payload.update(owner_name="Alex", owner_evidence={"source_ref": item.source.ref,
+            "excerpt": item.summary, "name": "Alex", "user_id": "alex-id"})
+    if change == "status":
+        payload["status"] = "waiting"
+    if change == "promotion":
+        payload.update(transition="promote_candidate", formal_basis="explicit_assignment")
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=TaskAgentDecision.model_validate({"task_decisions": [payload]}), record_run=False)
+    task = store.get_business_task(seed.task_id)
+    assert task.title == "提交报价"
+    if change == "owner":
+        assert task.owner_name == "Alex"
+    elif change == "status":
+        assert task.status.value == "waiting"
+    elif change == "promotion":
+        assert task.stage.value == "formal"
+        assert task.owner_user_id == "alex-id"
+        assert task.formal_basis is FormalTaskBasis.EXPLICIT_ASSIGNMENT
+    else:
+        assert result.skipped_reasons
+        assert len(store.list_business_task_signals()) == 1
+
+
+@pytest.mark.parametrize("action", ["record_candidate", "create_task"])
+@pytest.mark.parametrize("title", [None, "", "   "])
+def test_new_task_requires_title_in_decision_shape(action, title):
+    payload = {"action": action, "transition": "none", "source_ref": "source:1",
+        "source_excerpt": "Submit the quote"}
+    if title is not None:
+        payload["title"] = title
+    if action == "create_task":
+        payload["formal_basis"] = "explicit_assignment"
+    with pytest.raises(ValidationError, match="new task decision requires title"):
+        TaskAgentDecision.model_validate({"task_decisions": [payload]})
+
+
+def test_missing_new_task_title_uses_existing_same_session_repair():
+    valid = {"task_decisions": [{"action": "record_candidate", "transition": "none",
+        "source_ref": "source:1", "source_excerpt": "Submit the quote", "title": "Submit quote"}]}
+    invalid = {"task_decisions": [{key: value for key, value in valid["task_decisions"][0].items()
+        if key != "title"}]}
+
+    class RepairingExecution:
+        def execute(self, **kwargs):
+            retry = kwargs["result_validation_retry"]
+            assert retry.resume_same_session
+            raw = _agent_message_jsonl(json.dumps(invalid))
+            with pytest.raises(RoutedResultValidationError):
+                kwargs["parser"](raw)
+            assert "new task decision requires title" in retry.correction_prompt(raw)
+            value = kwargs["parser"](_agent_message_jsonl(json.dumps(valid)))
+            return SimpleNamespace(value=value, session_id="title-repair", transcript_start=0, transcript_end=2)
+
+    decision = TaskAgentCodexRunner(routed_execution=RepairingExecution()).decide(
+        prompt="decide", workload_key="1", session_scope_id="title-repair")
+    assert decision == TaskAgentDecision.model_validate(valid)
+
+
 def test_update_task_decision_applies_evidence_backed_description_change(tmp_path):
     store = AutoReplyStore(tmp_path / "description-update.sqlite3")
     task = TaskSemanticService(store).record_candidate(RecordCandidate(
