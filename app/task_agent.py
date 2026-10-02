@@ -396,6 +396,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "JSON object.\n\n"
         f"Problems in the previous output:\n{detail}\n\n"
         "Rules that must hold:\n"
+        "- project_assessments is required. Return one outcome, concrete reason, and original evidence for every relevant Project in this same output. Every attention_proposal requires needs_attention and a supporting decision index; not_needed and insufficient_evidence cannot carry a new attention proposal. Use [] only when no relevant structured Project exists, with a nonblank update_summary explaining that fact.\n"
         "- Return the TaskAgentDecision envelope with task_decisions (0..N); "
         "every non-skip item needs a source_excerpt (a sentence of the source), source_ref and a locator (source_link when there is one, otherwise source_description) "
         "(evidence_origin says whether it is the current Work Item, an earlier session turn, or memory provenance).\n"
@@ -548,6 +549,22 @@ still need the current Work Item's authority and identity metadata, and dates
 still need current, identified source evidence.
 
 Extract every distinct source-backed deliverable, or return an empty list.
+In `project_assessments`, return one outcome, concrete reason, and original evidence
+for every relevant Project selected by a current `project_proposal`,
+`project_link_proposal`, or `attention_proposal`. Reports, meetings, and chats are all
+valid inputs. A report is not the sole input or a prerequisite. Candidate Tasks may
+support a needs_attention assessment without promotion. Use `insufficient_evidence`
+only for a genuine unconfirmed Project identity or missing Task/risk evidence.
+Do not fabricate a Task, Project, proposal, or ID to avoid it. A retained card may use an
+actual `existing_attention_id` with that card's original evidence and no new Task
+field change or proposal; the service verifies those stored facts in the domain layer.
+Negative assessments never close an existing card. Do not infer Project identity from
+aliases, prefixes, similarity, or keywords. Keep source facts separate from business inference.
+Do not perform a whole-company or full-history scan; assess the Projects selected by
+this Work Item and its bounded retrieved context. The shared session and native CLI compaction
+remain responsible for continuity; do not synthesize assessments as compatibility output.
+Repeated decisions with the same exact `project_proposal.title`, or the same known anchor,
+share one assessment; do not emit a second business judgment for the duplicate selector.
 Project registration scope, objectives, and categories are not separate Tasks
 when concrete source actions already cover that work. Use registration text as
 Project evidence attached to those real actions, not as an additional umbrella Task.

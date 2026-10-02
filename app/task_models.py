@@ -663,7 +663,9 @@ class TaskProjectAssessment(StrictTaskModel):
     project_title: str = Field(
         description="Registered Project title when its identity is known; when identity is unresolved, preserve the source's Project clue without treating it as a registered Project.",
     )
-    outcome: Literal["needs_attention", "not_needed", "insufficient_evidence"]
+    outcome: Literal["needs_attention", "not_needed", "insufficient_evidence"] = Field(
+        description="Exactly one judgment for this Project: needs_attention for a retained existing card or matching current proposal, not_needed for a supported negative judgment, or insufficient_evidence only for genuine unconfirmed identity or missing Task/risk evidence.",
+    )
     reason: str = Field(
         description="Concrete reason for the outcome, grounded in the cited facts; do not restate an inference as an original quote.",
     )
@@ -727,7 +729,7 @@ class TaskProjectAssessment(StrictTaskModel):
 
 class TaskAgentDecision(StrictTaskModel):
     project_assessments: list[TaskProjectAssessment] = Field(
-        description="Explicit per-Project attention judgments for this result; use an empty list only when this round has no relevant Project, and explain that in update_summary.",
+        description="One explicit outcome, concrete reason, and original evidence set for every relevant structured Project in this same output. Exact duplicate current titles and repeated known anchors share one judgment. Use [] only when no relevant structured Project exists and explain that in update_summary.",
     )
     task_decisions: list[TaskDecision] = Field(default_factory=list)
     todo_changes: list[CompletionTodoChange] = Field(default_factory=list)
@@ -737,9 +739,176 @@ class TaskAgentDecision(StrictTaskModel):
     memory_recall_used: bool = False
 
     @model_validator(mode="after")
-    def at_most_one_todo_close(self) -> "TaskAgentDecision":
+    def validate_decision_envelope(self) -> "TaskAgentDecision":
         if len(self.todo_changes) > 1:
             raise ValueError("a Task Agent decision may close at most one TODO")
+
+        def selected_project(decision: TaskDecision) -> tuple[str, int | str] | None:
+            if decision.project_proposal is not None:
+                return ("proposal", decision.project_proposal.title)
+            if decision.project_link_proposal is not None:
+                return ("anchor", decision.project_link_proposal.anchor_id)
+            if decision.attention_proposal is not None and decision.attention_proposal.anchor_id is not None:
+                return ("anchor", decision.attention_proposal.anchor_id)
+            return None
+
+        def selected_anchor_ids(decision: TaskDecision) -> set[int]:
+            anchors: set[int] = set()
+            if decision.project_link_proposal is not None:
+                anchors.add(decision.project_link_proposal.anchor_id)
+            if decision.attention_proposal is not None and decision.attention_proposal.anchor_id is not None:
+                anchors.add(decision.attention_proposal.anchor_id)
+            return anchors
+
+        relevant_anchor_ids: set[int] = set()
+        current_project_titles: set[str] = set()
+        for decision in self.task_decisions:
+            if decision.project_link_proposal is not None:
+                relevant_anchor_ids.add(decision.project_link_proposal.anchor_id)
+            if decision.project_proposal is not None:
+                current_project_titles.add(decision.project_proposal.title)
+            if decision.attention_proposal is not None:
+                if decision.attention_proposal.anchor_id is not None:
+                    relevant_anchor_ids.add(decision.attention_proposal.anchor_id)
+
+        if not self.project_assessments:
+            if relevant_anchor_ids or current_project_titles:
+                raise ValueError("every relevant structured Project requires one project assessment")
+            if not self.update_summary.strip():
+                raise ValueError("empty project_assessments requires a nonblank update_summary explaining that no relevant Project was found")
+            return self
+
+        assessments_by_anchor: dict[int, list[TaskProjectAssessment]] = {}
+        assessments_by_title: dict[str, list[TaskProjectAssessment]] = {}
+        for assessment in self.project_assessments:
+            known_supporting_anchors = {
+                anchor_id
+                for index in assessment.decision_indexes
+                if index < len(self.task_decisions)
+                for anchor_id in selected_anchor_ids(self.task_decisions[index])
+            }
+            if len(known_supporting_anchors) > 1:
+                raise ValueError("one project assessment cannot combine unequal known Project anchors")
+            if assessment.project_decision_index is not None:
+                index = assessment.project_decision_index
+                if index >= len(self.task_decisions):
+                    raise ValueError("project_decision_index is out of bounds")
+                project_decision = self.task_decisions[index]
+                if project_decision.action == "skip" or project_decision.project_proposal is None:
+                    raise ValueError("project_decision_index must select a non-skip decision with project_proposal")
+                if index not in assessment.decision_indexes:
+                    raise ValueError("project_decision_index must be one of the supporting decision_indexes")
+                if assessment.project_title != project_decision.project_proposal.title:
+                    raise ValueError("project assessment project_title must exactly match its project_proposal title")
+            for index in assessment.decision_indexes:
+                if index >= len(self.task_decisions):
+                    raise ValueError("project assessment decision index is out of bounds")
+                supporting = self.task_decisions[index]
+                if supporting.action == "skip":
+                    raise ValueError("project assessment cannot reference a skip decision")
+                selection = selected_project(supporting)
+                if assessment.anchor_id is not None:
+                    if selection is not None and selection[0] == "anchor" and selection[1] != assessment.anchor_id:
+                        raise ValueError("supporting decisions must select the same Project as the assessment")
+                elif assessment.project_decision_index is not None:
+                    if selection is not None and selection[0] == "proposal" and selection[1] != assessment.project_title:
+                        raise ValueError("supporting decisions must select the same Project as the assessment")
+                elif selection is not None:
+                    raise ValueError("an unknown Project clue cannot reference a decision selecting the same Project or another structured Project")
+
+            if assessment.anchor_id is not None:
+                assessments_by_anchor.setdefault(assessment.anchor_id, []).append(assessment)
+            elif assessment.project_decision_index is not None:
+                assessments_by_title.setdefault(assessment.project_title, []).append(assessment)
+
+        for anchor_id in relevant_anchor_ids:
+            covering_assessments = [
+                assessment
+                for assessment in self.project_assessments
+                if assessment.anchor_id == anchor_id
+                or (
+                    assessment.project_decision_index is not None
+                    and any(
+                        anchor_id in selected_anchor_ids(self.task_decisions[index])
+                        for index in assessment.decision_indexes
+                    )
+                )
+            ]
+            if len(covering_assessments) != 1:
+                raise ValueError(f"structured Project anchor {anchor_id} requires exactly one assessment")
+        for title in current_project_titles:
+            if len(assessments_by_title.get(title, ())) != 1:
+                raise ValueError(f"current project_proposal title {title!r} requires exactly one assessment")
+
+        for anchor_id, assessments in assessments_by_anchor.items():
+            if len(assessments) > 1:
+                raise ValueError(f"Project anchor {anchor_id} must have exactly one assessment")
+        for title, assessments in assessments_by_title.items():
+            if len(assessments) > 1:
+                raise ValueError(f"exact Project proposal title {title!r} must have exactly one assessment")
+
+        for assessment in self.project_assessments:
+            matching_attention_indexes: list[int] = []
+            for index in assessment.decision_indexes:
+                proposal = self.task_decisions[index].attention_proposal
+                if proposal is None:
+                    continue
+                if assessment.anchor_id is not None and proposal.anchor_id == assessment.anchor_id:
+                    matching_attention_indexes.append(index)
+                elif (
+                    assessment.project_decision_index is not None
+                    and (
+                        proposal.anchor_id is not None
+                        or self.task_decisions[index].project_proposal is not None
+                        and self.task_decisions[index].project_proposal.title == assessment.project_title
+                    )
+                ):
+                    matching_attention_indexes.append(index)
+            if assessment.outcome == "needs_attention":
+                if assessment.existing_attention_id is None and not matching_attention_indexes:
+                    has_omitted_matching_proposal = any(
+                        decision.attention_proposal is not None
+                        and (
+                            assessment.anchor_id is not None
+                            and decision.attention_proposal.anchor_id == assessment.anchor_id
+                            or assessment.project_decision_index is not None
+                            and (
+                                decision.attention_proposal.anchor_id is not None
+                                or decision.project_proposal is not None
+                                and decision.project_proposal.title == assessment.project_title
+                            )
+                        )
+                        for decision in self.task_decisions
+                    )
+                    if has_omitted_matching_proposal:
+                        raise ValueError("every attention_proposal must be named as a supporting decision")
+                    raise ValueError("needs_attention requires existing_attention_id or a matching attention_proposal")
+            elif matching_attention_indexes:
+                raise ValueError("an attention_proposal requires a needs_attention assessment")
+
+        for index, decision in enumerate(self.task_decisions):
+            proposal = decision.attention_proposal
+            if proposal is None:
+                continue
+            matching = [
+                assessment
+                for assessment in self.project_assessments
+                if index in assessment.decision_indexes
+                and (
+                    assessment.anchor_id is not None
+                    and proposal.anchor_id == assessment.anchor_id
+                    or assessment.project_decision_index is not None
+                    and (
+                        proposal.anchor_id is not None
+                        or decision.project_proposal is not None
+                        and decision.project_proposal.title == assessment.project_title
+                    )
+                )
+            ]
+            if len(matching) != 1 or matching[0].outcome != "needs_attention":
+                raise ValueError("every attention_proposal requires one corresponding needs_attention assessment")
+            if index not in matching[0].decision_indexes:
+                raise ValueError("every attention_proposal must be named as a supporting decision")
         return self
 
 

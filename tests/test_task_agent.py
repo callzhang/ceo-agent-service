@@ -20,7 +20,7 @@ from app.task_agent import (
     _task_result_validation_repair_prompt,
 )
 from app.leak_check import contains_credential, contains_local_runtime_leak
-from app.task_models import TaskAgentDecision, WorkItem, WorkItemSourceKind, WorkItemSourceType
+from app.task_models import TaskAgentDecision, TaskDecision, WorkItem, WorkItemSourceKind, WorkItemSourceType
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_service import (
     RecordCandidate,
@@ -34,7 +34,7 @@ from app.task_agent_session import TaskAgentSessionLeaseLost
 
 
 def test_task_agent_parser_uses_valid_result_after_failed_tool_event():
-    decision = {"task_decisions": [{
+    decision = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "skip", "transition": "none",
         "skip_reason": "No durable work was identified.",
     }]}
@@ -68,11 +68,11 @@ def test_task_agent_parser_uses_valid_result_after_failed_tool_event():
 
 
 def test_task_agent_parser_recovers_complete_object_with_repeated_continuation():
-    decision = {"task_decisions": [{
+    decision = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "skip", "transition": "none",
         "skip_reason": "The source is informational only.",
     }]}
-    malformed = json.dumps(decision) + ',"task_decisions":[]}'
+    malformed = json.dumps(decision) + ',"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions":[]}'
 
     assert _parse_task_agent_decision(malformed) == TaskAgentDecision.model_validate(decision)
 
@@ -92,7 +92,7 @@ def _agent_message_jsonl(*messages: str) -> str:
 
 
 def _null_evidence_decision(**overrides) -> dict:
-    decision = {"task_decisions": [{
+    decision = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "skip", "transition": "none", "skip_reason": "No change.",
         "untrusted_runtime_value": "Confirm the vendor quote with Zhang",
     }]}
@@ -116,7 +116,7 @@ def test_task_agent_parser_reports_field_errors_of_last_candidate():
 
 
 def test_task_agent_parser_accepts_minimax_null_optional_fields():
-    decision = {"task_decisions": [{"action": "skip", "transition": "none",
+    decision = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none",
         "skip_reason": "No source-grounded Task."}]}
     parsed = _parse_task_agent_decision(_agent_message_jsonl(json.dumps(decision)))
     assert parsed == TaskAgentDecision.model_validate(decision)
@@ -196,7 +196,7 @@ def test_task_result_validation_repair_prompt_for_prose_only_output():
 
 def test_task_result_validation_repair_prompt_after_runtime_path_leak():
     decision = {
-        "task_decisions": [{"action": "skip", "transition": "none",
+        "project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none",
             "skip_reason": "Could not read /tmp/ceo-agent-service/todo.md"}],
     }
 
@@ -208,7 +208,7 @@ def test_task_result_validation_repair_prompt_after_runtime_path_leak():
 
 
 def test_task_result_validation_repair_prompt_caps_problem_list():
-    decision = {"task_decisions": [
+    decision = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [
         {"action": "skip", "transition": "none", "untrusted_field": str(index)}
         for index in range(15)
     ]}
@@ -287,7 +287,11 @@ def test_attention_shape_omissions_use_existing_same_session_repair(fault, probl
         "anchor_id": 3, "material_trigger": "risk_escalation", "evidence": [
             {"source_ref": "chat:current", "source_excerpt": "验收再次延期"},
             {"signal_id": 7, "source_ref": "report:prior", "source_excerpt": "原计划延期"}]}
-    valid = {"task_decisions": [{"action": "record_candidate", "transition": "none", "title": "核对验收计划",
+    valid = {"project_assessments": [{
+        "project_title": "示例项目", "anchor_id": 3, "outcome": "needs_attention",
+        "reason": "当前延期较原计划扩大，可能影响交付。", "assessment_basis": "historical_comparison",
+        "evidence": attention["evidence"], "decision_indexes": [0], "task_ids": [],
+    }], "task_decisions": [{"action": "record_candidate", "transition": "none", "title": "核对验收计划",
         "source_ref": "chat:current", "source_excerpt": "复核示例项目验收计划", "attention_proposal": attention,
         "project_link_proposal": {"anchor_id": 3, "source_excerpt": "复核示例项目验收计划", "reason": "明确项目行动"}}]}
     if fault == "relation":
@@ -318,6 +322,68 @@ def test_attention_shape_omissions_use_existing_same_session_repair(fault, probl
     decision = TaskAgentCodexRunner(routed_execution=RepairingExecution()).decide(
         prompt="decide", workload_key="1", session_scope_id="contract-repair-session")
     assert decision == TaskAgentDecision.model_validate(valid)
+
+
+@pytest.mark.parametrize("fault", ["missing_assessment", "contradictory_attention"])
+def test_project_assessment_envelope_uses_one_same_session_parser_correction(fault):
+    import copy
+
+    valid = {
+        "project_assessments": [{
+            "project_title": "示例项目", "anchor_id": 3, "outcome": "needs_attention",
+            "reason": "验收延期会影响客户上线。", "assessment_basis": "current_observation",
+            "decision_indexes": [0], "task_ids": [],
+            "evidence": [{"source_ref": "chat:current", "source_excerpt": "示例项目验收延期"}],
+        }],
+        "task_decisions": [{
+            "action": "record_candidate", "transition": "none", "title": "核对验收计划",
+            "source_ref": "chat:current", "source_excerpt": "示例项目验收延期",
+            "project_link_proposal": {"anchor_id": 3, "source_excerpt": "示例项目验收延期", "reason": "明确项目行动"},
+            "attention_proposal": {
+                "assessment_basis": "current_observation", "category": "watch", "title": "验收延期",
+                "why_attention": "影响客户上线", "current_state": "验收延期", "ceo_action": "观察验收",
+                "anchor_id": 3, "material_trigger": "risk_escalation",
+                "evidence": [{"source_ref": "chat:current", "source_excerpt": "示例项目验收延期"}],
+            },
+        }],
+    }
+    invalid = copy.deepcopy(valid)
+    if fault == "missing_assessment":
+        invalid.pop("project_assessments")
+    else:
+        invalid["project_assessments"][0]["outcome"] = "not_needed"
+
+    class OneRepairExecution:
+        execute_calls = 0
+        parser_calls = 0
+        correction_calls = 0
+        store_calls = 0
+
+        def execute(self, **kwargs):
+            self.execute_calls += 1
+            assert kwargs["conversation_id"] == "assessment-repair-session"
+            retry = kwargs["result_validation_retry"]
+            assert retry.resume_same_session
+            raw = _agent_message_jsonl(json.dumps(invalid))
+            self.parser_calls += 1
+            with pytest.raises(RoutedResultValidationError):
+                kwargs["parser"](raw)
+            self.correction_calls += 1
+            correction = retry.correction_prompt(raw)
+            assert "project_assessments" in correction
+            assert "one outcome, concrete reason, and original evidence" in correction
+            assert "attention_proposal requires needs_attention" in correction
+            self.parser_calls += 1
+            value = kwargs["parser"](_agent_message_jsonl(json.dumps(valid)))
+            return SimpleNamespace(value=value, session_id="assessment-repair-session",
+                                   transcript_start=0, transcript_end=2)
+
+    routed = OneRepairExecution()
+    decision = TaskAgentCodexRunner(routed_execution=routed).decide(
+        prompt="decide", workload_key="1", session_scope_id="assessment-repair-session")
+
+    assert decision == TaskAgentDecision.model_validate(valid)
+    assert (routed.execute_calls, routed.parser_calls, routed.correction_calls, routed.store_calls) == (1, 2, 1, 0)
 
 
 def _work_item(project_name="售前知识库"):
@@ -387,7 +453,7 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
         item.source.type.value, item.source.ref, item.model_dump_json()
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
-    payload = {"task_decisions": [{"action": "skip", "transition": "none",
+    payload = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none",
         "skip_reason": "no durable update"}]}
 
     class LifecycleCodex(FakeCodex):
@@ -431,7 +497,7 @@ def test_process_work_items_keep_run_keys_but_share_task_agent_session_scope(tmp
     work_inputs = store.claim_work_summary_inputs(limit=2)
     codex = FakeCodex(
         {
-            "task_decisions": [
+            "project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [
                 {
                     "action": "skip",
                     "transition": "none",
@@ -462,7 +528,7 @@ def test_process_work_item_does_not_apply_decision_after_session_lease_loss(tmp_
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
     decision = {
-        "task_decisions": [
+        "project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [
             {
                 "action": "record_candidate",
                 "transition": "none",
@@ -508,7 +574,7 @@ def test_process_work_item_success_commits_task_and_terminal_run_and_input(tmp_p
         item.source.type.value, item.source.ref, item.model_dump_json()
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
-    payload = {"task_decisions": [{
+    payload = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "record_candidate", "transition": "none",
         "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
         "title": "补齐报价来源链接", "missing_evidence": ["owner"],
@@ -618,7 +684,7 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
     codex = FakeCodexWithAuditEvents(
-        {"task_decisions": [{"action": "skip", "transition": "none",
+        {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none",
             "skip_reason": "No source-grounded task."}]},
         audit_tool_events=[],
     )
@@ -641,7 +707,7 @@ def test_task_agent_codex_runner_uses_standard_runtime_factory():
     routed = FakeRoutedTaskExecution(
         json.dumps(
             {
-                "task_decisions": [{"action": "skip", "transition": "none",
+                "project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none",
                     "skip_reason": "输入不足以形成稳定事项。"}],
             }
         )
@@ -808,7 +874,7 @@ def test_project_link_effect_identity_does_not_change_creation_task_identity(act
         "source_excerpt": "复核示例项目验收及付款计划。", "title": "复核验收付款计划", "description": "当前来源补充。",
         "project_link_proposal": {"anchor_id": 1, "source_excerpt": "复核示例项目验收及付款计划。", "reason": "关联解释"}}
     def signal(payload):
-        decision = TaskAgentDecision.model_validate({"task_decisions": [payload]}).task_decisions[0]
+        decision = TaskDecision.model_validate(payload)
         return _task_source_signal(item, decision).dedupe_key
     changed = {**base, "project_link_proposal": {**base["project_link_proposal"], **change}}
     assert (signal(base) != signal(changed)) is (action == "update_task")
@@ -826,6 +892,27 @@ def test_task_agent_registry_scope_does_not_originate_umbrella_tasks(monkeypatch
     text = " ".join(text.split())
     assert "Project registration scope, objectives, and categories are not separate Tasks when concrete source actions already cover that work" in text
     assert "Keep genuine explicit actions wherever they occur in the source" in text
+
+
+@pytest.mark.parametrize("surface", ["prompt", "skill"])
+def test_task_agent_requires_complete_project_assessment_envelope(monkeypatch, surface):
+    import app.task_agent as task_agent
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    text = (build_task_agent_prompt(_work_item(), "候选上下文为空。") if surface == "prompt"
+        else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8"))
+    text = " ".join(text.split())
+    assert "one outcome, concrete reason, and original evidence" in text
+    assert "Reports, meetings, and chats are all valid inputs" in text
+    assert "A report is not the sole input or a prerequisite" in text
+    assert "Candidate Tasks may support a needs_attention assessment without promotion" in text
+    assert "existing_attention_id" in text
+    assert "Negative assessments never close an existing card" in text
+    assert "Do not fabricate a Task, Project, proposal, or ID" in text
+    assert "Do not infer Project identity from aliases, prefixes, similarity, or keywords" in text
+    assert "source facts separate from business inference" in text
+    assert "Do not perform a whole-company or full-history scan" in text
+    assert "native CLI compaction" in text
 
 
 @pytest.mark.parametrize("surface", ["prompt", "skill"])
@@ -874,7 +961,8 @@ def test_fresh_task_agent_loads_initial_risk_rules_from_selected_skill_root(monk
     class CapturingCodex:
         def decide(self, **kwargs):
             self.prompt = kwargs["prompt"]
-            return TaskAgentDecision(task_decisions=[])
+            return TaskAgentDecision(project_assessments=[], task_decisions=[],
+                                     update_summary="本轮没有相关 Project。")
 
     codex = CapturingCodex()
     fresh_agent["TaskAgentRunner"](codex).decide(
@@ -923,7 +1011,8 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(mon
     class CapturingCodex:
         def decide(self, **kwargs):
             self.prompt = kwargs["prompt"]
-            return TaskAgentDecision(task_decisions=[])
+            return TaskAgentDecision(project_assessments=[], task_decisions=[],
+                                     update_summary="本轮没有相关 Project。")
     codex = CapturingCodex()
     TaskAgentRunner(codex).decide(item, "无候选项目", run_id=11, session_scope_id="isolated-test")
     prompt = codex.prompt
@@ -1019,7 +1108,7 @@ def test_process_work_item_does_not_require_memory_recall_receipt(
         item.model_dump_json(),
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
-    update = {"task_decisions": [{"action": "skip", "transition": "none",
+    update = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none",
         "skip_reason": "No source-grounded task; memory receipt is not a service gate."}]}
 
     class CodexWithoutMemoryRecallReceipt(FakeCodexWithAuditEvents):
@@ -1053,7 +1142,7 @@ def test_process_work_item_rolls_back_batch_and_marks_input_and_run_failed(tmp_p
         item.source.type.value, item.source.ref, item.model_dump_json()
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
-    payload = {"task_decisions": [
+    payload = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [
         {"action": "record_candidate", "transition": "none",
          "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
          "title": "有效候选", "missing_evidence": ["owner"]},
@@ -1094,7 +1183,7 @@ def test_process_work_item_accepts_none_session_id(tmp_path):
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
     codex = FakeCodexWithoutSession(
-        {"task_decisions": [{"action": "skip", "transition": "none",
+        {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none",
             "skip_reason": "一次性对话。"}]}
     )
 
@@ -1114,7 +1203,7 @@ def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):
         return "\n".join([
             json.dumps({"type": "session_meta", "payload": {"id": "session-task-1"}}),
             json.dumps({"item": {"type": "agent_message", "text": json.dumps({
-                "task_decisions": [{"action": "skip", "transition": "none", "skip_reason": "没有状态变化"}]
+                "project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none", "skip_reason": "没有状态变化"}]
             }, ensure_ascii=False)}}, ensure_ascii=False),
         ])
 
@@ -1147,7 +1236,7 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
                                     "type": "output_text",
                                         "text": json.dumps(
                                             {
-                                                "task_decisions": [{"action": "skip", "transition": "none",
+                                                "project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none",
                                                     "skip_reason": "只是确认收到"}],
                                         },
                                         ensure_ascii=False,
@@ -1196,7 +1285,7 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
     routed = FakeRoutedTaskExecution(
         json.dumps(
             {
-                "task_decisions": [{"action": "skip", "transition": "none",
+                "project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none",
                     "skip_reason": "没有状态变化"}],
             },
             ensure_ascii=False,
@@ -1226,7 +1315,7 @@ def test_task_agent_codex_runner_requires_injected_execution():
 def test_task_agent_codex_runner_reads_audit_events_from_session():
     routed = FakeRoutedTaskExecution(
         json.dumps(
-            {"task_decisions": [{"action": "skip", "transition": "none",
+            {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none",
                 "skip_reason": "无需记录候选人 follow-up。"}]},
             ensure_ascii=False,
         ),
@@ -1310,12 +1399,12 @@ def test_task_agent_codex_runner_keeps_nonretryable_routed_failures_terminal(
 
 
 def test_task_agent_parser_finds_decision_embedded_in_prose():
-    decision = {"task_decisions": [{"action": "skip", "transition": "none",
+    decision = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "skip", "transition": "none",
         "skip_reason": "No source-grounded task was found."}]}
     message = (
         "Based on my search within the allowed sources, I found:\n\n"
         "1. **Memory**: background only {not a decision}.\n\n"
-        + json.dumps({"task_decisions": []})
+        + json.dumps({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": []})
         + "\n\nFinal decision:\n\n"
         + json.dumps(decision, indent=2)
         + "\n"
@@ -1380,7 +1469,7 @@ def _work_item(project_name="售前知识库", **context):
 
 
 def _candidate_decision(item, *, excerpt="补齐来源链接", title="补齐报价来源链接"):
-    return TaskAgentDecision.model_validate({"task_decisions": [{
+    return TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "record_candidate", "transition": "none",
         "source_excerpt": excerpt, "source_ref": item.source.ref,
         "title": title, "missing_evidence": ["owner"],
@@ -1393,7 +1482,8 @@ def test_current_ai_minutes_provenance_is_canonical_and_not_external_todo():
         "type": WorkItemSourceType.AI_MINUTES,
         "ref": "minutes:1#todos-sha256=abc",
     })})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [],
+        "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "create_task", "transition": "none",
         "source_excerpt": "补齐来源链接", "source_ref": "wrong-ref",
         "title": "补齐报价来源链接", "formal_basis": "external_todo",
@@ -1420,7 +1510,7 @@ def test_current_ai_minutes_commitment_is_canonicalized_to_meeting_action_item()
             "source_conversation_kind": WorkItemSourceKind.MINUTES,
         }),
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "create_task", "transition": "none",
         "source_excerpt": "张玲玲更新数据",
         "source_ref": item.source.ref,
@@ -1446,7 +1536,7 @@ def test_current_ai_minutes_assignment_is_canonicalized_to_meeting_action_item()
             "source_conversation_kind": WorkItemSourceKind.MINUTES,
         }),
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "create_task", "transition": "none",
         "source_excerpt": "张玲玲更新数据",
         "source_ref": item.source.ref,
@@ -1490,7 +1580,7 @@ def test_ai_minutes_owner_relation_controls_formal_task_promotion(
     )
     decision = TaskAgentDecision.model_validate(
         {
-            "task_decisions": [
+            "project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [
                 {
                     "action": "record_candidate",
                     "transition": "none",
@@ -1521,7 +1611,7 @@ def test_ai_minutes_owner_relation_controls_formal_task_promotion(
 
 def test_session_provenance_is_not_rewritten():
     item = _work_item()
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "record_candidate", "transition": "none",
         "evidence_origin": "session", "source_excerpt": "旧来源证据",
         "source_ref": "message:original", "source_description": "群聊 / Avery",
@@ -1533,8 +1623,8 @@ def test_session_provenance_is_not_rewritten():
 
 
 def test_parser_accepts_zero_to_many_task_decisions():
-    assert _parse_task_agent_decision('{"task_decisions": []}').task_decisions == []
-    decision = _parse_task_agent_decision(json.dumps({"task_decisions": [
+    assert _parse_task_agent_decision('{"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": []}').task_decisions == []
+    decision = _parse_task_agent_decision(json.dumps({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [
         {"action": "skip", "transition": "none", "skip_reason": "no task"},
         {"action": "record_candidate", "transition": "none", "source_excerpt": "补齐来源链接",
          "source_ref": "message:1", "title": "补齐来源链接", "missing_evidence": ["owner"]},
@@ -1550,7 +1640,8 @@ def test_parser_rejects_project_first_decision():
 def test_multi_decision_batch_records_each_source_grounded_item(tmp_path):
     store = AutoReplyStore(tmp_path / "multi-task.sqlite3")
     item = _work_item(assignment_authorized=True)
-    decision = TaskAgentDecision.model_validate({"task_decisions": [
+    decision = TaskAgentDecision.model_validate({"project_assessments": [],
+        "update_summary": "本轮没有相关 Project。", "task_decisions": [
         {"action": "record_candidate", "transition": "none", "source_excerpt": "补齐来源链接",
          "source_ref": item.source.ref, "title": "补齐报价来源链接", "missing_evidence": ["owner"]},
         {"action": "create_task", "transition": "none", "source_excerpt": "owner 是 Alex",
@@ -1573,7 +1664,12 @@ def test_explicit_meeting_project_proposal_registers_project_and_links_task(tmp_
         "summary": json.dumps({"meeting": {"summary":
             "会议明确决定启动美国客户成交项目，并由 Alex 负责报价"}}, ensure_ascii=True),
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [{
+        "project_title": "美国客户成交", "project_decision_index": 0,
+        "outcome": "not_needed", "reason": "本轮为正常立项和报价行动，没有额外重大风险。",
+        "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": "会议明确决定启动美国客户成交项目，并由 Alex 负责报价"}],
+    }], "task_decisions": [{
         "action": "create_task", "transition": "none",
         "source_excerpt": "会议明确决定启动美国客户成交项目，并由 Alex 负责报价",
         "source_ref": item.source.ref, "title": "准备美国客户报价",
@@ -1625,7 +1721,12 @@ def test_explicit_meeting_project_proposal_registers_project_and_links_task(tmp_
 def test_generic_department_project_proposal_is_not_promoted(tmp_path):
     store = AutoReplyStore(tmp_path / "generic-project.sqlite3")
     item = _work_item(assignment_authorized=True)
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [{
+        "project_title": "项目管理部", "project_decision_index": 0,
+        "outcome": "not_needed", "reason": "该标题不构成有效 Project 登记，且没有重大风险。",
+        "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": "项目管理部"}],
+    }], "task_decisions": [{
         "action": "create_task", "transition": "none",
         "source_excerpt": "补齐来源链接；owner 是 Alex。",
         "source_ref": item.source.ref, "title": "补齐交付清单",
@@ -1650,7 +1751,12 @@ def test_weekly_report_task_section_project_proposal_is_not_promoted(tmp_path):
             "type": WorkItemSourceType.PROJECT_WEEKLY_REPORT,
         }),
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [{
+        "project_title": "中汽对账", "project_decision_index": 0,
+        "outcome": "not_needed", "reason": "任务章节不构成有效 Project 登记，且没有重大风险。",
+        "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": "中汽对账"}],
+    }], "task_decisions": [{
         "action": "create_task", "transition": "none",
         "source_excerpt": "补齐来源链接；owner 是 Alex。",
         "source_ref": item.source.ref, "title": "中汽对账",
@@ -1682,7 +1788,12 @@ def test_project_weekly_report_registry_row_becomes_official_project(tmp_path):
             "markdown": f"## **手头项目**\n\n| 项目名 | 负责内容 |\n|---|---|\n{row}\n",
         }, ensure_ascii=False),
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [{
+        "project_title": "大众底盘采集", "project_decision_index": 0,
+        "outcome": "not_needed", "reason": "登记行显示正常推进，没有需要 CEO 关注的重大影响。",
+        "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": row}],
+    }], "task_decisions": [{
         "action": "record_candidate", "transition": "none",
         "source_excerpt": row, "source_ref": item.source.ref,
         "title": "完成大众底盘采集内部试标、规则固化、数据打包与算法预标注",
@@ -1716,7 +1827,12 @@ def test_management_weekly_report_registry_row_becomes_official_project(tmp_path
             "markdown": f"## **手头项目**\n\n| 负责人 | 项目 | 当前状态 |\n|---|---|---|\n{row}\n",
         }, ensure_ascii=False),
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [{
+        "project_title": "江淮私有化", "project_decision_index": 0,
+        "outcome": "not_needed", "reason": "登记行显示正常推进，没有需要 CEO 关注的重大影响。",
+        "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": row}],
+    }], "task_decisions": [{
         "action": "record_candidate", "transition": "none",
         "source_excerpt": row, "source_ref": item.source.ref,
         "title": "完成江淮私有化本周交付和合同边界确认",
@@ -1745,7 +1861,12 @@ def test_weekly_report_registry_accepts_excerpt_without_leading_pipe(tmp_path):
             "markdown": "## **手头项目**\n\n| 项目名 | 负责内容 | 目标 | DDL | 状态 |\n|---|---|---|---|---|\n| " + row + " |\n",
         }, ensure_ascii=False),
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [{
+        "project_title": "标注工厂（大同标注基地）", "project_decision_index": 0,
+        "outcome": "not_needed", "reason": "本测试只验证登记行解析，不新增 Attention 提案。",
+        "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": row}],
+    }], "task_decisions": [{
         "action": "record_candidate", "transition": "none",
         "source_excerpt": row, "source_ref": item.source.ref,
         "title": "停止大同标注基地亏损业务类型并确认后续产能量级",
@@ -1775,7 +1896,7 @@ def test_source_dedupe_distinguishes_owner_but_replays_identical_decision(tmp_pa
                 update={"summary": excerpt}
             ),
     ]
-    decisions = [TaskAgentDecision.model_validate({"task_decisions": [{
+    decisions = [TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "create_task", "transition": "none", "formal_basis": "explicit_assignment",
         "source_excerpt": excerpt, "source_ref": item.source.ref, "title": "Prepare release report",
         "owner_name": owner_name,
@@ -1813,10 +1934,10 @@ def test_creation_replay_ignores_description_and_audit_wording(tmp_path):
         "title": "Prepare release report", "owner_name": "Alex",
         "owner_evidence": {"source_ref": item.source.ref, "excerpt": item.summary, "name": "Alex"},
     }
-    first = TaskAgentDecision.model_validate({"task_decisions": [{
+    first = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         **base, "description": "Prepare the report for launch.", "update_summary": "Owner confirmed."
     }]})
-    replay = TaskAgentDecision.model_validate({"task_decisions": [{
+    replay = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         **base, "description": "The release report needs preparation.", "update_summary": "Clear owner evidence."
     }]})
 
@@ -1839,8 +1960,8 @@ def test_replayed_creation_with_new_date_requires_explicit_task_update(tmp_path)
         "source_excerpt": item.summary, "source_ref": item.source.ref,
         "title": "报价候选", "missing_evidence": ["owner"],
     }
-    without_date = TaskAgentDecision.model_validate({"task_decisions": [common]})
-    with_new_date = TaskAgentDecision.model_validate({"task_decisions": [{
+    without_date = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [common]})
+    with_new_date = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         **common, "date_evidence": [{"kind": "requested_deadline_at", "value": "2026-09-25",
             "source_ref": item.source.ref, "source_excerpt": "2026-09-25"}],
     }]})
@@ -1864,7 +1985,7 @@ def test_update_dedupe_identity_preserves_a_real_status_transition(tmp_path):
     item = _work_item().model_copy(update={"summary": "报价任务状态已更新"})
 
     for status in ("waiting", "done"):
-        decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
             "action": "update_task", "transition": "update_fields", "task_id": task.task_id,
             "source_excerpt": item.summary, "source_ref": item.source.ref,
             "title": "报价跟进", "status": status,
@@ -1895,7 +2016,7 @@ def test_existing_task_update_can_omit_title(tmp_path, change):
     if change == "promotion":
         payload.update(transition="promote_candidate", formal_basis="explicit_assignment")
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-        decision=TaskAgentDecision.model_validate({"task_decisions": [payload]}), record_run=False)
+        decision=TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [payload]}), record_run=False)
     task = store.get_business_task(seed.task_id)
     assert task.title == "提交报价"
     if change == "owner":
@@ -1921,7 +2042,7 @@ def test_new_task_requires_title_in_decision_shape(action, title):
     if action == "create_task":
         payload["formal_basis"] = "explicit_assignment"
     with pytest.raises(ValidationError, match="new task decision requires title"):
-        TaskAgentDecision.model_validate({"task_decisions": [payload]})
+        TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [payload]})
 
 
 def test_update_whitespace_title_rejected_in_shape_before_domain_write(tmp_path):
@@ -1934,7 +2055,7 @@ def test_update_whitespace_title_rejected_in_shape_before_domain_write(tmp_path)
     payload = {"action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
         "source_ref": "source:update", "source_excerpt": "报价等待回复", "title": "   ", "status": "waiting"}
     with pytest.raises(ValidationError, match="provided update title must be nonblank"):
-        TaskAgentDecision.model_validate({"task_decisions": [payload]})
+        TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [payload]})
     assert store.get_business_task(seed.task_id) == original
     assert store.list_business_task_signals() == signals
 
@@ -1951,16 +2072,16 @@ def test_update_title_boundary_preserves_omitted_empty_or_applies_valid_title(tm
     if title is not None:
         payload["title"] = title
     apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-        decision=TaskAgentDecision.model_validate({"task_decisions": [payload]}), record_run=False)
+        decision=TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [payload]}), record_run=False)
     task = store.get_business_task(seed.task_id)
     assert task.title == (title if title else "提交报价")
     assert task.status.value == "waiting"
 
 
 def test_missing_new_task_title_uses_existing_same_session_repair():
-    valid = {"task_decisions": [{"action": "record_candidate", "transition": "none",
+    valid = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{"action": "record_candidate", "transition": "none",
         "source_ref": "source:1", "source_excerpt": "Submit the quote", "title": "Submit quote"}]}
-    invalid = {"task_decisions": [{key: value for key, value in valid["task_decisions"][0].items()
+    invalid = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{key: value for key, value in valid["task_decisions"][0].items()
         if key != "title"}]}
 
     class RepairingExecution:
@@ -1987,7 +2108,7 @@ def test_process_work_item_commits_titleless_update_and_new_candidate_batch(tmp_
     item = _work_item().model_copy(update={"summary": "报价等待客户回复；另需准备独立演示。"})
     input_id = store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
     work_input, = store.claim_work_summary_inputs(limit=1)
-    decision = {"task_decisions": [
+    decision = {"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [
         {"action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
          "source_ref": item.source.ref, "source_excerpt": item.summary, "status": "waiting"},
         {"action": "record_candidate", "transition": "none", "title": "准备独立演示",
@@ -2015,7 +2136,7 @@ def test_update_task_decision_applies_evidence_backed_description_change(tmp_pat
     item = _work_item().model_copy(update={
         "summary": "客户材料已到齐并补齐缺项",
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "update_fields", "task_id": task.task_id,
         "source_excerpt": "客户材料已到齐并补齐缺项", "source_ref": item.source.ref,
         "title": "核对客户材料", "description": "客户材料已到齐，核对后补齐缺项。",
@@ -2038,7 +2159,7 @@ def test_owner_evidence_keeps_the_citation_the_agent_gave(tmp_path):
     item = _work_item(
         assignment_authorized=True,
     ).model_copy(update={"summary": "Alex 负责提交周报，周五前完成。"})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "create_task", "transition": "none",
         "source_excerpt": item.summary, "source_ref": item.source.ref,
         "title": "提交周报", "owner_name": "Alex",
@@ -2080,7 +2201,7 @@ def test_recurring_same_title_tasks_cannot_be_identity_merged(tmp_path):
     first = _seed_identity_task(store, "message:week-1")
     second = _seed_identity_task(store, "message:week-2")
     item = _work_item().model_copy(update={"summary": "本周周报已提交"})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "merge_identity", "task_id": first.task_id,
         "target_task_id": second.task_id, "source_excerpt": "本周周报已提交",
         "source_ref": item.source.ref, "title": "提交周报",
@@ -2103,7 +2224,7 @@ def test_same_external_task_id_can_support_identity_merge_and_recompute_both_tas
     first = _seed_identity_task(store, "message:external-1", external_task_id="dingtalk:task-44")
     second = _seed_identity_task(store, "message:external-2", external_task_id="dingtalk:task-44")
     item = _work_item().model_copy(update={"summary": "同步外部待办记录"})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "merge_identity", "task_id": first.task_id,
         "target_task_id": second.task_id, "source_excerpt": "同步外部待办记录",
         "source_ref": item.source.ref, "title": "提交周报",
@@ -2150,7 +2271,8 @@ def test_batch_rolls_back_task_signal_and_all_proposals_on_later_invalid_evidenc
     cluster_id = resolution.create_cluster(title="客户事项", task_ids=[source_id, target_id])
     anchor_id = resolution.register_anchor(anchor_type="customer", anchor_ref="customer:1", title="客户")
     item = _work_item()
-    decision = TaskAgentDecision.model_validate({"task_decisions": [
+    decision = TaskAgentDecision.model_validate({"project_assessments": [],
+        "update_summary": "本轮没有相关 Project。", "task_decisions": [
         {"action": "update_task", "transition": "update_fields", "task_id": source_id,
          "source_excerpt": "补齐来源链接", "source_ref": item.source.ref, "title": "报价跟进",
          "status": "waiting", "relation_proposals": [{"related_task_id": target_id, "direction": "current_to_related",
@@ -2189,7 +2311,7 @@ def test_decision_relative_relation_binds_actual_applied_task_and_replays(tmp_pa
         "source_ref": item.source.ref, "source_excerpt": item.summary, "title": "核对付款安排",
         "description": item.summary, "relation_proposals": [{"related_task_id": seeds[1].task_id,
             "direction": direction, "relation_type": "supports", "reason": "当前行动支持已有交付"}]}
-    decision = TaskAgentDecision.model_validate({"task_decisions": [payload]})
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [payload]})
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
     current_id, = result.task_ids
     assert current_id == (seeds[0].task_id if action == "update_task" else 3)
@@ -2212,7 +2334,7 @@ def test_new_action_relation_rejects_missing_or_deduped_actual_self_target_atomi
         "source_excerpt": item.summary, "title": "复核付款安排"}
     if actual_self:
         seed = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-            decision=TaskAgentDecision.model_validate({"task_decisions": [payload]}), record_run=False)
+            decision=TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [payload]}), record_run=False)
         target_id = seed.task_ids[0]
     else:
         target_id = 999
@@ -2220,7 +2342,7 @@ def test_new_action_relation_rejects_missing_or_deduped_actual_self_target_atomi
     payload["relation_proposals"] = [{"related_task_id": target_id, "direction": "current_to_related", "relation_type": "related_to"}]
     with pytest.raises(ValueError):
         apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-            decision=TaskAgentDecision.model_validate({"task_decisions": [payload]}), record_run=False)
+            decision=TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [payload]}), record_run=False)
     assert store.list_business_tasks() == tasks
     assert store.list_business_task_signals() == signals
 
@@ -2234,7 +2356,7 @@ def test_relative_relation_effect_fingerprint_preserves_direction_and_ignores_re
         "source_excerpt": "复核付款安排。", "title": "付款复核", "description": "补充调整方案", "relation_proposals": [
             {"related_task_id": 2, "direction": "current_to_related", "relation_type": "supports", "reason": "解释"}]}
     def key(relation):
-        decision = TaskAgentDecision.model_validate({"task_decisions": [{**payload, "relation_proposals": [relation]}]}).task_decisions[0]
+        decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{**payload, "relation_proposals": [relation]}]}).task_decisions[0]
         return _task_source_signal(item, decision).dedupe_key
     original = payload["relation_proposals"][0]
     assert key(original) == key({**original, "reason": "同一业务关系的新解释"})
@@ -2249,7 +2371,12 @@ def test_same_task_multiple_decisions_keep_positional_task_signal_mapping(tmp_pa
         title="报价跟进", signal=SourceSignal(source_type="seed", source_ref="seed:1", evidence_text="报价跟进", dedupe_key="seed:1")
     ))
     item = _work_item()
-    decision = TaskAgentDecision.model_validate({"task_decisions": [
+    decision = TaskAgentDecision.model_validate({"project_assessments": [{
+        "project_title": "报价项目", "anchor_id": 1, "outcome": "needs_attention",
+        "reason": "报价延期存在明确风险。", "assessment_basis": "current_observation",
+        "decision_indexes": [0], "task_ids": [created.task_id],
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": "补齐来源链接"}],
+    }], "task_decisions": [
         {"action": "update_task", "transition": "update_fields", "task_id": created.task_id,
          "source_excerpt": "补齐来源链接", "source_ref": item.source.ref, "title": "报价跟进", "status": "waiting",
          "attention_proposal": {"category": "watch", "title": "报价延期风险", "why_attention": "有明确风险",
@@ -2301,7 +2428,12 @@ def test_attention_projection_runs_after_outer_domain_transaction_commit(tmp_pat
     item = _work_item(sender="Alex", sender_user_id="alex-id").model_copy(update={
         "summary": "Alex says the delivery is at risk."
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [{
+        "project_title": "关键客户交付", "anchor_id": anchor_id, "outcome": "needs_attention",
+        "reason": "负责人报告已接受承诺存在交付风险。", "assessment_basis": "current_observation",
+        "decision_indexes": [0], "task_ids": [seed.task_id],
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": "delivery is at risk"}],
+    }], "task_decisions": [{
         "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
         "source_excerpt": item.summary, "source_ref": item.source.ref,
         "title": "报价方案", "business_relevance": "relevant",
@@ -2353,7 +2485,7 @@ def test_routine_progress_without_attention_proposal_is_not_projected(tmp_path):
             evidence_text="报价跟进", dedupe_key="seed:attention-candidate")
     ))
     item = _work_item().model_copy(update={"summary": "补齐来源链接"})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
         "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
         "title": "报价跟进", "business_relevance": "relevant",
@@ -2376,7 +2508,7 @@ def test_agent_recomputes_existing_attention_after_terminal_or_irrelevant_change
     store = AutoReplyStore(tmp_path / f"attention-recompute-{next(iter(change.values()))}.sqlite3")
     seed = _seed_identity_task(store, f"message:attention-recompute-{next(iter(change.values()))}")
     relevance_item = _work_item().model_copy(update={"summary": "报价任务进入主营业务范围"})
-    relevance = TaskAgentDecision.model_validate({"task_decisions": [{
+    relevance = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
         "source_excerpt": relevance_item.summary, "source_ref": relevance_item.source.ref,
         "title": "提交周报", "business_relevance": "relevant",
@@ -2396,7 +2528,7 @@ def test_agent_recomputes_existing_attention_after_terminal_or_irrelevant_change
         task_ids=(seed.task_id,), evidence_signal_id=seed.signal_id,
     ))
     change_item = _work_item().model_copy(update={"summary": "Task finished."})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
         "source_excerpt": change_item.summary, "source_ref": change_item.source.ref,
         "title": "提交周报", **change,
@@ -2423,7 +2555,7 @@ def test_unlinked_owner_reply_does_not_accept_any_task(tmp_path):
             "excerpt": "Alex 负责报价方案", "user_id": "alex-id", "name": "Alex"}),
     ))
     item = _work_item(sender="Alex", sender_user_id="alex-id")
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "apply_acceptance", "task_id": assigned.task_id,
         "acceptance_polarity": "accepted", "acceptance_target_signal_id": assigned.signal_id,
         "source_excerpt": "补齐来源链接", "source_ref": item.source.ref, "title": "报价方案",
@@ -2440,7 +2572,7 @@ def test_unlinked_owner_reply_does_not_accept_any_task(tmp_path):
 def test_owner_evidence_does_not_itself_authorize_assignment(tmp_path):
     store = AutoReplyStore(tmp_path / "unauthorized-assignment.sqlite3")
     item = _work_item()
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "create_task", "transition": "none", "source_excerpt": "owner 是 Alex",
         "source_ref": item.source.ref, "title": "确认负责人", "formal_basis": "explicit_assignment",
         "owner_name": "Alex", "owner_evidence": {"source_ref": item.source.ref, "excerpt": "owner 是 Alex"},
@@ -2462,7 +2594,7 @@ def test_new_commitment_requires_the_named_owner_to_author_it(tmp_path, sender, 
         sender=sender, sender_user_id=sender_user_id,
         owner_identity={"name": "Alex", "user_id": "alex-id"},
     ).model_copy(update={"summary": excerpt})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "create_task", "transition": "none", "formal_basis": "explicit_commitment",
         "source_excerpt": excerpt, "source_ref": item.source.ref, "title": "交付报价方案",
         "owner_name": "Alex", "owner_evidence": {"source_ref": item.source.ref,
@@ -2506,7 +2638,7 @@ def test_formal_basis_cannot_be_selected_for_an_unrelated_reply_source(
         owner_identity={"name": "Alex", "user_id": "alex-id"},
         external_task_id="dingtalk-task-1",
     )
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "create_task", "transition": "none", "formal_basis": basis,
         "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
         "title": "补齐报价来源链接", "owner_name": "Alex",
@@ -2530,7 +2662,7 @@ def test_meeting_action_item_requires_minutes_action_item_source(tmp_path):
         "context": {"sender": "", "source_conversation_kind": "minutes",
             "owner_identity": {"name": "Alex", "user_id": "alex-id"}},
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "create_task", "transition": "none", "formal_basis": "meeting_action_item",
             "source_excerpt": "Alex 负责补齐报价来源链接。", "source_ref": item.source.ref,
             "title": "补齐报价来源链接", "owner_name": "Alex",
@@ -2551,7 +2683,7 @@ def test_next_check_date_uses_identified_agent_actor(tmp_path):
     item = _work_item().model_copy(update={
         "summary": "补齐来源链接；下次检查 2026-10-01T09:00:00+08:00"
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "record_candidate", "transition": "none", "source_excerpt": item.summary,
         "source_ref": item.source.ref, "title": "补齐报价来源链接", "missing_evidence": ["owner"],
         "date_evidence": [{"kind": "next_check_at", "value": "2026-10-01T09:00:00+08:00",
@@ -2571,7 +2703,7 @@ def test_source_target_and_next_check_create_task_keyed_follow_up(tmp_path):
     ).model_copy(update={
         "summary": "Avery assigns Alex to confirm quote. Check 2026-10-01T09:00:00+08:00."
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "create_task", "transition": "none", "formal_basis": "explicit_assignment",
         "source_excerpt": item.summary, "source_ref": item.source.ref,
         "title": "Confirm quote", "owner_name": "Alex",
@@ -2600,7 +2732,7 @@ def test_noncommitment_date_types_keep_exact_source_and_human_actor(tmp_path):
             "summary": "Avery assigns Alex on 2026-09-20. Request due 2026-09-25; "
                        "external deadline 2026-09-26; estimate 2026-09-27."
         })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "create_task", "transition": "none", "formal_basis": "explicit_assignment",
         "source_excerpt": item.summary, "source_ref": item.source.ref,
         "title": "客户报价跟进", "owner_name": "Alex",
@@ -2662,7 +2794,7 @@ def test_date_evidence_rejects_wrong_reference_or_non_source_excerpt(tmp_path, d
     })
     date_fact = {"kind": "requested_deadline_at", "value": "2026-09-25",
         "source_ref": item.source.ref, "source_excerpt": "2026-09-25", **date_patch}
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "record_candidate", "transition": "none",
         "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
         "title": "报价候选", "missing_evidence": ["owner"], "date_evidence": [date_fact],
@@ -2681,7 +2813,7 @@ def test_ai_minutes_date_actor_requires_trusted_speaker_mapping(tmp_path):
         "source": _work_item().source.model_copy(update={"type": WorkItemSourceType.AI_MINUTES}),
         "summary": "Alex 承诺 2026-09-25 交付报价方案",
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "record_candidate", "transition": "none", "source_excerpt": item.summary,
         "source_ref": item.source.ref, "title": "报价方案", "missing_evidence": ["owner"],
         "date_evidence": [{"kind": "requested_deadline_at", "value": "2026-09-25",
@@ -2697,7 +2829,7 @@ def test_ai_minutes_date_actor_requires_trusted_speaker_mapping(tmp_path):
 def test_candidate_cannot_record_committed_deadline_without_owner_acceptance(tmp_path):
     store = AutoReplyStore(tmp_path / "unaccepted-commitment-date.sqlite3")
     item = _work_item().model_copy(update={"summary": "补齐来源链接；2026-09-25"})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "record_candidate", "transition": "none",
         "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
         "title": "报价候选", "missing_evidence": ["owner"],
@@ -2723,7 +2855,7 @@ def test_promoting_candidate_derives_assigned_at_from_explicit_assignment_source
         owner_identity={"name": "Alex", "user_id": "alex-id"}).model_copy(update={
             "summary": "Avery formally assigns Alex on 2026-09-22."
         })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "promote_candidate", "task_id": candidate.task_id,
         "formal_basis": "explicit_assignment", "source_excerpt": item.summary,
         "source_ref": item.source.ref, "title": "提交报价", "owner_name": "Alex",
@@ -2743,7 +2875,7 @@ def test_promoting_candidate_derives_assigned_at_from_explicit_assignment_source
 def test_unparseable_relative_date_stays_only_in_linked_source_evidence(tmp_path):
     store = AutoReplyStore(tmp_path / "relative-date-not-normalized.sqlite3")
     item = _work_item().model_copy(update={"summary": "提交报价，下周五前完成"})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "record_candidate", "transition": "none", "source_excerpt": item.summary,
         "source_ref": item.source.ref, "title": "提交报价", "missing_evidence": ["owner"],
         "date_evidence": [{"kind": "requested_deadline_at", "value": "2026-09-25",
@@ -2764,7 +2896,7 @@ def test_estimate_keeps_source_speaker_and_rejects_model_attribution_override(tm
     item = _work_item(sender="Avery", sender_user_id="avery-id").model_copy(update={
         "summary": "Avery estimates completion on 2026-09-27."
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "record_candidate", "transition": "none", "source_excerpt": item.summary,
         "source_ref": item.source.ref, "title": "报价交付", "missing_evidence": ["owner"],
         "date_evidence": [{"kind": "estimated_deadline_at", "value": "2026-09-27",
@@ -2807,7 +2939,7 @@ def test_exact_owner_reply_accepts_only_cited_assignment_and_records_committed_d
     item = _work_item(
         sender="Alex", sender_user_id="alex-id", reply_to_source_ref="message:assignment"
     ).model_copy(update={"summary": "我接受报价方案，承诺于 2026-09-25 交付"})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "apply_acceptance", "task_id": assigned.task_id,
         "acceptance_polarity": "accepted", "acceptance_target_signal_id": assigned.signal_id,
         "source_excerpt": "我接受报价方案，承诺于 2026-09-25 交付", "source_ref": item.source.ref,
@@ -2852,7 +2984,7 @@ def test_source_grounded_completion_updates_task_status_without_todo_write(tmp_p
     item = _work_item().model_copy(update={
         "summary": "客户验收已完成，报价方案交付物通过验收。"
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "update_fields", "task_id": assigned.task_id,
         "source_excerpt": "客户验收已完成，报价方案交付物通过验收。",
         "source_ref": item.source.ref, "title": "报价方案", "status": "done",
@@ -2885,7 +3017,7 @@ def test_acceptance_with_wrong_conversation_or_reply_reference_is_not_applied(tm
                 "conversation_id": reply_context["conversation_id"]
             }), "summary": "我接受报价方案"}
         )
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "apply_acceptance", "task_id": assigned.task_id,
         "acceptance_polarity": "accepted", "acceptance_target_signal_id": assigned.signal_id,
         "source_excerpt": "我接受报价方案", "source_ref": item.source.ref, "title": "报价方案",
@@ -2937,7 +3069,7 @@ def test_update_restating_current_fields_adds_the_owner_and_an_unchanged_item_is
             "status": "open", "business_relevance": "unknown", **extra,
         }
 
-    decision = TaskAgentDecision.model_validate({"task_decisions": [
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [
         update(first, "整理访谈问题清单", owner_name="Zoey", owner_evidence={"excerpt": line}),
         update(second, "收集用户诉求"),
     ]})
@@ -2960,7 +3092,7 @@ def test_an_exact_owner_excerpt_from_another_line_is_kept_when_the_work_was_hand
     ))
     assigning, taking = "磊哥：你写下来，结构化的写下来。", "Claire：你认的话我就写下来呗。"
     item = _work_item().model_copy(update={"summary": json.dumps({"lines": [assigning, taking]}, ensure_ascii=False)})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "update_task", "transition": "update_fields", "task_id": task.task_id,
         "source_excerpt": assigning, "source_ref": item.source.ref, "title": "结构化撰写内容产出计划",
         "owner_name": "Claire", "owner_evidence": {"source_ref": item.source.ref, "excerpt": taking},
@@ -2994,7 +3126,7 @@ def test_an_owner_the_source_does_not_establish_skips_that_item_and_not_the_whol
             "owner_evidence": {"source_ref": item.source.ref, "excerpt": excerpt},
         }
 
-    decision = TaskAgentDecision.model_validate({"task_decisions": [
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [
         update(first, "整理清单", "陈思睿", good),  # the quoted line is Zoey's: it does not name 陈思睿
         update(second, "发送文档", "陈思睿", other),
     ]})
@@ -3025,7 +3157,7 @@ def test_earlier_or_remembered_evidence_can_refine_a_task_and_is_kept_as_its_own
         signal=SourceSignal(source_type="ai_minutes", source_ref="m:1#todos-sha256=a", evidence_text="整理访谈问题清单", dedupe_key="seed:earlier"),
     ))
     item = _work_item().model_copy(update={"summary": "本次来源没有提到负责人。"})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(task.task_id, item)]})
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [_earlier_evidence_decision(task.task_id, item)]})
 
     apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
 
@@ -3052,7 +3184,7 @@ def test_earlier_or_remembered_evidence_can_refine_a_task_and_is_kept_as_its_own
 def test_earlier_evidence_does_not_stand_in_for_the_current_sources_authority_or_dates(extra):
     item = _work_item()
     with pytest.raises(ValidationError):
-        TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(1, item, **extra)]})
+        TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [_earlier_evidence_decision(1, item, **extra)]})
 
 
 def test_earlier_evidence_needs_its_link_or_else_a_description_of_where_it_is():
@@ -3060,15 +3192,15 @@ def test_earlier_evidence_needs_its_link_or_else_a_description_of_where_it_is():
     item = _work_item()
     for missing in ({"source_link": ""}, {"source_link": "", "source_group": "产品群"}, {"source_link": "", "source_person": "Zoey"}):
         with pytest.raises(ValidationError, match="its source link, or, when there is none, a description"):
-            TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(1, item, **missing)]})
+            TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [_earlier_evidence_decision(1, item, **missing)]})
     for given in ({"source_link": "", "source_description": "产品群里 Zoey 的消息"}, {"source_link": "", "source_group": "产品群", "source_person": "Zoey"}):
-        TaskAgentDecision.model_validate({"task_decisions": [_earlier_evidence_decision(1, item, **given)]})
+        TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [_earlier_evidence_decision(1, item, **given)]})
 
 
 def test_the_current_sources_link_or_group_and_person_are_recorded_and_the_excerpt_may_be_an_extract(tmp_path):
     store = AutoReplyStore(tmp_path / "locator.sqlite3")
     minutes = _work_item().model_copy(update={"summary": json.dumps({"meeting": {"shareUrl": "https://shanji.example/transcribes/1"}, "lines": ["Zoey：我先列一个list给你看。"]}, ensure_ascii=False)})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "record_candidate", "transition": "none", "title": "列问题清单",
         "source_ref": minutes.source.ref, "source_excerpt": "Zoey 说先列个清单给看",  # an extract, not word for word
     }]})
@@ -3080,7 +3212,7 @@ def test_the_current_sources_link_or_group_and_person_are_recorded_and_the_excer
     chat = _work_item().model_copy(update={"summary": "王明：周五前交报价。"})
     chat = chat.model_copy(update={"source": chat.source.model_copy(update={"ref": "message:9", "conversation_title": "报价群"}),
                                    "context": chat.context.model_copy(update={"sender": "王明"})})
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+    decision = TaskAgentDecision.model_validate({"project_assessments": [], "update_summary": "本轮没有相关 Project。", "task_decisions": [{
         "action": "record_candidate", "transition": "none", "title": "交报价",
         "source_ref": "message:9", "source_excerpt": "周五前交报价",
     }]})

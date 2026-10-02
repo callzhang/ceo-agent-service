@@ -158,6 +158,22 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    not imply 需介入. Do not invent work, owners, assignments, commitments, or
    dates to fill a card. Explain unproposed Tasks in `update_summary` when
    impact is insufficient, the Project is unconfirmed, or evidence is unverifiable.
+   In `project_assessments`, return one outcome, concrete reason, and original evidence
+   for every relevant Project selected by a current `project_proposal`,
+   `project_link_proposal`, or `attention_proposal`. Reports, meetings, and chats are all
+   valid inputs. A report is not the sole input or a prerequisite. Candidate Tasks may
+   support a needs_attention assessment without promotion. Use `insufficient_evidence`
+   only for a genuine unconfirmed Project identity or missing Task/risk evidence.
+   Do not fabricate a Task, Project, proposal, or ID to avoid it. A retained card may use an
+   actual `existing_attention_id` with that card's original evidence and no new Task
+   field change or proposal; the service verifies those stored facts in the domain layer.
+   Negative assessments never close an existing card. Do not infer Project identity from
+   aliases, prefixes, similarity, or keywords. Keep source facts separate from business inference.
+   Do not perform a whole-company or full-history scan; assess the Projects selected by
+   this Work Item and its bounded retrieved context. The shared session and native CLI compaction
+   remain responsible for continuity; do not synthesize assessments as compatibility output.
+   Repeated decisions with the same exact `project_proposal.title`, or the same known anchor,
+   share one assessment; do not emit a second business judgment for the duplicate selector.
 10. Apply replies, corrections, disputes, owner changes, scope changes, and
     date changes to the existing Task when identity is explicit. Preserve new
     evidence and actor; record corrections/supersession instead of erasing

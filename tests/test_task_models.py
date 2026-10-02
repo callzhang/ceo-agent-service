@@ -29,7 +29,7 @@ def _project_assessment(**changes):
         "reason": "本轮只有正常进展，没有需要 CEO 关注的重大影响。",
         "assessment_basis": "current_observation",
         "anchor_id": 3,
-        "decision_indexes": [0],
+        "decision_indexes": [],
         "task_ids": [7],
         "evidence": [{
             "source_ref": "message:42",
@@ -37,6 +37,29 @@ def _project_assessment(**changes):
         }],
         **changes,
     }
+
+
+def _linked_decision(anchor_id=3, **changes):
+    return _decision(
+        project_link_proposal={
+            "anchor_id": anchor_id,
+            "source_excerpt": "美国报价可以研究一下",
+            "reason": "当前行动明确属于已登记 Project",
+        },
+        **changes,
+    )
+
+
+def _proposal_decision(title="示例项目", **changes):
+    return _decision(
+        project_proposal={
+            "title": title,
+            "reason": "会议明确立项",
+            "source_excerpt": f"会议决定启动{title}",
+            "authority": "meeting_decision",
+        },
+        **changes,
+    )
 
 
 def test_project_assessments_is_required_without_a_default():
@@ -52,14 +75,241 @@ def test_project_assessments_explicit_empty_collection_is_allowed():
     decision = TaskAgentDecision.model_validate({
         "task_decisions": [],
         "project_assessments": [],
+        "update_summary": "本轮没有相关 Project。",
     })
     assert decision.project_assessments == []
 
 
-def test_project_assessment_accepts_known_project_negative_with_current_quote():
+def test_empty_project_assessments_requires_nonblank_no_project_summary():
+    with pytest.raises(ValidationError, match="update_summary"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [],
+            "project_assessments": [],
+            "update_summary": " ",
+        })
+
+
+@pytest.mark.parametrize("decision", [
+    _linked_decision(),
+    _proposal_decision(),
+    _linked_decision(attention_proposal=_attention()),
+])
+def test_empty_project_assessments_rejects_relevant_structured_project(decision):
+    with pytest.raises(ValidationError, match="project assessment"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [decision],
+            "project_assessments": [],
+            "update_summary": "本轮没有相关 Project。",
+        })
+
+
+@pytest.mark.parametrize("change,problem", [
+    ({"decision_indexes": [1]}, "out of bounds"),
+    ({"decision_indexes": [1]}, "skip"),
+])
+def test_project_assessment_rejects_out_of_bounds_or_skip_support(change, problem):
+    decisions = [_linked_decision()]
+    if problem == "skip":
+        decisions.append({"action": "skip", "transition": "none", "skip_reason": "无工作"})
+    with pytest.raises(ValidationError, match=problem):
+        TaskAgentDecision.model_validate({
+            "task_decisions": decisions,
+            "project_assessments": [_project_assessment(**change)],
+        })
+
+
+def test_project_assessment_project_index_must_select_non_skip_project_proposal():
+    with pytest.raises(ValidationError, match="project_decision_index.*project_proposal"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_decision()],
+            "project_assessments": [_project_assessment(
+                anchor_id=None,
+                project_decision_index=0,
+                decision_indexes=[0],
+                outcome="insufficient_evidence",
+            )],
+        })
+
+
+def test_known_anchor_assessment_rejects_supporting_decision_for_another_project():
+    with pytest.raises(ValidationError, match="same Project"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_linked_decision(anchor_id=4)],
+            "project_assessments": [_project_assessment(anchor_id=3, decision_indexes=[0])],
+        })
+
+
+def test_exact_current_project_title_is_assessed_once_across_two_tasks():
+    assessment = _project_assessment(
+        anchor_id=None,
+        project_decision_index=1,
+        project_title="示例项目",
+        decision_indexes=[0, 1],
+        task_ids=[],
+    )
+    decision = TaskAgentDecision.model_validate({
+        "task_decisions": [_proposal_decision(), _proposal_decision()],
+        "project_assessments": [assessment],
+    })
+    assert len(decision.project_assessments) == 1
+    assert decision.project_assessments[0].project_decision_index == 1
+
+
+def test_mixed_current_proposal_and_known_anchor_can_share_one_unresolved_judgment():
+    attention = _attention(anchor_id=3)
+    decision = TaskAgentDecision.model_validate({
+        "task_decisions": [
+            _proposal_decision(attention_proposal=attention),
+            _linked_decision(anchor_id=3),
+        ],
+        "project_assessments": [_project_assessment(
+            anchor_id=None,
+            project_decision_index=0,
+            project_title="示例项目",
+            outcome="needs_attention",
+            decision_indexes=[0, 1],
+            task_ids=[],
+        )],
+    })
+    assert len(decision.project_assessments) == 1
+
+
+def test_mixed_proposal_assessment_rejects_two_unequal_known_anchors():
+    with pytest.raises(ValidationError, match="unequal known Project anchors"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [
+                _proposal_decision(),
+                _linked_decision(anchor_id=3),
+                _linked_decision(anchor_id=4),
+            ],
+            "project_assessments": [_project_assessment(
+                anchor_id=None,
+                project_decision_index=0,
+                project_title="示例项目",
+                decision_indexes=[0, 1, 2],
+                task_ids=[],
+            )],
+        })
+
+
+def test_duplicate_known_anchor_or_exact_current_title_assessment_is_rejected():
+    with pytest.raises(ValidationError, match="exactly one"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_linked_decision()],
+            "project_assessments": [
+                _project_assessment(),
+                _project_assessment(reason="第二个判断"),
+            ],
+        })
+
+    proposal_assessment = _project_assessment(
+        anchor_id=None,
+        project_decision_index=0,
+        decision_indexes=[0],
+        task_ids=[],
+    )
+    with pytest.raises(ValidationError, match="exactly one"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_proposal_decision()],
+            "project_assessments": [
+                proposal_assessment,
+                {**proposal_assessment, "reason": "第二个判断"},
+            ],
+        })
+
+
+def test_current_project_assessment_title_must_match_exact_proposal_title():
+    with pytest.raises(ValidationError, match="project_title"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_proposal_decision("示例项目")],
+            "project_assessments": [_project_assessment(
+                anchor_id=None,
+                project_decision_index=0,
+                project_title="示例项目二期",
+                decision_indexes=[0],
+                task_ids=[],
+            )],
+        })
+
+
+def test_unknown_project_clue_may_reference_only_unselected_current_decisions():
     decision = TaskAgentDecision.model_validate({
         "task_decisions": [_decision()],
-        "project_assessments": [_project_assessment()],
+        "project_assessments": [_project_assessment(
+            anchor_id=None,
+            outcome="insufficient_evidence",
+            reason="来源有项目线索，但没有已登记 anchor 或当前登记提案。",
+            decision_indexes=[0],
+            task_ids=[],
+        )],
+    })
+    assert decision.project_assessments[0].outcome == "insufficient_evidence"
+
+    with pytest.raises(ValidationError, match="same Project"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_linked_decision()],
+            "project_assessments": [_project_assessment(
+                anchor_id=None,
+                outcome="insufficient_evidence",
+                decision_indexes=[0],
+                task_ids=[],
+            )],
+        })
+
+
+def test_attention_proposal_requires_matching_needs_attention_assessment_and_support_index():
+    decision = _linked_decision(attention_proposal=_attention())
+    with pytest.raises(ValidationError, match="needs_attention"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [decision],
+            "project_assessments": [_project_assessment()],
+        })
+
+    with pytest.raises(ValidationError, match="supporting decision"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [decision, _linked_decision()],
+            "project_assessments": [_project_assessment(
+                outcome="needs_attention",
+                decision_indexes=[1],
+                task_ids=[],
+            )],
+        })
+
+
+def test_needs_attention_requires_existing_card_or_matching_current_proposal():
+    with pytest.raises(ValidationError, match="existing_attention_id.*attention_proposal"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_linked_decision()],
+            "project_assessments": [_project_assessment(
+                outcome="needs_attention",
+                task_ids=[],
+            )],
+        })
+
+    accepted = TaskAgentDecision.model_validate({
+        "task_decisions": [_linked_decision()],
+        "project_assessments": [_project_assessment(
+            outcome="needs_attention",
+            existing_attention_id=11,
+            task_ids=[],
+        )],
+    })
+    assert accepted.project_assessments[0].existing_attention_id == 11
+
+
+@pytest.mark.parametrize("outcome", ["not_needed", "insufficient_evidence"])
+def test_negative_assessment_cannot_carry_attention_proposal(outcome):
+    with pytest.raises(ValidationError, match="needs_attention"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_linked_decision(attention_proposal=_attention())],
+            "project_assessments": [_project_assessment(outcome=outcome)],
+        })
+
+
+def test_project_assessment_accepts_known_project_negative_with_current_quote():
+    decision = TaskAgentDecision.model_validate({
+        "task_decisions": [_linked_decision()],
+        "project_assessments": [_project_assessment(decision_indexes=[0])],
     })
     assessment = decision.project_assessments[0]
     assert assessment.outcome == "not_needed"
@@ -73,6 +323,8 @@ def test_project_assessment_accepts_new_project_proposal_position():
         project_decision_index=0,
         outcome="needs_attention",
         reason="当前验收阻塞会影响本季度客户上线，需要 CEO 推动解决。",
+        decision_indexes=[0],
+        task_ids=[],
     )
     decision = TaskAgentDecision.model_validate({
         "task_decisions": [_decision(project_proposal={
@@ -80,7 +332,7 @@ def test_project_assessment_accepts_new_project_proposal_position():
             "reason": "会议明确立项",
             "source_excerpt": "会议决定启动示例项目",
             "authority": "meeting_decision",
-        })],
+        }, attention_proposal=_attention(anchor_id=None))],
         "project_assessments": [assessment],
     })
     assert decision.project_assessments[0].project_decision_index == 0
@@ -263,7 +515,8 @@ def test_new_action_attention_requires_matching_existing_project_link(action):
 
 
 def test_existing_task_attention_reuses_link_without_new_proposal():
-    decision = TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [_decision(action="update_task",
+    decision = TaskAgentDecision.model_validate({"project_assessments": [_project_assessment(
+        outcome="needs_attention", decision_indexes=[0], task_ids=[1])], "task_decisions": [_decision(action="update_task",
         transition="update_fields", task_id=1, attention_proposal=_attention())]})
     assert decision.task_decisions[0].project_link_proposal is None
 
@@ -315,7 +568,8 @@ def test_relation_proposal_rejects_old_unbound_or_missing_endpoint_shape(payload
 
 @pytest.mark.parametrize("action", ["record_candidate", "create_task"])
 def test_new_action_attention_accepts_explicit_project_link(action):
-    decision = TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [_decision(action=action,
+    decision = TaskAgentDecision.model_validate({"project_assessments": [_project_assessment(
+        outcome="needs_attention", decision_indexes=[0], task_ids=[])], "task_decisions": [_decision(action=action,
         formal_basis="meeting_action_item" if action == "create_task" else None,
         project_link_proposal={"anchor_id": 3, "source_excerpt": "复核示例项目验收计划", "reason": "当前项目行动"},
         attention_proposal=_attention())]})
@@ -333,7 +587,8 @@ def test_work_item_does_not_require_project_name():
 
 def test_existing_project_link_proposal_has_distinct_current_source_contract():
     link = {"anchor_id": 3, "source_excerpt": "复核示例项目验收计划。", "reason": "行动明确属于已有项目"}
-    decision = TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [_decision(project_link_proposal=link)]})
+    decision = TaskAgentDecision.model_validate({"project_assessments": [_project_assessment(
+        decision_indexes=[0])], "task_decisions": [_decision(project_link_proposal=link)]})
     assert decision.task_decisions[0].project_link_proposal.model_dump() == link
     assert decision.task_decisions[0].project_proposal is None
 
@@ -370,7 +625,8 @@ def test_existing_project_link_and_attention_must_reference_same_anchor():
 
 
 def test_vague_source_is_candidate_with_missing_evidence():
-    decision = TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [_decision()]})
+    decision = TaskAgentDecision.model_validate({"project_assessments": [],
+        "update_summary": "本轮没有相关 Project。", "task_decisions": [_decision()]})
     assert decision.task_decisions[0].action == "record_candidate"
     assert decision.task_decisions[0].formal_basis is None
 
@@ -416,6 +672,7 @@ def test_one_task_agent_contract_supports_task_and_completion_transitions():
 def test_completion_operation_targets_one_business_task_without_legacy_todo_id():
     decision = TaskAgentDecision.model_validate({
         "project_assessments": [],
+        "update_summary": "本轮没有相关 Project。",
         "todo_changes": [{
             "action": "close", "business_task_id": 42,
             "completion_evidence": {"source": "message:42", "reason": "done"},
@@ -426,7 +683,8 @@ def test_completion_operation_targets_one_business_task_without_legacy_todo_id()
 
 
 def test_one_source_can_emit_several_source_grounded_tasks():
-    result = TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [
+    result = TaskAgentDecision.model_validate({"project_assessments": [],
+        "update_summary": "本轮没有相关 Project。", "task_decisions": [
         _decision(source_excerpt="请王明提交报价", title="提交报价",
                   action="create_task", formal_basis="explicit_assignment",
                   owner_user_id="wang", owner_name="王明",
@@ -443,7 +701,8 @@ def test_one_source_can_emit_several_source_grounded_tasks():
 
 
 def test_acceptance_has_dedicated_transition_and_existing_task_id():
-    accepted = TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [
+    accepted = TaskAgentDecision.model_validate({"project_assessments": [],
+        "update_summary": "本轮没有相关 Project。", "task_decisions": [
         _decision(action="update_task", transition="apply_acceptance", task_id=12,
                   source_excerpt="我接受报价任务，周五交第一版", missing_evidence=[],
                   acceptance_polarity="accepted", acceptance_target_signal_id=55)
@@ -483,7 +742,8 @@ def test_merge_proposal_requires_ids_and_structured_identity_evidence():
                                              "source_signal_id": 21,
                                              "target_signal_id": 22,
                                          }})
-    TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [valid]})
+    TaskAgentDecision.model_validate({"project_assessments": [],
+        "update_summary": "本轮没有相关 Project。", "task_decisions": [valid]})
     with pytest.raises(ValidationError):
         TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [
             _decision(action="update_task", transition="merge_identity", task_id=8,
@@ -492,14 +752,17 @@ def test_merge_proposal_requires_ids_and_structured_identity_evidence():
 
 
 def test_project_candidate_requires_existing_cluster_id_and_project_proposal_requires_authority():
-    TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [
+    TaskAgentDecision.model_validate({"project_assessments": [],
+        "update_summary": "本轮没有相关 Project。", "task_decisions": [
         _decision(project_candidate_proposal={"cluster_id": 3, "title": "美国客户成交", "reason": "相关任务持续"})
     ]})
     with pytest.raises(ValidationError):
         TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [
             _decision(project_candidate_proposal={"title": "美国客户成交", "reason": "相关任务持续"})
         ]})
-    TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [
+    TaskAgentDecision.model_validate({"project_assessments": [_project_assessment(
+        anchor_id=None, project_decision_index=0, project_title="美国客户成交",
+        decision_indexes=[0], task_ids=[])], "task_decisions": [
         _decision(project_proposal={
             "title": "美国客户成交",
             "reason": "会议明确决定启动该项目",
@@ -532,13 +795,15 @@ def test_attention_proposal_requires_material_trigger_and_confirmed_anchor():
             _decision(action="create_task", formal_basis="external_todo", missing_evidence=[],
                       attention_proposal={"category": "fyi", "title": "买办公用品", "why_attention": "有日期"})
         ]})
-    TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [
+    TaskAgentDecision.model_validate({"project_assessments": [],
+        "update_summary": "本轮没有相关 Project。", "task_decisions": [
         _decision(action="create_task", formal_basis="external_todo", missing_evidence=[])
     ]})
 
 
 def test_required_and_optional_null_contract():
-    model = TaskAgentDecision.model_validate({"project_assessments": [], "task_decisions": [
+    model = TaskAgentDecision.model_validate({"project_assessments": [],
+        "update_summary": "本轮没有相关 Project。", "task_decisions": [
         _decision(owner_evidence=None, date_evidence=None)
     ]})
     assert model.task_decisions[0].owner_evidence == {}
