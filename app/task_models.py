@@ -357,10 +357,10 @@ class TaskAnchorMatchProposal(StrictTaskModel):
 
 
 class TaskProjectLinkProposal(StrictTaskModel):
-    """Current action evidence associating one retained Task with an existing Project."""
+    """Current action explicitly supplements a known Project after resolving source authority."""
 
     anchor_id: int = Field(gt=0, strict=True)
-    source_excerpt: str = Field(description="Exact same-action compound quote containing the stored Project/anchor title and this Task's action excerpt; a complete compound sentence is allowed, not another paragraph or the whole report assembled to supply a name.")
+    source_excerpt: str = Field(description="Exact same-action compound quote containing the stored Project/anchor title and this Task's action excerpt, explicitly supplementing that known Project rather than replacing a different current authoritative Project name; a complete compound sentence is allowed, not another paragraph or the whole report assembled to supply a name.")
     reason: str
 
     @model_validator(mode="after")
@@ -377,12 +377,12 @@ class ProjectCandidateProposal(StrictTaskModel):
 
 
 class ProjectProposal(StrictTaskModel):
-    """A source-backed Project decision attached to one current Task."""
+    """Adopt the current authoritative Project definition and register or reuse its identity."""
 
     title: str
     reason: str
     source_excerpt: str = Field(
-        description="Exact project registration quote, distinct from the Task's action evidence.",
+        description="Exact current authoritative Project definition to register or reuse, distinct from the Task's action evidence; its source-named title takes precedence over a different stored similar or shorter name.",
     )
     authority: Literal[
         "management_weekly_report", "project_weekly_report",

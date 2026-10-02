@@ -749,7 +749,12 @@ Task/cluster 或 Project candidate 中）；同一正式 Project 的多个周报
 正式周报中有明确项目列的“手头项目/项目清单/项目组合”行，必须由相关 Task 的
 `project_proposal.source_excerpt` 独立引用；服务核验实际来源类型与 authority 一致、
 提案标题与原文项目列一致，才建立 cluster 并注册正式 Project，把 cluster 中的
-Task 关联到该 Project；同一项目标题跨周报复用同一 anchor。
+Task 关联到该 Project。`project_proposal` 表示采用当前权威来源明确的正式 Project 定义并
+登记或复用，不仅用于新建。先解析当前登记名称，再选已有对象；当前不同的正式名称不能
+因行动使用简称而被旧相似名称取代。报告和明确会议登记共用来源 Project 登记方法：
+只有唯一活动、已注册且标题精确相同的 Project 才复用实际 anchor，并保留原 registry provenance，
+不受旧 anchor_ref 格式影响；没有匹配对象时沿用标题 hash 身份注册，多个活动同名正式对象
+按身份冲突拒绝当前事务，不猜选 ID。通用 anchor 的 type/ref 身份不变。
 登记摘录仅用于定位原文行，列值从完整原文行解析；部分列摘录不能移动项目列的位置。
 定位先越过摘录的起始空白/换行，实际原文行必须含表格分隔结构；登记区域中的普通段落
 不成为项目，起始换行也不能导致错读前一行。
@@ -802,7 +807,7 @@ attention_proposal（assessment 字段和 evidence 一致，anchor 选择与已�
 现有投影折叠为一张卡并合并这些支持 Task 的成员。related_task_ids 只能填写真实已有 ID，
 不能猜新决定的 ID；不把无关项目 Task 加入卡片，冲突提案仍拒绝。
 已有正式 Project 的新 Task 或未确认关联 Task 可在同一决定提交
-`project_link_proposal={anchor_id,source_excerpt,reason}`，与新项目登记 project_proposal 分开，
+`project_link_proposal={anchor_id,source_excerpt,reason}`，与采用当前权威定义并登记/复用的 project_proposal 分开，
 不能同一决定同时提交两者，Attention 的正 anchor 必须与关联目标一致。
 服务要求目标是活动的已注册正式 Project，关联引用和 Task 行动引用均来自当前原始来源且
 逐字连续、互相包含，关联引用含数据库中 Project/anchor 的实际标题；不以其他段落或

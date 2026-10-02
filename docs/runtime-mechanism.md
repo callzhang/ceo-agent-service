@@ -235,7 +235,7 @@ attention_proposal（assessment 字段和 evidence 一致，anchor 选择与已�
 现有投影折叠为一张卡并合并这些支持 Task 的成员。related_task_ids 只能填写真实已有 ID，
 不能猜新决定的 ID；不把无关项目 Task 加入卡片，冲突提案仍拒绝。
 已有正式 Project 的新 Task 或未确认关联 Task 可在同一决定提交
-`project_link_proposal={anchor_id,source_excerpt,reason}`，与新项目登记 project_proposal 分开，
+`project_link_proposal={anchor_id,source_excerpt,reason}`，与采用当前权威定义并登记/复用的 project_proposal 分开，
 不能同一决定同时提交两者，Attention 的正 anchor 必须与关联目标一致。
 服务要求目标是活动的已注册正式 Project，关联引用和 Task 行动引用均来自当前原始来源且
 逐字连续、互相包含，关联引用含数据库中 Project/anchor 的实际标题；不以其他段落或
@@ -339,7 +339,12 @@ Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_propo
 无效的显式登记提案使当前领域事务回滚，Task 摘录是登记表行也不会隐式注册 Project。
 通过核验后建立 cluster、注册正式 Project，并把 cluster 中的 Task 关联到 Project；
 Task 确认关联规范 anchor 并派生 relevant，candidate stage 不因此提升；
-同一标题复用同一 anchor。普通项目提及、客户/部门标签和孤立 Task 只形成
+`project_proposal` 采用当前权威来源的正式 Project 定义并登记或复用，不仅用于新建；
+先解析当前登记名称，再选择已有对象，不用旧相似名称替代当前不同的正式名称。
+报告和明确会议登记共用来源 Project 登记方法：唯一活动且标题精确相同的正式 Project
+复用实际 anchor、保留原 registry provenance，不受旧 anchor_ref 格式影响；没有匹配对象
+时沿用标题 hash 身份注册，多个活动同名正式对象按身份冲突拒绝当前事务，不猜选 ID。
+通用 anchor 的 type/ref 身份不变。普通项目提及、客户/部门标签和孤立 Task 只形成
 `business_project_candidates`，不会直接注册正式 Project。控制台确认只从 cluster 的已有
 Task evidence 选择来源信号，不凭空制造证据；事务会同时把 cluster 中的 Task 关联到 Project，
 重复确认保持幂等，不能把已确认 candidate 改绑到另一个 Project。

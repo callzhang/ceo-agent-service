@@ -26,6 +26,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-source-project-registration | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: app/task_business_resolution.py (source Project registration only), app/task_agent.py (Project guidance and two registration calls only), app/task_models.py (Project field descriptions only), ci/shared-skills/ceo-work-tracking/SKILL.md (Project guidance only), tests/test_task_source_project_registration.py (new), tests/fixtures/task_attention_project_identity.json (new), docs/architecture.md and docs/runtime-mechanism.md (source Project registration only), docs/superpowers/specs/2026-10-01-task-attention-w39-phase1-design.md (same contract only) | Parent core owner authorizes scoped correction: current authoritative Project identity, unique exact-title official Project reuse with original provenance, shared report/meeting registration; no alias, lifecycle, no-change guard, retry, policy, native eval or production change. | 2026-10-03 |
+
 
 
 

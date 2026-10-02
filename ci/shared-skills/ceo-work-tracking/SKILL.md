@@ -81,7 +81,7 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    Task and risk evidence; a weekly report is neither the sole risk source nor
    a prerequisite for Attention. Register an official Project only from a
    confirmed report's project registration or an explicit meeting registration
-   decision. Prefer confirmed official weekly reports for Project definition and
+   decision. Resolve that current source definition before selecting a stored Project. Prefer confirmed official weekly reports for Project definition and
    registry fields. Quote that basis separately in `ProjectProposal.source_excerpt`;
    the Task action excerpt is not registration evidence. Chat updates Task and
    risk evidence but cannot create a Project or silently overwrite official
@@ -99,8 +99,10 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    Use the same positive anchor in attention_proposal. The service confirms that Task's
    link and derives relevant business_relevance without promoting its stage.
    Do not set business_relevance on a new Task decision. Reuse existing confirmed Task links.
-   Do not re-register an existing Project with project_proposal merely to link a Task,
-   and never combine project_link_proposal with a new registration in one decision.
+   Adopt the exact current authoritative Project definition with project_proposal to register or reuse
+   its official identity. A different stored name cannot replace that definition merely because the action uses its shorter name.
+   Use project_link_proposal when the source explicitly supplements that known Project;
+   do not combine these two Project selections in one decision.
    Uncertain matches remain `anchor_match_proposals`; they are proposed, not confirmed.
    Do not infer aliases or identity from a title prefix or similarity; judge whether
    the source explicitly names this existing Project. Quote/title checks establish

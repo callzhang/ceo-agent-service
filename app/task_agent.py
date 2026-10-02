@@ -629,14 +629,16 @@ The link quote and exact Task action quote must contain one another in the curre
 Use the same positive anchor in attention_proposal. The service confirms that Task's
 link and derives relevant business_relevance without promoting its stage.
 Do not set business_relevance on a new Task decision. Reuse existing confirmed Task links.
-Do not re-register an existing Project with project_proposal merely to link a Task,
-and never combine project_link_proposal with a new registration in one decision.
+Adopt the exact current authoritative Project definition with project_proposal to register or reuse
+its official identity. A different stored name cannot replace that definition merely because the action uses its shorter name.
+Use project_link_proposal when the source explicitly supplements that known Project;
+do not combine these two Project selections in one decision.
 Uncertain matches remain `anchor_match_proposals`; they are proposed, not confirmed.
 Do not infer aliases or identity from a title prefix or similarity; judge whether
 the source explicitly names this existing Project. Quote/title checks establish
 current provenance and a name reference, not independent semantic identity proof.
 An official Project requires confirmed report registration or an explicit meeting
-registration decision. Prefer the confirmed official weekly report for Project
+registration decision. Resolve that current source definition before selecting a stored Project. Prefer the confirmed official weekly report for Project
 definition and registry fields. Chat can update Task/risk evidence but cannot create an
 official Project or silently overwrite official fields. Preserve report references
 and reporting periods. When newer meeting or chat evidence conflicts with official
@@ -1720,31 +1722,14 @@ def apply_task_agent_decision(
                     )
             report_project_id = None
             if report_project_title:
-                import hashlib
-
-                project_key = hashlib.sha256(
-                    " ".join(report_project_title.split()).casefold().encode("utf-8")
-                ).hexdigest()
-                report_anchor_id = resolution.register_anchor(
-                    anchor_type="project",
-                    anchor_ref=f"task-agent-project:{project_key}",
+                project = resolution.register_source_project(
                     title=report_project_title,
+                    registry_source=f"{work_item.source.type.value}:{work_item.source.ref}",
                     _db=db,
                 )
+                report_anchor_id = project.canonical_anchor_id
                 applied_project_anchor_id = report_anchor_id
-                existing_project = db.execute(
-                    "select id from business_projects where canonical_anchor_id=?",
-                    (report_anchor_id,),
-                ).fetchone()
-                report_project_id = (
-                    int(existing_project["id"])
-                    if existing_project is not None
-                    else resolution.register_official_project(
-                        anchor_id=report_anchor_id,
-                        registry_source=f"{work_item.source.type.value}:{work_item.source.ref}",
-                        _db=db,
-                    )
-                )
+                report_project_id = project.id
                 resolution.confirm_anchor_match(
                     task_id=task_id,
                     anchor_id=report_anchor_id,
@@ -1760,27 +1745,13 @@ def apply_task_agent_decision(
                 )
             if item.project_proposal is not None and not report_project_title:
                 proposal = item.project_proposal
-                import hashlib
-
-                project_key = hashlib.sha256(
-                    " ".join(proposal.title.split()).casefold().encode("utf-8")
-                ).hexdigest()
-                anchor_id = resolution.register_anchor(
-                    anchor_type="project",
-                    anchor_ref=f"task-agent-project:{project_key}",
+                project = resolution.register_source_project(
                     title=proposal.title,
+                    registry_source=f"{proposal.authority}:{item.source_ref}",
                     _db=db,
                 )
+                anchor_id = project.canonical_anchor_id
                 applied_project_anchor_id = anchor_id
-                if db.execute(
-                    "select 1 from business_projects where canonical_anchor_id=?",
-                    (anchor_id,),
-                ).fetchone() is None:
-                    resolution.register_official_project(
-                        anchor_id=anchor_id,
-                        registry_source=f"{proposal.authority}:{item.source_ref}",
-                        _db=db,
-                    )
                 resolution.confirm_anchor_match(
                     task_id=task_id,
                     anchor_id=anchor_id,
