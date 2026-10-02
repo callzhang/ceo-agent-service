@@ -437,3 +437,12 @@ backup 创建并完成完整性核验 `ok`：259 Tasks、16 Projects、0 Attenti
 仍为 done，完整来源 ref 与固定目标一致。它没有继承上轮错误投影；尚未原生重跑。
 候选竞争样例已在代码 `70e2cdf6` 上启动；该提交相对复核代码仅增加验证文档，
 code/CI Skill 无变化。运行最终结果仍待读回，不将启动或 shape/local 测试视为业务通过。
+
+竞争样例候选已完成并通过，最终读回代码 revision `abaae124`（运行期间新增的文档
+提交，行为代码/Skill 与复核冻结 `394fac8c` 一致）。相同 fixture、路由顺序、实际
+codex_oauth/gpt-5.6-luna、concurrency=1、900s/300s 时限；一次 normal attempt
+completed，无纠正或模型切换。实际 Task 1 保持 candidate/open 且仅更新，无新 Task；
+两 Project 不新增、不改写，卡 1 关联「示例创智」真实 anchor2、成员 Task1。
+receipt completed、1 proposal/1 applied；风险原句、来源与 source_time 核验通过，
+无重复卡、failures=[]。这是同一新增样例 baseline FAIL / candidate PASS，
+不是最新九样例或真实 W39 已通过。候选证明保存在 `candidate-project-identity.sqlite3`。
