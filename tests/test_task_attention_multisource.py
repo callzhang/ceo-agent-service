@@ -207,6 +207,44 @@ def test_evaluation_requires_source_on_each_target_project_card(tmp_path):
     assert "missing_required_source" in result["failures"]
 
 
+@pytest.mark.parametrize("include_second_proposal", [False, True])
+def test_evaluation_checks_both_same_project_actions_are_attention_members(tmp_path, include_second_proposal):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "project-members.sqlite3")
+    item = report_item()
+    second_quote = "核对示例项目供应商延期付款安排。"
+    source = json.loads(item.summary)
+    source["markdown"] += "\n" + second_quote
+    item = item.model_copy(update={"summary": json.dumps(source, ensure_ascii=False)})
+    payload = decision_payload()
+    second = decision_payload()["task_decisions"][0]
+    second.update(title="核对示例项目供应商延期付款安排", source_excerpt=second_quote)
+    if not include_second_proposal:
+        del second["attention_proposal"]
+    payload["task_decisions"].append(second)
+
+    class Codex:
+        def decide(self, **kwargs):
+            assert "required_project_member_counts" not in kwargs["prompt"]
+            return TaskAgentDecision.model_validate(payload)
+
+    from app.task_agent import TaskAgentRunner
+    input_id = store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
+    result = tool.replay_input(store, tool.scoped_runner(TaskAgentRunner, Codex()), input_id,
+                              source_ref=item.source.ref, expected={
+        "attention_projects": ["示例项目"], "project_titles": ["示例项目"], "task_count": 2,
+        "minimum_evidence_sources": 1, "required_source_refs": [item.source.ref],
+        "required_project_member_counts": {"示例项目": 2},
+    })
+    assert result["run_status"] == "completed", result.get("execution_error")
+    assert result["projection"]["status"] == "completed"
+    assert result["evidence_valid"]
+    assert len(result["tasks"]) == 2
+    assert len(result["cards"][0]["task_ids"]) == (2 if include_second_proposal else 1)
+    assert result["passed"] is include_second_proposal
+    assert ("missing_project_task_member" in result["failures"]) is not include_second_proposal
+
+
 @pytest.mark.parametrize("status,outcome,recompute_error", [
     ("pending", "applied", ""), ("partial", "applied", ""), ("failed", "applied", ""),
     ("no_proposal", "applied", ""), ("completed", "rejected", ""),

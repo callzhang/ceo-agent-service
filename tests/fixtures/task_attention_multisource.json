@@ -377,6 +377,9 @@
         "task_count": 2,
         "minimum_evidence_sources": 1,
         "reuse_attention": false,
+        "required_project_member_counts": {
+          "示例交付项目": 2
+        },
         "required_source_refs": [
           "eval:same-project-two-actions"
         ]

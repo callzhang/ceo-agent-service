@@ -186,6 +186,9 @@ def readback(store, *, input_id, before, expected=None):
         if any(not required_sources.issubset({quote["source_ref"] for quote in card["assessment"].get("evidence", [])})
                for card in cards if card["project_title"] in wanted):
             failures.append("missing_required_source")
+        required_members = expected.get("required_project_member_counts", {})
+        if any(len(card["task_ids"]) < required_members.get(card["project_title"], 0) for card in cards):
+            failures.append("missing_project_task_member")
         initial_ids = {card["id"] for card in before["attention"]}
         if expected.get("reuse_attention") and {card["id"] for card in active} != initial_ids:
             failures.append("attention_identity_changed")
