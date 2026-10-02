@@ -113,8 +113,8 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    a real positive persisted Signal ID, matching reference, and exact quote.
    Attention cannot use cited-only session/Memory provenance as observed truth.
    Use a real existing anchor, or null only with this same decision's new
-   Project proposal. Return one unique Project assessment/card per round.
-   For multiple newly created supporting Tasks, repeat the identical `attention_proposal`
+   Project proposal. Return at most one unique assessment/card per Project per round.
+   For multiple newly created Tasks supporting the same Project and risk, repeat the identical `attention_proposal`
    on each supporting TaskDecision. The service folds those identical proposals into
    one card and combines their Task membership. Keep the assessment fields and evidence
    identical across those decisions; anchor resolution and existing related IDs may differ.

@@ -674,8 +674,8 @@ For current evidence use null signal_id and the current source_ref; historical e
 requires a real positive persisted signal_id, matching source_ref, and an exact quote.
 Session/memory cited-only provenance cannot support Attention; use stored observed
 original Signals. Labels, relevance, routine progress, and date proximity alone
-do not explain material impact. Return one unique Project assessment/card per round.
-For multiple newly created supporting Tasks, repeat the identical `attention_proposal`
+do not explain material impact. Return at most one unique assessment/card per Project per round.
+For multiple newly created Tasks supporting the same Project and risk, repeat the identical `attention_proposal`
 on each supporting TaskDecision. The service folds those identical proposals into
 one card and combines their Task membership. Keep the assessment fields and evidence
 identical across those decisions; anchor resolution and existing related IDs may differ.

@@ -26,6 +26,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-attention-per-project-limit-prompt | Delegated isolated slices: app/task_agent.py (prompt text only), ci/shared-skills/ceo-work-tracking/SKILL.md, tests/test_task_agent.py (scope assertions) | Restore explicit per-Project assessment limit after independent review; no core/oracle/global Skill edits. | 2026-10-02 |
+
 
 | codex-attention-multisource-browser-fixture | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: frontend/dev-mock/tasksMock.ts (synthetic Attention evidence fixtures only) | Reuse existing isolated Tasks mock preview to verify two-source detail, watch/decision labels, light/dark and narrow readability; synthetic UI evidence is not business or production verification. | 2026-10-02 |
 

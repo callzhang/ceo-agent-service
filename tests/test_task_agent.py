@@ -641,7 +641,7 @@ def test_task_agent_prompt_uses_all_source_risk_evidence_with_official_project_a
     assert "weekly report is neither the sole risk source nor a prerequisite" in prompt
     assert "cannot create an official Project or silently overwrite official fields" in prompt
     assert "preserve both cited sources and their times" in prompt
-    assert "one unique Project assessment/card per round" in prompt
+    assert "at most one unique assessment/card per Project per round" in prompt
     assert "current_state" in prompt and "无需你处理" in prompt
     assert "historical evidence requires a real positive persisted signal_id" in prompt
     assert "emit `project_proposal`" in prompt
@@ -684,8 +684,9 @@ def test_task_agent_repeats_identical_assessment_for_new_supporting_task_members
     text = (build_task_agent_prompt(_work_item(), "候选上下文为空。") if surface == "prompt"
         else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8"))
     text = " ".join(text.split())
-    assert "Return one unique Project assessment/card per round" in text
-    assert "For multiple newly created supporting Tasks, repeat the identical `attention_proposal` on each supporting TaskDecision" in text
+    assert "Return at most one unique assessment/card per Project per round" in text
+    assert "For multiple newly created Tasks supporting the same Project and risk, repeat the identical `attention_proposal` on each supporting TaskDecision" in text
+    assert "Return one unique Project assessment/card per round" not in text
     assert "The service folds those identical proposals into one card and combines their Task membership" in text
     assert "Use `related_task_ids` only for real existing Task IDs; never invent IDs for new decisions" in text
     assert "Keep unrelated Project Tasks outside this assessment; conflicting proposal payloads are rejected" in text
