@@ -1,13 +1,13 @@
 # 多来源项目关注第一版验收
 
-状态：开发分支实现及确定性测试已验证；baseline 9 个原生样本已完成，4 个负例通过、5 个正例失败。候选 W39 两卡、同项目两行动成员及后续专用关联修订的原生样本已通过主 Agent 复核。当前聊天综合样本仍遗漏已实际交付的原始历史报告引用，新增选择性比较归因文字的原生效果待 fresh rerun；不将此前修订的通过当作本次通过。W39 生产数据库副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
+状态：开发分支实现及确定性测试已验证；baseline 9 个原生样本已完成，4 个负例通过、5 个正例失败。候选 W39 两卡、同项目两行动成员及后续专用关联修订的原生样本已通过主 Agent 复核。`dd073b25` 的两次 fresh 原生聊天重跑仍未通过：综合样本缺历史引用，并重复拆出未关联项目的新 Task；冲突样本已成功更新卡片，但仍缺历史原文。正在修正输出契约，不将此前修订的通过当作本次通过。W39 生产数据库副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
 
 ## 四个独立门槛
 
 | 门槛 | 当前证据 | 仍需完成 |
 | --- | --- | --- |
 | 代码测试 | Tasks 1–6 已独立复核。Task 6 的 `128ea5b4` / `f92d0a92`：7 项 API、22 项页面测试与构建通过；主 Agent 检查模拟列表及 decision/watch 详情，桌面及 390×844 窄屏亮/暗色可读。Task 7 的固定输入、精确回放、旧 run 保留、幂等卡片/事件、落库依据与 expected 隔离回归先 RED 后 GREEN。 | 合并前重跑本次有关文件；模拟页面及 fake runner 不证明真实业务效果。 |
-| 语义评估 | 固定 version 1 的 9 个 case；expected 与输入分开。baseline `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0` 的 9 样本完成，4 负例通过、5 正例失败。原候选 `4f0e06e5` W39 零卡；后续 `1ed0f3f2` W39 3 Tasks/2 卡、同项目两行动 2 Tasks/1 卡且两成员均通过。后续专用关联修订的实际原生样本已通过；聊天综合样本投影有效，但缺少实际交付的历史报告引用。 | 保持同 `codex_oauth`/`gpt-5.6-luna`、timeout、初始事实、concurrency=1，对本次比较归因文字 fresh copy 重跑并完成候选全 9 样本比较；不能用此前修订的部分通过替代最新版本验证。 |
+| 语义评估 | 固定 version 1 的 9 个 case；expected 与输入分开。baseline `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0` 的 9 样本完成，4 负例通过、5 正例失败。原候选 `4f0e06e5` W39 零卡；后续 `1ed0f3f2` W39 3 Tasks/2 卡、同项目两行动 2 Tasks/1 卡且两成员均通过。`0e4acad6` 专用关联会议样本通过。最新 `dd073b25` 两聊天样本均失败，详细原因见末尾记录。 | 保持同 `codex_oauth`/`gpt-5.6-luna`、timeout、初始事实、concurrency=1，修正后 fresh copy 重跑并完成候选全 9 样本比较；不能用此前修订的部分通过替代最新版本验证。 |
 | W39 数据库副本 | 主 Agent 用 SQLite backup 创建唯一完整性验证副本，`integrity_check=ok`，3,223,863,296 bytes；259 Tasks、16 Projects、0 Attention。精确输入 27465 已核对 source_ref，状态 done、attempts=1。原有 W39 Tasks 129–134；中汽 anchor 23 不代表中汽创智别名。 | 从这份不可变初态另建候选副本，回放两次；比较真实 Task/Project/card IDs、关联、依据及事件。不得为落卡编造字段变化、强行合并简称或忽略额外 Task。副本尚未回放。 |
 | 上线 | 全局权威 Skill 仍为 version 2，SHA256 `5c2bcbee182ed0872a55f35193c8815a51dd3e0ba0ca92b8e1eaa55e20cc1992`；候选使用隔离 `ci/shared-skills` version 3。 | PR + 固定 eval 对比通过后按既有部署流程发布、读回运行健康及队列、发布权威 Skill、单输入生产回放及真实页面核对。尚未上线。 |
 
@@ -182,4 +182,27 @@ prompt 和隔离 CI Skill 同步明确：比较、延续、升级或冲突判断
 原历史不可用则比较标明不确定，不编造引文或使用 session/memory 作为原始证明。
 通用 prompt/Skill 断言及 fresh Skill 交付断言先 RED（3 项缺少此规则）后 GREEN；
 Task Agent、混合来源投影、检索和 session 的聚焦回归共 268 项通过，ruff 及 diff 检查通过。
-文字修订的真实模型效果仍待主 Agent 用同固定输入/model 的 fresh copy 原生重跑。
+上述文字修订后的真实模型效果未通过，详见以下 fresh rerun；原确定性测试结果不证明引用行为已修复。
+
+## 比较归因文字修订后的原生复测失败
+
+候选 revision `dd073b2578ebfdeec2f7678b7e93fef34e745e5d`、CI Skill SHA256
+`4ab5fb97f86004d160b61817f7e449d0ffc0936dcf203ea431f8cfe38bc9c1b4`，
+实际路由/model 均为 `codex_oauth` / `gpt-5.6-luna`，concurrency=1；两次独立 fresh
+固定样本复测的 runner 均正常 completed，没有切换模型或放宽 expected。
+
+| case | 实际落库和回执 | 失败原因 |
+| --- | --- | --- |
+| chat-with-report-context | 2 Tasks；Task 1 更新已纳入补充内容，Task 2 又记录相同新增内容且 unknown/未确认 Project link；两项相同 Attention 提案因支持成员不合格全部 rejected，旧卡未更新。 | projection_not_successful、unverifiable_attention_evidence、task_count_mismatch、missing_evidence_source、missing_required_source |
+| newer-conflicting-chat | 1 Task、1 卡更新，projection completed/applied_count=1；当前原文引用有效，登记字段未改写。state/inference 描述与上期正式周报冲突，evidence 却只有当前聊天。 | missing_evidence_source、missing_required_source |
+
+对应副本为上述评估目录下的 `candidate-citations-chat-with-report-context.sqlite3` 与
+`candidate-citations-newer-conflicting-chat.sqlite3`。原始历史 Signal 1 已交付给 Agent；
+当前 schema 允许 optional link=None 与单当前证据，因此输出形状有效，既有纠正机会未触发。
+下一修订针对输出契约及任务交付边界，不新增 Agent、队列、关键词判定或自动补链。
+
+独立业务复核确认：聊天行动的“增加供应商停交风险及延期付款协商结果”是既有复核内容的
+补充，且本轮 Task 1 已包含该内容，第二项造成重复覆盖；保留精确 Task 数量 1，不放宽。
+供应商本周不能付款将停交的当前事实可以独立支持 watch，并不要求历史周报才能形成风险。
+但原始历史的延续/升级/冲突比较需要比较两侧的实际引用，本固定样本专门验证此能力，
+保留双来源要求；不能把“当前风险有效”等同于“多来源综合归因已通过”。
