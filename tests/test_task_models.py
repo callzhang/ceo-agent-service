@@ -25,6 +25,44 @@ def test_work_item_does_not_require_project_name():
     assert "project_name" not in item.model_dump()
 
 
+def test_existing_project_link_proposal_has_distinct_current_source_contract():
+    link = {"anchor_id": 3, "source_excerpt": "复核示例项目验收计划。", "reason": "行动明确属于已有项目"}
+    decision = TaskAgentDecision.model_validate({"task_decisions": [_decision(project_link_proposal=link)]})
+    assert decision.task_decisions[0].project_link_proposal.model_dump() == link
+    assert decision.task_decisions[0].project_proposal is None
+
+
+@pytest.mark.parametrize("change", [
+    {"anchor_id": 0}, {"anchor_id": True}, {"source_excerpt": " "}, {"reason": " "},
+])
+def test_existing_project_link_proposal_requires_valid_identity_and_quote(change):
+    link = {"anchor_id": 3, "source_excerpt": "复核示例项目验收计划。", "reason": "当前行动明确项目关联", **change}
+    with pytest.raises(ValidationError):
+        TaskAgentDecision.model_validate({"task_decisions": [_decision(project_link_proposal=link)]})
+
+
+@pytest.mark.parametrize("change,reason", [
+    ({"project_proposal": {"title": "示例项目", "reason": "立项", "source_excerpt": "启动示例项目", "authority": "meeting_decision"}}, "registration and existing Project link"),
+    ({"evidence_origin": "memory", "source_description": "历史来源"}, "current Work Item evidence"),
+    ({"evidence_origin": "session", "source_description": "历史来源"}, "current Work Item evidence"),
+])
+def test_existing_project_link_cannot_mix_registration_or_cited_only_provenance(change, reason):
+    with pytest.raises(ValidationError, match=reason):
+        TaskAgentDecision.model_validate({"task_decisions": [_decision(
+            project_link_proposal={"anchor_id": 3, "source_excerpt": "复核示例项目验收计划。", "reason": "明确关联"}, **change,
+        )]})
+
+
+def test_existing_project_link_and_attention_must_reference_same_anchor():
+    with pytest.raises(ValidationError, match="Attention anchor must match"):
+        TaskAgentDecision.model_validate({"task_decisions": [_decision(
+            project_link_proposal={"anchor_id": 3, "source_excerpt": "复核示例项目验收计划。", "reason": "明确关联"},
+            attention_proposal={"anchor_id": 4, "category": "watch", "title": "风险", "why_attention": "有经营影响",
+                "current_state": "验收延期", "ceo_action": "观察验收", "material_trigger": "risk_escalation",
+                "evidence": [{"source_ref": "message:42", "source_excerpt": "验收延期"}]},
+        )]})
+
+
 def test_vague_source_is_candidate_with_missing_evidence():
     decision = TaskAgentDecision.model_validate({"task_decisions": [_decision()]})
     assert decision.task_decisions[0].action == "record_candidate"

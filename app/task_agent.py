@@ -612,6 +612,21 @@ cannot set commitment status.
 Only identical deliverables may be proposed for identity merge; related tasks
 remain linked or clustered. Reports, meetings, and chats all supply Task and risk evidence;
 a weekly report is neither the sole risk source nor a prerequisite for Attention.
+Attention.anchor_id selects the Project assessment; it does not confirm a Task's Project link.
+For a new or unconfirmed Task explicitly belonging to an existing official Project,
+emit `project_link_proposal` with that known positive `anchor_id`, a nonempty exact
+current action `source_excerpt` naming the stored Project/anchor title, and a
+source-grounded `reason`. The link quote and this decision's exact Task action quote
+must contain one another in the current source; an unrelated paragraph is not action proof.
+Use the same positive anchor in attention_proposal. The service confirms that Task's
+link and derives relevant business_relevance without promoting its stage.
+Do not set business_relevance on a new Task decision. Reuse existing confirmed Task links.
+Do not re-register an existing Project with project_proposal merely to link a Task,
+and never combine project_link_proposal with a new registration in one decision.
+Uncertain matches remain `anchor_match_proposals`; they are proposed, not confirmed.
+Do not infer aliases or identity from a title prefix or similarity; judge whether
+the source explicitly names this existing Project. Quote/title checks establish
+current provenance and a name reference, not independent semantic identity proof.
 An official Project requires confirmed report registration or an explicit meeting
 registration decision. Prefer the confirmed official weekly report for Project
 definition and registry fields. Chat can update Task/risk evidence but cannot create an
@@ -1086,6 +1101,11 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
             ),
             "date_effects": date_effects,
         }
+        if item.project_link_proposal is not None:
+            semantic_identity["project_link"] = {
+                "anchor_id": item.project_link_proposal.anchor_id,
+                "source_excerpt": item.project_link_proposal.source_excerpt,
+            }
     stable_item = hashlib.sha256(json.dumps(
         semantic_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")).hexdigest()
@@ -1748,6 +1768,33 @@ def apply_task_agent_decision(
                     relevance=BusinessRelevance.RELEVANT,
                     _db=db,
                 )
+            if item.project_link_proposal is not None:
+                link = item.project_link_proposal
+                project = db.execute(
+                    """select p.title as project_title, a.title as anchor_title
+                       from business_projects p join business_anchors a
+                         on a.id=p.canonical_anchor_id
+                       where p.canonical_anchor_id=? and a.anchor_type='project' and a.active=1""",
+                    (link.anchor_id,),
+                ).fetchone()
+                if project is None:
+                    raise ValueError("existing Project link requires an active registered official Project")
+                if (
+                    item.evidence_origin != "current"
+                    or item.source_ref != work_item.source.ref
+                    or not source_contains_quote(work_item.summary, link.source_excerpt)
+                    or not source_contains_quote(work_item.summary, item.source_excerpt)
+                    or not (item.source_excerpt in link.source_excerpt or link.source_excerpt in item.source_excerpt)
+                    or not any(title in link.source_excerpt for title in (
+                        project["project_title"], project["anchor_title"],
+                    ))
+                ):
+                    raise ValueError("existing Project link must cite the current exact Task action naming its Project")
+                resolution.confirm_anchor_match(
+                    task_id=task_id, anchor_id=link.anchor_id, evidence_signal_id=result.signal_id,
+                    reason=link.reason, relevance=BusinessRelevance.RELEVANT, _db=db,
+                )
+                applied_project_anchor_id = link.anchor_id
             if applied_project_anchor_id is not None:
                 project_links.add((task_id, applied_project_anchor_id))
             project_candidate = item.project_candidate_proposal

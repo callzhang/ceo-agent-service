@@ -665,6 +665,42 @@ def test_task_agent_prompt_requires_report_owner_rows_and_project_proposals():
 
 
 @pytest.mark.parametrize("surface", ["prompt", "skill"])
+def test_task_agent_existing_project_link_contract_is_distinct_from_registration(monkeypatch, surface):
+    import app.task_agent as task_agent
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    text = (build_task_agent_prompt(_work_item(), "候选上下文为空。") if surface == "prompt"
+        else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8"))
+    text = " ".join(text.split())
+    assert "Attention.anchor_id selects the Project assessment; it does not confirm a Task's Project link" in text
+    assert "emit `project_link_proposal`" in text
+    assert "derives relevant business_relevance without promoting its stage" in text
+    assert "Do not set business_relevance on a new Task decision" in text
+    assert "Reuse existing confirmed Task links" in text
+    assert "Uncertain matches remain `anchor_match_proposals`" in text
+    assert "Do not infer aliases or identity from a title prefix or similarity" in text
+
+
+@pytest.mark.parametrize("action", ["record_candidate", "update_task"])
+@pytest.mark.parametrize("change", [{"anchor_id": 2}, {"source_excerpt": "复核示例项目付款计划。"}])
+def test_project_link_effect_identity_does_not_change_creation_task_identity(action, change):
+    from app.task_agent import _task_source_signal
+
+    item = _work_item()
+    base = {"action": action, "transition": "update_fields" if action == "update_task" else "none",
+        "task_id": 1 if action == "update_task" else None, "source_ref": item.source.ref,
+        "source_excerpt": "复核示例项目验收及付款计划。", "title": "复核验收付款计划", "description": "当前来源补充。",
+        "project_link_proposal": {"anchor_id": 1, "source_excerpt": "复核示例项目验收及付款计划。", "reason": "关联解释"}}
+    def signal(payload):
+        decision = TaskAgentDecision.model_validate({"task_decisions": [payload]}).task_decisions[0]
+        return _task_source_signal(item, decision).dedupe_key
+    changed = {**base, "project_link_proposal": {**base["project_link_proposal"], **change}}
+    assert (signal(base) != signal(changed)) is (action == "update_task")
+    reason_only = {**base, "project_link_proposal": {**base["project_link_proposal"], "reason": "同一关联的不同解释"}}
+    assert signal(base) == signal(reason_only)
+
+
+@pytest.mark.parametrize("surface", ["prompt", "skill"])
 def test_task_agent_registry_scope_does_not_originate_umbrella_tasks(monkeypatch, surface):
     import app.task_agent as task_agent
 
@@ -739,6 +775,7 @@ def test_fresh_task_agent_loads_initial_risk_rules_from_selected_skill_root(monk
     assert "Relevance, labels, acceptance, routine progress, and date proximity alone do not establish material impact" in skill_text
     assert "Project registration scope, objectives, and categories are not separate Tasks" in skill_text
     assert "repeat the identical `attention_proposal` on each supporting TaskDecision" in skill_text
+    assert "Attention.anchor_id selects the Project assessment" in skill_text
 
 
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(monkeypatch):

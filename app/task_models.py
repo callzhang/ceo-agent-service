@@ -351,6 +351,20 @@ class TaskAnchorMatchProposal(StrictTaskModel):
     reason: str
 
 
+class TaskProjectLinkProposal(StrictTaskModel):
+    """Current action evidence associating one retained Task with an existing Project."""
+
+    anchor_id: int = Field(gt=0, strict=True)
+    source_excerpt: str
+    reason: str
+
+    @model_validator(mode="after")
+    def nonblank(self) -> "TaskProjectLinkProposal":
+        if not self.source_excerpt.strip() or not self.reason.strip():
+            raise ValueError("existing Project link requires a nonblank action quote and reason")
+        return self
+
+
 class ProjectCandidateProposal(StrictTaskModel):
     cluster_id: int = Field(gt=0)
     title: str
@@ -472,6 +486,7 @@ class TaskDecision(StrictTaskModel):
     anchor_match_proposals: list[TaskAnchorMatchProposal] = Field(default_factory=list)
     project_candidate_proposal: ProjectCandidateProposal | None = None
     project_proposal: ProjectProposal | None = None
+    project_link_proposal: TaskProjectLinkProposal | None = None
     attention_proposal: TaskAttentionProposal | None = None
     update_summary: str = ""
     memory_recall_used: bool = False
@@ -525,6 +540,14 @@ class TaskDecision(StrictTaskModel):
             raise ValueError("formal Project proposals require the current Work Item evidence")
         if self.project_proposal is not None and self.project_candidate_proposal is not None:
             raise ValueError("a decision cannot contain both a formal Project and a Project candidate proposal")
+        if self.project_link_proposal is not None:
+            if self.evidence_origin != "current":
+                raise ValueError("existing Project links require the current Work Item evidence")
+            if self.project_proposal is not None:
+                raise ValueError("a decision cannot mix Project registration and existing Project link")
+            if (self.attention_proposal is not None
+                and self.attention_proposal.anchor_id != self.project_link_proposal.anchor_id):
+                raise ValueError("Attention anchor must match the existing Project link target")
         if (
             self.attention_proposal is not None
             and self.attention_proposal.anchor_id is None

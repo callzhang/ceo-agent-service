@@ -89,6 +89,21 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    or chat evidence conflicts with official fields, preserve both cited sources
    and their times and mark the conflict pending verification. Similarity,
    labels, clusters, and candidates are not Project authority.
+   Attention.anchor_id selects the Project assessment; it does not confirm a Task's Project link.
+   For a new or unconfirmed Task explicitly belonging to an existing official Project,
+   emit `project_link_proposal` with that known positive `anchor_id`, a nonempty exact
+   current action `source_excerpt` naming the stored Project/anchor title, and a
+   source-grounded `reason`. The link quote and this decision's exact Task action quote
+   must contain one another in the current source; an unrelated paragraph is not action proof.
+   Use the same positive anchor in attention_proposal. The service confirms that Task's
+   link and derives relevant business_relevance without promoting its stage.
+   Do not set business_relevance on a new Task decision. Reuse existing confirmed Task links.
+   Do not re-register an existing Project with project_proposal merely to link a Task,
+   and never combine project_link_proposal with a new registration in one decision.
+   Uncertain matches remain `anchor_match_proposals`; they are proposed, not confirmed.
+   Do not infer aliases or identity from a title prefix or similarity; judge whether
+   the source explicitly names this existing Project. Quote/title checks establish
+   current provenance and a name reference, not independent semantic identity proof.
 8. Merge only identical deliverables supported by explicit identity evidence.
    Distinct deliverables with a shared goal may be clustered or linked; they
    retain independent owners, dates, and completion. When identity is uncertain,

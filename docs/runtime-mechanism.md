@@ -233,6 +233,20 @@ watch 可写当前无需你处理并给可观察结果，关注不等于需介�
 attention_proposal（assessment 字段和 evidence 一致，anchor 选择与已有 related IDs 可不同），
 现有投影折叠为一张卡并合并这些支持 Task 的成员。related_task_ids 只能填写真实已有 ID，
 不能猜新决定的 ID；不把无关项目 Task 加入卡片，冲突提案仍拒绝。
+已有正式 Project 的新 Task 或未确认关联 Task 可在同一决定提交
+`project_link_proposal={anchor_id,source_excerpt,reason}`，与新项目登记 project_proposal 分开，
+不能同一决定同时提交两者，Attention 的正 anchor 必须与关联目标一致。
+服务要求目标是活动的已注册正式 Project，关联引用和 Task 行动引用均来自当前原始来源且
+逐字连续、互相包含，关联引用含数据库中 Project/anchor 的实际标题；不以其他段落或
+cited-only session/memory 代替行动关联证据。名字引用和原文核对是最小来源证明，
+不独立证明完整语义身份；Agent 不得仅靠标题前缀、相似度或猜别名建立明确关联。
+通过后仅对该实际应用 Task 调用既有 confirm_anchor_match，确认关联并派生 relevant，
+不注册/改写 Project，不改变 candidate/formal stage，不要求补造负责人或承诺。
+TaskProjectLinkProposal 应用所得 anchor 计入本轮 project_link_count；已有 confirmed 关联可复用，
+普通 anchor_match_proposals 仍仅 proposed。原无实际字段变化的 update guard 保留在确认前，
+不增 evidence-only update；新 Task 的 business_relevance 由关联确认派生，不在创建决定直接设置。
+update 来源身份包含实际 Project link 的目标和引用，不把 reason 措辞纳入效果；
+创建 Task 身份仍沿用行动/标题/负责人，不因关联说明改写而重复创建。
 
 开发中的多来源 Project Attention 已实现输出、Project 绑定、消费契约、prompt 接线及控制台只读展示，尚未部署，原生浏览器、语义样本验收、全局 Skill 发布及部署仍待后续任务：正式
 `project_proposal` 必须带独立、非空的 `source_excerpt`，引用项目登记依据，与 Task 的

@@ -1,13 +1,13 @@
 # 多来源项目关注第一版验收
 
-状态：开发分支实现及确定性测试已验证；首个真实模型比较暴露候选失败，首次资格修订后 W39 两卡及依据已验证；同项目多个新行动的成员仍失败，后续文字修订待 fresh rerun。W39 副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
+状态：开发分支实现及确定性测试已验证；baseline 9 个原生样本已完成，4 个负例通过、5 个正例失败。候选 W39 两卡及同项目两行动成员已验证，会议新 Task 暴露已有 Project 关联确认缺口；新增专用关联契约的原生效果待 fresh rerun。W39 生产数据库副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
 
 ## 四个独立门槛
 
 | 门槛 | 当前证据 | 仍需完成 |
 | --- | --- | --- |
 | 代码测试 | Tasks 1–6 已独立复核。Task 6 的 `128ea5b4` / `f92d0a92`：7 项 API、22 项页面测试与构建通过；主 Agent 检查模拟列表及 decision/watch 详情，桌面及 390×844 窄屏亮/暗色可读。Task 7 的固定输入、精确回放、旧 run 保留、幂等卡片/事件、落库依据与 expected 隔离回归先 RED 后 GREEN。 | 合并前重跑本次有关文件；模拟页面及 fake runner 不证明真实业务效果。 |
-| 语义评估 | 固定 `tests/fixtures/task_attention_multisource.json` version 1，9 个 case；work_item、existing_context、expected 分开。baseline 固定实际生产代码 `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0`；候选包含该 baseline。baseline 56 项模型/检索测试通过。首个 `w39-project-risk` 实际比较：baseline 4 Tasks/2 Projects/0 Attention，候选 `4f0e06e5` 3 Tasks/2 Projects/0 Attention，候选未达到两项目卡预期。 | baseline/candidate 各实际运行同一 9 个 case；同路由、模型、timeout、初始事实、concurrency=1；记录 readback、失败及 revision。首次风险资格文字已修订，需相同输入和模型 fresh copy 重跑；其余样本比较尚未完成。 |
+| 语义评估 | 固定 version 1 的 9 个 case；expected 与输入分开。baseline `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0` 的 9 样本完成，4 负例通过、5 正例失败。原候选 `4f0e06e5` W39 零卡；后续 `1ed0f3f2` W39 3 Tasks/2 卡、同项目两行动 2 Tasks/1 卡且两成员均通过。会议新风险实际出现新 Task 未确认 Project 关联，投影失败。 | 同 `codex_oauth`/`gpt-5.6-luna`、timeout、初始事实、concurrency=1，针对新增关联契约 fresh copy 重跑，并完成候选全 9 样本比较；不能用后续修订前的部分通过替代最新版本验证。 |
 | W39 数据库副本 | 主 Agent 用 SQLite backup 创建唯一完整性验证副本，`integrity_check=ok`，3,223,863,296 bytes；259 Tasks、16 Projects、0 Attention。精确输入 27465 已核对 source_ref，状态 done、attempts=1。原有 W39 Tasks 129–134；中汽 anchor 23 不代表中汽创智别名。 | 从这份不可变初态另建候选副本，回放两次；比较真实 Task/Project/card IDs、关联、依据及事件。不得为落卡编造字段变化、强行合并简称或忽略额外 Task。副本尚未回放。 |
 | 上线 | 全局权威 Skill 仍为 version 2，SHA256 `5c2bcbee182ed0872a55f35193c8815a51dd3e0ba0ca92b8e1eaa55e20cc1992`；候选使用隔离 `ci/shared-skills` version 3。 | PR + 固定 eval 对比通过后按既有部署流程发布、读回运行健康及队列、发布权威 Skill、单输入生产回放及真实页面核对。尚未上线。 |
 
@@ -85,7 +85,7 @@ run 1 的顶层 update_summary 明说项目带报告注册提案，但任务缺�
 
 两个新回归先因缺少资格文字失败，再验证 prompt 与 fresh module 通过 CEO_SKILLS_ROOT
 实际选择并完整加载的 Skill 内容；相关 task_agent/retrieval/session 142 项通过。
-这只证明文字契约和实际加载路径，修订后原生模型效果、全部 9 样本及生产副本回放仍待验证。
+此轮回归只证明文字契约和实际加载路径；后续 W39 固定样本两卡已验证，最新关联修订的全 9 样本及生产副本回放仍待验证。
 
 ## 同项目两个新行动的原生成员失败与限定修订
 
@@ -111,7 +111,7 @@ related_task_ids 继续仅接受真实已有 ID，无关项目 Task 不加入，
 两个通用回归分别验证 prompt/Skill 的登记范围与新 Task 成员表述，共四个参数化用例
 先 RED 后 GREEN；fresh Skill 加载回归也验证新增文字实际进入 runner。
 相关 task_agent/retrieval/session 146 项通过。此处只证明规则契约与加载，
-修订后固定样本的原生卡片成员、额外 Task 是否消除及其他样本效果仍待 fresh rerun。
+后续 fresh case 9 已验证两真实 Task 同一卡两成员；最新关联修订及其他样本效果仍待验证。
 
 固定计数另经原生结果后的来源/独立交付契约复核，由主 Agent 单独修订评估 oracle：
 W39 显式允许 [3,4,5]，meeting-new-risk 允许 [1,2]，其他样本保持原精确计数，
@@ -120,4 +120,42 @@ W39 显式允许 [3,4,5]，meeting-new-risk 允许 [1,2]，其他样本保持原
 与 Task 4 有范围重叠，保留人工身份复核注意点，不据计数放行把重复身份说成已排除。
 两侧 baseline/candidate 以同一修订后 oracle 重新评估，expected 仍仅用于运行后比较，
 不进入 Agent 输入、routing 或规则。首次资格修订后的 W39 已实际生成两张卡且依据有效；
-同项目多新行动的实际成员门槛未放宽，上述 case 9 成员失败仍须修订后原生验证。
+同项目多新行动的实际成员门槛未放宽，后续 case 9 fresh rerun 已通过该门槛。
+
+## 已有 Project 下新会议/聊天 Task 的关联缺口与契约修订
+
+后续原生结果由主 Agent 保存并复核：`1ed0f3f2` 的隔离 Skill hash 以 `3ec776` 开头，
+同路由/model 的 candidate-final-w39-project-risk 为 3 Tasks/2 卡；
+candidate-same-project-two-actions-rerun1 为 2 Tasks/1 卡且两实际成员。baseline 9 样本
+已完成，4 负例通过、5 正例失败。它们是该修订前的模型证据，不证明本节新增契约效果。
+
+新的失败来自 `candidate-final-meeting-new-risk.sqlite3` run 1，已独立只读核对。
+该 run completed，两个 Task、两个相同 Attention 提案，projection_json 为 failed，
+project_link_count=0，两项 rejected 原因均为支持 Task 必须 relevant、open/waiting
+并确认到同一活动 Project。既有 Task 1 已 relevant/open 且 confirmed anchor 1；
+新 Task 2 是 unknown/open、无 Project link。两决定的 anchor_match_proposals 都为空，
+Attention.anchor_id=1 只选择卡片目标，并未确认 Task 关联。
+
+代码检查证明仅改 prompt 不足：原 TaskAnchorMatchProposal 只有 anchor_id/reason，
+应用只产生 proposed；新 Task 决定也不能直接设置 business_relevance，因为该字段须
+update_fields。普通会议/聊天当前来源不能为关联而伪造项目立项提案。
+
+因此在原已批准的已有项目关联目标内新增 TaskProjectLinkProposal：严格正整数 anchor_id、
+非空 source_excerpt/reason，TaskDecision.project_link_proposal 可选；与登记 proposal
+互斥，存在 Attention 时其 anchor 须与链接一致。领域应用要求当前来源引用/原始证据，
+目标为活动已注册正式 Project；逐字引用与 Task 的行动引用互相包含并包含存储的
+Project/anchor 标题。引用/标题检查是最小来源和名字引用证明，完整身份语义仍由 Agent
+判断，不推断简称别名或凭前缀自动匹配。通过后调用既有 confirm_anchor_match，只确认
+实际应用 Task 的关联并派生 relevant，计入 project_link_count；不注册或改写 Project，
+不升级 Task stage，不补造负责人/日期/承诺。旧 uncertain anchor proposal 仍 proposed。
+原无字段实际变化的 update guard 在关联/投影前保留；不能以新增链接绕过该 guard。
+update 信号效果身份包含实际关联目标/引用，不包括 reason；创建身份不因关联说明而改变。
+
+新增模型、prompt/Skill、update 信号身份回归先 RED 后 GREEN；full process_work_item
+会议及聊天均使同一已有卡包含原 Task 与新 Task、当前原文引用、新 Task relevant/confirmed，
+且不新建 Project 或升级候选。缺失/非正式/非活动目标、其他 Project、不在当前源的引文、
+其他段落而非本行动的引文、来源引用不符均原子回滚；session/memory、同时登记/链接和
+Attention 目标不符被模型拒绝。未确认既有 Task 的真实字段更新可确认，restating 更新仍
+跳过且保持 rejected 回执，旧 uncertain 匹配不确认。相关 305 项通过，ruff 及服务 imports
+通过。此处是确定性契约验证；新增契约后的原生会议/聊天、全部候选 9 样本、W39
+生产副本两次回放及上线仍待主 Agent 的独立复核、fresh 原生比较和发布验收。
