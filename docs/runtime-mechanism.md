@@ -230,6 +230,9 @@ Attention 应用结果使用冻结的 `AppliedTaskAttention(decision, task_id, s
 每个当前/显式 related Task 都须满足上述资格；related_task_ids 指定风险支持 Task，不能自动扩展为
 整个项目任务集合。现有卡的仍合格成员与本轮支持成员合并，保留开放兄弟 Task。
 同轮同项目提案的内容（含 evidence，排除已解析的 anchor 选择器和 related IDs）完全一致时折叠，
+assessment 合并每项已经核验的全部来源信号及引文；完整相同证据条目精确去重，首项代表的
+primary signal 优先，其余按条目的规范 JSON 排序，重复回放不因证据重复而追加事件。
+卡片 primary evidence_signal_id 保留首项代表，其他真实信号的 provenance 仍保存在 assessment。
 否则整组 rejected 并记录 multiple distinct proposals，不按先后顺序选最后一项；此处只检查契约一致性。
 候选 Task 可携带风险证据，不要求补造负责人或承诺；整体应用与投影验收完成前不得部署。
 `skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。

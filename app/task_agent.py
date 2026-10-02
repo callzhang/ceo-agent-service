@@ -1872,7 +1872,7 @@ def _project_task_attention(
                 link.signal_id for member in eligible
                 for link in store.list_business_task_evidence(member)
             }
-            verified = []
+            verified = {}
             for entry in group:
                 for evidence in entry.decision.attention_proposal.evidence:
                     source = store.get_business_task_signal(
@@ -1886,13 +1886,13 @@ def _project_task_attention(
                         raise ValueError("attention quote is absent from original source")
                     if source.id not in linked_signal_ids:
                         raise ValueError("attention evidence must be linked to a qualifying supporting Task in this Project")
-                    if entry is applied:
-                        verified.append({
-                            "signal_id": source.id, "source_ref": source.source_ref,
-                            "source_excerpt": evidence.source_excerpt,
-                            "source_time": source.source_time,
-                            "source_link": json.loads(source.context_json).get("source_link", ""),
-                        })
+                    verified_entry = {
+                        "signal_id": source.id, "source_ref": source.source_ref,
+                        "source_excerpt": evidence.source_excerpt,
+                        "source_time": source.source_time,
+                        "source_link": json.loads(source.context_json).get("source_link", ""),
+                    }
+                    verified[json.dumps(verified_entry, ensure_ascii=False, sort_keys=True)] = verified_entry
             effective = AttentionProposal(
                 stable_key=f"project:{applied.anchor_id}",
                 category=AttentionCategory(proposal.category),
@@ -1906,7 +1906,10 @@ def _project_task_attention(
                 evidence_signal_id=signal_id,
                 assessment_json=json.dumps({
                     "material_trigger": proposal.material_trigger,
-                    "inference": proposal.why_attention, "evidence": verified,
+                    "inference": proposal.why_attention,
+                    "evidence": [verified[key] for key in sorted(
+                        verified, key=lambda key: (verified[key]["signal_id"] != signal_id, key)
+                    )],
                 }, ensure_ascii=False, sort_keys=True),
             )
         except ValueError as exc:

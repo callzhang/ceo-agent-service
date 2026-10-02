@@ -178,6 +178,10 @@ def test_same_project_multiple_proposals_fold_only_identical_content(tmp_path, d
     second["title"] = "复核付款协调行动"
     if distinct:
         second["attention_proposal"]["category"] = "decision"
+    else:
+        for row in (payload["task_decisions"][0], second):
+            row["attention_proposal"]["evidence"].append(
+                dict(row["attention_proposal"]["evidence"][0]))
     payload["task_decisions"].append(second)
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(), decision=TaskAgentDecision.model_validate(payload), record_run=False)
     receipt = result.projection_receipt
@@ -190,6 +194,19 @@ def test_same_project_multiple_proposals_fold_only_identical_content(tmp_path, d
     else:
         card, = store.list_business_attention_items()
         assert {link.task_id for link in store.list_business_attention_tasks(card.id)} == set(result.task_ids)
+        evidence = json.loads(card.assessment_json)["evidence"]
+        assert evidence == [{
+            "signal_id": entry.signal_id, "source_ref": "report:fixture",
+            "source_excerpt": RISK_QUOTE, "source_time": "2026-09-30T12:00:00Z",
+            "source_link": "",
+        } for entry in result.attention_proposals]
+        assert len({entry["signal_id"] for entry in evidence}) == 2
+        assert card.evidence_signal_id == result.attention_proposals[0].signal_id
+        assert len(store.list_business_attention_events(card.id)) == 1
+        replay = apply_task_agent_decision(store, summary_input_id=2, work_item=report_item(),
+            decision=TaskAgentDecision.model_validate(payload), record_run=False)
+        assert replay.projection_receipt.applied_count == 1
+        assert store.get_business_attention_item(card.id).assessment_json == card.assessment_json
         assert len(store.list_business_attention_events(card.id)) == 1
 
 

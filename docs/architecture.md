@@ -805,6 +805,9 @@ inference（纯 why_attention 推断）及精确引文的 signal ID/source_ref/s
 related_task_ids 只指定实际风险支持 Task，不自动包含所有项目 Task。合并本轮支持 Task 与旧卡
 仍合格的成员，开放兄弟 Task 保留；完成等变化移除成员，不自动解决 Attention。
 同轮同项目的 Attention 内容完全一致（排除 anchor 选择器和 related IDs）时折叠并合并成员；
+折叠 assessment 保留每项提案已经核验的全部来源信号及引文，完整相同的证据条目精确去重，
+按首项代表的 primary signal 优先、其余条目的规范 JSON 排序，确保回放不因重复证据追加事件。
+卡片 primary evidence_signal_id 仍取首项代表，不丢失其他实际支持信号的 assessment provenance。
 其余内容（含 evidence）不同则整组 rejected，原因为 multiple distinct proposals，不按顺序覆盖。
 这是契约一致性检查，不是机器严重度判断。
 Task/input/run 原子提交时保存 pending 投影回执，卡片写入、成员重算与最终回执保存均在提交后。
