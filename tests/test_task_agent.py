@@ -22,6 +22,7 @@ from app.task_agent import (
 from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.task_models import TaskAgentDecision, TaskDecision, WorkItem, WorkItemSourceKind, WorkItemSourceType
 from app.task_business_resolution import BusinessResolutionService
+from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
 from app.task_semantic_service import (
     RecordCandidate,
     RecordFormalTask,
@@ -29,7 +30,13 @@ from app.task_semantic_service import (
     TaskSemanticService,
 )
 from app.task_semantic_rules import FormalityEvidence
-from app.task_semantic_models import BusinessActorKind, BusinessTaskDateType, FormalTaskBasis
+from app.task_semantic_models import (
+    AttentionCategory,
+    BusinessActorKind,
+    BusinessRelevance,
+    BusinessTaskDateType,
+    FormalTaskBasis,
+)
 from app.task_agent_session import TaskAgentSessionLeaseLost
 
 
@@ -1710,6 +1717,11 @@ def test_explicit_meeting_project_proposal_registers_project_and_links_task(tmp_
         "source": item.source.model_copy(update={"ref": "minutes:second"}),
     })
     second_decision = decision.model_copy(update={
+        "project_assessments": [decision.project_assessments[0].model_copy(update={
+            "evidence": [decision.project_assessments[0].evidence[0].model_copy(update={
+                "source_ref": second_item.source.ref,
+            })],
+        })],
         "task_decisions": [decision.task_decisions[0].model_copy(update={
             "source_ref": second_item.source.ref,
             "owner_evidence": {
@@ -1732,7 +1744,7 @@ def test_generic_department_project_proposal_is_not_promoted(tmp_path):
         "project_title": "项目管理部", "project_decision_index": 0,
         "outcome": "not_needed", "reason": "该标题不构成有效 Project 登记，且没有重大风险。",
         "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
-        "evidence": [{"source_ref": item.source.ref, "source_excerpt": "项目管理部"}],
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": "补齐来源链接"}],
     }], "task_decisions": [{
         "action": "create_task", "transition": "none",
         "source_excerpt": "补齐来源链接；owner 是 Alex。",
@@ -1762,7 +1774,7 @@ def test_weekly_report_task_section_project_proposal_is_not_promoted(tmp_path):
         "project_title": "中汽对账", "project_decision_index": 0,
         "outcome": "not_needed", "reason": "任务章节不构成有效 Project 登记，且没有重大风险。",
         "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
-        "evidence": [{"source_ref": item.source.ref, "source_excerpt": "中汽对账"}],
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": "补齐来源链接"}],
     }], "task_decisions": [{
         "action": "create_task", "transition": "none",
         "source_excerpt": "补齐来源链接；owner 是 Alex。",
@@ -2377,9 +2389,21 @@ def test_same_task_multiple_decisions_keep_positional_task_signal_mapping(tmp_pa
     created = service.record_candidate(RecordCandidate(
         title="报价跟进", signal=SourceSignal(source_type="seed", source_ref="seed:1", evidence_text="报价跟进", dedupe_key="seed:1")
     ))
+    resolution = BusinessResolutionService(store)
+    anchor_id = resolution.register_anchor(
+        anchor_type="project", anchor_ref="project:quote", title="报价项目"
+    )
+    resolution.register_official_project(
+        anchor_id=anchor_id, registry_source="report:quote"
+    )
+    resolution.confirm_anchor_match(
+        task_id=created.task_id, anchor_id=anchor_id,
+        evidence_signal_id=created.signal_id, reason="正式报价项目",
+        relevance=BusinessRelevance.RELEVANT,
+    )
     item = _work_item()
     decision = TaskAgentDecision.model_validate({"project_assessments": [{
-        "project_title": "报价项目", "anchor_id": 1, "outcome": "needs_attention",
+        "project_title": "报价项目", "anchor_id": anchor_id, "outcome": "needs_attention",
         "reason": "报价延期存在明确风险。", "assessment_basis": "current_observation",
         "decision_indexes": [0], "task_ids": [created.task_id],
         "evidence": [{"source_ref": item.source.ref, "source_excerpt": "补齐来源链接"}],
@@ -2387,7 +2411,7 @@ def test_same_task_multiple_decisions_keep_positional_task_signal_mapping(tmp_pa
         {"action": "update_task", "transition": "update_fields", "task_id": created.task_id,
          "source_excerpt": "补齐来源链接", "source_ref": item.source.ref, "title": "报价跟进", "status": "waiting",
          "attention_proposal": {"category": "watch", "title": "报价延期风险", "why_attention": "有明确风险",
-         "current_state": "待补来源", "ceo_action": "确认推进", "anchor_id": 1,
+         "current_state": "待补来源", "ceo_action": "确认推进", "anchor_id": anchor_id,
          "assessment_basis": "current_observation", "material_trigger": "risk_escalation", "evidence": [
              {"source_ref": item.source.ref, "source_excerpt": "补齐来源链接"}]}},
         {"action": "update_task", "transition": "update_fields", "task_id": created.task_id,
@@ -3227,3 +3251,464 @@ def test_the_current_sources_link_or_group_and_person_are_recorded_and_the_excer
 
     signal = next(row for row in store.list_business_task_signals() if row.source_ref == "message:9")
     assert (signal.conversation_title, signal.author_name) == ("报价群", "王明")
+
+
+def _stored_project_task(store, *, title="售前知识库", source_type="seed"):
+    semantic = TaskSemanticService(store)
+    seed = semantic.record_candidate(RecordCandidate(
+        title=f"{title}交付",
+        signal=SourceSignal(
+            source_type=source_type,
+            source_ref=f"{source_type}:{title}",
+            evidence_text=f"{title}历史交付风险",
+            dedupe_key=f"{source_type}:{title}",
+        ),
+    ))
+    resolution = BusinessResolutionService(store)
+    anchor_id = resolution.register_anchor(
+        anchor_type="project", anchor_ref=f"project:{title}", title=title,
+    )
+    resolution.register_official_project(
+        anchor_id=anchor_id, registry_source=f"report:{title}",
+    )
+    resolution.confirm_anchor_match(
+        task_id=seed.task_id,
+        anchor_id=anchor_id,
+        evidence_signal_id=seed.signal_id,
+        reason="正式 Project 的现有 Task",
+        relevance=BusinessRelevance.RELEVANT,
+    )
+    return seed, anchor_id
+
+
+def _stored_project_assessment(item, seed, anchor_id, **updates):
+    payload = {
+        "project_title": "售前知识库",
+        "anchor_id": anchor_id,
+        "outcome": "not_needed",
+        "reason": "本轮仅补齐来源，没有新增经营影响。",
+        "assessment_basis": "current_observation",
+        "evidence": [{
+            "source_ref": item.source.ref,
+            "source_excerpt": "补齐来源链接",
+        }],
+        "decision_indexes": [],
+        "task_ids": [seed.task_id],
+    }
+    payload.update(updates)
+    return payload
+
+
+def _stored_attention_card(store, *, seed, anchor_id, title="售前知识库"):
+    assessment_json = json.dumps({
+        "assessment_basis": "historical_comparison",
+        "material_trigger": "risk_escalation",
+        "inference": "历史交付风险仍需观察",
+        "evidence": [{
+            "signal_id": seed.signal_id,
+            "source_ref": f"seed:{title}",
+            "source_excerpt": f"{title}历史交付风险",
+            "source_time": "",
+            "source_link": "",
+        }],
+    }, ensure_ascii=False, sort_keys=True)
+    return BusinessAttentionProjection(store).upsert(AttentionProposal(
+        stable_key=f"project:{anchor_id}",
+        category=AttentionCategory.WATCH,
+        title=f"{title}交付风险",
+        business_area="",
+        why_attention="历史交付风险仍需观察",
+        current_state="等待新的交付结果",
+        ceo_action="暂不介入，观察结果",
+        anchor_id=anchor_id,
+        task_ids=(seed.task_id,),
+        evidence_signal_id=seed.signal_id,
+        assessment_json=assessment_json,
+    ))
+
+
+def test_stored_assessment_requires_current_known_project_link_coverage(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-known-project-coverage.sqlite3")
+    seed, _anchor_id = _stored_project_task(store)
+    item = _work_item()
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [],
+        "update_summary": "错误地声称本轮没有相关 Project。",
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields",
+            "task_id": seed.task_id, "title": "售前知识库交付",
+            "source_ref": item.source.ref, "source_excerpt": "补齐来源链接",
+        }],
+    })
+
+    with pytest.raises(ValueError, match="confirmed Project.*requires exactly one assessment"):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+        )
+
+    assert len(store.list_business_task_signals()) == 1
+
+
+@pytest.mark.parametrize(
+    ("evidence_update", "problem"),
+    [
+        ({"source_ref": "message:guessed"}, "current assessment evidence must cite the immutable Work Item"),
+        ({"source_excerpt": "不存在的当前原文"}, "current assessment quote is absent"),
+    ],
+)
+def test_stored_assessment_rejects_wrong_current_citation_atomically(
+    tmp_path, evidence_update, problem,
+):
+    store = AutoReplyStore(tmp_path / "assessment-current-citation.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    item = _work_item()
+    assessment = _stored_project_assessment(item, seed, anchor_id)
+    assessment["evidence"] = [{**assessment["evidence"][0], **evidence_update}]
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [assessment], "task_decisions": [],
+    })
+
+    with pytest.raises(ValueError, match=problem):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+        )
+
+    assert len(store.list_business_task_signals()) == 1
+
+
+@pytest.mark.parametrize(
+    ("historical_update", "source_type", "problem"),
+    [
+        ({"signal_id": 999}, "seed", "historical assessment evidence signal does not exist"),
+        ({"source_ref": "seed:wrong"}, "seed", "historical assessment evidence signal/source_ref does not match"),
+        ({"source_excerpt": "不存在的历史原文"}, "seed", "historical assessment quote is absent"),
+        ({}, "memory_provenance", "historical assessment evidence must be observed original source"),
+    ],
+)
+def test_stored_assessment_rejects_false_historical_provenance(
+    tmp_path, historical_update, source_type, problem,
+):
+    store = AutoReplyStore(tmp_path / "assessment-historical-citation.sqlite3")
+    seed, anchor_id = _stored_project_task(store, source_type=source_type)
+    item = _work_item()
+    historical = {
+        "signal_id": seed.signal_id,
+        "source_ref": f"{source_type}:售前知识库",
+        "source_excerpt": "售前知识库历史交付风险",
+        **historical_update,
+    }
+    assessment = _stored_project_assessment(
+        item, seed, anchor_id,
+        outcome="needs_attention",
+        reason="当前信息与历史风险需要一起判断。",
+        assessment_basis="historical_comparison",
+        existing_attention_id=1,
+        evidence=[
+            {"source_ref": item.source.ref, "source_excerpt": "补齐来源链接"},
+            historical,
+        ],
+    )
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [assessment], "task_decisions": [],
+    })
+
+    with pytest.raises(ValueError, match=problem):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ("guessed_anchor", "registered active official Project"),
+        ("inactive_anchor", "registered active official Project"),
+        ("wrong_title", "project_title must match the canonical stored Project title"),
+        ("missing_task", "supporting Task 999 does not exist"),
+        ("unrelated_task", "supporting Task is not confirmed to the assessed Project"),
+    ],
+)
+def test_stored_assessment_rejects_guessed_project_or_unrelated_task(tmp_path, change, problem):
+    store = AutoReplyStore(tmp_path / "assessment-project-identity.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    unrelated = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="无关工作",
+        signal=SourceSignal(source_type="seed", source_ref="seed:unrelated",
+                            evidence_text="无关工作", dedupe_key="seed:unrelated"),
+    ))
+    item = _work_item()
+    assessment = _stored_project_assessment(item, seed, anchor_id)
+    if change == "guessed_anchor":
+        assessment["anchor_id"] = 999
+    elif change == "inactive_anchor":
+        with store.business_task_transaction() as db:
+            db.execute("update business_anchors set active=0 where id=?", (anchor_id,))
+    elif change == "wrong_title":
+        assessment["project_title"] = "猜测的项目名"
+    elif change == "missing_task":
+        assessment["task_ids"] = [999]
+    else:
+        assessment["task_ids"] = [unrelated.task_id]
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [assessment], "task_decisions": [],
+    })
+
+    with pytest.raises(ValueError, match=problem):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+        )
+
+
+def test_existing_attention_repeat_with_no_task_field_change_has_no_new_effect(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-existing-card-repeat.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    attention_id = _stored_attention_card(store, seed=seed, anchor_id=anchor_id)
+    item = _work_item()
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [_stored_project_assessment(
+            item, seed, anchor_id,
+            outcome="needs_attention",
+            reason="同一事实已由现有关注卡表示。",
+            existing_attention_id=attention_id,
+            decision_indexes=[0],
+        )],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields",
+            "task_id": seed.task_id, "title": "售前知识库交付",
+            "source_ref": item.source.ref, "source_excerpt": "补齐来源链接",
+        }],
+    })
+    signals_before = store.list_business_task_signals()
+    events_before = store.list_business_attention_events(attention_id)
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.task_ids == ()
+    assert result.applied_decisions == ()
+    assert store.list_business_task_signals() == signals_before
+    assert store.list_business_attention_events(attention_id) == events_before
+
+
+@pytest.mark.parametrize(
+    ("card_change", "problem"),
+    [
+        ("guessed", "existing Attention card does not exist"),
+        ("unrelated", "existing Attention card belongs to a different Project"),
+        ("inactive", "existing Attention card must be active"),
+        ("wrong_member", "does not contain the assessment's supporting Tasks"),
+        ("bad_proof", "existing Attention original evidence signal/source_ref does not match"),
+    ],
+)
+def test_existing_attention_identity_and_original_proof_are_stored_facts(
+    tmp_path, card_change, problem,
+):
+    store = AutoReplyStore(tmp_path / "assessment-existing-card-proof.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    attention_id = _stored_attention_card(store, seed=seed, anchor_id=anchor_id)
+    if card_change == "unrelated":
+        other, other_anchor = _stored_project_task(store, title="其他项目")
+        attention_id = _stored_attention_card(
+            store, seed=other, anchor_id=other_anchor, title="其他项目",
+        )
+    elif card_change == "bad_proof":
+        with store.business_task_transaction() as db:
+            row = store.get_business_attention_item_in_transaction(item_id=attention_id, _db=db)
+            assert row is not None
+            broken = json.loads(row.assessment_json)
+            broken["evidence"][0]["source_ref"] = "seed:wrong"
+            store.update_business_attention_item_in_transaction(
+                item=row.model_copy(update={"assessment_json": json.dumps(broken, ensure_ascii=False, sort_keys=True)}),
+                _db=db,
+            )
+    elif card_change == "inactive":
+        BusinessAttentionProjection(store).resolve(
+            item_id=attention_id,
+            resolution_signal_id=seed.signal_id,
+            reason="历史卡片已解决",
+        )
+    elif card_change == "wrong_member":
+        with store.business_task_transaction() as db:
+            store.replace_business_attention_tasks_in_transaction(
+                attention_item_id=attention_id, task_ids=(), _db=db,
+            )
+    elif card_change == "guessed":
+        attention_id = 999
+    item = _work_item()
+    assessment = _stored_project_assessment(
+        item, seed, anchor_id,
+        outcome="needs_attention",
+        reason="同一事实已由现有关注卡表示。",
+        existing_attention_id=attention_id,
+    )
+
+    with pytest.raises(ValueError, match=problem):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=item,
+            decision=TaskAgentDecision.model_validate({
+                "project_assessments": [assessment], "task_decisions": [],
+            }),
+            record_run=False,
+        )
+
+
+def test_two_current_tasks_share_one_stored_project_judgment(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-two-tasks.sqlite3")
+    first, anchor_id = _stored_project_task(store)
+    second = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="售前知识库回款",
+        signal=SourceSignal(source_type="seed", source_ref="seed:collection",
+                            evidence_text="售前知识库回款", dedupe_key="seed:collection"),
+    ))
+    BusinessResolutionService(store).confirm_anchor_match(
+        task_id=second.task_id, anchor_id=anchor_id, evidence_signal_id=second.signal_id,
+        reason="同一正式 Project", relevance=BusinessRelevance.RELEVANT,
+    )
+    item = _work_item()
+    assessment = _stored_project_assessment(
+        item, first, anchor_id,
+        decision_indexes=[0, 1], task_ids=[first.task_id, second.task_id],
+    )
+    decisions = [{
+        "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+        "title": title, "status": "waiting", "source_ref": item.source.ref,
+        "source_excerpt": "补齐来源链接",
+    } for seed, title in ((first, "售前知识库交付"), (second, "售前知识库回款"))]
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item,
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [assessment], "task_decisions": decisions,
+        }),
+        record_run=False,
+    )
+
+    assert result.task_ids == (first.task_id, second.task_id)
+    assert [(entry.decision_index, entry.task_id, entry.anchor_id) for entry in result.applied_decisions] == [
+        (0, first.task_id, anchor_id), (1, second.task_id, anchor_id),
+    ]
+
+
+def test_current_project_proposal_reuses_stored_exact_title_and_maps_actual_identity(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-proposal-existing-project.sqlite3")
+    _seed, anchor_id = _stored_project_task(store)
+    base = _work_item()
+    item = base.model_copy(update={
+        "source": base.source.model_copy(update={"type": WorkItemSourceType.AI_MINUTES}),
+        "context": base.context.model_copy(update={"source_conversation_kind": WorkItemSourceKind.MINUTES}),
+        "summary": "会议决定启动售前知识库，先完成试点交付。",
+    })
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "售前知识库", "project_decision_index": 0,
+            "outcome": "not_needed", "reason": "当前是按计划启动，没有新增经营风险。",
+            "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "启动售前知识库"}],
+        }],
+        "task_decisions": [{
+            "action": "record_candidate", "transition": "none", "title": "完成试点交付",
+            "source_ref": item.source.ref, "source_excerpt": "完成试点交付",
+            "project_proposal": {
+                "title": "售前知识库", "authority": "meeting_decision",
+                "source_excerpt": "会议决定启动售前知识库", "reason": "会议明确立项",
+            },
+        }],
+    })
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert len(store.list_business_projects()) == 1
+    assert result.applied_decisions[0].decision_index == 0
+    assert result.applied_decisions[0].task_id == result.task_ids[0]
+    assert result.applied_decisions[0].signal_id > 0
+    assert result.applied_decisions[0].anchor_id == anchor_id
+
+
+def test_unknown_current_project_clue_is_evidence_only_and_creates_nothing(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-unknown-clue.sqlite3")
+    item = _work_item().model_copy(update={"summary": "也许与远期海外机会有关，但无法确认 Project 或行动。"})
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "远期海外机会", "outcome": "insufficient_evidence",
+            "reason": "只有线索，无法确认 Project 身份、Task 或经营影响。",
+            "assessment_basis": "current_observation", "decision_indexes": [], "task_ids": [],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "远期海外机会"}],
+        }],
+        "task_decisions": [],
+    })
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.task_ids == ()
+    assert result.applied_decisions == ()
+    assert store.list_business_tasks() == ()
+    assert store.list_business_task_signals() == ()
+    assert store.list_business_projects() == []
+    assert store.list_business_attention_items() == ()
+
+
+def test_no_field_change_attention_proposal_remains_unapplied_without_new_effect(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-no-change-proposal.sqlite3")
+    seed = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="完成试点交付",
+        signal=SourceSignal(source_type="seed", source_ref="seed:trial",
+                            evidence_text="完成试点交付", dedupe_key="seed:trial"),
+    ))
+    base = _work_item()
+    item = base.model_copy(update={
+        "source": base.source.model_copy(update={"type": WorkItemSourceType.AI_MINUTES}),
+        "context": base.context.model_copy(update={"source_conversation_kind": WorkItemSourceKind.MINUTES}),
+        "summary": "会议决定启动新试点项目，并继续完成试点交付。",
+    })
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "新试点项目", "project_decision_index": 0,
+            "outcome": "needs_attention", "reason": "当前原文提出风险，但 Task 字段没有变化。",
+            "assessment_basis": "current_observation", "decision_indexes": [0],
+            "task_ids": [seed.task_id],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "启动新试点项目"}],
+        }],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields",
+            "task_id": seed.task_id, "title": "完成试点交付",
+            "source_ref": item.source.ref, "source_excerpt": "完成试点交付",
+            "project_proposal": {
+                "title": "新试点项目", "authority": "meeting_decision",
+                "source_excerpt": "会议决定启动新试点项目", "reason": "会议明确立项",
+            },
+            "attention_proposal": {
+                "category": "watch", "title": "新试点项目风险",
+                "why_attention": "需要观察", "current_state": "等待来源",
+                "ceo_action": "暂不介入", "anchor_id": None,
+                "assessment_basis": "current_observation",
+                "material_trigger": "risk_escalation",
+                "evidence": [{
+                    "source_ref": item.source.ref,
+                    "source_excerpt": "启动新试点项目",
+                }],
+            },
+        }],
+    })
+    signals_before = store.list_business_task_signals()
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.applied_decisions == ()
+    assert result.attention_proposals == ()
+    assert result.projection_receipt is not None
+    assert [outcome.reason for outcome in result.projection_receipt.outcomes] == [
+        "proposal has no applied Task decision"
+    ]
+    assert store.list_business_task_signals() == signals_before
+    assert store.list_business_projects() == []
+    assert store.list_business_task_anchor_links(task_id=seed.task_id) == ()
+    assert store.list_business_attention_items() == ()

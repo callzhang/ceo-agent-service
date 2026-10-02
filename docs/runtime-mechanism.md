@@ -369,8 +369,15 @@ reason 承载推断；`historical_comparison` 同时要求本轮无 signal ID �
 同一原生 conversation 的一次结构修正，不增加第二 Agent、Store 查询或循环。当前 Task 2a 已同步模型、parser correction、
 主 prompt、当前 CI Skill 和本文件内 producer 单测。prompt/Skill 同时要求覆盖当前来源相关业务 Project/线索和当前 Task 的
 已确认 Project 链接；没有输出 selector 不能作为返回空集合的理由，身份/真实 Task/风险证据不足时应返回说明具体缺口的
-`insufficient_evidence`。这一语义覆盖的 stored link/card/evidence domain 核验、持久化与 receipt、native eval、部署和生产读回
-尚未接入，因此不是完整集成通过或业务结果证明。完成由新证据驱动
+`insufficient_evidence`。Task 2b 已在现有 Task 领域事务写入前接入 stored-domain 核验：当前 null-ID 证据必须精确引用 immutable
+Work Item ref 和原文摘录；历史正 signal ID 必须解析到相同 ref/quote 的原始来源，并拒绝 memory/session provenance。已知 anchor
+必须是活动正式 Project 且标题精确匹配登记；本轮决定/assessment 实际引用的现存 Task 必须存在，并由已有活动 confirmed link 或
+同一支持决定的当前 Project registration/link proposal 对应到该 Project。覆盖只遍历这些输出 Task，不扩展到 retrieval competition
+或全库 Task。当前 proposal 仅按正式 Project 精确标题复用既有规范身份；同一规范 Project 的重复/矛盾判断拒绝。
+`existing_attention_id` 必须是同一 Project 的活动卡片，支持 Task 是当前合格成员，卡片保存的原始 signal/ref/quote 仍存在、未被
+provenance 替代且链接到成员；当前 Work Item 引文单独核验，不要求新旧措辞相同，也不增加业务意义/重大性分类器。真正成功应用的
+决定才记录实际 decision position→Task ID/Signal ID/Project anchor；skip、失败接受和无字段变化 update 没有映射，也不会为了判断
+独立创建事实。逐 assessment 持久化 receipt、只读诊断、native eval、部署和生产读回仍未接入，因此不是完整集成通过或业务结果证明。完成由新证据驱动
 （Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：新完成的
 钉钉待办由扫描直接关闭对应 Task（见下文「后台周期性工作」），消息、会议等新信息照常作为 Work Item 进入
 Task Agent。单独的 Task completion Agent（`app/task_completion_agent.py`）已删除，服务不再产生
