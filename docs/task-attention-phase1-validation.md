@@ -1,13 +1,13 @@
 # 多来源项目关注第一版验收
 
-状态：开发分支实现及确定性测试已验证；真实模型比较、W39 副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
+状态：开发分支实现及确定性测试已验证；首个真实模型固定样本比较已执行且候选失败，修订后的模型行为仍待重跑验证。W39 副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
 
 ## 四个独立门槛
 
 | 门槛 | 当前证据 | 仍需完成 |
 | --- | --- | --- |
 | 代码测试 | Tasks 1–6 已独立复核。Task 6 的 `128ea5b4` / `f92d0a92`：7 项 API、22 项页面测试与构建通过；主 Agent 检查模拟列表及 decision/watch 详情，桌面及 390×844 窄屏亮/暗色可读。Task 7 的固定输入、精确回放、旧 run 保留、幂等卡片/事件、落库依据与 expected 隔离回归先 RED 后 GREEN。 | 合并前重跑本次有关文件；模拟页面及 fake runner 不证明真实业务效果。 |
-| 语义评估 | 固定 `tests/fixtures/task_attention_multisource.json` version 1，9 个 case；work_item、existing_context、expected 分开。baseline 固定实际生产代码 `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0`；候选包含该 baseline。baseline 56 项模型/检索测试通过。 | baseline/candidate 各实际运行同一 9 个 case；同路由、模型、timeout、初始事实、concurrency=1；记录 readback、失败及 revision。尚未执行真实模型样本。 |
+| 语义评估 | 固定 `tests/fixtures/task_attention_multisource.json` version 1，9 个 case；work_item、existing_context、expected 分开。baseline 固定实际生产代码 `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0`；候选包含该 baseline。baseline 56 项模型/检索测试通过。首个 `w39-project-risk` 实际比较：baseline 4 Tasks/2 Projects/0 Attention，候选 `4f0e06e5` 3 Tasks/2 Projects/0 Attention，候选未达到两项目卡预期。 | baseline/candidate 各实际运行同一 9 个 case；同路由、模型、timeout、初始事实、concurrency=1；记录 readback、失败及 revision。首次风险资格文字已修订，需相同输入和模型 fresh copy 重跑；其余样本比较尚未完成。 |
 | W39 数据库副本 | 主 Agent 用 SQLite backup 创建唯一完整性验证副本，`integrity_check=ok`，3,223,863,296 bytes；259 Tasks、16 Projects、0 Attention。精确输入 27465 已核对 source_ref，状态 done、attempts=1。原有 W39 Tasks 129–134；中汽 anchor 23 不代表中汽创智别名。 | 从这份不可变初态另建候选副本，回放两次；比较真实 Task/Project/card IDs、关联、依据及事件。不得为落卡编造字段变化、强行合并简称或忽略额外 Task。副本尚未回放。 |
 | 上线 | 全局权威 Skill 仍为 version 2，SHA256 `5c2bcbee182ed0872a55f35193c8815a51dd3e0ba0ca92b8e1eaa55e20cc1992`；候选使用隔离 `ci/shared-skills` version 3。 | PR + 固定 eval 对比通过后按既有部署流程发布、读回运行健康及队列、发布权威 Skill、单输入生产回放及真实页面核对。尚未上线。 |
 
@@ -57,3 +57,32 @@ stdout JSON 保存 code revision、实际 Skill 路径/hash、配置路由/model
 Task 7 规格复核补强：`2abb82fd` 的评估工具曾可能把仅历史证据的更新或未成功投影的旧卡计为通过；已用真实 Store/full process_work_item 的确定性失败回归复现并修正。此修正仅改变一次性评估断言，不改变生产 Task Agent、投影或权限行为；真实语义比较仍待执行。
 
 Task 7 质量复核补强：同一项目两个行动的 fixture 在 expected.required_project_member_counts 中明确要求该项目卡包含两个不同 Task；实际已有 task_count=2 不能替代卡片成员验证。full process_work_item 回归包含两个引用真实原文且确认关联同一 Project 的 Task，只有首项提出关注时曾被误计通过；新增落库后成员数量断言将其记录为 missing_project_task_member。两个行动都实际成为同一卡成员时通过；不按 Task 标题固定措辞判定，也不将 expected 送进 Agent。尚未据此更改生产 prompt 或核心行为。
+
+## 首个真实模型失败与限定修订
+
+2026-10-02，主 Agent 以同一固定 `w39-project-risk` 输入、`codex_oauth` 路由、
+`gpt-5.6-luna` 模型和 concurrency=1 跑完 baseline 与候选 `4f0e06e5`；实际 Skill
+路径/hash 已读回，候选使用隔离 revision 3。两侧运行均 completed，均没有关注提议或卡片；
+baseline 落库 4 Tasks/2 Projects，候选落库 3 Tasks/2 Projects。此处是固定脱敏样本，
+不是精确生产输入 27465 的数据库副本回放。
+
+候选固定样本库只读核对路径：
+`/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-attention-eval-40j4skvv/candidate-w39-project-risk.sqlite3`。
+run 1 的顶层 update_summary 明说项目带报告注册提案，但任务缺明确负责人而保留候选，
+且未创建 CEO Attention。两个项目 Task 的逐项 update_summary 明确写出
+“当前没有已注册项目锚点或可验证的新增材料触发”。原 prompt 首句要求 registered official Project anchor，
+后文才允许同一 decision 的 null anchor；Skill 第 9 步也先要求 confirmed Project。
+此外原规则笼统排除 static facts，容易把首次观察到的当前未解决重大风险当作没有新变化。
+这支持一个需模型重跑核验的资格解释假设，不证明只改文字已经解决行为。
+
+限定修订仅同步 build_task_agent_prompt 与隔离 Skill：正式 Project 可为已有已确认对象，
+或同一 decision 的有效当前权威 ProjectProposal 本轮解析出的对象；首次观察到有具体
+经营影响的未解决重大风险可 watch，无需已有卡或对不存在的旧评估证明新变化。
+已有卡已反映同一事实时不重复提案，标签、普通进展和日期临近仍不足；真实候选 Task
+无需补造负责人或承诺即可支持风险。保持引用核验、真实 Task 和当前无需处理的 watch 表述。
+不修改 Project 注册、投影、parser、transition 或全局 Skill，不增加 Agent/队列/策略层，
+不把样本业务名、金额或 expected 注入规则。
+
+两个新回归先因缺少资格文字失败，再验证 prompt 与 fresh module 通过 CEO_SKILLS_ROOT
+实际选择并完整加载的 Skill 内容；相关 task_agent/retrieval/session 142 项通过。
+这只证明文字契约和实际加载路径，修订后原生模型效果、全部 9 样本及生产副本回放仍待验证。

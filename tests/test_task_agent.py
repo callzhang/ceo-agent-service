@@ -664,6 +664,52 @@ def test_task_agent_prompt_requires_report_owner_rows_and_project_proposals():
     assert "preserving exact spaces and punctuation" in " ".join(prompt.split())
 
 
+def test_task_agent_prompt_allows_initial_risk_with_project_registered_this_turn(monkeypatch):
+    import app.task_agent as task_agent
+
+    # Isolate the prompt's own contract so matching Skill text cannot mask a regression.
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    prompt = " ".join(build_task_agent_prompt(_work_item(), "候选上下文为空。").split())
+
+    assert "an existing confirmed official Project or a valid current-authority `project_proposal` in this same TaskDecision" in prompt
+    assert "First assessment of a source-observed unresolved material business risk" in prompt
+    assert "does not require a prior card or a fresh delta against a nonexistent assessment" in prompt
+    assert "An existing card already reflecting the same facts does not need a new proposal" in prompt
+    assert "Candidate Tasks may support Attention without a formal owner or accepted commitment" in prompt
+    assert "Attention requires a registered official Project anchor plus a material trigger" not in prompt
+    assert "Labels, relevance, routine progress, and date proximity alone do not explain material impact" in prompt
+    assert "Never invent a Task, owner, assignment, commitment, or date to fill a card" in prompt
+
+
+def test_fresh_task_agent_loads_initial_risk_rules_from_selected_skill_root(monkeypatch):
+    import runpy
+
+    code_root = Path(__file__).resolve().parents[1]
+    skill_root = code_root / "ci/shared-skills"
+    monkeypatch.setenv("CEO_SKILLS_ROOT", str(skill_root))
+    fresh_agent = runpy.run_path(str(code_root / "app/task_agent.py"))
+    assert fresh_agent["WORK_TRACKING_SKILL_PATH"] == skill_root / "ceo-work-tracking/SKILL.md"
+
+    class CapturingCodex:
+        def decide(self, **kwargs):
+            self.prompt = kwargs["prompt"]
+            return TaskAgentDecision(task_decisions=[])
+
+    codex = CapturingCodex()
+    fresh_agent["TaskAgentRunner"](codex).decide(
+        _work_item(), "无候选项目", run_id=11, session_scope_id="isolated-initial-risk-test"
+    )
+    loaded_skill = fresh_agent["WORK_TRACKING_SKILL_PATH"].read_text(encoding="utf-8")
+    assert loaded_skill in codex.prompt
+    skill_text = " ".join(loaded_skill.split())
+    assert "an existing confirmed official Project or a valid current-authority `project_proposal` in this same TaskDecision" in skill_text
+    assert "First assessment of a source-observed unresolved material business risk" in skill_text
+    assert "does not require a prior card or a fresh delta against a nonexistent assessment" in skill_text
+    assert "An existing card already reflecting the same facts does not need a new proposal" in skill_text
+    assert "Candidate Tasks may support Attention without a formal owner or accepted commitment" in skill_text
+    assert "Relevance, labels, acceptance, routine progress, and date proximity alone do not establish material impact" in skill_text
+
+
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(monkeypatch):
     import app.task_agent as task_agent
     skill_path = Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md"

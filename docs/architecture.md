@@ -788,6 +788,12 @@ prompt 只读取当前 ceo-work-tracking Skill；定时任务保存的旧 skill_
 每轮每 Project 最多一个关注提案，事实 current_state 与重大业务影响推断 why_attention 分开；
 watch 可写当前无需你处理并给可观察结果，关注不等于需介入。未提案 Task 在 update_summary
 说明影响不足、项目未确认或证据无法核验；不为卡片补造 Task、负责人、承诺或日期。
+资格中的正式 Project 可以是已有已确认对象，也可以由同一 TaskDecision 的有效当前权威
+`project_proposal` 本轮注册后解析 anchor；不要求 Project 在本轮开始前已存在。
+首次评估来源中已观察、当前未解决且有具体经营影响的重大风险可提出 watch，
+不要求已有卡片或相对不存在的旧评估出现新变化。已有卡已反映同一事实时不重复提案；
+重复事实、标签、正常进展和日期临近仍不足以证明重大影响。
+真实候选 Task 可支持风险，不因缺正式负责人或已接受承诺而排除，也不因此升级 stage。
 
 开发中、尚未部署的多来源 Project Attention 契约（输出模型、Project 绑定、投影消费、prompt 接线及控制台只读展示；语义评估和发布验收仍待后续任务）：
 `ProjectProposal.source_excerpt` 必填且非空，独立引用项目登记依据，不借用

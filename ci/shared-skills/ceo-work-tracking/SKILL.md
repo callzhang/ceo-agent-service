@@ -89,11 +89,20 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    Distinct deliverables with a shared goal may be clustered or linked; they
    retain independent owners, dates, and completion. When identity is uncertain,
    link or keep separate rather than merge.
-9. Propose CEO attention only for a confirmed official Project with real
-   supporting Tasks and source evidence of material business impact. Explain
+9. Propose CEO attention only for an existing confirmed official Project or a valid
+   current-authority `project_proposal` in this same TaskDecision, resolved to its
+   registered anchor this turn, with real supporting Tasks and source evidence
+   of material business impact. First assessment of a source-observed unresolved
+   material business risk may use watch; it does not require a prior card or a
+   fresh delta against a nonexistent assessment. Explain the concrete unresolved
+   business impact from the observed source, even when the report states the
+   risk as a current fact. An existing card already reflecting the same facts
+   does not need a new proposal; repeated facts alone are insufficient.
+   Candidate Tasks may support Attention without a formal owner or accepted commitment;
+   keep their stage and missing ownership evidence truthful. Explain
    the impact in `why_attention` as inference; keep `current_state` factual.
-   Relevance, labels, acceptance, routine progress, date proximity, and static
-   facts alone do not establish material impact. Quote risk evidence from the
+   Relevance, labels, acceptance, routine progress, and date proximity alone do
+   not establish material impact. Quote risk evidence from the
    full current source or historical persisted original Signals, separately
    from Task action and Project registration excerpts. Current evidence uses
    null `signal_id` and the current `source_ref`; historical evidence requires

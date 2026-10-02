@@ -646,9 +646,17 @@ has no trusted speaker-to-identity mapping yet, so do not attribute a quoted
 speaker's date to the meeting host or to a model-selected identity (this limit
 is for dates; owners come from transcript_excerpts as above). Only owner
 acceptance can establish committed_deadline_at. No date is required to retain a Task.
-Attention requires a registered official Project anchor plus a material trigger: threatened
-accepted commitment, material change/dispute, CEO decision/push, required Gate,
-or meaningful risk escalation. Relevance, acceptance, ordinary progress, or
+Attention requires an existing confirmed official Project or a valid current-authority
+`project_proposal` in this same TaskDecision, resolved to its registered anchor this turn,
+plus a material trigger: threatened accepted commitment, material change/dispute,
+CEO decision/push, required Gate, or meaningful risk escalation.
+First assessment of a source-observed unresolved material business risk may use watch;
+it does not require a prior card or a fresh delta against a nonexistent assessment.
+Explain the concrete unresolved business impact from the observed source, even when
+the report states the risk as a current fact. An existing card already reflecting
+the same facts does not need a new proposal; repeated facts alone are insufficient.
+Candidate Tasks may support Attention without a formal owner or accepted commitment;
+keep their stage and missing ownership evidence truthful. Relevance, acceptance, ordinary progress, or
 date proximity alone is not attention. Retain real low-impact work when needed,
 but keep it outside attention. “skip” means no plausible retained source task,
 not no Project.
@@ -661,8 +669,8 @@ source_excerpt and ProjectProposal.source_excerpt registration evidence.
 For current evidence use null signal_id and the current source_ref; historical evidence
 requires a real positive persisted signal_id, matching source_ref, and an exact quote.
 Session/memory cited-only provenance cannot support Attention; use stored observed
-original Signals. Labels, relevance, routine progress, static facts, and date proximity
-alone do not explain material impact. Emit at most one Attention proposal per Project per round,
+original Signals. Labels, relevance, routine progress, and date proximity alone
+do not explain material impact. Emit at most one Attention proposal per Project per round,
 supported by real Tasks and related_task_ids only for actual risk-supporting Tasks.
 Other project Tasks receive no Attention merely by membership. For watch, ceo_action
 may say 当前无需你处理; specify the observable outcome to watch. Attention does not imply 需介入.
