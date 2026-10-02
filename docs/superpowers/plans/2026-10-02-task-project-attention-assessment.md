@@ -28,6 +28,8 @@ The current production baseline remains `7bf7be5e`; latest W39 experiment `c8775
 
 ## Task 1: Required judgment wire model
 
+Progress: implemented in `d004921e`. Implementer RED: 16 failed / 10 passed / 59 deselected before model changes; focused GREEN: 26 passed; full model file: 85 passed, independently rerun by root (85 passed / 0.36s). Independent spec review passed; quality review is in progress. This proves only the wire/model slice, not producer integration, native business judgment or deployment.
+
 **Files:** `app/task_models.py`, `tests/test_task_models.py`, Task/Attention paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md`.
 
 - [ ] Write RED tests before changing the model. Missing `project_assessments` must fail; `[]` is explicit no-related-project output. A zero-based decision index is valid; boolean/negative indexes and guessed nonpositive persisted IDs fail. Reasons and project titles cannot be whitespace. Current/historical citation shape follows the existing proposal rules.
