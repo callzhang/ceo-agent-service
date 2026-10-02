@@ -26,8 +26,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-task-comparison-evidence-prompt | Delegated isolated candidate: app/task_agent.py (prompt text), ci/shared-skills/ceo-work-tracking/SKILL.md, tests/test_task_agent.py (generic/fresh Skill assertions), docs/architecture.md and docs/runtime-mechanism.md (evidence text), docs/task-attention-phase1-validation.md (native attribution failure) | Clarify selective original historical citation for assessments relying on comparison/continuity/escalation/conflict; no retrieval/domain/model/oracle/global Skill/production edits. | 2026-10-02 |
-
 
 
 | codex-attention-multisource-browser-fixture | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: frontend/dev-mock/tasksMock.ts (synthetic Attention evidence fixtures only) | Reuse existing isolated Tasks mock preview to verify two-source detail, watch/decision labels, light/dark and narrow readability; synthetic UI evidence is not business or production verification. | 2026-10-02 |
