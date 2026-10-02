@@ -33,6 +33,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-attention-multisource-plan | docs/superpowers/plans/2026-10-01-task-attention-multisource-phase1.md, docs/superpowers/specs/2026-10-01-task-attention-w39-phase1-design.md, docs/agent-claims.md (own row only) | Write the approved multisource attention implementation plan; documentation only, no runtime or production changes. | 2026-10-01 |
 | codex-weekly-okr-title-binding | app/weekly_okr_report.py, tests/test_weekly_okr_report.py, docs/architecture.md, docs/runtime-mechanism.md, docs/agent-claims.md | Bind model KR reviews to the live KR order when the model omits usable IDs and title anchors, while keeping exact count and order validation. | 2026-09-28 |
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
