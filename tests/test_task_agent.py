@@ -641,7 +641,7 @@ def test_task_agent_prompt_uses_all_source_risk_evidence_with_official_project_a
     assert "weekly report is neither the sole risk source nor a prerequisite" in prompt
     assert "cannot create an official Project or silently overwrite official fields" in prompt
     assert "preserve both cited sources and their times" in prompt
-    assert "at most one Attention proposal per Project per round" in prompt
+    assert "one unique Project assessment/card per round" in prompt
     assert "current_state" in prompt and "无需你处理" in prompt
     assert "historical evidence requires a real positive persisted signal_id" in prompt
     assert "emit `project_proposal`" in prompt
@@ -662,6 +662,34 @@ def test_task_agent_prompt_requires_report_owner_rows_and_project_proposals():
     assert "authority to this source type" in prompt
     assert "`date_evidence.source_excerpt` must be copied literally" in prompt
     assert "preserving exact spaces and punctuation" in " ".join(prompt.split())
+
+
+@pytest.mark.parametrize("surface", ["prompt", "skill"])
+def test_task_agent_registry_scope_does_not_originate_umbrella_tasks(monkeypatch, surface):
+    import app.task_agent as task_agent
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    text = (build_task_agent_prompt(_work_item(), "候选上下文为空。") if surface == "prompt"
+        else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8"))
+    text = " ".join(text.split())
+    assert "Project registration scope, objectives, and categories are not separate Tasks when concrete source actions already cover that work" in text
+    assert "Keep genuine explicit actions wherever they occur in the source" in text
+
+
+@pytest.mark.parametrize("surface", ["prompt", "skill"])
+def test_task_agent_repeats_identical_assessment_for_new_supporting_task_members(monkeypatch, surface):
+    import app.task_agent as task_agent
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    text = (build_task_agent_prompt(_work_item(), "候选上下文为空。") if surface == "prompt"
+        else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8"))
+    text = " ".join(text.split())
+    assert "Return one unique Project assessment/card per round" in text
+    assert "For multiple newly created supporting Tasks, repeat the identical `attention_proposal` on each supporting TaskDecision" in text
+    assert "The service folds those identical proposals into one card and combines their Task membership" in text
+    assert "Use `related_task_ids` only for real existing Task IDs; never invent IDs for new decisions" in text
+    assert "Keep unrelated Project Tasks outside this assessment; conflicting proposal payloads are rejected" in text
+    assert "at most one Attention proposal per Project per round" not in text
 
 
 def test_task_agent_prompt_allows_initial_risk_with_project_registered_this_turn(monkeypatch):
@@ -708,6 +736,8 @@ def test_fresh_task_agent_loads_initial_risk_rules_from_selected_skill_root(monk
     assert "An existing card already reflecting the same facts does not need a new proposal" in skill_text
     assert "Candidate Tasks may support Attention without a formal owner or accepted commitment" in skill_text
     assert "Relevance, labels, acceptance, routine progress, and date proximity alone do not establish material impact" in skill_text
+    assert "Project registration scope, objectives, and categories are not separate Tasks" in skill_text
+    assert "repeat the identical `attention_proposal` on each supporting TaskDecision" in skill_text
 
 
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(monkeypatch):

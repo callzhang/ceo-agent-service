@@ -547,6 +547,10 @@ still need the current Work Item's authority and identity metadata, and dates
 still need current, identified source evidence.
 
 Extract every distinct source-backed deliverable, or return an empty list.
+Project registration scope, objectives, and categories are not separate Tasks
+when concrete source actions already cover that work. Use registration text as
+Project evidence attached to those real actions, not as an additional umbrella Task.
+Keep genuine explicit actions wherever they occur in the source.
 One source may yield multiple decisions. Each non-skip item cites its source: the
 source_ref, a sentence of the original text as source_excerpt (an extract is fine;
 it need not be word for word), and where a reader can find it: source_link
@@ -670,8 +674,13 @@ For current evidence use null signal_id and the current source_ref; historical e
 requires a real positive persisted signal_id, matching source_ref, and an exact quote.
 Session/memory cited-only provenance cannot support Attention; use stored observed
 original Signals. Labels, relevance, routine progress, and date proximity alone
-do not explain material impact. Emit at most one Attention proposal per Project per round,
-supported by real Tasks and related_task_ids only for actual risk-supporting Tasks.
+do not explain material impact. Return one unique Project assessment/card per round.
+For multiple newly created supporting Tasks, repeat the identical `attention_proposal`
+on each supporting TaskDecision. The service folds those identical proposals into
+one card and combines their Task membership. Keep the assessment fields and evidence
+identical across those decisions; anchor resolution and existing related IDs may differ.
+Use `related_task_ids` only for real existing Task IDs; never invent IDs for new decisions.
+Keep unrelated Project Tasks outside this assessment; conflicting proposal payloads are rejected.
 Other project Tasks receive no Attention merely by membership. For watch, ceo_action
 may say 当前无需你处理; specify the observable outcome to watch. Attention does not imply 需介入.
 Explain unproposed Tasks in update_summary when impact is insufficient, Project is

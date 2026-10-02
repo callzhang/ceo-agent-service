@@ -218,7 +218,7 @@ prompt 只读取当前 ceo-work-tracking Skill；定时任务保存的旧 skill_
 原始 payload 历史不变，scheduled 元数据和 prompt 的专项业务范围仍保留。
 开发与测试使用隔离的 ci/shared-skills revision 3；实际默认 Skill 路径仍为安装的用户 Skill，
 全局发布另走既有 Skill 仓库，不代表本代码变更已发布。
-每轮每 Project 最多一个关注提案，事实 current_state 与重大业务影响推断 why_attention 分开；
+每轮每 Project 最多一个唯一关注 assessment/卡片，事实 current_state 与重大业务影响推断 why_attention 分开；
 watch 可写当前无需你处理并给可观察结果，关注不等于需介入。未提案 Task 在 update_summary
 说明影响不足、项目未确认或证据无法核验；不为卡片补造 Task、负责人、承诺或日期。
 资格中的正式 Project 可以是已有已确认对象，也可以由同一 TaskDecision 的有效当前权威
@@ -227,6 +227,12 @@ watch 可写当前无需你处理并给可观察结果，关注不等于需介�
 不要求已有卡片或相对不存在的旧评估出现新变化。已有卡已反映同一事实时不重复提案；
 重复事实、标签、正常进展和日期临近仍不足以证明重大影响。
 真实候选 Task 可支持风险，不因缺正式负责人或已接受承诺而排除，也不因此升级 stage。
+登记行的负责范围、目标或类别在具体来源行动已经覆盖该工作时不另建泛化 Task；
+登记依据附在真实行动的 ProjectProposal 上。来源任何章节的真实明确行动仍可提取。
+多个本轮新建 Task 实际支持同一风险时，每个对应 TaskDecision 都附同一完全相同的
+attention_proposal（assessment 字段和 evidence 一致，anchor 选择与已有 related IDs 可不同），
+现有投影折叠为一张卡并合并这些支持 Task 的成员。related_task_ids 只能填写真实已有 ID，
+不能猜新决定的 ID；不把无关项目 Task 加入卡片，冲突提案仍拒绝。
 
 开发中的多来源 Project Attention 已实现输出、Project 绑定、消费契约、prompt 接线及控制台只读展示，尚未部署，原生浏览器、语义样本验收、全局 Skill 发布及部署仍待后续任务：正式
 `project_proposal` 必须带独立、非空的 `source_excerpt`，引用项目登记依据，与 Task 的

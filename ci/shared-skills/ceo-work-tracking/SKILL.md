@@ -23,6 +23,10 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    (its link whenever it has one; otherwise a description, e.g. a DingTalk
    message is its group and the person who sent it). Never originate a Task, deliverable,
    owner, assignment, or date from Agent judgment alone.
+   Project registration scope, objectives, and categories are not separate Tasks
+   when concrete source actions already cover that work. Use registration text as
+   Project evidence attached to those real actions, not as an additional umbrella Task.
+   Keep genuine explicit actions wherever they occur in the source.
 2. If the source contains no plausible action or decision, skip it. Retain
    source-backed low-impact work when its source workflow needs a record, but
    do not promote it to CEO attention merely because it was recorded.
@@ -109,8 +113,13 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    a real positive persisted Signal ID, matching reference, and exact quote.
    Attention cannot use cited-only session/Memory provenance as observed truth.
    Use a real existing anchor, or null only with this same decision's new
-   Project proposal. Return at most one proposal per Project per round; use
-   `related_task_ids` only for actual supporting Tasks, not all Project Tasks.
+   Project proposal. Return one unique Project assessment/card per round.
+   For multiple newly created supporting Tasks, repeat the identical `attention_proposal`
+   on each supporting TaskDecision. The service folds those identical proposals into
+   one card and combines their Task membership. Keep the assessment fields and evidence
+   identical across those decisions; anchor resolution and existing related IDs may differ.
+   Use `related_task_ids` only for real existing Task IDs; never invent IDs for new decisions.
+   Keep unrelated Project Tasks outside this assessment; conflicting proposal payloads are rejected.
    For watch, you may say 当前无需你处理; specify the observable outcome to watch. It does
    not imply 需介入. Do not invent work, owners, assignments, commitments, or
    dates to fill a card. Explain unproposed Tasks in `update_summary` when

@@ -1,6 +1,6 @@
 # 多来源项目关注第一版验收
 
-状态：开发分支实现及确定性测试已验证；首个真实模型固定样本比较已执行且候选失败，修订后的模型行为仍待重跑验证。W39 副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
+状态：开发分支实现及确定性测试已验证；首个真实模型比较暴露候选失败，首次资格修订后 W39 两卡及依据已验证；同项目多个新行动的成员仍失败，后续文字修订待 fresh rerun。W39 副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
 
 ## 四个独立门槛
 
@@ -86,3 +86,38 @@ run 1 的顶层 update_summary 明说项目带报告注册提案，但任务缺�
 两个新回归先因缺少资格文字失败，再验证 prompt 与 fresh module 通过 CEO_SKILLS_ROOT
 实际选择并完整加载的 Skill 内容；相关 task_agent/retrieval/session 142 项通过。
 这只证明文字契约和实际加载路径，修订后原生模型效果、全部 9 样本及生产副本回放仍待验证。
+
+## 同项目两个新行动的原生成员失败与限定修订
+
+2026-10-02，固定 `same-project-two-actions` 原生候选运行 completed；只读核对
+`/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-attention-eval-40j4skvv/candidate-same-project-two-actions.sqlite3`
+run 1：三个候选 Task、一个 Project、一张 Attention 卡，卡成员只有 Task 1。
+Task 1 引用项目登记行的负责范围，成为泛化的验收/付款协调 Task；Task 2 与 Task 3
+分别引用两条明确行动，但 attention_proposal 均为空，未成为卡片成员。
+这是实际成员缺失证据，不以一张卡或总 Task 数替代关联核对。
+
+原因对应两处文字缺口：登记范围在具体行动已覆盖同一工作时仍被提取为额外 Task；
+“每项目每轮最多一个关注提案”与仅接受已有 ID 的 related_task_ids 组合，使本轮多个
+新 Task 难以同时表达支持成员。既有投影已把除 anchor/related IDs 外完全一致的提案
+折叠为一张卡，并合并每项实际应用 Task ID，无需修改领域或投影代码。
+
+限定文字修订同步 prompt 与隔离 revision 3 Skill：登记范围/目标/类别不在具体来源行动
+已覆盖时另建泛化 Task；任何章节中真实明确行动仍可保留，不限制为下周重点。
+每轮每 Project 一个唯一 assessment/卡片，多个新建且实际支持该风险的 TaskDecision
+各附完全相同的 attention_proposal，沿用既有折叠行为完成成员合并。
+related_task_ids 继续仅接受真实已有 ID，无关项目 Task 不加入，冲突内容仍拒绝。
+不修改核心/API/模型、全局 Skill 或固定样本 oracle，不写业务名、金额或预期数量进规则。
+
+两个通用回归分别验证 prompt/Skill 的登记范围与新 Task 成员表述，共四个参数化用例
+先 RED 后 GREEN；fresh Skill 加载回归也验证新增文字实际进入 runner。
+相关 task_agent/retrieval/session 146 项通过。此处只证明规则契约与加载，
+修订后固定样本的原生卡片成员、额外 Task 是否消除及其他样本效果仍待 fresh rerun。
+
+固定计数另经原生结果后的来源/独立交付契约复核，由主 Agent 单独修订评估 oracle：
+W39 显式允许 [3,4,5]，meeting-new-risk 允许 [1,2]，其他样本保持原精确计数，
+不改为全局最小数量门槛。W39 的五项都有真实行动依据：进展章节的“需同步”不能因
+所在章节被排除，同句对账与方案沟通可以是独立可完成结果；Task 3 的描述仍含方案沟通，
+与 Task 4 有范围重叠，保留人工身份复核注意点，不据计数放行把重复身份说成已排除。
+两侧 baseline/candidate 以同一修订后 oracle 重新评估，expected 仍仅用于运行后比较，
+不进入 Agent 输入、routing 或规则。首次资格修订后的 W39 已实际生成两张卡且依据有效；
+同项目多新行动的实际成员门槛未放宽，上述 case 9 成员失败仍须修订后原生验证。
