@@ -34,8 +34,16 @@ describe("TasksPage", () => {
     expect(screen.getByRole("link", { name: "正式项目" })).toHaveAttribute("href", "/tasks?view=projects");
     for (const text of ["持续观察", "海外业务", "客户等待首版报价", "负责人已接单", "当前无需处理", "美国市场", "2 个关联任务"]) expect(within(card).getByText(text)).toBeInTheDocument();
     expect(within(card).getByRole("link", { name: "美国客户报价" })).toHaveAttribute("href", "/tasks/attention/7");
+    expect(within(card).getByText("关注点")).toBeInTheDocument();
+    expect(within(card).queryByText("你的动作")).not.toBeInTheDocument();
     expect(screen.queryByText("整理办公室绿植")).not.toBeInTheDocument();
     expect(api.tasks).not.toHaveBeenCalled();
+  });
+
+  it.each(["decision", "push"])("keeps the action label for %s", async (category) => {
+    api.attention.mockResolvedValue({ items: [{ ...attention, category }], meta });
+    render(<MemoryRouter><TasksPage /></MemoryRouter>);
+    expect(within(await screen.findByRole("article")).getByText("你的动作")).toBeInTheDocument();
   });
 
   it("separates formal Tasks from candidate evidence instead of making candidates the default task list", async () => {

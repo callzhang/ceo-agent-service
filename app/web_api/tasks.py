@@ -774,6 +774,7 @@ class ConsoleBusinessAttentionDetail(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: ConsoleBusinessAttentionSummary
     anchor: dict[str, Any]
+    assessment: dict[str, Any]
     evidence_signals: list[BusinessTaskSignal]
     linked_tasks: list[ConsoleBusinessTaskSummary]
     events: list[BusinessAttentionEvent]
@@ -1103,9 +1104,12 @@ def business_attention_detail(store: Any, attention_id: int) -> ConsoleBusinessA
         evidence_ids.add(item.resolution_signal_id)
     events = list(store.list_business_attention_events(attention_id))
     evidence_ids.update(event.signal_id for event in events)
+    assessment = _object_json(item.assessment_json)
+    evidence_ids.update(evidence["signal_id"] for evidence in assessment.get("evidence", []))
     return ConsoleBusinessAttentionDetail(
         summary=ConsoleBusinessAttentionSummary.model_validate(_attention_summary_payload(store, item, anchors)),
         anchor=json_safe(anchors[item.anchor_id]) if item.anchor_id in anchors else {},
+        assessment=assessment,
         evidence_signals=[signal for signal_id in sorted(evidence_ids) if (signal := store.get_business_task_signal(signal_id)) is not None],
         linked_tasks=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in linked if task is not None],
         events=events,

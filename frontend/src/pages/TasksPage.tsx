@@ -20,7 +20,7 @@ function AttentionCard({ item }: { item: BusinessAttentionSummary }) {
     <dl>
       <div><dt>为什么关注</dt><dd>{item.why_attention}</dd></div>
       <div><dt>当前状态</dt><dd>{item.current_state}</dd></div>
-      <div className="business-attention-action"><dt>你的动作</dt><dd>{item.ceo_action}</dd></div>
+      <div className="business-attention-action"><dt>{item.category === "watch" ? "关注点" : "你的动作"}</dt><dd>{item.ceo_action}</dd></div>
     </dl>
     <footer><span>{item.anchor_label || "暂未关联业务主线"}</span><span>{item.linked_task_count} 个关联任务</span><TaskTime value={item.updated_at} /></footer>
   </article>;

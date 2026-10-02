@@ -222,7 +222,7 @@ prompt 只读取当前 ceo-work-tracking Skill；定时任务保存的旧 skill_
 watch 可写当前无需你处理并给可观察结果，关注不等于需介入。未提案 Task 在 update_summary
 说明影响不足、项目未确认或证据无法核验；不为卡片补造 Task、负责人、承诺或日期。
 
-开发中的多来源 Project Attention 已实现输出、Project 绑定、消费契约与 prompt 接线，尚未部署，前端、语义评估及发布验收仍待后续任务：正式
+开发中的多来源 Project Attention 已实现输出、Project 绑定、消费契约、prompt 接线及控制台只读展示，尚未部署，原生浏览器、语义样本验收、全局 Skill 发布及部署仍待后续任务：正式
 `project_proposal` 必须带独立、非空的 `source_excerpt`，引用项目登记依据，与 Task 的
 行动摘录分开。Attention 用必填、至少一条的 `evidence` 取代 `trigger_evidence`；每条需
 非空来源引用和原文摘录，`signal_id` 可省略/null 或为严格正整数。`why_attention` 是推断，
@@ -245,6 +245,13 @@ Attention 应用结果使用冻结的 `AppliedTaskAttention(decision, task_id, s
 assessment 合并每项已经核验的全部来源信号及引文；完整相同证据条目精确去重，首项代表的
 primary signal 优先，其余按条目的规范 JSON 排序，重复回放不因证据重复而追加事件。
 卡片 primary evidence_signal_id 保留首项代表，其他真实信号的 provenance 仍保存在 assessment。
+本分支只读详情 API 返回已保存 `assessment_json` 的对象，并将其精确 signal ID 引用的原始信号
+与 primary、resolution、event 信号取并集；不重新检索、不选择新依据，历史 `{}` 保持为空对象。
+详情分别展示“来源事实”（逐字摘录、来源引用、真实来源时间及已有链接）与“Agent 判断”
+（保存的 inference；历史记录保留 why_attention 并说明没有结构化引文依据）。列表和详情中
+watch 使用“关注点”，原 ceo_action 可显示“当前无需你处理”；decision/push 仍显示“你的动作”。
+现有状态、业务主线、更新时间、实际 Task 成员、原始来源和关注历程保留；UI 不重判分类、
+不添加已关闭 Task 成员、不改变 stage。上述展示在代码分支实现，不代表生产部署或业务效果验收。
 否则整组 rejected 并记录 multiple distinct proposals，不按先后顺序选最后一项；此处只检查契约一致性。
 候选 Task 可携带风险证据，不要求补造负责人或承诺；整体应用与投影验收完成前不得部署。
 `skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。

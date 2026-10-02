@@ -48,7 +48,7 @@ const attention: Row[] = [
   { id: "1", category: "decision", business_area: "海外业务", title: "美国客户要求下周前给出正式报价", why_attention: "客户已两次催问，报价首版仍在制作，超过约定日期会影响后续合同", current_state: "王明已接单，首版预计周五完成", ceo_action: "决定是否接受客户提出的 15% 折扣区间", anchor_label: "美国市场", linked_task_count: 3, updated_at: ago(12), detail_url: "/tasks/attention/1" },
   { id: "2", category: "decision", business_area: "财务", title: "财务设备接入方案需要选型", why_attention: "两套方案成本相差一倍，团队意见不一致", current_state: "评审会已开，结论待定", ceo_action: "选定方案并明确预算上限", anchor_label: "财务设备接入", linked_task_count: 2, updated_at: ago(60 * 5), detail_url: "/tasks/attention/2" },
   { id: "3", category: "push", business_area: "产品", title: "Projects 模块上线时间未定", why_attention: "评审流程还没有走完，负责人之间没有对齐", current_state: "等待评审结论", ceo_action: "拉通会议，逼近一个明确的上线日期", anchor_label: "AI 会议助手", linked_task_count: 1, updated_at: ago(60 * 27), detail_url: "/tasks/attention/3" },
-  { id: "4", category: "watch", business_area: "研发", title: "Recipe 生成不稳定", why_attention: "偶发失败，已影响两个演示", current_state: "工程师在复现", ceo_action: "当前无需处理", anchor_label: "", linked_task_count: 1, updated_at: ago(60 * 30), detail_url: "/tasks/attention/4" },
+  { id: "4", category: "watch", business_area: "研发", title: "Recipe 生成不稳定", why_attention: "偶发失败，已影响两个演示", current_state: "工程师在复现", ceo_action: "当前无需你处理，观察故障复现与演示恢复结果", anchor_label: "", linked_task_count: 1, updated_at: ago(60 * 30), detail_url: "/tasks/attention/4" },
   { id: "5", category: "watch", business_area: "市场", title: "国庆前客户走访进度", why_attention: "走访清单已完成，实际预约较少", current_state: "已联系 4 家，2 家确认", ceo_action: "当前无需处理", anchor_label: "美国市场", linked_task_count: 4, updated_at: ago(60 * 24 * 3), detail_url: "/tasks/attention/5" },
   { id: "6", category: "fyi", business_area: "人力", title: "两名新同事下周入职", why_attention: "入职材料齐备", current_state: "工位与账号已准备", ceo_action: "当前无需处理", anchor_label: "", linked_task_count: 0, updated_at: ago(60 * 24 * 5), detail_url: "/tasks/attention/6" },
   { id: "7", category: "fyi", business_area: "法务", title: "海外渠道合同已通过法审并且法务给出了一长串需要留意的条款，其中涉及数据出境、违约金上限、争议解决地和知识产权归属", why_attention: "合同已法审", current_state: "等待对方签署", ceo_action: "当前无需处理", anchor_label: "美国市场", linked_task_count: 1, updated_at: ago(60 * 24 * 8), detail_url: "/tasks/attention/7" },
@@ -103,10 +103,21 @@ function taskDetail(id: number): Row | null {
 const attentionDetail = (id: string): Row | null => {
   const summary = attention.find((row) => row.id === id);
   if (!summary) return null;
+  const sourceSignals = id === "1" ? [
+    signal(31, "meeting", "客户希望下周前看到正式报价，并提出折扣区间。", { source_link: "https://example.com/synthetic/minutes-31" }),
+    { ...signal(32, "dingtalk", "目前报价首版还在制作，需要等成本核算结果。"), source_time: "2026-09-25T09:15:00+08:00" },
+  ] : id === "4" ? [
+    signal(41, "meeting", "Recipe 生成偶发失败，已经影响两个演示。", { source_link: "https://example.com/synthetic/recipe-review-41" }),
+    { ...signal(42, "dingtalk", "工程师仍在复现故障，需要观察修复后演示能否恢复。"), source_time: "2026-09-25T09:15:00+08:00" },
+  ] : [];
   return {
     summary, anchor: { id: 1, title: summary.anchor_label },
-    linked_tasks: allTasks.slice(0, Number(summary.linked_task_count)),
-    evidence_signals: [signal(31, "meeting", "客户希望下周前看到正式报价，并提出折扣区间。"), signal(32, "ai_minutes", JSON.stringify({ meeting: { title: "客户同步会" } }), { work_item_title: "客户同步会纪要" })].map((value) => ({ signal: value })),
+    assessment: sourceSignals.length ? {
+      material_trigger: "risk_escalation", inference: summary.why_attention,
+      evidence: sourceSignals.map((source) => ({ signal_id: source.id, source_ref: source.source_ref, source_excerpt: source.evidence_text, source_time: source.source_time, source_link: JSON.parse(source.context_json).source_link || "" })),
+    } : {},
+    linked_tasks: id === "4" ? [candidates[4]] : allTasks.slice(0, Number(summary.linked_task_count)),
+    evidence_signals: sourceSignals,
     events: [{ id: 1, event_type: "opened", created_at: backendStamp(60 * 30) }, { id: 2, event_type: "category_changed", reason: "客户再次催问", created_at: backendStamp(60 * 3) }],
   };
 };

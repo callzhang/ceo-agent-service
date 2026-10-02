@@ -143,6 +143,11 @@ export type BusinessAttentionList = ConsoleList<BusinessAttentionSummary>;
 export type BusinessTaskList = ConsoleList<BusinessTaskSummary>;
 export interface BusinessAttentionDetail {
   summary: BusinessAttentionSummary;
+  assessment: {
+    material_trigger?: string;
+    inference?: string;
+    evidence?: Array<{ signal_id: number; source_ref: string; source_excerpt: string; source_time: string; source_link: string }>;
+  };
   anchor?: Record<string, unknown> | null;
   linked_tasks: BusinessTaskSummary[];
   evidence_signals: Array<Record<string, unknown>>;
