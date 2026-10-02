@@ -1241,3 +1241,8 @@ Worker status reads its local SQLite queue, Email health and component facts
 on every request. These facts are not served from the last background payload:
 after a worker writes its state, the next status request must reflect it.
 External connector authentication probes retain their independent cache.
+
+Typed result parsing preserves malformed or unclosed JSON as a result-stage
+invalid-result failure, including its syntax cause. It is not classified as a
+missing result. An earlier valid result in the same primary turn remains usable;
+no JSON repair or successful external-effect inference is performed.

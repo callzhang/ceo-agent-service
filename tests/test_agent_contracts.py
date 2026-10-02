@@ -1195,6 +1195,18 @@ def test_parse_typed_agent_result_reports_schema_violation_locations():
     )
 
 
+def test_parse_typed_agent_result_reports_unclosed_json_as_invalid():
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": '{"outcome":"executed"'},
+        }
+    )
+    with pytest.raises(ResultParseError, match="invalid JSON") as info:
+        parse_typed_agent_result(raw, AuditAgentResult)
+    assert "unbalanced" in str(info.value.__cause__)
+
+
 def test_parse_typed_agent_result_still_reports_missing_when_no_object_exists():
     raw = json.dumps(
         {
