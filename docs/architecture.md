@@ -870,7 +870,7 @@ Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写�
   adapter（`TaskMemoryWriteQueueAdapter`）像 DingTalk Todo outbox 一样，一入队就领取，
   `app/task_memory_write.py` 用服务自己的 memory-connector 客户端逐条调用 `memory_write`（与会议结论同一客户端）。
   dry-run 不注册该 adapter。
-  正文与时间来自 Agent；`thread_id`（会话标识）、`source_metadata`（渠道、会话、触发消息、任务 id，
+  正文与时间来自 Agent，写入前去掉服务附加的反馈回调链接和署名（`app/memory_text.py`，会议结论同样处理，并去掉跟进消息抬头；标识符只放 metadata，不进正文：固定内容会让 memory-connector 聚类把无关 episode 判成近似重复，Derek 2026-10-02）；`thread_id`（会话标识）、`source_metadata`（渠道、会话、触发消息、任务 id，
   外加 Agent 指认的 `source_refs`）和 `provenance_metadata`（执行者、Consumer run、执行代、线路、
   模型、用途 `task_durable_memory`）由服务从记录里填。每写成一条就记下它的 id，重试只写剩下的；
   连接器失败按退避重试（上限 20 次），之后记 `failed` 并进 Attention（`task_memory_write_failed`）。
