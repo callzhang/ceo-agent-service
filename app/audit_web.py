@@ -10200,6 +10200,13 @@ def create_audit_app(
             "system_health": system_health,
         }
 
+    def warm_history_views() -> None:
+        audit_store.warm_history_page_cache(
+            source_tables=history_types.HISTORY_SOURCE_TABLES
+        )
+        for chart_hours in (24, 24 * 7, 24 * 30):
+            render_history_chart(chart_hours)
+
     @asynccontextmanager
     async def audit_lifespan(_app: FastAPI):
         if not spa_enabled:
@@ -10225,19 +10232,9 @@ def create_audit_app(
             if workbench_lifecycle is None:
                 raise RuntimeError("workbench lifecycle is unavailable")
             workbench_lifecycle.start()
-            # Warm the default History page before advertising the listener as
-            # ready. This moves the one-time SQLite scan out of the user's
-            # first request; subsequent reads are served from the short-lived
-            # store cache and still refresh after its TTL.
-            audit_store.warm_history_page_cache(
-                source_tables=history_types.HISTORY_SOURCE_TABLES
-            )
-            # The chart is requested immediately after the list on a History
-            # navigation. Precompute the supported ranges while the service is
-            # still starting so the first user-visible range switch is served
-            # from the same short-lived snapshot cache.
-            for chart_hours in (24, 24 * 7, 24 * 30):
-                render_history_chart(chart_hours)
+            # History scans warm the existing caches without blocking the
+            # listener or the supervisor's startup health check.
+            threading.Thread(target=warm_history_views, daemon=True).start()
             yield
         finally:
             if workbench_lifecycle is not None:

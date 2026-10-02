@@ -3834,8 +3834,9 @@ def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp
     try:
         db_path = tmp_path / "worker.sqlite3"
         complete_setup_wizard(AutoReplyStore(db_path))
+        app = create_audit_app(db_path)
         started_at = time.monotonic()
-        with TestClient(create_audit_app(db_path)) as client:
+        with TestClient(app) as client:
             # The blocked render holds for 30 s. Startup on a loaded machine
             # can take seconds, so the bound is well under the block, not a
             # fixed second: it only proves startup does not wait for the render.
@@ -3846,6 +3847,27 @@ def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp
             assert "History is temporarily busy" in response.text
     finally:
         release_render.set()
+
+
+def test_health_listener_does_not_wait_for_store_history_prewarm(monkeypatch, tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def slow_prewarm(self, *, source_tables):
+        started.set()
+        release.wait(timeout=60)
+        finished.set()
+
+    monkeypatch.setattr(AutoReplyStore, "warm_history_page_cache", slow_prewarm)
+    try:
+        app = create_audit_app(tmp_path / "worker.sqlite3")
+        with TestClient(app) as client:
+            assert not finished.is_set()
+            assert client.get("/healthz").json()["ok"] is True
+            assert started.wait(timeout=1)
+    finally:
+        release.set()
 
 
 def test_recent_html_cache_refreshes_after_ttl():

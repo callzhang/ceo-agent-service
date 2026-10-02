@@ -1223,3 +1223,9 @@ This lets the authorized direct reread obtain new provider evidence without
 rewriting a completed reply task to pending. A successful receipt, missing
 receipt, or failed terminal parent does not authorize this runtime operation;
 the action plan and browser effect authorization remain unchanged.
+
+Audit History list and chart prewarming runs in a daemon background thread
+after lifecycle recovery starts. These read-only scans populate the existing
+caches but do not gate the HTTP listener or launchd startup health checks.
+Health readiness is not evidence that History prewarming or business actions
+have completed; their APIs and provider receipts must still be read back.
