@@ -93,8 +93,9 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    For a new or unconfirmed Task explicitly belonging to an existing official Project,
    emit `project_link_proposal` with that known positive `anchor_id`, a nonempty exact
    current action `source_excerpt` naming the stored Project/anchor title, and a
-   source-grounded `reason`. The link quote and this decision's exact Task action quote
-   must contain one another in the current source; an unrelated paragraph is not action proof.
+   source-grounded `reason`. A complete same-action compound quote may supply the stored
+   Project name and contain the shorter Task action quote; not another paragraph or whole report.
+   The link quote and exact Task action quote must contain one another in the current source.
    Use the same positive anchor in attention_proposal. The service confirms that Task's
    link and derives relevant business_relevance without promoting its stage.
    Do not set business_relevance on a new Task decision. Reuse existing confirmed Task links.
@@ -108,6 +109,8 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    deliverable update that Task by its real ID. Identical source quotes alone do not establish
    Task identity. Merge only identical deliverables supported by explicit identity evidence.
    Task action excerpts do not originate extra Tasks from Project registration scope already covered by concrete actions.
+   Relations name the existing `related_task_id` and direction relative to this applied Task:
+   current_to_related or related_to_current; never guess a new Task's ID or use unrelated endpoints.
    Distinct deliverables with a shared goal may be clustered or linked; they
    retain independent owners, dates, and completion. When identity is uncertain,
    link or keep separate rather than merge.

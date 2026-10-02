@@ -609,8 +609,10 @@ promote_candidate, apply_acceptance, update_fields, or merge_identity
 transitions with existing IDs. Similarity rank is context only. Generic updates
 cannot set commitment status.
 
-Only identical deliverables may be proposed for identity merge; related tasks
-remain linked or clustered. Create only independently completable deliverables;
+Only identical deliverables may be proposed for identity merge.
+Relations name the existing `related_task_id` and direction relative to this applied Task:
+current_to_related or related_to_current; never guess a new Task's ID or use unrelated endpoints.
+Related Tasks remain linked or clustered. Create only independently completable deliverables;
 scope/content additions to an existing deliverable update that Task by its real ID.
 Identical source quotes alone do not establish Task identity.
 Task action excerpts do not originate extra Tasks from Project registration scope already covered by concrete actions.
@@ -620,8 +622,9 @@ Attention.anchor_id selects the Project assessment; it does not confirm a Task's
 For a new or unconfirmed Task explicitly belonging to an existing official Project,
 emit `project_link_proposal` with that known positive `anchor_id`, a nonempty exact
 current action `source_excerpt` naming the stored Project/anchor title, and a
-source-grounded `reason`. The link quote and this decision's exact Task action quote
-must contain one another in the current source; an unrelated paragraph is not action proof.
+source-grounded `reason`. A complete same-action compound quote may supply the stored
+Project name and contain the shorter Task action quote; not another paragraph or whole report.
+The link quote and exact Task action quote must contain one another in the current source.
 Use the same positive anchor in attention_proposal. The service confirms that Task's
 link and derives relevant business_relevance without promoting its stage.
 Do not set business_relevance on a new Task decision. Reuse existing confirmed Task links.
@@ -1061,8 +1064,10 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
         # Updates are idempotent per target and actual business effects. Audit
         # prose, model quality scores, and CEO-attention copy are presentation,
         # not a new Task identity or state transition.
+        current_task_id = (item.identity_proposal.target_task_id
+            if item.transition == "merge_identity" and item.identity_proposal else item.task_id)
         relation_effects = sorted(
-            (r.from_task_id, r.to_task_id, r.relation_type) for r in item.relation_proposals
+            (*r.endpoints(current_task_id), r.relation_type) for r in item.relation_proposals
         )
         anchor_effects = sorted((proposal.anchor_id,) for proposal in item.anchor_match_proposals)
         semantic_identity = {
@@ -1644,11 +1649,10 @@ def apply_task_agent_decision(
                     item.identity_proposal.target_task_id,
                 ))
             for relation in item.relation_proposals:
-                if task_id not in {relation.from_task_id, relation.to_task_id}:
-                    raise ValueError("relation proposal must include the Task evidenced by this decision")
+                from_task_id, to_task_id = relation.endpoints(task_id)
                 resolution.add_relation(
-                    from_task_id=relation.from_task_id,
-                    to_task_id=relation.to_task_id,
+                    from_task_id=from_task_id,
+                    to_task_id=to_task_id,
                     relation_type=BusinessRelationType(relation.relation_type),
                     evidence_signal_id=result.signal_id,
                     status="proposed", reason=relation.reason, _db=db,

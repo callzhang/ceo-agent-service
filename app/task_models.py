@@ -333,10 +333,15 @@ class TaskIdentityProposal(StrictTaskModel):
 
 
 class TaskRelationProposal(StrictTaskModel):
-    from_task_id: int = Field(gt=0)
-    to_task_id: int = Field(gt=0)
+    related_task_id: int = Field(gt=0, strict=True,
+        description="Real existing related Task ID; the current Task is this decision's applied result, never a guessed new ID.")
+    direction: Literal["current_to_related", "related_to_current"]
     relation_type: Literal["depends_on", "blocks", "supports", "supersedes", "related_to"]
     reason: str = ""
+
+    def endpoints(self, current_task_id: int) -> tuple[int, int]:
+        return ((current_task_id, self.related_task_id) if self.direction == "current_to_related"
+                else (self.related_task_id, current_task_id))
 
 
 class TaskClusterProposal(StrictTaskModel):
@@ -355,7 +360,7 @@ class TaskProjectLinkProposal(StrictTaskModel):
     """Current action evidence associating one retained Task with an existing Project."""
 
     anchor_id: int = Field(gt=0, strict=True)
-    source_excerpt: str
+    source_excerpt: str = Field(description="Exact same-action compound quote containing the stored Project/anchor title and this Task's action excerpt; a complete compound sentence is allowed, not another paragraph or the whole report assembled to supply a name.")
     reason: str
 
     @model_validator(mode="after")
@@ -533,6 +538,10 @@ class TaskDecision(StrictTaskModel):
     def validate_transition_shape(self) -> "TaskDecision":
         if self.action != "skip" and (not self.source_excerpt.strip() or not self.source_ref.strip()):
             raise ValueError("task decisions require a source excerpt (a sentence taken from the source) and reference")
+        if self.action == "update_task" and any(
+            relation.related_task_id == self.task_id for relation in self.relation_proposals
+        ):
+            raise ValueError("relation requires a different related Task than this decision's task_id")
         if self.evidence_origin != "current" and not (
             self.action == "record_candidate"
             or (self.action == "update_task" and self.transition == "update_fields")

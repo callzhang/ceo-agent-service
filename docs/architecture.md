@@ -823,6 +823,18 @@ next_check_at 使用 task-agent/CEO Agent。报告/文档名不是行为人，�
 这些是模型字段指导，不增加语义验证器、关键词判断、机械去重或吞错；既有来源/行为人/
 日期及无变化 guard 原样保留。此前冻结版本原生 8/9、同项目两行动样本失败仍为真实记录，
 本次指导的原生效果待独立重跑，不能由 schema 描述测试证明语义根治。
+后续字段版原生同项目两行动已两次通过、W39 通过；会议新 Task 暴露关系端点缺口，
+本次关系契约原生效果仍待重跑。
+TaskRelationProposal 的当前输出改为必填 related_task_id（真实已有正 ID）、direction
+（current_to_related/related_to_current）、relation_type 和既有可选 reason；不再接受 wire
+from_task_id/to_task_id。服务取得当前实际应用 Task ID 后派生两端，调用既有 add_relation，
+仍为 proposed、仍引用本决定实际 signal；领域 Graph API/SQL 不变。update_task 的 related
+ID 等于决定 task_id 时形状拒绝并沿既有一次纠正；创建重放后的 actual self 或缺失目标仍由
+领域层原子拒绝。旧 decision_json 保留原始值，不迁移或增加旧形状兼容。update 信号身份
+以派生实际端点/关系类型表达原业务效果，merge 的当前 ID 为实际 target；reason 噪声不变身份，
+新行动创建身份不变。已无字段变化的 update 仍先跳过，不凭关系制造 evidence-only update。
+Project link 摘录可用同一行动的完整 compound quote 包含 stored Project 名及较短 Task 行动，
+不得用其他段落/整报告凑名；原标题/引文最小核验不变，完整语义身份仍由 Agent 判断。
 update 来源身份包含实际 Project link 的目标和引用，不把 reason 措辞纳入效果；
 创建 Task 身份仍沿用行动/标题/负责人，不因关联说明改写而重复创建。
 

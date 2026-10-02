@@ -26,6 +26,7 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-decision-relative-task-relations | Delegated isolated candidate: app/task_models.py, app/task_agent.py, ci/shared-skills/ceo-work-tracking/SKILL.md, tests/test_task_models.py/test_task_agent.py/test_task_attention_multisource.py, docs/architecture.md/runtime-mechanism.md and docs/superpowers/specs/2026-10-01-task-attention-w39-phase1-design.md (Task contract) | Bind decision-relative relation to applied current Task and known existing related ID; field-local same-action Project-link quote guidance, no domain Graph API/oracle/input/global Skill/production change. Parent owns validation. | 2026-10-02 |
 
 
 | codex-attention-multisource-browser-fixture | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: frontend/dev-mock/tasksMock.ts (synthetic Attention evidence fixtures only) | Reuse existing isolated Tasks mock preview to verify two-source detail, watch/decision labels, light/dark and narrow readability; synthetic UI evidence is not business or production verification. | 2026-10-02 |

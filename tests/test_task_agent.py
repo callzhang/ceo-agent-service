@@ -277,6 +277,7 @@ class FakeRoutedTaskExecution:
 @pytest.mark.parametrize("fault,problem", [
     ("link", "new Task Attention requires"),
     ("history", "historical_comparison requires"),
+    ("relation", "relation_proposals.0.direction"),
 ])
 def test_attention_shape_omissions_use_existing_same_session_repair(fault, problem):
     import copy
@@ -289,11 +290,16 @@ def test_attention_shape_omissions_use_existing_same_session_repair(fault, probl
     valid = {"task_decisions": [{"action": "record_candidate", "transition": "none", "title": "核对验收计划",
         "source_ref": "chat:current", "source_excerpt": "复核示例项目验收计划", "attention_proposal": attention,
         "project_link_proposal": {"anchor_id": 3, "source_excerpt": "复核示例项目验收计划", "reason": "明确项目行动"}}]}
+    if fault == "relation":
+        valid["task_decisions"][0]["relation_proposals"] = [{"related_task_id": 7,
+            "direction": "current_to_related", "relation_type": "supports"}]
     invalid = copy.deepcopy(valid)
     if fault == "link":
         invalid["task_decisions"][0].pop("project_link_proposal")
-    else:
+    elif fault == "history":
         invalid["task_decisions"][0]["attention_proposal"]["evidence"].pop()
+    else:
+        invalid["task_decisions"][0]["relation_proposals"][0].pop("direction")
 
     class RepairingExecution:
         def execute(self, **kwargs):
@@ -727,6 +733,22 @@ def test_action_and_date_guidance_is_delivered_next_to_output_fields(monkeypatch
 
 
 @pytest.mark.parametrize("surface", ["prompt", "skill"])
+def test_relation_and_same_action_project_link_guidance_is_delivered(monkeypatch, surface):
+    import app.task_agent as task_agent
+    from app.task_models import TaskProjectLinkProposal
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    text = (build_task_agent_prompt(_work_item(), "候选上下文为空。") if surface == "prompt"
+        else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8"))
+    text = " ".join(text.split())
+    assert "Relations name the existing `related_task_id` and direction relative to this applied Task" in text
+    assert "never guess a new Task's ID or use unrelated endpoints" in text
+    field = TaskProjectLinkProposal.model_json_schema()["properties"]["source_excerpt"]
+    assert "same-action compound quote" in field["description"]
+    assert "not another paragraph or the whole report" in field["description"]
+
+
+@pytest.mark.parametrize("surface", ["prompt", "skill"])
 def test_action_date_source_guidance_is_consistent(monkeypatch, surface):
     import app.task_agent as task_agent
 
@@ -878,6 +900,8 @@ def test_fresh_task_agent_loads_initial_risk_rules_from_selected_skill_root(monk
     assert "scope/content additions to an existing deliverable update that Task by its real ID" in skill_text
     assert "Quote only the complete parseable date phrase, not a registry row" in skill_text
     assert "Report/document names are not date actors" in skill_text
+    assert "Relations name the existing `related_task_id` and direction relative to this applied Task" in skill_text
+    assert "A complete same-action compound quote may supply the stored Project name" in skill_text
 
 
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(monkeypatch):
@@ -1996,7 +2020,7 @@ def test_batch_rolls_back_task_signal_and_all_proposals_on_later_invalid_evidenc
     decision = TaskAgentDecision.model_validate({"task_decisions": [
         {"action": "update_task", "transition": "update_fields", "task_id": source_id,
          "source_excerpt": "补齐来源链接", "source_ref": item.source.ref, "title": "报价跟进",
-         "status": "waiting", "relation_proposals": [{"from_task_id": source_id, "to_task_id": target_id,
+         "status": "waiting", "relation_proposals": [{"related_task_id": target_id, "direction": "current_to_related",
          "relation_type": "related_to", "reason": "共享客户目标"}],
          "cluster_proposal": {"cluster_id": cluster_id, "task_ids": [source_id, target_id], "reason": "同一目标"},
          "anchor_match_proposals": [{"anchor_id": anchor_id, "reason": "客户事项"}],
@@ -2016,6 +2040,73 @@ def test_batch_rolls_back_task_signal_and_all_proposals_on_later_invalid_evidenc
     assert len(store.list_business_work_cluster_tasks(cluster_id=cluster_id)) == 2
     with store._connect() as db:
         assert db.execute("select count(*) from business_project_candidates").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("action", ["record_candidate", "update_task"])
+@pytest.mark.parametrize("direction", ["current_to_related", "related_to_current"])
+def test_decision_relative_relation_binds_actual_applied_task_and_replays(tmp_path, action, direction):
+    store = AutoReplyStore(tmp_path / "relative-relation.sqlite3")
+    semantic = TaskSemanticService(store)
+    seeds = [semantic.record_candidate(RecordCandidate(title=f"已有交付{i}",
+        signal=SourceSignal(source_type="seed", source_ref=f"seed:{i}", evidence_text="既有交付", dedupe_key=f"seed:{i}")))
+        for i in range(2)]
+    item = _work_item().model_copy(update={"summary": "核对供应商延期付款安排。"})
+    payload = {"action": action, "transition": "update_fields" if action == "update_task" else "none",
+        "task_id": seeds[0].task_id if action == "update_task" else None,
+        "source_ref": item.source.ref, "source_excerpt": item.summary, "title": "核对付款安排",
+        "description": item.summary, "relation_proposals": [{"related_task_id": seeds[1].task_id,
+            "direction": direction, "relation_type": "supports", "reason": "当前行动支持已有交付"}]}
+    decision = TaskAgentDecision.model_validate({"task_decisions": [payload]})
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+    current_id, = result.task_ids
+    assert current_id == (seeds[0].task_id if action == "update_task" else 3)
+    relation, = store.list_business_task_relations(task_id=current_id)
+    assert (relation.from_task_id, relation.to_task_id) == (
+        (current_id, seeds[1].task_id) if direction == "current_to_related" else (seeds[1].task_id, current_id))
+    assert relation.status.value == "proposed"
+    assert relation.supporting_signal_id == store.list_business_task_signals()[-1].id
+    tasks = store.list_business_tasks()
+    apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
+    assert store.list_business_tasks() == tasks
+    assert store.list_business_task_relations(task_id=current_id) == (relation,)
+
+
+@pytest.mark.parametrize("actual_self", [False, True])
+def test_new_action_relation_rejects_missing_or_deduped_actual_self_target_atomically(tmp_path, actual_self):
+    store = AutoReplyStore(tmp_path / "invalid-relative.sqlite3")
+    item = _work_item().model_copy(update={"summary": "复核付款安排。"})
+    payload = {"action": "record_candidate", "transition": "none", "source_ref": item.source.ref,
+        "source_excerpt": item.summary, "title": "复核付款安排"}
+    if actual_self:
+        seed = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+            decision=TaskAgentDecision.model_validate({"task_decisions": [payload]}), record_run=False)
+        target_id = seed.task_ids[0]
+    else:
+        target_id = 999
+    tasks, signals = store.list_business_tasks(), store.list_business_task_signals()
+    payload["relation_proposals"] = [{"related_task_id": target_id, "direction": "current_to_related", "relation_type": "related_to"}]
+    with pytest.raises(ValueError):
+        apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+            decision=TaskAgentDecision.model_validate({"task_decisions": [payload]}), record_run=False)
+    assert store.list_business_tasks() == tasks
+    assert store.list_business_task_signals() == signals
+
+
+@pytest.mark.parametrize("action", ["record_candidate", "update_task"])
+def test_relative_relation_effect_fingerprint_preserves_direction_and_ignores_reason(action):
+    from app.task_agent import _task_source_signal
+    item = _work_item()
+    payload = {"action": action, "transition": "update_fields" if action == "update_task" else "none",
+        "task_id": 1 if action == "update_task" else None, "source_ref": item.source.ref,
+        "source_excerpt": "复核付款安排。", "title": "付款复核", "description": "补充调整方案", "relation_proposals": [
+            {"related_task_id": 2, "direction": "current_to_related", "relation_type": "supports", "reason": "解释"}]}
+    def key(relation):
+        decision = TaskAgentDecision.model_validate({"task_decisions": [{**payload, "relation_proposals": [relation]}]}).task_decisions[0]
+        return _task_source_signal(item, decision).dedupe_key
+    original = payload["relation_proposals"][0]
+    assert key(original) == key({**original, "reason": "同一业务关系的新解释"})
+    for change in ({"direction": "related_to_current"}, {"related_task_id": 3}, {"relation_type": "blocks"}):
+        assert (key(original) != key({**original, **change})) is (action == "update_task")
 
 
 def test_same_task_multiple_decisions_keep_positional_task_signal_mapping(tmp_path):

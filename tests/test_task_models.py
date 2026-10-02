@@ -72,6 +72,33 @@ def test_current_observation_can_include_original_history_as_corroboration():
     assert TaskAttentionProposal.model_validate(payload).assessment_basis == "current_observation"
 
 
+@pytest.mark.parametrize("direction", ["current_to_related", "related_to_current"])
+def test_relation_proposal_names_only_existing_related_task_and_direction(direction):
+    from app.task_models import TaskRelationProposal
+    relation = TaskRelationProposal.model_validate({"related_task_id": 7, "direction": direction,
+        "relation_type": "supports", "reason": "当前行动支持相关交付"})
+    assert relation.endpoints(12) == ((12, 7) if direction == "current_to_related" else (7, 12))
+
+
+def test_update_relation_shape_rejects_current_id_as_related_target():
+    with pytest.raises(ValidationError, match="relation requires a different related Task"):
+        TaskAgentDecision.model_validate({"task_decisions": [_decision(action="update_task",
+            transition="update_fields", task_id=7, relation_proposals=[{"related_task_id": 7,
+                "direction": "current_to_related", "relation_type": "related_to"}])]})
+
+
+@pytest.mark.parametrize("payload", [
+    {"from_task_id": 1, "to_task_id": 2, "relation_type": "related_to"},
+    {"related_task_id": 0, "direction": "current_to_related", "relation_type": "related_to"},
+    {"related_task_id": True, "direction": "current_to_related", "relation_type": "related_to"},
+    {"related_task_id": 7, "relation_type": "related_to"},
+])
+def test_relation_proposal_rejects_old_unbound_or_missing_endpoint_shape(payload):
+    from app.task_models import TaskRelationProposal
+    with pytest.raises(ValidationError):
+        TaskRelationProposal.model_validate(payload)
+
+
 @pytest.mark.parametrize("action", ["record_candidate", "create_task"])
 def test_new_action_attention_accepts_explicit_project_link(action):
     decision = TaskAgentDecision.model_validate({"task_decisions": [_decision(action=action,

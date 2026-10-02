@@ -20,6 +20,19 @@ W39 的中汽创智与岚图是定点验收案例。NPS 等没有已确认项目
 
 ## 验收与上线
 
+### 新 Task 关系的决定相对输出契约补全
+
+TaskRelationProposal 不要求 Agent 在创建前猜当前 Task ID：必填真实已有 related_task_id、
+direction=current_to_related/related_to_current，保留 relation_type/reason。当前 Task 应用后
+服务用实际 task_id 派生两端；领域 add_relation/from/to/status=proposed/实际来源证据协议不变。
+不能表达与本决定无关的第三方两端；update 的 related ID 等于当前已知 task_id 在形状层拒绝，
+创建 dedupe 导致的实际自身或缺失目标由原领域层拒绝，不新增恢复或补链。旧 decision_json
+保持原始数据，不提供旧 from/to 输出兼容。update 指纹仍用实际端点和关系类型，reason 不
+构成身份；新创建身份不变，无字段变化 update 不因关系或关注而绕过原 guard。
+既有 Project link 可引用同一行动的完整 compound 原句，包含 stored Project/anchor 标题及
+较短 Task 行动引用；不是其他段落或整报告凑名，不改来源/标题核验或自动推断别名语义。
+这只补全先前无法表达新 Task 关系的输入端点，不增加 Agent、queue、权限或业务 gate。
+
 先写会在现状下失败的回归测试：同一周报内项目行与行动行分离、风险影响在第三处时，项目仍被关联，`watch` 关注落库；只写「有风险」却无实质影响时不落库；新项目无预存 anchor ID 时可在同轮完成；候选 Task 有确认的项目关联时可支持关注；已有关联项目的会议新风险或聊天补充证据无需等待周报即可更新关注；同一项目多条行动不产生重复卡片；投影失败留下明确诊断。用真实 W39 文本的脱敏固定样本检验中汽创智、岚图两项，同时确认 NPS 不被误注册为 Project。
 
 代码和针对性测试通过后，同步更新描述 Task/Project/Attention 行为的架构与运行文档，按现有生产部署流程上线。先在生产数据库副本上对 W39 输入做定点回放，核对 Task/Project 去重及预期两张关注卡；再备份生产库，只重排这一条已完成的周报输入，交给原有处理队列执行。同时读回上线后会议/聊天等非周报输入的处理回执，确认这些来源同样能提出、更新或被明确拒绝关注。验收分别读取 Task Agent 决定、项目关联、关注表和控制台 API；若副本回放出现重复 Task/Project 或额外关注，停止生产回放，先修正身份/判断逻辑。第一版验收不以四周历史覆盖率或 NPS 展示为门槛。

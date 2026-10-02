@@ -273,6 +273,16 @@ Attention 必填 assessment_basis（无兼容默认）：current_observation 需
 可信 WorkItem.context.sender_user_id/sender，next_check_at 用 task-agent/CEO Agent，报告名
 不是 actor。缺可信身份或完整日期时仅留原文、不输出 typed date。未增加验证器或恢复行为；
 此前冻结版本原生 8/9、同项目两行动失败保留，本次字段指导效果尚待原生重跑。
+后续字段版原生同项目两行动已两次通过、W39 通过；会议新 Task 暴露关系端点缺口，
+本次关系契约原生效果仍待重跑。
+关系 wire 使用必填 existing related_task_id + direction（current_to_related/related_to_current），
+保留 relation_type/reason，不再输入 from/to 两端。当前 actual Task 应用后才派生两端并调用
+既有领域 add_relation，status=proposed、supporting signal 仍为本决定真实信号；Graph API/SQL 不改。
+update 指向自身 task_id 在形状层拒绝并沿现有一次纠正；新行动 dedupe 后的 actual self、
+缺失 target 在领域事务中拒绝。old decision_json 原样保留，无旧 wire 兼容或 fallback。
+update 来源指纹用实际端点（merge 使用实际 target）与类型，忽略 reason；创建身份不改，
+无实际字段变化的 update guard 保留。同一行动 compound quote 可补足 Project 名和较短 Task
+摘录，不借其他段落/全报告；现有来源/标题核验不增强为自动完整语义身份判断。
 Agent 若以既有事实的比较、延续、升级或冲突形成评估，应同时引用当前来源和实际相关的
 持久化原始 Signals，使用真实正 ID、匹配 source_ref 和逐字原文；当前来源提到旧报告不等于
 引用原报告。不全量引用检索结果，也不强制特定来源类型；首次仅依据当前事实仍允许。

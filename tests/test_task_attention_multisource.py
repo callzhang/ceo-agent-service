@@ -1102,6 +1102,43 @@ def test_current_source_links_new_task_to_existing_project_and_updates_one_card(
     assert store.list_business_attention_items()[0].id == old_card_id
 
 
+def test_new_task_relation_and_compound_project_link_use_actual_current_id(tmp_path):
+    from app.task_agent import TaskAgentRunner
+
+    store, item, seed, anchor_id, old_card_id, new_task = existing_project_link_case(tmp_path)
+    existing = store.get_business_task(seed.task_id)
+    compound = "复核示例交付项目验收计划，并补充验收取消后的供应商延期付款安排。"
+    item = item.model_copy(update={"summary": f"{new_task['attention_proposal']['current_state']}\n{compound}"})
+    new_task.update(title="补充供应商延期付款安排", source_excerpt="补充验收取消后的供应商延期付款安排",
+        description="补充验收取消后的供应商延期付款安排")
+    new_task["project_link_proposal"]["source_excerpt"] = compound
+    new_task["relation_proposals"] = [{"related_task_id": seed.task_id,
+        "direction": "current_to_related", "relation_type": "supports", "reason": "付款安排支持既有验收交付"}]
+    new_task["attention_proposal"]["related_task_ids"] = [seed.task_id]
+    old_update = {"action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+        "title": existing.title, "description": existing.description, "source_ref": item.source.ref,
+        "source_excerpt": "复核示例交付项目验收计划"}
+    payload = {"task_decisions": [old_update, new_task]}
+    class Codex:
+        def decide(self, **kwargs):
+            return TaskAgentDecision.model_validate(payload)
+    input_id = store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
+    process_work_item(store, TaskAgentRunner(Codex()), store.claim_work_summary_inputs(limit=1)[0])
+    tasks = store.list_business_tasks()
+    assert len(tasks) == 2
+    assert store.get_business_task(seed.task_id) == existing
+    current = next(task for task in tasks if task.id != seed.task_id)
+    relation, = store.list_business_task_relations(task_id=current.id)
+    assert (relation.from_task_id, relation.to_task_id) == (current.id, seed.task_id)
+    assert relation.status.value == "proposed"
+    card, = store.list_business_attention_items()
+    assert card.id == old_card_id and card.anchor_id == anchor_id
+    assert {link.task_id for link in store.list_business_attention_tasks(card.id)} == {seed.task_id, current.id}
+    with store._connect() as db:
+        receipt = json.loads(db.execute("select projection_json from task_agent_runs where summary_input_id=?", (input_id,)).fetchone()[0])
+    assert receipt["status"] == "completed"
+
+
 @pytest.mark.parametrize("failure", ["missing", "unofficial", "inactive", "cross_project", "wrong_quote", "wrong_task_quote", "source_ref"])
 def test_existing_project_link_rejects_unproven_target_or_current_action(tmp_path, failure):
     from app.task_business_resolution import BusinessResolutionService
