@@ -3363,10 +3363,7 @@ class PlaywrightUnsubscribeBrowser:
                     self._raise_if_blocked()
                     # Some unsubscribe endpoints abort the provisional
                     # navigation while replacing it with their redirect or
-                    # client-rendered page. If Playwright has already left
-                    # about:blank, the URL and subsequent page readback are
-                    # stronger evidence than the aborted wait itself.
-                    current_url = str(getattr(self.page, "url", ""))
+                    # client-rendered page.
                     if "ERR_ABORTED" not in str(exc):
                         raise
                     # A GET unsubscribe endpoint may be treated as a download
