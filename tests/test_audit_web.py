@@ -3923,6 +3923,33 @@ def test_recent_payload_cache_returns_fallback_while_first_refresh_runs():
     assert payload == {"state": "ready"}
 
 
+def test_worker_status_reads_component_changes_on_next_request(tmp_path):
+    path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(path)
+    store.set_service_health_component(
+        "agent-cron-scheduler", state="healthy", latest_error="before"
+    )
+    client = loopback_test_client(create_audit_app(path))
+
+    def scheduler_error():
+        payload = client.get("/api/workers/status").json()
+        return next(
+            (item["latest_error"] for item in payload["components"]
+             if item["name"] == "agent-cron-scheduler"), None
+        )
+
+    for _ in range(40):
+        if scheduler_error() == "before":
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("initial worker status did not become readable")
+    store.set_service_health_component(
+        "agent-cron-scheduler", state="degraded", latest_error="after"
+    )
+    assert scheduler_error() == "after"
+
+
 def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     client = loopback_test_client(create_audit_app(db_path))

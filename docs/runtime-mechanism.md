@@ -1236,3 +1236,8 @@ The CLI's default 20-item pages exhausted its 50-page budget for large
 participant queries such as Melody; retrying the same bounded query could
 never reach the remaining candidates. A partial response still fails closed;
 larger pages do not change recipient ranking or authorize a send.
+
+Worker status reads its local SQLite queue, Email health and component facts
+on every request. These facts are not served from the last background payload:
+after a worker writes its state, the next status request must reflect it.
+External connector authentication probes retain their independent cache.
