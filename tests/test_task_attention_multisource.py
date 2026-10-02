@@ -88,6 +88,7 @@ def test_omitted_anchor_accepts_this_decisions_project_proposal():
     PROJECT_ROW,
     PROJECT_ROW.lstrip("| "),
     "回款复核 | 降低现金流风险 | 09-30 | 有风险 |",
+    "\n" + PROJECT_ROW,
 ])
 def test_apply_independent_registry_proof_registers_project_and_reuses_task(tmp_path, registration_excerpt):
     store = AutoReplyStore(tmp_path / "registry.sqlite3")
@@ -133,6 +134,31 @@ def test_invalid_registry_proof_rolls_back_domain_transaction(tmp_path, change):
     with store._connect() as db:
         assert db.execute("select count(*) from business_tasks").fetchone()[0] == 0
         assert db.execute("select count(*) from business_task_signals").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("quote_from_following_row", [False, True])
+def test_registry_prose_cannot_register_a_project(tmp_path, quote_from_following_row):
+    store = AutoReplyStore(tmp_path / "registry-prose.sqlite3")
+    prose = "项目负责人统一更新登记信息。"
+    second_row = PROJECT_ROW.replace("示例项目", "真实第二项目")
+    work_item = report_item()
+    source = json.loads(work_item.summary)
+    source["markdown"] = source["markdown"].replace(
+        PROJECT_ROW, PROJECT_ROW + "\n" + prose + "\n" + second_row,
+    )
+    work_item = work_item.model_copy(update={"summary": json.dumps(source, ensure_ascii=False)})
+    payload = decision_payload()
+    payload["task_decisions"][0]["project_proposal"].update(
+        title=prose, source_excerpt="\n" + second_row if quote_from_following_row else prose,
+    )
+    with pytest.raises(ValueError, match="cited report registry row"):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=work_item,
+            decision=TaskAgentDecision.model_validate(payload), record_run=False,
+        )
+    assert store.list_business_projects() == []
+    with store._connect() as db:
+        assert db.execute("select count(*) from business_tasks").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("meeting_source,quote", [

@@ -869,6 +869,7 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
     row_start = markdown.find(source_excerpt)
     if row_start < 0:
         return ""
+    row_start += len(source_excerpt) - len(source_excerpt.lstrip())
     row_start = markdown.rfind("\n", 0, row_start) + 1
     row_end = markdown.find("\n", row_start)
     if row_end < 0:
@@ -890,6 +891,8 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
     # The excerpt only locates the original row. Parse its columns from the
     # report so a partial quote cannot shift the authoritative project column.
     first_row = markdown[row_start:row_end]
+    if "|" not in first_row:
+        return ""
     cells = [cell.strip() for cell in first_row.strip().strip("|").split("|")]
     if not cells:
         return ""
