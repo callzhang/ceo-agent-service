@@ -9486,13 +9486,13 @@ def handle_rerun_attempt_post(
         trigger_create_time = existing_task.trigger_create_time
         conversation_title = existing_task.conversation_title
         single_chat = existing_task.single_chat
-    elif channel == "wechat":
+    elif channel in {"wechat", "scheduled"}:
         return (
             409,
             {},
             render_page(
-                "WeChat trigger unavailable",
-                "<p>WeChat trigger payload is unavailable; rerun was not queued.</p>",
+                "Trigger unavailable",
+                "<p>Original execution payload is unavailable; rerun was not queued.</p>",
             ),
         )
     elif conversation_record is None:
@@ -9656,7 +9656,11 @@ def _is_valid_rerun_trigger_json(
     trigger_message_json: str, *, channel: str = "dingtalk",
 ) -> bool:
     try:
-        if channel == "wechat":
+        if channel == "scheduled":
+            from app.agent_cron.context import ScheduledAgentContext
+
+            ScheduledAgentContext.from_execution_json(trigger_message_json, reply_task_id=0)
+        elif channel == "wechat":
             WechatMessage.model_validate_json(trigger_message_json)
         else:
             DingTalkMessage.model_validate_json(trigger_message_json)

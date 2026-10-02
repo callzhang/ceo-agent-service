@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-ceo-scheduled-rerun-20261002: app/audit_web.py (rerun payload validation only), tests/test_audit_web.py, docs/runtime-mechanism.md; preserve scheduled execution context instead of synthesizing DingTalk input; 320 focused tests passed. -->
+
 <!-- codex-ceo-result-syntax-20261002: app/agent_result.py, tests/test_agent_contracts.py, docs/runtime-mechanism.md; preserve unbalanced JSON as invalid, no result repair or effect policy change; 138 focused tests passed. -->
 
 Several agents (Claude Code sessions and Codex) edit this working tree at the
