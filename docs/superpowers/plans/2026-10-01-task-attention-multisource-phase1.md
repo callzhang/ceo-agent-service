@@ -456,6 +456,8 @@ Task 6 复核记录：`128ea5b4` 完成保存的 assessment API 与事实/判断
 
 **Files:** Create `tests/fixtures/task_attention_multisource.json`, `scripts/replay_task_attention.py`, `docs/task-attention-phase1-validation.md`; Test `tests/test_task_attention_multisource.py`。
 
+Task 7 开始前的实测基线（尚未回放）：当前生产 revision `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0`，已固定到 `/Users/derek/Projects/ceo-agent-service/.worktrees/attention-eval-baseline`；该基线 56 项 models/retrieval 测试通过，其 CI Skill 与未修改全局 version 2 文件 hash 相同。候选分支已正常合并此 origin/main revision，保留他人修复。SQLite 在线 backup 到 `/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-attention-eval-40j4skvv/baseline.sqlite3`，完整性 `ok`、大小 3,223,863,296 bytes；该不可变初态有 259 Task、16 Project、0 Attention，输入 27465 精确来源 ref 匹配、done、attempts=1，已有 Task 129–134 均 candidate/open。生产配置的路由、模型、工作目录和 MCP 连接用于两侧比较；只对评估显式使用各侧 Skill root 和副本 session scope，不打印秘密配置。此处只证明准备和只读核对，不证明候选模型效果。
+
 - [ ] **1. 建立固定版本样本，不把 Agent 正确输出写进输入。** JSON 顶层 version=1，每项 work_item、existing_context、expected 互相独立；expected 只供评估断言，不能发给 Agent。
 
 | case_id | 固定输入与预期 |
