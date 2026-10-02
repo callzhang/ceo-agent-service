@@ -777,9 +777,9 @@ Task 6 与 Task 7 已随 `46ba55eb`（2026-09-24）一起部署上线，不是�
 
 系统首先在一个语义事务中写入来源信号、候选或正式 Task、证据、类型化日期、显式 Task 转换和关系/锚点/Project 候选提议；随后从已提交的语义事实重算关注投影。候选提升、接受、字段更正和同一事项合并使用不同转换；模型相似度仅用于提示，不授权身份转换。`created_at` 是系统记录时间；`assigned_at` 仅从明确正式指派的可信源时间戳派生，日期值必须与精确摘录中的可解析日期一致。周级或不可解析日期短语只留在关联的来源信号中，不生成 typed date fact 或猜测时间戳。估算由可信来源发言人署名，抽取 Agent 不冒充估算者；Task 6 的 `next_check_at` 由 Agent 署名但只记录来源明确给出的检查日期，不安排 cadence、不将 due date 转成检查时间；其他日期要求可识别来源行为人。当前 AI Minutes producer 没有可信 speaker→identity 映射，故不把转述者或模型填写的人作为日期行为人，相关日期暂不记录。指派日、请求/外部/承诺 DDL、估算和下次检查分别保存为独立类型。Project 只能引用注册表中的正式对象；Project 候选和锚点匹配不会自动创建正式 Project。
 
-需关注必须同时有已确认的业务锚点、相关 Task、已链接来源信号、明确 CEO action 和当前来源的精确 trigger 摘录。trigger 类型和原因是 Agent 对来源的语义分类并写入 Attention provenance；它不等于机器独立证明其重大性，系统不做关键词重大性推断。提交后还要按所有受影响 Task 重算当前关注成员，完成、取消、不相关及合并都会更新/移除成员；投影失败不回滚已提交 Task。仅相关、已接受、正常进度或临近日期不足以进入关注。Task Agent 不再把 `work_projects` / `work_todos` / `work_updates` 当新语义事实的双写目标；外部 TODO 镜像走 Task 7 的独立 Task 键控 outbox，Task 6 单独不得部署。
+需关注必须同时有正式 Project 的已确认规范锚点、相关且开放/等待中的 Task、已链接来源信号、明确 CEO action 和已核验的精确来源引文。trigger 类型和原因是 Agent 对来源的语义分类并写入 Attention assessment；它不等于机器独立证明其重大性，系统不做关键词重大性推断。提交后还要按所有受影响 Task 重算当前关注成员，完成、取消、不相关及合并都会更新/移除成员；投影失败不回滚已提交 Task。仅相关、已接受、正常进度或临近日期不足以进入关注。Task Agent 不再把 `work_projects` / `work_todos` / `work_updates` 当新语义事实的双写目标；外部 TODO 镜像走 Task 7 的独立 Task 键控 outbox，Task 6 单独不得部署。
 
-开发中、尚未部署的多来源 Project Attention 契约（输出模型与 Project 绑定阶段）：
+开发中、尚未部署的多来源 Project Attention 契约（输出模型、Project 绑定与投影消费阶段；prompt 接线与发布验收仍待后续任务）：
 `ProjectProposal.source_excerpt` 必填且非空，独立引用项目登记依据，不借用
 `TaskDecision.source_excerpt` 的行动项摘录。Attention 使用至少一条 `evidence`，每条包含
 非空 `source_ref`、`source_excerpt` 和可选的严格正整数 `signal_id`；`why_attention` 保留为
@@ -793,8 +793,31 @@ Agent 的推断。`anchor_id` 可省略或为 null，但只能指向同一 TaskD
 注册成功后，Task 确认关联到规范 anchor 并派生 relevant；candidate stage 不因此提升。
 每项 Attention 应用结果以 `AppliedTaskAttention` 保存 decision、task_id、signal_id 与 anchor_id；
 null anchor 仅取同一 decision 实际注册的 Project anchor，明确的正整数 anchor 保留原值。
-此阶段的投影端仅支持既有单条当前来源证据与既有 anchor；多条/历史证据、显式相关 Task 列表
-及新注册 Project 的完整投影仍留给后续阶段，未支持的形状明确记录失败。整体完成验收前不得部署。
+投影使用 `project:{canonical_anchor_id}` 稳定身份，每个正式 Project 保留一张卡。
+当前引文的 null signal ID 只解析为该 `AppliedTaskAttention` 的实际信号；历史正整数 ID
+只读取对应持久化原始信号，核对 source_ref、精确连续引文和合格支持 Task 的证据链接。
+引文可来自完整当前来源或 JSON 解码后的某个字符串叶子，不要求包含在 Task 行动摘录中，
+也不能拼接不同 JSON 字段。session/memory 的 cited-only provenance 不充当已观察原始来源。
+任一引文或关联无效就拒绝整项提案。`assessment_json` 按键排序保存 material_trigger、
+inference（纯 why_attention 推断）及精确引文的 signal ID/source_ref/source_time/source_link，
+时间和链接只来自持久化信号，不复制报告或检索全文；assessment 改变会产生事件，重复回放幂等。
+每个当前或显式 related Task 都必须 relevant、open/waiting，且确认关联同一活动规范 anchor；
+related_task_ids 只指定实际风险支持 Task，不自动包含所有项目 Task。合并本轮支持 Task 与旧卡
+仍合格的成员，开放兄弟 Task 保留；完成等变化移除成员，不自动解决 Attention。
+同轮同项目的 Attention 内容完全一致（排除 anchor 选择器和 related IDs）时折叠并合并成员；
+其余内容（含 evidence）不同则整组 rejected，原因为 multiple distinct proposals，不按顺序覆盖。
+这是契约一致性检查，不是机器严重度判断。
+Task/input/run 原子提交时保存 pending 投影回执，卡片写入、成员重算与最终回执保存均在提交后。
+回执独立于已完成 Task run；投影或回执保存失败不得改写其终态。未确认完成仍为 pending，
+失败会记录原因，不新增重试/恢复循环。直接未记录 run 的 apply 只返回类型化回执，不创建假 run。
+task_decision_count 包含全部原始决定；proposal_count 包含全部原始提案（包括跳过/无实际 Task
+应用的提案，并为其记录 rejected outcome）；project_link_count 为本轮实际确认的不同 Task↔Project
+关联数；registry_row_count 复用原始周报登记行解析，与是否提出 Project 无关，非报告为 null；
+applied_count 只计成功写入的不同卡 ID。零提案为 no_proposal，全部成功 completed，成功与失败
+并存 partial，无成功且失败 failed；成员重算错误独立记录 recompute_error。整体完成验收前不得部署。
+既有 `_update_fields_restates_task` 仍在 Project/Attention 应用前跳过无字段变化的 update；其原始
+Attention 提案计数并明确 rejected。真实新风险可以实际补充 Task 描述，但不为投影伪造字段改动，
+也不新增通用 evidence-only update 路径。
 
 业务 Skill 说明“如何判断”，操作 Skill 说明“如何读取或执行”。OA、面试和 OKR 已有成熟的专业
 Skill，CEO Skill 只负责识别需要委派的场景，不复制专业规则：分别加载

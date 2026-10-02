@@ -1836,8 +1836,9 @@ def test_attention_projection_runs_after_outer_domain_transaction_commit(tmp_pat
         ),),
     ))
     resolution = BusinessResolutionService(store)
-    anchor_id = resolution.register_anchor(anchor_type="customer", anchor_ref="customer:attention",
+    anchor_id = resolution.register_anchor(anchor_type="project", anchor_ref="project:attention",
         title="关键客户交付")
+    resolution.register_official_project(anchor_id=anchor_id, registry_source="report:attention")
     resolution.confirm_anchor_match(task_id=seed.task_id, anchor_id=anchor_id,
         evidence_signal_id=seed.signal_id, reason="确认是关键客户业务事项")
     item = _work_item(sender="Alex", sender_user_id="alex-id").model_copy(update={
@@ -1877,12 +1878,15 @@ def test_attention_projection_runs_after_outer_domain_transaction_commit(tmp_pat
             decision=decision, record_run=False, _db=db)
         assert seen == []
     from app.task_agent import _project_task_attention
-    _project_task_attention(store, result.attention_proposals, result.affected_task_ids)
+    _project_task_attention(store, result.attention_proposals, result.affected_task_ids,
+                            receipt=result.projection_receipt)
 
     assert seen == [("relevant", 1, 1)]
     (attention_item,) = store.list_business_attention_items()
-    assert "threatened_commitment" in attention_item.why_attention
-    assert "delivery is at risk" in attention_item.why_attention
+    assert attention_item.why_attention == "负责人报告已接受承诺有风险"
+    assessment = json.loads(attention_item.assessment_json)
+    assert assessment["material_trigger"] == "threatened_commitment"
+    assert assessment["evidence"][0]["source_excerpt"] == "delivery is at risk"
 
 
 def test_routine_progress_without_attention_proposal_is_not_projected(tmp_path):

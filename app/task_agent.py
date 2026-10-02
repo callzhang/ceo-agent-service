@@ -2,7 +2,7 @@ import json
 import logging
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -33,6 +33,8 @@ from app.task_models import (
     WorkItemSourceKind,
     WorkItemSourceType,
     WorkSummaryInput,
+    TaskAttentionProjectionOutcome,
+    TaskAttentionProjectionReceipt,
 )
 from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID
 from app.task_retrieval import (
@@ -48,6 +50,7 @@ from app.task_semantic_models import (
     BusinessTaskStatus,
     BusinessRelevance,
     FormalTaskBasis,
+    AttentionCategory,
 )
 from app.task_semantic_service import (
     AcceptancePolarity,
@@ -107,6 +110,8 @@ class TaskAgentApplyResult:
     attention_proposals: tuple[AppliedTaskAttention, ...]
     affected_task_ids: tuple[int, ...] = ()
     skipped_reasons: tuple[str, ...] = ()
+    projection_receipt: TaskAttentionProjectionReceipt | None = None
+    project_links: tuple[tuple[int, int], ...] = ()
 
     def __iter__(self):
         return iter(self.task_ids)
@@ -848,8 +853,7 @@ def _source_locator(work_item: WorkItem, item: TaskDecision) -> tuple[str, str, 
     return link, group or work_item.source.conversation_title, person or work_item.context.sender, description
 
 
-def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> str:
-    """Return a project name only when the cited row is in a report project registry."""
+def _report_markdown(work_item: WorkItem) -> str:
     if work_item.source.type not in {
         WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT,
         WorkItemSourceType.PROJECT_WEEKLY_REPORT,
@@ -864,7 +868,13 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
         )
     except (TypeError, ValueError, AttributeError):
         return ""
-    if not isinstance(markdown, str) or not source_excerpt.strip():
+    return markdown if isinstance(markdown, str) else ""
+
+
+def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> str:
+    """Return a project name only when the cited row is in a report project registry."""
+    markdown = _report_markdown(work_item)
+    if not markdown or not source_excerpt.strip():
         return ""
     row_start = markdown.find(source_excerpt)
     if row_start < 0:
@@ -891,7 +901,7 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
     # The excerpt only locates the original row. Parse its columns from the
     # report so a partial quote cannot shift the authoritative project column.
     first_row = markdown[row_start:row_end]
-    if "|" not in first_row:
+    if "|" not in first_row or re.fullmatch(r"\|[\s:|\-]+\|", first_row.strip()):
         return ""
     cells = [cell.strip() for cell in first_row.strip().strip("|").split("|")]
     if not cells:
@@ -927,12 +937,16 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
     return title
 
 
-def _source_contains_project_quote(work_item: WorkItem, quote: str) -> bool:
+def source_contains_quote(raw: str, quote: str) -> bool:
     """Check current source text, including decoded strings in structured inputs."""
+    if not quote.strip():
+        return False
+    if quote in raw:
+        return True
     try:
-        payload = json.loads(work_item.summary)
+        payload = json.loads(raw)
     except ValueError:
-        return quote in work_item.summary
+        return False
 
     def contains(value: object) -> bool:
         if isinstance(value, str):
@@ -1272,6 +1286,7 @@ def apply_task_agent_decision(
     affected_task_ids: list[int] = []
     attention: list[AppliedTaskAttention] = []
     skipped_reasons: list[str] = []
+    project_links: set[tuple[int, int]] = set()
 
     def apply(db: sqlite3.Connection | None) -> None:
         for item in decision.task_decisions:
@@ -1601,7 +1616,7 @@ def apply_task_agent_decision(
                             work_item.source.type is WorkItemSourceType.AI_MINUTES
                             or work_item.context.source_conversation_kind is WorkItemSourceKind.MINUTES
                         )
-                        or not _source_contains_project_quote(work_item, proposal.source_excerpt)
+                        or not source_contains_quote(work_item.summary, proposal.source_excerpt)
                     ):
                         raise ValueError("project proposal must cite an exact quote in the current meeting source")
                 else:
@@ -1702,6 +1717,8 @@ def apply_task_agent_decision(
                     relevance=BusinessRelevance.RELEVANT,
                     _db=db,
                 )
+            if applied_project_anchor_id is not None:
+                project_links.add((task_id, applied_project_anchor_id))
             project_candidate = item.project_candidate_proposal
             if report_project_id is not None:
                 existing_candidate = db.execute(
@@ -1743,13 +1760,14 @@ def apply_task_agent_decision(
                     anchor_id=attention_anchor_id,
                 ))
 
+    recorded_run_id = None
     if _db is not None:
         apply(_db)
     else:
         with store.task_agent_domain_apply_transaction() as db:
             apply(db)
         if record_run:
-            store.record_task_agent_run(
+            recorded_run_id = store.record_task_agent_run(
                 summary_input_id=summary_input_id,
                 codex_session_id=codex_session_id,
                 decision_json=_json_dumps(decision.model_dump(mode="json")),
@@ -1761,9 +1779,17 @@ def apply_task_agent_decision(
         attention_proposals=tuple(attention),
         affected_task_ids=tuple(dict.fromkeys(affected_task_ids)),
         skipped_reasons=tuple(skipped_reasons),
+        project_links=tuple(sorted(project_links)),
     )
+    receipt = _projection_receipt(work_item, decision, result)
+    result = replace(result, projection_receipt=receipt)
     if _db is None:
-        _project_task_attention(store, result.attention_proposals, result.affected_task_ids)
+        if recorded_run_id is not None:
+            _save_projection_receipt(store, recorded_run_id, receipt)
+        receipt = _project_task_attention(store, result.attention_proposals, result.affected_task_ids, receipt=receipt)
+        result = replace(result, projection_receipt=receipt)
+        if recorded_run_id is not None:
+            _save_projection_receipt(store, recorded_run_id, receipt)
     return result
 
 
@@ -1787,52 +1813,181 @@ def _project_task_attention(
     store: AutoReplyStore,
     proposals: tuple[AppliedTaskAttention, ...],
     affected_task_ids: tuple[int, ...],
-) -> None:
+    *,
+    receipt: TaskAttentionProjectionReceipt,
+) -> TaskAttentionProjectionReceipt:
+    applied_ids: set[int] = set()
+    groups: dict[int, list[AppliedTaskAttention]] = {}
     for applied in proposals:
-        item, task_id, signal_id = applied.decision, applied.task_id, applied.signal_id
+        groups.setdefault(applied.anchor_id, []).append(applied)
+    for anchor_id, group in groups.items():
+        shapes = {
+            json.dumps(entry.decision.attention_proposal.model_dump(
+                mode="json", exclude={"anchor_id", "related_task_ids"}
+            ), sort_keys=True)
+            for entry in group
+        }
+        if len(shapes) != 1:
+            receipt.outcomes.extend(
+                TaskAttentionProjectionOutcome(
+                    task_id=entry.task_id, anchor_id=anchor_id, status="rejected",
+                    reason="multiple distinct proposals for the same Project",
+                ) for entry in group
+            )
+            continue
+        applied = group[0]
+        item, signal_id = applied.decision, applied.signal_id
         proposal = item.attention_proposal
         assert proposal is not None
         try:
-            # Contract-only stage: multi-source and newly resolved project
-            # projection are implemented together in the later attention task.
-            if proposal.anchor_id is None or len(proposal.evidence) != 1 or proposal.related_task_ids:
-                raise ValueError("multisource/project attention projection is not implemented yet")
-            evidence = proposal.evidence[0]
-            if evidence.signal_id is not None or evidence.source_ref != item.source_ref:
-                raise ValueError("existing attention projection only supports current-source evidence")
-            exact_trigger_quote = (
-                evidence.source_excerpt in item.source_excerpt
+            if anchor_id not in {
+                project.canonical_anchor_id for project in store.list_business_projects()
+            }:
+                raise ValueError("attention requires a registered official Project")
+            task_ids = {entry.task_id for entry in group}
+            task_ids.update(
+                value for entry in group
+                for value in entry.decision.attention_proposal.related_task_ids
             )
-            if not exact_trigger_quote:
-                LOGGER.info("Suppressing Task attention without an exact source trigger quote task_id=%s", task_id)
-                continue
-            BusinessAttentionProjection(store).upsert(AttentionProposal(
-                stable_key=f"task:{task_id}:{proposal.material_trigger}",
-                category=proposal.category,
+            projection = BusinessAttentionProjection(store)
+            with store.business_task_transaction() as db:
+                eligible = set(projection._current_eligible_task_ids(
+                    task_ids=tuple(sorted(task_ids)), anchor_id=anchor_id, db=db
+                ))
+                if eligible != task_ids:
+                    raise ValueError("every supporting Task must be relevant, open/waiting and confirmed to this active Project")
+                existing = store.get_business_attention_item_by_stable_key_in_transaction(
+                    stable_key=f"project:{anchor_id}", _db=db
+                )
+                if existing is not None:
+                    old_ids = tuple(
+                        link.task_id for link in store.list_business_attention_tasks_in_transaction(
+                            attention_item_id=existing.id, _db=db
+                        )
+                    )
+                    task_ids.update(projection._current_eligible_task_ids(
+                        task_ids=old_ids, anchor_id=anchor_id, db=db
+                    ))
+            linked_signal_ids = {
+                link.signal_id for member in eligible
+                for link in store.list_business_task_evidence(member)
+            }
+            verified = []
+            for entry in group:
+                for evidence in entry.decision.attention_proposal.evidence:
+                    source = store.get_business_task_signal(
+                        evidence.signal_id if evidence.signal_id is not None else entry.signal_id
+                    )
+                    if source is None or source.source_ref != evidence.source_ref:
+                        raise ValueError("attention evidence signal/source_ref does not match")
+                    if source.source_type in {"session_provenance", "memory_provenance"}:
+                        raise ValueError("attention evidence must be observed original source, not cited provenance")
+                    if not source_contains_quote(source.evidence_text, evidence.source_excerpt):
+                        raise ValueError("attention quote is absent from original source")
+                    if source.id not in linked_signal_ids:
+                        raise ValueError("attention evidence must be linked to a qualifying supporting Task in this Project")
+                    if entry is applied:
+                        verified.append({
+                            "signal_id": source.id, "source_ref": source.source_ref,
+                            "source_excerpt": evidence.source_excerpt,
+                            "source_time": source.source_time,
+                            "source_link": json.loads(source.context_json).get("source_link", ""),
+                        })
+            effective = AttentionProposal(
+                stable_key=f"project:{applied.anchor_id}",
+                category=AttentionCategory(proposal.category),
                 title=proposal.title,
                 business_area="",
-                why_attention=(
-                    f"{proposal.why_attention} Source trigger ({proposal.material_trigger}): "
-                    f"{evidence.source_excerpt}"
-                ),
+                why_attention=proposal.why_attention,
                 current_state=proposal.current_state,
                 ceo_action=proposal.ceo_action,
                 anchor_id=applied.anchor_id,
-                task_ids=(task_id,),
+                task_ids=tuple(sorted(task_ids)),
                 evidence_signal_id=signal_id,
-            ))
-        except Exception:
-            LOGGER.exception(
-                "Task committed but CEO attention projection failed for task_id=%s",
-                task_id,
+                assessment_json=json.dumps({
+                    "material_trigger": proposal.material_trigger,
+                    "inference": proposal.why_attention, "evidence": verified,
+                }, ensure_ascii=False, sort_keys=True),
+            )
+        except ValueError as exc:
+            receipt.outcomes.extend(
+                TaskAttentionProjectionOutcome(task_id=entry.task_id, anchor_id=anchor_id,
+                                               status="rejected", reason=str(exc))
+                for entry in group
+            )
+            continue
+        except Exception as exc:
+            receipt.outcomes.extend(
+                TaskAttentionProjectionOutcome(task_id=entry.task_id, anchor_id=anchor_id,
+                                               status="error", reason=str(exc))
+                for entry in group
+            )
+            continue
+        try:
+            attention_id = projection.upsert(effective)
+            applied_ids.add(attention_id)
+            receipt.outcomes.extend(
+                TaskAttentionProjectionOutcome(task_id=entry.task_id, anchor_id=anchor_id,
+                                               attention_id=attention_id, status="applied")
+                for entry in group
+            )
+        except Exception as exc:
+            receipt.outcomes.extend(
+                TaskAttentionProjectionOutcome(task_id=entry.task_id, anchor_id=anchor_id,
+                                               status="error", reason=str(exc))
+                for entry in group
             )
     try:
         BusinessAttentionProjection(store).recompute_for_tasks(affected_task_ids)
-    except Exception:
-        LOGGER.exception(
-            "Task committed but CEO attention membership recomputation failed for task_ids=%s",
-            affected_task_ids,
+    except Exception as exc:
+        receipt.recompute_error = str(exc)
+    receipt.applied_count = len(applied_ids)
+    failed = bool(receipt.recompute_error or any(outcome.status != "applied" for outcome in receipt.outcomes))
+    receipt.status = (
+        "partial" if failed and applied_ids else "failed" if failed
+        else "completed" if receipt.proposal_count else "no_proposal"
+    )
+    return receipt
+
+
+def _projection_receipt(
+    work_item: WorkItem, decision: TaskAgentDecision, result: TaskAgentApplyResult,
+) -> TaskAttentionProjectionReceipt:
+    report_source = work_item.source.type in {
+        WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT, WorkItemSourceType.PROJECT_WEEKLY_REPORT,
+        WorkItemSourceType.DEPARTMENT_WEEKLY_REPORT,
+    }
+    registry_rows = None
+    if report_source:
+        markdown = _report_markdown(work_item)
+        registry_rows = sum(
+            bool(_report_project_registry_title(work_item, line))
+            for line in markdown.splitlines() if line.strip()
         )
+    unapplied = [
+        item for item in decision.task_decisions
+        if item.attention_proposal is not None
+        and not any(applied.decision is item for applied in result.attention_proposals)
+    ]
+    return TaskAttentionProjectionReceipt(
+        status="pending", source_type=work_item.source.type.value,
+        task_decision_count=len(decision.task_decisions), project_link_count=len(result.project_links),
+        registry_row_count=registry_rows,
+        proposal_count=sum(item.attention_proposal is not None for item in decision.task_decisions),
+        outcomes=[TaskAttentionProjectionOutcome(
+            task_id=item.task_id, anchor_id=item.attention_proposal.anchor_id,
+            status="rejected", reason="proposal has no applied Task decision",
+        ) for item in unapplied],
+    )
+
+
+def _save_projection_receipt(
+    store: AutoReplyStore, run_id: int, receipt: TaskAttentionProjectionReceipt,
+) -> None:
+    try:
+        store.record_task_agent_projection(run_id, receipt.model_dump_json())
+    except Exception:
+        LOGGER.exception("Task committed but projection receipt could not be saved run_id=%s", run_id)
 
 
 def _validate_identity_proposal(store, proposal, *, db: sqlite3.Connection | None) -> None:
@@ -1963,12 +2118,18 @@ def process_work_item(
                 memory_recall_used=any(item.memory_recall_used for item in decision.task_decisions),
                 _db=db,
             )
+            receipt = apply_result.projection_receipt
+            assert receipt is not None
+            store.record_task_agent_projection(active_run_id, receipt.model_dump_json(), _db=db)
+        committed_run_id = active_run_id
         active_run_id = None
-        _project_task_attention(
-            store, apply_result.attention_proposals, apply_result.affected_task_ids
-        )
     except Exception as exc:
         if active_run_id is not None:
             store.finish_task_agent_run(active_run_id, status="failed", error=str(exc))
         store.mark_work_summary_input_failed(work_input.id, str(exc))
         raise
+    try:
+        receipt = _project_task_attention(store, apply_result.attention_proposals, apply_result.affected_task_ids, receipt=receipt)
+        _save_projection_receipt(store, committed_run_id, receipt)
+    except Exception:
+        LOGGER.exception("Task committed but projection did not finish run_id=%s", committed_run_id)

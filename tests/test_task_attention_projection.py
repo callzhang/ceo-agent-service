@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import pytest
 
 from app.store import AutoReplyStore
@@ -90,6 +91,18 @@ def test_upsert_creates_aggregated_attention_and_category_transition_preserves_i
     assert [event.event_type.value for event in projection.store.list_business_attention_events(item_id)] == [
         "opened", "category_changed"
     ]
+
+
+def test_assessment_change_creates_one_event_and_replay_is_idempotent(projection):
+    task_id, anchor_id, signal_id = _task_with_anchor(projection, "assessment")
+    initial = _proposal((task_id,), anchor_id, signal_id)
+    attention_id = projection.upsert(initial)
+    updated = replace(initial, assessment_json='{"inference":"new assessment"}')
+    assert projection.upsert(updated) == attention_id
+    assert projection.upsert(updated) == attention_id
+    events = projection.store.list_business_attention_events(attention_id)
+    assert len(events) == 2
+    assert projection.store.get_business_attention_item(attention_id).assessment_json == updated.assessment_json
 
 
 def test_resolution_requires_signal_and_reading_never_resolves(projection):

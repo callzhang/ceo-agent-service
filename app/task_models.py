@@ -731,7 +731,7 @@ class WorkSummaryInput(BaseModel):
 
 
 class TaskAttentionProjectionOutcome(BaseModel):
-    task_id: int
+    task_id: int | None
     anchor_id: int | None = None
     attention_id: int | None = None
     status: Literal["applied", "rejected", "error"]

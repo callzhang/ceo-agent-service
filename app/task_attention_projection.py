@@ -31,6 +31,7 @@ class AttentionProposal:
     anchor_id: int
     task_ids: tuple[int, ...]
     evidence_signal_id: int
+    assessment_json: str = "{}"
 
     def __post_init__(self) -> None:
         if len(set(self.task_ids)) != len(self.task_ids):
@@ -81,6 +82,7 @@ class BusinessAttentionProjection:
                 item.ceo_action != proposal.ceo_action,
                 item.anchor_id != proposal.anchor_id,
                 item.evidence_signal_id != proposal.evidence_signal_id,
+                item.assessment_json != proposal.assessment_json,
             )
         )
 
@@ -125,7 +127,6 @@ class BusinessAttentionProjection:
             raise ValueError("attention anchor must be active")
 
         tasks: list[BusinessTask] = []
-        confirmed_anchor = False
         evidence_linked = False
         for task_id in proposal.task_ids:
             task = self.store.get_business_task_in_transaction(task_id=task_id, _db=db)
@@ -133,20 +134,20 @@ class BusinessAttentionProjection:
                 raise ValueError(f"business task {task_id} does not exist")
             if task.status is BusinessTaskStatus.MERGED:
                 raise ValueError("merged Task is not eligible for attention")
+            if task.business_relevance is not BusinessRelevance.RELEVANT:
+                raise ValueError("every attention Task must be relevant")
             tasks.append(task)
-            confirmed_anchor = confirmed_anchor or db.execute(
+            confirmed_anchor = db.execute(
                 """select 1 from business_task_anchor_links
                    where task_id=? and anchor_id=? and status=? and active=1""",
                 (task_id, proposal.anchor_id, BusinessRelationStatus.CONFIRMED.value),
             ).fetchone() is not None
+            if not confirmed_anchor:
+                raise ValueError("attention anchor must be confirmed for every underlying Task")
             evidence_linked = evidence_linked or db.execute(
                 "select 1 from business_task_evidence where task_id=? and signal_id=?",
                 (task_id, proposal.evidence_signal_id),
             ).fetchone() is not None
-        if not any(task.business_relevance is BusinessRelevance.RELEVANT for task in tasks):
-            raise ValueError("attention requires at least one relevant Task")
-        if not confirmed_anchor:
-            raise ValueError("attention anchor must be confirmed for an underlying Task")
         if not evidence_linked:
             raise ValueError("attention evidence signal must be linked to an underlying Task")
         return tuple(tasks)
@@ -188,6 +189,7 @@ class BusinessAttentionProjection:
                     business_area=proposal.business_area, why_attention=proposal.why_attention,
                     current_state=proposal.current_state, ceo_action=proposal.ceo_action,
                     anchor_id=proposal.anchor_id, evidence_signal_id=proposal.evidence_signal_id,
+                    assessment_json=proposal.assessment_json,
                     now=now, _db=db,
                 )
                 item = self.store.get_business_attention_item_in_transaction(item_id=item_id, _db=db)
@@ -230,6 +232,7 @@ class BusinessAttentionProjection:
                             "current_state": proposal.current_state, "ceo_action": proposal.ceo_action,
                             "anchor_id": proposal.anchor_id,
                             "evidence_signal_id": proposal.evidence_signal_id,
+                            "assessment_json": proposal.assessment_json,
                             "resolution_signal_id": None if fields_changed else existing.resolution_signal_id,
                             "resolved_at": "" if fields_changed else existing.resolved_at,
                             "updated_at": now,

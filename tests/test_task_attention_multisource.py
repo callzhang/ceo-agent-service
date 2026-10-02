@@ -8,6 +8,8 @@ from pydantic import ValidationError
 from app.task_models import TaskAgentDecision, WorkItem, WorkItemSourceType
 from app.task_agent import apply_task_agent_decision
 from app.store import AutoReplyStore
+from app.task_agent import process_work_item
+from app.task_attention_projection import BusinessAttentionProjection
 
 
 PROJECT_ROW = "| 示例项目 | 回款复核 | 降低现金流风险 | 09-30 | 有风险 |"
@@ -17,7 +19,7 @@ TASK_QUOTE = "复核示例项目回款及供应商付款计划。"
 
 def report_item():
     return WorkItem.model_validate({
-        "source": {"type": "project_weekly_report", "ref": "report:fixture"},
+        "source": {"type": "project_weekly_report", "ref": "report:fixture", "created_at": "2026-09-30T12:00:00Z"},
         "context": {"source_conversation_kind": "group"},
         "summary": json.dumps({
             "report": {"reporting_period": "2026-W39"},
@@ -68,6 +70,352 @@ def test_parse_separate_registry_task_and_attention_evidence_without_inventing_o
     assert parsed.owner_name == ""
     assert parsed.owner_user_id == ""
     assert parsed.missing_evidence == ["owner"]
+
+
+def test_report_risk_outside_action_projects_one_stable_card_with_verified_assessment(tmp_path):
+    store = AutoReplyStore(tmp_path / "risk.sqlite3")
+    decision = TaskAgentDecision.model_validate(decision_payload())
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(),
+                                      decision=decision, record_run=False)
+    card, = store.list_business_attention_items()
+    project, = store.list_business_projects()
+    assert card.stable_key == f"project:{project.canonical_anchor_id}"
+    assert "当前无需你处理" in card.ceo_action
+    assessment = json.loads(card.assessment_json)
+    assert assessment["inference"] == decision.task_decisions[0].attention_proposal.why_attention
+    assert assessment["evidence"] == [{
+        "signal_id": result.attention_proposals[0].signal_id,
+        "source_ref": "report:fixture", "source_excerpt": RISK_QUOTE,
+        "source_time": "2026-09-30T12:00:00Z", "source_link": "",
+    }]
+    receipt = result.projection_receipt
+    assert (receipt.status, receipt.proposal_count, receipt.applied_count,
+            receipt.project_link_count, receipt.registry_row_count) == ("completed", 1, 1, 1, 1)
+    replay = apply_task_agent_decision(store, summary_input_id=2, work_item=report_item(),
+                                      decision=decision, record_run=False)
+    assert replay.task_ids == result.task_ids
+    assert store.list_business_projects() == [project]
+    assert store.list_business_attention_items() == (card,)
+    assert len(store.list_business_attention_events(card.id)) == 1
+
+
+def seed_report(store):
+    return apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(),
+                                    decision=TaskAgentDecision.model_validate(decision_payload()), record_run=False)
+
+
+def update_risk(store, seed, *, source_type="reply_attempt", evidence=None, related_ids=None):
+    quote = "客户确认进一步延迟，付款协调仍在推进。"
+    item = WorkItem.model_validate({
+        "source": {"type": source_type, "ref": f"{source_type}:new", "created_at": "2026-10-01T15:00:00Z"},
+        "context": {"source_conversation_kind": "group"}, "summary": quote,
+    })
+    proposal = decision_payload()["task_decisions"][0]["attention_proposal"]
+    proposal.update(anchor_id=seed.attention_proposals[0].anchor_id,
+                    evidence=evidence or [{"source_ref": item.source.ref, "source_excerpt": quote}],
+                    related_task_ids=related_ids or [])
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "update_fields", "task_id": seed.task_ids[0],
+        "source_ref": item.source.ref, "source_excerpt": quote, "description": quote,
+        "title": store.get_business_task(seed.task_ids[0]).title,
+        "attention_proposal": proposal,
+    }]})
+    return item, decision
+
+
+@pytest.mark.parametrize("fault", ["missing", "unlinked", "crossproject", "forged", "wrong_ref", "session_provenance", "memory_provenance"])
+def test_invalid_historical_citation_rejects_whole_proposal(tmp_path, fault):
+    store = AutoReplyStore(tmp_path / f"{fault}.sqlite3")
+    seed = seed_report(store)
+    if fault == "missing":
+        signal_id = 99999
+    elif fault in {"forged", "wrong_ref"}:
+        signal_id = seed.attention_proposals[0].signal_id
+    else:
+        signal_id = store.create_business_task_signal(source_type=fault, source_ref="report:fixture",
+            evidence_text=RISK_QUOTE, dedupe_key=fault)
+        if fault in {"session_provenance", "memory_provenance"}:
+            store.link_business_task_evidence(task_id=seed.task_ids[0], signal_id=signal_id, evidence_role="discovery")
+        if fault == "crossproject":
+            other = seed_report_other_project(store)
+            store.link_business_task_evidence(task_id=other.task_ids[0], signal_id=signal_id, evidence_role="discovery")
+    evidence = [{"signal_id": signal_id, "source_ref": "report:forged-ref" if fault == "wrong_ref" else "report:fixture",
+                 "source_excerpt": "不存在的风险原文" if fault == "forged" else RISK_QUOTE}]
+    item, decision = update_risk(store, seed, evidence=evidence)
+    result = apply_task_agent_decision(store, summary_input_id=2, work_item=item, decision=decision, record_run=False)
+    assert result.projection_receipt.status == "failed"
+    assert result.projection_receipt.outcomes[0].status == "rejected"
+    assert len(store.list_business_attention_events(1)) == 1
+
+
+def seed_report_other_project(store):
+    item = report_item()
+    payload = decision_payload()
+    item = item.model_copy(update={"summary": item.summary.replace("示例项目", "另一个项目"),
+        "source": item.source.model_copy(update={"ref": "report:other"})})
+    payload["task_decisions"][0]["source_ref"] = "report:other"
+    row = payload["task_decisions"][0]
+    row["title"] = row["title"].replace("示例项目", "另一个项目")
+    row["source_excerpt"] = row["source_excerpt"].replace("示例项目", "另一个项目")
+    row["project_proposal"].update(title="另一个项目", source_excerpt=PROJECT_ROW.replace("示例项目", "另一个项目"))
+    row["attention_proposal"]["evidence"][0]["source_ref"] = "report:other"
+    return apply_task_agent_decision(store, summary_input_id=3, work_item=item, decision=TaskAgentDecision.model_validate(payload), record_run=False)
+
+
+def test_crossproject_related_task_rejects_proposal(tmp_path):
+    store = AutoReplyStore(tmp_path / "cross-related.sqlite3")
+    seed, other = seed_report(store), seed_report_other_project(store)
+    item, decision = update_risk(store, seed, related_ids=[other.task_ids[0]])
+    result = apply_task_agent_decision(store, summary_input_id=2, work_item=item, decision=decision, record_run=False)
+    assert result.projection_receipt.status == "failed"
+
+
+@pytest.mark.parametrize("distinct", [False, True])
+def test_same_project_multiple_proposals_fold_only_identical_content(tmp_path, distinct):
+    store = AutoReplyStore(tmp_path / "multiple.sqlite3")
+    payload = decision_payload()
+    second = decision_payload()["task_decisions"][0]
+    second["title"] = "复核付款协调行动"
+    if distinct:
+        second["attention_proposal"]["category"] = "decision"
+    payload["task_decisions"].append(second)
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(), decision=TaskAgentDecision.model_validate(payload), record_run=False)
+    receipt = result.projection_receipt
+    assert receipt.proposal_count == 2
+    assert receipt.status == ("failed" if distinct else "completed")
+    assert receipt.applied_count == (0 if distinct else 1)
+    if distinct:
+        assert all("multiple distinct proposals" in outcome.reason for outcome in receipt.outcomes)
+        assert store.list_business_attention_items() == ()
+    else:
+        card, = store.list_business_attention_items()
+        assert {link.task_id for link in store.list_business_attention_tasks(card.id)} == set(result.task_ids)
+        assert len(store.list_business_attention_events(card.id)) == 1
+
+
+@pytest.mark.parametrize("failure", ["upsert", "receipt", "recompute"])
+def test_projection_failure_preserves_committed_task_input_and_run(tmp_path, monkeypatch, failure):
+    store = AutoReplyStore(tmp_path / f"commit-{failure}.sqlite3")
+    item = report_item()
+    input_id = store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
+    work_input, = store.claim_work_summary_inputs(limit=1)
+    class Runner:
+        codex = type("Codex", (), {"last_session_id": ""})()
+        def decide(self, *args, **kwargs):
+            return TaskAgentDecision.model_validate(decision_payload())
+    def fail(*args, **kwargs):
+        raise RuntimeError(f"{failure} unavailable")
+    if failure == "receipt":
+        original = store.record_task_agent_projection
+        def final_fail(run_id, projection_json, **kwargs):
+            if json.loads(projection_json)["status"] != "pending":
+                fail()
+            return original(run_id, projection_json, **kwargs)
+        monkeypatch.setattr(store, "record_task_agent_projection", final_fail)
+    else:
+        monkeypatch.setattr(BusinessAttentionProjection, "upsert" if failure == "upsert" else "recompute_for_tasks", fail)
+    process_work_item(store, Runner(), work_input)
+    assert store.get_work_summary_input(input_id).status.value == "done"
+    assert len(store.list_business_tasks()) == 1
+    with store._connect() as db:
+        run, = db.execute("select * from task_agent_runs").fetchall()
+    assert run["status"] == "completed"
+    receipt = json.loads(run["projection_json"])
+    assert receipt["status"] == {"upsert": "failed", "receipt": "pending", "recompute": "partial"}[failure]
+    if failure == "recompute":
+        assert receipt["recompute_error"] == "recompute unavailable"
+
+
+def test_registry_count_without_project_or_attention_proposal(tmp_path):
+    store = AutoReplyStore(tmp_path / "counts.sqlite3")
+    payload = decision_payload()
+    del payload["task_decisions"][0]["project_proposal"]
+    del payload["task_decisions"][0]["attention_proposal"]
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(), decision=TaskAgentDecision.model_validate(payload), record_run=False)
+    assert result.projection_receipt.status == "no_proposal"
+    assert result.projection_receipt.registry_row_count == 1
+    assert result.projection_receipt.project_link_count == 0
+
+
+@pytest.mark.parametrize("source_type", ["ai_minutes", "reply_attempt"])
+def test_new_source_risk_reuses_project_card_and_preserves_report_fields(tmp_path, source_type):
+    store = AutoReplyStore(tmp_path / f"new-{source_type}.sqlite3")
+    seed = seed_report(store)
+    project, = store.list_business_projects()
+    old_card, = store.list_business_attention_items()
+    item, decision = update_risk(store, seed, source_type=source_type)
+    if source_type == "reply_attempt":
+        historical = {"signal_id": seed.attention_proposals[0].signal_id,
+                      "source_ref": "report:fixture", "source_excerpt": RISK_QUOTE}
+        proposal = decision.task_decisions[0].attention_proposal
+        proposal.evidence.append(type(proposal.evidence[0]).model_validate(historical))
+    result = apply_task_agent_decision(store, summary_input_id=2, work_item=item, decision=decision, record_run=False)
+    assert result.projection_receipt.status == "completed"
+    assert result.projection_receipt.registry_row_count is None
+    assert result.projection_receipt.project_link_count == 0
+    card, = store.list_business_attention_items()
+    assert card.id == old_card.id
+    assert store.list_business_projects() == [project]
+    assert store.get_business_task(seed.task_ids[0]).description == item.summary
+    evidence = json.loads(card.assessment_json)["evidence"]
+    assert evidence[0]["source_time"] == "2026-10-01T15:00:00Z"
+    if source_type == "reply_attempt":
+        assert evidence[1]["source_time"] == "2026-09-30T12:00:00Z"
+        assert evidence[1]["signal_id"] != evidence[0]["signal_id"]
+
+
+def test_later_proposal_preserves_open_sibling_and_completion_only_removes_member(tmp_path):
+    store = AutoReplyStore(tmp_path / "siblings.sqlite3")
+    payload = decision_payload()
+    second = decision_payload()["task_decisions"][0]
+    second["title"] = "复核付款协调行动"
+    payload["task_decisions"].append(second)
+    seed = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(), decision=TaskAgentDecision.model_validate(payload), record_run=False)
+    card, = store.list_business_attention_items()
+    item, decision = update_risk(store, seed)
+    apply_task_agent_decision(store, summary_input_id=2, work_item=item, decision=decision, record_run=False)
+    assert {link.task_id for link in store.list_business_attention_tasks(card.id)} == set(seed.task_ids)
+    completion_item = item.model_copy(update={"summary": "回款复核已经完成。", "source": item.source.model_copy(update={"ref": "chat:completed", "created_at": "2026-10-02T16:00:00Z"})})
+    completion = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "update_task", "transition": "update_fields", "task_id": seed.task_ids[0],
+        "title": store.get_business_task(seed.task_ids[0]).title,
+        "source_ref": completion_item.source.ref, "source_excerpt": completion_item.summary, "status": "done",
+    }]})
+    apply_task_agent_decision(store, summary_input_id=3, work_item=completion_item, decision=completion, record_run=False)
+    assert {link.task_id for link in store.list_business_attention_tasks(card.id)} == {seed.task_ids[1]}
+    assert store.get_business_attention_item(card.id).status.value == "active"
+
+
+def test_quote_cannot_join_decoded_json_leaves():
+    from app.task_agent import source_contains_quote
+    raw = json.dumps({"parts": ["收入确认延迟", "供应商付款受影响"]}, ensure_ascii=True)
+    assert source_contains_quote(raw, "收入确认延迟")
+    assert not source_contains_quote(raw, "收入确认延迟供应商付款受影响")
+    assert not source_contains_quote(raw, " ")
+
+
+def test_skipped_noop_proposal_is_counted_and_diagnosed(tmp_path):
+    store = AutoReplyStore(tmp_path / "noop.sqlite3")
+    seed = seed_report(store)
+    item, decision = update_risk(store, seed)
+    first = apply_task_agent_decision(store, summary_input_id=2, work_item=item, decision=decision, record_run=False)
+    replay = apply_task_agent_decision(store, summary_input_id=3, work_item=item, decision=decision, record_run=False)
+    assert first.projection_receipt.status == "completed"
+    assert replay.projection_receipt.task_decision_count == 1
+    assert replay.projection_receipt.proposal_count == 1
+    # Replay of an existing signal remains a valid replay; a new source without
+    # actual field changes is skipped by the Task domain instead.
+    newer = item.model_copy(update={"source": item.source.model_copy(update={"ref": "chat:no-change"})})
+    row = decision.task_decisions[0].model_copy(update={"source_ref": newer.source.ref})
+    skipped = apply_task_agent_decision(store, summary_input_id=4, work_item=newer, decision=decision.model_copy(update={"task_decisions": [row]}), record_run=False)
+    assert skipped.projection_receipt.status == "failed"
+    assert skipped.projection_receipt.proposal_count == 1
+    assert "no applied Task" in skipped.projection_receipt.outcomes[0].reason
+
+
+def test_raw_skip_proposal_does_not_invent_a_task_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "skip-proposal.sqlite3")
+    row = decision_payload()["task_decisions"][0]
+    row.update(action="skip", skip_reason="No actionable Task")
+    row.pop("project_proposal")
+    row["attention_proposal"]["anchor_id"] = 9
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(), decision=TaskAgentDecision.model_validate({"task_decisions": [row]}), record_run=False)
+    assert result.projection_receipt.proposal_count == 1
+    assert result.projection_receipt.status == "failed"
+    assert result.projection_receipt.outcomes[0].task_id is None
+
+
+def test_folded_group_checks_each_current_signal_not_only_first(tmp_path):
+    from app.task_agent import AppliedTaskAttention, _project_task_attention
+    from app.task_models import TaskAttentionProjectionReceipt
+    store = AutoReplyStore(tmp_path / "folded-provenance.sqlite3")
+    seed = seed_report(store)
+    applied = seed.attention_proposals[0]
+    cited = store.create_business_task_signal(source_type="session_provenance", source_ref="report:fixture", evidence_text=RISK_QUOTE, dedupe_key="cited")
+    store.link_business_task_evidence(task_id=applied.task_id, signal_id=cited, evidence_role="discovery")
+    receipt = _project_task_attention(store,
+        (applied, AppliedTaskAttention(applied.decision, applied.task_id, cited, applied.anchor_id)),
+        (applied.task_id,), receipt=TaskAttentionProjectionReceipt(
+            status="pending", source_type="project_weekly_report", task_decision_count=2,
+            project_link_count=0, proposal_count=2,
+        ))
+    assert receipt.status == "failed"
+    assert all(outcome.status == "rejected" for outcome in receipt.outcomes)
+
+
+def test_report_plain_text_with_no_registry_has_zero_rows(tmp_path):
+    store = AutoReplyStore(tmp_path / "plain.sqlite3")
+    item = report_item().model_copy(update={"summary": TASK_QUOTE})
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=TaskAgentDecision.model_validate({"task_decisions": []}), record_run=False)
+    assert result.projection_receipt.registry_row_count == 0
+    assert result.projection_receipt.status == "no_proposal"
+
+
+def test_registered_project_without_attention_still_counts_applied_link(tmp_path):
+    store = AutoReplyStore(tmp_path / "project-only.sqlite3")
+    payload = decision_payload()
+    del payload["task_decisions"][0]["attention_proposal"]
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(), decision=TaskAgentDecision.model_validate(payload), record_run=False)
+    assert result.projection_receipt.project_link_count == 1
+    assert result.projection_receipt.proposal_count == result.projection_receipt.applied_count == 0
+    assert result.projection_receipt.status == "no_proposal"
+
+
+def test_recorded_direct_apply_saves_receipt_on_actual_run(tmp_path):
+    store = AutoReplyStore(tmp_path / "direct-run.sqlite3")
+    result = apply_task_agent_decision(store, summary_input_id=8, work_item=report_item(), decision=TaskAgentDecision.model_validate(decision_payload()))
+    with store._connect() as db:
+        run, = db.execute("select * from task_agent_runs").fetchall()
+    assert run["summary_input_id"] == 8
+    assert run["status"] == "completed"
+    assert json.loads(run["projection_json"]) == result.projection_receipt.model_dump()
+
+
+def test_registry_row_count_excludes_repeated_table_separators(tmp_path):
+    store = AutoReplyStore(tmp_path / "registry-count.sqlite3")
+    item = report_item()
+    payload = json.loads(item.summary)
+    payload["markdown"] = payload["markdown"].replace(PROJECT_ROW,
+        PROJECT_ROW + "\n| 项目名 | 负责内容 | 目标 | DDL | 状态 |\n"
+        "| :--- | ---: | --- | --- | --- |\n" + PROJECT_ROW.replace("示例项目", "第二个项目"))
+    item = item.model_copy(update={"summary": json.dumps(payload, ensure_ascii=False)})
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=TaskAgentDecision.model_validate({"task_decisions": []}), record_run=False)
+    assert result.projection_receipt.registry_row_count == 2
+
+
+def test_conflicting_chat_risk_does_not_replace_report_registry_summary(tmp_path):
+    from app.web_api.tasks import business_project_detail
+    store = AutoReplyStore(tmp_path / "conflicting-chat.sqlite3")
+    seed = seed_report(store)
+    project, = store.list_business_projects()
+    before = business_project_detail(store, project.id).summary
+    assert before.goal == "降低现金流风险"
+    assert before.current_status == "有风险"
+    item, decision = update_risk(store, seed)
+    summary = item.summary + " 聊天提出目标改为扩张销售、状态恢复正常、DDL 改为 12-31。"
+    item = item.model_copy(update={"summary": summary})
+    row = decision.task_decisions[0].model_copy(update={"description": summary})
+    result = apply_task_agent_decision(store, summary_input_id=2, work_item=item,
+        decision=decision.model_copy(update={"task_decisions": [row]}), record_run=False)
+    assert result.projection_receipt.status == "completed"
+    after = business_project_detail(store, project.id).summary
+    assert after == before
+    card, = store.list_business_attention_items()
+    assert json.loads(card.assessment_json)["evidence"][0]["source_ref"] == item.source.ref
+
+
+def test_upsert_value_error_is_an_application_error_not_a_quote_rejection(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "upsert-value-error.sqlite3")
+    def fail(*args, **kwargs):
+        raise ValueError("card write rejected")
+    monkeypatch.setattr(BusinessAttentionProjection, "upsert", fail)
+    result = seed_report(store)
+    assert result.projection_receipt.status == "failed"
+    assert result.projection_receipt.outcomes[0].status == "error"
+    assert result.projection_receipt.outcomes[0].reason == "card write rejected"
+    assert len(store.list_business_tasks()) == 1
 
 
 def test_null_anchor_requires_this_decisions_project_proposal():

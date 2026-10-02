@@ -210,7 +210,7 @@ Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
 Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返回 0..N 个 `task_decisions`。
 每个保留决策都必须引用 WorkItem 的准确 `source_ref`，并提供确实出现在来源摘要中的原文
 `source_excerpt`；检索到的 Task、Project 候选及 memory 只能提供背景，不能替代来源证据或授权。
-开发中的多来源 Project Attention 第一阶段仅变更输出契约，尚未部署：正式
+开发中的多来源 Project Attention 已实现输出、Project 绑定与消费契约，尚未部署，prompt 接线及发布验收仍待后续任务：正式
 `project_proposal` 必须带独立、非空的 `source_excerpt`，引用项目登记依据，与 Task 的
 行动摘录分开。Attention 用必填、至少一条的 `evidence` 取代 `trigger_evidence`；每条需
 非空来源引用和原文摘录，`signal_id` 可省略/null 或为严格正整数。`why_attention` 是推断，
@@ -220,8 +220,17 @@ Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返�
 此阶段已核验独立 Project 登记摘录并在领域事务内解析同一 decision 的 Project anchor。
 Attention 应用结果使用冻结的 `AppliedTaskAttention(decision, task_id, signal_id, anchor_id)`；
 显式 anchor 保留原值，null 仅取本 decision 实际注册的 anchor，不借用前一 decision 或标题猜测。
-投影端仍仅支持单条当前来源证据与既有 anchor；多来源/历史信号、显式相关 Task
-列表及新注册 Project 的完整投影留给后续阶段，未支持的投影形状明确记录失败。
+投影支持新注册 Project、完整当前来源中的风险引文、历史持久化原始信号与显式相关 Task，
+统一按 `project:{canonical_anchor_id}` 复用卡片身份，不按 Task/trigger 新建卡。
+当前 null signal ID 只解析为该 AppliedTaskAttention.signal_id；历史正整数 ID 精确读取持久化信号。
+每条引文核对 source_ref、原始文本中的连续子串或 JSON 解码后的单个字符串叶子，禁止拼接叶子；
+无需包含在 Task 行动摘录中。历史信号必须链接到本次支持的 relevant/open/waiting Task，且该 Task
+确认关联同一正式 Project 的活动规范 anchor。session_provenance/memory_provenance 是 cited-only，
+不能作为已观察原始来源。任一引文无效就拒绝整项提案，不部分接受。
+每个当前/显式 related Task 都须满足上述资格；related_task_ids 指定风险支持 Task，不能自动扩展为
+整个项目任务集合。现有卡的仍合格成员与本轮支持成员合并，保留开放兄弟 Task。
+同轮同项目提案的内容（含 evidence，排除已解析的 anchor 选择器和 related IDs）完全一致时折叠，
+否则整组 rejected 并记录 multiple distinct proposals，不按先后顺序选最后一项；此处只检查契约一致性。
 候选 Task 可携带风险证据，不要求补造负责人或承诺；整体应用与投影验收完成前不得部署。
 `skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。
 正式 Project 注册表和当前 Task 状态优先读取最近一次确认的正式周报，尤其是
@@ -323,10 +332,23 @@ Task 决策数、实际 Project 关联数、提案数、成功应用的不同 Pr
 `applied` / `rejected` / `error` 的 Task、anchor、Attention ID 和原因、成员重算错误。
 `registry_row_count` 只用于报告来源，其他来源为 null；登记行数不等于 Project 关联数。
 历史 run 的默认 `{}` 表示未记录，不能据此判断零提案或投影完成；`pending` 表示尚未确认结果。
-此阶段提供类型校验和独立持久化，投影计数与卡片评估的生产接线另行完成，不新增队列或恢复流程。
+输入的 Task/input/run 领域事务同时写入 pending 回执；卡片应用、成员重算和最终回执保存位于
+该事务及其失败处理之外。逐项领域/引文证明失败为 rejected，卡片写入异常为 error，重算异常
+记录 recompute_error。零提案且无错误为 no_proposal，全部成功 completed，成功与失败并存 partial，
+无成功且有失败 failed。最终回执保存失败只记录日志，原 pending 不冒充成功，已提交 Task/input/run
+不得改成 failed；不新增队列或恢复流程。未记录 run 的直接 apply 返回回执而不创建 run，记录 run
+的直接 apply 保存到实际返回的 run ID。原始 task_decision_count 包含所有 Agent 决定，proposal_count
+包含跳过/restating 决定上的原始提案；无实际应用 Task 的提案有明确 rejected outcome，task_id 可为 null。
+project_link_count 是本轮实际确认的不同 Task↔Project 关联数，applied_count 是成功卡 ID 去重数。
+registry_row_count 复用既有原始周报结构解析，未提出 Project 也统计真实登记行，非报告为 null。
+无字段实际变化的 update 仍由既有 `_update_fields_restates_task` 在 Project/Attention 处理前跳过；
+其原始提案保留计数并有 rejected outcome。新风险对 Task 描述的真实补充可更新，不能为了链接
+引文伪造描述/状态变更，也不新增 evidence-only update 路径。
 `business_attention_items.assessment_json` 默认 `{}`，只用于保存已经核验的 material trigger、
 Agent 推断、精确引文及来源 signal ID / source_ref / source_time / link，不复制完整来源。
-底层存储不自行生成评估或判定业务重大性；Attention 事件的卡片快照保留此字段。
+引文的时间、链接仅取持久化 signal metadata/context，JSON 按键排序；why_attention 保留纯推断，
+不拼入 trigger 原文。底层存储不自行生成评估或判定业务重大性；Attention 事件的卡片快照保留此字段，
+仅 assessment 改变也产生更新事件，重复回放不重复产生事件。
 只读诊断 `python scripts/inspect_task_attention.py --db <数据库路径> --input-id <精确输入 ID>`
 通过 SQLite `mode=ro` 读取该输入及其 run，输出来源、输入/run 状态、投影回执与审核摘要，
 不输出 payload 或完整决策，也不初始化 Store、迁移数据库或创建不存在的数据库。
@@ -336,7 +358,7 @@ Agent 推断、精确引文及来源 signal ID / source_ref / source_time / link
 不能据此把显式提到负责人的讨论升级成正式授权指派。对应的生产者接线必须作为单独集成范围处理，
 不能由 Task Agent 猜测或合成。
 
-Attention 的 `material_trigger` 是 Agent 对来源证据的语义分类，不是独立机器证明。每项提案必须附带当前来源摘录中的精确 trigger quote、分类理由和明确 CEO action；投影还要求业务锚点已确认、Task 相关且来源信号已链接。系统把 trigger 类型和摘录写入 Attention 原因/事件沿革。系统不靠关键词推断重大性；若未来需要独立机器级判定，应另行定义 canonical trigger facts 或人工确认机制。
+Attention 的 `material_trigger` 是 Agent 对来源证据的语义分类，不是独立机器证明。每项提案必须附带已观察原始来源中的精确引文、推断理由和明确 CEO action；投影还要求正式 Project、活动规范锚点、全部支持 Task 合格且来源信号已链接。系统把 trigger 类型、推断和核验引文分别写入 assessment/事件沿革。候选 Task 可以支持风险，无需补造负责人、日期或接受承诺，也不因此提升 stage。系统不靠关键词推断重大性；若未来需要独立机器级判定，应另行定义 canonical trigger facts 或人工确认机制。
 
 OA 审批中，申请人的补充只可完善其可核验的事实或材料，不能生成、替代或关闭规则、例外、
 授权与动作映射。材料缺口和规则缺口同时存在时，Consumer 在原审批向申请人评论可补材料，
