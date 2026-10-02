@@ -69,6 +69,9 @@ def test_project_assessments_is_required_without_a_default():
     schema = TaskAgentDecision.model_json_schema()
     assert "project_assessments" in schema["required"]
     assert "default" not in schema["properties"]["project_assessments"]
+    assessment_description = schema["properties"]["project_assessments"]["description"]
+    assert "current source and current Tasks' confirmed Project links" in assessment_description
+    assert "not limited to structured selectors" in assessment_description
 
 
 def test_project_assessments_explicit_empty_collection_is_allowed():
@@ -188,7 +191,7 @@ def test_known_anchor_negative_assessment_can_cover_supported_current_proposal()
 
 
 def test_known_anchor_assessment_must_match_supported_current_proposal_title():
-    with pytest.raises(ValidationError, match="project_proposal title.*exactly one assessment"):
+    with pytest.raises(ValidationError, match="supporting current project_proposal title"):
         TaskAgentDecision.model_validate({
             "task_decisions": [_proposal_decision("示例项目")],
             "project_assessments": [_project_assessment(
@@ -197,6 +200,28 @@ def test_known_anchor_assessment_must_match_supported_current_proposal_title():
                 decision_indexes=[0],
                 task_ids=[],
             )],
+        })
+
+
+def test_known_anchor_assessment_cannot_claim_wrong_supported_proposal_when_title_is_covered():
+    with pytest.raises(ValidationError, match="supporting current project_proposal title"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_proposal_decision("项目B")],
+            "project_assessments": [
+                _project_assessment(
+                    anchor_id=3,
+                    project_title="项目A",
+                    decision_indexes=[0],
+                    task_ids=[],
+                ),
+                _project_assessment(
+                    anchor_id=None,
+                    project_decision_index=0,
+                    project_title="项目B",
+                    decision_indexes=[0],
+                    task_ids=[],
+                ),
+            ],
         })
 
 
@@ -255,6 +280,84 @@ def test_same_proposal_null_attention_must_be_a_supporting_decision():
                 outcome="needs_attention",
                 decision_indexes=[1],
                 task_ids=[],
+            )],
+        })
+
+
+def test_unrelated_positive_attention_does_not_look_like_omitted_support():
+    with pytest.raises(
+        ValidationError,
+        match="needs_attention requires existing_attention_id or a matching attention_proposal",
+    ):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [
+                _proposal_decision("项目A"),
+                _proposal_decision("项目B", attention_proposal=_attention(anchor_id=4)),
+            ],
+            "project_assessments": [
+                _project_assessment(
+                    anchor_id=None,
+                    project_decision_index=0,
+                    project_title="项目A",
+                    outcome="needs_attention",
+                    decision_indexes=[0],
+                    task_ids=[],
+                ),
+                _project_assessment(
+                    anchor_id=4,
+                    project_title="项目B",
+                    outcome="needs_attention",
+                    decision_indexes=[1],
+                    task_ids=[],
+                ),
+            ],
+        })
+
+
+def test_unequal_known_anchor_does_not_become_omitted_support_by_same_title():
+    with pytest.raises(
+        ValidationError,
+        match="needs_attention requires existing_attention_id or a matching attention_proposal",
+    ):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [
+                _proposal_decision("项目A"),
+                _proposal_decision("项目A", attention_proposal=_attention(anchor_id=4)),
+                _linked_decision(anchor_id=4),
+            ],
+            "project_assessments": [
+                _project_assessment(
+                    anchor_id=3,
+                    project_title="项目A",
+                    outcome="needs_attention",
+                    decision_indexes=[0],
+                    task_ids=[],
+                ),
+                _project_assessment(
+                    anchor_id=4,
+                    project_title="项目B",
+                    outcome="needs_attention",
+                    decision_indexes=[2],
+                    task_ids=[],
+                ),
+            ],
+        })
+
+
+def test_same_known_anchor_attention_omitted_from_support_keeps_precise_error():
+    with pytest.raises(ValidationError, match="supporting decision"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [
+                _linked_decision(anchor_id=3),
+                _linked_decision(
+                    anchor_id=3,
+                    attention_proposal=_attention(anchor_id=3),
+                ),
+            ],
+            "project_assessments": [_project_assessment(
+                anchor_id=3,
+                outcome="needs_attention",
+                decision_indexes=[0],
             )],
         })
 

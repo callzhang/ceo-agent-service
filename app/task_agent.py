@@ -396,7 +396,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "JSON object.\n\n"
         f"Problems in the previous output:\n{detail}\n\n"
         "Rules that must hold:\n"
-        "- project_assessments is required. Return one outcome, concrete reason, and original evidence for every relevant Project in this same output. Every attention_proposal requires needs_attention and a supporting decision index; not_needed and insufficient_evidence cannot carry a new attention proposal. Use [] only when no relevant structured Project exists, with a nonblank update_summary explaining that fact.\n"
+        "- project_assessments is required. Return one outcome, concrete reason, and original evidence for every relevant business Project or Project clue in the current source and current Tasks' confirmed Project links, whether or not this output emitted a selector for it. Semantic coverage is not limited to structured selectors; envelope validation can only prove coverage of emitted selectors. Every attention_proposal requires needs_attention and a supporting decision index; not_needed and insufficient_evidence cannot carry a new attention proposal. Use [] only when there is no relevant business Project or Project clue, with a nonblank update_summary explaining that fact.\n"
         "- Return the TaskAgentDecision envelope with task_decisions (0..N); "
         "every non-skip item needs a source_excerpt (a sentence of the source), source_ref and a locator (source_link when there is one, otherwise source_description) "
         "(evidence_origin says whether it is the current Work Item, an earlier session turn, or memory provenance).\n"

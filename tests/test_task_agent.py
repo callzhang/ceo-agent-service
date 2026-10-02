@@ -373,6 +373,8 @@ def test_project_assessment_envelope_uses_one_same_session_parser_correction(fau
             assert "project_assessments" in correction
             assert "one outcome, concrete reason, and original evidence" in correction
             assert "attention_proposal requires needs_attention" in correction
+            assert "current source and current Tasks' confirmed Project links" in correction
+            assert "not limited to structured selectors" in correction
             self.parser_calls += 1
             value = kwargs["parser"](_agent_message_jsonl(json.dumps(valid)))
             return SimpleNamespace(value=value, session_id="assessment-repair-session",

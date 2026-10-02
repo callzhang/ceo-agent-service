@@ -352,11 +352,12 @@ Task evidence 选择来源信号，不凭空制造证据；事务会同时把 cl
 更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
 
 Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。每个结果显式返回无默认值的
-`project_assessments`；只有本轮没有相关结构化 Project 选择时才返回 `[]`，并在 `update_summary` 给出非空解释；遗漏即
-结构校验失败，不做 legacy fallback 或 payload 合成。每项给出 `needs_attention`、`not_needed` 或
+`project_assessments`；只有当前来源和当前 Task 中没有相关业务 Project 或 Project 线索时才返回 `[]`，并在
+`update_summary` 给出非空解释；遗漏即结构校验失败，不做 legacy fallback 或 payload 合成。每项给出 `needs_attention`、`not_needed` 或
 `insufficient_evidence`，并用已知 `anchor_id`、本轮 `project_proposal` 所在的零基 `project_decision_index`，或仅限
-`insufficient_evidence` 的未知 Project 线索区分身份。envelope 校验保证引用位置存在且非 skip、proposal 标题精确匹配、
-相同 anchor/精确标题每轮只有一个判断，并覆盖本轮 Project proposal、Project link 和 Attention proposal；每个当前 Attention
+`insufficient_evidence` 的未知 Project 线索区分身份。envelope 校验保证引用位置存在且非 skip、每个 assessment 显式支持的
+当前 proposal 标题与 `project_title` 精确匹配、相同 anchor/精确标题每轮只有一个判断，并覆盖本轮已输出的 Project proposal、
+Project link 和 Attention proposal；这只能证明已输出 selector 的结构覆盖，不能证明模型识别了原文中的全部业务 Project。每个当前 Attention
 proposal 都必须由对应 `needs_attention` 判断列为支持决定，负面或证据不足判断不能携带新 proposal。`needs_attention` 没有
 对应当前 Attention proposal 时必须给出正的 `existing_attention_id`。当前 Project proposal 与已知 anchor 的跨类型引用不在
 Pydantic 层猜测是否同一规范 Project；允许已知-anchor 判断用显式 `decision_indexes` 覆盖当前 proposal，由后续 domain 解析

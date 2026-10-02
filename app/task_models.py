@@ -729,7 +729,7 @@ class TaskProjectAssessment(StrictTaskModel):
 
 class TaskAgentDecision(StrictTaskModel):
     project_assessments: list[TaskProjectAssessment] = Field(
-        description="One explicit outcome, concrete reason, and original evidence set for every relevant structured Project in this same output. Exact duplicate current titles and repeated known anchors share one judgment. Use [] only when no relevant structured Project exists and explain that in update_summary.",
+        description="One explicit outcome, concrete reason, and original evidence set for every relevant business Project or Project clue in the current source and current Tasks' confirmed Project links. This semantic coverage is not limited to structured selectors emitted in this output; envelope validation can only prove coverage of emitted selectors. Exact duplicate current titles and repeated known anchors share one judgment. Use [] only when there is no relevant business Project or Project clue, and explain that in update_summary.",
     )
     task_decisions: list[TaskDecision] = Field(default_factory=list)
     todo_changes: list[CompletionTodoChange] = Field(default_factory=list)
@@ -742,15 +742,6 @@ class TaskAgentDecision(StrictTaskModel):
     def validate_decision_envelope(self) -> "TaskAgentDecision":
         if len(self.todo_changes) > 1:
             raise ValueError("a Task Agent decision may close at most one TODO")
-
-        def selected_project(decision: TaskDecision) -> tuple[str, int | str] | None:
-            if decision.project_proposal is not None:
-                return ("proposal", decision.project_proposal.title)
-            if decision.project_link_proposal is not None:
-                return ("anchor", decision.project_link_proposal.anchor_id)
-            if decision.attention_proposal is not None and decision.attention_proposal.anchor_id is not None:
-                return ("anchor", decision.attention_proposal.anchor_id)
-            return None
 
         def selected_anchor_ids(decision: TaskDecision) -> set[int]:
             anchors: set[int] = set()
@@ -816,14 +807,25 @@ class TaskAgentDecision(StrictTaskModel):
                 supporting = self.task_decisions[index]
                 if supporting.action == "skip":
                     raise ValueError("project assessment cannot reference a skip decision")
-                selection = selected_project(supporting)
-                if assessment.anchor_id is not None:
-                    if selection is not None and selection[0] == "anchor" and selection[1] != assessment.anchor_id:
-                        raise ValueError("supporting decisions must select the same Project as the assessment")
-                elif assessment.project_decision_index is not None:
-                    if selection is not None and selection[0] == "proposal" and selection[1] != assessment.project_title:
-                        raise ValueError("supporting decisions must select the same Project as the assessment")
-                elif selection is not None:
+                if (
+                    supporting.project_proposal is not None
+                    and supporting.project_proposal.title != assessment.project_title
+                ):
+                    raise ValueError(
+                        "supporting current project_proposal title must exactly match assessment project_title"
+                    )
+                if (
+                    assessment.anchor_id is None
+                    and assessment.project_decision_index is None
+                    and (
+                        supporting.project_proposal is not None
+                        or supporting.project_link_proposal is not None
+                        or (
+                            supporting.attention_proposal is not None
+                            and supporting.attention_proposal.anchor_id is not None
+                        )
+                    )
+                ):
                     raise ValueError("an unknown Project clue cannot reference a decision selecting the same Project or another structured Project")
 
             if assessment.anchor_id is not None:
@@ -887,9 +889,19 @@ class TaskAgentDecision(StrictTaskModel):
             if proposal is None:
                 return False
             if proposal.anchor_id is not None:
-                return (
-                    assessment.anchor_id == proposal.anchor_id
-                    or assessment.project_decision_index is not None
+                if assessment.anchor_id is not None:
+                    return assessment.anchor_id == proposal.anchor_id
+                if require_support:
+                    return assessment.project_decision_index is not None
+                if (
+                    decision.project_proposal is not None
+                    and assessment.project_title == decision.project_proposal.title
+                ):
+                    return True
+                return any(
+                    proposal.anchor_id
+                    in selected_anchor_ids(self.task_decisions[supporting_index])
+                    for supporting_index in assessment.decision_indexes
                 )
             return (
                 decision.project_proposal is not None
