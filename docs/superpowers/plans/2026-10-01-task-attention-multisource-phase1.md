@@ -12,7 +12,7 @@
 
 ## 开发边界与已确认依据
 
-设计：[2026-10-01-task-attention-w39-phase1-design.md](../specs/2026-10-01-task-attention-w39-phase1-design.md)，Derek 已确认。本计划尚未执行，不代表生产修复。
+设计：[2026-10-01-task-attention-w39-phase1-design.md](../specs/2026-10-01-task-attention-w39-phase1-design.md)，Derek 已确认。本计划正在隔离工作区执行，不代表生产修复。
 
 当前断点是 Agent 没有提出 Project/Attention，而不是前端过滤掉卡片。W39 输入 `27465`、运行 `10634` 的六条 Task 决定中，两种 proposal 都为空。数值 anchor ID 必填、风险只能引用 Task 摘录、投影错误只有日志，是需要一起打通的后续断点，不能声称它们已实际拦截该运行。
 
@@ -33,7 +33,8 @@
 | `app/task_semantic_models.py`, `app/store.py` | 关注判断依据和运行投影回执的存储/升级 |
 | `app/web_api/tasks.py`, `frontend/src/api/console.ts` | 详情中分开提供事实引用和 Agent 推断 |
 | `frontend/src/pages/TasksPage.tsx`, `frontend/src/pages/TaskAttentionDetailPage.tsx` | watch 的“关注点”和可见依据 |
-| `ci/shared-skills/ceo-work-tracking/SKILL.md` | 与 prompt 完全一致的来源/关注规则；移除已停用 completion 描述 |
+| `ci/shared-skills/ceo-work-tracking/SKILL.md` | 隔离开发/CI 验证副本；与 prompt 完全一致的来源/关注规则 |
+| `/Users/derek/.agents/skills/ceo-work-tracking/SKILL.md` | 运行时权威 Skill，代码部署成功后发布相同内容；开发期间不提前改动 |
 | `docs/architecture.md`, `docs/runtime-mechanism.md` | 同步描述新运行行为，不写成已部署 |
 | `scripts/inspect_task_attention.py` | 只读读取运行、计数、原因和卡片 ID |
 | `scripts/replay_task_attention.py` | 仅数据库副本上的指定输入评估，不加入服务调度 |
@@ -43,11 +44,13 @@
 
 开始代码前重新读取 `docs/agent-claims.md`，逐任务认领涉及文件。已有 claim 要先与 owner 协调，只改已协调的函数/段落。测试仅跑本计划列出的文件；不在运行服务的开发机执行串行全套。每次提交只暂存自己的文件或 hunks；不用 `git add -A`。当前另两份未跟踪文件不属于本计划。
 
+执行工作区：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`，分支 `codex/task-attention-multisource`。基线 `tests/test_task_models.py` + `tests/test_task_attention_projection.py`：47 passed。Task 1 已提交 `79c8c38c`，185 项聚焦回归通过，独立契约及质量检查通过；正在执行 Task 2。未合并、未部署、未回放生产数据。
+
 ## Task 1：明确来源引用和同轮项目选择的契约
 
 **Files:** Modify `app/task_models.py`; Test `tests/test_task_models.py`, Create `tests/test_task_attention_multisource.py`。
 
-- [ ] **1. 写失败测试：风险引用不再受限于任务行动行。** 在新集成测试文件先建立下面的公共样本函数；后续任务在同一文件使用，不依赖其他测试文件的私有 fixture。
+- [x] **1. 写失败测试：风险引用不再受限于任务行动行。** 在新集成测试文件先建立下面的公共样本函数；后续任务在同一文件使用，不依赖其他测试文件的私有 fixture。
 
 ```python
 import json
@@ -78,7 +81,7 @@ def decision_payload():
         'source_ref': 'report:fixture', 'source_excerpt': ACTION,
         'source_description': '项目管理部固定测试周报',
         'title': '复核示例项目回款及供应商付款计划',
-        'business_relevance': 'relevant', 'missing_evidence': ['owner'],
+        'missing_evidence': ['owner'],
         'project_proposal': {'title': '示例项目', 'reason': '周报登记项目',
             'authority': 'project_weekly_report', 'source_excerpt': REGISTRY},
         'attention_proposal': {'category': 'watch', 'title': '示例项目回款风险',
@@ -98,8 +101,8 @@ def test_attention_can_reference_separate_project_and_risk_quotes():
     assert item.attention_proposal.evidence[0].source_excerpt == RISK
 ```
 
-- [ ] **2. 运行失败测试。** `python -m pytest -q tests/test_task_attention_multisource.py::test_attention_can_reference_separate_project_and_risk_quotes`。现状预期是 validation failure：Project 无独立引文、anchor 不接受 null、evidence 非现有字段。
-- [ ] **3. 替换字段契约。** ProjectProposal 增加必填 `source_excerpt: str` 并纳入 nonblank 检查。TaskAttentionProposal 删除 `trigger_evidence`；保留 `why_attention` 为推断说明，用下面的类型替代旧引用和 anchor 字段。
+- [x] **2. 运行失败测试。** `python -m pytest -q tests/test_task_attention_multisource.py::test_attention_can_reference_separate_project_and_risk_quotes`。现状预期是 validation failure：Project 无独立引文、anchor 不接受 null、evidence 非现有字段。
+- [x] **3. 替换字段契约。** ProjectProposal 增加必填 `source_excerpt: str` 并纳入 nonblank 检查。TaskAttentionProposal 删除 `trigger_evidence`；保留 `why_attention` 为推断说明，用下面的类型替代旧引用和 anchor 字段。
 
 ```python
 class TaskAttentionEvidence(StrictTaskModel):
@@ -122,10 +125,12 @@ if proposal is not None and any(value <= 0 for value in proposal.related_task_id
 
 null anchor 只表示本条 Task 的 Project proposal 将在本轮取得 anchor，不按标题猜测其他项目。`signal_id=None` 只表示当前 Work Item 原文；正整数表示已经保存、与相关 Task/已确认项目关联的 signal。不是任意 session 记忆引用。更新所有生成这两种 proposal 的生产代码/测试，不能保留两个新旧输出 schema 或静默兼容旧 trigger 字段；历史 decision_json 原样保留，不重新当新决策应用。
 
-- [ ] **4. 补两个拒绝测试并运行。** 从 `decision_payload()` 删除 project_proposal 并保留 null anchor，应报上述 anchor 错误；把 evidence 设为 [] 应报 validation error。命令 `python -m pytest -q tests/test_task_models.py tests/test_task_attention_multisource.py`。预期新契约测试通过；尚未实现的 apply 回归在下一任务加入。
-- [ ] **5. 提交契约及同步说明。** 在 `docs/runtime-mechanism.md` 说明字段变化是开发契约，Project/task/risk 各有自己的引用。提交 `feat(tasks): separate project and attention evidence references`。运行行为变更必须带文档，不等最后才补。
+- [x] **4. 补两个拒绝测试并运行。** 从 `decision_payload()` 删除 project_proposal 并保留 null anchor，应报上述 anchor 错误；把 evidence 设为 [] 应报 validation error。命令 `python -m pytest -q tests/test_task_models.py tests/test_task_attention_multisource.py`。预期新契约测试通过；尚未实现的 apply 回归在下一任务加入。
+- [x] **5. 提交契约及同步说明。** 在 `docs/runtime-mechanism.md` 说明字段变化是开发契约，Project/task/risk 各有自己的引用。提交 `feat(tasks): separate project and attention evidence references`。运行行为变更必须带文档，不等最后才补。
 
 ## Task 2：项目登记行与 Task 行分离，先取得真实 anchor
+
+Task 1 的五个步骤均已完成；上方契约代码仅作实施记录，最终投影仍以 Task 4 的完整实现为准。
 
 **Files:** Modify `app/task_agent.py`, `tests/test_task_agent.py`, `docs/architecture.md`, `docs/runtime-mechanism.md`; Test `tests/test_task_attention_multisource.py`。
 
@@ -327,6 +332,8 @@ projected = BusinessAttentionProjection(store).upsert(AttentionProposal(
 
 `process_work_item` 在原有 Task+input+run 事务写 pending 初始 receipt；提交后保存投影函数返回的最终 receipt。保留 run ID 的局部副本，不复用 `active_run_id` 的失败路径。回执保存或投影异常发生在提交之后，不能进入原有将 input 改 failed 的 precommit except 分支；把提交后处理移到该 try/except 之外。direct apply 路径沿用返回结果，不造不存在的 run。
 
+删除 Task1 消费者阶段的“multisource/project attention projection is not implemented yet”与仅单引文限制；它们不能进入发布版本。验证时必须同时读取 completed Task run 与独立投影 receipt：前者不是“已生成关注”的证据，投影失败不能倒改已提交 Task 状态。
+
 - [ ] **6. 补回归并验证。** 每个测试先观察失败再实现对应行为：
 
 | 新测试 | 核对结果 |
@@ -386,6 +393,8 @@ watch 可写“当前无需你处理”，并指出接下来观察的结果；�
 - [ ] **4. 清除业务 Skill 中已停用的 completion turn 说明。** 与现行架构一致写成：一个共享 Task Agent 消费新来源，判断新建/更新/完成；不产生三类旧 completion Work Item，枚举仅保留历史；DingTalk TODO 人类完成反馈确定性更新。保留已确认的 prompt-only 只读说明，不新增权限实现。此处是规则一致性修正，不恢复 completion orchestration。
 - [ ] **5. 测试 prompt 契约与运行 Skill 加载。** 更新 `tests/test_task_agent.py` 的 prompt 测试为上述新字段和规则；确认 runner 加载仓库托管 Skill 的这份内容，managed metadata/version 按已有 Skill 发布流程更新。`python -m pytest -q tests/test_task_agent.py tests/test_task_retrieval.py tests/test_task_agent_session.py`，预期通过。检查 `rg -n 'completion|trigger_evidence|明确 CEO action'` 的命中逐项判断，代码/当前规则不得残留已删除路径；历史叙述可以明确标为历史。
 - [ ] **6. 提交。** `feat(tasks): align multisource attention prompt retrieval and skill`，包含准确的架构/运行说明。
+
+Task 5 Skill 发布边界：当前 `app.business_skills.bundled_business_skills_root()` 默认读取全局 `~/.agents/skills`，CI 副本不是生产权威来源。开发测试及候选语义评估显式设置 `CEO_SKILLS_ROOT` 指向隔离工作区 `ci/shared-skills`，不在开发时修改运行中的全局 Skill。Task 8 先完成代码部署，再按现有 Skill 仓库流程发布相同内容到权威文件，核对实际加载路径、内容及版本；在两份规则一致之前不宣称发布完成。不得为此另建 Skill 代理、临时配置文件、复制循环或永久切换生产到 CI 副本。
 
 ## Task 6：用户能看到依据，watch 不误写成“你的动作”
 
