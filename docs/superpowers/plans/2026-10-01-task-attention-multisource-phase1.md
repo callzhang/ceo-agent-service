@@ -44,7 +44,7 @@
 
 开始代码前重新读取 `docs/agent-claims.md`，逐任务认领涉及文件。已有 claim 要先与 owner 协调，只改已协调的函数/段落。测试仅跑本计划列出的文件；不在运行服务的开发机执行串行全套。每次提交只暂存自己的文件或 hunks；不用 `git add -A`。当前另两份未跟踪文件不属于本计划。
 
-执行工作区：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`，分支 `codex/task-attention-multisource`。基线 `tests/test_task_models.py` + `tests/test_task_attention_projection.py`：47 passed。Task 1 已提交 `79c8c38c`，185 项聚焦回归通过，独立契约及质量检查通过；正在执行 Task 2。未合并、未部署、未回放生产数据。
+执行工作区：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`，分支 `codex/task-attention-multisource`。基线 `tests/test_task_models.py` + `tests/test_task_attention_projection.py`：47 passed。Task 1 已提交 `79c8c38c`；Task 2 已提交 `579d1b6a`、`71ca2407`、`9efcab15`，201 项聚焦回归通过，独立规格及质量检查通过。正在执行 Task 3。未合并、未部署、未回放生产数据。
 
 ## Task 1：明确来源引用和同轮项目选择的契约
 
@@ -130,11 +130,11 @@ null anchor 只表示本条 Task 的 Project proposal 将在本轮取得 anchor�
 
 ## Task 2：项目登记行与 Task 行分离，先取得真实 anchor
 
-Task 1 的五个步骤均已完成；上方契约代码仅作实施记录，最终投影仍以 Task 4 的完整实现为准。
+Task 1 的五个步骤均已完成；上方契约代码仅作实施记录，最终投影仍以 Task 4 的完整实现为准。Task 2 的六个步骤已完成，两轮独立检查发现的原文列移位、普通段落及起始换行边界问题已补失败回归并修正；最终确认到 `9efcab15`。
 
 **Files:** Modify `app/task_agent.py`, `tests/test_task_agent.py`, `docs/architecture.md`, `docs/runtime-mechanism.md`; Test `tests/test_task_attention_multisource.py`。
 
-- [ ] **1. 写失败集成测试。**
+- [x] **1. 写失败集成测试。**
 
 ```python
 def test_separate_registry_row_links_candidate_to_official_project(tmp_path):
@@ -156,11 +156,11 @@ def test_project_title_must_match_its_separate_registry_quote(tmp_path):
         apply_task_agent_decision(store, summary_input_id=1,
             work_item=report_item(), decision=TaskAgentDecision.model_validate(payload),
             record_run=False)
-    assert store.list_business_projects() == ()
+    assert store.list_business_projects() == []
 ```
 
-- [ ] **2. 运行失败测试。** `python -m pytest -q tests/test_task_attention_multisource.py -k 'separate_registry or separate_project or project_title'`。旧逻辑虽不能以 Task 行定位登记表，通用 proposal 分支仍可能登记 Project，因此正例单独通过不能证明绑定正确；负例应失败于“没有拒绝错误项目标题”，这是本任务明确的红测试。
-- [ ] **3. 让已有登记表识别器只解析明确 Project 引文。** 将 `_report_project_registry_title(work_item, item)` 的第二参数改成 `source_excerpt: str`，函数内对 `item.source_excerpt` 的引用全部换成参数。沿用现有表格结构解析，不新增业务名称、风险关键词、章节别名或 regex。调用必须显式来自 `item.project_proposal.source_excerpt`；删除“Task 行恰好在登记表中就自动注册”的隐式路径。旧登记行测试要显式构造 Project proposal，而不是继续支持旧输出。
+- [x] **2. 运行失败测试。** `python -m pytest -q tests/test_task_attention_multisource.py -k 'separate_registry or separate_project or project_title'`。旧逻辑虽不能以 Task 行定位登记表，通用 proposal 分支仍可能登记 Project，因此正例单独通过不能证明绑定正确；负例应失败于“没有拒绝错误项目标题”，这是本任务明确的红测试。
+- [x] **3. 让已有登记表识别器只解析明确 Project 引文。** 将 `_report_project_registry_title(work_item, item)` 的第二参数改成 `source_excerpt: str`，函数内对 `item.source_excerpt` 的引用全部换成参数。沿用现有表格结构解析，不新增业务名称、风险关键词、章节别名或 regex。调用必须显式来自 `item.project_proposal.source_excerpt`；删除“Task 行恰好在登记表中就自动注册”的隐式路径。旧登记行测试要显式构造 Project proposal，而不是继续支持旧输出。
 
 ```python
 proposal = item.project_proposal
@@ -175,7 +175,7 @@ if proposal is not None and proposal.authority.endswith('weekly_report'):
 
 保留现在的规范化标题 hash/anchor_ref、register_official_project、confirm_anchor_match 和事务。会议 Project proposal 仍需已有明确会议决策规则；聊天不进入注册路径。Project 行要存在于当前原始来源并与标题一致，不使用 `reason` 中的章节关键词冒充位置证明。
 
-- [ ] **4. 将关联结果传入提交后投影。** 给 `TaskAgentApplyResult` 的 attention 项使用明确 dataclass，替换 `(decision, task_id, signal_id)` 的匿名 tuple；anchor_id 来自当前事务的已确认关联，不让投影重新猜。
+- [x] **4. 将关联结果传入提交后投影。** 给 `TaskAgentApplyResult` 的 attention 项使用明确 dataclass，替换 `(decision, task_id, signal_id)` 的匿名 tuple；anchor_id 来自当前事务的已确认关联，不让投影重新猜。
 
 ```python
 @dataclass(frozen=True)
@@ -200,8 +200,8 @@ if item.attention_proposal is not None:
 
 仅在该 Task 的 project_proposal 确实应用后引用本条结果，不能使用上一条循环残留变量。每条 Task 循环开头置 `applied_project_anchor_id=None`，周报/会议两种注册分支写入该变量，null selector 读取此变量。无效 Project 引文在原有领域验证事务中拒绝本轮，不部分提交伪项目；已提交事实上的 Attention 引用/投影错误则由 Task4 单独记录，不回滚 Task。
 
-- [ ] **5. 补两项回归。** 行标题不一致和“下周工作重点”行动行冒充 Project 登记引文均不能登记 Project；重复相同决定复用 Task/Project/anchor。原文表格的有/无 leading pipe 两种形态继续通过结构解析测试。`python -m pytest -q tests/test_task_agent.py tests/test_task_attention_multisource.py -k 'project or registry or dedupe'`，预期通过。
-- [ ] **6. 同提交更新项目来源文档。** 写明显式项目引文、行动行独立、会议/聊天源界限。提交 `fix(tasks): bind report actions to separately cited project rows`。
+- [x] **5. 补两项回归。** 行标题不一致和“下周工作重点”行动行冒充 Project 登记引文均不能登记 Project；重复相同决定复用 Task/Project/anchor。原文表格的有/无 leading pipe 两种形态继续通过结构解析测试。`python -m pytest -q tests/test_task_agent.py tests/test_task_attention_multisource.py -k 'project or registry or dedupe'`，预期通过。
+- [x] **6. 同提交更新项目来源文档。** 写明显式项目引文、行动行独立、会议/聊天源界限。提交 `fix(tasks): bind report actions to separately cited project rows`。
 
 ## Task 3：保存最小投影回执与可显示的判断依据
 
@@ -391,7 +391,7 @@ watch 可写“当前无需你处理”，并指出接下来观察的结果；�
 ```
 
 - [ ] **4. 清除业务 Skill 中已停用的 completion turn 说明。** 与现行架构一致写成：一个共享 Task Agent 消费新来源，判断新建/更新/完成；不产生三类旧 completion Work Item，枚举仅保留历史；DingTalk TODO 人类完成反馈确定性更新。保留已确认的 prompt-only 只读说明，不新增权限实现。此处是规则一致性修正，不恢复 completion orchestration。
-- [ ] **5. 测试 prompt 契约与运行 Skill 加载。** 更新 `tests/test_task_agent.py` 的 prompt 测试为上述新字段和规则；确认 runner 加载仓库托管 Skill 的这份内容，managed metadata/version 按已有 Skill 发布流程更新。`python -m pytest -q tests/test_task_agent.py tests/test_task_retrieval.py tests/test_task_agent_session.py`，预期通过。检查 `rg -n 'completion|trigger_evidence|明确 CEO action'` 的命中逐项判断，代码/当前规则不得残留已删除路径；历史叙述可以明确标为历史。
+- [ ] **5. 测试 prompt 契约与运行 Skill 加载。** 更新 `tests/test_task_agent.py` 的 prompt 测试为上述新字段和规则；候选测试显式设置 `CEO_SKILLS_ROOT` 到隔离工作区的 `ci/shared-skills` 并验证 runner 实际读取新规则。全局权威 Skill 的 metadata/version 随 Task 8 发布更新，开发期间不提前修改。`python -m pytest -q tests/test_task_agent.py tests/test_task_retrieval.py tests/test_task_agent_session.py`，预期通过。检查 `rg -n 'completion|trigger_evidence|明确 CEO action'` 的命中逐项判断，代码/当前规则不得残留已删除路径；历史叙述可以明确标为历史。
 - [ ] **6. 提交。** `feat(tasks): align multisource attention prompt retrieval and skill`，包含准确的架构/运行说明。
 
 Task 5 Skill 发布边界：当前 `app.business_skills.bundled_business_skills_root()` 默认读取全局 `~/.agents/skills`，CI 副本不是生产权威来源。开发测试及候选语义评估显式设置 `CEO_SKILLS_ROOT` 指向隔离工作区 `ci/shared-skills`，不在开发时修改运行中的全局 Skill。Task 8 先完成代码部署，再按现有 Skill 仓库流程发布相同内容到权威文件，核对实际加载路径、内容及版本；在两份规则一致之前不宣称发布完成。不得为此另建 Skill 代理、临时配置文件、复制循环或永久切换生产到 CI 副本。
@@ -488,7 +488,7 @@ class AttentionEvaluationRunner(TaskAgentRunner):
 
 - [ ] **1. 开发验收汇总。** 在部署前跑本次涉及的 Python 文件和两份前端测试/build，检查 import `app.cli, app.worker, app.email_worker, app.service_supervisor`。不用全套串行测试；未通过项写明并修好，不能混同其他 Agent 的失败。
 - [ ] **2. 推送已合并 runtime commit。** 读回 origin/main revision。按共享发布流程 `python -m app.deploy`，等待安静窗口、backup、fast-forward/build/import/restart/health；不手动 kill/kickstart，不在 `~/Services/ceo-agent-service` 编辑或测试。只说“代码已推送”直到部署实际结束。
-- [ ] **3. 部署读回。** 记录 production checkout HEAD、新 PID、healthz、相关队列、Attention 和 History API。确认新 receipt 字段和新 prompt/托管 Skill 真正在生产 checkout；schema 升级只表示字段存在，不等于已生成关注。
+- [ ] **3. 部署读回与权威 Skill 发布。** 记录 production checkout HEAD、新 PID、healthz、相关队列、Attention 和 History API。确认代码部署成功后，通过现有 Skill 仓库流程把已验证副本的相同内容发布到全局权威 `ceo-work-tracking/SKILL.md`，核对实际配置的 Skill root、加载内容及 metadata/version 与副本一致。新 prompt/receipt 来自生产 checkout，Skill 默认来自全局权威目录，不能把 checkout 里的 CI 副本当作生产读取证明。schema 升级只表示字段存在，不等于已生成关注。
 - [ ] **4. 备份生产 DB 后仅重排已确认的 W39 输入。** 该数据操作只有在用户已授权上线后重跑，且 Task7 副本验证全过时执行。使用下面单行限定更新；保留 attempts、payload 和全部旧 run。更新必须恰好一行，否则 rollback。不能调用只接受 failed 的 requeue 方法来重开 done，也不能把旧 run 改成 running。
 
 ```sql
