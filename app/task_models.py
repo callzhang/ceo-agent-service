@@ -730,11 +730,32 @@ class WorkSummaryInput(BaseModel):
     updated_at: str
 
 
+class TaskAttentionProjectionOutcome(BaseModel):
+    task_id: int
+    anchor_id: int | None = None
+    attention_id: int | None = None
+    status: Literal["applied", "rejected", "error"]
+    reason: str = ""
+
+
+class TaskAttentionProjectionReceipt(BaseModel):
+    status: Literal["pending", "no_proposal", "completed", "partial", "failed"]
+    source_type: str
+    task_decision_count: int
+    project_link_count: int
+    registry_row_count: int | None = None
+    proposal_count: int
+    applied_count: int = 0
+    outcomes: list[TaskAttentionProjectionOutcome] = Field(default_factory=list)
+    recompute_error: str = ""
+
+
 class TaskAgentRun(BaseModel):
     id: int
     summary_input_id: int
     codex_session_id: str = ""
     decision_json: str = "{}"
+    projection_json: str = "{}"
     audit_summary: str = ""
     memory_recall_used: bool = False
     status: str = "completed"

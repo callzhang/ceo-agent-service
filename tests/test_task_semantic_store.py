@@ -184,6 +184,7 @@ ROWS = {
             "ceo_action": "选择方案",
             "anchor_id": 1,
             "evidence_signal_id": 1,
+            "assessment_json": "{}",
             "resolution_signal_id": None,
             "resolved_at": "",
             "created_at": STAMP,

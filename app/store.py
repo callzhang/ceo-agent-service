@@ -109,6 +109,7 @@ from app.outbound_postfix import (
 from app.task_models import (
     DingTalkTodoLinkStatus,
     FollowUpDraft,
+    TaskAttentionProjectionReceipt,
     TodoEvidenceCandidate,
     TodoEvidenceCandidateStatus,
     WorkProject,
@@ -474,7 +475,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "business_attention_items": (
         "id", "stable_key", "category", "status", "title", "business_area",
         "why_attention", "current_state", "ceo_action", "anchor_id",
-        "evidence_signal_id", "resolution_signal_id", "resolved_at",
+        "evidence_signal_id", "assessment_json", "resolution_signal_id", "resolved_at",
         "created_at", "updated_at",
     ),
     "business_attention_tasks": ("attention_item_id", "task_id", "created_at"),
@@ -550,7 +551,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "result_envelope_json",
     ),
     "conversation_runtime_sessions": ("contract_hash",),
-    "task_agent_runs": ("status", "error", "finished_at", "updated_at"),
+    "task_agent_runs": ("status", "error", "finished_at", "updated_at", "projection_json"),
     "meeting_alignment_jobs": (
         "calendar_summary_status",
         "calendar_summary_result_json",
@@ -3875,6 +3876,7 @@ class AutoReplyStore:
                     ceo_action text not null check({_business_nonblank_sql("ceo_action")}),
                     anchor_id integer not null,
                     evidence_signal_id integer not null,
+                    assessment_json text not null default '{{}}',
                     resolution_signal_id integer,
                     resolved_at text not null default '',
                     created_at text not null default current_timestamp,
@@ -4133,6 +4135,7 @@ class AutoReplyStore:
                     summary_input_id integer not null,
                     codex_session_id text not null default '',
                     decision_json text not null default '{}',
+                    projection_json text not null default '{}',
                     audit_summary text not null default '',
                     memory_recall_used integer not null default 0,
                     status text not null default 'completed'
@@ -4339,6 +4342,14 @@ class AutoReplyStore:
                 );
                 """
             )
+            attention_columns = {
+                row["name"] for row in db.execute("pragma table_info(business_attention_items)")
+            }
+            if "assessment_json" not in attention_columns:
+                db.execute(
+                    "alter table business_attention_items add column "
+                    "assessment_json text not null default '{}'"
+                )
             signal_columns = {
                 row["name"] for row in db.execute("pragma table_info(business_task_signals)")
             }
@@ -5384,6 +5395,7 @@ class AutoReplyStore:
             }
             for column, definition in (
                 ("status", "text not null default 'completed'"),
+                ("projection_json", "text not null default '{}'"),
                 ("error", "text not null default ''"),
                 ("finished_at", "text not null default ''"),
                 ("updated_at", "text not null default ''"),
@@ -7587,6 +7599,7 @@ class AutoReplyStore:
         ceo_action: str,
         anchor_id: int,
         evidence_signal_id: int,
+        assessment_json: str = "{}",
         now: str,
         _db: sqlite3.Connection,
     ) -> int:
@@ -7595,15 +7608,16 @@ class AutoReplyStore:
             business_area=business_area, why_attention=why_attention,
             current_state=current_state, ceo_action=ceo_action, anchor_id=anchor_id,
             evidence_signal_id=evidence_signal_id, created_at=now, updated_at=now,
+            assessment_json=assessment_json,
         )
         return int(_db.execute(
             """insert into business_attention_items
                (stable_key, category, status, title, business_area, why_attention,
-                current_state, ceo_action, anchor_id, evidence_signal_id, created_at, updated_at)
-               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                current_state, ceo_action, anchor_id, evidence_signal_id, assessment_json, created_at, updated_at)
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (item.stable_key, item.category.value, item.status.value, item.title,
              item.business_area, item.why_attention, item.current_state, item.ceo_action,
-             item.anchor_id, item.evidence_signal_id, item.created_at, item.updated_at),
+             item.anchor_id, item.evidence_signal_id, item.assessment_json, item.created_at, item.updated_at),
         ).lastrowid)
 
     def update_business_attention_item_in_transaction(
@@ -7613,11 +7627,11 @@ class AutoReplyStore:
             """update business_attention_items set
                category=?, status=?, title=?, business_area=?, why_attention=?, current_state=?,
                ceo_action=?, anchor_id=?, evidence_signal_id=?, resolution_signal_id=?,
-               resolved_at=?, updated_at=? where id=?""",
+               resolved_at=?, assessment_json=?, updated_at=? where id=?""",
             (item.category.value, item.status.value, item.title, item.business_area,
              item.why_attention, item.current_state, item.ceo_action, item.anchor_id,
              item.evidence_signal_id, item.resolution_signal_id, item.resolved_at,
-             item.updated_at, item.id),
+             item.assessment_json, item.updated_at, item.id),
         )
 
     def link_business_attention_task_in_transaction(
@@ -29080,6 +29094,26 @@ class AutoReplyStore:
             return
         with self._agent_run_write_transaction(None) as (db, _):
             self._finish_task_agent_run_in_connection(db, run_id, expected)
+
+    def record_task_agent_projection(
+        self, run_id: int, projection_json: str, *,
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        TaskAttentionProjectionReceipt.model_validate_json(projection_json)
+
+        def record(db: sqlite3.Connection) -> None:
+            cursor = db.execute(
+                "update task_agent_runs set projection_json=? where id=?",
+                (projection_json, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("task agent run does not exist")
+
+        if _db is not None:
+            record(_db)
+            return
+        with self._agent_run_write_transaction(None) as (db, _):
+            record(db)
 
     def recover_orphaned_task_agent_runs(self) -> int:
         """Close task runs whose parent input is no longer processing."""

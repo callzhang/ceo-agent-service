@@ -316,6 +316,22 @@ fallback，不循环创建 session。普通会话冲突或其他错误不会清�
 `business_task_dingtalk_links` 和 `business_task_todo_sync_outbox`，并不把旧 Project/TODO 当作 Task 主键。
 此处描述的是代码分支，不代表已经部署；Task 6 不单独部署或重启服务。
 
+开发中的 Attention 回执存储使用 `task_agent_runs.projection_json` 独立记录每个输入 run 的
+派生投影结果，不修改 Task run 的终态、`decision_json`、审核摘要或完成/更新时间。
+回执状态为 `pending`、`no_proposal`、`completed`、`partial` 或 `failed`，记录来源类型、
+Task 决策数、实际 Project 关联数、提案数、成功应用的不同 Project 卡片数，以及逐项
+`applied` / `rejected` / `error` 的 Task、anchor、Attention ID 和原因、成员重算错误。
+`registry_row_count` 只用于报告来源，其他来源为 null；登记行数不等于 Project 关联数。
+历史 run 的默认 `{}` 表示未记录，不能据此判断零提案或投影完成；`pending` 表示尚未确认结果。
+此阶段提供类型校验和独立持久化，投影计数与卡片评估的生产接线另行完成，不新增队列或恢复流程。
+`business_attention_items.assessment_json` 默认 `{}`，只用于保存已经核验的 material trigger、
+Agent 推断、精确引文及来源 signal ID / source_ref / source_time / link，不复制完整来源。
+底层存储不自行生成评估或判定业务重大性；Attention 事件的卡片快照保留此字段。
+只读诊断 `python scripts/inspect_task_attention.py --db <数据库路径> --input-id <精确输入 ID>`
+通过 SQLite `mode=ro` 读取该输入及其 run，输出来源、输入/run 状态、投影回执与审核摘要，
+不输出 payload 或完整决策，也不初始化 Store、迁移数据库或创建不存在的数据库。
+输入不存在时输出 `input_not_found` JSON 并以状态 1 退出。
+
 目前通用 work-item 生产者尚未提供所有授权和 owner identity 映射元数据；在来源元数据缺失时，
 不能据此把显式提到负责人的讨论升级成正式授权指派。对应的生产者接线必须作为单独集成范围处理，
 不能由 Task Agent 猜测或合成。

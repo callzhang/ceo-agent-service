@@ -348,6 +348,7 @@ class BusinessAttentionItem(_FrozenBusinessModel):
     ceo_action: Nonblank
     anchor_id: ReferenceId
     evidence_signal_id: ReferenceId
+    assessment_json: str = "{}"
     resolution_signal_id: ReferenceId | None = None
     resolved_at: str = ""
     created_at: str
