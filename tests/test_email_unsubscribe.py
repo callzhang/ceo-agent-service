@@ -3230,6 +3230,33 @@ def test_discover_current_page_models_a_standalone_unsubscribe_button() -> None:
     assert discovery.controls[0].intent == "unsubscribe"
 
 
+def test_rejected_form_records_http_status_without_provider_url() -> None:
+    from types import SimpleNamespace
+    from app.email_unsubscribe import browser_failure_detail
+
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": 24, "controlCount": 1}],
+        texts=["Manage your preferences"],
+    )
+    snapshot = _unsubscribe_form_snapshot()
+    snapshot["method"] = "post"
+    binding = browser._form_binding(snapshot)
+    assert binding is not None
+    response = SimpleNamespace(
+        status=405, url="https://news.example.com/confirm?token=private-value"
+    )
+    browser._context = SimpleNamespace(
+        request=SimpleNamespace(post=lambda *args, **kwargs: response)
+    )
+    with pytest.raises(UnsubscribeBrowserError) as caught:
+        browser._execute_audited_control(binding)
+    detail = browser_failure_detail(caught.value, operation="submit_form")
+    assert "HTTP 405" in detail
+    assert "private-value" not in detail
+    assert "https://" not in detail
+
+
 def test_confirmation_button_clicks_only_its_modelled_exact_selector() -> None:
     browser = _discovery_browser(
         control_snapshots=[{"blocked": False, "forms": [], "links": []}],

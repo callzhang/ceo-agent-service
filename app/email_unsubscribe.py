@@ -3139,7 +3139,7 @@ class PlaywrightUnsubscribeBrowser:
         if response.status < 200 or response.status >= 300:
             raise UnsubscribeBrowserError(
                 UnsubscribeBrowserFailure.FORM_RESPONSE_REJECTED,
-                "form provider response rejected",
+                f"form provider response rejected: HTTP {response.status}",
             )
         body = response.body()
         if len(body) > 1_048_576:

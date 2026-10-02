@@ -1180,6 +1180,11 @@ message/proposal bodies or repeat the window query for the timestamp. Recovery,
 execution-generation and business-object filters remain part of that same
 projection; physical historical failures are not current queue failures.
 
+Rejected unsubscribe form responses retain their numeric HTTP status in the
+sanitized failure detail (for example HTTP 405). Private response URLs and
+subscription tokens remain excluded. A rejected response is not a success
+receipt and cannot terminalize the unsubscribe as done.
+
 Successful multi-family email training runs use the successful `embedding-mlp`
 entry in `family_results` for description optimization. The compatibility
 `model_id` field may point at a traditional classifier and does not imply
