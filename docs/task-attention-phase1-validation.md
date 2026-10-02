@@ -7,7 +7,7 @@
 | 门槛 | 当前证据 | 仍需完成 |
 | --- | --- | --- |
 | 代码测试 | Tasks 1–6 已独立复核。Task 6 的 `128ea5b4` / `f92d0a92`：7 项 API、22 项页面测试与构建通过；主 Agent 检查模拟列表及 decision/watch 详情，桌面及 390×844 窄屏亮/暗色可读。Task 7 的固定输入、精确回放、旧 run 保留、幂等卡片/事件、落库依据与 expected 隔离回归先 RED 后 GREEN。 | 合并前重跑本次有关文件；模拟页面及 fake runner 不证明真实业务效果。 |
-| 语义评估 | 固定 version 1 的 9 个 case；expected 与输入分开。baseline `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0` 的 9 样本完成，4 负例通过、5 正例失败。原候选 `4f0e06e5` W39 零卡；后续 `1ed0f3f2` W39 3 Tasks/2 卡、同项目两行动 2 Tasks/1 卡且两成员均通过。`0e4acad6` 专用关联会议样本通过。最新 `dd073b25` 两聊天样本均失败，详细原因见末尾记录。 | 保持同 `codex_oauth`/`gpt-5.6-luna`、timeout、初始事实、concurrency=1，修正后 fresh copy 重跑并完成候选全 9 样本比较；不能用此前修订的部分通过替代最新版本验证。 |
+| 语义评估 | 固定 version 1 的 9 个 case；expected 与输入分开。baseline `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0` 为 4/9 通过。最新冻结候选 `233b9667` 为 8/9 通过，两聊天综合/冲突、W39、会议和四负例通过；同项目两行动因错误日期 actor 提交前失败，且原输出存在多余登记范围 Task。具体比较及旧失败均见末尾记录。 | 保持同 `codex_oauth`/`gpt-5.6-luna`、timeout、初始事实、concurrency=1，限定修订后 fresh copy 重跑完整样本及失败 case 重复验证；不能用此前修订或部分通过替代最新版本验证。 |
 | W39 数据库副本 | 主 Agent 用 SQLite backup 创建唯一完整性验证副本，`integrity_check=ok`，3,223,863,296 bytes；259 Tasks、16 Projects、0 Attention。精确输入 27465 已核对 source_ref，状态 done、attempts=1。原有 W39 Tasks 129–134；中汽 anchor 23 不代表中汽创智别名。 | 从这份不可变初态另建候选副本，回放两次；比较真实 Task/Project/card IDs、关联、依据及事件。不得为落卡编造字段变化、强行合并简称或忽略额外 Task。副本尚未回放。 |
 | 上线 | 全局权威 Skill 仍为 version 2，SHA256 `5c2bcbee182ed0872a55f35193c8815a51dd3e0ba0ca92b8e1eaa55e20cc1992`；候选使用隔离 `ci/shared-skills` version 3。 | PR + 固定 eval 对比通过后按既有部署流程发布、读回运行健康及队列、发布权威 Skill、单输入生产回放及真实页面核对。尚未上线。 |
 
