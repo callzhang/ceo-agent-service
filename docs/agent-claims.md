@@ -26,8 +26,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-task-existing-project-link | Delegated isolated candidate: app/task_models.py (TaskProjectLinkProposal), app/task_agent.py (link application/prompt), tests/test_task_models.py, tests/test_task_agent.py, tests/test_task_attention_multisource.py (link regressions), ci/shared-skills/ceo-work-tracking/SKILL.md, docs/architecture.md and docs/runtime-mechanism.md (Task link contract), docs/task-attention-phase1-validation.md | Root authorized dedicated exact-current-source Task association to existing official Project using existing confirm_anchor_match; preserve old uncertain proposals and restating-update guard; no production/global Skill/oracle edits. | 2026-10-02 |
-
 
 
 | codex-attention-multisource-browser-fixture | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: frontend/dev-mock/tasksMock.ts (synthetic Attention evidence fixtures only) | Reuse existing isolated Tasks mock preview to verify two-source detail, watch/decision labels, light/dark and narrow readability; synthetic UI evidence is not business or production verification. | 2026-10-02 |
