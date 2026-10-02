@@ -36,6 +36,13 @@ def test_fixed_evaluation_cases_have_independent_inputs_and_expectations():
         WorkItem.model_validate(case["work_item"])
         assert "expected" not in case["work_item"]
         assert "expected" not in case["existing_context"]
+        required_refs = case["expected"]["required_source_refs"]
+        if case["expected"]["attention_projects"]:
+            assert case["work_item"]["source"]["ref"] in required_refs
+        else:
+            assert required_refs == []
+        if case["case_id"] in ("chat-with-report-context", "newer-conflicting-chat"):
+            assert "eval:historical-report" in required_refs
 
 
 def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_runs(tmp_path):
@@ -138,6 +145,100 @@ def test_evaluation_missing_run_cannot_pass_a_negative_case(tmp_path):
         "attention_projects": [], "project_titles": [], "task_count": 0, "minimum_evidence_sources": 1})
     assert result["passed"] is False
     assert "task_agent_run_missing" in result["failures"]
+
+
+def test_evaluation_new_risk_cannot_pass_with_only_historical_evidence(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "historical-only.sqlite3")
+    seed = seed_report(store)
+    original_card, = store.list_business_attention_items()
+    quote = "示例项目客户取消验收；复核回款计划并增加供应商付款协调。"
+    item = WorkItem.model_validate({
+        "source": {"type": "ai_minutes", "ref": "meeting:current", "created_at": "2026-10-01T12:00:00Z"},
+        "context": {"source_conversation_kind": "minutes"}, "summary": quote,
+    })
+    payload = decision_payload()
+    row = payload["task_decisions"][0]
+    row.update(action="update_task", transition="update_fields", task_id=seed.task_ids[0], source_ref=item.source.ref,
+               source_excerpt=quote, description=quote)
+    del row["project_proposal"]
+    row["attention_proposal"]["anchor_id"] = original_card.anchor_id
+    row["attention_proposal"]["evidence"][0]["signal_id"] = seed.attention_proposals[0].signal_id
+
+    class Codex:
+        def decide(self, **kwargs):
+            assert "required_source_refs" not in kwargs["prompt"]
+            return TaskAgentDecision.model_validate(payload)
+
+    from app.task_agent import TaskAgentRunner
+    input_id = store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
+    result = tool.replay_input(store, tool.scoped_runner(TaskAgentRunner, Codex()), input_id,
+                              source_ref=item.source.ref, expected={
+        "attention_projects": ["示例项目"], "project_titles": ["示例项目"], "task_count": 1,
+        "minimum_evidence_sources": 1, "reuse_attention": True,
+        "required_source_refs": [item.source.ref],
+    })
+    assert result["run_status"] == "completed", result.get("execution_error")
+    assert result["projection"]["status"] == "completed"
+    assert result["evidence_valid"]
+    assert result["passed"] is False
+    assert "missing_required_source" in result["failures"]
+
+
+def test_evaluation_requires_source_on_each_target_project_card(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "each-target.sqlite3")
+    seed_report(store)
+    second_item = report_item()
+    second_item = second_item.model_copy(update={
+        "source": second_item.source.model_copy(update={"ref": "report:other"}),
+        "summary": second_item.summary.replace("示例项目", "另一项目"),
+    })
+    second_payload = json.loads(json.dumps(decision_payload(), ensure_ascii=False)
+                                .replace("示例项目", "另一项目").replace("report:fixture", "report:other"))
+    apply_task_agent_decision(store, summary_input_id=2, work_item=second_item,
+                             decision=TaskAgentDecision.model_validate(second_payload), record_run=False)
+    result = tool.readback(store, input_id=None, before=tool.read_domain(store), expected={
+        "attention_projects": ["示例项目", "另一项目"], "project_titles": ["示例项目", "另一项目"],
+        "task_count": 2, "minimum_evidence_sources": 1, "required_source_refs": ["report:fixture"],
+    })
+    assert result["evidence_valid"]
+    assert result["passed"] is False
+    assert "missing_required_source" in result["failures"]
+
+
+@pytest.mark.parametrize("status,outcome,recompute_error", [
+    ("pending", "applied", ""), ("partial", "applied", ""), ("failed", "applied", ""),
+    ("no_proposal", "applied", ""), ("completed", "rejected", ""),
+    ("completed", "error", ""), ("completed", "applied", "member recompute failed"),
+])
+def test_evaluation_valid_old_card_cannot_mask_recorded_projection_failure(tmp_path, status, outcome, recompute_error):
+    from app.task_models import TaskAttentionProjectionReceipt, TaskAttentionProjectionOutcome
+
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "failed-receipt.sqlite3")
+    seed = seed_report(store)
+    item = report_item()
+    input_id = store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
+    run_id = store.record_task_agent_run(input_id, decision_json=json.dumps(decision_payload()))
+    before = tool.read_domain(store)
+    expected = {"attention_projects": ["示例项目"], "project_titles": ["示例项目"],
+                "task_count": 1, "minimum_evidence_sources": 1, "required_source_refs": [item.source.ref]}
+    # An actual baseline run without the new receipt remains evaluable.
+    assert tool.readback(store, input_id=input_id, before=before, expected=expected)["passed"]
+    card, = store.list_business_attention_items()
+    receipt = TaskAttentionProjectionReceipt(
+        status=status, source_type=item.source.type.value, task_decision_count=1,
+        project_link_count=1, registry_row_count=1, proposal_count=1, applied_count=1,
+        outcomes=[TaskAttentionProjectionOutcome(task_id=seed.task_ids[0], anchor_id=card.anchor_id,
+                   attention_id=card.id, status=outcome, reason="persisted evaluation failure")],
+        recompute_error=recompute_error,
+    )
+    store.record_task_agent_projection(run_id, receipt.model_dump_json())
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    assert result["evidence_valid"]
+    assert result["passed"] is False
+    assert "projection_not_successful" in result["failures"]
 
 
 PROJECT_ROW = "| 示例项目 | 回款复核 | 降低现金流风险 | 09-30 | 有风险 |"

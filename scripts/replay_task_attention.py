@@ -152,7 +152,16 @@ def readback(store, *, input_id, before, expected=None):
                       "anchor_id": card["anchor_id"], "task_ids": members, "assessment": assessment,
                       "current_state": card["current_state"], "why_attention": card["why_attention"],
                       "evidence_valid": bool(valid)})
+    decision = json.loads(run["decision_json"]) if run is not None else {}
+    proposal_count = sum(bool(row.get("attention_proposal")) for row in decision.get("task_decisions", []))
+    projection = json.loads(run["projection_json"]) if run is not None and "projection_json" in run.keys() else {}
     failures = []
+    if projection and (
+        projection["status"] not in (("completed",) if proposal_count else ("completed", "no_proposal"))
+        or any(outcome["status"] != "applied" for outcome in projection["outcomes"])
+        or projection["recompute_error"]
+    ):
+        failures.append("projection_not_successful")
     duplicate_cards = len(active) - len({card["anchor_id"] for card in active})
     if duplicate_cards:
         failures.append("duplicate_project_cards")
@@ -173,12 +182,15 @@ def readback(store, *, input_id, before, expected=None):
             failures.append("task_count_mismatch")
         if any(count < expected["minimum_evidence_sources"] for count in source_counts):
             failures.append("missing_evidence_source")
+        required_sources = set(expected.get("required_source_refs", []))
+        if any(not required_sources.issubset({quote["source_ref"] for quote in card["assessment"].get("evidence", [])})
+               for card in cards if card["project_title"] in wanted):
+            failures.append("missing_required_source")
         initial_ids = {card["id"] for card in before["attention"]}
         if expected.get("reuse_attention") and {card["id"] for card in active} != initial_ids:
             failures.append("attention_identity_changed")
         if expected.get("preserve_project_registry") and before["projects"] != after["projects"]:
             failures.append("project_registry_changed")
-    decision = json.loads(run["decision_json"]) if run is not None else {}
     visible_task_ids = {task_id for card in cards for task_id in card["task_ids"]}
     before_tasks = {task["id"]: task for task in before["tasks"]}
     visible_task_ids.update(task["id"] for task in after["tasks"]
@@ -187,8 +199,8 @@ def readback(store, *, input_id, before, expected=None):
             "run_id": run["id"] if run is not None else None, "run_status": run["status"] if run is not None else None,
             "run_error": run["error"] if run is not None else "",
             "runtime_attempts": attempts,
-            "proposal_count": sum(bool(row.get("attention_proposal")) for row in decision.get("task_decisions", [])),
-            "projection": json.loads(run["projection_json"]) if run is not None and "projection_json" in run.keys() else {},
+            "proposal_count": proposal_count,
+            "projection": projection,
             "persisted_attention_count": len(active), "duplicate_cards": duplicate_cards,
             "evidence_valid": evidence_valid, "cards": cards,
             "tasks": [{"id": t["id"], "title": t["title"], "stage": t["stage"], "status": t["status"]}

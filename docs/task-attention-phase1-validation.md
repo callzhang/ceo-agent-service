@@ -52,4 +52,6 @@ stdout JSON 保存 code revision、实际 Skill 路径/hash、配置路由/model
 
 ## 接受标准
 
-固定正例全部达到项目卡预期；负例无误关注、伪项目或伪 Task；真实卡片引用有可核对的 signal/source_ref/连续原文/来源时间及支持 Task；同项目两行动保留两 Task 一卡；会议/聊天更新复用当前卡；来源冲突保留双方证据而不改写登记字段。W39 两次回放不重复 Task/Project/card；卡片关联中汽创智及岚图的真实任务和原文；第二次卡 ID 不变且未变化不追加事件。任何真实模型失败都记录原 case 并修正 prompt/context 后重做相同对比，不用 fake 输出替代模型门槛。
+固定正例全部达到项目卡预期；负例无误关注、伪项目或伪 Task；真实卡片引用有可核对的 signal/source_ref/连续原文/来源时间及支持 Task；每张目标项目卡都必须包含 expected.required_source_refs 指定的当前来源，聊天综合及来源冲突样本还须包含历史周报来源，不以一张历史卡或来源数量替代本轮证据。required_source_refs 仍只在落库后断言，不进入 Agent 输入。当前有关注提议时，已记录的 projection 必须 completed；pending/partial/failed/no_proposal、rejected/error outcome 或 recompute_error 都使本轮评估失败。无提议时已记录回执只允许 completed/no_proposal 且无失败结果；实际 baseline 的未记录空回执 `{}` 保持独立诊断，不补造也不因此自动判失败。同项目两行动保留两 Task 一卡；会议/聊天更新复用当前卡；来源冲突保留双方证据而不改写登记字段。W39 两次回放不重复 Task/Project/card；卡片关联中汽创智及岚图的真实任务和原文；第二次卡 ID 不变且未变化不追加事件。任何真实模型失败都记录原 case 并修正 prompt/context 后重做相同对比，不用 fake 输出替代模型门槛。
+
+Task 7 规格复核补强：`2abb82fd` 的评估工具曾可能把仅历史证据的更新或未成功投影的旧卡计为通过；已用真实 Store/full process_work_item 的确定性失败回归复现并修正。此修正仅改变一次性评估断言，不改变生产 Task Agent、投影或权限行为；真实语义比较仍待执行。

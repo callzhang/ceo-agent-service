@@ -30,7 +30,10 @@
         ],
         "task_count": 3,
         "minimum_evidence_sources": 1,
-        "reuse_attention": false
+        "reuse_attention": false,
+        "required_source_refs": [
+          "eval:w39-project-risk"
+        ]
       }
     },
     {
@@ -90,7 +93,10 @@
         ],
         "task_count": 1,
         "minimum_evidence_sources": 1,
-        "reuse_attention": true
+        "reuse_attention": true,
+        "required_source_refs": [
+          "eval:meeting-new-risk"
+        ]
       }
     },
     {
@@ -150,7 +156,11 @@
         ],
         "task_count": 1,
         "minimum_evidence_sources": 2,
-        "reuse_attention": true
+        "reuse_attention": true,
+        "required_source_refs": [
+          "eval:chat-with-report-context",
+          "eval:historical-report"
+        ]
       }
     },
     {
@@ -200,7 +210,11 @@
         "task_count": 1,
         "minimum_evidence_sources": 2,
         "reuse_attention": false,
-        "preserve_project_registry": true
+        "preserve_project_registry": true,
+        "required_source_refs": [
+          "eval:newer-conflicting-chat",
+          "eval:historical-report"
+        ]
       }
     },
     {
@@ -234,7 +248,8 @@
         ],
         "task_count": 1,
         "minimum_evidence_sources": 1,
-        "reuse_attention": false
+        "reuse_attention": false,
+        "required_source_refs": []
       }
     },
     {
@@ -268,7 +283,8 @@
         ],
         "task_count": 1,
         "minimum_evidence_sources": 1,
-        "reuse_attention": false
+        "reuse_attention": false,
+        "required_source_refs": []
       }
     },
     {
@@ -294,7 +310,8 @@
         "project_titles": [],
         "task_count": 1,
         "minimum_evidence_sources": 1,
-        "reuse_attention": false
+        "reuse_attention": false,
+        "required_source_refs": []
       }
     },
     {
@@ -328,7 +345,8 @@
         ],
         "task_count": 0,
         "minimum_evidence_sources": 1,
-        "reuse_attention": false
+        "reuse_attention": false,
+        "required_source_refs": []
       }
     },
     {
@@ -358,7 +376,10 @@
         ],
         "task_count": 2,
         "minimum_evidence_sources": 1,
-        "reuse_attention": false
+        "reuse_attention": false,
+        "required_source_refs": [
+          "eval:same-project-two-actions"
+        ]
       }
     }
   ]
