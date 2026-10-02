@@ -210,6 +210,16 @@ Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
 Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返回 0..N 个 `task_decisions`。
 每个保留决策都必须引用 WorkItem 的准确 `source_ref`，并提供确实出现在来源摘要中的原文
 `source_excerpt`；检索到的 Task、Project 候选及 memory 只能提供背景，不能替代来源证据或授权。
+开发中的多来源 Project Attention 第一阶段仅变更输出契约，尚未部署：正式
+`project_proposal` 必须带独立、非空的 `source_excerpt`，引用项目登记依据，与 Task 的
+行动摘录分开。Attention 用必填、至少一条的 `evidence` 取代 `trigger_evidence`；每条需
+非空来源引用和原文摘录，`signal_id` 可省略/null 或为严格正整数。`why_attention` 是推断，
+不充当原文。`anchor_id` 可省略/null，但此时同一 TaskDecision 必须带 `project_proposal`；
+不能从其他决定或同名项目推断 anchor。既有 anchor 和 `related_task_ids` 只接受严格正整数，
+后者默认空列表。旧输出字段直接拒绝，历史 `decision_json` 保持原样。
+此阶段只适配既有消费者的单条当前来源证据与既有 anchor；多来源/历史信号、显式相关 Task
+列表、本轮 Project 解析及独立登记摘录核验留给后续阶段，未支持的投影形状明确记录失败。
+候选 Task 可携带风险证据，不要求补造负责人或承诺；整体应用与投影验收完成前不得部署。
 `skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。
 正式 Project 注册表和当前 Task 状态优先读取最近一次确认的正式周报，尤其是
 项目管理部或管理层周报中明确列出的项目、负责人、目标、DDL、状态和下周任务；

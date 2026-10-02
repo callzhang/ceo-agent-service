@@ -158,6 +158,7 @@ def test_project_candidate_requires_existing_cluster_id_and_project_proposal_req
             "title": "美国客户成交",
             "reason": "会议明确决定启动该项目",
             "authority": "meeting_decision",
+            "source_excerpt": "会议明确决定启动美国客户成交项目",
         })
     ]})
     with pytest.raises(ValidationError):
@@ -170,6 +171,7 @@ def test_project_candidate_requires_existing_cluster_id_and_project_proposal_req
                 project_proposal={
                     "title": "美国客户成交", "reason": "会议明确决定启动该项目",
                     "authority": "meeting_decision",
+                    "source_excerpt": "会议明确决定启动美国客户成交项目",
                 },
                 project_candidate_proposal={
                     "cluster_id": 3, "title": "美国客户成交", "reason": "相关任务持续",

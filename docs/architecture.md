@@ -775,6 +775,17 @@ Task 6 与 Task 7 已随 `46ba55eb`（2026-09-24）一起部署上线，不是�
 
 需关注必须同时有已确认的业务锚点、相关 Task、已链接来源信号、明确 CEO action 和当前来源的精确 trigger 摘录。trigger 类型和原因是 Agent 对来源的语义分类并写入 Attention provenance；它不等于机器独立证明其重大性，系统不做关键词重大性推断。提交后还要按所有受影响 Task 重算当前关注成员，完成、取消、不相关及合并都会更新/移除成员；投影失败不回滚已提交 Task。仅相关、已接受、正常进度或临近日期不足以进入关注。Task Agent 不再把 `work_projects` / `work_todos` / `work_updates` 当新语义事实的双写目标；外部 TODO 镜像走 Task 7 的独立 Task 键控 outbox，Task 6 单独不得部署。
 
+开发中、尚未部署的多来源 Project Attention 契约（第一阶段仅输出模型）：
+`ProjectProposal.source_excerpt` 必填且非空，独立引用项目登记依据，不借用
+`TaskDecision.source_excerpt` 的行动项摘录。Attention 使用至少一条 `evidence`，每条包含
+非空 `source_ref`、`source_excerpt` 和可选的严格正整数 `signal_id`；`why_attention` 保留为
+Agent 的推断。`anchor_id` 可省略或为 null，但只能指向同一 TaskDecision 本轮的
+`project_proposal`，不能按标题猜测其他 Project。`related_task_ids` 默认空列表，只接受
+严格正整数。旧 `trigger_evidence` 不再接受，历史 `decision_json` 不迁移。候选 Task 可表达
+风险证据而不补造负责人或升级正式 Task。此阶段的消费端仅适配既有的单条当前来源证据与
+既有 anchor；多条/历史信号证据、显式相关 Task 列表及本轮 Project anchor 解析尚未实现，
+尝试投影会明确记录失败。登记原文核验与完整投影在后续阶段实现，整体完成验收前不得部署。
+
 业务 Skill 说明“如何判断”，操作 Skill 说明“如何读取或执行”。OA、面试和 OKR 已有成熟的专业
 Skill，CEO Skill 只负责识别需要委派的场景，不复制专业规则：分别加载
 `dingtalk-oa-approval`、`xiaoqing_interview`/现有面试 Skill、`dingtang-okr-review`。

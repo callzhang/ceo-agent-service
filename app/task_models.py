@@ -1,7 +1,7 @@
 from enum import StrEnum
-from typing import Any, Literal, Mapping
+from typing import Annotated, Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 
 from app.decision_quality import DecisionQualityResult, DecisionRisk, classify_decision_quality
@@ -362,10 +362,20 @@ class ProjectProposal(StrictTaskModel):
 
     title: str
     reason: str
+    source_excerpt: str = Field(
+        description="Exact project registration quote, distinct from the Task's action evidence.",
+    )
     authority: Literal[
         "management_weekly_report", "project_weekly_report",
         "department_weekly_report", "meeting_decision",
     ]
+
+    @field_validator("source_excerpt")
+    @classmethod
+    def nonblank_excerpt(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("project proposal requires a nonblank source excerpt")
+        return value
 
     @model_validator(mode="after")
     def nonblank(self) -> "ProjectProposal":
@@ -374,18 +384,35 @@ class ProjectProposal(StrictTaskModel):
         return self
 
 
+class TaskAttentionEvidence(StrictTaskModel):
+    signal_id: int | None = Field(default=None, strict=True, gt=0)
+    source_ref: str
+    source_excerpt: str
+
+    @field_validator("source_ref", "source_excerpt")
+    @classmethod
+    def nonblank_provenance(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("attention evidence requires a nonblank source reference and excerpt")
+        return value
+
+
 class TaskAttentionProposal(StrictTaskModel):
     category: Literal["fyi", "watch", "decision", "push"]
     title: str
     why_attention: str
     current_state: str
     ceo_action: str
-    anchor_id: int = Field(gt=0)
+    anchor_id: int | None = Field(
+        default=None, strict=True, gt=0,
+        description="Registered anchor ID; null resolves only this TaskDecision's project_proposal.",
+    )
+    related_task_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(default_factory=list)
     material_trigger: Literal[
         "threatened_commitment", "material_change", "material_dispute",
         "ceo_decision", "ceo_push", "required_gate", "risk_escalation",
     ]
-    trigger_evidence: str
+    evidence: list[TaskAttentionEvidence] = Field(min_length=1)
 
 
 class TaskDecision(StrictTaskModel):
@@ -498,6 +525,12 @@ class TaskDecision(StrictTaskModel):
             raise ValueError("formal Project proposals require the current Work Item evidence")
         if self.project_proposal is not None and self.project_candidate_proposal is not None:
             raise ValueError("a decision cannot contain both a formal Project and a Project candidate proposal")
+        if (
+            self.attention_proposal is not None
+            and self.attention_proposal.anchor_id is None
+            and self.project_proposal is None
+        ):
+            raise ValueError("attention with a null anchor requires this decision's project_proposal")
         if (self.owner_user_id.strip() or self.owner_name.strip()) and not self.owner_evidence:
             raise ValueError("source-backed owner assignment requires owner_evidence")
         if self.action in {"skip", "record_candidate", "create_task"} and self.transition != "none":

@@ -471,7 +471,9 @@ For this report, emit `project_proposal` for each named project/workstream that
 has explicit project-level fields such as an owner, milestone/target, status,
 deliverable, or next task. Use the exact report heading/title and set the
 authority to this source type (`management_weekly_report`,
-`project_weekly_report`, or `department_weekly_report`). Do not turn a generic
+`project_weekly_report`, or `department_weekly_report`). Its required
+`source_excerpt` quotes the project registration row separately from the Task's
+action evidence. Do not turn a generic
 department, topic, or isolated task into a Project. Attach the same authoritative
 proposal to the related Tasks so the service can merge them into one Project
 instead of leaving every report row as an ungrouped candidate. Any
@@ -608,7 +610,8 @@ remain proposals.
 Project resolution is part of this scan. If the current meeting evidence explicitly
 decides to start, approve, 立项, or assign a named project/workstream (not merely
 mentioning it), emit `project_proposal` on each related Task with the exact project
-title, a reason grounded in the source sentence, and `authority="meeting_decision"`.
+title, a reason grounded in the source sentence, a separate `source_excerpt`
+quoting the project decision, and `authority="meeting_decision"`.
 This is required even when the related Task is an `update_task` or a previously
 recorded meeting action: update the Task and attach the project proposal in the
 same decision. Read the complete meeting_summary, transcript_excerpts, and action
@@ -639,6 +642,13 @@ or meaningful risk escalation. Relevance, acceptance, ordinary progress, or
 date proximity alone is not attention. Retain real low-impact work when needed,
 but keep it outside attention. “skip” means no plausible retained source task,
 not no Project.
+Attention proposals cite a nonempty `evidence` list: each entry includes
+`source_ref`, an exact `source_excerpt`, and an optional existing `signal_id`.
+Keep `why_attention` as your inference, separate from these source quotes.
+`anchor_id` is a positive registered ID, or null only when this same TaskDecision
+contains the `project_proposal` to resolve this turn. `related_task_ids` contains
+only positive existing Task IDs; omit it when there are none. Do not output the
+retired `trigger_evidence` field.
 
 Memory is background only, never source proof. Do not copy runtime paths,
 credentials, or diagnostics into business fields.
@@ -1777,9 +1787,15 @@ def _project_task_attention(
         proposal = item.attention_proposal
         assert proposal is not None
         try:
+            # Contract-only stage: multi-source and newly resolved project
+            # projection are implemented together in the later attention task.
+            if proposal.anchor_id is None or len(proposal.evidence) != 1 or proposal.related_task_ids:
+                raise ValueError("multisource/project attention projection is not implemented yet")
+            evidence = proposal.evidence[0]
+            if evidence.signal_id is not None or evidence.source_ref != item.source_ref:
+                raise ValueError("existing attention projection only supports current-source evidence")
             exact_trigger_quote = (
-                bool(proposal.trigger_evidence.strip())
-                and proposal.trigger_evidence in item.source_excerpt
+                evidence.source_excerpt in item.source_excerpt
             )
             if not exact_trigger_quote:
                 LOGGER.info("Suppressing Task attention without an exact source trigger quote task_id=%s", task_id)
@@ -1791,7 +1807,7 @@ def _project_task_attention(
                 business_area="",
                 why_attention=(
                     f"{proposal.why_attention} Source trigger ({proposal.material_trigger}): "
-                    f"{proposal.trigger_evidence}"
+                    f"{evidence.source_excerpt}"
                 ),
                 current_state=proposal.current_state,
                 ceo_action=proposal.ceo_action,

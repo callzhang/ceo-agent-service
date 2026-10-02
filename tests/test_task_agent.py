@@ -1320,6 +1320,7 @@ def test_explicit_meeting_project_proposal_registers_project_and_links_task(tmp_
         "project_proposal": {
             "title": "美国客户成交", "reason": "会议明确决定启动该项目",
             "authority": "meeting_decision",
+            "source_excerpt": "会议明确决定启动美国客户成交项目，并由 Alex 负责报价",
         },
     }]})
 
@@ -1370,6 +1371,7 @@ def test_generic_department_project_proposal_is_not_promoted(tmp_path):
         "owner_evidence": {"source_ref": item.source.ref, "excerpt": "owner 是 Alex"},
         "project_proposal": {
             "title": "项目管理部", "reason": "报告章节标题", "authority": "project_weekly_report",
+            "source_excerpt": "项目管理部",
         },
     }]})
 
@@ -1397,6 +1399,7 @@ def test_weekly_report_task_section_project_proposal_is_not_promoted(tmp_path):
         "project_proposal": {
             "title": "中汽对账", "reason": "周报将“中汽对账”列为下周工作重点",
             "authority": "project_weekly_report",
+            "source_excerpt": "中汽对账",
         },
     }]})
 
@@ -1786,7 +1789,8 @@ def test_same_task_multiple_decisions_keep_positional_task_signal_mapping(tmp_pa
          "source_excerpt": "补齐来源链接", "source_ref": item.source.ref, "title": "报价跟进", "status": "waiting",
          "attention_proposal": {"category": "watch", "title": "报价延期风险", "why_attention": "有明确风险",
          "current_state": "待补来源", "ceo_action": "确认推进", "anchor_id": 1,
-         "material_trigger": "risk_escalation", "trigger_evidence": "补齐来源链接"}},
+         "material_trigger": "risk_escalation", "evidence": [
+             {"source_ref": item.source.ref, "source_excerpt": "补齐来源链接"}]}},
         {"action": "update_task", "transition": "update_fields", "task_id": created.task_id,
          "source_excerpt": "owner 是 Alex", "source_ref": item.source.ref, "title": "报价跟进",
          "business_relevance": "relevant"},
@@ -1837,7 +1841,8 @@ def test_attention_projection_runs_after_outer_domain_transaction_commit(tmp_pat
         "title": "报价方案", "business_relevance": "relevant",
         "attention_proposal": {"category": "watch", "title": "承诺交付风险", "why_attention": "负责人报告已接受承诺有风险",
          "current_state": "交付存在风险", "ceo_action": "核实交付状态", "anchor_id": anchor_id,
-         "material_trigger": "threatened_commitment", "trigger_evidence": "delivery is at risk"},
+         "material_trigger": "threatened_commitment", "evidence": [
+             {"source_ref": item.source.ref, "source_excerpt": "delivery is at risk"}]},
     }]})
     seen = []
     original_upsert = BusinessAttentionProjection.upsert
