@@ -474,7 +474,7 @@ Task 7 开始前的实测基线（尚未回放）：当前生产 revision `7bf7b
 
 真实 W39 只复制必要脱敏段落：保留逻辑关系和金额量级，不提交全文、signed 图片 URL、个人信息。原文引用与读取证据保留在现有生产 signal，不上传新记忆文档。
 
-- [ ] **2. 副本回放脚本保持一次性和单输入。** 支持 `--db COPY --input-id ID`，加载该 WorkSummaryInput，沿用 `TaskAgentRunner/TaskAgentCodexRunner` 和 `build_production_routed_codex_execution` 的现有配置；直接 `process_work_item`，不调用会遍历其他 pending 输入或初始化 outbound DWS 的业务 CLI。显式取得该副本的 TaskAgentSessionLease。副本上的 route session 指针不续接生产 session：脚本使用下列 scoped runner，每种版本从相同副本初态开始；不改变服务的共享 scope。
+- [x] **2. 副本回放脚本保持一次性和单输入。** 支持 `--db COPY --input-id ID`，加载该 WorkSummaryInput，沿用 `TaskAgentRunner/TaskAgentCodexRunner` 和 `build_production_routed_codex_execution` 的现有配置；直接 `process_work_item`，不调用会遍历其他 pending 输入或初始化 outbound DWS 的业务 CLI。显式取得该副本的 TaskAgentSessionLease。副本上的 route session 指针不续接生产 session：脚本使用下列 scoped runner，每种版本从相同副本初态开始；不改变服务的共享 scope。
 
 ```python
 class AttentionEvaluationRunner(TaskAgentRunner):
@@ -486,7 +486,7 @@ class AttentionEvaluationRunner(TaskAgentRunner):
 脚本只允许库副本：参数路径不得等于 `worker_db_path()`，这是该一次性评估工具的范围检查，不增添运行服务权限层。按 ID 读取、确认源 ref 后，只在副本把这条 done/skipped 输入置为可处理状态；不修改它的旧 runs，不重新扫描所有来源，不重开其他输入。runner 外部写操作仍按现行 prompt 禁止；本次不声称是硬隔离。
 
 - [ ] **3. 基线/候选用相同样本、模型、路由、timeout、concurrency=1。** 不切换模型来解释改进。评估输出 case_id、proposal 数、入库数、项目/Task 变化、evidence 核验、重复卡、缺失/误关注、失败原因。保存 readback 而非只看 Agent 说成功。先完成纯 fake-runner 确定性回归，再运行真实 runner 的固定样本。
-- [ ] **4. 把 production DB 做 SQLite backup 到唯一临时目录。** 用 `sqlite3.Connection.backup`，不复制正在写入的裸 DB 文件。完整性检查 `pragma integrity_check` 返回 ok。记录副本基线 Task/Project 数及 W39 已有 Task IDs，不提交或打印全文。对 `27465` 精确回放；若 source_ref 不等于设计固定的 W39 ref，停止并重新定位，不能按旧 ID 误跑其他输入。
+- [x] **4. 把 production DB 做 SQLite backup 到唯一临时目录。** 用 `sqlite3.Connection.backup`，不复制正在写入的裸 DB 文件。完整性检查 `pragma integrity_check` 返回 ok。记录副本基线 Task/Project 数及 W39 已有 Task IDs，不提交或打印全文。对 `27465` 精确回放；若 source_ref 不等于设计固定的 W39 ref，停止并重新定位，不能按旧 ID 误跑其他输入。
 
 固定 source ref：`dingtalk-doc:a9E05BDRVQvy7QEacPZLB4anJ63zgkYA#sha256=21661643562265ca27e3369112a7ce3e91d9cbb6d21733050b5c3e7a9d42bf1e`。
 
