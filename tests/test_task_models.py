@@ -214,6 +214,89 @@ def test_known_anchor_positive_assessment_covers_proposal_with_same_positive_att
     assert decision.project_assessments[0].outcome == "needs_attention"
 
 
+def test_known_anchor_positive_assessment_covers_same_proposal_null_attention():
+    decision = TaskAgentDecision.model_validate({
+        "task_decisions": [_proposal_decision(attention_proposal=_attention(anchor_id=None))],
+        "project_assessments": [_project_assessment(
+            anchor_id=3,
+            project_title="示例项目",
+            outcome="needs_attention",
+            decision_indexes=[0],
+            task_ids=[],
+        )],
+    })
+    assert decision.project_assessments[0].outcome == "needs_attention"
+
+
+def test_negative_known_anchor_assessment_conflicts_with_same_proposal_null_attention():
+    with pytest.raises(ValidationError, match="needs_attention"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_proposal_decision(attention_proposal=_attention(anchor_id=None))],
+            "project_assessments": [_project_assessment(
+                anchor_id=3,
+                project_title="示例项目",
+                outcome="not_needed",
+                decision_indexes=[0],
+                task_ids=[],
+            )],
+        })
+
+
+def test_same_proposal_null_attention_must_be_a_supporting_decision():
+    with pytest.raises(ValidationError, match="supporting decision"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [
+                _proposal_decision(attention_proposal=_attention(anchor_id=None)),
+                _proposal_decision(),
+            ],
+            "project_assessments": [_project_assessment(
+                anchor_id=3,
+                project_title="示例项目",
+                outcome="needs_attention",
+                decision_indexes=[1],
+                task_ids=[],
+            )],
+        })
+
+
+def test_known_anchor_assessment_rejects_two_unequal_current_proposal_titles():
+    with pytest.raises(ValidationError, match="unequal current Project proposal titles"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [
+                _proposal_decision("项目A"),
+                _proposal_decision("项目B"),
+            ],
+            "project_assessments": [
+                _project_assessment(
+                    anchor_id=3,
+                    project_title="项目A",
+                    decision_indexes=[0, 1],
+                    task_ids=[],
+                ),
+                _project_assessment(
+                    anchor_id=None,
+                    project_decision_index=1,
+                    project_title="项目B",
+                    decision_indexes=[1],
+                    task_ids=[],
+                ),
+            ],
+        })
+
+
+def test_known_anchor_assessment_can_support_repeated_exact_current_proposal_title():
+    decision = TaskAgentDecision.model_validate({
+        "task_decisions": [_proposal_decision("项目A"), _proposal_decision("项目A")],
+        "project_assessments": [_project_assessment(
+            anchor_id=3,
+            project_title="项目A",
+            decision_indexes=[0, 1],
+            task_ids=[],
+        )],
+    })
+    assert len(decision.project_assessments) == 1
+
+
 def test_anchor_and_proposal_assessments_cannot_duplicate_one_mixed_selection():
     proposal_assessment = _project_assessment(
         anchor_id=None,

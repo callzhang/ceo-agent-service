@@ -791,6 +791,14 @@ class TaskAgentDecision(StrictTaskModel):
                 known_supporting_anchors.add(assessment.anchor_id)
             if len(known_supporting_anchors) > 1:
                 raise ValueError("one project assessment cannot combine unequal known Project anchors")
+            known_supporting_titles = {
+                self.task_decisions[index].project_proposal.title
+                for index in assessment.decision_indexes
+                if index < len(self.task_decisions)
+                and self.task_decisions[index].project_proposal is not None
+            }
+            if len(known_supporting_titles) > 1:
+                raise ValueError("one project assessment cannot combine unequal current Project proposal titles")
             if assessment.project_decision_index is not None:
                 index = assessment.project_decision_index
                 if index >= len(self.task_decisions):
@@ -866,38 +874,47 @@ class TaskAgentDecision(StrictTaskModel):
             if len(assessments) > 1:
                 raise ValueError(f"exact Project proposal title {title!r} must have exactly one assessment")
 
+        def assessment_matches_attention(
+            assessment: TaskProjectAssessment,
+            index: int,
+            *,
+            require_support: bool,
+        ) -> bool:
+            if require_support and index not in assessment.decision_indexes:
+                return False
+            decision = self.task_decisions[index]
+            proposal = decision.attention_proposal
+            if proposal is None:
+                return False
+            if proposal.anchor_id is not None:
+                return (
+                    assessment.anchor_id == proposal.anchor_id
+                    or assessment.project_decision_index is not None
+                )
+            return (
+                decision.project_proposal is not None
+                and assessment.project_title == decision.project_proposal.title
+                and (
+                    assessment.anchor_id is not None
+                    or assessment.project_decision_index is not None
+                )
+            )
+
         for assessment in self.project_assessments:
-            matching_attention_indexes: list[int] = []
-            for index in assessment.decision_indexes:
-                proposal = self.task_decisions[index].attention_proposal
-                if proposal is None:
-                    continue
-                if assessment.anchor_id is not None and proposal.anchor_id == assessment.anchor_id:
-                    matching_attention_indexes.append(index)
-                elif (
-                    assessment.project_decision_index is not None
-                    and (
-                        proposal.anchor_id is not None
-                        or self.task_decisions[index].project_proposal is not None
-                        and self.task_decisions[index].project_proposal.title == assessment.project_title
-                    )
-                ):
-                    matching_attention_indexes.append(index)
+            matching_attention_indexes = [
+                index
+                for index in assessment.decision_indexes
+                if assessment_matches_attention(
+                    assessment, index, require_support=True
+                )
+            ]
             if assessment.outcome == "needs_attention":
                 if assessment.existing_attention_id is None and not matching_attention_indexes:
                     has_omitted_matching_proposal = any(
-                        decision.attention_proposal is not None
-                        and (
-                            assessment.anchor_id is not None
-                            and decision.attention_proposal.anchor_id == assessment.anchor_id
-                            or assessment.project_decision_index is not None
-                            and (
-                                decision.attention_proposal.anchor_id is not None
-                                or decision.project_proposal is not None
-                                and decision.project_proposal.title == assessment.project_title
-                            )
+                        assessment_matches_attention(
+                            assessment, index, require_support=False
                         )
-                        for decision in self.task_decisions
+                        for index in range(len(self.task_decisions))
                     )
                     if has_omitted_matching_proposal:
                         raise ValueError("every attention_proposal must be named as a supporting decision")
@@ -912,16 +929,8 @@ class TaskAgentDecision(StrictTaskModel):
             matching = [
                 assessment
                 for assessment in self.project_assessments
-                if index in assessment.decision_indexes
-                and (
-                    assessment.anchor_id is not None
-                    and proposal.anchor_id == assessment.anchor_id
-                    or assessment.project_decision_index is not None
-                    and (
-                        proposal.anchor_id is not None
-                        or decision.project_proposal is not None
-                        and decision.project_proposal.title == assessment.project_title
-                    )
+                if assessment_matches_attention(
+                    assessment, index, require_support=True
                 )
             ]
             if len(matching) != 1 or matching[0].outcome != "needs_attention":

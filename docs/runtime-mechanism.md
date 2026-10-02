@@ -360,7 +360,9 @@ Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新
 proposal 都必须由对应 `needs_attention` 判断列为支持决定，负面或证据不足判断不能携带新 proposal。`needs_attention` 没有
 对应当前 Attention proposal 时必须给出正的 `existing_attention_id`。当前 Project proposal 与已知 anchor 的跨类型引用不在
 Pydantic 层猜测是否同一规范 Project；允许已知-anchor 判断用显式 `decision_indexes` 覆盖当前 proposal，由后续 domain 解析
-实际身份，但 assessment 自身 anchor 与支持决定显式携带的正 anchor 必须一致。`decision_indexes` 是
+实际身份，但 assessment 自身 anchor 与支持决定显式携带的正 anchor 必须一致，同一判断也不能支持两个不同的当前 proposal
+标题。null Attention anchor 只有在同一支持决定带有与 assessment 精确同名的当前 Project proposal 时才匹配已知 anchor；省略
+该支持位置仍是结构错误。`decision_indexes` 是
 本轮支持 Task 决定的位置，`task_ids` 是已有 Task ID；真实 candidate Task 可以支持判断但不会因此晋升。证据保存事实原文，
 reason 承载推断；`historical_comparison` 同时要求本轮无 signal ID 引用与已有正 signal ID 的原始引用。遗漏或矛盾输出沿用
 同一原生 conversation 的一次结构修正，不增加第二 Agent、Store 查询或循环。当前 Task 2a 已同步模型、parser correction、
