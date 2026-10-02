@@ -26,7 +26,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-task-assessment-basis-contract | Delegated isolated candidate: app/task_models.py, app/task_agent.py (contract/assessment storage only), ci/shared-skills/ceo-work-tracking/SKILL.md, focused Task tests, docs/architecture.md, docs/runtime-mechanism.md and docs/task-attention-phase1-validation.md (Task sections) | Required assessment basis and new-action Project-link shape; field-local deliverable semantics, existing validation retry, no retrieval/oracle/global Skill/production change. | 2026-10-02 |
 
 
 | codex-attention-multisource-browser-fixture | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: frontend/dev-mock/tasksMock.ts (synthetic Attention evidence fixtures only) | Reuse existing isolated Tasks mock preview to verify two-source detail, watch/decision labels, light/dark and narrow readability; synthetic UI evidence is not business or production verification. | 2026-10-02 |
