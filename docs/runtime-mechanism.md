@@ -342,8 +342,10 @@ Task 决策数、实际 Project 关联数、提案数、成功应用的不同 Pr
 不得改成 failed；不新增队列或恢复流程。未记录 run 的直接 apply 返回回执而不创建 run，记录 run
 的直接 apply 保存到实际返回的 run ID。原始 task_decision_count 包含所有 Agent 决定，proposal_count
 包含跳过/restating 决定上的原始提案；无实际应用 Task 的提案有明确 rejected outcome，task_id 可为 null。
-project_link_count 是本轮实际确认的不同 Task↔Project 关联数，applied_count 是成功卡 ID 去重数。
+project_link_count 是本轮实际确认的不同 Task↔Project 关联数，包括确认已有 Project 候选时的聚类成员，
+按本轮来源信号和正式 anchor 核对活动 confirmed 关联并去重；applied_count 是成功卡 ID 去重数。
 registry_row_count 复用既有原始周报结构解析，未提出 Project 也统计真实登记行，非报告为 null。
+紧接 Markdown 分隔行的表头按结构排除，重复表头既不计登记行，也不能作为 Project 注册依据。
 无字段实际变化的 update 仍由既有 `_update_fields_restates_task` 在 Project/Attention 处理前跳过；
 其原始提案保留计数并有 rejected outcome。新风险对 Task 描述的真实补充可更新，不能为了链接
 引文伪造描述/状态变更，也不新增 evidence-only update 路径。

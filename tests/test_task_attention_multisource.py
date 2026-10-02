@@ -389,17 +389,73 @@ def test_recorded_direct_apply_saves_receipt_on_actual_run(tmp_path):
     assert json.loads(run["projection_json"]) == result.projection_receipt.model_dump()
 
 
-def test_registry_row_count_excludes_repeated_table_separators(tmp_path):
+@pytest.mark.parametrize("project_header", ["项目名", "项目名称", "业务项目", "工作流", "项目/方向"])
+def test_registry_row_count_excludes_repeated_table_separators(tmp_path, project_header):
     store = AutoReplyStore(tmp_path / "registry-count.sqlite3")
     item = report_item()
     payload = json.loads(item.summary)
     payload["markdown"] = payload["markdown"].replace(PROJECT_ROW,
-        PROJECT_ROW + "\n| 项目名 | 负责内容 | 目标 | DDL | 状态 |\n"
+        PROJECT_ROW + f"\n| {project_header} | 负责内容 | 目标 | DDL | 状态 |\n"
         "| :--- | ---: | --- | --- | --- |\n" + PROJECT_ROW.replace("示例项目", "第二个项目"))
     item = item.model_copy(update={"summary": json.dumps(payload, ensure_ascii=False)})
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
         decision=TaskAgentDecision.model_validate({"task_decisions": []}), record_run=False)
     assert result.projection_receipt.registry_row_count == 2
+
+
+@pytest.mark.parametrize("project_header", ["项目名称", "业务项目", "工作流", "项目/方向"])
+def test_repeated_registry_header_cannot_register_project(tmp_path, project_header):
+    store = AutoReplyStore(tmp_path / "header-project.sqlite3")
+    item = report_item()
+    source = json.loads(item.summary)
+    header = f"| {project_header} | 负责内容 | 目标 | DDL | 状态 |"
+    source["markdown"] = source["markdown"].replace(
+        PROJECT_ROW, PROJECT_ROW + "\n" + header + "\n| --- | --- | --- | --- | --- |"
+    )
+    item = item.model_copy(update={"summary": json.dumps(source, ensure_ascii=False)})
+    payload = decision_payload()
+    payload["task_decisions"][0]["project_proposal"].update(
+        title=project_header, source_excerpt=header
+    )
+    with pytest.raises(ValueError, match="cited report registry row"):
+        apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+            decision=TaskAgentDecision.model_validate(payload), record_run=False)
+    assert store.list_business_tasks() == ()
+    assert store.list_business_projects() == []
+    assert store.list_business_attention_items() == ()
+
+
+def test_project_link_count_includes_confirmed_candidate_cluster_members(tmp_path):
+    from app.task_business_resolution import BusinessResolutionService
+
+    store = AutoReplyStore(tmp_path / "cluster-link-count.sqlite3")
+    item = report_item()
+    first = decision_payload()["task_decisions"][0]
+    first.pop("project_proposal")
+    first.pop("attention_proposal")
+    second = {**first, "title": "复核付款协调行动"}
+    seed = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=TaskAgentDecision.model_validate({"task_decisions": [first, second]}), record_run=False)
+    resolution = BusinessResolutionService(store)
+    cluster_id = resolution.create_cluster(title="示例项目", task_ids=list(seed.task_ids))
+    resolution.propose_project(cluster_id=cluster_id, title="示例项目", reason="已有项目候选")
+    row = decision_payload()["task_decisions"][0]
+    row.update(action="update_task", transition="update_fields", task_id=seed.task_ids[0],
+        description="新来源补充回款复核细节",
+        cluster_proposal={"cluster_id": cluster_id, "task_ids": list(seed.task_ids), "reason": "同一聚类"})
+    row.pop("attention_proposal")
+    result = apply_task_agent_decision(store, summary_input_id=2, work_item=item,
+        decision=TaskAgentDecision.model_validate({"task_decisions": [row]}), record_run=False)
+    project, = store.list_business_projects()
+    expected = {(task_id, project.canonical_anchor_id) for task_id in seed.task_ids}
+    with store._connect() as db:
+        actual = {tuple(link) for link in db.execute(
+            "select task_id, anchor_id from business_task_anchor_links where status='confirmed' and active=1"
+        )}
+    assert actual == expected
+    assert set(result.project_links) == expected
+    assert result.projection_receipt.project_link_count == 2
+    assert result.projection_receipt.proposal_count == 0
 
 
 def test_conflicting_chat_risk_does_not_replace_report_registry_summary(tmp_path):

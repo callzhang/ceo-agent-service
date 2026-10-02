@@ -903,6 +903,9 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
     first_row = markdown[row_start:row_end]
     if "|" not in first_row or re.fullmatch(r"\|[\s:|\-]+\|", first_row.strip()):
         return ""
+    following_line = markdown[row_end + 1:].split("\n", 1)[0].strip()
+    if re.fullmatch(r"\|[\s:|\-]+\|", following_line):
+        return ""
     cells = [cell.strip() for cell in first_row.strip().strip("|").split("|")]
     if not cells:
         return ""
@@ -1734,6 +1737,18 @@ def apply_task_agent_decision(
                         project_id=report_project_id,
                         evidence_signal_id=result.signal_id,
                         _db=db,
+                    )
+                    project_links.update(
+                        (int(link["task_id"]), int(link["anchor_id"]))
+                        for link in db.execute(
+                            """select distinct link.task_id, link.anchor_id
+                               from business_task_anchor_links link
+                               join business_work_cluster_tasks member on member.task_id=link.task_id
+                               where member.cluster_id=? and link.anchor_id=?
+                                 and link.status='confirmed' and link.active=1
+                                 and link.evidence_signal_id=?""",
+                            (cluster_id, applied_project_anchor_id, result.signal_id),
+                        )
                     )
             elif project_candidate is not None:
                 candidate_cluster_id = project_candidate.cluster_id

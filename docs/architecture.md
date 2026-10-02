@@ -815,7 +815,9 @@ Task/input/run 原子提交时保存 pending 投影回执，卡片写入、成�
 失败会记录原因，不新增重试/恢复循环。直接未记录 run 的 apply 只返回类型化回执，不创建假 run。
 task_decision_count 包含全部原始决定；proposal_count 包含全部原始提案（包括跳过/无实际 Task
 应用的提案，并为其记录 rejected outcome）；project_link_count 为本轮实际确认的不同 Task↔Project
-关联数；registry_row_count 复用原始周报登记行解析，与是否提出 Project 无关，非报告为 null；
+关联数，包括本轮确认已有 Project 候选时关联的聚类成员，按实际确认来源信号与正式 anchor 核对并去重；
+registry_row_count 复用原始周报登记行解析，与是否提出 Project 无关，非报告为 null；
+紧接 Markdown 分隔行的表头按结构排除，重复表头不计登记行，也不能注册 Project；
 applied_count 只计成功写入的不同卡 ID。零提案为 no_proposal，全部成功 completed，成功与失败
 并存 partial，无成功且失败 failed；成员重算错误独立记录 recompute_error。整体完成验收前不得部署。
 既有 `_update_fields_restates_task` 仍在 Project/Attention 应用前跳过无字段变化的 update；其原始
