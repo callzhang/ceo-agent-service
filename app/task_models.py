@@ -787,6 +787,8 @@ class TaskAgentDecision(StrictTaskModel):
                 if index < len(self.task_decisions)
                 for anchor_id in selected_anchor_ids(self.task_decisions[index])
             }
+            if assessment.anchor_id is not None:
+                known_supporting_anchors.add(assessment.anchor_id)
             if len(known_supporting_anchors) > 1:
                 raise ValueError("one project assessment cannot combine unequal known Project anchors")
             if assessment.project_decision_index is not None:
@@ -837,7 +839,24 @@ class TaskAgentDecision(StrictTaskModel):
             if len(covering_assessments) != 1:
                 raise ValueError(f"structured Project anchor {anchor_id} requires exactly one assessment")
         for title in current_project_titles:
-            if len(assessments_by_title.get(title, ())) != 1:
+            covering_assessments = [
+                assessment
+                for assessment in self.project_assessments
+                if (
+                    assessment.project_decision_index is not None
+                    and assessment.project_title == title
+                )
+                or (
+                    assessment.anchor_id is not None
+                    and assessment.project_title == title
+                    and any(
+                        self.task_decisions[index].project_proposal is not None
+                        and self.task_decisions[index].project_proposal.title == title
+                        for index in assessment.decision_indexes
+                    )
+                )
+            ]
+            if len(covering_assessments) != 1:
                 raise ValueError(f"current project_proposal title {title!r} requires exactly one assessment")
 
         for anchor_id, assessments in assessments_by_anchor.items():
@@ -907,8 +926,6 @@ class TaskAgentDecision(StrictTaskModel):
             ]
             if len(matching) != 1 or matching[0].outcome != "needs_attention":
                 raise ValueError("every attention_proposal requires one corresponding needs_attention assessment")
-            if index not in matching[0].decision_indexes:
-                raise ValueError("every attention_proposal must be named as a supporting decision")
         return self
 
 

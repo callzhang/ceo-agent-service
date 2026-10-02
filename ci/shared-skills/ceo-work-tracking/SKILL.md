@@ -174,6 +174,13 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    remain responsible for continuity; do not synthesize assessments as compatibility output.
    Repeated decisions with the same exact `project_proposal.title`, or the same known anchor,
    share one assessment; do not emit a second business judgment for the duplicate selector.
+   Return a judgment for every related business Project or Project clue in the current source,
+   and for current Tasks' confirmed Project links, even when no `project_proposal`,
+   `project_link_proposal`, or `attention_proposal` is emitted. Emitting no Project selector
+   does not prove that no relevant Project exists. When identity is unconfirmed or no real Task
+   or risk evidence exists, use `insufficient_evidence` and state the specific missing identity,
+   Task, or risk evidence. Use [] only when the current source and current Tasks contain no
+   relevant business Project.
 10. Apply replies, corrections, disputes, owner changes, scope changes, and
     date changes to the existing Task when identity is explicit. Preserve new
     evidence and actor; record corrections/supersession instead of erasing

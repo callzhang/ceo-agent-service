@@ -913,6 +913,11 @@ def test_task_agent_requires_complete_project_assessment_envelope(monkeypatch, s
     assert "source facts separate from business inference" in text
     assert "Do not perform a whole-company or full-history scan" in text
     assert "native CLI compaction" in text
+    assert "related business Project or Project clue in the current source" in text
+    assert "current Tasks' confirmed Project links" in text
+    assert "Emitting no Project selector does not prove that no relevant Project exists" in text
+    assert "specific missing identity, Task, or risk evidence" in text
+    assert "Use [] only when the current source and current Tasks contain no relevant business Project" in text
 
 
 @pytest.mark.parametrize("surface", ["prompt", "skill"])

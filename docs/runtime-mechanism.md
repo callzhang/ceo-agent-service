@@ -358,13 +358,16 @@ Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新
 `insufficient_evidence` 的未知 Project 线索区分身份。envelope 校验保证引用位置存在且非 skip、proposal 标题精确匹配、
 相同 anchor/精确标题每轮只有一个判断，并覆盖本轮 Project proposal、Project link 和 Attention proposal；每个当前 Attention
 proposal 都必须由对应 `needs_attention` 判断列为支持决定，负面或证据不足判断不能携带新 proposal。`needs_attention` 没有
-当前 proposal 时必须给出正的 `existing_attention_id`。当前 proposal 与已知 anchor 的跨类型引用不在 Pydantic 层猜测
-是否同一规范 Project；允许一个判断用显式 `decision_indexes` 携带两者，由后续 domain 解析实际身份。`decision_indexes` 是
+对应当前 Attention proposal 时必须给出正的 `existing_attention_id`。当前 Project proposal 与已知 anchor 的跨类型引用不在
+Pydantic 层猜测是否同一规范 Project；允许已知-anchor 判断用显式 `decision_indexes` 覆盖当前 proposal，由后续 domain 解析
+实际身份，但 assessment 自身 anchor 与支持决定显式携带的正 anchor 必须一致。`decision_indexes` 是
 本轮支持 Task 决定的位置，`task_ids` 是已有 Task ID；真实 candidate Task 可以支持判断但不会因此晋升。证据保存事实原文，
 reason 承载推断；`historical_comparison` 同时要求本轮无 signal ID 引用与已有正 signal ID 的原始引用。遗漏或矛盾输出沿用
 同一原生 conversation 的一次结构修正，不增加第二 Agent、Store 查询或循环。当前 Task 2a 已同步模型、parser correction、
-主 prompt、当前 CI Skill 和本文件内 producer 单测；stored link/card/evidence 的 domain 核验、持久化与 receipt、native eval、
-部署和生产读回尚未接入，因此不是完整集成通过或业务结果证明。完成由新证据驱动
+主 prompt、当前 CI Skill 和本文件内 producer 单测。prompt/Skill 同时要求覆盖当前来源相关业务 Project/线索和当前 Task 的
+已确认 Project 链接；没有输出 selector 不能作为返回空集合的理由，身份/真实 Task/风险证据不足时应返回说明具体缺口的
+`insufficient_evidence`。这一语义覆盖的 stored link/card/evidence domain 核验、持久化与 receipt、native eval、部署和生产读回
+尚未接入，因此不是完整集成通过或业务结果证明。完成由新证据驱动
 （Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：新完成的
 钉钉待办由扫描直接关闭对应 Task（见下文「后台周期性工作」），消息、会议等新信息照常作为 Work Item 进入
 Task Agent。单独的 Task completion Agent（`app/task_completion_agent.py`）已删除，服务不再产生

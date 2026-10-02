@@ -132,7 +132,7 @@ def test_project_assessment_project_index_must_select_non_skip_project_proposal(
 
 
 def test_known_anchor_assessment_rejects_supporting_decision_for_another_project():
-    with pytest.raises(ValidationError, match="same Project"):
+    with pytest.raises(ValidationError, match="unequal known Project anchors"):
         TaskAgentDecision.model_validate({
             "task_decisions": [_linked_decision(anchor_id=4)],
             "project_assessments": [_project_assessment(anchor_id=3, decision_indexes=[0])],
@@ -174,6 +174,71 @@ def test_mixed_current_proposal_and_known_anchor_can_share_one_unresolved_judgme
     assert len(decision.project_assessments) == 1
 
 
+def test_known_anchor_negative_assessment_can_cover_supported_current_proposal():
+    decision = TaskAgentDecision.model_validate({
+        "task_decisions": [_proposal_decision()],
+        "project_assessments": [_project_assessment(
+            anchor_id=3,
+            project_title="示例项目",
+            decision_indexes=[0],
+            task_ids=[],
+        )],
+    })
+    assert decision.project_assessments[0].anchor_id == 3
+
+
+def test_known_anchor_assessment_must_match_supported_current_proposal_title():
+    with pytest.raises(ValidationError, match="project_proposal title.*exactly one assessment"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_proposal_decision("示例项目")],
+            "project_assessments": [_project_assessment(
+                anchor_id=3,
+                project_title="另一个项目",
+                decision_indexes=[0],
+                task_ids=[],
+            )],
+        })
+
+
+def test_known_anchor_positive_assessment_covers_proposal_with_same_positive_attention():
+    decision = TaskAgentDecision.model_validate({
+        "task_decisions": [_proposal_decision(attention_proposal=_attention(anchor_id=3))],
+        "project_assessments": [_project_assessment(
+            anchor_id=3,
+            project_title="示例项目",
+            outcome="needs_attention",
+            decision_indexes=[0],
+            task_ids=[],
+        )],
+    })
+    assert decision.project_assessments[0].outcome == "needs_attention"
+
+
+def test_anchor_and_proposal_assessments_cannot_duplicate_one_mixed_selection():
+    proposal_assessment = _project_assessment(
+        anchor_id=None,
+        project_decision_index=0,
+        project_title="示例项目",
+        outcome="needs_attention",
+        decision_indexes=[0],
+        task_ids=[],
+    )
+    with pytest.raises(ValidationError, match="exactly one"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_proposal_decision(attention_proposal=_attention(anchor_id=3))],
+            "project_assessments": [
+                _project_assessment(
+                    anchor_id=3,
+                    project_title="示例项目",
+                    outcome="needs_attention",
+                    decision_indexes=[0],
+                    task_ids=[],
+                ),
+                proposal_assessment,
+            ],
+        })
+
+
 def test_mixed_proposal_assessment_rejects_two_unequal_known_anchors():
     with pytest.raises(ValidationError, match="unequal known Project anchors"):
         TaskAgentDecision.model_validate({
@@ -187,6 +252,21 @@ def test_mixed_proposal_assessment_rejects_two_unequal_known_anchors():
                 project_decision_index=0,
                 project_title="示例项目",
                 decision_indexes=[0, 1, 2],
+                task_ids=[],
+            )],
+        })
+
+
+def test_assessment_anchor_cannot_disagree_with_positive_anchor_hidden_by_proposal():
+    with pytest.raises(ValidationError, match="unequal known Project anchors"):
+        TaskAgentDecision.model_validate({
+            "task_decisions": [_proposal_decision(attention_proposal=_attention(anchor_id=3))],
+            "project_assessments": [_project_assessment(
+                anchor_id=4,
+                project_title="示例项目",
+                outcome="needs_attention",
+                existing_attention_id=12,
+                decision_indexes=[0],
                 task_ids=[],
             )],
         })
