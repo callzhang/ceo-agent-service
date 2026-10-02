@@ -32,7 +32,7 @@ Progress: implemented in `d004921e`, test masking tightened in `8097b54b`. Imple
 
 **Files:** `app/task_models.py`, `tests/test_task_models.py`, Task/Attention paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md`.
 
-- [ ] Write RED tests before changing the model. Missing `project_assessments` must fail; `[]` is explicit no-related-project output. A zero-based decision index is valid; boolean/negative indexes and guessed nonpositive persisted IDs fail. Reasons and project titles cannot be whitespace. Current/historical citation shape follows the existing proposal rules.
+- [x] Write RED tests before changing the model. Missing `project_assessments` must fail; `[]` is explicit no-related-project output. A zero-based decision index is valid; boolean/negative indexes and guessed nonpositive persisted IDs fail. Reasons and project titles cannot be whitespace. Current/historical citation shape follows the existing proposal rules.
 
 ```python
 def test_project_assessments_are_required_in_current_result():
@@ -58,8 +58,8 @@ def test_project_assessment_retains_negative_reason_and_original_quote():
     assert result.outcome == "not_needed"
 ```
 
-- [ ] Run `python -m pytest -q tests/test_task_models.py -k project_assessment`. Expect missing model/required-field regression failure, not infrastructure failure.
-- [ ] Implement this wire type before `TaskAgentDecision` and add required `project_assessments: list[TaskProjectAssessment]` to that envelope. Current test result fixtures must explicitly supply real assessments or `[]`; no automatic default, legacy union or payload synthesis.
+- [x] Run `python -m pytest -q tests/test_task_models.py -k project_assessment`. Expect missing model/required-field regression failure, not infrastructure failure.
+- [x] Implement this wire type before `TaskAgentDecision` and add required `project_assessments: list[TaskProjectAssessment]` to that envelope. Current test result fixtures must explicitly supply real assessments or `[]`; no automatic default, legacy union or payload synthesis.
 
 ```python
 class TaskProjectAssessment(StrictTaskModel):
@@ -98,9 +98,9 @@ class TaskProjectAssessment(StrictTaskModel):
         return self
 ```
 
-- [ ] Add field descriptions explaining stored IDs versus decision positions, factual quotes versus inference, candidate eligibility and unknown-project evidence-only scope. Do not use classifiers to reject vague reasons; test nonblank structurally and quality in native evals.
-- [ ] Run `python -m pytest -q tests/test_task_models.py`; expect all model tests passing after deliberate fixture upgrades. Record other test files still awaiting the new envelope rather than reporting full integration done.
-- [ ] Document the required result shape as development-only, then commit owned files. Spec and quality reviews must both pass before Task 2.
+- [x] Add field descriptions explaining stored IDs versus decision positions, factual quotes versus inference, candidate eligibility and unknown-project evidence-only scope. Do not use classifiers to reject vague reasons; test nonblank structurally and quality in native evals.
+- [x] Run `python -m pytest -q tests/test_task_models.py`; expect all model tests passing after deliberate fixture upgrades. Record other test files still awaiting the new envelope rather than reporting full integration done.
+- [x] Document the required result shape as development-only, then commit owned files. Spec and quality reviews must both pass before Task 2.
 
 ## Task 2: Bind judgments to this run's actual decisions and Projects
 
