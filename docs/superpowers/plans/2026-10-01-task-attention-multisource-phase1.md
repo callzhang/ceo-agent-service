@@ -44,7 +44,7 @@
 
 开始代码前重新读取 `docs/agent-claims.md`，逐任务认领涉及文件。已有 claim 要先与 owner 协调，只改已协调的函数/段落。测试仅跑本计划列出的文件；不在运行服务的开发机执行串行全套。每次提交只暂存自己的文件或 hunks；不用 `git add -A`。当前另两份未跟踪文件不属于本计划。
 
-执行工作区：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`，分支 `codex/task-attention-multisource`。基线 `tests/test_task_models.py` + `tests/test_task_attention_projection.py`：47 passed。Task 1 已提交 `79c8c38c`；Task 2 已提交 `579d1b6a`、`71ca2407`、`9efcab15`，201 项聚焦回归通过，独立规格及质量检查通过。正在执行 Task 3。未合并、未部署、未回放生产数据。
+执行工作区：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`，分支 `codex/task-attention-multisource`。基线 `tests/test_task_models.py` + `tests/test_task_attention_projection.py`：47 passed。Task 1 已提交 `79c8c38c`；Task 2 已提交到 `9efcab15`，201 项聚焦回归通过；Task 3 已提交 `29f492f2`，553 项相关测试及 7 项 Store 测试通过。前三步均已通过独立规格与质量检查。正在执行 Task 4。未合并、未部署、未回放生产数据。
 
 ## Task 1：明确来源引用和同轮项目选择的契约
 
@@ -259,6 +259,8 @@ def record_task_agent_projection(self, run_id: int, projection_json: str,
 - [ ] **6. 验证并提交。** `python -m pytest -q tests/test_store.py -k 'task_agent or business_attention or receipt_migrates'`。同步运行文档描述投影回执，提交 `feat(tasks): persist attention projection outcomes per input run`。
 
 ## Task 4：综合相关证据，按 Project 更新同一张卡
+
+Task 3 的六个步骤已完成：两个 JSON 字段、类型模型、只更新回执的方法、历史迁移及只读诊断均通过验证。运行中实际计数和卡片依据的组装属于本任务，不以存储实现完成代替端到端结果。
 
 **Files:** Modify `app/task_agent.py`, `app/task_attention_projection.py`, `tests/test_task_agent.py`, `tests/test_task_attention_projection.py`, `docs/architecture.md`, `docs/runtime-mechanism.md`; Test `tests/test_task_attention_multisource.py`。
 
