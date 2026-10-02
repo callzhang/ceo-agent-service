@@ -408,8 +408,8 @@ Task 5 还需统一当前执行规则的实际输入：`build_task_agent_prompt`
 
 **Files:** Modify `app/web_api/tasks.py`, `frontend/src/api/console.ts`, `frontend/src/pages/TasksPage.tsx`, `frontend/src/pages/TaskAttentionDetailPage.tsx`; Test `tests/test_web_api_task_attention.py`, `frontend/src/pages/TasksPage.test.tsx`, `frontend/src/pages/TaskAttentionDetailPage.test.tsx`; Modify `docs/architecture.md`。
 
-- [ ] **1. 写 API 失败测试。** 两来源 assessment 的详情应返回 inference、精确 quote、source_ref/source_time/signal_id，并在 evidence_signals 提供这两份被引用信号。原来只读取 primary/event signal 会漏 supplemental，因此必须测试完整证据集合。历史 assessment={} 应显示没有结构化依据，不能伪造证明。
-- [ ] **2. 实现 detail 字段。** ConsoleBusinessAttentionDetail 新增 `assessment: dict[str, Any]`；解析 `item.assessment_json`，仅增加已保存 assessment evidence 的 signal IDs 到 detail.evidence_signals。frontend 类型增加如下结构，fact 日期来自存储的 signal。
+- [x] **1. 写 API 失败测试。** 两来源 assessment 的详情应返回 inference、精确 quote、source_ref/source_time/signal_id，并在 evidence_signals 提供这两份被引用信号。原来只读取 primary/event signal 会漏 supplemental，因此必须测试完整证据集合。历史 assessment={} 应显示没有结构化依据，不能伪造证明。
+- [x] **2. 实现 detail 字段。** ConsoleBusinessAttentionDetail 新增 `assessment: dict[str, Any]`；解析 `item.assessment_json`，仅增加已保存 assessment evidence 的 signal IDs 到 detail.evidence_signals。frontend 类型增加如下结构，fact 日期来自存储的 signal。
 
 ```typescript
 assessment: {
@@ -425,8 +425,8 @@ assessment: {
 };
 ```
 
-- [ ] **3. 写页面失败测试。** watch 卡/详情包含“关注点”“当前无需你处理”，不出现“你的动作”；decision/push 继续显示动作。详情分别有“来源事实”和“Agent 判断”，两条证据可读且有来源时间/链接。空、loading、请求失败、历史无 assessment、已关闭 Task 成员变化都覆盖。
-- [ ] **4. 改标签并显示证据。** 两页采用一致 label。
+- [x] **3. 写页面失败测试。** watch 卡/详情包含“关注点”“当前无需你处理”，不出现“你的动作”；decision/push 继续显示动作。详情分别有“来源事实”和“Agent 判断”，两条证据可读且有来源时间/链接。空、loading、请求失败、历史无 assessment、已关闭 Task 成员变化都覆盖。
+- [x] **4. 改标签并显示证据。** 两页采用一致 label。
 
 ```tsx
 const actionLabel = item.category === 'watch' ? '关注点' : '你的动作';
@@ -447,8 +447,10 @@ const actionLabel = item.category === 'watch' ? '关注点' : '你的动作';
 ```
 
 历史记录沿用其原有 why_attention，是已有显示字段，不补造 assessment。保留当前状态、Project、相关 Task、更新时间、来源/历程入口；不重做列表布局，不更改主题。亮色/暗色、窄屏/桌面均验证文字可读。
-- [ ] **5. 验证。** `python -m pytest -q tests/test_web_api_task_attention.py`；前端目录 `npm test -- --run src/pages/TasksPage.test.tsx src/pages/TaskAttentionDetailPage.test.tsx` 和 `npm run build`。预期全部通过，包含类型检查。浏览器亲自打开列表与两种详情验证，不用 HTTP 200 代替页面效果。
-- [ ] **6. 提交。** `feat(console): explain project attention evidence and watch focus`，同步架构文档说明只读展示。
+- [x] **5. 验证。** `python -m pytest -q tests/test_web_api_task_attention.py`；前端目录 `npm test -- --run src/pages/TasksPage.test.tsx src/pages/TaskAttentionDetailPage.test.tsx` 和 `npm run build`。预期全部通过，包含类型检查。浏览器亲自打开列表与两种详情验证，不用 HTTP 200 代替页面效果。
+- [x] **6. 提交。** `feat(console): explain project attention evidence and watch focus`，同步架构文档说明只读展示。
+
+Task 6 复核记录：`128ea5b4` 完成保存的 assessment API 与事实/判断展示；`f92d0a92` 直接验证真实 Attention 成员完成、重算移除、保留 open sibling 与 active 风险、不因 GET 改写状态。独立规格及质量审查通过；7 项 API、22 项页面测试及 TypeScript/Vite 构建通过。主 Agent 亲验隔离模拟列表和 decision/watch 详情，桌面亮/暗色与 390×844 窄屏亮/暗色文字可读，临时 viewport/media 已恢复。模拟卡片只证明展示，尚不证明真实 Agent 语义或生产效果。
 
 ## Task 7：固定样本比较与数据库副本定点回放
 
