@@ -2,6 +2,11 @@
 
 状态：baseline 完整九样本为 4/9 通过；最新冻结候选 `fc58e803` 完整九样本为 9/9 通过。真实 W39 数据库副本首次精确回放未通过：非跳过更新缺少 title，被提交前校验拒绝，259 Tasks / 16 Projects / 0 Attention 保持不变；原生输出也没有 Attention 提案，仍需诊断真实输入与样本的差异。重复副本回放及上线未完成。本文件不表示已发布，不用样本通过或 native 运行完成替代实际业务效果。
 
+最新进展：标题契约及空白边界已通过独立规格/质量复核。冻结 `b5f9bd5f` 真实副本
+run 10663 成功提交 8 个决定、3 张卡；但业务身份验收失败，中汽创智风险被挂在旧
+Project「中汽」anchor 23，不能因 receipt completed 或工具 passed 就说 W39 通过。
+另新增两 Task 的独立交付边界正在复核，未重复回放或发布。
+
 ## 四个独立门槛
 
 | 门槛 | 当前证据 | 仍需完成 |
@@ -361,3 +366,35 @@ imports 通过。独立规格 33 passed。质量复核发现显式纯空白更�
 结算争议、五行登记及行动。上下文规模差异是已测事实，不证明其导致 Attention 遗漏，
 本轮没有因此改检索、模型路由、fixture 或 oracle。最新标题修订仍需 native 回放，
 不得继承 `fc58e803` 的九样本通过作为新版本或真实业务通过。
+
+## 标题修复后的真实副本：提交成功但 Project 身份未通过
+
+冻结 `b5f9bd5f7f85d712edced8bcbc1a60ed80a89b94`，CI Skill SHA256
+`2c325b786d30832dcab0d79b886e8c8d1cc4e39cd954bb73d5bc1859dfe6b5d0`。
+空白边界独立规格 20 passed、质量 15 passed，原复现现在在 shape validation 拒绝；
+主 Agent 标题专项 17 passed。精确 input 27465 的副本 run 10663 为 completed/input done。
+原有失败 run 10662 不改写。三次 native attempt 均 codex_oauth/gpt-5.6-luna：
+18953 normal superseded(runtime_unclassified)，18954 normal superseded
+(runtime_result_validation_failed)，18955 既有 result_validation_correction completed。
+没有为本实验另增重试或模型切换。
+
+领域实测：259→261 Tasks，16→19 Projects，0→3 cards；旧 Task 129–134 均更新，
+129 提升为 assigned_unaccepted 的正式任务，其他五项保持候选。新增 Task 260
+「推进一次通过率统计及HLL低通过率改进」、261「补入管理周会文档中的健康度指标及ISO进度」。
+岚图 anchor 35、项目管理 anchor 36、抽检包生命周期 anchor 37 来自当前登记行。
+三张卡为：中汽(anchor 23, Task129)、岚图(anchor35, Task130)、项目管理(anchor36, Task260)。
+receipt 为 completed：task_decision_count=8、proposal_count=3、project_link_count=5、
+registry_row_count=5、applied_count=3；引文原文、来源及成员链接检查通过。
+
+这仅证明提交与出处核验成功，不证明项目身份正确。Task129 的 project_link_proposal
+选旧 anchor23「中汽」，引文来自下周行动「中汽回款计划」；其 Attention current_state
+和风险引文却说「中汽创智」，当前正式登记行也明确为「中汽创智」。最终 update_summary
+说明输出纠正删除了冲突的 project_proposal，保留旧 anchor23 link。本版没有授权或证明
+这两个名称为同一项目；引文包含短标题不能替代该身份。真实副本业务验收因此失败。
+工具在 input 模式没有这份人工业务预期，passed=true 不覆盖此项身份验收。
+
+Task260 的统计部分与旧 Task131 有交叠，HLL改进是否构成独立交付尚在复核；
+Task261 的健康指标文档更新有来源，标题中额外 ISO 内容也需核对，不因新增数量就判错或忽略。
+项目管理卡有低验收率与统计口径缺失的真实引用；第三张卡不是仅凭数量即可认定误关注。
+仍不改 alias、静态业务规则、来源、旧 runs 或生产状态；最新完整九样本、精确副本幂等、
+PR/合并/push、部署、全局 Skill、生产回放与页面验收均未完成。
