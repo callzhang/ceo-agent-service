@@ -8,6 +8,7 @@ from typing import Any
 from app.store import AutoReplyStore
 from app.task_models import WorkItem, WorkProject, WorkTodo
 from app.task_semantic_models import (
+    AttentionStatus, BusinessAttentionItem,
     BusinessActorKind, BusinessAnchor, BusinessProject, BusinessTask, BusinessTaskAnchorLink,
     BusinessTaskEvidence, BusinessTaskRelation, BusinessTaskSignal,
     BusinessWorkCluster, BusinessWorkClusterTask, BusinessRelationStatus, FormalTaskBasis,
@@ -54,6 +55,7 @@ class TaskSemanticContext:
     cluster_memberships: tuple[BusinessWorkClusterTask, ...]
     anchors: tuple[BusinessAnchor, ...]
     official_projects: tuple[BusinessProject, ...]
+    attention_items: tuple[BusinessAttentionItem, ...]
 
 
 def _all_pages(fetch, *, page_size: int = 100):
@@ -283,6 +285,11 @@ def retrieve_task_semantic_context(
         query_terms=query_terms,
         limit=limit_per_kind,
     )
+    project_anchor_ids = {project.canonical_anchor_id for project in projects}
+    attention_items = tuple(
+        item for item in store.list_business_attention_items()
+        if item.status is AttentionStatus.ACTIVE and item.anchor_id in project_anchor_ids
+    )[:limit_per_kind]
     return TaskSemanticContext(
         task_candidates=candidates,
         formal_tasks=formal,
@@ -295,6 +302,7 @@ def retrieve_task_semantic_context(
         cluster_memberships=cluster_memberships,
         anchors=anchors,
         official_projects=projects,
+        attention_items=attention_items,
     )
 
 
@@ -323,6 +331,11 @@ def render_task_semantic_context(context: TaskSemanticContext) -> str:
         "cluster_memberships": [_model_payload(value) for value in context.cluster_memberships],
         "registered_anchors": [_model_payload(value) for value in context.anchors],
         "official_project_registry": [_model_payload(value) for value in context.official_projects],
+        "current_project_attention": [{
+            "id": value.id, "anchor_id": value.anchor_id,
+            "why_attention": value.why_attention, "current_state": value.current_state,
+            "assessment_json": value.assessment_json, "updated_at": value.updated_at,
+        } for value in context.attention_items],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 

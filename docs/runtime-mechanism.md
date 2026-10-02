@@ -208,9 +208,21 @@ Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `
 Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
 
 Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返回 0..N 个 `task_decisions`。
-每个保留决策都必须引用 WorkItem 的准确 `source_ref`，并提供确实出现在来源摘要中的原文
-`source_excerpt`；检索到的 Task、Project 候选及 memory 只能提供背景，不能替代来源证据或授权。
-开发中的多来源 Project Attention 已实现输出、Project 绑定与消费契约，尚未部署，prompt 接线及发布验收仍待后续任务：正式
+每个保留决策都必须引用准确来源；当前来源使用 WorkItem 的 `source_ref`，普通 Task 摘录可摘取。
+session/memory 背景用于完善已有 Task 或记录候选时，必须显式引用原始来源及可回溯位置；
+它们不能替代当前来源的授权与身份元数据，也不能替代 Attention 所需的已观察持久化原始 Signal。
+本分支 Task Agent 检索上下文增加 `current_project_attention`：仅取返回的正式 Project
+规范 anchor 下的当前 active 卡，数量受既有 `limit_per_kind` 约束，渲染 id、anchor_id、
+why_attention、current_state、assessment_json 与 updated_at；不扩展完整 source_signals 预算。
+prompt 只读取当前 ceo-work-tracking Skill；定时任务保存的旧 skill_protocol 不再注入指令，
+原始 payload 历史不变，scheduled 元数据和 prompt 的专项业务范围仍保留。
+开发与测试使用隔离的 ci/shared-skills revision 3；实际默认 Skill 路径仍为安装的用户 Skill，
+全局发布另走既有 Skill 仓库，不代表本代码变更已发布。
+每轮每 Project 最多一个关注提案，事实 current_state 与重大业务影响推断 why_attention 分开；
+watch 可写当前无需你处理并给可观察结果，关注不等于需介入。未提案 Task 在 update_summary
+说明影响不足、项目未确认或证据无法核验；不为卡片补造 Task、负责人、承诺或日期。
+
+开发中的多来源 Project Attention 已实现输出、Project 绑定、消费契约与 prompt 接线，尚未部署，前端、语义评估及发布验收仍待后续任务：正式
 `project_proposal` 必须带独立、非空的 `source_excerpt`，引用项目登记依据，与 Task 的
 行动摘录分开。Attention 用必填、至少一条的 `evidence` 取代 `trigger_evidence`；每条需
 非空来源引用和原文摘录，`signal_id` 可省略/null 或为严格正整数。`why_attention` 是推断，
@@ -236,14 +248,11 @@ primary signal 优先，其余按条目的规范 JSON 排序，重复回放不�
 否则整组 rejected 并记录 multiple distinct proposals，不按先后顺序选最后一项；此处只检查契约一致性。
 候选 Task 可携带风险证据，不要求补造负责人或承诺；整体应用与投影验收完成前不得部署。
 `skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。
-正式 Project 注册表和当前 Task 状态优先读取最近一次确认的正式周报，尤其是
-项目管理部或管理层周报中明确列出的项目、负责人、目标、DDL、状态和下周任务；
-保留周报文档引用及统计周期。会议纪要、逐字稿或已确认会议行动项是尚未进入
-周报的新决策或变更的次级权威来源。聊天或消息只能补充上下文、负责人、状态或
-链接，不能单独创建正式 Project，也不能自行覆盖周报明确字段。明确决定启动、批准
-或立项的会议行动项可以创建带会议证据的正式 Project；普通项目提及只形成项目线索。
-来源冲突时先取
-最新明确周报字段，再取最新确认的会议决策，并保留精确来源引用。
+报告、会议和聊天都是 Task 与风险证据来源；周报不是风险的唯一来源，也不是关注的前置条件。
+正式 Project 的定义和登记字段优先采用确认的正式周报，明确会议立项登记也可建立正式 Project；
+普通项目提及只形成项目线索。保留报告引用和统计周期。聊天可更新 Task 与风险证据，
+但不单独创建正式 Project，也不静默覆盖正式字段。较新会议或聊天与正式字段冲突时，
+同时保留双方精确引用和时间并标记待核实，不按来源类型抹去较新证据。
 周报中的命名项目/工作流若有明确的负责人、目标/里程碑、状态、交付物或下一步，
 Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_proposal`；孤立任务、
 部门或话题不能直接注册 Project。多位个人负责人可以用名单表示。通常其
@@ -363,7 +372,7 @@ Agent 推断、精确引文及来源 signal ID / source_ref / source_time / link
 不能据此把显式提到负责人的讨论升级成正式授权指派。对应的生产者接线必须作为单独集成范围处理，
 不能由 Task Agent 猜测或合成。
 
-Attention 的 `material_trigger` 是 Agent 对来源证据的语义分类，不是独立机器证明。每项提案必须附带已观察原始来源中的精确引文、推断理由和明确 CEO action；投影还要求正式 Project、活动规范锚点、全部支持 Task 合格且来源信号已链接。系统把 trigger 类型、推断和核验引文分别写入 assessment/事件沿革。候选 Task 可以支持风险，无需补造负责人、日期或接受承诺，也不因此提升 stage。系统不靠关键词推断重大性；若未来需要独立机器级判定，应另行定义 canonical trigger facts 或人工确认机制。
+Attention 的 `material_trigger` 是 Agent 对来源证据的语义分类，不是独立机器证明。每项提案必须附带已观察原始来源中的精确引文、推断理由和分类对应的 CEO action；watch 可写当前无需你处理并说明要观察的结果。投影还要求正式 Project、活动规范锚点、全部支持 Task 合格且来源信号已链接。系统把 trigger 类型、推断和核验引文分别写入 assessment/事件沿革。候选 Task 可以支持风险，无需补造负责人、日期或接受承诺，也不因此提升 stage。系统不靠关键词推断重大性；若未来需要独立机器级判定，应另行定义 canonical trigger facts 或人工确认机制。
 
 OA 审批中，申请人的补充只可完善其可核验的事实或材料，不能生成、替代或关闭规则、例外、
 授权与动作映射。材料缺口和规则缺口同时存在时，Consumer 在原审批向申请人评论可补材料，

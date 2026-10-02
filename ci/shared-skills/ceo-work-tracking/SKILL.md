@@ -1,9 +1,9 @@
 ---
 name: ceo-work-tracking
-description: Use when source context contains one or more trackable Tasks needing extraction, evidence, explicit ownership, commitment/date interpretation, Project clustering, follow-up, completion evidence, or closure. Tasks must be derived from source context; never invent tasks or assignees. Use ceo-message-triage when no durable work item is needed and ceo-meeting-work for meeting synthesis before actions are confirmed. Load the relevant task operation Skill before changing tracked work.
+description: Use when source context contains one or more trackable Tasks needing extraction, evidence, explicit ownership, commitment/date interpretation, Project clustering, follow-up, completion evidence, or closure. Tasks must be derived from source context; never invent tasks or assignees. Use ceo-message-triage when no durable work item is needed and ceo-meeting-work for meeting synthesis before actions are confirmed. Return structured local Task decisions; external operations belong to their service workflows.
 metadata:
   managed_by: ceo-agent-service
-  version: 2
+  version: 3
 ---
 
 # CEO Work Tracking
@@ -13,7 +13,7 @@ closure as one lifecycle. Preserve identity, intent, evidence, and links across
 every state change. Do not use keyword routers, hardcoded business terms,
 person names, or static routing branches to make work decisions.
 
-Load `dingtalk-todo` for DingTalk TODO operations, `task-management` for local task records, and `dingtalk-chat` before requesting updates or reporting closure.
+In this Task Agent turn, return structured local Task decisions only. Use connected tools for read-only source discovery; do not write, send, or complete external records through CLI, API, or MCP. This is prompt-only best-effort guidance, not an enforced tool permission boundary.
 
 ## Task-First Lifecycle Decision
 
@@ -73,30 +73,39 @@ Load `dingtalk-todo` for DingTalk TODO operations, `task-management` for local t
    Missing dates do not prevent recording a Business Task. A concrete,
    parseable deadline is still required before mirroring a Task as a DingTalk
    TODO.
-7. Keep a Task independent of Projects. Use the most recent confirmed official
-   weekly report first, especially a project-management or management weekly
-   report with explicit project, owner, target, DDL, status, and next-task
-   fields. Preserve its exact document reference and reporting period. Use
-   confirmed meeting evidence (minutes, transcript, or meeting action items)
-   next for newly decided work or changes not yet reflected in a weekly
-   report. Chat or message evidence only supplements these sources and cannot
-   create an official Project or override an explicit weekly-report field by
-   itself. When sources conflict, prefer the latest explicit weekly-report
-   field, then the latest confirmed meeting decision, and preserve the exact
-   source reference. Match only against that supplied registry; propose
-   uncertain anchor matches or Project candidates for explicit confirmation.
-   Semantic similarity, a cluster, or a Project candidate does not create an
-   official Project or prove business relevance.
+7. Keep a Task independent of Projects. Reports, meetings, and chats all supply
+   Task and risk evidence; a weekly report is neither the sole risk source nor
+   a prerequisite for Attention. Register an official Project only from a
+   confirmed report's project registration or an explicit meeting registration
+   decision. Prefer confirmed official weekly reports for Project definition and
+   registry fields. Quote that basis separately in `ProjectProposal.source_excerpt`;
+   the Task action excerpt is not registration evidence. Chat updates Task and
+   risk evidence but cannot create a Project or silently overwrite official
+   fields. Preserve report references and reporting periods. When newer meeting
+   or chat evidence conflicts with official fields, preserve both cited sources
+   and their times and mark the conflict pending verification. Similarity,
+   labels, clusters, and candidates are not Project authority.
 8. Merge only identical deliverables supported by explicit identity evidence.
    Distinct deliverables with a shared goal may be clustered or linked; they
    retain independent owners, dates, and completion. When identity is uncertain,
    link or keep separate rather than merge.
-9. Enter CEO **需关注** only when a confirmed business anchor and a concrete
-   material trigger exist: threatened accepted commitment, material change,
-   material assignment/commitment dispute, CEO decision or push, required Gate,
-   or meaningful risk escalation. Relevance, acceptance, normal progress, and
-   date proximity alone are not triggers. FYI must be material and contain a
-   new meaningful change; do not repeat static facts.
+9. Propose CEO attention only for a confirmed official Project with real
+   supporting Tasks and source evidence of material business impact. Explain
+   the impact in `why_attention` as inference; keep `current_state` factual.
+   Relevance, labels, acceptance, routine progress, date proximity, and static
+   facts alone do not establish material impact. Quote risk evidence from the
+   full current source or historical persisted original Signals, separately
+   from Task action and Project registration excerpts. Current evidence uses
+   null `signal_id` and the current `source_ref`; historical evidence requires
+   a real positive persisted Signal ID, matching reference, and exact quote.
+   Attention cannot use cited-only session/Memory provenance as observed truth.
+   Use a real existing anchor, or null only with this same decision's new
+   Project proposal. Return at most one proposal per Project per round; use
+   `related_task_ids` only for actual supporting Tasks, not all Project Tasks.
+   For watch, you may say 当前无需你处理; specify the observable outcome to watch. It does
+   not imply 需介入. Do not invent work, owners, assignments, commitments, or
+   dates to fill a card. Explain unproposed Tasks in `update_summary` when
+   impact is insufficient, the Project is unconfirmed, or evidence is unverifiable.
 10. Apply replies, corrections, disputes, owner changes, scope changes, and
     date changes to the existing Task when identity is explicit. Preserve new
     evidence and actor; record corrections/supersession instead of erasing
@@ -143,120 +152,32 @@ Load `dingtalk-todo` for DingTalk TODO operations, `task-management` for local t
   stop the old owner/date follow-up before considering a new one.
 - `follow_up_reply_updates_existing_task`: match a reply by explicit reference
   or one unique evidenced Task; do not create a second Task for the same work.
-- `stale_follow_up_is_skipped`: when an old draft is presented for
-  reevaluation, read its current Task, linked TODO, external status, and replies;
-  suppress it only when those facts show the old question is no longer
-  appropriate. The service may enqueue reevaluation but cannot decide the
-  semantic outcome. If the decision keeps the follow-up open, provide a new
-  future work-hours schedule; the revised draft is a new repair revision.
 - `sensitive_follow_up_uses_verified_direct_target`: use only the verified
   direct identity selected in the decision; never convert a group target to a
   direct target in service code.
 
-## TODO Completion Discovery
+## Shared Source-Driven Task Session
 
-The ordinary Task extraction and TODO/follow-up completion turns share the
-`task-agent:work-tracking:v1` runtime session so that context is not lost
-(validated project rule). Evidence read earlier in the session, and evidence found
-through Memory provenance, may be cited to refine a Task: set `evidence_origin`
-to `session` or `memory`, cite the original source's reference and one sentence
-of its text, and give its link (or, with no link, a description of where it is). Such evidence may refine
-an existing Task or record a candidate; creating a formal Task, promotion,
-acceptance and identity merges still need the current Work Item's authority and
-identity metadata, and dates need current, identified source evidence. Runtime
-route sessions remain separate; Codex CLI manages its own context compaction.
+One Task Agent extracts, updates, and completes Tasks from new source evidence
+through one `TaskAgentDecision`. Every Work Item has its own run and workload
+key, while the shared logical `task-agent:work-tracking:v1` session preserves
+context; runtime routes keep separate native sessions and native CLI compaction.
+Prioritize the current Work Item's authority and identity metadata.
 
-Runtime integration: one Task Agent returns one `TaskAgentDecision` lifecycle
-contract for both new Task extraction and existing Task/TODO/follow-up
-transitions. The Work Item source type selects the context and service-side
-operations; it does not select a different Agent or decision schema.
+Earlier session evidence and Memory provenance may refine an existing Task or
+record a candidate when they cite the original source reference, excerpt, and
+link or location description. Creating a formal Task, promotion, acceptance,
+identity merges, and typed dates still require the current source authority and
+identity evidence. Attention has a stricter source contract: historical quotes
+must resolve to stored observed original Signals, not cited-only provenance.
+
 `todo_completion_evidence_candidate`, `todo_completion_check`, and
-`follow_up_completion_check` are lifecycle inputs. A decision may contain
-zero or more source-grounded `task_decisions` plus applicable linked TODO or
-follow-up changes in the same result. The service applies Task transitions,
-local TODO completion, evidence-candidate status, and linked follow-up changes
-within the transaction. TODO-close synchronization uses the existing outbox
-only when the DingTalk client is configured. The Task Agent cannot create a
-TODO through completion fields, target unlinked records, or add replacement
-follow-up drafts during repair. Invalid identities or operations fail the
-work-summary input and run without committing domain changes. A completion
-check records its bounded `search_trace` even when it finds no completion
-evidence.
-
-The runtime validates `source_kind` against the Work Item's `search_policy`,
-checks source timestamps against its supplied time window, service-stamps
-retrieval time and rejects a timestamp that predates the window, enforces the
-returned-source and observed-tool-call limits, and associates each
-trace locator with a tool-call receipt from the current run. The service derives
-the persisted call IDs from those receipts; it does not trust model-authored
-receipt IDs. Current receipts do not contain a separately verified copy of the
-external source's semantic truth, so a trace match is provenance linkage, not
-proof that the source really establishes completion. Candidate-source timestamps
-are also matched to the persisted candidate timestamp. `completed_at` is checked
-only for timestamp syntax and that it is not in the future; the runtime cannot
-prove that it matches the source content. The Task Agent prompt directs the
-Agent to use connected tools only for read-only discovery and not to perform
-external writes through CLI, API, or MCP; this is prompt-only best-effort
-guidance. The current Codex route has no per-turn MCP write-tool allowlist, so
-prompt wording does not enforce that restriction. The runtime also lacks typed
-search-versus-raw-read receipts, so `max_raw_reads` is an instruction without
-an independent runtime counter. This is a documented prompt/runtime limitation
-outside the approved Task 6 scope, not a release blocker; do not add a counter
-or write-tool allowlist as part of Task 6.
-
-This describes the code contract, not deployment status: Task 6 must remain
-undeployed until its complete Task 6/Task 7 acceptance gate is verified. The
-separate Task 7 Task-to-DingTalk-TODO mirror remains out of scope; do not infer
-an external TODO identity when no trusted producer supplied one.
-
-When the Work Item source is `todo_completion_check`, the service is asking for
-a bounded current-state check, not reporting a completion fact. First restate
-the TODO's concrete completion condition from its title, description, owner,
-deadline, follow-up question, and project context. Then use the supplied
-`search_policy` to search only the allowed sources within the allowed budget.
-
-Search in this order when the corresponding tool or link is available:
-
-1. Structured task status such as DingTalk TODO or Lark Task.
-2. The original follow-up conversation and nearby replies after the follow-up
-   was sent.
-3. DWS messages and DWS/AI minutes in the supplied time window.
-4. Lark messages, Lark docs, email, and local files under the runtime-supplied workspace root only
-   when the TODO context indicates those sources may contain the result.
-5. `memory_recall` for stable background only; memory is never current
-   completion evidence by itself.
-
-Respect these operational limits unless the Work Item explicitly supplies
-stricter values: at most 8 read/search tool calls, at most 3 raw source reads,
-and at most 3 evidence sources in the final decision. The runtime validates
-observed call count and trace-source count, but the raw-read cap remains an
-instruction rather than an independently enforced counter. Prefer the window from follow-up sent
-time or `search_policy.time_window.prefer_since` to now. For local files, use
-only the runtime-supplied workspace root, prefer files changed after
-`search_policy.time_window.changed_files_since`, and cite a narrow locator such
-as relative path plus line, paragraph, mtime, or hash. Do not read or copy large
-files when a snippet search is enough.
-
-Stop searching as soon as one strong, current completion evidence source is
-found. Strong evidence must identify who or what system confirmed completion,
-where it was recorded, when it happened, and why it directly satisfies the TODO
-completion condition. Phrases like "I'll look", "in progress", "arranged",
-"should be OK", or generic "done" language are not enough unless the surrounding
-source ties them to the exact deliverable.
-
-For TODO completion checks, use the unified TaskAgentDecision contract and the
-`dingtalk-todo` operation Skill to recommend a local TODO close; the Agent is
-instructed to only read external TODOs and never write them. Put completion
-operations in the top-level `todo_changes` and `follow_up_changes` fields, not
-inside individual `task_decisions`. The service applies local completion and
-queues the configured existing outbox sync. Record complete
-`completion_evidence.source`, `reason`, `description`, `completed_at`, and
-`checked_at`, with a compact `search_trace` showing which sources were checked
-and why the evidence is sufficient. These typed lifecycle fields can close or
-update only records linked by the current Work Item; they cannot create or
-mirror an external TODO. If no strong completion evidence is found, keep the
-TODO open and summarize the check in that independent workflow; do not create
-duplicate TODOs or follow-ups.
+`follow_up_completion_check` are retired historical enum values, not current
+Task Agent inputs. The schema still contains `todo_changes`,
+`follow_up_changes`, and `search_trace`, but the current service does not apply
+those lifecycle fields. Do not orchestrate discovery turns or recommend their
+use. Newly observed DingTalk human completion deterministically updates only
+its explicitly linked Task through the existing service path.
 
 ## Memory And Evidence
 
@@ -277,7 +198,7 @@ The service owns source/evidence persistence, Task transition validation,
 evidence-derived commitment state, typed date storage, explicit matching to
 existing Tasks, scheduled wake-up, due-time and local-work-hours guards, the
 parseable due-date gate for a DingTalk TODO mirror, live external-status refresh,
-completion-check enqueueing, exact-message idempotency, and sent-result or
+exact-message idempotency, and sent-result or
 retry state. The Agent may extract and propose interpretations only from
 supplied source context; the service rejects unsupported owners, acceptance,
 dates, transitions, identity merges, or attention triggers. The Agent/service

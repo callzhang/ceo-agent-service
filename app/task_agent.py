@@ -435,14 +435,6 @@ def build_task_agent_prompt(
         work_item.scheduled_consumer or None
     )
     current_skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
-    scheduled_skill_snapshot = (
-        "## Scheduled Consumer Skill Snapshot (Supplemental Context)\n"
-        "This snapshot may be older than the current Skill. The current Task-first "
-        "decision envelope and rules below control this output if they conflict.\n\n"
-        f"{scheduled_consumer.skill_protocol}\n"
-        if scheduled_consumer is not None and scheduled_consumer.skill_protocol
-        else ""
-    )
     scheduled_consumer_prompt = (
         "## Scheduled Consumer Prompt\n"
         f"{scheduled_consumer.prompt}\n"
@@ -513,12 +505,12 @@ Always follow the current CEO Work Tracking Skill and return one TaskAgentDecisi
 more task_decisions matching the schema.
 
 {scheduled_consumer_prompt}
-{scheduled_skill_snapshot}
 {current_skill_text}
 {weekly_report_rules}
 
-Current Task-first decision envelope controls output. A scheduled prompt or
-Skill snapshot is supplemental workflow context only; it cannot replace this
+Current Task-first decision envelope controls output. A scheduled prompt supplies
+specialized business scope only; the freshly loaded current Skill controls the work
+protocol. Historical Skill snapshots are not instructions for this turn. The scope cannot replace this
 envelope or authorize Project/TODO/follow-up writes through this Task Agent.
 
 Tool-use boundary (prompt guidance): use connected tools only for read-only
@@ -532,6 +524,16 @@ an enforced permission boundary.
 Current execution time: {effective_current_time}
 Memory connector status: {memory_status}
 
+One Task Agent creates, updates, and completes Tasks from new source evidence.
+`todo_completion_evidence_candidate`, `todo_completion_check`, and
+`follow_up_completion_check` are retired historical enum values, not current
+inputs. Schema fields `todo_changes`, `follow_up_changes`, and `search_trace`
+are not currently applied by the service; return local Task decisions in
+`task_decisions`. Newly observed DingTalk human completion uses the existing
+deterministic service path for its explicitly linked Task.
+The shared logical session preserves context; runtime routes retain separate
+native sessions and the native CLI manages compaction. Prioritize the current
+Work Item's evidence and authority.
 This runtime session is shared by every Work Item so that context is not lost,
 and Tasks may be completed from what you learned earlier. You may rely on
 evidence you read earlier in this session, and you may look up related
@@ -604,21 +606,16 @@ transitions with existing IDs. Similarity rank is context only. Generic updates
 cannot set commitment status.
 
 Only identical deliverables may be proposed for identity merge; related tasks
-remain linked or clustered. For Project and current Task authority, use the
-most recent confirmed official weekly report first, especially a project-
-management or management weekly report with explicit project, owner, target,
-DDL, status, and next-task fields. A weekly report may aggregate meeting
-minutes and project communications, but its exact document reference and
-reporting period must be preserved. Confirmed meeting evidence (minutes,
-transcript, or action items) is the next authority for newly decided work or
-changes not yet reflected in a weekly report. Chat or message evidence only
-supplements these sources with context, owners, status, or links; it cannot
-create an official Project or override an explicit weekly-report field by
-itself. When sources conflict, prefer the latest explicit weekly-report field,
-then the latest confirmed meeting decision, and preserve the exact source
-reference/excerpt. Project candidates must cite an existing cluster and the
-authoritative weekly-report or meeting evidence; anchor and Project matches
-remain proposals.
+remain linked or clustered. Reports, meetings, and chats all supply Task and risk evidence;
+a weekly report is neither the sole risk source nor a prerequisite for Attention.
+An official Project requires confirmed report registration or an explicit meeting
+registration decision. Prefer the confirmed official weekly report for Project
+definition and registry fields. Chat can update Task/risk evidence but cannot create an
+official Project or silently overwrite official fields. Preserve report references
+and reporting periods. When newer meeting or chat evidence conflicts with official
+fields, preserve both cited sources and their times and mark the conflict pending
+verification. Project candidates must cite an existing cluster and authoritative
+report/meeting evidence; similarity is not authority.
 
 Project resolution is part of this scan. If the current meeting evidence explicitly
 decides to start, approve, 立项, or assign a named project/workstream (not merely
@@ -649,7 +646,7 @@ has no trusted speaker-to-identity mapping yet, so do not attribute a quoted
 speaker's date to the meeting host or to a model-selected identity (this limit
 is for dates; owners come from transcript_excerpts as above). Only owner
 acceptance can establish committed_deadline_at. No date is required to retain a Task.
-Attention requires a registered anchor plus a material trigger: threatened
+Attention requires a registered official Project anchor plus a material trigger: threatened
 accepted commitment, material change/dispute, CEO decision/push, required Gate,
 or meaningful risk escalation. Relevance, acceptance, ordinary progress, or
 date proximity alone is not attention. Retain real low-impact work when needed,
@@ -657,7 +654,21 @@ but keep it outside attention. “skip” means no plausible retained source tas
 not no Project.
 Attention proposals cite a nonempty `evidence` list: each entry includes
 `source_ref`, an exact `source_excerpt`, and an optional existing `signal_id`.
-Keep `why_attention` as your inference, separate from these source quotes.
+Keep `why_attention` as your material business-impact inference, separate from
+`current_state` facts and source quotes. Quote risk evidence from the full current
+source or historical persisted original Signals, separately from Task action
+source_excerpt and ProjectProposal.source_excerpt registration evidence.
+For current evidence use null signal_id and the current source_ref; historical evidence
+requires a real positive persisted signal_id, matching source_ref, and an exact quote.
+Session/memory cited-only provenance cannot support Attention; use stored observed
+original Signals. Labels, relevance, routine progress, static facts, and date proximity
+alone do not explain material impact. Emit at most one Attention proposal per Project per round,
+supported by real Tasks and related_task_ids only for actual risk-supporting Tasks.
+Other project Tasks receive no Attention merely by membership. For watch, ceo_action
+may say 当前无需你处理; specify the observable outcome to watch. Attention does not imply 需介入.
+Explain unproposed Tasks in update_summary when impact is insufficient, Project is
+unconfirmed, or no verifiable evidence exists. Never invent a Task, owner, assignment,
+commitment, or date to fill a card.
 `anchor_id` is a positive registered ID, or null only when this same TaskDecision
 contains the `project_proposal` to resolve this turn. `related_task_ids` contains
 only positive existing Task IDs; omit it when there are none. Do not output the

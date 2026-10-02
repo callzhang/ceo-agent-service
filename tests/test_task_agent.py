@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -633,15 +634,16 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
     assert "Prior session turns are background only" not in prompt
 
 
-def test_task_agent_prompt_prioritizes_weekly_report_then_meeting_evidence():
+def test_task_agent_prompt_uses_all_source_risk_evidence_with_official_project_authority():
     prompt = " ".join(build_task_agent_prompt(_work_item(), "候选上下文为空。").split())
 
-    assert "most recent confirmed official weekly report first" in prompt
-    assert "project, owner, target, DDL, status, and next-task fields" in prompt
-    assert "Confirmed meeting evidence" in prompt
-    assert "Chat or message evidence only supplements" in prompt
-    assert "cannot create an official Project or override an explicit weekly-report field" in prompt
-    assert "preserve the exact source reference/excerpt" in prompt
+    assert "Reports, meetings, and chats all supply Task and risk evidence" in prompt
+    assert "weekly report is neither the sole risk source nor a prerequisite" in prompt
+    assert "cannot create an official Project or silently overwrite official fields" in prompt
+    assert "preserve both cited sources and their times" in prompt
+    assert "at most one Attention proposal per Project per round" in prompt
+    assert "current_state" in prompt and "无需你处理" in prompt
+    assert "historical evidence requires a real positive persisted signal_id" in prompt
     assert "emit `project_proposal`" in prompt
     assert "explicitly decides to start, approve, 立项" in prompt
     assert "required even when the related Task is an `update_task`" in prompt
@@ -662,7 +664,10 @@ def test_task_agent_prompt_requires_report_owner_rows_and_project_proposals():
     assert "preserving exact spaces and punctuation" in " ".join(prompt.split())
 
 
-def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():
+def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(monkeypatch):
+    import app.task_agent as task_agent
+    skill_path = Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md"
+    monkeypatch.setattr(task_agent, "WORK_TRACKING_SKILL_PATH", skill_path)
     payload = _work_item().model_dump(mode="json")
     payload["scheduled_consumer"] = {
         "schema": "scheduled_consumer.v1",
@@ -673,17 +678,29 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill():
         "skill_protocol": "# Old Work Tracking Snapshot\nReturn update_project with todo_changes.",
     }
 
-    prompt = build_task_agent_prompt(
-        WorkItem.model_validate(payload),
-        "无候选项目",
-    )
+    item = WorkItem.model_validate(payload)
+    original_payload = item.scheduled_consumer.copy()
+    class CapturingCodex:
+        def decide(self, **kwargs):
+            self.prompt = kwargs["prompt"]
+            return TaskAgentDecision(task_decisions=[])
+    codex = CapturingCodex()
+    TaskAgentRunner(codex).decide(item, "无候选项目", run_id=11, session_scope_id="isolated-test")
+    prompt = codex.prompt
 
     assert "## Scheduled Consumer Prompt" in prompt
     assert "只处理 $ceo-work-tracking 能确认的真实工作项。" in prompt
-    assert "# Old Work Tracking Snapshot" in prompt
-    assert "Return update_project with todo_changes." in prompt
-    assert prompt.count("Return update_project with todo_changes.") == 1
+    assert "# Old Work Tracking Snapshot" not in prompt
+    assert "Return update_project with todo_changes." not in prompt
+    assert "Scheduled Consumer Skill Snapshot" not in prompt
+    assert '"scheduled_task_run_id": 11' in prompt
     assert "# CEO Work Tracking" in prompt
+    assert "version: 3" in prompt
+    assert "## Shared Source-Driven Task Session" in prompt
+    assert "## TODO Completion Discovery" not in prompt
+    assert "are not currently applied by the service" in prompt
+    assert "native CLI manages compaction" in prompt
+    assert item.scheduled_consumer == original_payload
     assert "task_decisions" in prompt
     assert "Current Task-first decision envelope controls output" in prompt
 

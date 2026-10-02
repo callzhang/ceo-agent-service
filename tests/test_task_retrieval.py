@@ -2,7 +2,7 @@ import json
 
 from app.store import AutoReplyStore
 from app.task_models import WorkItem
-from app.task_semantic_models import BusinessTaskStage
+from app.task_semantic_models import AttentionStatus, BusinessTaskStage
 from app.task_retrieval import (
     load_project_task_detail,
     render_candidate_prompt,
@@ -37,6 +37,60 @@ def _sourced_formal_task(store: AutoReplyStore, *, title: str, suffix: str) -> i
     )
     store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="assignment")
     return task_id
+
+
+def test_semantic_context_returns_only_bounded_active_attention_for_selected_projects(tmp_path):
+    from app.task_business_resolution import BusinessResolutionService
+
+    store = AutoReplyStore(tmp_path / "attention-context.sqlite3")
+    resolver = BusinessResolutionService(store)
+    anchors = [resolver.register_anchor(anchor_type="project", anchor_ref=f"project:{i}",
+        title=title) for i, title in enumerate(("报价", "无关"))]
+    for anchor in anchors:
+        resolver.register_official_project(anchor_id=anchor, registry_source="report:registry")
+    signal = store.create_business_task_signal(source_type="message", source_ref="message:risk",
+        evidence_text="交付受阻", dedupe_key="message:risk")
+    assessment = json.dumps({"inference": "影响交付", "evidence": [
+        {"signal_id": signal, "source_ref": "message:risk", "source_excerpt": "交付受阻"}]}, ensure_ascii=False)
+    ids = []
+    with store._connect() as db:
+        for i, anchor in enumerate((anchors[0], anchors[0], anchors[1], anchors[0])):
+            ids.append(store.create_business_attention_item_in_transaction(stable_key=f"test:{i}",
+                category="watch", title="交付风险", business_area="交付", why_attention="影响交付",
+                current_state="交付受阻", ceo_action="无需你处理；等待交付恢复", anchor_id=anchor,
+                evidence_signal_id=signal, assessment_json=assessment, now=f"2026-10-02T00:00:0{i}Z", _db=db))
+        inactive = store.get_business_attention_item_in_transaction(item_id=ids[3], _db=db)
+        store.update_business_attention_item_in_transaction(item=inactive.model_copy(update={
+            "status": AttentionStatus.RESOLVED, "resolution_signal_id": signal, "resolved_at": "2026-10-02T01:00:00Z"}), _db=db)
+    context = retrieve_task_semantic_context(store, _work_item("报价"), limit_per_kind=1)
+    assert len(context.attention_items) == 1
+    card = context.attention_items[0]
+    assert card.id in ids[:2]
+    assert card.anchor_id == anchors[0]
+    payload = json.loads(render_task_semantic_context(context))
+    assert payload["current_project_attention"] == [{"id": card.id, "anchor_id": anchors[0],
+        "why_attention": "影响交付", "current_state": "交付受阻", "assessment_json": assessment,
+        "updated_at": card.updated_at}]
+    # The card's assessment carries provenance without adding full signals to the budget.
+    assert payload["source_signals"] == []
+
+
+def test_semantic_context_has_no_attention_without_official_project_anchor(tmp_path):
+    from app.task_business_resolution import BusinessResolutionService
+
+    store = AutoReplyStore(tmp_path / "attention-no-anchor.sqlite3")
+    anchor = BusinessResolutionService(store).register_anchor(
+        anchor_type="project", anchor_ref="unregistered:quote", title="报价")
+    signal = store.create_business_task_signal(source_type="message", source_ref="message:no-project",
+        evidence_text="报价风险", dedupe_key="message:no-project")
+    with store._connect() as db:
+        store.create_business_attention_item_in_transaction(stable_key="unregistered:attention",
+            category="watch", title="报价风险", business_area="交付", why_attention="风险影响交付",
+            current_state="报价风险", ceo_action="等待恢复", anchor_id=anchor,
+            evidence_signal_id=signal, now="2026-10-02T00:00:00Z", _db=db)
+    context = retrieve_task_semantic_context(store, _work_item("报价"))
+    assert context.attention_items == ()
+    assert json.loads(render_task_semantic_context(context))["current_project_attention"] == []
 
 
 def test_semantic_context_keeps_legacy_ownerless_formal_searchable_but_unverified(tmp_path):

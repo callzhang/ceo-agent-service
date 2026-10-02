@@ -730,15 +730,11 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 
 ### Task-first 工作跟踪（Task 6 与 Task 7；已上线）
 
-Task-first 的正式 Project 注册表和当前 Task 状态以最近一次确认的正式周报为
-首要来源，尤其是项目管理部或管理层周报中明确列出的项目、负责人、目标、
-DDL、状态和下周任务。周报即使汇总会议纪要与项目沟通记录，也必须保留周报
-文档引用和统计周期。会议纪要、逐字稿或已确认会议行动项是尚未进入周报的
-新决策或变更的次级权威来源。聊天或消息只能补充负责人、状态、链接等上下文，
-不能单独创建正式 Project，也不能自行覆盖周报中明确的字段。明确决定启动、批准或
-立项的会议行动项可以创建带有会议证据的正式 Project；普通的项目提及只形成项目线索。
-来源冲突时先取
-最新明确周报字段，再取最新确认的会议决策，并保留精确来源引用。
+报告、会议和聊天都是 Task 与风险证据来源；周报不是风险的唯一来源，也不是关注的前置条件。
+正式 Project 的定义和登记字段优先采用确认的正式周报，明确会议立项登记也可建立正式 Project；
+普通项目提及只形成项目线索。保留报告引用和统计周期。聊天可更新 Task 与风险证据，
+但不单独创建正式 Project，也不静默覆盖正式字段。较新会议或聊天与正式字段冲突时，
+同时保留双方精确引用和时间并标记待核实，不按来源类型抹去较新证据。
 周报 Work Item 中有明确项目级字段的命名项目/工作流，Task Agent 应在相关
 Task 决策上附带对应周报权威类型的 `project_proposal`，而不是只生成散落的任务。
 部门、团队、话题或孤立任务名称不得注册为正式 Project（这类信息只能留在
@@ -777,9 +773,20 @@ Task 6 与 Task 7 已随 `46ba55eb`（2026-09-24）一起部署上线，不是�
 
 系统首先在一个语义事务中写入来源信号、候选或正式 Task、证据、类型化日期、显式 Task 转换和关系/锚点/Project 候选提议；随后从已提交的语义事实重算关注投影。候选提升、接受、字段更正和同一事项合并使用不同转换；模型相似度仅用于提示，不授权身份转换。`created_at` 是系统记录时间；`assigned_at` 仅从明确正式指派的可信源时间戳派生，日期值必须与精确摘录中的可解析日期一致。周级或不可解析日期短语只留在关联的来源信号中，不生成 typed date fact 或猜测时间戳。估算由可信来源发言人署名，抽取 Agent 不冒充估算者；Task 6 的 `next_check_at` 由 Agent 署名但只记录来源明确给出的检查日期，不安排 cadence、不将 due date 转成检查时间；其他日期要求可识别来源行为人。当前 AI Minutes producer 没有可信 speaker→identity 映射，故不把转述者或模型填写的人作为日期行为人，相关日期暂不记录。指派日、请求/外部/承诺 DDL、估算和下次检查分别保存为独立类型。Project 只能引用注册表中的正式对象；Project 候选和锚点匹配不会自动创建正式 Project。
 
-需关注必须同时有正式 Project 的已确认规范锚点、相关且开放/等待中的 Task、已链接来源信号、明确 CEO action 和已核验的精确来源引文。trigger 类型和原因是 Agent 对来源的语义分类并写入 Attention assessment；它不等于机器独立证明其重大性，系统不做关键词重大性推断。提交后还要按所有受影响 Task 重算当前关注成员，完成、取消、不相关及合并都会更新/移除成员；投影失败不回滚已提交 Task。仅相关、已接受、正常进度或临近日期不足以进入关注。Task Agent 不再把 `work_projects` / `work_todos` / `work_updates` 当新语义事实的双写目标；外部 TODO 镜像走 Task 7 的独立 Task 键控 outbox，Task 6 单独不得部署。
+需关注必须同时有正式 Project 的已确认规范锚点、相关且开放/等待中的 Task、已链接来源信号、分类对应的 CEO action 和已核验的精确来源引文。trigger 类型和原因是 Agent 对来源的语义分类并写入 Attention assessment；它不等于机器独立证明其重大性，系统不做关键词重大性推断。提交后还要按所有受影响 Task 重算当前关注成员，完成、取消、不相关及合并都会更新/移除成员；投影失败不回滚已提交 Task。仅相关、已接受、正常进度或临近日期不足以进入关注。Task Agent 不再把 `work_projects` / `work_todos` / `work_updates` 当新语义事实的双写目标；外部 TODO 镜像走 Task 7 的独立 Task 键控 outbox，Task 6 单独不得部署。
 
-开发中、尚未部署的多来源 Project Attention 契约（输出模型、Project 绑定与投影消费阶段；prompt 接线与发布验收仍待后续任务）：
+本分支 Task Agent 检索上下文增加 `current_project_attention`：仅取返回的正式 Project
+规范 anchor 下的当前 active 卡，数量受既有 `limit_per_kind` 约束，渲染 id、anchor_id、
+why_attention、current_state、assessment_json 与 updated_at；不扩展完整 source_signals 预算。
+prompt 只读取当前 ceo-work-tracking Skill；定时任务保存的旧 skill_protocol 不再注入指令，
+原始 payload 历史不变，scheduled 元数据和 prompt 的专项业务范围仍保留。
+开发与测试使用隔离的 ci/shared-skills revision 3；实际默认 Skill 路径仍为安装的用户 Skill，
+全局发布另走既有 Skill 仓库，不代表本代码变更已发布。
+每轮每 Project 最多一个关注提案，事实 current_state 与重大业务影响推断 why_attention 分开；
+watch 可写当前无需你处理并给可观察结果，关注不等于需介入。未提案 Task 在 update_summary
+说明影响不足、项目未确认或证据无法核验；不为卡片补造 Task、负责人、承诺或日期。
+
+开发中、尚未部署的多来源 Project Attention 契约（输出模型、Project 绑定、投影消费与 prompt 接线；前端、语义评估和发布验收仍待后续任务）：
 `ProjectProposal.source_excerpt` 必填且非空，独立引用项目登记依据，不借用
 `TaskDecision.source_excerpt` 的行动项摘录。Attention 使用至少一条 `evidence`，每条包含
 非空 `source_ref`、`source_excerpt` 和可选的严格正整数 `signal_id`；`why_attention` 保留为
