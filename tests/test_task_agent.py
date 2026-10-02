@@ -1310,7 +1310,12 @@ def test_multi_decision_batch_records_each_source_grounded_item(tmp_path):
 
 def test_explicit_meeting_project_proposal_registers_project_and_links_task(tmp_path):
     store = AutoReplyStore(tmp_path / "meeting-project.sqlite3")
-    item = _work_item(assignment_authorized=True)
+    base = _work_item(assignment_authorized=True, source_conversation_kind="minutes")
+    item = base.model_copy(update={
+        "source": base.source.model_copy(update={"type": WorkItemSourceType.AI_MINUTES}),
+        "summary": json.dumps({"meeting": {"summary":
+            "会议明确决定启动美国客户成交项目，并由 Alex 负责报价"}}, ensure_ascii=True),
+    })
     decision = TaskAgentDecision.model_validate({"task_decisions": [{
         "action": "create_task", "transition": "none",
         "source_excerpt": "会议明确决定启动美国客户成交项目，并由 Alex 负责报价",
@@ -1375,12 +1380,10 @@ def test_generic_department_project_proposal_is_not_promoted(tmp_path):
         },
     }]})
 
-    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-                                       decision=decision, record_run=False)
-
-    assert len(result.task_ids) == 1
+    with pytest.raises(ValueError, match="cited report registry row"):
+        apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+                                  decision=decision, record_run=False)
     assert store.list_business_projects() == []
-    assert store.list_business_task_anchor_links(task_id=result.task_ids[0]) == ()
 
 
 def test_weekly_report_task_section_project_proposal_is_not_promoted(tmp_path):
@@ -1403,10 +1406,9 @@ def test_weekly_report_task_section_project_proposal_is_not_promoted(tmp_path):
         },
     }]})
 
-    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-                                       decision=decision, record_run=False)
-
-    assert len(result.task_ids) == 1
+    with pytest.raises(ValueError, match="cited report registry row"):
+        apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+                                  decision=decision, record_run=False)
     assert store.list_business_projects() == []
 
 
@@ -1428,9 +1430,11 @@ def test_project_weekly_report_registry_row_becomes_official_project(tmp_path):
         "source_excerpt": row, "source_ref": item.source.ref,
         "title": "完成大众底盘采集内部试标、规则固化、数据打包与算法预标注",
         "missing_evidence": ["owner"],
+        "project_proposal": {"title": "大众底盘采集", "reason": "登记表列出项目",
+                             "authority": "project_weekly_report", "source_excerpt": row},
     }]})
 
-    assert _report_project_registry_title(item, decision.task_decisions[0]) == "大众底盘采集"
+    assert _report_project_registry_title(item, decision.task_decisions[0].project_proposal.source_excerpt) == "大众底盘采集"
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
                                        decision=decision, record_run=False)
 
@@ -1460,6 +1464,8 @@ def test_management_weekly_report_registry_row_becomes_official_project(tmp_path
         "source_excerpt": row, "source_ref": item.source.ref,
         "title": "完成江淮私有化本周交付和合同边界确认",
         "missing_evidence": ["owner"],
+        "project_proposal": {"title": "江淮私有化", "reason": "登记表列出项目",
+                             "authority": "management_weekly_report", "source_excerpt": row},
     }]})
 
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
@@ -1487,9 +1493,11 @@ def test_weekly_report_registry_accepts_excerpt_without_leading_pipe(tmp_path):
         "source_excerpt": row, "source_ref": item.source.ref,
         "title": "停止大同标注基地亏损业务类型并确认后续产能量级",
         "missing_evidence": ["owner"],
+        "project_proposal": {"title": "标注工厂（大同标注基地）", "reason": "登记表列出项目",
+                             "authority": "project_weekly_report", "source_excerpt": row},
     }]})
 
-    assert _report_project_registry_title(item, decision.task_decisions[0]) == "标注工厂（大同标注基地）"
+    assert _report_project_registry_title(item, decision.task_decisions[0].project_proposal.source_excerpt) == "标注工厂（大同标注基地）"
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
                                        decision=decision, record_run=False)
 
@@ -1800,8 +1808,8 @@ def test_same_task_multiple_decisions_keep_positional_task_signal_mapping(tmp_pa
 
     assert result.task_ids == (created.task_id, created.task_id)
     assert len(result.attention_proposals) == 1
-    assert result.attention_proposals[0][1] == created.task_id
-    assert result.attention_proposals[0][2] != created.signal_id
+    assert result.attention_proposals[0].task_id == created.task_id
+    assert result.attention_proposals[0].signal_id != created.signal_id
 
 
 def test_attention_projection_runs_after_outer_domain_transaction_commit(tmp_path, monkeypatch):

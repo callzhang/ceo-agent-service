@@ -746,9 +746,10 @@ Task/cluster 或 Project candidate 中）；同一正式 Project 的多个周报
 项目标题合并。日期证据的 `source_excerpt` 必须逐字复制当前来源中的连续文本，
 保留空格和标点，无法逐字引用时不写日期证据。周报的“本周工作重点”“下周工作重点”、
 “团队管理和分工”“周度待办追踪”“行动项”章节只生成 Task；只有单独的项目清单、
-项目组合、里程碑/路线图条目或明确会议立项才可注册正式 Project。项目周报的
-项目周报或管理周报中有明确项目列的“手头项目/项目清单/项目组合”行，会先从 Task
-建立 cluster，再依据该登记表来源自动进入正式 Project 注册表，并把 cluster 中的
+项目组合中的登记表行或明确会议立项才可注册正式 Project。
+正式周报中有明确项目列的“手头项目/项目清单/项目组合”行，必须由相关 Task 的
+`project_proposal.source_excerpt` 独立引用；服务核验实际来源类型与 authority 一致、
+提案标题与原文项目列一致，才建立 cluster 并注册正式 Project，把 cluster 中的
 Task 关联到该 Project；同一项目标题跨周报复用同一 anchor。普通项目提及、客户/部门
 标签和孤立 Task 仍只形成 Project candidate，只有候选项目的明确确认命令才会升级。
 确认命令只能引用 candidate cluster 已有的来源证据，重复点击幂等，不能改绑到另一个 Project。
@@ -775,16 +776,22 @@ Task 6 与 Task 7 已随 `46ba55eb`（2026-09-24）一起部署上线，不是�
 
 需关注必须同时有已确认的业务锚点、相关 Task、已链接来源信号、明确 CEO action 和当前来源的精确 trigger 摘录。trigger 类型和原因是 Agent 对来源的语义分类并写入 Attention provenance；它不等于机器独立证明其重大性，系统不做关键词重大性推断。提交后还要按所有受影响 Task 重算当前关注成员，完成、取消、不相关及合并都会更新/移除成员；投影失败不回滚已提交 Task。仅相关、已接受、正常进度或临近日期不足以进入关注。Task Agent 不再把 `work_projects` / `work_todos` / `work_updates` 当新语义事实的双写目标；外部 TODO 镜像走 Task 7 的独立 Task 键控 outbox，Task 6 单独不得部署。
 
-开发中、尚未部署的多来源 Project Attention 契约（第一阶段仅输出模型）：
+开发中、尚未部署的多来源 Project Attention 契约（输出模型与 Project 绑定阶段）：
 `ProjectProposal.source_excerpt` 必填且非空，独立引用项目登记依据，不借用
 `TaskDecision.source_excerpt` 的行动项摘录。Attention 使用至少一条 `evidence`，每条包含
 非空 `source_ref`、`source_excerpt` 和可选的严格正整数 `signal_id`；`why_attention` 保留为
 Agent 的推断。`anchor_id` 可省略或为 null，但只能指向同一 TaskDecision 本轮的
 `project_proposal`，不能按标题猜测其他 Project。`related_task_ids` 默认空列表，只接受
 严格正整数。旧 `trigger_evidence` 不再接受，历史 `decision_json` 不迁移。候选 Task 可表达
-风险证据而不补造负责人或升级正式 Task。此阶段的消费端仅适配既有的单条当前来源证据与
-既有 anchor；多条/历史信号证据、显式相关 Task 列表及本轮 Project anchor 解析尚未实现，
-尝试投影会明确记录失败。登记原文核验与完整投影在后续阶段实现，整体完成验收前不得部署。
+风险证据而不补造负责人或升级正式 Task。Project 注册必须引用当前来源：周报提案严格匹配
+权威登记表行及项目标题；会议提案要求实际 AI Minutes 来源或可信 minutes 会话类型，
+并逐字引用当前文本（含结构化 JSON 的解码文本）。服务核验来源，不以新增关键词判定立项语义。
+无效的显式登记提案使当前领域事务回滚；Task 摘录自身是登记表行也不会隐式注册 Project。
+注册成功后，Task 确认关联到规范 anchor 并派生 relevant；candidate stage 不因此提升。
+每项 Attention 应用结果以 `AppliedTaskAttention` 保存 decision、task_id、signal_id 与 anchor_id；
+null anchor 仅取同一 decision 实际注册的 Project anchor，明确的正整数 anchor 保留原值。
+此阶段的投影端仅支持既有单条当前来源证据与既有 anchor；多条/历史证据、显式相关 Task 列表
+及新注册 Project 的完整投影仍留给后续阶段，未支持的形状明确记录失败。整体完成验收前不得部署。
 
 业务 Skill 说明“如何判断”，操作 Skill 说明“如何读取或执行”。OA、面试和 OKR 已有成熟的专业
 Skill，CEO Skill 只负责识别需要委派的场景，不复制专业规则：分别加载

@@ -217,8 +217,11 @@ Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返�
 不充当原文。`anchor_id` 可省略/null，但此时同一 TaskDecision 必须带 `project_proposal`；
 不能从其他决定或同名项目推断 anchor。既有 anchor 和 `related_task_ids` 只接受严格正整数，
 后者默认空列表。旧输出字段直接拒绝，历史 `decision_json` 保持原样。
-此阶段只适配既有消费者的单条当前来源证据与既有 anchor；多来源/历史信号、显式相关 Task
-列表、本轮 Project 解析及独立登记摘录核验留给后续阶段，未支持的投影形状明确记录失败。
+此阶段已核验独立 Project 登记摘录并在领域事务内解析同一 decision 的 Project anchor。
+Attention 应用结果使用冻结的 `AppliedTaskAttention(decision, task_id, signal_id, anchor_id)`；
+显式 anchor 保留原值，null 仅取本 decision 实际注册的 anchor，不借用前一 decision 或标题猜测。
+投影端仍仅支持单条当前来源证据与既有 anchor；多来源/历史信号、显式相关 Task
+列表及新注册 Project 的完整投影留给后续阶段，未支持的投影形状明确记录失败。
 候选 Task 可携带风险证据，不要求补造负责人或承诺；整体应用与投影验收完成前不得部署。
 `skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。
 正式 Project 注册表和当前 Task 状态优先读取最近一次确认的正式周报，尤其是
@@ -236,14 +239,19 @@ Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_propo
 权威 memory 或 session 上下文，则可使用 `linked_source_ref`、稳定的 `episode_id`/`thread_id`
 和包含明确负责人-行动关系的 `memory_excerpt`；校验忽略
 钉钉 `@` 标记和常见名单分隔符，不把多人整串当作一个名字。
-部门/团队标签（例如“项目管理部”“算法团队”）即使被模型误放进
-`project_proposal` 也不会注册为正式 Project；它们仍可作为 Task 的上下文或候选聚类。
+部门/团队标签仍可作为 Task 的上下文或候选聚类；显式 Project 登记提案必须通过来源核验，
+不以部门名或 Task 章节关键词作为注册依据。
 所有 `date_evidence.source_excerpt` 都必须是当前 Work Item 文本中逐字连续的子串，
 包括原始空格与标点，无法逐字引用时省略日期证据。周报“本周工作重点”“下周工作重点”、
 “团队管理和分工”“周度待办追踪”“行动项”章节是 Task 来源，不是 Project 注册表；
-只有单独的项目清单/项目组合、里程碑/路线图条目或明确会议立项才可注册正式 Project。
-项目/管理周报中有明确项目列的“手头项目/项目清单/项目组合”行先由 Task Agent 建立
-cluster，再依据登记表来源直接注册正式 Project，并把 cluster 中的 Task 关联到 Project；
+只有单独的项目清单/项目组合中的登记表行或明确会议立项才可注册正式 Project。
+正式周报中有明确项目列的“手头项目/项目清单/项目组合”行，必须由
+`project_proposal.source_excerpt` 独立引用；实际来源类型须匹配 authority，提案标题须等于
+原文项目列。会议登记必须来自实际 AI Minutes 或可信 minutes 会话类型，并逐字引用当前
+来源文本（包括结构化 JSON 的解码文本）；立项语义仍由 Agent 判断，服务不新增关键词匹配。
+无效的显式登记提案使当前领域事务回滚，Task 摘录是登记表行也不会隐式注册 Project。
+通过核验后建立 cluster、注册正式 Project，并把 cluster 中的 Task 关联到 Project；
+Task 确认关联规范 anchor 并派生 relevant，candidate stage 不因此提升；
 同一标题复用同一 anchor。普通项目提及、客户/部门标签和孤立 Task 只形成
 `business_project_candidates`，不会直接注册正式 Project。控制台确认只从 cluster 的已有
 Task evidence 选择来源信号，不凭空制造证据；事务会同时把 cluster 中的 Task 关联到 Project，

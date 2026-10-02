@@ -94,9 +94,17 @@ TASK_RESULT_CODEC = RoutedResultCodec.text(
 
 
 @dataclass(frozen=True)
+class AppliedTaskAttention:
+    decision: TaskDecision
+    task_id: int
+    signal_id: int
+    anchor_id: int
+
+
+@dataclass(frozen=True)
 class TaskAgentApplyResult:
     task_ids: tuple[int, ...]
-    attention_proposals: tuple[tuple[TaskDecision, int, int], ...]
+    attention_proposals: tuple[AppliedTaskAttention, ...]
     affected_task_ids: tuple[int, ...] = ()
     skipped_reasons: tuple[str, ...] = ()
 
@@ -840,63 +848,7 @@ def _source_locator(work_item: WorkItem, item: TaskDecision) -> tuple[str, str, 
     return link, group or work_item.source.conversation_title, person or work_item.context.sender, description
 
 
-_GENERIC_PROJECT_TITLES = frozenset({
-    "项目管理部",
-    "项目团队",
-    "管理部",
-    "产品部",
-    "产品团队",
-    "研发部",
-    "研发团队",
-    "技术部",
-    "技术团队",
-    "算法部",
-    "算法团队",
-    "测试部",
-    "测试团队",
-    "销售部",
-    "销售团队",
-    "市场部",
-    "运营部",
-    "财务部",
-    "人力资源部",
-    "部门",
-    "团队",
-})
-
-_REPORT_TASK_SECTION_MARKERS = (
-    "本周工作重点",
-    "下周工作重点",
-    "团队管理和分工",
-    "周度待办追踪",
-    "行动项",
-)
-
-
-def _is_generic_project_title(title: str) -> bool:
-    """Do not promote a department/team label to an official Project."""
-    normalized = "".join(title.casefold().split()).strip(" ：:、，,。")
-    return normalized in _GENERIC_PROJECT_TITLES
-
-
-def _is_report_task_section_project_proposal(
-    work_item: WorkItem, proposal: object
-) -> bool:
-    """Weekly-report task sections must not create one official Project per row."""
-    if work_item.source.type not in {
-        WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT,
-        WorkItemSourceType.PROJECT_WEEKLY_REPORT,
-        WorkItemSourceType.DEPARTMENT_WEEKLY_REPORT,
-    }:
-        return False
-    authority = getattr(proposal, "authority", "")
-    reason = getattr(proposal, "reason", "")
-    if not authority.endswith("weekly_report"):
-        return False
-    return any(marker in reason for marker in _REPORT_TASK_SECTION_MARKERS)
-
-
-def _report_project_registry_title(work_item: WorkItem, item: TaskDecision) -> str:
+def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> str:
     """Return a project name only when the cited row is in a report project registry."""
     if work_item.source.type not in {
         WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT,
@@ -912,9 +864,9 @@ def _report_project_registry_title(work_item: WorkItem, item: TaskDecision) -> s
         )
     except (TypeError, ValueError, AttributeError):
         return ""
-    if not isinstance(markdown, str) or not item.source_excerpt.strip():
+    if not isinstance(markdown, str) or not source_excerpt.strip():
         return ""
-    row_start = markdown.find(item.source_excerpt)
+    row_start = markdown.find(source_excerpt)
     if row_start < 0:
         return ""
     registry_match = re.search(
@@ -934,7 +886,7 @@ def _report_project_registry_title(work_item: WorkItem, item: TaskDecision) -> s
     # The model's evidence excerpt may preserve a Markdown table row with or
     # without the leading pipe.  The report itself is authoritative; the
     # excerpt is only a locator, so accept either representation.
-    first_row = next((line for line in item.source_excerpt.splitlines()
+    first_row = next((line for line in source_excerpt.splitlines()
                       if "|" in line), "")
     cells = [cell.strip() for cell in first_row.strip().strip("|").split("|")]
     if not cells:
@@ -968,6 +920,25 @@ def _report_project_registry_title(work_item: WorkItem, item: TaskDecision) -> s
     if not title or title in {"项目名", "项目", "Project"}:
         return ""
     return title
+
+
+def _source_contains_project_quote(work_item: WorkItem, quote: str) -> bool:
+    """Check current source text, including decoded strings in structured inputs."""
+    try:
+        payload = json.loads(work_item.summary)
+    except ValueError:
+        return quote in work_item.summary
+
+    def contains(value: object) -> bool:
+        if isinstance(value, str):
+            return quote in value
+        if isinstance(value, dict):
+            return any(contains(child) for child in value.values())
+        if isinstance(value, list):
+            return any(contains(child) for child in value)
+        return False
+
+    return contains(payload)
 
 
 def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal:
@@ -1294,11 +1265,12 @@ def apply_task_agent_decision(
     resolution = BusinessResolutionService(store)
     task_ids: list[int] = []
     affected_task_ids: list[int] = []
-    attention: list[tuple[TaskDecision, int, int]] = []
+    attention: list[AppliedTaskAttention] = []
     skipped_reasons: list[str] = []
 
     def apply(db: sqlite3.Connection | None) -> None:
         for item in decision.task_decisions:
+            applied_project_anchor_id = None
             if item.action == "skip":
                 continue
             if item.transition == "apply_acceptance":
@@ -1613,7 +1585,32 @@ def apply_task_agent_decision(
                         )
             else:
                 cluster_id = None
-            report_project_title = _report_project_registry_title(work_item, item)
+            report_project_title = ""
+            if item.project_proposal is not None:
+                proposal = item.project_proposal
+                if proposal.authority == "meeting_decision":
+                    if (
+                        item.evidence_origin != "current"
+                        or item.source_ref != work_item.source.ref
+                        or not (
+                            work_item.source.type is WorkItemSourceType.AI_MINUTES
+                            or work_item.context.source_conversation_kind is WorkItemSourceKind.MINUTES
+                        )
+                        or not _source_contains_project_quote(work_item, proposal.source_excerpt)
+                    ):
+                        raise ValueError("project proposal must cite an exact quote in the current meeting source")
+                else:
+                    report_project_title = _report_project_registry_title(
+                        work_item, proposal.source_excerpt
+                    )
+                    if (
+                        item.evidence_origin != "current"
+                        or item.source_ref != work_item.source.ref
+                        or work_item.source.type.value != proposal.authority
+                        or not report_project_title
+                        or proposal.title != report_project_title
+                    ):
+                        raise ValueError("project proposal title and authority must match the cited report registry row")
             if report_project_title and cluster_id is None:
                 existing_cluster = db.execute(
                     """
@@ -1642,6 +1639,7 @@ def apply_task_agent_decision(
                     title=report_project_title,
                     _db=db,
                 )
+                applied_project_anchor_id = report_anchor_id
                 existing_project = db.execute(
                     "select id from business_projects where canonical_anchor_id=?",
                     (report_anchor_id,),
@@ -1668,14 +1666,7 @@ def apply_task_agent_decision(
                     task_id=task_id, anchor_id=anchor_match.anchor_id,
                     evidence_signal_id=result.signal_id, reason=anchor_match.reason, _db=db,
                 )
-            if (
-                item.project_proposal is not None
-                and not report_project_title
-                and not _is_generic_project_title(item.project_proposal.title)
-                and not _is_report_task_section_project_proposal(
-                    work_item, item.project_proposal
-                )
-            ):
+            if item.project_proposal is not None and not report_project_title:
                 proposal = item.project_proposal
                 import hashlib
 
@@ -1688,6 +1679,7 @@ def apply_task_agent_decision(
                     title=proposal.title,
                     _db=db,
                 )
+                applied_project_anchor_id = anchor_id
                 if db.execute(
                     "select 1 from business_projects where canonical_anchor_id=?",
                     (anchor_id,),
@@ -1736,7 +1728,15 @@ def apply_task_agent_decision(
                         reason=project_candidate.reason, _db=db,
                     )
             if item.attention_proposal is not None:
-                attention.append((item, task_id, result.signal_id))
+                attention_anchor_id = item.attention_proposal.anchor_id
+                if attention_anchor_id is None:
+                    attention_anchor_id = applied_project_anchor_id
+                if attention_anchor_id is None:
+                    raise ValueError("attention proposal requires this decision's applied Project anchor")
+                attention.append(AppliedTaskAttention(
+                    decision=item, task_id=task_id, signal_id=result.signal_id,
+                    anchor_id=attention_anchor_id,
+                ))
 
     if _db is not None:
         apply(_db)
@@ -1780,10 +1780,11 @@ def _update_fields_restates_task(task: BusinessTask, item: TaskDecision, owner_u
 
 def _project_task_attention(
     store: AutoReplyStore,
-    proposals: tuple[tuple[TaskDecision, int, int], ...],
+    proposals: tuple[AppliedTaskAttention, ...],
     affected_task_ids: tuple[int, ...],
 ) -> None:
-    for item, task_id, signal_id in proposals:
+    for applied in proposals:
+        item, task_id, signal_id = applied.decision, applied.task_id, applied.signal_id
         proposal = item.attention_proposal
         assert proposal is not None
         try:
@@ -1811,7 +1812,7 @@ def _project_task_attention(
                 ),
                 current_state=proposal.current_state,
                 ceo_action=proposal.ceo_action,
-                anchor_id=proposal.anchor_id,
+                anchor_id=applied.anchor_id,
                 task_ids=(task_id,),
                 evidence_signal_id=signal_id,
             ))
