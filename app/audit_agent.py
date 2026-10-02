@@ -570,15 +570,12 @@ def _parse_audit_agent_result(
     *,
     has_typed_actions: bool,
 ) -> AuditAgentResult:
-    """Reject a provider execution flag misreported as a human decision."""
+    """Reject CLI confirmation, not a missing external-action authorization."""
     result = parse_audit_agent_wire_result(raw)
     if (
         has_typed_actions
         and result.outcome is AuditOutcome.FAILED
-        and result.error.code in {
-            "confirmation_required",
-            "authorization_required",
-        }
+        and result.error.code == "confirmation_required"
         and result.error.authorization_required
     ):
         raise ResultParseError(

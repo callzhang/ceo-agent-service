@@ -71,6 +71,12 @@ pending -> processing -> done
 `authorization_required` 错误供人工确认后重试。此门禁与证据质量评分分开，不能通过
 调低 `confidence` 或 `rule_coverage` 伪造 `needs_human` 分类。
 
+已有 typed proposal 只代表待审核的动作，不代表真实外部授权。Audit 返回
+`authorization_required` 时，解析器保留此错误，不将其误判为无效 JSON 或普通 CLI
+确认参数问题。服务认定为不可重试的授权缺失，在 Consumer 和 Audit 两条路径都落为
+`failed_terminal`；再次调度以及任务上已保存同一错误码都不能触发自动重试。
+这不会授权发送、伪造 `needs_human` 或修改历史失败；明确授权后的恢复仍须走正式入口。
+
 当前代次的最新 Attempt 指向失败 run 时，即使关联任务进入 `pending` 等待重试，History 与 Attention
 仍显示该失败，直到后续有效 run/Attempt 给出新的当前状态。没有当前代次失败 run 的 pending
 任务本身不进入 Attention；旧代次失败也不污染新代次。同一定时任务的较早 Reply task 若失败，后续 run 已派发且对应 Reply task 进入 done/skipped，则较早失败及绑定该 run 的读取错误仅保留在 History，不再作为当前 Attention；仅派发、pending 或另一个任务成功均不满足恢复条件。

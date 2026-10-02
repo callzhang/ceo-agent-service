@@ -2804,6 +2804,51 @@ def test_fourth_revision_request_is_a_terminal_technical_failure(store):
     assert latest_audit.proposal_revision == 3
 
 
+def test_missing_authorization_stops_audit_without_retry(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
+    audit = ScriptedAudit(
+        store,
+        _audit_result(
+            "failed", 0, code="authorization_required",
+            retryable=False, authorization_required=True,
+        ),
+    )
+    orchestrator = AgentOrchestrator(store=store, consumer=consumer, audit=audit)
+    result = _process(orchestrator, task)
+    assert result.status == "failed_terminal"
+    assert result.error.code == "authorization_required"
+    assert result.error.retryable is False
+    assert result.error.authorization_required is True
+    assert len(audit.calls) == 1
+    resumed = _process(orchestrator, task.model_copy(update={"error": "authorization_required"}))
+    assert resumed.status == "failed_terminal"
+    assert len(audit.calls) == 1
+
+
+def test_missing_authorization_stops_consumer_without_retry(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(
+        store, _consumer_result("failed", "authorization_required").model_copy(
+            update={"error": AgentError(
+                code="authorization_required", retryable=False, authorization_required=True
+            )}
+        )
+    )
+    audit = ScriptedAudit(store)
+    orchestrator = AgentOrchestrator(store=store, consumer=consumer, audit=audit)
+    result = _process(orchestrator, task)
+    assert result.status == "failed_terminal"
+    assert result.error.code == "authorization_required"
+    assert result.error.retryable is False
+    assert result.error.authorization_required is True
+    assert len(consumer.calls) == 1
+    resumed = _process(orchestrator, task.model_copy(update={"error": "authorization_required"}))
+    assert resumed.status == "failed_terminal"
+    assert len(consumer.calls) == 1
+    assert audit.calls == []
+
+
 def test_authorization_wait_defers_without_consuming_feedback_cycle(store):
     task = _task(store)
     consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
