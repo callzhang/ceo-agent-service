@@ -458,7 +458,7 @@ Task 6 复核记录：`128ea5b4` 完成保存的 assessment API 与事实/判断
 
 Task 7 开始前的实测基线（尚未回放）：当前生产 revision `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0`，已固定到 `/Users/derek/Projects/ceo-agent-service/.worktrees/attention-eval-baseline`；该基线 56 项 models/retrieval 测试通过，其 CI Skill 与未修改全局 version 2 文件 hash 相同。候选分支已正常合并此 origin/main revision，保留他人修复。SQLite 在线 backup 到 `/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-attention-eval-40j4skvv/baseline.sqlite3`，完整性 `ok`、大小 3,223,863,296 bytes；该不可变初态有 259 Task、16 Project、0 Attention，输入 27465 精确来源 ref 匹配、done、attempts=1，已有 Task 129–134 均 candidate/open。生产配置的路由、模型、工作目录和 MCP 连接用于两侧比较；只对评估显式使用各侧 Skill root 和副本 session scope，不打印秘密配置。此处只证明准备和只读核对，不证明候选模型效果。
 
-- [ ] **1. 建立固定版本样本，不把 Agent 正确输出写进输入。** JSON 顶层 version=1，每项 work_item、existing_context、expected 互相独立；expected 只供评估断言，不能发给 Agent。
+- [x] **1. 建立固定版本样本，不把 Agent 正确输出写进输入。** JSON 顶层 version=1，每项 work_item、existing_context、expected 互相独立；expected 只供评估断言，不能发给 Agent。
 
 | case_id | 固定输入与预期 |
 | --- | --- |
@@ -492,7 +492,9 @@ class AttentionEvaluationRunner(TaskAgentRunner):
 
 - [ ] **5. 连续回放两次验证身份，不只验卡片数。** W39 原有同一交付事项不新增重复 Task；新增官方 Project 只来源于有效登记行且复用已有同名 anchor；两张目标卡分别对应其正式项目、实际关联 Task 和准确原文依据。第二次卡 ID 不变，不重复 Task/Project，未变化不重复事件。若标题改写导致现有身份逻辑无法确认同一 Task，应使用已有 Task identity 契约修正决定或检索，不能强制同名 merge、删除旧记录或忽略额外 Task。
 - [ ] **6. 记录验收门槛。** 所有固定正例达到预期项目卡；全部负例没有误关注/伪项目/伪 Task；关联引用全部可核对；重放无重复。真实模型不达标则记录失败 case 并修正 prompt/context，再做同样比较，不能通过测试 fake 输出宣布效果完成。`docs/task-attention-phase1-validation.md` 分别写代码测试、语义评估、副本回放、上线四栏结果和准确 revision。
-- [ ] **7. 提交样本与评估工具。** `test(tasks): add multisource attention evaluation and targeted replay`。按共享规则，改变谁进入关注的语义变更通过 PR + 固定 eval 对比再合并；不要把用户批准设计说成已证明模型效果。
+- [x] **7. 提交样本与评估工具。** `test(tasks): add multisource attention evaluation and targeted replay`。按共享规则，改变谁进入关注的语义变更通过 PR + 固定 eval 对比再合并；不要把用户批准设计说成已证明模型效果。
+
+Task 7 中间读回（2026-10-02，尚未上线）：工具已支持逐条固定样本及精确生产输入副本、保留历史 run、相同卡/Task 身份及来源核验；102 项评估确定性测试通过。固定输入及初态不变，两个原精确任务计数经独立来源/交付身份复核修正为有界可接受集合（`1bf9de93`，仅 W39 3/4/5、会议 1/2），其他精确计数、零行动负例、引用和成员检查不变。baseline 原生 9 样本已完成：四个负例通过，五个正例未达到卡片/证据要求。首个资格修订及同项目新行动成员修订后，候选 W39 实际 3 Tasks/2 cards、同项目两行动实际 2 Tasks/1 card 且两者都是成员，通过相同模型/路由核验。会议候选仍因模型未明确任务业务相关性及确认新任务的项目关联而投影拒绝，不能把完成的 Task run 或旧卡说成更新成功。此处明确保留语义全样本和实际 W39 副本两次回放门槛；工具实现与 backup 准备不替代这些结果。
 
 ## Task 8：按现有流程上线、单输入生产回放和页面验收
 
