@@ -488,7 +488,7 @@ class AttentionEvaluationRunner(TaskAgentRunner):
 - [ ] **3. 基线/候选用相同样本、模型、路由、timeout、concurrency=1。** 不切换模型来解释改进。评估输出 case_id、proposal 数、入库数、项目/Task 变化、evidence 核验、重复卡、缺失/误关注、失败原因。保存 readback 而非只看 Agent 说成功。先完成纯 fake-runner 确定性回归，再运行真实 runner 的固定样本。
 - [x] **4. 把 production DB 做 SQLite backup 到唯一临时目录。** 用 `sqlite3.Connection.backup`，不复制正在写入的裸 DB 文件。完整性检查 `pragma integrity_check` 返回 ok。记录副本基线 Task/Project 数及 W39 已有 Task IDs，不提交或打印全文。对 `27465` 精确回放；若 source_ref 不等于设计固定的 W39 ref，停止并重新定位，不能按旧 ID 误跑其他输入。
 
-此步骤只完成备份和精确输入定位：完整性 ok，259 Tasks、16 Projects、0 Attention，W39 Tasks 129–134 及输入 27465 的 source_ref 已核对。实际副本回放属于步骤 5，尚未执行；此勾选不表示副本语义或幂等验收通过。
+此步骤完成备份和精确输入定位：完整性 ok，259 Tasks、16 Projects、0 Attention，W39 Tasks 129–134 及输入 27465 的 source_ref 已核对。实际副本回放属于步骤 5：首次 run 10662 因标题契约失败；修复后的 run 10663 提交成功，但中汽创智风险错误关联到旧「中汽」anchor23，业务身份验收未通过。此勾选不表示副本语义或幂等验收通过，详细证据见 validation。
 
 固定 source ref：`dingtalk-doc:a9E05BDRVQvy7QEacPZLB4anJ63zgkYA#sha256=21661643562265ca27e3369112a7ce3e91d9cbb6d21733050b5c3e7a9d42bf1e`。
 
@@ -497,6 +497,8 @@ class AttentionEvaluationRunner(TaskAgentRunner):
 - [x] **7. 提交样本与评估工具。** `test(tasks): add multisource attention evaluation and targeted replay`。按共享规则，改变谁进入关注的语义变更通过 PR + 固定 eval 对比再合并；不要把用户批准设计说成已证明模型效果。
 
 Task 7 中间读回（2026-10-02，尚未上线）：工具已支持逐条固定样本及精确生产输入副本、保留历史 run、相同卡/Task 身份及来源核验；102 项评估确定性测试通过。固定输入及初态不变，两个原精确任务计数经独立来源/交付身份复核修正为有界可接受集合（`1bf9de93`，仅 W39 3/4/5、会议 1/2），其他精确计数、零行动负例、引用和成员检查不变。baseline 原生 9 样本已完成：四个负例通过，五个正例未达到卡片/证据要求。首个资格修订及同项目新行动成员修订后，候选 W39 实际 3 Tasks/2 cards、同项目两行动实际 2 Tasks/1 card 且两者都是成员，通过相同模型/路由核验。会议候选仍因模型未明确任务业务相关性及确认新任务的项目关联而投影拒绝，不能把完成的 Task run 或旧卡说成更新成功。此处明确保留语义全样本和实际 W39 副本两次回放门槛；工具实现与 backup 准备不替代这些结果。
+
+Task 7 最新进展（2026-10-02）：完整冻结 `fc58e803` 九样本全部通过，相同 baseline 为 4/9；后续真实副本揭示并修复新建/已有更新标题契约，`b5f9bd5f` 副本实际生成三张卡，但正式项目身份未对齐，不能继承旧九样本或工具 passed=true 宣称业务通过。正在以当前权威项目定义优先、唯一同名正式项目复用修正既有登记契约；不合并前缀、简称或修改 generic anchor 身份。新增质量改进/健康指标任务的交付边界仍需原文复核。最新修订的完整固定评估、精确副本重复幂等和全部上线步骤仍未完成。
 
 ## Task 8：按现有流程上线、单输入生产回放和页面验收
 
