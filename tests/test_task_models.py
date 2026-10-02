@@ -148,7 +148,6 @@ def test_project_assessment_rejects_duplicate_task_references(change):
     {"anchor_id": None, "project_decision_index": -1},
     {"anchor_id": None, "project_decision_index": True},
     {"existing_attention_id": -1},
-    {"existing_attention_id": True},
     {"decision_indexes": [-1]},
     {"decision_indexes": [True]},
     {"task_ids": [0]},
@@ -160,6 +159,21 @@ def test_project_assessment_rejects_negative_or_boolean_references(change):
             "task_decisions": [],
             "project_assessments": [_project_assessment(**change)],
         })
+
+
+def test_project_assessment_rejects_boolean_existing_attention_id_as_type_error():
+    with pytest.raises(ValidationError) as exc_info:
+        TaskAgentDecision.model_validate({
+            "task_decisions": [],
+            "project_assessments": [_project_assessment(
+                outcome="needs_attention",
+                existing_attention_id=True,
+            )],
+        })
+
+    assert ("project_assessments", 0, "existing_attention_id") in {
+        error["loc"] for error in exc_info.value.errors()
+    }
 
 
 @pytest.mark.parametrize("outcome", ["not_needed", "insufficient_evidence"])
