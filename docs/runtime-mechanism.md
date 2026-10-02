@@ -1174,6 +1174,12 @@ path; their historical dispatch state is not fabricated.
 
 ### Runtime result failure evidence
 
+Reply-attempt queue status computes counts, the latest timestamp and failure
+detail from one narrow latest-trigger projection. It does not sort full
+message/proposal bodies or repeat the window query for the timestamp. Recovery,
+execution-generation and business-object filters remain part of that same
+projection; physical historical failures are not current queue failures.
+
 Successful multi-family email training runs use the successful `embedding-mlp`
 entry in `family_results` for description optimization. The compatibility
 `model_id` field may point at a traditional classifier and does not imply

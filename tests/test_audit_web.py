@@ -7686,6 +7686,32 @@ def test_confirmed_not_sent_legacy_follow_up_offers_no_repair_or_cancel(
     assert unchanged.revision == draft.revision
 
 
+def test_reply_attempt_queue_snapshot_reads_latest_projection_once(tmp_path: Path):
+    from app.audit_web import _reply_attempt_queue_snapshot
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-single-projection",
+        conversation_title="Queue snapshot",
+        trigger_message_id="msg-single-projection",
+        trigger_sender="System",
+        trigger_text="Current attempt",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    queries = []
+    with store._connect() as db:
+        db.set_trace_callback(queries.append)
+        snapshot = _reply_attempt_queue_snapshot(db)
+        expected_time = db.execute(
+            "select max(updated_at) from reply_attempts"
+        ).fetchone()[0]
+    assert snapshot["counts"] == {"failed": 1}
+    assert snapshot["latest_updated_at"] == expected_time
+    assert sum("row_number() over" in query.lower() for query in queries) == 1
+
+
 def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     tmp_path: Path,
 ):

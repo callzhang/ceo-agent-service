@@ -2976,7 +2976,9 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Summarize the current state of each message trigger, not retry history."""
     current_attempts = """
         with latest as (
-            select a.*, row_number() over (
+            select a.id, a.agent_run_id, a.channel, a.conversation_id,
+                   a.trigger_message_id, a.send_status, a.resolved_at,
+                   a.updated_at, a.send_error, row_number() over (
                 partition by a.channel, a.conversation_id, a.trigger_message_id
                 order by a.updated_at desc, a.id desc
             ) as ordinal
@@ -3064,6 +3066,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
             select
                 live_status as status,
                 count(*) as count,
+                max(updated_at) as latest_updated_at,
                 max(case
                     when live_status='failed'
                      and trim(coalesce(send_error, ''))<>''
@@ -3079,9 +3082,9 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
         str(row["status"] or "-"): int(row["count"] or 0)
         for row in rows
     }
-    latest_row = db.execute(
-        current_attempts + "select max(updated_at) as value from current"
-    ).fetchone()
+    latest_updated_at = max(
+        (str(row["latest_updated_at"] or "") for row in rows), default=""
+    )
     failed_row = next(
         (row for row in rows if str(row["status"] or "") == "failed"),
         None,
@@ -3096,7 +3099,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
         "processing": _queue_count_for(counts, {"processing", "sending"}),
         "failed": _queue_count_for(counts, {"failed", "error"}),
         "retryable": _queue_count_for(counts, {"retryable"}),
-        "latest_updated_at": "" if latest_row is None else str(latest_row["value"] or ""),
+        "latest_updated_at": latest_updated_at,
         "latest_error": latest_error,
     }
 
