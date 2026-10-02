@@ -28,7 +28,7 @@ The current production baseline remains `7bf7be5e`; latest W39 experiment `c8775
 
 ## Task 1: Required judgment wire model
 
-Progress: implemented in `d004921e`. Implementer RED: 16 failed / 10 passed / 59 deselected before model changes; focused GREEN: 26 passed; full model file: 85 passed, independently rerun by root (85 passed / 0.36s). Independent spec review passed; quality review is in progress. This proves only the wire/model slice, not producer integration, native business judgment or deployment.
+Progress: implemented in `d004921e`, test masking tightened in `8097b54b`. Implementer RED: 16 failed / 10 passed / 59 deselected before model changes; focused GREEN: 26 passed; full model file: 85 passed, independently rerun by root (85 passed / 0.36s). Independent spec review and quality review passed; quality reviewer verified the narrow correction. This proves only the wire/model slice, not producer integration, native business judgment or deployment.
 
 **Files:** `app/task_models.py`, `tests/test_task_models.py`, Task/Attention paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md`.
 
@@ -103,6 +103,8 @@ class TaskProjectAssessment(StrictTaskModel):
 - [ ] Document the required result shape as development-only, then commit owned files. Spec and quality reviews must both pass before Task 2.
 
 ## Task 2: Bind judgments to this run's actual decisions and Projects
+
+Execute sequentially as 2a (envelope consistency, parser correction and prompt/Skill guidance) then 2b (stored Project/Task/card provenance and applied identity resolution). Review 2a before starting the stored-domain changes. Required field fixtures outside the current 2a tests remain an explicitly incomplete integration gate, not a reason to introduce runtime defaults.
 
 **Files:** `app/task_models.py`, `app/task_agent.py`, current result producers and runtime/correction cases in `tests/test_task_agent.py`, `tests/test_task_agent_session.py` (session fixtures only), `ci/shared-skills/ceo-work-tracking/SKILL.md`, the two behavior documents.
 
