@@ -44,7 +44,7 @@
 
 开始代码前重新读取 `docs/agent-claims.md`，逐任务认领涉及文件。已有 claim 要先与 owner 协调，只改已协调的函数/段落。测试仅跑本计划列出的文件；不在运行服务的开发机执行串行全套。每次提交只暂存自己的文件或 hunks；不用 `git add -A`。当前另两份未跟踪文件不属于本计划。
 
-执行工作区：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`，分支 `codex/task-attention-multisource`。基线 `tests/test_task_models.py` + `tests/test_task_attention_projection.py`：47 passed。Task 1 已提交 `79c8c38c`；Task 2 已提交到 `9efcab15`，201 项聚焦回归通过；Task 3 已提交 `29f492f2`，553 项相关测试及 7 项 Store 测试通过。前三步均已通过独立规格与质量检查。正在执行 Task 4。未合并、未部署、未回放生产数据。
+执行工作区：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`，分支 `codex/task-attention-multisource`。基线 `tests/test_task_models.py` + `tests/test_task_attention_projection.py`：47 passed。Task 1 已提交 `79c8c38c`；Task 2 已提交到 `9efcab15`，201 项聚焦回归通过；Task 3 已提交 `29f492f2`，553 项相关测试及 7 项 Store 测试通过。Task 4 已提交到 `bdd2e524`，239 项聚焦回归通过，折叠证据保留与两项计数修正均经独立复核。前四步均已通过规格与质量检查，正在执行 Task 5。未合并、未部署、未回放生产数据。
 
 ## Task 1：明确来源引用和同轮项目选择的契约
 
@@ -213,7 +213,7 @@ if item.attention_proposal is not None:
 
 ```python
 class TaskAttentionProjectionOutcome(BaseModel):
-    task_id: int
+    task_id: int | None
     anchor_id: int | None = None
     attention_id: int | None = None
     status: Literal['applied', 'rejected', 'error']
@@ -264,7 +264,7 @@ Task 3 的六个步骤已完成：两个 JSON 字段、类型模型、只更新�
 
 **Files:** Modify `app/task_agent.py`, `app/task_attention_projection.py`, `tests/test_task_agent.py`, `tests/test_task_attention_projection.py`, `docs/architecture.md`, `docs/runtime-mechanism.md`; Test `tests/test_task_attention_multisource.py`。
 
-- [ ] **1. 添加当前来源跨章节回归。**
+- [x] **1. 添加当前来源跨章节回归。**
 
 ```python
 def test_project_watch_can_use_risk_outside_task_excerpt(tmp_path):
@@ -283,8 +283,8 @@ def test_project_watch_can_use_risk_outside_task_excerpt(tmp_path):
     assert store.get_business_task(result.task_ids[0]).stage.value == 'candidate'
 ```
 
-- [ ] **2. 跑失败测试。** `python -m pytest -q tests/test_task_attention_multisource.py::test_project_watch_can_use_risk_outside_task_excerpt`。现状是 quote 不在 Task excerpt 内而抑制，或旧 tuple 接口不匹配。
-- [ ] **3. 引文匹配原始来源，不匹配 Task 行。** 定义并测试该小函数；JSON 原文中的连续字符串可匹配解码后的文本，不能把两个不连续段落拼接成虚假引文。
+- [x] **2. 跑失败测试。** `python -m pytest -q tests/test_task_attention_multisource.py::test_project_watch_can_use_risk_outside_task_excerpt`。现状是 quote 不在 Task excerpt 内而抑制，或旧 tuple 接口不匹配。
+- [x] **3. 引文匹配原始来源，不匹配 Task 行。** 定义并测试该小函数；JSON 原文中的连续字符串可匹配解码后的文本，不能把两个不连续段落拼接成虚假引文。
 
 ```python
 def source_contains_quote(raw: str, quote: str) -> bool:
@@ -309,7 +309,7 @@ def source_contains_quote(raw: str, quote: str) -> bool:
 
 这是来源表示解析，不是业务关键词判定。当前 evidence 取本条提交的 signal，核对 source_ref；历史 evidence 按 signal_id 从 DB 取完整原始文本，核对 source_ref，再核对它已有的 Task 证据关联和本次确认项目。缺失信号、跨项目信号、伪造引用、只有未落库 session/memory 总结分别记 rejected 原因，不借用当前 signal 冒充历史来源。来源时间/链接由 signal 读取，不信任模型补日期。
 
-- [ ] **4. 组装并 upsert 项目卡。** `AppliedTaskAttention.anchor_id` 必须对应正式 Project。候选或正式 Task 都可参与，但必须 relevant、开放、已确认到同一 anchor；proposal.related_task_ids 是支持本风险的已有 Task，不是整项目全部任务。本轮相同项目的所有 attention Task + 显式 related_task_ids + 该卡仍合格的现有成员，去重后传入现有 projection；每次更新不丢掉未完成的兄弟 Task。闭合/取消/不相关成员仍由原有 recompute 移出，不自行宣布风险已解决。
+- [x] **4. 组装并 upsert 项目卡。** `AppliedTaskAttention.anchor_id` 必须对应正式 Project。候选或正式 Task 都可参与，但必须 relevant、开放、已确认到同一 anchor；proposal.related_task_ids 是支持本风险的已有 Task，不是整项目全部任务。本轮相同项目的所有 attention Task + 显式 related_task_ids + 该卡仍合格的现有成员，去重后传入现有 projection；每次更新不丢掉未完成的兄弟 Task。闭合/取消/不相关成员仍由原有 recompute 移出，不自行宣布风险已解决。
 
 ```python
 assessment_json = json.dumps({
@@ -330,13 +330,13 @@ projected = BusinessAttentionProjection(store).upsert(AttentionProposal(
 
 `evidence_signal_id` 保留当前输入 signal，保证旧投影 linkage 检查；真正支持推断的当前/历史证据集合保存在 assessment_json。不能要求所有 quotes 都来自该 primary signal。使用已有 Task 更新服务保存新证据，不凭文字相似度创建新的正式关系。
 
-- [ ] **5. `_project_task_attention` 返回回执，不再只有吞错日志。** 已有异常边界只增加结果记录，不新建重试/恢复层。引用/关联错误记 rejected；upsert 异常记 error；recompute 异常写 recompute_error。无 proposal 则 no_proposal。成功卡数等于全部有效提议时 completed；成功+失败为 partial；无成功但有失败为 failed。
+- [x] **5. `_project_task_attention` 返回回执，不再只有吞错日志。** 已有异常边界只增加结果记录，不新建重试/恢复层。引用/关联错误记 rejected；upsert 异常记 error；recompute 异常写 recompute_error。无 proposal 则 no_proposal。成功卡数等于全部有效提议时 completed；成功+失败为 partial；无成功但有失败为 failed。
 
 `process_work_item` 在原有 Task+input+run 事务写 pending 初始 receipt；提交后保存投影函数返回的最终 receipt。保留 run ID 的局部副本，不复用 `active_run_id` 的失败路径。回执保存或投影异常发生在提交之后，不能进入原有将 input 改 failed 的 precommit except 分支；把提交后处理移到该 try/except 之外。direct apply 路径沿用返回结果，不造不存在的 run。
 
 删除 Task1 消费者阶段的“multisource/project attention projection is not implemented yet”与仅单引文限制；它们不能进入发布版本。验证时必须同时读取 completed Task run 与独立投影 receipt：前者不是“已生成关注”的证据，投影失败不能倒改已提交 Task 状态。
 
-- [ ] **6. 补回归并验证。** 每个测试先观察失败再实现对应行为：
+- [x] **6. 补回归并验证。** 每个测试先观察失败再实现对应行为：
 
 | 新测试 | 核对结果 |
 | --- | --- |
@@ -351,7 +351,9 @@ projected = BusinessAttentionProjection(store).upsert(AttentionProposal(
 | `test_source_quote_does_not_join_noncontiguous_json_values` | 引文不可跨无关字段拼接 |
 
 命令 `python -m pytest -q tests/test_task_attention_multisource.py tests/test_task_attention_projection.py tests/test_task_agent.py`。测试用真实类型 WorkItem+TaskAgentDecision，不通过 monkeypatch 跳过身份/引用核验。
-- [ ] **7. 同提交更新文档。** 解释事实 vs 推断、Project 身份、投影事务边界与回执。提交 `fix(tasks): project multisource risk evidence into one project attention card`。
+- [x] **7. 同提交更新文档。** 解释事实 vs 推断、Project 身份、投影事务边界与回执。提交 `fix(tasks): project multisource risk evidence into one project attention card`。
+
+Task 4 复核记录：`2bb67cd2` 实现完整投影；`0b9eabd8` 修正相同提案折叠时遗漏第二个真实信号的问题，保留全部已核验引文并精确去重；`bdd2e524` 结构性排除重复表头、计入候选聚类确认的实际链接。新增缺陷回归均观察到对应失败，最终四文件 239 项通过，两阶段独立复核通过。无字段变化而未应用的提案仍如实 rejected，outcome.task_id 可为 null，不以假 ID 代替。生产尚未变更。
 
 ## Task 5：统一 Agent prompt、检索上下文和业务 Skill
 
