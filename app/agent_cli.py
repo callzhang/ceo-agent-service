@@ -143,6 +143,7 @@ def send_approved_dingtalk_message(
     from app.consumer_agent import structured_dingtalk_outgoing_text_key
     from app.dingtalk_models import DingTalkConversation, DingTalkMessage
     from app.dws_client import DwsClient
+    from app.external_action_identity import expected_external_action
     from app.service_message_sender import (
         ServiceMessageSender,
         agent_message_delivery_key,
@@ -293,6 +294,17 @@ def send_approved_dingtalk_message(
         raise RuntimeError(
             "dingtalk_message_delivery_" + str(verification.get("state") or "ambiguous")
         )
+    expected = expected_external_action(
+        action, business_object_key=task.business_object_key
+    )
+    store.record_agent_message_delivery(
+        agent_run_id=audit_run.id,
+        external_action_key=str(expected["external_action_key"]),
+        conversation_id=task.conversation_id,
+        trigger_message_id=task.trigger_message_id,
+        reply_text=prepared.final_body,
+        provider_result={"provider_result": provider_result, "verification": verification},
+    )
     return {
         "success": True,
         "delivery_status": "sent",
