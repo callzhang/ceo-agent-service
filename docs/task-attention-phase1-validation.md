@@ -1,6 +1,6 @@
 # 多来源项目关注第一版验收
 
-状态：开发分支实现及确定性测试已验证；baseline 9 个原生样本已完成，4 个负例通过、5 个正例失败。候选 W39 两卡、同项目两行动成员及后续专用关联修订的原生样本已通过主 Agent 复核。`dd073b25` 的两次 fresh 原生聊天重跑仍未通过：综合样本缺历史引用，并重复拆出未关联项目的新 Task；冲突样本已成功更新卡片，但仍缺历史原文。正在修正输出契约，不将此前修订的通过当作本次通过。W39 生产数据库副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
+状态：baseline 9 个原生样本为 4/9 通过；最新完整冻结候选 `233b9667` 为 8/9 通过。两条历史综合聊天、W39、会议和四个负例通过；同项目两行动因错误日期 actor 在提交前失败，实际 0 Task/Project/card，原输出还包含一个多余登记范围 Task。正在限定修订字段说明；不能将其余通过替代该失败。W39 生产数据库副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
 
 ## 四个独立门槛
 
@@ -231,3 +231,37 @@ update guard、混合来源存储及 API basis 读回均保留聚焦验证。真
 独立规格/质量复核后冻结相同输入/model 原生重跑，不将确定性测试当作语义通过或上线。
 本次指定 9 文件聚焦验证 805 项通过（32.56 秒），补充 API basis 读回后该文件 7 项通过；
 ruff、diff 检查及服务 CLI/worker/supervisor imports 通过。未执行全套测试或本次原生 turn。
+
+## 冻结契约修订的完整原生比较：8/9，尚未通过发布门槛
+
+规格复核独立 22 项通过，质量复核独立 31 项通过；主 Agent 独立模型/API 56 项通过。
+随后冻结 code `233b9667cf18eff12cf5e7222150b4d317e47a55`、CI Skill SHA256
+`828342187afbd95d2f89b2d89f5161b7a2fd615842dd6991ff43894147f59d22`，
+同一 version 1 固定输入、相同 expected、`codex_oauth` / `gpt-5.6-luna`、有效 timeout
+900/300 秒、concurrency=1，完成全部九个 fresh 原生候选 case。各调用正常完成，
+失败 case 在后续日期领域验证被拒；正常 CLI 退出不等于业务提交成功。
+
+| case | baseline 7bf7be5e | 候选 233b9667 实际结果 |
+| --- | --- | --- |
+| w39-project-risk | 未通过 | 通过：4 Task、2 卡；中汽创智成员 1，岚图成员 2/3，NPS Task 4 无 Project/Attention。 |
+| meeting-new-risk | 未通过 | 通过：2 Task、原卡更新，成员 1/2，既有正式 Project 未重建；当前事实模式。 |
+| chat-with-report-context | 未通过 | 通过：更新 Task 1、原卡 ID 1，当前和原始历史引用并列，historical_comparison；无重复 Task。 |
+| newer-conflicting-chat | 未通过 | 通过：1 Task/1 卡，双方原文和时间并列，冲突待核对，不改登记字段。 |
+| risk-label-only | 通过 | 通过：1 真实行动 Task、0 卡。 |
+| routine-progress | 通过 | 通过：1 真实行动 Task、0 卡。 |
+| unconfirmed-project | 通过 | 通过：1 Task、0 正式 Project/卡。 |
+| no-real-task | 通过 | 通过：0 Task/卡。 |
+| same-project-two-actions | 未通过 | 未通过：日期 actor 错误，0 Task/Project/卡；原输出提出了 3 个 TaskDecision，不是 3 个已提交 Task。 |
+
+失败副本 `candidate-typed-same-project-two-actions.sqlite3`，实际 native session
+`01a0fc4f-3f15-7993-8f28-0a095d8c7f3d`。完整原始输出在该库
+agent_runtime_attempts.result_envelope_json 中保留。额外 Task 使用整个项目登记行的负责范围，
+两条具体行动已覆盖该工作；该项还把登记 DDL 作为 external_deadline_at，value 为不完整日期，
+quote 为整行，actor_name 填来源类型“项目周报”，而可信 sender/name/ID 均为空。
+失败原因 `date actor_name must match the trusted date actor`；不能跳过拒绝条件或放宽计数。
+
+独立隔离复现：原输出拒绝且无提交；仅清空 actor 或移除日期会提交 3 Tasks，仍多余；
+仅保留两条明确行动得到 2 Tasks/1 Project/1 卡。说明日期错误遮住了任务粒度问题，
+只修日期不能宣称语义修复。当前字段已能表达正确输出，下一轮只限定字段旁的来源/日期
+说明，不新增自报标签或业务关键词分类；指导不能确定性证明自然语言独立交付，必须重复
+原生验证。本次四负例通过及两个多来源比较通过不代表最新修改或生产已通过。
