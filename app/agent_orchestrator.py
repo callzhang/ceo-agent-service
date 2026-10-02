@@ -730,7 +730,7 @@ class AgentOrchestrator:
                     self._retry_feedback(run, runs_by_id=runs_by_id),
                 )
         error = _run_error(run)
-        if run.status == "failed" and error.authorization_required:
+        if run.status == "failed" and error.authorization_required and error.retryable:
             if task.error == error.code:
                 feedback = self._retry_feedback(run, runs_by_id=runs_by_id)
                 return self._next_consumer_retry(
@@ -833,7 +833,7 @@ class AgentOrchestrator:
                     None,
                 )
         error = _run_error(run)
-        if run.status == "failed" and error.authorization_required:
+        if run.status == "failed" and error.authorization_required and error.retryable:
             if task.error == error.code:
                 return _NextAudit(
                     run.proposal_revision,

@@ -1534,7 +1534,7 @@ def test_audit_result_missing_proposal_revision_is_result_invalid(setup):
 
 @pytest.mark.parametrize(
     "error_code",
-    ("confirmation_required", "authorization_required"),
+    ("confirmation_required",),
 )
 def test_audit_rejects_provider_confirmation_as_a_human_decision(setup, error_code):
     store, task, audit_context, parent = setup
@@ -1582,6 +1582,39 @@ def test_audit_rejects_provider_confirmation_as_a_human_decision(setup, error_co
     error = json.loads(run.structured_error_json)
     assert error["code"] == "codex_result_invalid"
     assert error["session_continuable"] is True
+
+
+def test_audit_preserves_missing_authorization_for_reviewed_action(setup):
+    store, task, audit_context, parent = setup
+    wire = _wire_result(
+        {
+            "outcome": "failed",
+            "summary": "The trusted trigger does not authorize this destination.",
+            "proposal_revision": 0,
+            "feedback": None,
+            "external_result": None,
+            "error": {
+                "code": "authorization_required",
+                "retryable": False,
+                "authorization_required": True,
+            },
+        }
+    )
+    raw = json.dumps(
+        {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(wire)}}
+    )
+    result = AuditAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=CapturingExecutor(raw)
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+    assert result.result.outcome is AuditOutcome.FAILED
+    assert result.result.error.code == "authorization_required"
+    assert result.result.error.retryable is False
+    assert result.result.error.authorization_required is True
+    run = store.get_agent_run(result.run_id)
+    assert run.status == "failed"
+    error = json.loads(run.structured_error_json)
+    assert error["code"] == "authorization_required"
+    assert error["retryable"] is False
 
 
 def test_audited_email_executed_binds_operation_id_from_the_run(setup):
