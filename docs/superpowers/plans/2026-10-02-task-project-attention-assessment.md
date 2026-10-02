@@ -170,10 +170,10 @@ Inspection output for a current negative judgment must expose this relationship:
 
 ## Task 4: Fixed native semantic comparison and exact W39
 
-**Files:** `scripts/replay_task_attention.py`, `tests/test_replay_task_attention.py`, existing versioned fixtures, `docs/task-attention-phase1-validation.md`, this plan's progress boxes.
+**Files:** `scripts/replay_task_attention.py`, `tests/test_task_attention_multisource.py` (existing replay/oracle tests), existing versioned fixtures, `docs/task-attention-phase1-validation.md`, this plan's progress boxes.
 
 - [ ] Add independent oracle assertions for assessment coverage, cited source and negative explanation; do not inject expected outcomes into Agent input. Keep original nine case expectations and project-name competition expectations. Add meeting/chat/report assessment cases, vague-risk/no-Task/no-confirmed-Project/routine negatives, same-Project two Tasks and already-represented-card idempotence.
-- [ ] Run `python -m pytest -q tests/test_replay_task_attention.py` first RED then GREEN. Use existing eval harness, not a new runtime, provider, route, retry or concurrency policy.
+- [ ] Run `python -m pytest -q tests/test_task_attention_multisource.py` first RED then GREEN. Use existing eval harness, not a new runtime, provider, route, retry or concurrency policy.
 - [ ] Freeze commit and Skill hash. Use the existing native replay script for pinned baseline and candidate with identical model/route/timeout/concurrency. Baseline's missing field is observable baseline behavior, not silently reinterpreted by the candidate model.
 - [ ] Create a fresh SQLite copy of the verified immutable baseline; replay only input `27465` with exact source ref `dingtalk-doc:a9E05BDRVQvy7QEacPZLB4anJ63zgkYA#sha256=21661643562265ca27e3369112a7ce3e91d9cbb6d21733050b5c3e7a9d42bf1e`. Expected: original Tasks reused, source-defined 中汽创智/岚图 identities, explicit risk judgments with cited经营影响, correctly supported cards, no unrelated promotion. Inspect with the existing command below, then replay the identical input a second time and compare Task/Project/Card/event identities.
 
