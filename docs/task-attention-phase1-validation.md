@@ -1,11 +1,11 @@
 # 多来源项目关注第一版验收
 
-状态：baseline 完整九样本为 4/9 通过；最新冻结候选 `fc58e803` 完整九样本为 9/9 通过。真实 W39 数据库副本首次精确回放未通过：非跳过更新缺少 title，被提交前校验拒绝，259 Tasks / 16 Projects / 0 Attention 保持不变；原生输出也没有 Attention 提案，仍需诊断真实输入与样本的差异。重复副本回放及上线未完成。本文件不表示已发布，不用样本通过或 native 运行完成替代实际业务效果。
+状态：baseline 完整九样本为 4/9 通过；已验证完整九样本的候选版本 `fc58e803` 为 9/9，后续最新代码不能继承该结果。当前 `c87752c0` 的独立项目名称竞争样例通过，但真实 W39 新副本仍无 Attention 提案，业务验收失败。重复副本回放及上线未完成。本文件不表示已发布，不用样本通过或 native 运行完成替代实际业务效果。
 
-最新进展：标题契约及空白边界已通过独立规格/质量复核。冻结 `b5f9bd5f` 真实副本
-run 10663 成功提交 8 个决定、3 张卡；但业务身份验收失败，中汽创智风险被挂在旧
-Project「中汽」anchor 23，不能因 receipt completed 或工具 passed 就说 W39 通过。
-另新增两 Task 的独立交付边界正在复核，未重复回放或发布。
+最新进展：标题和 Project 身份修复均经独立复核；`c87752c0` 新副本实际更新六个原 Task，
+无新增 Task，正式 Project 中汽创智和岚图登记正确；但 proposal_count=0，receipt=no_proposal，
+没有卡片。当前输出不能区分已评估后不关注与漏评，也没有给出这两项风险不关注的理由。
+不得将工具 input 模式 passed=true 或领域提交完成当作真实业务通过。详见末尾本轮结果。
 
 ## 四个独立门槛
 
@@ -446,3 +446,31 @@ completed，无纠正或模型切换。实际 Task 1 保持 candidate/open 且�
 receipt completed、1 proposal/1 applied；风险原句、来源与 source_time 核验通过，
 无重复卡、failures=[]。这是同一新增样例 baseline FAIL / candidate PASS，
 不是最新九样例或真实 W39 已通过。候选证明保存在 `candidate-project-identity.sqlite3`。
+
+## Project 身份修复后的真实 W39：无重复任务，但关注仍遗漏
+
+冻结 `c87752c0bfe2a7aa75235c607baeebe6f31fcb19`、CI Skill
+`2b557b4754c39c688bc0533f04e152157b70fcc519bb4647f12bdbe330bb8d70`。
+在新副本 `w39-project-identity-candidate.sqlite3` 精确回放 input27465，run10662、
+native attempt18952 normal completed，codex_oauth/gpt-5.6-luna，无纠正或模型切换。
+这里的 run/attempt 数字属于这一新副本，不与另一副本中的历史失败互相覆盖。
+
+Task 数保持259，原129–134更新；129为formal/open，其余五项仍candidate/open；
+没有新Task260/261，本轮不能据旧副本新增标题就断定新版本仍扩展ISO行动范围。
+Project16→20：中汽创智anchor35、岚图anchor36、项目管理anchor37、抽检包生命周期
+anchor38来自当前登记；旧「中汽」anchor23原样保留，当前Task129关联完整项目名称。
+领域事件434→444。六条决定的attention_proposal全部null，proposal_count=0，
+receipt=no_proposal、project_link_count=4、registry_row_count=5，卡片仍0。
+工具input模式没有业务expected，因此其passed=true仅证明运行和出处等机械检查，
+不覆盖要求中汽创智及岚图目标关注卡的业务验收；本轮业务结果明确FAIL。
+
+已亲读当前完整周报和最终决定：原文保留已交付收入确认延迟、回款与供应商付款
+节奏、岚图存量结算争议及暂停增量业务。最终update_summary说明未将一般风险另拆
+为独立任务，但未说明为何已关联真实Task和正式Project的两项具体风险不提出关注。
+代码收到零proposal后没有投影可应用；不属于页面过滤或投影拒绝。
+当前可观测性只能判定未提出，不能证明Agent已评估并拒绝，也不能精确证明内部漏评原因。
+在用户确认新的判断输出契约前不增Agent、补偿循环、硬编码风险或业务审核层。
+
+当前代码的主Agent相关十个Python文件410passed（121.79s）、两页面22passed，
+TypeScript/Vite build与app.cli/worker/email_worker/service_supervisor imports通过。
+这些局部验证不替代最新完整九样例、真实副本重复幂等或生产结果。
