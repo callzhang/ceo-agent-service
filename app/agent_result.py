@@ -68,6 +68,10 @@ class ResultParseError(ValueError):
     pass
 
 
+class ResultSyntaxError(ResultParseError):
+    pass
+
+
 ResultModelT = TypeVar("ResultModelT", bound=BaseModel)
 
 
@@ -77,6 +81,7 @@ def parse_typed_agent_result(
 ) -> ResultModelT:
     payloads = _primary_turn_payloads(_parse_jsonl_payloads(raw))
     schema_error: ValidationError | None = None
+    syntax_error: ResultSyntaxError | ValidationError | None = None
     for payload in reversed(payloads):
         candidate = _agent_message_candidate(payload)
         if candidate is None:
@@ -84,6 +89,10 @@ def parse_typed_agent_result(
         try:
             normalized = _normalize_result_text(candidate)
             return model_type.model_validate_json(normalized)
+        except ResultSyntaxError as exc:
+            if syntax_error is None:
+                syntax_error = exc
+            continue
         except ResultParseError:
             continue
         except ValidationError as exc:
@@ -94,11 +103,15 @@ def parse_typed_agent_result(
             # claiming that no result was returned at all.
             if schema_error is None and not _is_json_syntax_error(exc):
                 schema_error = exc
+            if syntax_error is None and _is_json_syntax_error(exc):
+                syntax_error = exc
             continue
     if schema_error is not None:
         raise ResultParseError(
             "typed result JSON failed schema validation"
         ) from schema_error
+    if syntax_error is not None:
+        raise ResultParseError("typed result contains invalid JSON") from syntax_error
     raise ResultParseError("no valid typed result JSON found in Codex JSONL")
 
 
@@ -328,4 +341,4 @@ def _first_balanced_json_object(text: str) -> str:
             depth -= 1
             if depth == 0:
                 return text[start : index + 1]
-    raise ResultParseError("agent message contains an unbalanced JSON object")
+    raise ResultSyntaxError("agent message contains an unbalanced JSON object")

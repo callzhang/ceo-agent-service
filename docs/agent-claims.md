@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-ceo-result-syntax-20261002: app/agent_result.py, tests/test_agent_contracts.py, docs/runtime-mechanism.md; preserve unbalanced JSON as invalid, no result repair or effect policy change; 138 focused tests passed. -->
+
 Several agents (Claude Code sessions and Codex) edit this working tree at the
 same time. This file is the shared claim board: it exists so that two agents
 do not rewrite the same file from different assumptions, and so that nobody
