@@ -44,7 +44,7 @@
 
 开始代码前重新读取 `docs/agent-claims.md`，逐任务认领涉及文件。已有 claim 要先与 owner 协调，只改已协调的函数/段落。测试仅跑本计划列出的文件；不在运行服务的开发机执行串行全套。每次提交只暂存自己的文件或 hunks；不用 `git add -A`。当前另两份未跟踪文件不属于本计划。
 
-执行工作区：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`，分支 `codex/task-attention-multisource`。基线 `tests/test_task_models.py` + `tests/test_task_attention_projection.py`：47 passed。Task 1 已提交 `79c8c38c`；Task 2 已提交到 `9efcab15`，201 项聚焦回归通过；Task 3 已提交 `29f492f2`，553 项相关测试及 7 项 Store 测试通过。Task 4 已提交到 `bdd2e524`，239 项聚焦回归通过，折叠证据保留与两项计数修正均经独立复核。Task 5 已提交到 `00527ba7`，140 项 Agent/检索/会话测试通过，规格与质量复核通过。前五步已完成，正在执行 Task 6。未合并、未部署、未回放生产数据，全局 Skill 仍为原版本。
+执行工作区：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`，分支 `codex/task-attention-multisource`。基线 `tests/test_task_models.py` + `tests/test_task_attention_projection.py`：47 passed。Task 1 已提交 `79c8c38c`；Task 2 已提交到 `9efcab15`，201 项聚焦回归通过；Task 3 已提交 `29f492f2`，553 项相关测试及 7 项 Store 测试通过。Task 4 已提交到 `bdd2e524`，239 项聚焦回归通过，折叠证据保留与两项计数修正均经独立复核。Task 5 已提交到 `00527ba7`，140 项 Agent/检索/会话测试通过，规格与质量复核通过。Task 6 已提交到 `f92d0a92`，7 项 API、22 项页面测试与构建通过，独立复核及模拟浏览器亲验通过。前六步已完成，正在执行 Task 7。未合并、未部署、未回放生产数据，全局 Skill 仍为原版本。
 
 ## Task 1：明确来源引用和同轮项目选择的契约
 
