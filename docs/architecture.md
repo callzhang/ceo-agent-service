@@ -832,6 +832,11 @@ null anchor 仅取同一 decision 实际注册的 Project anchor，明确的正�
 投影使用 `project:{canonical_anchor_id}` 稳定身份，每个正式 Project 保留一张卡。
 当前引文的 null signal ID 只解析为该 `AppliedTaskAttention` 的实际信号；历史正整数 ID
 只读取对应持久化原始信号，核对 source_ref、精确连续引文和合格支持 Task 的证据链接。
+Agent 若依赖与既有事实的比较、延续、升级或冲突形成评估，须在 evidence 中同时引用当前来源
+及实际相关的持久化原始 Signals（真实正 ID、匹配 source_ref、逐字原文）；当前聊天对旧报告的
+转述只是当前陈述，不能替代原报告引用。只选实际用于判断的来源，不要求某类来源或全量引用
+检索结果；首次仅依据当前事实的评估仍允许。原始历史不可用时标明比较不确定，不编造历史
+引文或以 session/memory 充当原始来源。这是 Agent 归因契约，不增加检索或领域投影规则。
 引文可来自完整当前来源或 JSON 解码后的某个字符串叶子，不要求包含在 Task 行动摘录中，
 也不能拼接不同 JSON 字段。session/memory 的 cited-only provenance 不充当已观察原始来源。
 任一引文或关联无效就拒绝整项提案。`assessment_json` 按键排序保存 material_trigger、

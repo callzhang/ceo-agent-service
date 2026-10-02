@@ -126,6 +126,13 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    from Task action and Project registration excerpts. Current evidence uses
    null `signal_id` and the current `source_ref`; historical evidence requires
    a real positive persisted Signal ID, matching reference, and exact quote.
+   When an assessment relies on comparison, continuity, escalation, or conflict with earlier stored facts,
+   cite the relevant persisted original Signals alongside the current source in `evidence`, using
+   positive actual signal IDs, matching source_refs, and exact original quotes. A current source's
+   reference to an earlier report is a current claim, not a citation of that original report.
+   Do not cite all retrieved sources or require any particular source type. A first assessment
+   based only on current facts remains allowed. If the original history is unavailable, mark
+   the comparison uncertain; never invent historical evidence or substitute session/Memory provenance.
    Attention cannot use cited-only session/Memory provenance as observed truth.
    Use a real existing anchor, or null only with this same decision's new
    Project proposal. Return at most one unique assessment/card per Project per round.

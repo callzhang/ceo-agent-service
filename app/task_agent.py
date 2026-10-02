@@ -687,6 +687,13 @@ source or historical persisted original Signals, separately from Task action
 source_excerpt and ProjectProposal.source_excerpt registration evidence.
 For current evidence use null signal_id and the current source_ref; historical evidence
 requires a real positive persisted signal_id, matching source_ref, and an exact quote.
+When an assessment relies on comparison, continuity, escalation, or conflict with earlier stored facts,
+cite the relevant persisted original Signals alongside the current source in `evidence`, using
+positive actual signal IDs, matching source_refs, and exact original quotes. A current source's
+reference to an earlier report is a current claim, not a citation of that original report.
+Do not cite all retrieved sources or require any particular source type. A first assessment
+based only on current facts remains allowed. If the original history is unavailable, mark
+the comparison uncertain; never invent historical evidence or substitute session/Memory provenance.
 Session/memory cited-only provenance cannot support Attention; use stored observed
 original Signals. Labels, relevance, routine progress, and date proximity alone
 do not explain material impact. Return at most one unique assessment/card per Project per round.

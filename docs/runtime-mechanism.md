@@ -261,6 +261,11 @@ Attention 应用结果使用冻结的 `AppliedTaskAttention(decision, task_id, s
 投影支持新注册 Project、完整当前来源中的风险引文、历史持久化原始信号与显式相关 Task，
 统一按 `project:{canonical_anchor_id}` 复用卡片身份，不按 Task/trigger 新建卡。
 当前 null signal ID 只解析为该 AppliedTaskAttention.signal_id；历史正整数 ID 精确读取持久化信号。
+Agent 若以既有事实的比较、延续、升级或冲突形成评估，应同时引用当前来源和实际相关的
+持久化原始 Signals，使用真实正 ID、匹配 source_ref 和逐字原文；当前来源提到旧报告不等于
+引用原报告。不全量引用检索结果，也不强制特定来源类型；首次仅依据当前事实仍允许。
+历史原始来源不可用时标明比较不确定，不编造历史或替代为 session/memory provenance。
+此为 Agent 的选择性证据归因契约，不新增检索、领域投影或服务判断规则。
 每条引文核对 source_ref、原始文本中的连续子串或 JSON 解码后的单个字符串叶子，禁止拼接叶子；
 无需包含在 Task 行动摘录中。历史信号必须链接到本次支持的 relevant/open/waiting Task，且该 Task
 确认关联同一正式 Project 的活动规范 anchor。session_provenance/memory_provenance 是 cited-only，

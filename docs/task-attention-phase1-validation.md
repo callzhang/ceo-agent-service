@@ -1,13 +1,13 @@
 # 多来源项目关注第一版验收
 
-状态：开发分支实现及确定性测试已验证；baseline 9 个原生样本已完成，4 个负例通过、5 个正例失败。候选 W39 两卡及同项目两行动成员已验证，会议新 Task 暴露已有 Project 关联确认缺口；新增专用关联契约的原生效果待 fresh rerun。W39 生产数据库副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
+状态：开发分支实现及确定性测试已验证；baseline 9 个原生样本已完成，4 个负例通过、5 个正例失败。候选 W39 两卡、同项目两行动成员及后续专用关联修订的原生样本已通过主 Agent 复核。当前聊天综合样本仍遗漏已实际交付的原始历史报告引用，新增选择性比较归因文字的原生效果待 fresh rerun；不将此前修订的通过当作本次通过。W39 生产数据库副本两次回放及上线均尚未验证。本文件不表示已发布，不用 fake runner 结果证明模型判断有效。
 
 ## 四个独立门槛
 
 | 门槛 | 当前证据 | 仍需完成 |
 | --- | --- | --- |
 | 代码测试 | Tasks 1–6 已独立复核。Task 6 的 `128ea5b4` / `f92d0a92`：7 项 API、22 项页面测试与构建通过；主 Agent 检查模拟列表及 decision/watch 详情，桌面及 390×844 窄屏亮/暗色可读。Task 7 的固定输入、精确回放、旧 run 保留、幂等卡片/事件、落库依据与 expected 隔离回归先 RED 后 GREEN。 | 合并前重跑本次有关文件；模拟页面及 fake runner 不证明真实业务效果。 |
-| 语义评估 | 固定 version 1 的 9 个 case；expected 与输入分开。baseline `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0` 的 9 样本完成，4 负例通过、5 正例失败。原候选 `4f0e06e5` W39 零卡；后续 `1ed0f3f2` W39 3 Tasks/2 卡、同项目两行动 2 Tasks/1 卡且两成员均通过。会议新风险实际出现新 Task 未确认 Project 关联，投影失败。 | 同 `codex_oauth`/`gpt-5.6-luna`、timeout、初始事实、concurrency=1，针对新增关联契约 fresh copy 重跑，并完成候选全 9 样本比较；不能用后续修订前的部分通过替代最新版本验证。 |
+| 语义评估 | 固定 version 1 的 9 个 case；expected 与输入分开。baseline `7bf7be5e6dcdb181b0674e79ace17a598dcf87e0` 的 9 样本完成，4 负例通过、5 正例失败。原候选 `4f0e06e5` W39 零卡；后续 `1ed0f3f2` W39 3 Tasks/2 卡、同项目两行动 2 Tasks/1 卡且两成员均通过。后续专用关联修订的实际原生样本已通过；聊天综合样本投影有效，但缺少实际交付的历史报告引用。 | 保持同 `codex_oauth`/`gpt-5.6-luna`、timeout、初始事实、concurrency=1，对本次比较归因文字 fresh copy 重跑并完成候选全 9 样本比较；不能用此前修订的部分通过替代最新版本验证。 |
 | W39 数据库副本 | 主 Agent 用 SQLite backup 创建唯一完整性验证副本，`integrity_check=ok`，3,223,863,296 bytes；259 Tasks、16 Projects、0 Attention。精确输入 27465 已核对 source_ref，状态 done、attempts=1。原有 W39 Tasks 129–134；中汽 anchor 23 不代表中汽创智别名。 | 从这份不可变初态另建候选副本，回放两次；比较真实 Task/Project/card IDs、关联、依据及事件。不得为落卡编造字段变化、强行合并简称或忽略额外 Task。副本尚未回放。 |
 | 上线 | 全局权威 Skill 仍为 version 2，SHA256 `5c2bcbee182ed0872a55f35193c8815a51dd3e0ba0ca92b8e1eaa55e20cc1992`；候选使用隔离 `ci/shared-skills` version 3。 | PR + 固定 eval 对比通过后按既有部署流程发布、读回运行健康及队列、发布权威 Skill、单输入生产回放及真实页面核对。尚未上线。 |
 
@@ -159,3 +159,27 @@ Attention 目标不符被模型拒绝。未确认既有 Task 的真实字段更�
 跳过且保持 rejected 回执，旧 uncertain 匹配不确认。相关 305 项通过，ruff 及服务 imports
 通过。此处是确定性契约验证；新增契约后的原生会议/聊天、全部候选 9 样本、W39
 生产副本两次回放及上线仍待主 Agent 的独立复核、fresh 原生比较和发布验收。
+
+## 已交付历史事实的比较归因遗漏
+
+后续专用关联修订的实际原生样本已由主 Agent 复核通过；上述缺口记录保留为此前失败事实，
+不再代表该修订的当前状态。本轮是新的证据归因原因，不是重复关联假设。
+只读核对 `candidate-verified-chat-with-report-context.sqlite3` run 1：completed，复用并更新
+既有卡，当前证据引用有效，但 evidence 只有当前聊天，评估报 missing_evidence_source 与
+missing_required_source。update_summary 明确比较已有风险并升级，why_attention 使用再次/仍未
+解决等延续判断；这些判断没有同时引用原始历史报告。
+
+实际 Codex transcript
+`/Users/derek/.codex/sessions/2026/10/02/rollout-2026-10-02T03-26-09-01a0fc26-622a-7481-8ace-103ebae9e6a7.jsonl`
+中交付的 Current semantic Task context.source_signals 已含真实 Signal 1，来源
+project_weekly_report、ref `eval:historical-report`、source_time `2026-09-24T12:00:00Z`，
+原文记录验收延迟两周及回款推迟导致供应商付款协调；与数据库该 Signal 原文一致。
+因此是已有上下文的输出归因遗漏，未据此改变检索、领域投影、路由/model 或评估 expected。
+
+prompt 和隔离 CI Skill 同步明确：比较、延续、升级或冲突判断要选择实际用于判断的原始
+历史 Signals，与当前证据一并引用，保留真实正 ID、source_ref 与逐字原文。当前来源对旧报告
+的转述不能代替原报告引用；不要求周报、不全量引用检索结果，首次仅凭当前事实仍可评估。
+原历史不可用则比较标明不确定，不编造引文或使用 session/memory 作为原始证明。
+通用 prompt/Skill 断言及 fresh Skill 交付断言先 RED（3 项缺少此规则）后 GREEN；
+Task Agent、混合来源投影、检索和 session 的聚焦回归共 268 项通过，ruff 及 diff 检查通过。
+文字修订的真实模型效果仍待主 Agent 用同固定输入/model 的 fresh copy 原生重跑。

@@ -665,6 +665,23 @@ def test_task_agent_prompt_requires_report_owner_rows_and_project_proposals():
 
 
 @pytest.mark.parametrize("surface", ["prompt", "skill"])
+def test_task_agent_comparison_assessments_cite_selective_original_history(monkeypatch, surface):
+    import app.task_agent as task_agent
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    text = (build_task_agent_prompt(_work_item(), "候选上下文为空。") if surface == "prompt"
+        else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8"))
+    text = " ".join(text.split())
+    assert "When an assessment relies on comparison, continuity, escalation, or conflict with earlier stored facts" in text
+    assert "cite the relevant persisted original Signals alongside the current source in `evidence`" in text
+    assert "positive actual signal IDs, matching source_refs, and exact original quotes" in text
+    assert "A current source's reference to an earlier report is a current claim, not a citation of that original report" in text
+    assert "Do not cite all retrieved sources or require any particular source type" in text
+    assert "A first assessment based only on current facts remains allowed" in text
+    assert "If the original history is unavailable, mark the comparison uncertain" in text
+
+
+@pytest.mark.parametrize("surface", ["prompt", "skill"])
 def test_task_agent_existing_project_link_contract_is_distinct_from_registration(monkeypatch, surface):
     import app.task_agent as task_agent
 
@@ -776,6 +793,10 @@ def test_fresh_task_agent_loads_initial_risk_rules_from_selected_skill_root(monk
     assert "Project registration scope, objectives, and categories are not separate Tasks" in skill_text
     assert "repeat the identical `attention_proposal` on each supporting TaskDecision" in skill_text
     assert "Attention.anchor_id selects the Project assessment" in skill_text
+    assert "cite the relevant persisted original Signals alongside the current source in `evidence`" in skill_text
+    assert "A current source's reference to an earlier report is a current claim" in skill_text
+    assert "A first assessment based only on current facts remains allowed" in skill_text
+    assert "If the original history is unavailable, mark the comparison uncertain" in skill_text
 
 
 def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(monkeypatch):
