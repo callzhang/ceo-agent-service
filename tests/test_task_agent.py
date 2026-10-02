@@ -1946,6 +1946,29 @@ def test_missing_new_task_title_uses_existing_same_session_repair():
     assert decision == TaskAgentDecision.model_validate(valid)
 
 
+def test_process_work_item_commits_titleless_update_and_new_candidate_batch(tmp_path):
+    store = AutoReplyStore(tmp_path / "title-batch.sqlite3")
+    seed = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="提交报价", signal=SourceSignal(source_type="seed", source_ref="seed:batch",
+            evidence_text="提交报价", dedupe_key="seed:batch")))
+    item = _work_item().model_copy(update={"summary": "报价等待客户回复；另需准备独立演示。"})
+    input_id = store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
+    work_input, = store.claim_work_summary_inputs(limit=1)
+    decision = {"task_decisions": [
+        {"action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+         "source_ref": item.source.ref, "source_excerpt": item.summary, "status": "waiting"},
+        {"action": "record_candidate", "transition": "none", "title": "准备独立演示",
+         "source_ref": item.source.ref, "source_excerpt": "另需准备独立演示"},
+    ]}
+    process_work_item(store, TaskAgentRunner(FakeCodex(decision)), work_input)
+    old = store.get_business_task(seed.task_id)
+    assert (old.title, old.status.value) == ("提交报价", "waiting")
+    assert {task.title for task in store.list_business_tasks()} == {"提交报价", "准备独立演示"}
+    with store._connect() as db:
+        assert db.execute("select status from work_summary_inputs where id=?", (input_id,)).fetchone()[0] == "done"
+        assert db.execute("select status from task_agent_runs where summary_input_id=?", (input_id,)).fetchone()[0] == "completed"
+
+
 def test_update_task_decision_applies_evidence_backed_description_change(tmp_path):
     store = AutoReplyStore(tmp_path / "description-update.sqlite3")
     task = TaskSemanticService(store).record_candidate(RecordCandidate(
@@ -2039,7 +2062,8 @@ def test_recurring_same_title_tasks_cannot_be_identity_merged(tmp_path):
     assert store.get_business_task(second.task_id).status.value != "merged"
 
 
-def test_same_external_task_id_can_support_identity_merge_and_recompute_both_tasks(tmp_path, monkeypatch):
+@pytest.mark.parametrize("omit_title", [False, True])
+def test_same_external_task_id_can_support_identity_merge_and_recompute_both_tasks(tmp_path, monkeypatch, omit_title):
     from app.task_agent import BusinessAttentionProjection
 
     store = AutoReplyStore(tmp_path / "external-id-merge.sqlite3")
@@ -2056,6 +2080,10 @@ def test_same_external_task_id_can_support_identity_merge_and_recompute_both_tas
                 "source_signal_id": first.signal_id, "target_signal_id": second.signal_id}},
     }]})
 
+    if omit_title:
+        payload = decision.model_dump(mode="json")
+        del payload["task_decisions"][0]["title"]
+        decision = TaskAgentDecision.model_validate(payload)
     recomputed = []
     original_recompute = BusinessAttentionProjection.recompute_for_tasks
 
@@ -2072,6 +2100,8 @@ def test_same_external_task_id_can_support_identity_merge_and_recompute_both_tas
     assert recomputed == [(second.task_id, first.task_id)]
     assert store.get_business_task(first.task_id).status.value == "merged"
     assert store.get_business_task(second.task_id).status.value != "merged"
+    assert store.get_business_task(first.task_id).title == "提交周报"
+    assert store.get_business_task(second.task_id).title == "提交周报"
 
 
 def test_batch_rolls_back_task_signal_and_all_proposals_on_later_invalid_evidence(tmp_path):
@@ -2737,7 +2767,8 @@ def _assigned_formal_task_for_acceptance(store):
     ))
 
 
-def test_exact_owner_reply_accepts_only_cited_assignment_and_records_committed_date(tmp_path):
+@pytest.mark.parametrize("omit_title", [False, True])
+def test_exact_owner_reply_accepts_only_cited_assignment_and_records_committed_date(tmp_path, omit_title):
     store = AutoReplyStore(tmp_path / "linked-acceptance.sqlite3")
     assigned = _assigned_formal_task_for_acceptance(store)
     item = _work_item(
@@ -2753,12 +2784,17 @@ def test_exact_owner_reply_accepts_only_cited_assignment_and_records_committed_d
             "actor_user_id": "alex-id", "actor_name": "Alex"}],
     }]})
 
+    if omit_title:
+        payload = decision.model_dump(mode="json")
+        del payload["task_decisions"][0]["title"]
+        decision = TaskAgentDecision.model_validate(payload)
     result = apply_task_agent_decision(
         store, summary_input_id=1, work_item=item, decision=decision, record_run=False
     )
 
     assert result.task_ids == (assigned.task_id,)
     task = store.get_business_task(assigned.task_id)
+    assert task.title == "报价方案"
     assert task.commitment_status.value == "accepted"
     (fact,) = store.list_business_task_date_evidence(assigned.task_id)
     assert (fact.date_type.value, fact.value_at, fact.raw_phrase) == (

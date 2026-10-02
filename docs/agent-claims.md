@@ -26,7 +26,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-task-title-contract | Isolated task-attention-multisource: app/task_models.py (title shape), app/task_agent.py (title/formality only), tests/test_task_agent.py (title regressions), ci/shared-skills/ceo-work-tracking/SKILL.md (title sentence), docs/architecture.md and docs/runtime-mechanism.md (title contract) | Root core owner authorized narrow subclaim: new Task title required in shape; existing-ID updates preserve stored title. No Attention or live changes. | 2026-10-02 |
 
 
 
