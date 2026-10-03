@@ -2,7 +2,11 @@
 
 状态（2026-10-03）：最新冻结候选 `1732455c` 已正常结束，20次Task Agent回放机械18通过/2失败，按19个独立案例17通过/2失败，不能发布。此前47和421批次均已结束，失败原始记录保留；各版本结果不得继承。真实W39最新版副本重复回放、全局Skill发布、合并部署和上线读回均未完成。
 
+当前源码进展：Derek已明确同意新证据可独立更新已有、已确认Task/正式Project的关注，不必制造Task字段变化。修订`3388c404`通过独立规格复审：首次字段更新后的同来源重放复用原Signal，不新增Signal、Task证据或Task/Attention事件；无效历史引文在新证据写入前拒绝；重复relevant值携带有效关注提案不改变Task事件。原有登记测试的断言保留。主Agent独立11文件矩阵1025 passed（57.15秒），CLI22 passed/254 deselected（2.06秒），Ruff、四个运行模块导入及diff检查通过。质量审阅仍在进行；下文f650失败及173原生失败是保留的历史证据，不代表新修订已原生或上线通过。
+
 ## 最新冻结候选1732455c最终读回
+
+3388质量审阅另以真实两次apply_task_agent_decision复现来源身份缺口：先前memory/session引用可在同原始source_ref下建立provenance Signal；真实Work Item后来到达时，证据独立更新分支仅按ref选择最新Signal，误把cited来源当作observed来源，随后完整payload核验正确拒绝但也阻止有效新关注。该源码门槛FAIL，1025绿色测试不覆盖这项原文后来到达的控制；须以当前实际source_type和ref共同选择可复用原始Signal，保持旧provenance和真正原文重放的严格payload核验。正在补RED/GREEN回归，不启动新冻结原生批次。
 
 2026-10-03后续源码修订（尚未原生验证）：实际native输入含正文和CI Skill的历史比较选择指令，但Pydantic输出schema的两处assessment_basis描述只定义两类判断，没有同步“当前明确比较历史且原始Signals已交付时必须核对原文”的选择要求。主Agent为两处描述写一致性回归，观察2例RED后仅同步字段说明；test_task_models.py120 passed，Ruff/diff通过。领域/结构validator、fixture/oracle、模型、检索和原始失败未改变。此证据证明指令一致性，不证明模型稳定性已修复；新冻结原生回放仍是验收门槛。
 

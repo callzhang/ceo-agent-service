@@ -26,13 +26,14 @@ First synthetic W39 case passed with two correctly supported Project cards and t
 
 Derek explicitly agreed that new evidence may update Attention on an existing confirmed Task/official Project without changing Task fields. This supersedes the original coupling, not the Task no-field-change guard itself.
 
-- [ ] TDD: reproduce the native no-field-change failure with a real stored Task/confirmed Project and current source; expect applied card/receipt with unchanged Task fields/events/lifecycle.
-- [ ] Implement the existing transaction/proposal/projection path for evidence-only processing. Persist actual source provenance; do not fabricate Task changes, register Projects, create/confirm new links, or trigger follow-up/TODO side effects in this path.
-- [ ] Verify same-evidence repeated processing does not duplicate source/card/member/events; unknown/unconfirmed Project, invalid evidence, and plain no-op without proposal retain original behavior.
+- [x] TDD: reproduce the native no-field-change failure with a real stored Task/confirmed Project and current source; expect applied card/receipt with unchanged Task fields/events/lifecycle.
+- [x] Implement the existing transaction/proposal/projection path for evidence-only processing. Persist actual source provenance; do not fabricate Task changes, register Projects, create/confirm new links, or trigger follow-up/TODO side effects in this path.
+- [x] Verify same-evidence repeated processing does not duplicate source/card/member/events; unknown/unconfirmed Project, invalid evidence, and plain no-op without proposal retain original behavior.
 - [ ] Synchronize primary prompt, CI Skill and behavior documents; independent spec review then quality review.
 - [ ] Freeze a new candidate and rerun unchanged native cases, followed by exact real-data and release gates. Historical citation omission remains a separate unresolved issue; do not weaken its oracle or alter model settings.
 
 Approved design: `docs/superpowers/specs/2026-10-02-task-project-attention-assessment-design.md`.
+Source progress: repair `3388c404` passed an independent specification re-review with actual Store probes. Root independently reran eleven related backend files: 1,025 passed / 57.15s; CLI process-work-items: 22 passed / 254 deselected / 2.06s; Ruff, four runtime imports and diff checks passed. The original source-registration regression assertions remain unchanged. Code quality review is pending, as are combined native, real-data and production gates. Schema-guidance revision `d6a9b074` passed one unchanged native historical-comparison case; that targeted result does not establish full or stable acceptance.
 Work only in `/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`.
 One core writer at a time, with spec review followed by quality review between tasks.
 Parent claims authorize narrow child claims; read the shared claim board before each edit.
