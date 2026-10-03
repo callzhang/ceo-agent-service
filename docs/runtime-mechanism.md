@@ -392,6 +392,7 @@ provenance 替代且链接到成员；assessment 必须精确引用该卡片保�
 保留旧卡时，Agent 从检索上下文 `current_project_attention` 的对应条目读取并解析 `assessment_json`，至少引用 `assessment_json.evidence` 中一项，保持其 signal_id、source_ref 和 source_excerpt 不变。本轮重述可以另外引用，不能代替该卡已保存的原始证明。
 旧卡证明仍按原规则核验，真实旧证明可以与当前提案并存。新来源的 Project 风险证据即使不改变 Task 业务字段，也可在真实既有 Task 与正式 Project 的活动 confirmed 链接上提交 Attention proposal；同一 Task Agent 领域事务只保存当前来源 Signal、Task 证据链接和实际应用映射，随后走原有卡片投影与回执。Task 字段/事件、原 Project 链接、follow-up 和 TODO outbox 不因这项证据改变；相同 Task/来源复用 Signal。没有 proposal 的普通无字段变化 update 仍跳过；未知或未确认 Project、新链接、无效来源不能靠此路径生成卡片。
 同项目风险的多个支持 Task 复制同一份项目级提案，`current_state` 只保留共享风险事实，不追加各 Task 行动摘要。
+证据独立更新只按实际来源类型与source_ref选择可复用的observed Signal，并严格核对完整来源载荷；同ref的memory/session provenance保持独立，不代替原文，也不阻止原文后来进入。复用已关联原文不增加其他证据角色。
 不同 Task 的行动留在其 description/update_summary；prompt/Skill/字段说明对此一致，领域的同提案折叠与矛盾拒绝保持不变。
 历史 citation 和卡片 proof 的成员关系按 `(task_id, signal_id)` 做有界存在性查询，不逐条读取完整 Task evidence 历史。当前 Work Item 引文单独核验；变化后的当前措辞可以与实际旧卡片证明组成历史比较，不要求新旧措辞相同，也不增加业务意义/重大性分类器。真正成功应用的
 决定才记录实际 decision position→Task ID/Signal ID/Project anchor；anchor 必须来自本轮成功 Project 应用或 actual Task 的活动 confirmed link；

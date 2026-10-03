@@ -6,6 +6,8 @@
 
 ## 最新冻结候选1732455c最终读回
 
+最终源码修订d9520ce3为Attention调用提供实际来源类型+ref的原文选择，普通owner调用维持既有行为。新增真实producer控制先RED后GREEN；独立规格和质量复审PASS，质量审阅另验证原文先到、更新的记忆引用后到，重放仍选择原文且Signal/evidence/Task事件/Attention事件全不变。主Agent最新11文件1026 passed（43.12秒）、CLI22 passed/254 deselected（2.28秒）、Ruff/四imports/diff通过。行为文档同步原文与provenance的选择规则，随后重新冻结全19案例/20回放；这不是native、真实W39或生产通过。
+
 3388质量审阅另以真实两次apply_task_agent_decision复现来源身份缺口：先前memory/session引用可在同原始source_ref下建立provenance Signal；真实Work Item后来到达时，证据独立更新分支仅按ref选择最新Signal，误把cited来源当作observed来源，随后完整payload核验正确拒绝但也阻止有效新关注。该源码门槛FAIL，1025绿色测试不覆盖这项原文后来到达的控制；须以当前实际source_type和ref共同选择可复用原始Signal，保持旧provenance和真正原文重放的严格payload核验。正在补RED/GREEN回归，不启动新冻结原生批次。
 
 2026-10-03后续源码修订（尚未原生验证）：实际native输入含正文和CI Skill的历史比较选择指令，但Pydantic输出schema的两处assessment_basis描述只定义两类判断，没有同步“当前明确比较历史且原始Signals已交付时必须核对原文”的选择要求。主Agent为两处描述写一致性回归，观察2例RED后仅同步字段说明；test_task_models.py120 passed，Ruff/diff通过。领域/结构validator、fixture/oracle、模型、检索和原始失败未改变。此证据证明指令一致性，不证明模型稳定性已修复；新冻结原生回放仍是验收门槛。
