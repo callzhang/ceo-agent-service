@@ -895,9 +895,19 @@ def _name_sqlite_extended_error(path: Path, error: sqlite3.Error) -> None:
     name = getattr(error, "sqlite_errorname", "")
     if not name:
         return
+    frame = sys._getframe(1)
+    callers = []
+    for _ in range(8):
+        callers.append(
+            f"{Path(frame.f_code.co_filename).name}:{frame.f_lineno}:{frame.f_code.co_name}"
+        )
+        frame = frame.f_back
+        if frame is None:
+            break
+    del frame
     print(
         f"sqlite {name} code={getattr(error, 'sqlite_errorcode', '')} "
-        f"path={path}: {error}",
+        f"path={path} thread={threading.get_ident()} callers={' <- '.join(callers)}: {error}",
         file=sys.stderr,
         flush=True,
     )
@@ -2478,6 +2488,7 @@ class AutoReplyStore:
     @contextmanager
     def _immediate_write_transaction(self) -> Iterator[sqlite3.Connection]:
         """Acquire a short SQLite write transaction with bounded lock retry."""
+        body_started = False
         for attempt in range(STORE_WRITE_LOCK_RETRY_ATTEMPTS):
             try:
                 with self._connect() as db:
@@ -2493,11 +2504,13 @@ class AutoReplyStore:
                             STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1)
                         )
                         continue
+                    body_started = True
                     yield db
                     return
             except sqlite3.OperationalError as exc:
                 if (
-                    not _is_sqlite_lock_error(exc)
+                    body_started
+                    or not _is_sqlite_lock_error(exc)
                     or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
                 ):
                     raise

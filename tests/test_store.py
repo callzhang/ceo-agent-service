@@ -3826,6 +3826,37 @@ def test_immediate_write_transaction_retries_begin_without_repeating_body(
     assert len(store.list_errors()) == 1
 
 
+def test_immediate_write_transaction_preserves_body_lock_error(tmp_path: Path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    error = sqlite3.OperationalError("database is locked")
+    sleeps = []
+    monkeypatch.setattr(store_module.time, "sleep", sleeps.append)
+
+    with pytest.raises(sqlite3.OperationalError) as caught:
+        with store._immediate_write_transaction() as db:
+            db.execute(
+                "insert into errors (conversation_id, message_id, kind, detail) "
+                "values ('cid', 'msg', 'test', 'must roll back')"
+            )
+            raise error
+
+    assert caught.value is error
+    assert sleeps == []
+    assert store.list_errors() == []
+
+
+def test_sqlite_error_diagnostic_names_caller_without_local_values(tmp_path: Path, capsys):
+    error = sqlite3.OperationalError("database is locked")
+    error.sqlite_errorname = "SQLITE_BUSY"
+    error.sqlite_errorcode = 5
+    private_value = "private-message-body"
+    store_module._name_sqlite_extended_error(tmp_path / "worker.sqlite3", error)
+    diagnostic = capsys.readouterr().err
+    assert "test_sqlite_error_diagnostic_names_caller_without_local_values" in diagnostic
+    assert "thread=" in diagnostic
+    assert private_value not in diagnostic
+
+
 def test_set_service_state_retries_a_transient_write_lock(
     tmp_path: Path, monkeypatch
 ):
