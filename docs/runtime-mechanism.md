@@ -1316,3 +1316,19 @@ inventory: only `email_unsubscribe_consumer_direct_v1`. An inventoried object
 replaced by an `email_unsubscribe_audited_v2` task must remain untouched, even
 when its task ID, generation, and pending status otherwise match. The mutation
 checks the lifecycle again under its write transaction.
+# Task Evidence Repair And Retired Anchors
+
+Task Agent validates formal creation and candidate promotion owner citations
+before entering its atomic domain transaction. A repairable evidence error is
+returned to the same Task session and run with the rejected candidate and
+original context, for at most two correction rounds. No domain changes are
+committed before validation succeeds. Exhaustion retains a real failed run and
+uses the existing work-summary retry policy; it never guesses an owner or
+changes a technical failure into `needs_human`. Memory-backed ownership still
+requires linked source provenance and an `episode_id`.
+
+An inactive `task-agent-project` anchor is a retained retirement decision.
+Weekly-report registry rows and Agent Project proposals must not reactivate it
+implicitly. The source-backed Task is saved independently, without a Project
+link to that retired anchor, and the run records why the Project was not applied.
+The general anchor registration conflict checks remain unchanged.

@@ -1251,6 +1251,22 @@ def _validate_task_agent_decision(
             )
         if item.action == "create_task" or item.transition == "promote_candidate":
             _validate_formal_basis_source(item, work_item)
+            evidence = dict(item.owner_evidence)
+            evidence.setdefault("source_ref", item.source_ref)
+            if not str(evidence.get("excerpt") or "").strip():
+                evidence["excerpt"] = item.source_excerpt
+            try:
+                TaskSemanticService._require_source_backed_owner(
+                    signal=_task_source_signal(work_item, item),
+                    owner_user_id=item.owner_user_id, owner_name=item.owner_name,
+                    owner_evidence_json=_json_dumps(evidence),
+                )
+            except ValueError as exc:
+                raise RepairableTaskDecisionValidationError(
+                    f"Task {item.title}: {exc}. Cite the named owner's assignment "
+                    "or undertaking from the supplied source, or linked memory evidence "
+                    "with its episode_id. If ownership is not established, retain a candidate."
+                ) from exc
         if item.transition == "apply_acceptance" and item.acceptance_polarity != "accepted":
             raise RepairableTaskDecisionValidationError(
                 "only explicit accepted owner evidence may use apply_acceptance"
@@ -1264,6 +1280,16 @@ def _validate_task_agent_decision(
             raise ValueError(
                 "same deliverable, owner, context, and time can link or cluster Tasks but cannot merge identity"
             )
+
+
+def _task_project_anchor_is_retired(store: AutoReplyStore, title: str, *, db) -> bool:
+    import hashlib
+
+    key = hashlib.sha256(" ".join(title.split()).casefold().encode("utf-8")).hexdigest()
+    anchor = store.get_business_anchor_by_identity_in_transaction(
+        anchor_type="project", anchor_ref=f"task-agent-project:{key}", _db=db
+    )
+    return anchor is not None and not anchor.active
 
 
 def apply_task_agent_decision(
@@ -1604,6 +1630,13 @@ def apply_task_agent_decision(
             else:
                 cluster_id = None
             report_project_title = _report_project_registry_title(work_item, item)
+            if report_project_title and _task_project_anchor_is_retired(
+                store, report_project_title, db=db
+            ):
+                skipped_reasons.append(
+                    f"Project {report_project_title} is retired; Task retained without reactivation."
+                )
+                report_project_title = ""
             if report_project_title and cluster_id is None:
                 existing_cluster = db.execute(
                     """
@@ -1658,8 +1691,17 @@ def apply_task_agent_decision(
                     task_id=task_id, anchor_id=anchor_match.anchor_id,
                     evidence_signal_id=result.signal_id, reason=anchor_match.reason, _db=db,
                 )
+            retired_project_proposal = (
+                item.project_proposal is not None
+                and _task_project_anchor_is_retired(store, item.project_proposal.title, db=db)
+            )
+            if retired_project_proposal:
+                skipped_reasons.append(
+                    f"Project {item.project_proposal.title} is retired; Task retained without reactivation."
+                )
             if (
                 item.project_proposal is not None
+                and not retired_project_proposal
                 and not report_project_title
                 and not _is_generic_project_title(item.project_proposal.title)
                 and not _is_report_task_section_project_proposal(
@@ -1896,16 +1938,30 @@ def process_work_item(
         semantic_context = retrieve_task_semantic_context(store, work_item)
         context_prompt = render_task_semantic_context(semantic_context)
         active_run_id = store.begin_task_agent_run(work_input.id)
-        decision = runner.decide(
-            work_item, context_prompt,
-            memory_issue=memory_connector_config_issue(),
-            run_id=active_run_id,
-            session_scope_id=TASK_AGENT_SESSION_SCOPE_ID,
-        )
-        decision = _canonicalize_current_source_provenance(
-            decision, work_item=work_item
-        )
-        _validate_task_agent_decision(decision, work_item=work_item, now=now)
+        memory_issue = memory_connector_config_issue()
+        for repair_round in range(TASK_DECISION_REPAIR_ROUNDS + 1):
+            if session_lease is not None:
+                session_lease.assert_owned()
+            decision = runner.decide(
+                work_item, context_prompt,
+                memory_issue=memory_issue,
+                run_id=active_run_id,
+                session_scope_id=TASK_AGENT_SESSION_SCOPE_ID,
+            )
+            decision = _canonicalize_current_source_provenance(decision, work_item=work_item)
+            try:
+                _validate_task_agent_decision(decision, work_item=work_item, now=now)
+            except RepairableTaskDecisionValidationError as exc:
+                if repair_round == TASK_DECISION_REPAIR_ROUNDS:
+                    raise TaskDecisionRepairExhausted(str(exc)) from exc
+                context_prompt = (
+                    render_task_semantic_context(semantic_context)
+                    + "\n\nDecision validation rejected the previous candidate before any "
+                    "domain writes. Correct this evidence error without inventing facts: "
+                    + str(exc) + "\nPrevious candidate:\n" + _json_dumps(decision)
+                )
+                continue
+            break
         session_id = getattr(runner.codex, "last_session_id", None) or ""
         if session_lease is not None:
             session_lease.assert_owned()

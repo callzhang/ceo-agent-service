@@ -1130,6 +1130,109 @@ def _candidate_decision(item, *, excerpt="补齐来源链接", title="补齐报�
     }]})
 
 
+def test_process_work_item_repairs_owner_citation_before_atomic_apply(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "owner-citation.sqlite3")
+    item = _work_item(assignment_authorized=True).model_copy(update={
+        "summary": "Avery: Please prepare the report. Alex: I will prepare it.",
+    })
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    bad = {"task_decisions": [{
+        "action": "create_task", "transition": "none", "title": "Prepare report",
+        "source_ref": item.source.ref, "source_excerpt": item.summary,
+        "formal_basis": "explicit_assignment", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref,
+                           "excerpt": "Avery: Please prepare the report."},
+    }]}
+
+    class RepairingCodex(FakeCodex):
+        def decide(self, **kwargs):
+            if self.calls:
+                assert not store.list_business_tasks()
+                self.payload = json.loads(json.dumps(bad))
+                self.payload["task_decisions"][0]["owner_evidence"]["excerpt"] = (
+                    "Alex: I will prepare it."
+                )
+            return super().decide(**kwargs)
+
+    codex = RepairingCodex(bad)
+    process_work_item(store, TaskAgentRunner(codex), store.claim_work_summary_inputs(limit=1)[0])
+
+    assert len(codex.calls) == 2
+    assert codex.calls[0] == codex.calls[1]
+    assert "owner identity" in codex.prompts[1]
+    assert len(store.list_business_tasks()) == 1
+    assert store.get_work_summary_input(input_id).status.value == "done"
+
+
+def test_owner_citation_repair_is_bounded_and_never_applies_invalid_owner(tmp_path, monkeypatch):
+    from app.task_agent import TASK_DECISION_REPAIR_ROUNDS, TaskDecisionRepairExhausted
+
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "owner-repair-exhausted.sqlite3")
+    item = _work_item(assignment_authorized=True)
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    codex = FakeCodex({"task_decisions": [{
+        "action": "create_task", "transition": "none", "title": "Prepare report",
+        "source_ref": item.source.ref, "source_excerpt": item.summary,
+        "formal_basis": "explicit_assignment", "owner_name": "Unidentified",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": "Avery assigns it."},
+    }]})
+
+    with pytest.raises(TaskDecisionRepairExhausted):
+        process_work_item(store, TaskAgentRunner(codex), store.claim_work_summary_inputs(limit=1)[0])
+
+    assert len(codex.calls) == 1 + TASK_DECISION_REPAIR_ROUNDS
+    assert not store.list_business_tasks()
+    assert store.get_work_summary_input(input_id).status.value == "failed"
+
+
+@pytest.mark.parametrize("registry", [False, True])
+def test_retired_project_anchor_does_not_fail_task_or_get_reactivated(tmp_path, registry):
+    import hashlib
+
+    store = AutoReplyStore(tmp_path / "retired-anchor.sqlite3")
+    title = "Report preparation"
+    key = hashlib.sha256(title.casefold().encode()).hexdigest()
+    resolver = BusinessResolutionService(store)
+    anchor_id = resolver.register_anchor(
+        anchor_type="project", anchor_ref=f"task-agent-project:{key}", title=title,
+        active=False,
+    )
+    row = f"| Alex | {title} | Prepare report |"
+    item = _work_item(assignment_authorized=True).model_copy(update={
+        "source": _work_item().source.model_copy(update={
+            "type": WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT,
+        }),
+        "summary": json.dumps({"markdown": (
+            f"## **手头项目**\n\n| 负责人 | 项目 | 当前状态 |\n|---|---|---|\n{row}\n"
+            if registry else row
+        )}),
+    })
+    decision = TaskAgentDecision.model_validate({"task_decisions": [{
+        "action": "create_task", "transition": "none", "title": "Prepare report",
+        "source_ref": item.source.ref, "source_excerpt": row,
+        "formal_basis": "explicit_assignment", "owner_name": "Alex",
+        "owner_evidence": {"source_ref": item.source.ref, "excerpt": row},
+        "project_proposal": {"title": title, "reason": "Source assigns report preparation",
+                             "authority": "management_weekly_report"},
+    }]})
+
+    result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+                                       decision=decision, record_run=False)
+
+    assert len(result.task_ids) == 1
+    assert not store.list_business_projects()
+    assert not store.list_business_task_anchor_links(task_id=result.task_ids[0])
+    assert any("retired" in reason for reason in result.skipped_reasons)
+    with store._connect() as db:
+        assert db.execute("select active from business_anchors where id=?", (anchor_id,)).fetchone()[0] == 0
+
+
 def test_current_ai_minutes_provenance_is_canonical_and_not_external_todo():
     base = _work_item()
     item = base.model_copy(update={"source": base.source.model_copy(update={
