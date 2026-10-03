@@ -1425,6 +1425,13 @@ def _validate_stored_project_assessments(
             if store.get_business_task_in_transaction(task_id=item.task_id, _db=db) is None:
                 raise ValueError(f"supporting Task {item.task_id} does not exist")
             existing_task_ids.add(item.task_id)
+        if item.transition == "merge_identity" and item.identity_proposal is not None:
+            target_task_id = item.identity_proposal.target_task_id
+            if store.get_business_task_in_transaction(
+                task_id=target_task_id, _db=db
+            ) is None:
+                raise ValueError(f"supporting Task {target_task_id} does not exist")
+            existing_task_ids.add(target_task_id)
     for assessment in decision.project_assessments:
         for task_id in assessment.task_ids:
             if store.get_business_task_in_transaction(task_id=task_id, _db=db) is None:

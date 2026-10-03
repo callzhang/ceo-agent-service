@@ -3299,6 +3299,92 @@ def _stored_project_assessment(item, seed, anchor_id, **updates):
     return payload
 
 
+def _stored_project_identity_merge(store, item, *, include_assessment):
+    source = _seed_identity_task(
+        store, "message:merge-project-source", external_task_id="dingtalk:task-88",
+    )
+    target = _seed_identity_task(
+        store, "message:merge-project-target", external_task_id="dingtalk:task-88",
+    )
+    resolution = BusinessResolutionService(store)
+    anchor_id = resolution.register_anchor(
+        anchor_type="project", anchor_ref="project:售前知识库", title="售前知识库",
+    )
+    resolution.register_official_project(
+        anchor_id=anchor_id, registry_source="report:售前知识库",
+    )
+    resolution.confirm_anchor_match(
+        task_id=target.task_id, anchor_id=anchor_id,
+        evidence_signal_id=target.signal_id, reason="目标 Task 已确认属于正式 Project",
+        relevance=BusinessRelevance.RELEVANT,
+    )
+    assessments = []
+    if include_assessment:
+        assessments.append({
+            "project_title": "售前知识库", "anchor_id": anchor_id,
+            "outcome": "not_needed", "reason": "本轮只合并重复身份。",
+            "assessment_basis": "current_observation", "decision_indexes": [],
+            "task_ids": [target.task_id],
+            "evidence": [{
+                "source_ref": item.source.ref,
+                "source_excerpt": "同步外部待办记录",
+            }],
+        })
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": assessments,
+        "update_summary": "本轮没有相关 Project。" if not assessments else "已判断目标 Project。",
+        "task_decisions": [{
+            "action": "update_task", "transition": "merge_identity",
+            "task_id": source.task_id, "target_task_id": target.task_id,
+            "source_excerpt": "同步外部待办记录", "source_ref": item.source.ref,
+            "identity_proposal": {
+                "source_task_id": source.task_id, "target_task_id": target.task_id,
+                "reason": "Same external task ID dingtalk:task-88",
+                "identity_evidence": {
+                    "basis": "same_external_task_id",
+                    "source_signal_id": source.signal_id,
+                    "target_signal_id": target.signal_id,
+                },
+            },
+        }],
+    })
+    return source, target, anchor_id, decision
+
+
+def test_identity_merge_target_confirmed_project_requires_assessment_before_writes(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-merge-target-coverage.sqlite3")
+    item = _work_item().model_copy(update={"summary": "同步外部待办记录"})
+    source, target, _anchor_id, decision = _stored_project_identity_merge(
+        store, item, include_assessment=False,
+    )
+    signals_before = store.list_business_task_signals()
+
+    with pytest.raises(ValueError, match=f"current Task {target.task_id} confirmed Project"):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+        )
+
+    assert store.get_business_task(source.task_id).status.value != "merged"
+    assert store.list_business_task_signals() == signals_before
+
+
+def test_identity_merge_target_confirmed_project_accepts_explicit_target_assessment(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-merge-target-covered.sqlite3")
+    item = _work_item().model_copy(update={"summary": "同步外部待办记录"})
+    source, target, anchor_id, decision = _stored_project_identity_merge(
+        store, item, include_assessment=True,
+    )
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.task_ids == (target.task_id,)
+    assert result.applied_decisions[0].task_id == target.task_id
+    assert result.applied_decisions[0].anchor_id == anchor_id
+    assert store.get_business_task(source.task_id).status.value == "merged"
+
+
 def _stored_attention_card(store, *, seed, anchor_id, title="售前知识库"):
     assessment_json = json.dumps({
         "assessment_basis": "historical_comparison",

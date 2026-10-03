@@ -373,8 +373,8 @@ reason 承载推断；`historical_comparison` 同时要求本轮无 signal ID �
 Work Item ref 和原文摘录；历史正 signal ID 必须解析到相同 ref/quote 的原始来源，并拒绝 memory/session provenance。已知 anchor
 必须是活动正式 Project 且标题精确匹配登记；本轮决定/assessment 实际引用的现存 Task 必须存在，并由已有活动 confirmed link 或
 同一支持决定的当前 Project registration/link proposal 对应到该 Project。未登记的新 Project 引用已有 Task 时，该 Task 也必须出现在
-带精确同名 current `project_proposal` 的支持决定上；只列真实 Task ID 不建立关系。覆盖只遍历这些输出 Task，不扩展到 retrieval competition
-或全库 Task。当前 proposal 仅按正式 Project 精确标题复用既有规范身份；支持决定上的 Project link、正 Attention anchor 与 proposal
+带精确同名 current `project_proposal` 的支持决定上；只列真实 Task ID 不建立关系。覆盖只遍历这些输出 Task；`merge_identity` 同时覆盖
+本轮实际更新/返回的 target Task，但不扩展到 relation competition、retrieval competition 或全库 Task。当前 proposal 仅按正式 Project 精确标题复用既有规范身份；支持决定上的 Project link、正 Attention anchor 与 proposal
 解析出的规范 Project 必须全部一致，同一规范 Project 的重复/矛盾判断拒绝。精确标题尚未登记时，正 selector 不能引用其他既有
 anchor 或预猜未来 ID；新 Project 的 Attention anchor 保持 null，并只从同一事务实际成功登记的 Project 解析。
 `existing_attention_id` 必须是同一 Project 的活动卡片，支持 Task 是当前合格成员，卡片保存的原始 signal/ref/quote 仍存在、未被
