@@ -16610,7 +16610,8 @@ class AutoReplyStore:
         """
         sent = db.execute(
             """
-            select account_id, target_type, target_id, conversation_id, reply_task_id
+            select account_id, target_type, target_id, conversation_id, reply_task_id,
+                   execution_generation
             from wechat_deliveries
             where id=? and status='sent'
             """,
@@ -16626,7 +16627,9 @@ class AutoReplyStore:
               and target_type=?
               and target_id=?
               and conversation_id=?
-              and reply_task_id < ?
+              and (reply_task_id < ? or (
+                  reply_task_id=? and id < ? and execution_generation<>?
+              ))
               and status='failed'
               and pre_action_failure=1
             """,
@@ -16636,6 +16639,9 @@ class AutoReplyStore:
                 sent["target_id"],
                 sent["conversation_id"],
                 sent["reply_task_id"],
+                sent["reply_task_id"],
+                sent_delivery_id,
+                sent["execution_generation"],
             ),
         ).fetchall()
         error = f"superseded_by_newer_wechat_delivery:{sent_delivery_id}"
@@ -20332,6 +20338,89 @@ class AutoReplyStore:
                 (send_run.reply_task_id,),
             )
             return SentReply.model_validate(dict(sent))
+
+    def reconcile_failed_audit_with_verified_delivery(self, task_id: int, run_id: int) -> bool:
+        """Recover result-format failure after every proposed effect was accepted."""
+        from app.dingtalk_send_evidence import DingTalkSendEvidenceDriver
+        from app.business_identity import external_action_key
+
+        task = self.get_reply_task(task_id)
+        run = self.get_agent_run(run_id)
+        if (
+            task is None or run is None or task.status != "failed"
+            or task.error != "codex_result_invalid"
+            or run.role is not AgentRole.AUDIT or run.status != "failed"
+            or run.reply_task_id != task_id
+            or run.execution_generation != task.execution_generation
+            or not run.operation_id or run.parent_agent_run_id is None
+        ):
+            raise ValueError("not a failed result-format Audit on the current task")
+        # Metadata discovery and evidence classification must not hold a writer lock.
+        if not DingTalkSendEvidenceDriver(self).audit_run_has_execution_evidence(
+            task, audit_run_id=run_id,
+        ):
+            raise ValueError("not all proposed effects have execution evidence")
+        consumer = self.get_agent_run(run.parent_agent_run_id) if run.parent_agent_run_id else None
+        if consumer is None or consumer.role is not AgentRole.CONSUMER or consumer.status != "completed":
+            raise ValueError("accepted Consumer proposal is unavailable")
+        actions = json.loads(consumer.final_result_json)["proposal"]["actions"]
+        expected = {
+            external_action_key(
+                business_object_key=task.business_object_key,
+                action_identity=action["action_identity"], operation=action["operation"],
+                target_identifiers=action["target"],
+            ): action for action in actions
+        }
+        with self._immediate_write_transaction() as db:
+            receipt = db.execute(
+                """
+                select replies.* from sent_replies replies
+                join agent_runs sender on sender.id=replies.agent_run_id
+                where sender.reply_task_id=? and sender.execution_generation=?
+                  and sender.role='audit' and sender.id<=?
+                  and sender.parent_agent_run_id is ?
+                  and sender.proposal_revision=? and sender.operation_id=?
+                  and trim(replies.external_action_key)<>''
+                  and json_valid(replies.send_result_json)
+                  and json_extract(replies.send_result_json, '$.verification.state')='sent'
+                """,
+                (task_id, run.execution_generation, run_id, run.parent_agent_run_id,
+                 run.proposal_revision, run.operation_id),
+            ).fetchall()
+            matched = [row for row in receipt if row["external_action_key"] in expected]
+            if not matched:
+                raise ValueError("current reviewed operation has no verified send receipt")
+            for row in matched:
+                action = expected[row["external_action_key"]]
+                db.execute(
+                    """
+                    insert or ignore into external_action_results (
+                        external_action_key, business_object_key, action_identity,
+                        operation, target_identifiers_json, provider_result_json,
+                        result_digest, first_agent_run_id
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (row["external_action_key"], task.business_object_key,
+                     action["action_identity"], action["operation"],
+                     _json_object_text(action["target"], field="target_identifiers"),
+                     row["send_result_json"], _canonical_json_sha256(json.loads(row["send_result_json"])),
+                     row["agent_run_id"]),
+                )
+            cursor = db.execute(
+                """
+                update reply_tasks set status='done', error='', available_at='',
+                    locked_at=null, updated_at=current_timestamp
+                where id=? and status='failed' and error='codex_result_invalid'
+                  and execution_generation=? and ?=(
+                    select max(id) from agent_runs where reply_task_id=?
+                      and execution_generation=?
+                  )
+                """,
+                (task_id, run.execution_generation, run_id, task_id, run.execution_generation),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"failed Audit superseded: {run_id}")
+            return True
 
     def reconcile_failed_reply_tasks_with_recorded_deliveries(self) -> int:
         """Close failed tasks whose completed provider action is in the ledger.

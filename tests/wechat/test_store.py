@@ -868,6 +868,36 @@ def test_exhausted_stale_wechat_delivery_rejects_invalid_scalar_unchanged(
     assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
 
 
+@pytest.mark.parametrize("pre_action_failure", [True, False])
+def test_sent_revision_supersedes_same_task_pre_action_failure(tmp_path, pre_action_failure):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-28T10:01:00", trigger_sender="Alex",
+        trigger_text="message",
+    )
+    old_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="old reply",
+    )
+    store.mark_wechat_delivery_sending(old_id)
+    store.set_wechat_delivery_status(
+        old_id, "failed", error="wechat_ui_not_ready",
+        pre_action_failure=pre_action_failure,
+    )
+    store.rotate_reply_task_execution_generation(1)
+    newer_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="revised reply",
+    )
+    store.mark_wechat_delivery_sending(newer_id)
+    store.set_wechat_delivery_status(newer_id, "sent")
+    old = store.get_wechat_delivery_by_id(old_id)
+    assert old.status == ("superseded" if pre_action_failure else "failed")
+    assert store.supersede_failed_wechat_deliveries_with_newer_sent() == 0
+
+
 def test_newer_sent_delivery_supersedes_older_action_not_performed(tmp_path):
     store = _store(tmp_path)
     for task_id, message_id in ((1, "m1"), (2, "m2")):
