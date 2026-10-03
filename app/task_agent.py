@@ -1856,7 +1856,16 @@ def apply_task_agent_decision(
             if (
                 item.action == "update_task" and item.transition == "update_fields"
                 and task_before is not None and not date_facts
-                and _update_fields_restates_task(task_before, item, owner_user_id)
+                and _update_fields_restates_task(
+                    task_before, item, owner_user_id,
+                    attention_only=(
+                        item.attention_proposal is not None
+                        and stored_anchor_by_decision.get(decision_index)
+                        in _confirmed_official_project_anchors(
+                            store, task_id=task_before.id, db=db
+                        )
+                    ),
+                )
             ):
                 # A new source may change Project Attention without changing any
                 # Task field. Save its original proof on the existing Task only.
@@ -1931,17 +1940,55 @@ def apply_task_agent_decision(
                             )
                         if not valid_project_quote:
                             raise ValueError("project proposal must cite the current official Project source")
-                    signal = replace(signal, dedupe_key=(
-                        f"task-attention:{work_item.source.type.value}:"
-                        f"{work_item.source.ref}:task:{task_before.id}"
-                    ))
-                    signal_id = service._signal_id_or_create(
-                        signal=signal, db=db, now=service._now()
+                    for evidence in proposal.evidence:
+                        if evidence.signal_id is None:
+                            continue
+                        original = store.get_business_task_signal_in_transaction(
+                            signal_id=evidence.signal_id, _db=db
+                        )
+                        if (
+                            original is None
+                            or original.source_ref != evidence.source_ref
+                            or original.source_type in {
+                                "session_provenance", "memory_provenance"
+                            }
+                            or not source_contains_quote(
+                                original.evidence_text, evidence.source_excerpt
+                            )
+                            or not any(db.execute(
+                                "select 1 from business_task_evidence "
+                                "where task_id=? and signal_id=? limit 1",
+                                (task_id, original.id),
+                            ).fetchone() is not None for task_id in (
+                                task_before.id, *proposal.related_task_ids
+                            ))
+                        ):
+                            raise ValueError("historical attention quote is absent from linked original source")
+                    original_source = (
+                        store.get_business_task_signal_for_task_source_ref_in_transaction(
+                            task_id=task_before.id, source_ref=work_item.source.ref,
+                            _db=db,
+                        )
                     )
-                    store.link_business_task_evidence_in_transaction(
-                        task_id=task_before.id, signal_id=signal_id,
-                        evidence_role=BusinessEvidenceRole.DISCOVERY, _db=db,
-                    )
+                    if original_source is not None:
+                        service._require_same_signal(
+                            signal=replace(signal, dedupe_key=original_source.dedupe_key),
+                            persisted=original_source,
+                        )
+                        signal_id = original_source.id
+                    else:
+                        signal = replace(signal, dedupe_key=(
+                            f"task-attention:{work_item.source.type.value}:"
+                            f"{work_item.source.ref}:task:{task_before.id}"
+                        ))
+                        signal_id = service._signal_id_or_create(
+                            signal=signal, db=db, now=service._now()
+                        )
+                    if original_source is None:
+                        store.link_business_task_evidence_in_transaction(
+                            task_id=task_before.id, signal_id=signal_id,
+                            evidence_role=BusinessEvidenceRole.DISCOVERY, _db=db,
+                        )
                     task_ids.append(task_before.id)
                     affected_task_ids.append(task_before.id)
                     attention.append(AppliedTaskAttention(
@@ -2389,17 +2436,24 @@ def apply_task_agent_decision(
     return result
 
 
-def _update_fields_restates_task(task: BusinessTask, item: TaskDecision, owner_user_id: str) -> bool:
+def _update_fields_restates_task(
+    task: BusinessTask, item: TaskDecision, owner_user_id: str, *,
+    attention_only: bool = False,
+) -> bool:
     """True when every field the decision sets already has that value on the Task."""
     return (
         (not item.title or item.title == task.title)
         and (not item.description or item.description == task.description)
         and (not item.status or BusinessTaskStatus(item.status) is task.status)
         # "unknown" is the absence of a judgement, so restating it asserts nothing;
-        # restating "relevant" is a confirmation the Task's evidence should record.
+        # restating "relevant" normally confirms Task evidence; a supported
+        # Attention-only proposal must leave the Task event history unchanged.
         and (not item.business_relevance
              or (BusinessRelevance(item.business_relevance) is BusinessRelevance.UNKNOWN
-                 and task.business_relevance is BusinessRelevance.UNKNOWN))
+                 and task.business_relevance is BusinessRelevance.UNKNOWN)
+             or (attention_only
+                 and BusinessRelevance(item.business_relevance) is BusinessRelevance.RELEVANT
+                 and task.business_relevance is BusinessRelevance.RELEVANT))
         and (not (owner_user_id or item.owner_name)
              or (owner_user_id == task.owner_user_id and item.owner_name == task.owner_name))
     )

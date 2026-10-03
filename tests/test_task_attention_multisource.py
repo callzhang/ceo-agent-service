@@ -2182,6 +2182,36 @@ def test_distinct_current_risk_revises_existing_card_without_task_event(tmp_path
     assert store.list_business_task_events(seed.task_id) == events_before
 
 
+def test_field_update_then_identical_attention_replay_preserves_evidence_roles(tmp_path):
+    store, item, seed, anchor_id, card_id, new_task = existing_project_link_case(tmp_path)
+    payload = {**new_task, "action": "update_task", "transition": "update_fields",
+        "task_id": seed.task_id, "title": "复核示例交付项目验收计划",
+        "description": "客户取消验收后复核交付和付款安排。"}
+    del payload["project_link_proposal"]
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [existing_project_assessment(
+            item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+        )], "task_decisions": [payload],
+    })
+    first = apply_task_agent_decision(store, summary_input_id=2, work_item=item,
+        decision=decision, record_run=False)
+    evidence_before = store.list_business_task_evidence(seed.task_id)
+    events_before = store.list_business_task_events(seed.task_id)
+    attention_events_before = store.list_business_attention_events(card_id)
+    card_before = store.get_business_attention_item(card_id)
+    signals_before = store.list_business_task_signals()
+
+    replay = apply_task_agent_decision(store, summary_input_id=2, work_item=item,
+        decision=decision, record_run=False)
+
+    assert replay.applied_decisions[0].signal_id == first.applied_decisions[0].signal_id
+    assert store.list_business_task_signals() == signals_before
+    assert store.list_business_task_evidence(seed.task_id) == evidence_before
+    assert store.list_business_task_events(seed.task_id) == events_before
+    assert store.list_business_attention_events(card_id) == attention_events_before
+    assert store.get_business_attention_item(card_id) == card_before
+
+
 def test_invalid_evidence_only_attention_quote_does_not_save_signal(tmp_path):
     store, item, seed, anchor_id, card_id, new_task = existing_project_link_case(tmp_path)
     task = store.get_business_task(seed.task_id)
@@ -2209,6 +2239,104 @@ def test_invalid_evidence_only_attention_quote_does_not_save_signal(tmp_path):
     assert store.list_business_task_signals() == before_signals
     assert store.list_business_task_evidence(seed.task_id) == before_evidence
     assert store.get_business_attention_item(card_id).title == "原验收风险"
+
+
+def test_invalid_historical_attention_quote_does_not_save_current_proof(tmp_path):
+    store, item, seed, anchor_id, card_id, new_task = existing_project_link_case(tmp_path)
+    task = store.get_business_task(seed.task_id)
+    signals_before = store.list_business_task_signals()
+    evidence_before = store.list_business_task_evidence(seed.task_id)
+    card_before = store.get_business_attention_item(card_id)
+    events_before = store.list_business_attention_events(card_id)
+    proposal = dict(new_task["attention_proposal"])
+    proposal["assessment_basis"] = "historical_comparison"
+    proposal["evidence"] = [*proposal["evidence"], {
+        "signal_id": seed.signal_id, "source_ref": "report:existing",
+        "source_excerpt": "原始来源中不存在的历史风险",
+    }]
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [existing_project_assessment(
+            item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+        )],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+            "title": task.title, "description": task.description,
+            "source_ref": item.source.ref, "source_excerpt": "复核示例交付项目验收计划",
+            "attention_proposal": proposal,
+        }],
+    })
+
+    with pytest.raises(ValueError, match="historical attention quote"):
+        apply_task_agent_decision(store, summary_input_id=2, work_item=item,
+            decision=decision, record_run=False)
+    assert store.list_business_task_signals() == signals_before
+    assert store.list_business_task_evidence(seed.task_id) == evidence_before
+    assert store.get_business_attention_item(card_id) == card_before
+    assert store.list_business_attention_events(card_id) == events_before
+
+
+def test_reconfirmed_relevance_with_attention_keeps_task_and_follow_up_unchanged(tmp_path):
+    store, item, seed, anchor_id, card_id, new_task = existing_project_link_case(tmp_path)
+    task = store.get_business_task(seed.task_id)
+    assert task.business_relevance.value == "relevant"
+    follow_up_signal_id = store.create_business_task_signal(
+        source_type="reply_attempt", source_ref="source:pending-relevance-follow-up",
+        evidence_text="待确认验收结果。", dedupe_key="source:pending-relevance-follow-up",
+        conversation_id="group:delivery",
+    )
+    store.link_business_task_evidence(
+        task_id=seed.task_id, signal_id=follow_up_signal_id, evidence_role="discovery",
+    )
+    store.create_business_task_follow_up(
+        business_task_id=seed.task_id, source_signal_id=follow_up_signal_id,
+        target_conversation_id="group:delivery", target_kind="group",
+        question_text="请确认验收结果。", scheduled_at="2026-10-10T12:00:00Z",
+        owner_user_id="owner:seed", owner_name="负责人", dedupe_key="follow-up:relevance",
+    )
+    events_before = store.list_business_task_events(seed.task_id)
+    with store._connect() as db:
+        followups_before = [dict(row) for row in db.execute("select * from business_task_follow_ups")]
+        todo_before = [dict(row) for row in db.execute("select * from business_task_todo_sync_outbox")]
+    payload = {**new_task, "action": "update_task", "transition": "update_fields",
+        "task_id": seed.task_id, "title": task.title, "description": task.description,
+        "business_relevance": "relevant"}
+    del payload["project_link_proposal"]
+    result = apply_task_agent_decision(store, summary_input_id=2, work_item=item,
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [existing_project_assessment(
+                item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+            )], "task_decisions": [payload],
+        }), record_run=False)
+
+    assert result.projection_receipt.status == "completed"
+    assert result.projection_receipt.project_assessments[0].attention_id == card_id
+    assert store.get_business_task(seed.task_id) == task
+    assert store.list_business_task_events(seed.task_id) == events_before
+    with store._connect() as db:
+        assert [dict(row) for row in db.execute("select * from business_task_follow_ups")] == followups_before
+        assert [dict(row) for row in db.execute("select * from business_task_todo_sync_outbox")] == todo_before
+
+
+def test_reconfirmed_relevance_without_attention_keeps_ordinary_task_evidence_effect(tmp_path):
+    store, item, seed, anchor_id, _card_id, _new_task = existing_project_link_case(tmp_path)
+    events_before = store.list_business_task_events(seed.task_id)
+    assessment = existing_project_assessment(
+        item=item, seed=seed, anchor_id=anchor_id,
+        decision_indexes=[0], outcome="not_needed",
+    )
+    result = apply_task_agent_decision(store, summary_input_id=2, work_item=item,
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [assessment],
+            "task_decisions": [{
+                "action": "update_task", "transition": "update_fields",
+                "task_id": seed.task_id, "title": "复核示例交付项目验收计划",
+                "business_relevance": "relevant", "source_ref": item.source.ref,
+                "source_excerpt": "复核示例交付项目验收计划",
+            }],
+        }), record_run=False)
+
+    assert result.attention_proposals == ()
+    assert len(store.list_business_task_events(seed.task_id)) == len(events_before) + 1
 
 
 def test_existing_unconfirmed_task_can_confirm_project_link_with_real_source_update(tmp_path):
