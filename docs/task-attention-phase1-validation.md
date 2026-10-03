@@ -529,8 +529,13 @@ SPEC 修复进一步以真实未关联第二 Signal 复现“只改 raw assessme
 link anchor 复制进 assessment 造成提前失败。最终补充冻结 no-Task `insufficient_evidence`
 正控制，并以 receipt-only 追加真实但未关联 Signal 复现空支持集合误通过；移除空集合跳过后，
 正常负面判断仍不创建 Task/卡片，篡改回执明确报 `project_assessment_receipt_mismatch`。
-最终 assessment oracle `21 passed / 117 deselected`；
-source registration + multisource + Web summary `148 passed`，CLI process-work-items
+质量复审再补三项严格读回：raw assessment 与 receipt 必须由唯一完整的
+`assessment_index` 集合一一对应，重复或未匹配的额外 receipt 均失败，但两个真实 assessment
+的 receipt 逆序仍通过；reason 必须是非空字符串，`null` 不经字符串转换冒充理由；每条引文
+excerpt 必须是非空字符串，空白不能利用 substring 规则冒充来源原句。这里仍不要求 reason
+精确等于 fixture、不加关键词分类，也不把引用支持关系升级为所有负面 Task 必须确认 Project。
+最终 assessment oracle `26 passed / 117 deselected`；
+source registration + multisource + Web summary `153 passed`，CLI process-work-items
 `22 passed / 254 deselected`。本节未运行
 native Agent、provider、真实 W39、生产数据库、全局 Skill 发布、push、PR、合并或部署。
 

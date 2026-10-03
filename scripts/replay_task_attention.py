@@ -109,6 +109,8 @@ def read_domain(store):
 
 
 def evidence_contains(text, quote):
+    if not isinstance(text, str) or not isinstance(quote, str) or not quote.strip():
+        return False
     if quote in text:
         return True
     if not text.lstrip().startswith(("{", "[")):
@@ -223,6 +225,32 @@ def readback(store, *, input_id, before, expected=None):
             receipt_assessments = projection.get("project_assessments")
             if not isinstance(receipt_assessments, list):
                 receipt_assessments = []
+            receipt_indexes = [
+                entry.get("assessment_index")
+                for entry in receipt_assessments
+                if isinstance(entry, dict)
+            ]
+            receipt_index_coverage_valid = (
+                len(receipt_assessments) == len(raw_assessments)
+                and len(receipt_indexes) == len(receipt_assessments)
+                and all(
+                    isinstance(index, int) and not isinstance(index, bool)
+                    for index in receipt_indexes
+                )
+                and len(set(receipt_indexes)) == len(receipt_indexes)
+                and set(receipt_indexes) == set(range(len(raw_assessments)))
+            )
+            if not receipt_index_coverage_valid:
+                failures.append("project_assessment_receipt_mismatch")
+            receipt_by_index = {
+                entry["assessment_index"]: entry
+                for entry in receipt_assessments
+                if (
+                    isinstance(entry, dict)
+                    and isinstance(entry.get("assessment_index"), int)
+                    and not isinstance(entry.get("assessment_index"), bool)
+                )
+            }
             input_row = store.get_work_summary_input(input_id) if input_id is not None else None
             work_item = json.loads(input_row.payload_json) if input_row is not None else {}
             source = work_item.get("source", {})
@@ -246,7 +274,8 @@ def readback(store, *, input_id, before, expected=None):
                 index, actual_assessment = matched
                 if actual_assessment.get("outcome") != wanted_assessment["outcome"]:
                     failures.append("project_assessment_outcome_mismatch")
-                if not str(actual_assessment.get("reason", "")).strip():
+                reason = actual_assessment.get("reason")
+                if not isinstance(reason, str) or not reason.strip():
                     failures.append("project_assessment_reason_missing")
                 wanted_evidence = wanted_assessment["evidence"]
                 actual_evidence = actual_assessment.get("evidence", [])
@@ -274,10 +303,7 @@ def readback(store, *, input_id, before, expected=None):
                             and signal.source_ref == evidence.get("source_ref")
                             and evidence_contains(signal.evidence_text, evidence.get("source_excerpt", ""))
                         )
-                receipt = next((
-                    entry for entry in receipt_assessments
-                    if entry.get("assessment_index") == index
-                ), None)
+                receipt = receipt_by_index.get(index)
                 receipt_valid = receipt is not None
                 if receipt is not None:
                     receipt_task_ids = receipt.get("task_ids", [])

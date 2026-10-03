@@ -324,6 +324,77 @@ def recorded_no_task_assessment_case(store):
     return item, input_id, before, result, case["expected"]
 
 
+def recorded_two_project_assessment_case(store):
+    tool = evaluation_tool()
+    item = report_item()
+    second_row = PROJECT_ROW.replace("示例项目", "另一项目")
+    second_risk = "另一项目客户取消验收，回款延期导致本周供应商款项无法支付。"
+    second_task_quote = TASK_QUOTE.replace("示例项目", "另一项目")
+    source = json.loads(item.summary)
+    source["markdown"] = source["markdown"].replace(
+        PROJECT_ROW, f"{PROJECT_ROW}\n{second_row}"
+    )
+    source["markdown"] += f"\n{second_risk}\n{second_task_quote}"
+    item = item.model_copy(update={"summary": json.dumps(source, ensure_ascii=False)})
+    payload = decision_payload()
+    second = json.loads(json.dumps(payload["task_decisions"][0], ensure_ascii=False))
+    second.update(
+        title="复核另一项目回款及供应商付款计划",
+        source_excerpt=second_task_quote,
+    )
+    second["project_proposal"].update(
+        title="另一项目",
+        source_excerpt=second_row,
+    )
+    second["attention_proposal"].update(
+        title="另一项目回款风险",
+        current_state="客户取消验收且回款延期",
+        evidence=[{"source_ref": item.source.ref, "source_excerpt": second_risk}],
+    )
+    payload["task_decisions"].append(second)
+    payload["project_assessments"].append({
+        "project_title": "另一项目",
+        "outcome": "needs_attention",
+        "reason": "客户取消验收使回款延期，并已影响本周供应商付款。",
+        "assessment_basis": "current_observation",
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": second_risk}],
+        "project_decision_index": 1,
+        "decision_indexes": [1],
+    })
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    before = tool.read_domain(store)
+    apply_task_agent_decision(
+        store,
+        summary_input_id=input_id,
+        work_item=item,
+        decision=TaskAgentDecision.model_validate(payload),
+    )
+    expected = {
+        "attention_projects": ["示例项目", "另一项目"],
+        "project_titles": ["示例项目", "另一项目"],
+        "task_count": 2,
+        "minimum_evidence_sources": 1,
+        "project_assessments": [{
+            "project_title": "示例项目",
+            "outcome": "needs_attention",
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": RISK_QUOTE}],
+            "application_status": "applied",
+            "task_count": 1,
+            "attention_required": True,
+        }, {
+            "project_title": "另一项目",
+            "outcome": "needs_attention",
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": second_risk}],
+            "application_status": "applied",
+            "task_count": 1,
+            "attention_required": True,
+        }],
+    }
+    return input_id, before, expected
+
+
 def rewrite_latest_run(store, *, decision=None, projection=None):
     with store._connect() as db:
         run = db.execute("select * from task_agent_runs order by id desc limit 1").fetchone()
@@ -394,6 +465,111 @@ def test_assessment_oracle_observes_missing_raw_field_without_model_defaults(tmp
     result = tool.readback(store, input_id=input_id, before=before, expected=expected)
     assert not result["passed"]
     assert "project_assessments_missing" in result["failures"]
+
+
+def test_assessment_oracle_rejects_duplicate_receipt_assessment_index(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "assessment-duplicate-receipt-index.sqlite3")
+    _, input_id, before, _, expected = recorded_assessment_case(store)
+    with store._connect() as db:
+        projection = json.loads(db.execute(
+            "select projection_json from task_agent_runs"
+        ).fetchone()[0])
+    duplicate = {
+        **projection["project_assessments"][0],
+        "status": "error",
+        "task_ids": [],
+        "attention_id": 99999,
+    }
+    projection["project_assessments"].append(duplicate)
+    rewrite_latest_run(store, projection=projection)
+
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+
+    assert not result["passed"]
+    assert "project_assessment_receipt_mismatch" in result["failures"]
+
+
+def test_assessment_oracle_rejects_unmatched_extra_receipt_assessment(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "assessment-unmatched-extra-receipt.sqlite3")
+    _, input_id, before, _, expected = recorded_assessment_case(store)
+    with store._connect() as db:
+        projection = json.loads(db.execute(
+            "select projection_json from task_agent_runs"
+        ).fetchone()[0])
+    projection["project_assessments"].append({
+        **projection["project_assessments"][0],
+        "assessment_index": 99,
+    })
+    rewrite_latest_run(store, projection=projection)
+
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+
+    assert not result["passed"]
+    assert "project_assessment_receipt_mismatch" in result["failures"]
+
+
+def test_assessment_oracle_matches_two_receipts_by_index_after_order_reversal(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "assessment-reversed-receipts.sqlite3")
+    input_id, before, expected = recorded_two_project_assessment_case(store)
+    with store._connect() as db:
+        projection = json.loads(db.execute(
+            "select projection_json from task_agent_runs"
+        ).fetchone()[0])
+    assert [entry["assessment_index"] for entry in projection["project_assessments"]] == [0, 1]
+    projection["project_assessments"].reverse()
+    rewrite_latest_run(store, projection=projection)
+
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+
+    assert result["passed"], result["failures"]
+
+
+def test_assessment_oracle_rejects_null_reason_without_reparsing_model(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "assessment-null-reason.sqlite3")
+    _, input_id, before, _, expected = recorded_assessment_case(store)
+    with store._connect() as db:
+        decision = json.loads(db.execute(
+            "select decision_json from task_agent_runs"
+        ).fetchone()[0])
+    decision["project_assessments"][0]["reason"] = None
+    rewrite_latest_run(store, decision=decision)
+
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+
+    assert not result["passed"]
+    assert "project_assessment_reason_missing" in result["failures"]
+
+
+def test_assessment_oracle_rejects_blank_extra_current_citation(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "assessment-blank-extra-citation.sqlite3")
+    item, input_id, before, _, expected = recorded_assessment_case(store)
+    with store._connect() as db:
+        run = db.execute("select * from task_agent_runs").fetchone()
+        decision = json.loads(run["decision_json"])
+        projection = json.loads(run["projection_json"])
+    decision["project_assessments"][0]["evidence"].append({
+        "signal_id": None,
+        "source_ref": item.source.ref,
+        "source_excerpt": "",
+    })
+    projection["project_assessments"][0]["evidence"].append({
+        "signal_id": None,
+        "source_ref": item.source.ref,
+        "source_excerpt": "",
+        "source_time": item.source.created_at,
+        "source_link": "",
+    })
+    rewrite_latest_run(store, decision=decision, projection=projection)
+
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+
+    assert not result["passed"]
+    assert "project_assessment_evidence_mismatch" in result["failures"]
 
 
 @pytest.mark.parametrize("fault,expected_failure", [
