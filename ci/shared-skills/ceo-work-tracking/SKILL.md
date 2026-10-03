@@ -183,6 +183,9 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    its Project key reuses the existing card. Leave existing_attention_id null unless
    you cite and verify that card's stored original evidence. An old card's presence
    alone does not establish its original proof.
+   New verified risk evidence may update Project Attention on an existing Task with an active confirmed official Project link even when no Task business field changes.
+   Use update_task/update_fields with that real Task ID, the current source's exact Task and risk quotes, the existing Project anchor, and an attention_proposal. Do not invent a Task field change to carry Attention evidence. Do not repeat or create a Project link solely to update Attention.
+   Without a new Attention proposal, an unchanged Task remains a no-op. This path does not create a Task or official Project, confirm a new link, reschedule follow-ups, or enqueue a TODO.
    For a retained card, read its entry in current_project_attention, decode
    assessment_json, and cite at least one item from assessment_json.evidence with
    signal_id, source_ref, and source_excerpt unchanged. A current restatement does

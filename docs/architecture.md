@@ -732,7 +732,7 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 
 项目判断中的 `not_needed` 需要来源证据支持“不需关注”的结论；缺少具体风险或经营影响证据时记录 `insufficient_evidence` 并解释缺口，不能把“没有足够信息证明需要关注”当作“不需关注”的证明。prompt、CI Skill 和 outcome 字段说明一致；来源含义由 Agent 判断，服务不增加关键词分类器、不替换原始 outcome、不自动补卡。
 
-保留已有关注卡的判断须从 bounded context 的 `current_project_attention` 对应条目解析 `assessment_json`，至少原样引用其 `assessment_json.evidence` 中一项 signal_id、source_ref、source_excerpt；本轮重述另列，不能代替旧卡保存的原始证明。此为 prompt、CI Skill 和字段说明对既有证据契约的操作指引，不改变领域核验或无字段变化更新的行为。
+保留已有关注卡的判断须从 bounded context 的 `current_project_attention` 对应条目解析 `assessment_json`，至少原样引用其 `assessment_json.evidence` 中一项 signal_id、source_ref、source_excerpt；本轮重述另列，不能代替旧卡保存的原始证明。这项旧卡证明要求仍适用；新增风险提案在既有 Task/正式 Project 已确认关联时可独立应用，即使 Task 字段不变。
 
 Task-first 基础机制已上线；本节新增的多来源关注规则属于当前开发分支，尚未部署。
 前端、语义评估及全局 Skill 发布仍待后续验收，不能据本节新增规则推断生产已经切换。
@@ -740,7 +740,7 @@ Task-first 基础机制已上线；本节新增的多来源关注规则属于当
 主 prompt、CI Skill 和字段说明把 `existing_attention_id` 定义为旧卡原始证明的声明，而不是更新目标。
 新风险使用匹配的 `attention_proposal`，现有 Project stable key 已会更新同一张卡；
 没有引用并核实该卡片保存的原始证明时，该可选 ID 保持 null，旧卡的存在本身不证明原始证据。
-真实旧证明与当前提案仍可以同时使用；本次说明澄清不改变领域核验或无字段变化 update 的跳过规则。
+真实旧证明与当前提案仍可以同时使用；当前提案只在来源与既有正式 Project 关联都可核验时走无字段变化的证据应用路径。
 同一项目风险支持多个 Task 时，prompt/Skill/字段说明要求复制同一份项目级提案，尤其 `current_state` 不拼入每条 Task 各自的行动。
 Task 的不同工作内容仍保留在其 description/update_summary；现有完全一致提案的折叠和矛盾提案拒绝规则不变。
 
@@ -783,9 +783,9 @@ Task Agent 使用一个统一的 `TaskAgentDecision` 生命周期契约：同一
 
 进入现有 Task 领域事务后、写入任何新 Task/Signal/Project 前，服务把上述判断绑定到持久化事实：当前 null-ID 引文必须使用 immutable Work Item 的精确 `source_ref` 且原文确实包含摘录；正 signal ID 必须解析到相同 ref 和原始引文，并拒绝 memory/session provenance 充当原始来源。已知 anchor 必须是活动的正式 Project，标题必须与规范登记精确相同；本轮输出或判断引用的真实 Task 必须存在，并已通过活动 confirmed link 属于该 Project，或由本轮同一支持决定的 Project registration/link proposal 建立该关系。尚未登记的新 Project 若引用已有 Task，该 Task 也必须由本轮支持决定上的精确同名 `project_proposal` 实际关联，不能只因 ID 存在就成为支持。当前 proposal 只按正式登记的精确标题复用既有规范 Project，不做模糊别名合并；同一支持决定上的 Project link、正 Attention anchor 与 proposal 解析出的规范 Project 必须全部一致，同一规范 Project 的矛盾或重复判断拒绝。精确标题尚未登记时，正 Project selector 不能引用另一个既有 anchor，也不能预猜注册后可能分配的 ID；新 Project 的 Attention selector 必须以 null 等待同一事务中实际成功登记的身份。`existing_attention_id` 还必须指向同一 Project 的活动卡片，支持 Task 是卡片当前合格成员，卡片保存的原始 signal/ref/quote 仍真实且链接到成员；本轮 assessment 本身必须精确引用这张卡片保存的至少一项原始证明，不能用同一 Task 上另一条真实 Signal 或一条无关当前引文冒充“已表示”。历史 citation 和卡片 proof 的 Task 归属使用 `(task_id, signal_id)` 的有界存在性查询，不为每条引文物化该 Task 的完整 evidence 历史。系统分别核验当前 Work Item 和旧卡片来源，不要求新旧措辞相同，也不另写业务风险关键词分类器。覆盖范围只包括本轮决定/assessment 实际处理或引用的 Task；`merge_identity` 还包括本轮实际返回和更新的 target Task，但不扩展到关系竞争对象、检索竞争集或全公司 Task。
 
-每个真正通过原有应用路径的决定在事务内记录实际 decision position → Task ID / Signal ID / 规范 Project anchor 映射；anchor 只在该决定本轮成功应用 Project，或实际 Task 已有活动 confirmed link 时出现。没有显式应用身份时，只有唯一一个实际 confirmed 正式 Project 才进入映射；零个或多个实际关联均保留 null，不能仅从 assessment 的声称推入映射。skip、接受证据失败和无字段变化的 update 没有映射，也不会为了支撑判断而另建 Signal、Task、Project、事件或卡片。原有无字段变化 guard 仍位于 Project 确认和 Attention 收集之前；正判断因此可以保持“已判断但未应用”，不能伪装为 `not_needed` 或成功。未知 Project 线索仍只是 evidence-only `insufficient_evidence`，负面判断不关闭既有卡片。
+每个真正通过原有应用路径的决定在事务内记录实际 decision position → Task ID / Signal ID / 规范 Project anchor 映射；anchor 只在该决定本轮成功应用 Project，或实际 Task 已有活动 confirmed link 时出现。没有显式应用身份时，只有唯一一个实际 confirmed 正式 Project 才进入映射；零个或多个实际关联均保留 null，不能仅从 assessment 的声称推入映射。skip、接受证据失败和普通无字段变化的 update 没有映射，也不会为了支撑判断而另建 Signal、Task、Project、事件或卡片。例外是新来源已经核验出 Project 风险、真实既有 Task 已有活动 confirmed 正式 Project 链接且本轮提交 Attention proposal：无字段变化 guard 在同一事务内只保存来源 Signal、该 Task 的证据链接及实际应用映射，随后走原有卡片投影；Task 行、Task 事件、原 Project 链接、follow-up 与 TODO outbox 都不变。重复同一来源按 Task 和来源复用 Signal。即使决定附带同一已确认链接或精确同名的 Project proposal，此路径也只核验而不重新确认/登记；未知、未确认或无效来源仍不借此新建链接、Project 或卡片。没有 Attention proposal 的无字段变化 update 继续跳过。未知 Project 线索仍只是 `insufficient_evidence`，负面判断不关闭既有卡片。
 
-投影消费者完成后，独立回执按原始 `project_assessments` 的位置写入同名应用读回集合；每项只记录实际 `anchor_id`、`task_ids`、`attention_id`、`status`、`reason` 与已核验 `evidence`。状态限于 `recorded`、`applied`、`existing`、`rejected`、`error`：负面或证据不足判断只被记录，不关闭卡片；正判断只有实际卡片应用成功才是 applied，已核验的同事实活动卡片是 existing，未应用决定、投影拒绝和异常保留原应用原因。同一判断的部分支持提案已落卡、部分因无实际 Task 决定被拒绝时，状态保持 applied、保留真实卡 ID，并在 reason 同时写明 applied 与原拒绝原因；不增加 partial 状态，也不把其他 Project 的失败借入。判断既引用已核验活动卡片又提交当前 proposal 时仍保留真实卡 ID，但 status/reason 采用当前 proposal 的实际结果；没有当前 proposal 时才以 existing 表示单纯复用。新 Project/Task 身份只来自本轮成功决定的实际映射，不从 assessment、未来计数器或提案位置猜 ID；已知正式 Project、显式真实 Task 和现有卡片成员则从当前引用的持久化对象有界读回。精确同名正式 Project 已存在但本轮 Task 更新无字段变化时，回执保留该既有 anchor 和已核验 Task ID，同时把正提案记录为 rejected；即使 assessment 未重复列出 `task_ids`，支持位置上已确认属于该 Project 的既有 Task 也保留其真实 ID，真正未登记的新 Project 仍保持 null。引用保留原 `source_ref` / `source_excerpt`，只有真实持久化 Signal 可核对时才写 `signal_id`、`source_time` 和 `source_link`；匹配 Signal 可以来自 assessment 的支持决定位置，也可以来自本轮实际更新的显式 `task_ids`，否则当前 immutable Work Item 引用的 signal ID 为 null、时间取来源时间、链接为空。重算错误只传播到由这些支持位置或显式 Task ID 实际关联的判断，不改写原始业务 outcome。原始业务判断和理由仍只在 run 的 `decision_json`，应用读回不覆盖它。Task/input/run 事务先保存 pending 回执；最终集合仍在卡片消费者与重算后独立保存，保存失败沿用既有日志和 pending 可观测性，不增加修复任务或读路径自愈。
+投影消费者完成后，独立回执按原始 `project_assessments` 的位置写入同名应用读回集合；每项只记录实际 `anchor_id`、`task_ids`、`attention_id`、`status`、`reason` 与已核验 `evidence`。状态限于 `recorded`、`applied`、`existing`、`rejected`、`error`：负面或证据不足判断只被记录，不关闭卡片；正判断只有实际卡片应用成功才是 applied，已核验的同事实活动卡片是 existing，未应用决定、投影拒绝和异常保留原应用原因。同一判断的部分支持提案已落卡、部分因无实际 Task 决定被拒绝时，状态保持 applied、保留真实卡 ID，并在 reason 同时写明 applied 与原拒绝原因；不增加 partial 状态，也不把其他 Project 的失败借入。判断既引用已核验活动卡片又提交当前 proposal 时仍保留真实卡 ID，但 status/reason 采用当前 proposal 的实际结果；没有当前 proposal 时才以 existing 表示单纯复用。新 Project/Task 身份只来自本轮成功决定的实际映射，不从 assessment、未来计数器或提案位置猜 ID；已知正式 Project、显式真实 Task 和现有卡片成员则从当前引用的持久化对象有界读回。精确同名正式 Project 已存在且无 Task 字段变化时，符合上述新来源证据路径的回执保存实际 Signal、既有 anchor/Task 与应用后的卡 ID；没有合格 Attention proposal 时仍记录为未应用。即使 assessment 未重复列出 `task_ids`，支持位置上已确认属于该 Project 的既有 Task 也保留其真实 ID，真正未登记的新 Project 仍保持 null。引用保留原 `source_ref` / `source_excerpt`，只有真实持久化 Signal 可核对时才写 `signal_id`、`source_time` 和 `source_link`；匹配 Signal 可以来自 assessment 的支持决定位置，也可以来自本轮实际更新的显式 `task_ids`，否则当前 immutable Work Item 引用的 signal ID 为 null、时间取来源时间、链接为空。重算错误只传播到由这些支持位置或显式 Task ID 实际关联的判断，不改写原始业务 outcome。原始业务判断和理由仍只在 run 的 `decision_json`，应用读回不覆盖它。Task/input/run 事务先保存 pending 回执；最终集合仍在卡片消费者与重算后独立保存，保存失败沿用既有日志和 pending 可观测性，不增加修复任务或读路径自愈。
 
 当前完成的是 Task 2a、Task 2b 与 Task 3 的结构、prompt/Skill、stored-domain 核验、实际应用身份映射、逐 assessment 回执及只读诊断；native eval、发布、部署和生产读回仍待后续任务，不能据此声称真实业务判断已修复或已上线。单独的 Task completion Agent 已删除（Derek 2026-09-25，完成由新证据驱动）：服务不再产生 `todo_completion_evidence_candidate`、`todo_completion_check`、`follow_up_completion_check` 三类 Work Item，队列里残留的这类输入在到达 Task Agent 前被标为 `skipped`（原因 `completion checks retired (Derek 2026-09-25: 完成由新证据驱动)`）；枚举值只为历史记录保留。契约里的 `todo_changes`、`follow_up_changes`、`search_trace` 字段仍在 schema 中，但当前没有服务端路径应用它们。外部 TODO 完成与类型化 Task 完成在事务提交后按受影响 Task 重算当前 Attention 成员；完成的 Task 从成员列表退出，但不会仅凭读取或完成动作把 Attention 标为已解决。Task Agent prompt 明确要求只读发现，不得通过 CLI/API/MCP 工具创建、更新、删除、发送或完成外部记录；这是 prompt-only 的 best-effort 指引，不是运行时权限边界，Codex route 仍没有 per-turn MCP 写工具 allowlist。外部完成只由现有 outbox 同步。
 
@@ -837,8 +837,7 @@ cited-only session/memory 代替行动关联证据。名字引用和原文核对
 通过后仅对该实际应用 Task 调用既有 confirm_anchor_match，确认关联并派生 relevant，
 不注册/改写 Project，不改变 candidate/formal stage，不要求补造负责人或承诺。
 TaskProjectLinkProposal 应用所得 anchor 计入本轮 project_link_count；已有 confirmed 关联可复用，
-普通 anchor_match_proposals 仍仅 proposed。原无实际字段变化的 update guard 保留在确认前，
-不增 evidence-only update；新 Task 的 business_relevance 由关联确认派生，不在创建决定直接设置。
+普通 anchor_match_proposals 仍仅 proposed。原无实际字段变化的 update guard 保留在确认前；合格的既有确认关联可只应用新来源 Attention 证据，而不重复确认 Project 链接。新 Task 的 business_relevance 由关联确认派生，不在创建决定直接设置。
 record_candidate/create_task 新行动对已有正 anchor 提出 Attention 时必须同决定给出匹配
 project_link_proposal；新注册沿用同决定的 project_proposal。已知 Task 应按真实 ID 更新，
 只有独立可完成交付才创建 Task，既有交付的范围/内容补充不拆成重复 Task；不机械按同引文合并。
@@ -859,7 +858,7 @@ from_task_id/to_task_id。服务取得当前实际应用 Task ID 后派生两端
 ID 等于决定 task_id 时形状拒绝并沿既有一次纠正；创建重放后的 actual self 或缺失目标仍由
 领域层原子拒绝。旧 decision_json 保留原始值，不迁移或增加旧形状兼容。update 信号身份
 以派生实际端点/关系类型表达原业务效果，merge 的当前 ID 为实际 target；reason 噪声不变身份，
-新行动创建身份不变。已无字段变化的 update 仍先跳过，不凭关系制造 evidence-only update。
+新行动创建身份不变。已无字段变化的 update 仍不凭关系制造应用；只有可核验的新来源 Attention 提案可走上述既有 Task/Project 的证据路径。
 Project link 摘录可用同一行动的完整 compound quote 包含 stored Project 名及较短 Task 行动，
 不得用其他段落/整报告凑名；原标题/引文最小核验不变，完整语义身份仍由 Agent 判断。
 update 来源身份包含实际 Project link 的目标和引用，不把 reason 措辞纳入效果；
@@ -925,9 +924,7 @@ registry_row_count 复用原始周报登记行解析，与是否提出 Project �
 紧接 Markdown 分隔行的表头按结构排除，重复表头不计登记行，也不能注册 Project；
 applied_count 只计成功写入的不同卡 ID。零提案为 no_proposal，全部成功 completed，成功与失败
 并存 partial，无成功且失败 failed；成员重算错误独立记录 recompute_error。整体完成验收前不得部署。
-既有 `_update_fields_restates_task` 仍在 Project/Attention 应用前跳过无字段变化的 update；其原始
-Attention 提案计数并明确 rejected。真实新风险可以实际补充 Task 描述，但不为投影伪造字段改动，
-也不新增通用 evidence-only update 路径。
+既有 `_update_fields_restates_task` 仍在 Project/Attention 应用前识别无字段变化的 update；无合格新来源 Attention 提案时跳过，其原始提案计数并明确 rejected。真实新风险可在既有 Task/正式 Project 确认关联上只保存证据并更新卡片，不为投影伪造字段改动，也不扩展为通用 Task 更新路径。
 
 业务 Skill 说明“如何判断”，操作 Skill 说明“如何读取或执行”。OA、面试和 OKR 已有成熟的专业
 Skill，CEO Skill 只负责识别需要委派的场景，不复制专业规则：分别加载

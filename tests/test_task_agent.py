@@ -1094,6 +1094,19 @@ def test_task_agent_repeats_identical_assessment_for_new_supporting_task_members
     assert "at most one Attention proposal per Project per round" not in text
 
 
+@pytest.mark.parametrize("surface", ["prompt", "skill"])
+def test_task_agent_allows_evidence_only_attention_on_confirmed_project(monkeypatch, surface):
+    import app.task_agent as task_agent
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    text = (build_task_agent_prompt(_work_item(), "候选上下文为空。") if surface == "prompt"
+        else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8"))
+    text = " ".join(text.split())
+    assert "New verified risk evidence may update Project Attention on an existing Task with an active confirmed official Project link even when no Task business field changes" in text
+    assert "Do not invent a Task field change to carry Attention evidence" in text
+    assert "Do not repeat or create a Project link solely to update Attention" in text
+
+
 def test_task_agent_prompt_allows_initial_risk_with_project_registered_this_turn(monkeypatch):
     import app.task_agent as task_agent
 
@@ -2713,7 +2726,7 @@ def test_two_applied_project_proposals_fold_into_one_assessment_readback(tmp_pat
     assert len({outcome.attention_id for outcome in result.projection_receipt.outcomes}) == 1
 
 
-def test_mixed_applied_and_unapplied_support_keeps_card_and_rejection_reason(tmp_path):
+def test_changed_and_evidence_only_support_share_applied_card(tmp_path):
     store = AutoReplyStore(tmp_path / "assessment-mixed-proposal-outcomes.sqlite3")
     first, anchor_id = _stored_project_task(store)
     second = TaskSemanticService(store).record_candidate(RecordCandidate(
@@ -2762,16 +2775,16 @@ def test_mixed_applied_and_unapplied_support_keeps_card_and_rejection_reason(tmp
     )
 
     assert result.projection_receipt is not None
-    assert result.projection_receipt.status == "partial"
+    assert result.projection_receipt.status == "completed"
     [readback] = result.projection_receipt.project_assessments
     assert readback.status == "applied"
-    assert readback.reason == "Attention proposal applied; proposal has no applied Task decision"
+    assert readback.reason == "Attention proposal applied."
     assert readback.anchor_id == anchor_id
     assert readback.task_ids == sorted([first.task_id, second.task_id])
     assert readback.attention_id is not None
     assert [
         link.task_id for link in store.list_business_attention_tasks(readback.attention_id)
-    ] == [first.task_id]
+    ] == [first.task_id, second.task_id]
 
 
 def test_task_ids_only_support_receives_recompute_error(tmp_path, monkeypatch):
@@ -2842,15 +2855,15 @@ def test_no_change_known_project_support_keeps_verified_decision_task_id(tmp_pat
         store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
     )
 
-    assert result.applied_decisions == ()
+    assert len(result.applied_decisions) == 1
     assert result.projection_receipt is not None
     [readback] = result.projection_receipt.project_assessments
-    assert readback.status == "rejected"
-    assert readback.reason == "proposal has no applied Task decision"
+    assert readback.status == "applied"
     assert readback.anchor_id == anchor_id
     assert readback.task_ids == [seed.task_id]
-    assert readback.attention_id is None
-    assert store.list_business_task_signals() == signals_before
+    assert readback.attention_id is not None
+    assert readback.evidence[0].signal_id == result.applied_decisions[0].signal_id
+    assert len(store.list_business_task_signals()) == len(signals_before) + 1
 
 
 @pytest.mark.parametrize(
@@ -4367,9 +4380,13 @@ def test_no_field_change_attention_proposal_remains_unapplied_without_new_effect
     assert store.list_business_attention_items() == ()
 
 
-def test_unapplied_exact_title_proposal_keeps_verified_existing_project_and_task_ids(tmp_path):
+def test_evidence_only_exact_title_proposal_reuses_existing_project_and_task_ids(tmp_path):
     store = AutoReplyStore(tmp_path / "assessment-existing-project-no-change.sqlite3")
     seed, anchor_id = _stored_project_task(store)
+    task_before = store.get_business_task(seed.task_id)
+    events_before = store.list_business_task_events(seed.task_id)
+    links_before = store.list_business_task_anchor_links(task_id=seed.task_id)
+    assert store.list_business_attention_items() == ()
     base = _work_item()
     item = base.model_copy(update={
         "source": base.source.model_copy(update={"type": WorkItemSourceType.AI_MINUTES}),
@@ -4407,17 +4424,23 @@ def test_unapplied_exact_title_proposal_keeps_verified_existing_project_and_task
         store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
     )
 
-    assert result.applied_decisions == ()
+    assert len(result.applied_decisions) == 1
     assert result.projection_receipt is not None
     [readback] = result.projection_receipt.project_assessments
-    assert readback.status == "rejected"
-    assert readback.reason == "proposal has no applied Task decision"
+    assert readback.status == "applied"
     assert readback.anchor_id == anchor_id
     assert readback.task_ids == [seed.task_id]
-    assert readback.attention_id is None
-    assert readback.evidence[0].signal_id is None
-    assert store.list_business_task_signals() == signals_before
-    assert store.list_business_attention_items() == ()
+    assert readback.attention_id is not None
+    assert readback.evidence[0].signal_id == result.applied_decisions[0].signal_id
+    assert len(store.list_business_task_signals()) == len(signals_before) + 1
+    assert len(store.list_business_projects()) == 1
+    assert store.list_business_attention_items()[0].id == readback.attention_id
+    card_evidence = json.loads(store.list_business_attention_items()[0].assessment_json)["evidence"]
+    assert card_evidence[0]["signal_id"] == readback.evidence[0].signal_id
+    assert card_evidence[0]["source_ref"] == item.source.ref
+    assert store.get_business_task(seed.task_id) == task_before
+    assert store.list_business_task_events(seed.task_id) == events_before
+    assert store.list_business_task_anchor_links(task_id=seed.task_id) == links_before
 
 
 def test_assessment_task_id_maps_matching_signal_without_decision_index(tmp_path):

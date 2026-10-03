@@ -2055,13 +2055,31 @@ def test_existing_project_link_rejects_unproven_target_or_current_action(tmp_pat
     assert len(store.list_business_task_signals()) == 1
 
 
-def test_restating_update_does_not_apply_existing_project_link_or_attention(tmp_path):
+def test_new_evidence_updates_existing_project_attention_without_task_field_change(tmp_path):
     store, item, seed, anchor_id, card_id, new_task = existing_project_link_case(tmp_path)
     task = store.get_business_task(seed.task_id)
     payload = {**new_task, "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
         "title": task.title, "description": task.description}
+    follow_up_signal_id = store.create_business_task_signal(
+        source_type="reply_attempt", source_ref="source:pending-follow-up",
+        evidence_text="待确认验收结果。", dedupe_key="source:pending-follow-up",
+        conversation_id="group:delivery",
+    )
+    store.link_business_task_evidence(
+        task_id=seed.task_id, signal_id=follow_up_signal_id, evidence_role="discovery",
+    )
+    store.create_business_task_follow_up(
+        business_task_id=seed.task_id, source_signal_id=follow_up_signal_id,
+        target_conversation_id="group:delivery", target_kind="group",
+        question_text="请确认验收结果。", scheduled_at="2026-10-10T12:00:00Z",
+        owner_user_id="owner:seed", owner_name="负责人", dedupe_key="follow-up:seed",
+    )
     with store._connect() as db:
         before = tuple(db.execute("select evidence_signal_id,reason from business_task_anchor_links").fetchone())
+        followups_before = [dict(row) for row in db.execute("select * from business_task_follow_ups")]
+        todo_before = [dict(row) for row in db.execute("select * from business_task_todo_sync_outbox")]
+    events_before = store.list_business_task_events(seed.task_id)
+    signals_before = store.list_business_task_signals()
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
         decision=TaskAgentDecision.model_validate({
             "project_assessments": [existing_project_assessment(
@@ -2069,12 +2087,127 @@ def test_restating_update_does_not_apply_existing_project_link_or_attention(tmp_
             )],
             "task_decisions": [payload],
         }), record_run=False)
-    assert result.task_ids == ()
+    assert result.task_ids == (seed.task_id,)
     assert result.project_links == ()
-    assert result.projection_receipt.status == "failed"
-    assert result.projection_receipt.outcomes[0].status == "rejected"
+    assert result.projection_receipt.status == "completed"
+    assert result.projection_receipt.outcomes[0].status == "applied"
+    [assessment] = result.projection_receipt.project_assessments
+    assert assessment.status == "applied"
+    assert assessment.anchor_id == anchor_id
+    assert assessment.task_ids == [seed.task_id]
+    assert assessment.attention_id == card_id
+    assert assessment.evidence[0].signal_id == result.applied_decisions[0].signal_id
+    assert result.applied_decisions[0].task_id == seed.task_id
+    assert result.applied_decisions[0].anchor_id == anchor_id
+    assert len(store.list_business_task_signals()) == len(signals_before) + 1
+    signal = store.get_business_task_signal(assessment.evidence[0].signal_id)
+    assert signal.source_ref == item.source.ref
+    assert assessment.evidence[0].source_excerpt in signal.evidence_text
+    assert store.get_business_task(seed.task_id) == task
+    assert store.list_business_task_events(seed.task_id) == events_before
     with store._connect() as db:
         assert tuple(db.execute("select evidence_signal_id,reason from business_task_anchor_links").fetchone()) == before
+        assert [dict(row) for row in db.execute("select * from business_task_follow_ups")] == followups_before
+        assert [dict(row) for row in db.execute("select * from business_task_todo_sync_outbox")] == todo_before
+    assert store.get_business_attention_item(card_id).title == "验收取消与付款风险"
+    assert store.list_business_attention_tasks(card_id)[0].task_id == seed.task_id
+    assert json.loads(store.get_business_attention_item(card_id).assessment_json)["evidence"][0]["signal_id"] == signal.id
+    events_after = store.list_business_attention_events(card_id)
+    evidence_after = store.list_business_task_evidence(seed.task_id)
+
+    replay = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [existing_project_assessment(
+                item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+            )], "task_decisions": [payload],
+        }), record_run=False)
+    assert replay.projection_receipt.status == "completed"
+    assert replay.applied_decisions[0].signal_id == signal.id
+    without_redundant_link = dict(payload)
+    del without_redundant_link["project_link_proposal"]
+    replay_without_link = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [existing_project_assessment(
+                item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+            )], "task_decisions": [without_redundant_link],
+        }), record_run=False)
+    assert replay_without_link.applied_decisions[0].signal_id == signal.id
+    assert store.list_business_task_signals() == (*signals_before, signal)
+    assert store.list_business_task_evidence(seed.task_id) == evidence_after
+    assert store.list_business_attention_events(card_id) == events_after
+    assert store.list_business_attention_tasks(card_id)[0].task_id == seed.task_id
+    assert store.get_business_task(seed.task_id) == task
+    assert store.list_business_task_events(seed.task_id) == events_before
+    with store._connect() as db:
+        assert [dict(row) for row in db.execute("select * from business_task_follow_ups")] == followups_before
+        assert [dict(row) for row in db.execute("select * from business_task_todo_sync_outbox")] == todo_before
+
+
+def test_distinct_current_risk_revises_existing_card_without_task_event(tmp_path):
+    store, item, seed, anchor_id, card_id, new_task = existing_project_link_case(tmp_path)
+    task_before = store.get_business_task(seed.task_id)
+    events_before = store.list_business_task_events(seed.task_id)
+    risk = "示例交付项目第二批验收推迟，新的回款节点也可能延后。"
+    item = item.model_copy(update={
+        "source": item.source.model_copy(update={"ref": "source:second-risk"}),
+        "summary": f"{risk}\n复核示例交付项目验收计划。",
+    })
+    proposal = dict(new_task["attention_proposal"])
+    proposal.update(title="第二批验收与回款风险", why_attention="第二批验收推迟影响新的回款节点",
+        current_state=risk, evidence=[{"source_ref": item.source.ref, "source_excerpt": risk}])
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [existing_project_assessment(
+            item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+        )],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+            "title": task_before.title, "description": task_before.description,
+            "source_ref": item.source.ref, "source_excerpt": "复核示例交付项目验收计划",
+            "attention_proposal": proposal,
+        }],
+    })
+
+    result = apply_task_agent_decision(store, summary_input_id=2, work_item=item,
+        decision=decision, record_run=False)
+
+    assert result.projection_receipt.status == "completed"
+    [assessment] = result.projection_receipt.project_assessments
+    assert (assessment.status, assessment.anchor_id, assessment.task_ids,
+        assessment.attention_id) == ("applied", anchor_id, [seed.task_id], card_id)
+    assert assessment.evidence[0].signal_id == result.applied_decisions[0].signal_id
+    card = store.get_business_attention_item(card_id)
+    assert card.title == "第二批验收与回款风险"
+    assert json.loads(card.assessment_json)["evidence"][0]["source_ref"] == item.source.ref
+    assert store.get_business_task(seed.task_id) == task_before
+    assert store.list_business_task_events(seed.task_id) == events_before
+
+
+def test_invalid_evidence_only_attention_quote_does_not_save_signal(tmp_path):
+    store, item, seed, anchor_id, card_id, new_task = existing_project_link_case(tmp_path)
+    task = store.get_business_task(seed.task_id)
+    before_signals = store.list_business_task_signals()
+    before_evidence = store.list_business_task_evidence(seed.task_id)
+    proposal = dict(new_task["attention_proposal"])
+    proposal["evidence"] = [{"source_ref": item.source.ref,
+        "source_excerpt": "来源中不存在的风险原文"}]
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [existing_project_assessment(
+            item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+        )],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+            "title": task.title, "description": task.description,
+            "source_ref": item.source.ref, "source_excerpt": "复核示例交付项目验收计划",
+            "attention_proposal": proposal,
+        }],
+    })
+
+    result = apply_task_agent_decision(store, summary_input_id=2, work_item=item,
+        decision=decision, record_run=False)
+    assert result.projection_receipt.status == "failed"
+    assert result.projection_receipt.outcomes[0].status == "rejected"
+    assert store.list_business_task_signals() == before_signals
+    assert store.list_business_task_evidence(seed.task_id) == before_evidence
     assert store.get_business_attention_item(card_id).title == "原验收风险"
 
 

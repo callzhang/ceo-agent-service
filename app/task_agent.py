@@ -581,6 +581,9 @@ When current evidence changes the risk, submit a matching attention_proposal;
 its Project key reuses the existing card. Leave existing_attention_id null unless
 you cite and verify that card's stored original evidence. An old card's presence
 alone does not establish its original proof.
+New verified risk evidence may update Project Attention on an existing Task with an active confirmed official Project link even when no Task business field changes.
+Use update_task/update_fields with that real Task ID, the current source's exact Task and risk quotes, the existing Project anchor, and an attention_proposal. Do not invent a Task field change to carry Attention evidence. Do not repeat or create a Project link solely to update Attention.
+Without a new Attention proposal, an unchanged Task remains a no-op. This path does not create a Task or official Project, confirm a new link, reschedule follow-ups, or enqueue a TODO.
 For a retained card, read its entry in current_project_attention, decode
 assessment_json, and cite at least one item from assessment_json.evidence with
 signal_id, source_ref, and source_excerpt unchanged. A current restatement does
@@ -1855,8 +1858,102 @@ def apply_task_agent_decision(
                 and task_before is not None and not date_facts
                 and _update_fields_restates_task(task_before, item, owner_user_id)
             ):
-                # The source says nothing the Task does not already say; there is
-                # nothing to apply, and one such item must not fail the whole batch.
+                # A new source may change Project Attention without changing any
+                # Task field. Save its original proof on the existing Task only.
+                proposal = item.attention_proposal
+                anchor_id = stored_anchor_by_decision.get(decision_index)
+                if (
+                    proposal is not None
+                    and anchor_id is not None
+                    and anchor_id in _confirmed_official_project_anchors(
+                        store, task_id=task_before.id, db=db
+                    )
+                    and (proposal.anchor_id == anchor_id
+                         or (proposal.anchor_id is None
+                             and item.project_proposal is not None))
+                    and item.evidence_origin == "current"
+                    and item.source_ref == work_item.source.ref
+                    and source_contains_quote(work_item.summary, item.source_excerpt)
+                    and any(evidence.signal_id is None for evidence in proposal.evidence)
+                    and all(
+                        evidence.signal_id is not None or (
+                            evidence.source_ref == work_item.source.ref
+                            and source_contains_quote(
+                                work_item.summary, evidence.source_excerpt
+                            )
+                        )
+                        for evidence in proposal.evidence
+                    )
+                    and not (
+                        item.project_candidate_proposal or item.cluster_proposal
+                        or item.relation_proposals or item.anchor_match_proposals
+                    )
+                ):
+                    project = db.execute(
+                        """select p.title as project_title, a.title as anchor_title
+                           from business_projects p join business_anchors a
+                             on a.id=p.canonical_anchor_id
+                           where p.canonical_anchor_id=? and a.anchor_type='project'
+                             and a.active=1""",
+                        (anchor_id,),
+                    ).fetchone()
+                    assert project is not None
+                    if item.project_link_proposal is not None:
+                        link = item.project_link_proposal
+                        if (
+                            link.anchor_id != anchor_id
+                            or not source_contains_quote(work_item.summary, link.source_excerpt)
+                            or not (item.source_excerpt in link.source_excerpt
+                                    or link.source_excerpt in item.source_excerpt)
+                            or not any(title in link.source_excerpt for title in (
+                                project["project_title"], project["anchor_title"],
+                            ))
+                        ):
+                            raise ValueError("existing Project link must cite the current exact Task action naming its Project")
+                    if item.project_proposal is not None:
+                        project_proposal = item.project_proposal
+                        if project_proposal.title != project["project_title"]:
+                            raise ValueError("evidence-only attention requires the Task's existing official Project")
+                        if project_proposal.authority == "meeting_decision":
+                            valid_project_quote = (
+                                (work_item.source.type is WorkItemSourceType.AI_MINUTES
+                                 or work_item.context.source_conversation_kind is WorkItemSourceKind.MINUTES)
+                                and source_contains_quote(
+                                    work_item.summary, project_proposal.source_excerpt
+                                )
+                            )
+                        else:
+                            valid_project_quote = (
+                                work_item.source.type.value == project_proposal.authority
+                                and _report_project_registry_title(
+                                    work_item, project_proposal.source_excerpt
+                                ) == project_proposal.title
+                            )
+                        if not valid_project_quote:
+                            raise ValueError("project proposal must cite the current official Project source")
+                    signal = replace(signal, dedupe_key=(
+                        f"task-attention:{work_item.source.type.value}:"
+                        f"{work_item.source.ref}:task:{task_before.id}"
+                    ))
+                    signal_id = service._signal_id_or_create(
+                        signal=signal, db=db, now=service._now()
+                    )
+                    store.link_business_task_evidence_in_transaction(
+                        task_id=task_before.id, signal_id=signal_id,
+                        evidence_role=BusinessEvidenceRole.DISCOVERY, _db=db,
+                    )
+                    task_ids.append(task_before.id)
+                    affected_task_ids.append(task_before.id)
+                    attention.append(AppliedTaskAttention(
+                        decision=item, task_id=task_before.id, signal_id=signal_id,
+                        anchor_id=anchor_id,
+                    ))
+                    applied_decisions.append(AppliedTaskDecision(
+                        decision_index=decision_index, task_id=task_before.id,
+                        signal_id=signal_id, anchor_id=anchor_id,
+                    ))
+                    continue
+                # A restated Task alone has no business effect.
                 skipped_reasons.append(f"Task {item.task_id} already matches this source; nothing to update.")
                 continue
             if item.action == "record_candidate":
