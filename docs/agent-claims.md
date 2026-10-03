@@ -37,6 +37,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-native-verbatim-citation-guidance | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: app/task_agent.py (quote prompt only), app/task_models.py (evidence/action field descriptions only), ci/shared-skills/ceo-work-tracking/SKILL.md, tests/test_task_agent.py (guidance regressions), docs/architecture.md and docs/runtime-mechanism.md (quote instruction consistency only) | Remove Skill's conflicting non-verbatim quotation instruction and clarify contiguous exact quotes with punctuation/newlines preserved. No validator relaxation, oracle change, fixture change or runtime repair. Other worktree's 47a56a7f native batch remains frozen. | 2026-10-03 |
+
 
 
 
