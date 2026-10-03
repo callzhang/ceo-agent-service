@@ -1,7 +1,35 @@
 import pytest
 from pydantic import ValidationError
 
-from app.task_models import TaskAgentDecision, WorkItem
+from app.task_models import TaskAgentDecision, TaskAttentionProjectionReceipt, WorkItem
+
+
+def test_projection_receipt_preserves_per_assessment_application_readback():
+    receipt = TaskAttentionProjectionReceipt.model_validate({
+        "status": "completed",
+        "source_type": "reply_attempt",
+        "task_decision_count": 1,
+        "project_link_count": 1,
+        "proposal_count": 1,
+        "project_assessments": [{
+            "assessment_index": 0,
+            "anchor_id": 4,
+            "task_ids": [7],
+            "attention_id": 9,
+            "status": "applied",
+            "reason": "Attention proposal applied.",
+            "evidence": [{
+                "source_ref": "message:42",
+                "source_excerpt": "验收延期",
+                "signal_id": 11,
+                "source_time": "2026-10-02T09:00:00Z",
+                "source_link": "https://example.test/message/42",
+            }],
+        }],
+    })
+
+    assert receipt.project_assessments[0].task_ids == [7]
+    assert receipt.project_assessments[0].evidence[0].signal_id == 11
 
 
 def _decision(**changes):

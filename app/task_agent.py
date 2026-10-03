@@ -35,6 +35,8 @@ from app.task_models import (
     WorkSummaryInput,
     TaskAttentionProjectionOutcome,
     TaskAttentionProjectionReceipt,
+    TaskAttentionAssessmentResult,
+    TaskAttentionVerifiedCitation,
 )
 from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID
 from app.task_retrieval import (
@@ -2261,6 +2263,9 @@ def apply_task_agent_decision(
         if recorded_run_id is not None:
             _save_projection_receipt(store, recorded_run_id, receipt)
         receipt = _project_task_attention(store, result.attention_proposals, result.affected_task_ids, receipt=receipt)
+        receipt = _finalize_assessment_results(
+            store, work_item=work_item, decision=decision, result=result, receipt=receipt,
+        )
         result = replace(result, projection_receipt=receipt)
         if recorded_run_id is not None:
             _save_projection_receipt(store, recorded_run_id, receipt)
@@ -2459,6 +2464,194 @@ def _projection_receipt(
     )
 
 
+def _finalize_assessment_results(
+    store: AutoReplyStore,
+    *,
+    work_item: WorkItem,
+    decision: TaskAgentDecision,
+    result: TaskAgentApplyResult,
+    receipt: TaskAttentionProjectionReceipt,
+) -> TaskAttentionProjectionReceipt:
+    """Attach verified application identities after the projection consumer has run."""
+
+    applied_by_index = {
+        entry.decision_index: entry for entry in result.applied_decisions
+    }
+
+    def exact_existing_project_anchor(title: str) -> int | None:
+        with store._connect() as db:
+            rows = db.execute(
+                """select p.canonical_anchor_id from business_projects p
+                   join business_anchors a on a.id=p.canonical_anchor_id
+                   where p.title=? and a.anchor_type='project' and a.active=1 limit 2""",
+                (title,),
+            ).fetchall()
+        if len(rows) > 1:
+            raise ValueError(
+                "Project identity conflict: multiple active official Projects have this exact title"
+            )
+        return int(rows[0]["canonical_anchor_id"]) if rows else None
+
+    def stored_signal(signal_id: int):
+        return store.get_business_task_signal(signal_id)
+
+    def verified_citations(assessment, existing_card) -> list[TaskAttentionVerifiedCitation]:
+        card_evidence = []
+        if existing_card is not None:
+            card_evidence = json.loads(existing_card.assessment_json).get("evidence", [])
+        citations: list[TaskAttentionVerifiedCitation] = []
+        for evidence in assessment.evidence:
+            signal = stored_signal(evidence.signal_id) if evidence.signal_id is not None else None
+            if signal is None:
+                applied_candidates = [
+                    entry for entry in result.applied_decisions
+                    if (
+                        entry.decision_index in assessment.decision_indexes
+                        or entry.task_id in assessment.task_ids
+                    )
+                ]
+                for applied in applied_candidates:
+                    candidate = stored_signal(applied.signal_id)
+                    if (
+                        candidate is not None
+                        and candidate.source_ref == evidence.source_ref
+                        and source_contains_quote(candidate.evidence_text, evidence.source_excerpt)
+                    ):
+                        signal = candidate
+                        break
+            if signal is None:
+                stored_proof = next((
+                    proof for proof in card_evidence
+                    if proof.get("source_ref") == evidence.source_ref
+                    and proof.get("source_excerpt") == evidence.source_excerpt
+                    and proof.get("signal_id") is not None
+                ), None)
+                if stored_proof is not None:
+                    signal = stored_signal(int(stored_proof["signal_id"]))
+            citations.append(TaskAttentionVerifiedCitation(
+                source_ref=evidence.source_ref,
+                source_excerpt=evidence.source_excerpt,
+                signal_id=signal.id if signal is not None else None,
+                source_time=(signal.source_time if signal is not None else work_item.source.created_at or ""),
+                source_link=(
+                    json.loads(signal.context_json).get("source_link", "")
+                    if signal is not None else ""
+                ),
+            ))
+        return citations
+
+    assessment_results: list[TaskAttentionAssessmentResult] = []
+    for assessment_index, assessment in enumerate(decision.project_assessments):
+        supported_applied = [
+            applied_by_index[index]
+            for index in assessment.decision_indexes
+            if index in applied_by_index
+        ]
+        actual_anchor_id = assessment.anchor_id
+        if actual_anchor_id is None and assessment.project_decision_index is not None:
+            actual_anchors = {
+                entry.anchor_id for entry in supported_applied if entry.anchor_id is not None
+            }
+            if len(actual_anchors) == 1:
+                actual_anchor_id = actual_anchors.pop()
+            elif not actual_anchors:
+                actual_anchor_id = exact_existing_project_anchor(assessment.project_title)
+
+        actual_task_ids = set(assessment.task_ids if actual_anchor_id is not None else ())
+        actual_task_ids.update(
+            entry.task_id for entry in supported_applied
+            if actual_anchor_id is not None and entry.anchor_id == actual_anchor_id
+        )
+        existing_card = (
+            store.get_business_attention_item(assessment.existing_attention_id)
+            if assessment.existing_attention_id is not None else None
+        )
+        attention_id = None
+        if existing_card is not None:
+            attention_id = existing_card.id
+            actual_task_ids.update(
+                link.task_id for link in store.list_business_attention_tasks(existing_card.id)
+            )
+
+        status = "recorded"
+        reason = "Assessment recorded; no Attention application requested."
+        if actual_anchor_id is None:
+            reason = "Assessment recorded without an applied Project or Attention identity."
+        if assessment.outcome == "needs_attention":
+            if existing_card is not None:
+                status = "existing"
+                reason = "Existing Attention card verified."
+            else:
+                proposal_indexes = {
+                    index for index in assessment.decision_indexes
+                    if decision.task_decisions[index].attention_proposal is not None
+                }
+                proposal_entries = [
+                    applied_by_index[index] for index in proposal_indexes
+                    if index in applied_by_index
+                ]
+                projection_outcomes = [
+                    outcome for outcome in receipt.outcomes
+                    if (
+                        any(outcome.task_id == entry.task_id for entry in proposal_entries)
+                        and (actual_anchor_id is None or outcome.anchor_id == actual_anchor_id)
+                    )
+                ]
+                applied_outcomes = [
+                    outcome for outcome in projection_outcomes if outcome.status == "applied"
+                ]
+                if applied_outcomes:
+                    status = "applied"
+                    attention_id = applied_outcomes[0].attention_id
+                    reason = "Attention proposal applied."
+                else:
+                    failed_outcome = next((
+                        outcome for outcome in projection_outcomes
+                        if outcome.status in {"error", "rejected"}
+                    ), None)
+                    if failed_outcome is None:
+                        unapplied_shapes = {
+                            (
+                                decision.task_decisions[index].task_id,
+                                decision.task_decisions[index].attention_proposal.anchor_id,
+                            )
+                            for index in proposal_indexes
+                        }
+                        failed_outcome = next((
+                            outcome for outcome in receipt.outcomes
+                            if outcome.reason == "proposal has no applied Task decision"
+                            and (outcome.task_id, outcome.anchor_id) in unapplied_shapes
+                        ), None)
+                    if failed_outcome is not None:
+                        status = failed_outcome.status
+                        reason = failed_outcome.reason
+                    else:
+                        status = "error"
+                        reason = receipt.recompute_error or "Attention application result is unavailable."
+
+        if receipt.recompute_error and supported_applied:
+            status = "error"
+            if reason in {
+                "Assessment recorded; no Attention application requested.",
+                "Attention proposal applied.",
+            }:
+                reason = receipt.recompute_error
+            elif receipt.recompute_error not in reason:
+                reason = f"{reason}; recompute_error: {receipt.recompute_error}"
+
+        assessment_results.append(TaskAttentionAssessmentResult(
+            assessment_index=assessment_index,
+            anchor_id=actual_anchor_id,
+            task_ids=sorted(actual_task_ids),
+            attention_id=attention_id,
+            status=status,
+            reason=reason,
+            evidence=verified_citations(assessment, existing_card),
+        ))
+    receipt.project_assessments = assessment_results
+    return receipt
+
+
 def _save_projection_receipt(
     store: AutoReplyStore, run_id: int, receipt: TaskAttentionProjectionReceipt,
 ) -> None:
@@ -2608,6 +2801,13 @@ def process_work_item(
         raise
     try:
         receipt = _project_task_attention(store, apply_result.attention_proposals, apply_result.affected_task_ids, receipt=receipt)
+        receipt = _finalize_assessment_results(
+            store,
+            work_item=work_item,
+            decision=decision,
+            result=apply_result,
+            receipt=receipt,
+        )
         _save_projection_receipt(store, committed_run_id, receipt)
     except Exception:
         LOGGER.exception("Task committed but projection did not finish run_id=%s", committed_run_id)

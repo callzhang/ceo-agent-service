@@ -21,20 +21,26 @@ def main() -> int:
             print(json.dumps({"error": "input_not_found", "input_id": args.input_id}))
             return 1
         runs = db.execute(
-            "select id, status, projection_json, audit_summary "
+            "select id, status, decision_json, projection_json "
             "from task_agent_runs where summary_input_id=? order by id",
             (args.input_id,),
         ).fetchall()
+    inspected_runs = []
+    for run in runs:
+        decision = json.loads(run["decision_json"])
+        inspected = {
+            "run_id": run["id"],
+            "run_status": run["status"],
+            "projection": json.loads(run["projection_json"]),
+        }
+        if "project_assessments" in decision:
+            inspected["project_assessments"] = decision["project_assessments"]
+        inspected_runs.append(inspected)
     print(json.dumps({
         "input_id": item["id"],
         "source_type": item["source_type"],
         "input_status": item["status"],
-        "runs": [{
-            "run_id": run["id"],
-            "run_status": run["status"],
-            "projection": json.loads(run["projection_json"]),
-            "audit_summary": run["audit_summary"],
-        } for run in runs],
+        "runs": inspected_runs,
     }, ensure_ascii=False))
     return 0
 

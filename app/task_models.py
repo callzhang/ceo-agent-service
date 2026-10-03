@@ -1070,6 +1070,24 @@ class TaskAttentionProjectionOutcome(BaseModel):
     reason: str = ""
 
 
+class TaskAttentionVerifiedCitation(BaseModel):
+    source_ref: str
+    source_excerpt: str
+    signal_id: int | None = None
+    source_time: str = ""
+    source_link: str = ""
+
+
+class TaskAttentionAssessmentResult(BaseModel):
+    assessment_index: int
+    anchor_id: int | None = None
+    task_ids: list[int] = Field(default_factory=list)
+    attention_id: int | None = None
+    status: Literal["recorded", "applied", "existing", "rejected", "error"]
+    reason: str = ""
+    evidence: list[TaskAttentionVerifiedCitation] = Field(default_factory=list)
+
+
 class TaskAttentionProjectionReceipt(BaseModel):
     status: Literal["pending", "no_proposal", "completed", "partial", "failed"]
     source_type: str
@@ -1079,6 +1097,7 @@ class TaskAttentionProjectionReceipt(BaseModel):
     proposal_count: int
     applied_count: int = 0
     outcomes: list[TaskAttentionProjectionOutcome] = Field(default_factory=list)
+    project_assessments: list[TaskAttentionAssessmentResult] = Field(default_factory=list)
     recompute_error: str = ""
 
 

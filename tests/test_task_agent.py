@@ -600,6 +600,41 @@ def test_process_work_item_success_commits_task_and_terminal_run_and_input(tmp_p
     assert run == ("completed", "")
 
 
+def test_process_work_item_persists_final_assessment_readback_without_rewriting_judgment(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task-assessment-readback.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    payload = {
+        "project_assessments": [_stored_project_assessment(item, seed, anchor_id)],
+        "task_decisions": [],
+    }
+
+    process_work_item(store, TaskAgentRunner(FakeCodex(payload)), work_input)
+
+    with store._connect() as db:
+        run = db.execute(
+            "select decision_json, projection_json from task_agent_runs "
+            "where summary_input_id=?",
+            (input_id,),
+        ).fetchone()
+    stored_decision = json.loads(run["decision_json"])
+    stored_projection = json.loads(run["projection_json"])
+    assert stored_decision["project_assessments"][0]["outcome"] == "not_needed"
+    assert stored_decision["project_assessments"][0]["reason"] == payload["project_assessments"][0]["reason"]
+    assert "assessment_results" not in stored_decision
+    assert stored_projection["status"] == "no_proposal"
+    assert stored_projection["project_assessments"][0]["status"] == "recorded"
+    assert stored_projection["project_assessments"][0]["anchor_id"] == anchor_id
+    assert stored_projection["project_assessments"][0]["task_ids"] == [seed.task_id]
+
+
 def test_work_item_accepts_task_routing_signals():
     item = WorkItem.model_validate(
         {
@@ -2509,6 +2544,111 @@ def test_attention_projection_runs_after_outer_domain_transaction_commit(tmp_pat
     assert assessment["evidence"][0]["source_excerpt"] == "delivery is at risk"
 
 
+def test_two_applied_project_proposals_fold_into_one_assessment_readback(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-folded-proposals.sqlite3")
+    first, anchor_id = _stored_project_task(store)
+    second = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="售前知识库回款",
+        signal=SourceSignal(source_type="seed", source_ref="seed:folded-second",
+                            evidence_text="售前知识库回款", dedupe_key="seed:folded-second"),
+    ))
+    BusinessResolutionService(store).confirm_anchor_match(
+        task_id=second.task_id, anchor_id=anchor_id, evidence_signal_id=second.signal_id,
+        reason="同一正式 Project", relevance=BusinessRelevance.RELEVANT,
+    )
+    item = _work_item().model_copy(update={"summary": "售前知识库交付风险需要观察。"})
+    proposal = {
+        "category": "watch", "title": "售前知识库交付风险",
+        "why_attention": "交付风险需要观察", "current_state": "等待交付与回款结果",
+        "ceo_action": "观察结果", "anchor_id": anchor_id,
+        "assessment_basis": "current_observation", "material_trigger": "risk_escalation",
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+    }
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "售前知识库", "anchor_id": anchor_id,
+            "outcome": "needs_attention", "reason": "交付风险同时影响交付与回款。",
+            "assessment_basis": "current_observation", "decision_indexes": [0, 1],
+            "task_ids": [first.task_id, second.task_id],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+        }],
+        "task_decisions": [
+            {
+                "action": "update_task", "transition": "update_fields", "task_id": first.task_id,
+                "title": "售前知识库交付",
+                "status": "waiting", "source_ref": item.source.ref,
+                "source_excerpt": "交付风险需要观察", "attention_proposal": proposal,
+            },
+            {
+                "action": "update_task", "transition": "update_fields", "task_id": second.task_id,
+                "title": "售前知识库回款", "status": "waiting", "source_ref": item.source.ref,
+                "source_excerpt": "交付风险需要观察", "attention_proposal": proposal,
+            },
+        ],
+    })
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.projection_receipt is not None
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "applied"
+    assert readback.anchor_id == anchor_id
+    assert readback.task_ids == sorted([first.task_id, second.task_id])
+    assert readback.attention_id == store.list_business_attention_items()[0].id
+    assert len({outcome.attention_id for outcome in result.projection_receipt.outcomes}) == 1
+
+
+@pytest.mark.parametrize(
+    ("failure_method", "failure_message"),
+    [("upsert", "projection exploded"), ("recompute_for_tasks", "recompute exploded")],
+)
+def test_projection_error_is_preserved_in_assessment_application_readback(
+    tmp_path, monkeypatch, failure_method, failure_message,
+):
+    store = AutoReplyStore(tmp_path / "assessment-projection-error.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    item = _work_item().model_copy(update={"summary": "售前知识库交付风险需要观察。"})
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "售前知识库", "anchor_id": anchor_id,
+            "outcome": "needs_attention", "reason": "交付风险需要观察。",
+            "assessment_basis": "current_observation", "decision_indexes": [0],
+            "task_ids": [seed.task_id],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+        }],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+            "title": "售前知识库交付", "status": "waiting", "source_ref": item.source.ref,
+            "source_excerpt": "交付风险需要观察",
+            "attention_proposal": {
+                "category": "watch", "title": "售前知识库交付风险",
+                "why_attention": "交付风险需要观察", "current_state": "等待交付结果",
+                "ceo_action": "观察结果", "anchor_id": anchor_id,
+                "assessment_basis": "current_observation", "material_trigger": "risk_escalation",
+                "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+            },
+        }],
+    })
+
+    def fail_projection(_self, *_args, **_kwargs):
+        raise RuntimeError(failure_message)
+
+    monkeypatch.setattr(BusinessAttentionProjection, failure_method, fail_projection)
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.projection_receipt is not None
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "error"
+    assert readback.reason == failure_message
+    assert readback.anchor_id == anchor_id
+    assert readback.task_ids == [seed.task_id]
+    assert (readback.attention_id is None) is (failure_method == "upsert")
+
+
 def test_routine_progress_without_attention_proposal_is_not_projected(tmp_path):
     store = AutoReplyStore(tmp_path / "ordinary-progress-not-attention.sqlite3")
     seed = TaskSemanticService(store).record_candidate(RecordCandidate(
@@ -3579,7 +3719,50 @@ def test_existing_attention_repeat_with_no_task_field_change_has_no_new_effect(t
 
     assert result.task_ids == ()
     assert result.applied_decisions == ()
+    assert result.projection_receipt is not None
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "existing"
+    assert readback.anchor_id == anchor_id
+    assert readback.task_ids == [seed.task_id]
+    assert readback.attention_id == attention_id
+    assert [citation.signal_id for citation in readback.evidence] == [
+        None, seed.signal_id,
+    ]
     assert store.list_business_task_signals() == signals_before
+    assert store.list_business_attention_events(attention_id) == events_before
+
+    replay = apply_task_agent_decision(
+        store, summary_input_id=2, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert replay.projection_receipt is not None
+    assert replay.projection_receipt.project_assessments == result.projection_receipt.project_assessments
+    assert store.list_business_task_signals() == signals_before
+    assert store.list_business_attention_events(attention_id) == events_before
+
+
+def test_negative_assessment_records_known_project_without_closing_existing_card(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-negative-keeps-card.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    attention_id = _stored_attention_card(store, seed=seed, anchor_id=anchor_id)
+    item = _work_item()
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [_stored_project_assessment(item, seed, anchor_id)],
+        "task_decisions": [],
+    })
+    events_before = store.list_business_attention_events(attention_id)
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.projection_receipt is not None
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "recorded"
+    assert readback.anchor_id == anchor_id
+    assert readback.task_ids == [seed.task_id]
+    assert readback.attention_id is None
+    assert store.get_business_attention_item(attention_id).status.value == "active"
     assert store.list_business_attention_events(attention_id) == events_before
 
 
@@ -3740,6 +3923,21 @@ def test_unknown_current_project_clue_is_evidence_only_and_creates_nothing(tmp_p
 
     assert result.task_ids == ()
     assert result.applied_decisions == ()
+    assert result.projection_receipt is not None
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.assessment_index == 0
+    assert readback.status == "recorded"
+    assert readback.anchor_id is None
+    assert readback.task_ids == []
+    assert readback.attention_id is None
+    assert readback.reason == "Assessment recorded without an applied Project or Attention identity."
+    assert readback.evidence[0].model_dump() == {
+        "source_ref": item.source.ref,
+        "source_excerpt": "远期海外机会",
+        "signal_id": None,
+        "source_time": item.source.created_at,
+        "source_link": "",
+    }
     assert store.list_business_tasks() == ()
     assert store.list_business_task_signals() == ()
     assert store.list_business_projects() == []
@@ -3800,10 +3998,99 @@ def test_no_field_change_attention_proposal_remains_unapplied_without_new_effect
     assert [outcome.reason for outcome in result.projection_receipt.outcomes] == [
         "proposal has no applied Task decision"
     ]
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "rejected"
+    assert readback.anchor_id is None
+    assert readback.task_ids == []
+    assert readback.attention_id is None
+    assert readback.reason == "proposal has no applied Task decision"
     assert store.list_business_task_signals() == signals_before
     assert store.list_business_projects() == []
     assert store.list_business_task_anchor_links(task_id=seed.task_id) == ()
     assert store.list_business_attention_items() == ()
+
+
+def test_unapplied_exact_title_proposal_keeps_verified_existing_project_and_task_ids(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-existing-project-no-change.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    base = _work_item()
+    item = base.model_copy(update={
+        "source": base.source.model_copy(update={"type": WorkItemSourceType.AI_MINUTES}),
+        "context": base.context.model_copy(update={"source_conversation_kind": WorkItemSourceKind.MINUTES}),
+        "summary": "会议再次确认售前知识库，售前知识库交付风险需要观察。",
+    })
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "售前知识库", "project_decision_index": 0,
+            "outcome": "needs_attention", "reason": "交付风险需要观察。",
+            "assessment_basis": "current_observation", "decision_indexes": [0],
+            "task_ids": [seed.task_id],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+        }],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+            "title": "售前知识库交付", "source_ref": item.source.ref,
+            "source_excerpt": "售前知识库交付风险需要观察",
+            "project_proposal": {
+                "title": "售前知识库", "authority": "meeting_decision",
+                "source_excerpt": "会议再次确认售前知识库", "reason": "会议确认既有项目",
+            },
+            "attention_proposal": {
+                "category": "watch", "title": "售前知识库交付风险",
+                "why_attention": "交付风险需要观察", "current_state": "等待交付结果",
+                "ceo_action": "观察结果", "anchor_id": None,
+                "assessment_basis": "current_observation", "material_trigger": "risk_escalation",
+                "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+            },
+        }],
+    })
+    signals_before = store.list_business_task_signals()
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.applied_decisions == ()
+    assert result.projection_receipt is not None
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "rejected"
+    assert readback.reason == "proposal has no applied Task decision"
+    assert readback.anchor_id == anchor_id
+    assert readback.task_ids == [seed.task_id]
+    assert readback.attention_id is None
+    assert readback.evidence[0].signal_id is None
+    assert store.list_business_task_signals() == signals_before
+    assert store.list_business_attention_items() == ()
+
+
+def test_assessment_task_id_maps_matching_signal_without_decision_index(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-task-id-signal-readback.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    item = _work_item().model_copy(update={"summary": "售前知识库交付补齐本轮来源。"})
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "售前知识库", "anchor_id": anchor_id,
+            "outcome": "not_needed", "reason": "本轮只补来源，没有新增经营影响。",
+            "assessment_basis": "current_observation", "decision_indexes": [],
+            "task_ids": [seed.task_id],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "补齐本轮来源"}],
+        }],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+            "title": "售前知识库交付", "status": "waiting",
+            "source_ref": item.source.ref, "source_excerpt": "补齐本轮来源",
+        }],
+    })
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.applied_decisions[0].task_id == seed.task_id
+    assert result.projection_receipt is not None
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "recorded"
+    assert readback.evidence[0].signal_id == result.applied_decisions[0].signal_id
 
 
 def test_stored_assessment_rejects_attention_anchor_contradicting_canonical_project_before_writes(tmp_path):
@@ -4176,7 +4463,7 @@ def test_existing_attention_same_current_source_quote_can_cite_card_original_wit
     )
     events_before = store.list_business_attention_events(attention_id)
 
-    apply_task_agent_decision(
+    result = apply_task_agent_decision(
         store, summary_input_id=1, work_item=item,
         decision=TaskAgentDecision.model_validate({
             "project_assessments": [assessment], "task_decisions": [],
@@ -4184,6 +4471,11 @@ def test_existing_attention_same_current_source_quote_can_cite_card_original_wit
         record_run=False,
     )
 
+    assert result.projection_receipt is not None
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "existing"
+    assert readback.attention_id == attention_id
+    assert readback.evidence[0].signal_id == seed.signal_id
     assert store.list_business_attention_events(attention_id) == events_before
 
 

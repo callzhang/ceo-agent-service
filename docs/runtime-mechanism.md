@@ -457,14 +457,17 @@ registry_row_count 复用既有原始周报结构解析，未提出 Project 也�
 无字段实际变化的 update 仍由既有 `_update_fields_restates_task` 在 Project/Attention 处理前跳过；
 其原始提案保留计数并有 rejected outcome。新风险对 Task 描述的真实补充可更新，不能为了链接
 引文伪造描述/状态变更，也不新增 evidence-only update 路径。
+最终回执还按原始判断位置保存 `project_assessments` 应用读回：`recorded` 表示负面或证据不足判断已留存但未请求卡片动作，`applied` 表示卡片实际写入，`existing` 表示实际活动卡片及其成员/原始证明已核验，`rejected` / `error` 保留该判断自身支持决定对应的拒绝或异常原因。每项的 anchor、Task、Attention ID 只来自本轮成功应用映射或被精确引用并已核验的当前持久化对象；同一 Project 的多个成功 Task 提案折叠后共享一个真实 Attention ID。精确同名正式 Project 已存在但 Task 更新无变化时保留既有 Project/Task 身份，真正未登记且未应用的新 Project 不产生身份。未应用的正提案不借用其他 Project 的 outcome，也不从提案猜未来 ID；重算异常保留在相关判断的 error reason，不由先前卡片写入成功掩盖。每条 evidence 保存原始 ref/quote，并仅在实际 Signal 存在且与引文匹配时附带 signal ID、来源时间和持久化 locator；匹配候选限于该 assessment 的支持决定及显式 Task ID 在本轮实际写入的 Signal。初始 pending 回执可没有该集合；消费者完成后才独立保存最终集合，原始 `decision_json` 不被回执改写，旧 run 的 `{}` 或缺少判断字段保持历史缺失语义。
 `business_attention_items.assessment_json` 默认 `{}`，只用于保存已经核验的 material trigger、
 Agent 推断、精确引文及来源 signal ID / source_ref / source_time / link，不复制完整来源。
 引文的时间、链接仅取持久化 signal metadata/context，JSON 按键排序；why_attention 保留纯推断，
 不拼入 trigger 原文。底层存储不自行生成评估或判定业务重大性；Attention 事件的卡片快照保留此字段，
 仅 assessment 改变也产生更新事件，重复回放不重复产生事件。
 只读诊断 `python scripts/inspect_task_attention.py --db <数据库路径> --input-id <精确输入 ID>`
-通过 SQLite `mode=ro` 读取该输入及其 run，输出来源、输入/run 状态、投影回执与审核摘要，
-不输出 payload 或完整决策，也不初始化 Store、迁移数据库或创建不存在的数据库。
+通过 SQLite `mode=ro` 读取该输入及其 run，输出来源、输入/run 状态、原始
+`project_assessments`（字段存在时）与 `projection` 应用读回；历史合法 JSON 中缺少该字段
+保持“缺失”，与当前显式空集合区分。不输出 payload、完整决策、审核摘要或其他私有字段，
+也不初始化 Store、迁移数据库或创建不存在的数据库。
 输入不存在时输出 `input_not_found` JSON 并以状态 1 退出。
 
 目前通用 work-item 生产者尚未提供所有授权和 owner identity 映射元数据；在来源元数据缺失时，
