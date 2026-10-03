@@ -37,6 +37,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-native-negative-assessment-guidance | Isolated task-attention-multisource worktree: app/task_agent.py (assessment outcome prompt only), app/task_models.py (outcome description only), ci/shared-skills/ceo-work-tracking/SKILL.md, tests/test_task_agent.py (outcome guidance regressions), docs/architecture.md and docs/runtime-mechanism.md (negative judgment guidance), docs/task-attention-phase1-validation.md (native business discrepancy) | Distinguish supported not_needed from insufficient_evidence when concrete risk impact is missing, as approved spec requires. No validator/classifier/oracle/fixture or projection change. Frozen421 batch untouched. | 2026-10-03 |
+
 
 
 
