@@ -1005,6 +1005,33 @@ def test_same_project_proposal_keeps_shared_facts_not_individual_actions(monkeyp
     assert "Task-specific actions belong in Task description or update_summary" in text
 
 
+def test_task_agent_quote_guidance_preserves_source_whitespace(monkeypatch):
+    import app.task_agent as task_agent
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    prompt = build_task_agent_prompt(_work_item(), "{}")
+    assert "Preserve source punctuation, spaces, and line breaks" in prompt
+    assert "Do not join separate lines or rewrite an excerpt" in prompt
+    assert "it need not be word for word" not in prompt
+
+
+def test_work_tracking_skill_requires_verbatim_source_spans():
+    skill = (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text()
+    assert "it need not be word for word" not in skill
+    assert "Preserve source punctuation, spaces, and line breaks" in skill
+
+
+def test_quote_schema_descriptions_preserve_source_line_breaks():
+    schema = TaskAgentDecision.model_json_schema()
+    for model in ("TaskAttentionEvidence", "TaskDecision"):
+        field = schema["$defs"][model]["properties"]["source_excerpt"]
+        description = " ".join([field.get("description", ""), *[
+            branch.get("description", "") for branch in field.get("anyOf", [])
+        ]])
+        assert "contiguous verbatim" in description
+        assert "line breaks" in description
+
+
 def test_attention_current_state_schema_describes_shared_project_facts():
     from app.task_models import TaskAttentionProposal
 

@@ -19,10 +19,13 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
 
 1. Extract zero or more distinct Tasks from supplied source context. Every Task
    decision must cite its source: the reference, one sentence of the original
-   text (an extract is fine, it need not be word for word), and where to find it
+   text (a contiguous verbatim extract), and where to find it
    (its link whenever it has one; otherwise a description, e.g. a DingTalk
    message is its group and the person who sent it). Never originate a Task, deliverable,
    owner, assignment, or date from Agent judgment alone.
+   Preserve source punctuation, spaces, and line breaks in every source_excerpt.
+   Do not join separate lines or rewrite an excerpt. Use separate evidence entries
+   for separate spans; a JSON escape for a line break preserves the original quote.
    Project registration scope, objectives, and categories are not separate Tasks
    when concrete source actions already cover that work. Use registration text as
    Project evidence attached to those real actions, not as an additional umbrella Task.

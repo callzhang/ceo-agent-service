@@ -406,7 +406,7 @@ class ProjectProposal(StrictTaskModel):
 class TaskAttentionEvidence(StrictTaskModel):
     signal_id: int | None = Field(default=None, strict=True, gt=0)
     source_ref: str
-    source_excerpt: str
+    source_excerpt: str = Field(description="A contiguous verbatim source quote, preserving punctuation, spaces, and line breaks. Do not join separate spans or paraphrase; use separate evidence entries for separate spans.")
 
     @field_validator("source_ref", "source_excerpt")
     @classmethod
@@ -457,7 +457,7 @@ class TaskDecision(StrictTaskModel):
     skip_reason: str = ""
     task_id: int | None = Field(default=None, gt=0)
     target_task_id: int | None = Field(default=None, gt=0)
-    source_excerpt: str = Field(default="", description="Exact quote of this independent Task action or this existing Task's actual update, not Project registration scope already covered by concrete actions; cite registration separately in project_proposal.")
+    source_excerpt: str = Field(default="", description="Exact contiguous verbatim quote of this independent Task action or this existing Task's actual update, not Project registration scope already covered by concrete actions; cite registration separately in project_proposal. Preserve punctuation, spaces, and line breaks.")
     source_ref: str = ""
     source_link: str = Field(default="", description="A link to the source (a document, minutes page, message or thread URL). Required whenever the source has one.")
     source_description: str = Field(default="", description="Where a reader can find the source when there is no link, in words: e.g. a DingTalk message is its group and the person who sent it.")

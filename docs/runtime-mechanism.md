@@ -471,6 +471,7 @@ registry_row_count 复用既有原始周报结构解析，未提出 Project 也�
 引文伪造描述/状态变更，也不新增 evidence-only update 路径。
 最终回执还按原始判断位置保存 `project_assessments` 应用读回：`recorded` 表示负面或证据不足判断已留存但未请求卡片动作，`applied` 表示卡片实际写入，`existing` 表示实际活动卡片及其成员/原始证明已核验，`rejected` / `error` 保留该判断自身支持决定对应的拒绝或异常原因。每项的 anchor、Task、Attention ID 只来自本轮成功应用映射或被精确引用并已核验的当前持久化对象；同一 Project 的多个成功 Task 提案折叠后共享一个真实 Attention ID。若同一判断一部分提案成功、一部分支持决定未应用，回执保持 applied 和真实卡 ID，同时在 reason 保留 `proposal has no applied Task decision`；卡片成员仍只反映实际成功的合格 Task。若判断既引用已核验活动卡片又提交当前 proposal，回执保留该真实卡 ID，但 status/reason 采用当前 proposal 的实际 applied/rejected/error 结果；只有没有当前 proposal 时才以 existing 表示单纯复用。精确同名正式 Project 已存在但 Task 更新无变化时保留既有 Project/Task 身份，支持位置上已确认链接的 Task 即使未重复列在 assessment `task_ids` 也保留真实 ID，真正未登记且未应用的新 Project 不产生身份。未应用的正提案不借用其他 Project 的 outcome，也不从提案猜未来 ID；重算异常只传播到由支持位置或显式 Task ID 对应本轮成功决定的相关判断，并保留为 error reason，不改写 raw outcome。每条 evidence 保存原始 ref/quote，并仅在实际 Signal 存在且与引文匹配时附带 signal ID、来源时间和持久化 locator；匹配候选限于该 assessment 的支持决定及显式 Task ID 在本轮实际写入的 Signal。初始 pending 回执可没有该集合；消费者完成后才独立保存最终集合，原始 `decision_json` 不被回执改写，旧 run 的 `{}` 或缺少判断字段保持历史缺失语义。
 正式 Project 身份已解析时，回执 `task_ids` 同样保留 assessment 支持位置本轮实际成功保存但没有 confirmed Project link 的 Task。这是支持任务引用，不是正式任务、已确认项目归属或 Attention 成员。未确认 Project 线索不携带应用 Task 身份，其当前原文引用不借用未列入回执支持任务的 Signal，保持 null ID 和原始来源时间；不猜 Project ID，不将未应用决定变成新 Task，也不改变卡片消费者的成员核验。
+当前 prompt、CI Skill 与 Task/评估引文字段说明统一要求连续的逐字原文片段，保留标点、空格和换行；不同片段用不同 evidence 项，不能把多行压成一行后当原文。删除 Skill 旧的“无需逐字”指引。原文核验器和现有拒绝行为不变，不做空白归一化、自动修复引用或放宽固定验收。
 `business_attention_items.assessment_json` 默认 `{}`，只用于保存已经核验的 material trigger、
 Agent 推断、精确引文及来源 signal ID / source_ref / source_time / link，不复制完整来源。
 引文的时间、链接仅取持久化 signal metadata/context，JSON 按键排序；why_attention 保留纯推断，
@@ -1253,12 +1254,12 @@ Derek 2026-09-25 定的规则。Task Agent 用同一个长期 session 是为了�
 | --- | --- |
 | `evidence_origin` | `current`（当前 Work Item，默认）、`session`（此前 session 里读到的）、`memory`（Memory provenance 指向的原始来源） |
 | `source_ref` | 来源引用；`session` / `memory` 时是**原始来源**的引用 |
-| `source_excerpt` | 取自原文的一句话；普通任务引文可以摘取，日期证据的 `source_excerpt` 必须逐字连续匹配 |
+| `source_excerpt` | prompt、Skill 和字段说明要求原文中连续的逐字摘录，保留标点、空格和换行；普通 Task 的原有校验仍不检查来源子串，日期证据及 Project assessment / Attention 引文仍按各自既有原文规则校验 |
 | `source_link` | 来源有链接就必须给 |
 | `source_description` | 没有链接时用文字描述在哪里，例如钉钉消息写“群 + 发送人”；`source_group` 加 `source_person` 也算 |
 
 - 对 `session` / `memory`，链接和描述至少要有一个，否则模型校验拒绝。对 `current`，缺的定位由服务补：URL 引用、听记摘要里的页面链接、或会话加发送人；都没有时记录里仍有 `source_ref`。
-- 引文不再校验是不是原文子串。仍然要求：引文非空；负责人的名字必须出现在负责人引文里；日期证据仍要求是来源子串。
+- 普通 Task 引文的原有校验仍不检查是不是原文子串，逐字摘录是 Agent 指令，不是新加入的验证器。仍然要求：引文非空；负责人的名字必须出现在负责人引文里；日期证据仍要求是来源子串。Project assessment / Attention 的原文核验按前述独立契约执行。
 - `session` / `memory` 只能用于完善已有 Task（`update_fields`）或记录候选。创建正式 Task、晋升、确认接受、身份合并仍要当前 Work Item 的授权与身份元数据；日期证据仍要当前来源和明确说话人。
 - 引用的旧证据单独存成一条来源信号：`source_type` 为 `session_provenance` 或 `memory_provenance`，引文作证据文本，链接和描述放 `context_json`（`source_link`、`source_description`），群和人放会话标题与作者名，`cited_while_processing` 记录当时在处理哪个 Work Item。服务无法重读原文，所以这条记录标明的是“引用而非当下观察”。
 

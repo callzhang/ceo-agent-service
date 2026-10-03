@@ -771,7 +771,7 @@ Task 关联到该 Project。`project_proposal` 表示采用当前权威来源明
 一行列出多位个人负责人时，来源证据须覆盖每个人名；钉钉 `@` 标记及名单分隔符
 不应把有效的负责人引用误判为缺失，团队或部门名称仍不能充当个人负责人。
 
-Task Agent 的结构化结果是 `task_decisions` 列表，同一来源可以得到 0 到多个决定。每个非 skip 项必须引用来源：来源引用、取自原文的一句话（可摘取，不必逐字）、以及来源的链接（没有链接则描述在哪里，如钉钉消息的群加发送人）；引用可以来自当前 Work Item，也可以来自此前 session 里读到的证据或 Memory provenance（只能用于完善已有 Task 或记录候选，见 `docs/runtime-mechanism.md` “Task 的来源与证据”）；Task、负责人、日期和承诺不得由 Agent 自行补造。正式 Task 必须有来源支持的明确负责人；对 AI Minutes，Agent 还必须给出 `owner_kind` 与 `owner_relation`：只有单个个人且关系为明确分派、自承诺或会议行动项时才按 `meeting_action_item` 正式化，团队、仅发言或关系未知仍是候选。稳定 ID、日期或完成标准缺失只影响后续补充，不会单独降级明确行动项。正式指派先记为 `assigned_unaccepted`。只有负责人本人对唯一现存 Task 的明确接受证据才能进入 `accepted`。外部 TODO 的存在只证明有一条外部记录，不证明负责人接受。
+Task Agent 的结构化结果是 `task_decisions` 列表，同一来源可以得到 0 到多个决定。每个非 skip 项必须引用来源：来源引用、原文中连续的逐字摘录（保留标点、空格和换行，不同片段用不同 evidence 项）、以及来源的链接（没有链接则描述在哪里，如钉钉消息的群加发送人）；引用可以来自当前 Work Item，也可以来自此前 session 里读到的证据或 Memory provenance（只能用于完善已有 Task 或记录候选，见 `docs/runtime-mechanism.md` “Task 的来源与证据”）；Task、负责人、日期和承诺不得由 Agent 自行补造。正式 Task 必须有来源支持的明确负责人；对 AI Minutes，Agent 还必须给出 `owner_kind` 与 `owner_relation`：只有单个个人且关系为明确分派、自承诺或会议行动项时才按 `meeting_action_item` 正式化，团队、仅发言或关系未知仍是候选。稳定 ID、日期或完成标准缺失只影响后续补充，不会单独降级明确行动项。正式指派先记为 `assigned_unaccepted`。只有负责人本人对唯一现存 Task 的明确接受证据才能进入 `accepted`。外部 TODO 的存在只证明有一条外部记录，不证明负责人接受。
 `record_candidate` / `create_task` 必须在结构解析时提供非空白 title，缺失走既有同 session 一次结果修正。所有 `update_task` 可省略 title 或用空字符串表示不修改；非空但全为空白的更新标题在结构解析时拒绝，使用同一结果修正。已有真实 ID 的持久化标题是交付名称；晋升的交付明确性也来自该目标 Task，负责人、正式依据及来源要求不变。仅 `update_fields` 中提供的 title 会改标题，晋升、接受与合并保留原有标题。
 更新既有 Task 时，Agent 可用本轮来源证据修订标题或描述；内容变更、新信号证据链接及 before/after 事件原子提交。纯内容更新记为 `details_changed`，内容与其他 Task 字段同时更新记为 `fields_changed`。重复回放不重复追加事件；只有新证据、没有字段实际变化的更新会被拒绝。
 

@@ -560,6 +560,9 @@ still need the current Work Item's authority and identity metadata, and dates
 still need current, identified source evidence.
 
 Extract every distinct source-backed deliverable, or return an empty list.
+Preserve source punctuation, spaces, and line breaks in every source_excerpt.
+Do not join separate lines or rewrite an excerpt. Use separate evidence entries
+for separate spans; a JSON escape for a line break preserves the original quote.
 In `project_assessments`, return one outcome, concrete reason, and original evidence
 for every relevant Project selected by a current `project_proposal`,
 `project_link_proposal`, or `attention_proposal`. Reports, meetings, and chats are all
@@ -593,8 +596,8 @@ when concrete source actions already cover that work. Use registration text as
 Project evidence attached to those real actions, not as an additional umbrella Task.
 Keep genuine explicit actions wherever they occur in the source.
 One source may yield multiple decisions. Each non-skip item cites its source: the
-source_ref, a sentence of the original text as source_excerpt (an extract is fine;
-it need not be word for word), and where a reader can find it: source_link
+source_ref, a contiguous verbatim extract of the original text as source_excerpt,
+and where a reader can find it: source_link
 whenever the source has a link (always give it then); when it has none, describe
 where it is in source_description (a DingTalk message: its group and the person
 who sent it). For the current Work Item the service fills in what it knows, but
