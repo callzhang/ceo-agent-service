@@ -1,13 +1,68 @@
 # 多来源项目关注第一版验收
 
-状态：baseline 完整九样本为 4/9 通过；已验证完整九样本的候选版本 `fc58e803` 为 9/9，后续最新代码不能继承该结果。当前 `c87752c0` 的独立项目名称竞争样例通过，但真实 W39 新副本仍无 Attention 提案，业务验收失败。重复副本回放及上线未完成。本文件不表示已发布，不用样本通过或 native 运行完成替代实际业务效果。
+状态（2026-10-03）：冻结候选 `fbba12e9` 的 19 案例原生配对仍在执行；截至下文明确记录的前 12 对，候选 9 对通过、3 对失败，不是完整评估通过。独立修复分支已完成并审查 `b965df0c` / `cc5a52e1` 两项 prompt/Skill/字段说明澄清，但尚未原生复测、合并或部署。真实 W39 最新版副本重复回放、全局 Skill 发布和上线读回均未完成。历史 `fc58e803` 的 9/9 不由后续版本继承，也不代替真实数据效果。
 
-最新进展：标题和 Project 身份修复均经独立复核；`c87752c0` 新副本实际更新六个原 Task，
+历史进展：标题和 Project 身份修复均经独立复核；`c87752c0` 新副本实际更新六个原 Task，
 无新增 Task，正式 Project 中汽创智和岚图登记正确；但 proposal_count=0，receipt=no_proposal，
 没有卡片。当前输出不能区分已评估后不关注与漏评，也没有给出这两项风险不关注的理由。
 不得将工具 input 模式 passed=true 或领域提交完成当作真实业务通过。详见末尾本轮结果。
 
-## 四个独立门槛
+## 19 案例冻结配对的阶段读回（尚未完成）
+
+此节只记录已完成到 `assessment-meeting-needs-attention` 的前 12 对；后续案例及已有卡两次
+重放仍在同一原生批次执行，不因某次观察没有输出而重启。固定 baseline 为
+`7bf7be5e6dcdb181b0674e79ace17a598dcf87e0`，候选为
+`fbba12e906888a59e5b7f8b7821c8ebcf44e9901`；各侧使用自己的 app 与 CI Skill。
+实际调用均为 `codex_oauth` / `gpt-5.6-luna`，installed CLI 0.154.0，concurrency=1、
+有效 total/idle 为 900/300 秒。baseline Skill 为 `5c2bcbee...`，冻结候选为 `246688c2...`。
+先用领域命令建立同一份固定事实，再 SQLite backup 为两侧 fresh DB；原生只接收
+exact input/ref，expected 仅在完成后由只读连接比较。副本和原始输出保留于
+`/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-attention-assessment-20261002-wZmAbc`。
+
+| 已完成 case | 候选实际结果与人工来源复核 |
+| --- | --- |
+| w39-project-risk | 通过：4 个真实候选 Task、2 个规范 Project、2 卡；两项目的经营影响均有原文，非项目行动不造 Project。此为固定样例，不是真实 input27465。 |
+| meeting-new-risk | 失败：当前新风险提案同时声明 existing_attention_id，历史 seed 卡 assessment_json={}，领域原始证明检查拒绝整次写入。 |
+| chat-with-report-context | 失败：同样把旧卡 ID 当更新目标，未证明旧卡自身保存的原始证据；不是当前/历史来源未交付。 |
+| newer-conflicting-chat | 通过：新聊天和原始旧周报双方引用、时间并列，保留冲突待核对，不覆写登记。 |
+| risk-label-only | 通过：具体风险内容和经营影响缺失，明确 insufficient_evidence，真实汇总行动保留、无卡。 |
+| routine-progress | 通过：按计划进度、验收及收付款无重大变化，not_needed，无误关注。负面理由一次使用“介入”措辞，后续语义复核仍须遵守“关注不等于介入”。 |
+| unconfirmed-project | 通过：真实行动候选保留，未确认项目身份写明缺口，不造正式 Project/卡。 |
+| no-real-task | 通过：无行动项且经营影响待核实，明确 insufficient_evidence；零 Task/卡，不为风险造任务。 |
+| same-project-two-actions | 失败：2 个真实 Task 与同一 Project 已正确落库；两 Attention 提案仅 current_state 的各 Task 行动摘要不同，投影明确拒绝 distinct proposals，零卡。 |
+| current-authority-project-name-competition | 通过：复用当前权威完整项目名的实际 anchor、原 Task 和当前风险卡，旧简称项目登记不被改写。 |
+| assessment-report-needs-attention | 通过：一个来源行动、一正式 Project、一卡，当前具体经营影响的显式判断与 actual receipt 一致；baseline 多提取一条登记范围 Task且无卡。 |
+| assessment-meeting-needs-attention | 通过：已有 Task/Project支持单独会议中的验收与付款重大变化，当前 Signal和会议时间真实，无周报前置条件。 |
+
+前四负例的 baseline 同样没有误关注，不能因它缺新 assessment 字段而宣称其业务结果全部失败。
+新 assessment 案例的历史字段缺失单列为可观测性缺口；actual Task/Project/card 错误另行判定。
+每个通过都经过原文、真实理由、Task/Project/card/引文读回，而非仅计机械 passed。
+
+### 已确认失败的独立源码修复（原生效果仍待重验）
+
+`b965df0c` 仅同步 prompt、CI Skill、existing_attention_id 字段说明与行为文档：该 ID
+声明旧卡保存的原始证明，不是 upsert 目标。新风险的匹配 proposal 已通过 Project stable key
+复用卡片；未引用并核实旧卡 proof 时可选 ID 保持 null。真实旧 proof 与当前 proposal 仍允许并存，
+不放宽领域引用核验。三个新回归先失败；10 个重点控制与 473 个相关测试通过，独立源码审查
+11 项通过、SOURCE PASS。控制回放只删除已保存原生 chat 输出中的可选旧卡声明，得到 completed、
+同 Task1/Card1 和当前/历史原始 Signals；这是单变量领域证据，不是修复后 native PASS。
+
+`cc5a52e1` 只明确同项目支持 Task 的 current_state 使用共享项目风险事实，完整 proposal
+复制不变，各自行动留在 Task description/update_summary。三个新回归先失败；5 个重点控制与
+333 个模型/Agent 测试通过，独立审查 6 项通过、SOURCE PASS。另一 fresh 事实副本只将原生
+第二 proposal 的 current_state 复制为第一份，得到 2 Task/Project1/Card1 和 completed receipt，
+证明失败来自内容分叉；没有让领域自动改写、放宽折叠/拒绝或更改固定 oracle。
+
+这两项在独立 `attention-native-result-fix` 工作区提交，原 fbba 冻结 checkout/fixture 仍不变。
+修复后 CI Skill SHA256 为 `118250132fd7579afaec136df7fd7feffa299e73e59faf1d31f112cc819eae97`；
+原三份 fixture hash 全部未变。该 Skill 尚未发布，修复版本尚未原生重跑，不继承 fbba 或历史版本成绩。
+
+会议控制同时发现无字段变化 Task 的 proposal 按现契约被跳过，产生 partial receipt。
+允许新风险证据独立更新卡片、而 Task 字段不变，会改变已批准的明确跳过规则；已单独向 Derek
+提出选择，尚未得到回复，源码没有改动这个边界。真实原始 W39 input27465/ref、259 Tasks/16 Projects/
+0 卡及 Task129–134 无 Project links已只读再次核对；这只是下一步回放准备，不是新版真实副本通过。
+
+## 四个独立门槛（以下为较早阶段记录；本轮以明确冻结版本读回为准）
 
 | 门槛 | 当前证据 | 仍需完成 |
 | --- | --- | --- |
