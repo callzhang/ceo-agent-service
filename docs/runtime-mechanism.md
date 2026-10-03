@@ -1290,6 +1290,14 @@ the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
 
+Direct provider-action claims hold BEGIN IMMEDIATE only over classifications
+with pending or failed actions, rather than materializing every processed
+classification's settled history on each poll. For each selected classification
+all sibling plan versions remain visible: an older processing action still
+blocks the current plan, dependencies and priority remain unchanged, and the
+claim update remains atomic. Fully settled groups cannot yield a claim and are
+excluded before rows are materialized. This requires no migration or replay.
+
 Legacy unsubscribe terminalization uses the same lifecycle selector as its
 inventory: only `email_unsubscribe_consumer_direct_v1`. An inventoried object
 replaced by an `email_unsubscribe_audited_v2` task must remain untouched, even

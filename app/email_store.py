@@ -15968,6 +15968,10 @@ class EmailStore:
                 join email_classifications as c on c.id=a.classification_id
                 join email_action_plans as p on p.action_plan_id=a.action_plan_id
                 where c.status='processed'
+                  and a.classification_id in (
+                      select classification_id from email_actions
+                      where status in ('pending', 'failed')
+                  )
                 """
             ).fetchall()
             if not rows:
