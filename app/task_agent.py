@@ -2495,6 +2495,18 @@ def _finalize_assessment_results(
     def stored_signal(signal_id: int):
         return store.get_business_task_signal(signal_id)
 
+    def task_is_confirmed_to_project(task_id: int, anchor_id: int) -> bool:
+        with store._connect() as db:
+            return db.execute(
+                """select 1 from business_task_anchor_links link
+                   join business_anchors anchor on anchor.id=link.anchor_id
+                   join business_projects project on project.canonical_anchor_id=link.anchor_id
+                   where link.task_id=? and link.anchor_id=?
+                     and link.status='confirmed' and link.active=1
+                     and anchor.anchor_type='project' and anchor.active=1 limit 1""",
+                (task_id, anchor_id),
+            ).fetchone() is not None
+
     def verified_citations(assessment, existing_card) -> list[TaskAttentionVerifiedCitation]:
         card_evidence = []
         if existing_card is not None:
@@ -2543,9 +2555,11 @@ def _finalize_assessment_results(
     assessment_results: list[TaskAttentionAssessmentResult] = []
     for assessment_index, assessment in enumerate(decision.project_assessments):
         supported_applied = [
-            applied_by_index[index]
-            for index in assessment.decision_indexes
-            if index in applied_by_index
+            entry for entry in result.applied_decisions
+            if (
+                entry.decision_index in assessment.decision_indexes
+                or entry.task_id in assessment.task_ids
+            )
         ]
         actual_anchor_id = assessment.anchor_id
         if actual_anchor_id is None and assessment.project_decision_index is not None:
@@ -2562,6 +2576,19 @@ def _finalize_assessment_results(
             entry.task_id for entry in supported_applied
             if actual_anchor_id is not None and entry.anchor_id == actual_anchor_id
         )
+        if actual_anchor_id is not None:
+            for decision_index in assessment.decision_indexes:
+                item = decision.task_decisions[decision_index]
+                referenced_task_id = (
+                    item.identity_proposal.target_task_id
+                    if item.identity_proposal is not None
+                    else item.task_id
+                )
+                if (
+                    referenced_task_id is not None
+                    and task_is_confirmed_to_project(referenced_task_id, actual_anchor_id)
+                ):
+                    actual_task_ids.add(referenced_task_id)
         existing_card = (
             store.get_business_attention_item(assessment.existing_attention_id)
             if assessment.existing_attention_id is not None else None
@@ -2600,28 +2627,37 @@ def _finalize_assessment_results(
                 applied_outcomes = [
                     outcome for outcome in projection_outcomes if outcome.status == "applied"
                 ]
+                unapplied_shapes = {
+                    (
+                        decision.task_decisions[index].task_id,
+                        decision.task_decisions[index].attention_proposal.anchor_id,
+                    )
+                    for index in proposal_indexes
+                    if index not in applied_by_index
+                }
+                unapplied_outcomes = [
+                    outcome for outcome in receipt.outcomes
+                    if outcome.reason == "proposal has no applied Task decision"
+                    and (outcome.task_id, outcome.anchor_id) in unapplied_shapes
+                ]
                 if applied_outcomes:
                     status = "applied"
                     attention_id = applied_outcomes[0].attention_id
-                    reason = "Attention proposal applied."
+                    failed_reasons = list(dict.fromkeys(
+                        outcome.reason for outcome in [
+                            *projection_outcomes, *unapplied_outcomes,
+                        ]
+                        if outcome.status != "applied"
+                    ))
+                    reason = (
+                        "Attention proposal applied; " + "; ".join(failed_reasons)
+                        if failed_reasons else "Attention proposal applied."
+                    )
                 else:
                     failed_outcome = next((
-                        outcome for outcome in projection_outcomes
+                        outcome for outcome in [*projection_outcomes, *unapplied_outcomes]
                         if outcome.status in {"error", "rejected"}
                     ), None)
-                    if failed_outcome is None:
-                        unapplied_shapes = {
-                            (
-                                decision.task_decisions[index].task_id,
-                                decision.task_decisions[index].attention_proposal.anchor_id,
-                            )
-                            for index in proposal_indexes
-                        }
-                        failed_outcome = next((
-                            outcome for outcome in receipt.outcomes
-                            if outcome.reason == "proposal has no applied Task decision"
-                            and (outcome.task_id, outcome.anchor_id) in unapplied_shapes
-                        ), None)
                     if failed_outcome is not None:
                         status = failed_outcome.status
                         reason = failed_outcome.reason

@@ -2600,6 +2600,146 @@ def test_two_applied_project_proposals_fold_into_one_assessment_readback(tmp_pat
     assert len({outcome.attention_id for outcome in result.projection_receipt.outcomes}) == 1
 
 
+def test_mixed_applied_and_unapplied_support_keeps_card_and_rejection_reason(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-mixed-proposal-outcomes.sqlite3")
+    first, anchor_id = _stored_project_task(store)
+    second = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="售前知识库回款",
+        signal=SourceSignal(source_type="seed", source_ref="seed:mixed-second",
+                            evidence_text="售前知识库回款", dedupe_key="seed:mixed-second"),
+    ))
+    BusinessResolutionService(store).confirm_anchor_match(
+        task_id=second.task_id, anchor_id=anchor_id, evidence_signal_id=second.signal_id,
+        reason="同一正式 Project", relevance=BusinessRelevance.RELEVANT,
+    )
+    item = _work_item().model_copy(update={"summary": "售前知识库交付风险需要观察。"})
+    proposal = {
+        "category": "watch", "title": "售前知识库交付风险",
+        "why_attention": "交付风险需要观察", "current_state": "等待交付与回款结果",
+        "ceo_action": "观察结果", "anchor_id": anchor_id,
+        "assessment_basis": "current_observation", "material_trigger": "risk_escalation",
+        "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+    }
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "售前知识库", "anchor_id": anchor_id,
+            "outcome": "needs_attention", "reason": "交付风险同时影响交付与回款。",
+            "assessment_basis": "current_observation", "decision_indexes": [0, 1],
+            "task_ids": [first.task_id, second.task_id],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+        }],
+        "task_decisions": [
+            {
+                "action": "update_task", "transition": "update_fields", "task_id": first.task_id,
+                "title": "售前知识库交付", "status": "waiting",
+                "source_ref": item.source.ref, "source_excerpt": "交付风险需要观察",
+                "attention_proposal": proposal,
+            },
+            {
+                "action": "update_task", "transition": "update_fields", "task_id": second.task_id,
+                "title": "售前知识库回款",
+                "source_ref": item.source.ref, "source_excerpt": "交付风险需要观察",
+                "attention_proposal": proposal,
+            },
+        ],
+    })
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.projection_receipt is not None
+    assert result.projection_receipt.status == "partial"
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "applied"
+    assert readback.reason == "Attention proposal applied; proposal has no applied Task decision"
+    assert readback.anchor_id == anchor_id
+    assert readback.task_ids == sorted([first.task_id, second.task_id])
+    assert readback.attention_id is not None
+    assert [
+        link.task_id for link in store.list_business_attention_tasks(readback.attention_id)
+    ] == [first.task_id]
+
+
+def test_task_ids_only_support_receives_recompute_error(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "assessment-task-id-recompute-error.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    item = _work_item().model_copy(update={"summary": "售前知识库交付补齐本轮来源。"})
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "售前知识库", "anchor_id": anchor_id,
+            "outcome": "not_needed", "reason": "本轮只补来源，没有新增经营影响。",
+            "assessment_basis": "current_observation", "decision_indexes": [],
+            "task_ids": [seed.task_id],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "补齐本轮来源"}],
+        }],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+            "title": "售前知识库交付", "status": "waiting",
+            "source_ref": item.source.ref, "source_excerpt": "补齐本轮来源",
+        }],
+    })
+
+    def fail_recompute(_self, *_args, **_kwargs):
+        raise RuntimeError("review recompute exploded")
+
+    monkeypatch.setattr(BusinessAttentionProjection, "recompute_for_tasks", fail_recompute)
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.projection_receipt is not None
+    assert result.projection_receipt.recompute_error == "review recompute exploded"
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "error"
+    assert readback.reason == "review recompute exploded"
+    assert readback.task_ids == [seed.task_id]
+    assert readback.evidence[0].signal_id == result.applied_decisions[0].signal_id
+    assert decision.project_assessments[0].outcome == "not_needed"
+
+
+def test_no_change_known_project_support_keeps_verified_decision_task_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-no-change-known-task-id.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    item = _work_item().model_copy(update={"summary": "售前知识库交付风险需要观察。"})
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "售前知识库", "anchor_id": anchor_id,
+            "outcome": "needs_attention", "reason": "交付风险需要观察。",
+            "assessment_basis": "current_observation", "decision_indexes": [0],
+            "task_ids": [],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+        }],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+            "title": "售前知识库交付", "source_ref": item.source.ref,
+            "source_excerpt": "交付风险需要观察",
+            "attention_proposal": {
+                "category": "watch", "title": "售前知识库交付风险",
+                "why_attention": "交付风险需要观察", "current_state": "等待交付结果",
+                "ceo_action": "观察结果", "anchor_id": anchor_id,
+                "assessment_basis": "current_observation", "material_trigger": "risk_escalation",
+                "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+            },
+        }],
+    })
+    signals_before = store.list_business_task_signals()
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.applied_decisions == ()
+    assert result.projection_receipt is not None
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "rejected"
+    assert readback.reason == "proposal has no applied Task decision"
+    assert readback.anchor_id == anchor_id
+    assert readback.task_ids == [seed.task_id]
+    assert readback.attention_id is None
+    assert store.list_business_task_signals() == signals_before
+
+
 @pytest.mark.parametrize(
     ("failure_method", "failure_message"),
     [("upsert", "projection exploded"), ("recompute_for_tasks", "recompute exploded")],
