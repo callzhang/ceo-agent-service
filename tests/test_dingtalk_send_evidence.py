@@ -76,11 +76,15 @@ def _driver(*, action=None, actions=None, tool_events: list, classifier=None, pa
     )
     audit_run = SimpleNamespace(
         id=19557, role=AgentRole.AUDIT, proposal_revision=0,
+        execution_generation="initial", operation_id="operation-1", status="completed",
         parent_agent_run_id=19556 if parent else None,
         final_result_json="", tool_events=tool_events,
     )
     runs = {19556: consumer_run, 19557: audit_run}
-    store = SimpleNamespace(get_agent_run=lambda run_id: runs.get(run_id))
+    store = SimpleNamespace(
+        get_agent_run=lambda run_id: runs.get(run_id),
+        list_agent_runs_for_task_generation=lambda *_: [audit_run],
+    )
     return DingTalkSendEvidenceDriver(store, classifier=classifier), task
 
 
@@ -105,6 +109,29 @@ def test_a_send_the_provider_accepted_has_evidence() -> None:
         action=CHAT_SEND, tool_events=[_receipt_event("T4iUBCTxjrrq=")]
     )
     assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+@pytest.mark.parametrize("mismatch", [None, "parent", "operation", "revision", "generation", "later"])
+def test_result_correction_uses_only_prior_receipts_for_the_same_operation(mismatch):
+    driver, task = _driver(action=CHAT_SEND, tool_events=[])
+    current = driver.store.get_agent_run(19557)
+    earlier = SimpleNamespace(
+        id=19555, role=AgentRole.AUDIT, proposal_revision=0,
+        execution_generation="initial", operation_id="operation-1", status="failed",
+        parent_agent_run_id=19556, tool_events=[_receipt_event("accepted-send")],
+    )
+    if mismatch == "parent":
+        earlier.parent_agent_run_id = 19554
+    elif mismatch == "operation":
+        earlier.operation_id = "operation-2"
+    elif mismatch == "revision":
+        earlier.proposal_revision = 1
+    elif mismatch == "generation":
+        earlier.execution_generation = "old"
+    elif mismatch == "later":
+        earlier.id = 19558
+    driver.store.list_agent_runs_for_task_generation = lambda *_: [earlier, current]
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=current.id) is (mismatch is None)
 
 
 def test_a_send_identified_by_reading_the_conversation_back_still_has_evidence() -> None:

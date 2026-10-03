@@ -182,6 +182,12 @@ pending recovery 排除，ask-back 不计 `needs_human`。
 
 ## 审核反馈闭环
 
+Audit 的结果修正轮不会撤销先前 provider 已接受的外部动作。执行证据校验读取当前轮与
+同一任务代次、同一 Consumer parent、同一 proposal revision、同一非空 operation_id 的
+先前终态 Audit 轮的持久化工具事件。不同候选、operation、代次以及后续轮次的回执不得
+借用；纯读取和模型自报仍不证明写入。这样首轮完成外部写入但返回无效 JSON 时，后续
+只修正结果的轮次可以验证原回执，不会因当前轮没有再次写入而误报失败或诱发重复发送。
+
 ```text
 执行 Agent 生成 run R0
   -> 审核 Agent 审核 R0
