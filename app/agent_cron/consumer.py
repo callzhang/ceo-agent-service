@@ -109,6 +109,15 @@ class ScheduledTaskTriggerConsumer:
         as an outage.
         """
         command = run.snapshot.command
+        if run.execution_kind or run.execution_id:
+            if (
+                run.execution_kind != SERVICE_COMMAND_EXECUTION_KIND
+                or run.execution_id != command
+            ):
+                raise ValueError("persisted service command execution does not match snapshot")
+            guard.finish_source(self._now().astimezone(UTC), status="dispatched")
+            self._store.resolve_errors_recovered_by_scheduled_service_command()
+            return
         try:
             consumer_context = self._builder.build_consumer_context(run)
             summary = self._commands.run(
