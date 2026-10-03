@@ -274,19 +274,23 @@ def readback(store, *, input_id, before, expected=None):
                             and signal.source_ref == evidence.get("source_ref")
                             and evidence_contains(signal.evidence_text, evidence.get("source_excerpt", ""))
                         )
-                if not citations_valid:
-                    failures.append("project_assessment_evidence_mismatch")
-
                 receipt = next((
                     entry for entry in receipt_assessments
                     if entry.get("assessment_index") == index
                 ), None)
                 receipt_valid = receipt is not None
                 if receipt is not None:
+                    receipt_task_ids = receipt.get("task_ids", [])
+                    receipt_task_ids_are_integers = all(
+                        isinstance(task_id, int) and not isinstance(task_id, bool)
+                        for task_id in receipt_task_ids
+                    )
                     receipt_valid = (
                         receipt.get("status") == wanted_assessment["application_status"]
-                        and len(receipt.get("task_ids", [])) == wanted_assessment["task_count"]
-                        and set(receipt.get("task_ids", [])).issubset(task_by_id)
+                        and len(receipt_task_ids) == wanted_assessment["task_count"]
+                        and receipt_task_ids_are_integers
+                        and len(set(receipt_task_ids)) == len(receipt_task_ids)
+                        and set(receipt_task_ids).issubset(task_by_id)
                     )
                     anchor_id = receipt.get("anchor_id")
                     if wanted_assessment.get("anchor_required", True):
@@ -330,7 +334,6 @@ def readback(store, *, input_id, before, expected=None):
                                 and signal.source_time == evidence.get("source_time", "")
                                 and signal_link == evidence.get("source_link", "")
                             )
-                            receipt_task_ids = receipt.get("task_ids", [])
                             if receipt_task_ids:
                                 linked_to_receipt_task = any(
                                     link.signal_id == signal_id
@@ -347,6 +350,39 @@ def readback(store, *, input_id, before, expected=None):
                                     linked_to_receipt_task
                                     or card_has_exact_proof
                                 )
+                    for evidence in actual_assessment.get("evidence", []):
+                        signal_id = evidence.get("signal_id")
+                        if signal_id is None:
+                            continue
+                        receipt_has_citation = any(
+                            actual.get("signal_id") == signal_id
+                            and actual.get("source_ref") == evidence.get("source_ref")
+                            and (
+                                evidence_contains(
+                                    actual.get("source_excerpt", ""),
+                                    evidence.get("source_excerpt", ""),
+                                )
+                                or evidence_contains(
+                                    evidence.get("source_excerpt", ""),
+                                    actual.get("source_excerpt", ""),
+                                )
+                            )
+                            for actual in receipt_evidence
+                        )
+                        linked_to_assessment_support = any(
+                            link.signal_id == signal_id
+                            for task_id in receipt_task_ids
+                            for link in store.list_business_task_evidence(task_id)
+                        )
+                        card_has_exact_proof = any(
+                            proof.get("signal_id") == signal_id
+                            for card in cards
+                            if card["id"] == receipt.get("attention_id")
+                            for proof in card["assessment"].get("evidence", [])
+                        )
+                        citations_valid = citations_valid and receipt_has_citation and (
+                            linked_to_assessment_support or card_has_exact_proof
+                        )
                     if wanted_assessment.get("attention_required"):
                         attention_id = receipt.get("attention_id")
                         card = next((card for card in cards if card["id"] == attention_id), None)
@@ -358,6 +394,8 @@ def readback(store, *, input_id, before, expected=None):
                         )
                     else:
                         receipt_valid = receipt_valid and receipt.get("attention_id") is None
+                if not citations_valid:
+                    failures.append("project_assessment_evidence_mismatch")
                 if not receipt_valid:
                     failures.append("project_assessment_receipt_mismatch")
     visible_task_ids = {task_id for card in cards for task_id in card["task_ids"]}

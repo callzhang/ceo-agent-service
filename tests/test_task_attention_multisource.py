@@ -351,6 +351,76 @@ def test_assessment_oracle_rejects_wrong_semantic_readback(tmp_path, fault, expe
     assert expected_failure in result["failures"]
 
 
+def test_assessment_oracle_rejects_unlinked_raw_positive_signal_absent_from_receipt(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "assessment-unlinked-raw-positive.sqlite3")
+    _, input_id, before, _, expected = recorded_assessment_case(store)
+    unrelated_signal_id = store.create_business_task_signal(
+        source_type="project_weekly_report",
+        source_ref="report:fixture",
+        evidence_text=RISK_QUOTE,
+        source_time="2026-09-30T12:00:00Z",
+        context_json="{}",
+        dedupe_key="eval:unlinked-raw-positive",
+    )
+    with store._connect() as db:
+        decision = json.loads(db.execute(
+            "select decision_json from task_agent_runs"
+        ).fetchone()[0])
+    decision["project_assessments"][0]["evidence"].append({
+        "signal_id": unrelated_signal_id,
+        "source_ref": "report:fixture",
+        "source_excerpt": RISK_QUOTE,
+    })
+    rewrite_latest_run(store, decision=decision)
+
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+
+    assert not result["passed"]
+    assert "project_assessment_evidence_mismatch" in result["failures"]
+
+
+def test_assessment_oracle_accepts_linked_extra_positive_signal_in_raw_and_receipt(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "assessment-linked-raw-positive.sqlite3")
+    _, input_id, before, _, expected = recorded_assessment_case(store)
+    with store._connect() as db:
+        run = db.execute("select * from task_agent_runs").fetchone()
+        decision = json.loads(run["decision_json"])
+        projection = json.loads(run["projection_json"])
+    receipt = projection["project_assessments"][0]
+    linked_signal_id = store.create_business_task_signal(
+        source_type="project_weekly_report",
+        source_ref="report:fixture",
+        evidence_text=f"本周经营风险：{RISK_QUOTE}",
+        source_time="2026-09-30T12:00:00Z",
+        context_json="{}",
+        dedupe_key="eval:linked-raw-positive",
+    )
+    store.link_business_task_evidence(
+        task_id=receipt["task_ids"][0],
+        signal_id=linked_signal_id,
+        evidence_role="discovery",
+    )
+    decision["project_assessments"][0]["evidence"].append({
+        "signal_id": linked_signal_id,
+        "source_ref": "report:fixture",
+        "source_excerpt": RISK_QUOTE,
+    })
+    receipt["evidence"].append({
+        "signal_id": linked_signal_id,
+        "source_ref": "report:fixture",
+        "source_excerpt": f"本周经营风险：{RISK_QUOTE}",
+        "source_time": "2026-09-30T12:00:00Z",
+        "source_link": "",
+    })
+    rewrite_latest_run(store, decision=decision, projection=projection)
+
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+
+    assert result["passed"], result["failures"]
+
+
 @pytest.mark.parametrize("fault", [
     "missing", "wrong_status", "false_existing", "forged_signal_id",
     "unlinked_real_signal", "unlinked_raw_and_receipt", "wrong_source_time",
@@ -441,6 +511,68 @@ def test_assessment_oracle_requires_reviewed_proof_coverage_and_validates_extras
     result = tool.readback(store, input_id=input_id, before=before, expected=expected)
     assert result["passed"] is passes
     assert ("project_assessment_evidence_mismatch" in result["failures"]) is (not passes)
+
+
+def test_assessment_oracle_counts_unique_receipt_task_identities(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "assessment-unique-receipt-tasks.sqlite3")
+    item = report_item()
+    second_quote = "核对示例项目供应商延期付款安排。"
+    source = json.loads(item.summary)
+    source["markdown"] += "\n" + second_quote
+    item = item.model_copy(update={"summary": json.dumps(source, ensure_ascii=False)})
+    payload = decision_payload()
+    second = decision_payload()["task_decisions"][0]
+    second.update(
+        title="核对示例项目供应商延期付款安排",
+        source_excerpt=second_quote,
+    )
+    payload["task_decisions"].append(second)
+    payload["project_assessments"][0]["decision_indexes"] = [0, 1]
+
+    class Codex:
+        def decide(self, **kwargs):
+            return TaskAgentDecision.model_validate(payload)
+
+    from app.task_agent import TaskAgentRunner
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    before = tool.read_domain(store)
+    tool.replay_input(
+        store,
+        tool.scoped_runner(TaskAgentRunner, Codex()),
+        input_id,
+        source_ref=item.source.ref,
+    )
+    with store._connect() as db:
+        projection = json.loads(db.execute(
+            "select projection_json from task_agent_runs"
+        ).fetchone()[0])
+    receipt = projection["project_assessments"][0]
+    assert len(set(receipt["task_ids"])) == 2
+    receipt["task_ids"] = [receipt["task_ids"][0], receipt["task_ids"][0]]
+    rewrite_latest_run(store, projection=projection)
+    expected = {
+        "attention_projects": ["示例项目"],
+        "project_titles": ["示例项目"],
+        "task_count": 2,
+        "minimum_evidence_sources": 1,
+        "required_project_member_counts": {"示例项目": 2},
+        "project_assessments": [{
+            "project_title": "示例项目",
+            "outcome": "needs_attention",
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": RISK_QUOTE}],
+            "application_status": "applied",
+            "task_count": 2,
+            "attention_required": True,
+        }],
+    }
+
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+
+    assert not result["passed"]
+    assert "project_assessment_receipt_mismatch" in result["failures"]
 
 
 def test_evaluation_new_risk_cannot_pass_with_only_historical_evidence(tmp_path):
@@ -1610,6 +1742,7 @@ def test_new_task_relation_and_compound_project_link_use_actual_current_id(tmp_p
 @pytest.mark.parametrize("failure", ["missing", "unofficial", "inactive", "cross_project", "wrong_quote", "wrong_task_quote", "source_ref"])
 def test_existing_project_link_rejects_unproven_target_or_current_action(tmp_path, failure):
     from app.task_business_resolution import BusinessResolutionService
+    from app.task_models import TaskProjectLinkProposal
 
     store, item, seed, anchor_id, card_id, payload = existing_project_link_case(tmp_path)
     resolution = BusinessResolutionService(store)
@@ -1630,15 +1763,37 @@ def test_existing_project_link_rejects_unproven_target_or_current_action(tmp_pat
     else:
         payload["source_ref"] = "other:source"
     payload["attention_proposal"] = None
+    invalid_link = TaskProjectLinkProposal.model_validate(payload.pop("project_link_proposal"))
+    # Validate the wire components and an independent unknown-clue assessment first.
+    # Then deliberately bypass envelope selector coverage while inserting the invalid
+    # link so this regression reaches the separate application-layer guard; the final
+    # combined object is not claimed to have passed full envelope validation.
     decision = TaskAgentDecision.model_validate({
-        "project_assessments": [existing_project_assessment(
-            item=item, seed=seed,
-            anchor_id=payload["project_link_proposal"]["anchor_id"],
-            decision_indexes=[0], outcome="not_needed",
-        )],
+        "project_assessments": [{
+            "project_title": "当前来源中的待核对项目线索",
+            "outcome": "insufficient_evidence",
+            "reason": "此判断只保留当前来源线索，不确认或复用被测的 Project 链接。",
+            "assessment_basis": "current_observation",
+            "evidence": [{
+                "source_ref": item.source.ref,
+                "source_excerpt": item.summary.splitlines()[0],
+            }],
+        }],
         "task_decisions": [payload],
     })
-    with pytest.raises(ValueError):
+    decision = decision.model_copy(update={
+        "task_decisions": [decision.task_decisions[0].model_copy(update={
+            "project_link_proposal": invalid_link,
+        })],
+    })
+    expected_error = (
+        "task decision source_ref must match the Work Item source"
+        if failure == "source_ref"
+        else "existing Project link requires an active registered official Project"
+        if failure in {"missing", "unofficial", "inactive"}
+        else "existing Project link must cite the current exact Task action naming its Project"
+    )
+    with pytest.raises(ValueError, match=expected_error):
         apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
     assert len(store.list_business_tasks()) == 1
     assert len(store.list_business_task_signals()) == 1

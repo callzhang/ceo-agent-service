@@ -505,7 +505,10 @@ Project selector、Task ID 和原始引文，负例/未知项写出 `not_needed`
 `source_ref + 经营影响原句` 被实际引文覆盖；允许同一 ref 的更长连续原文和额外真实引文，
 但逐一核验所有额外引文。当前 null-signal 引文必须来自 immutable Work Item 并读回原
 source_time/空 link；正 signal 必须核对真实 Signal 的 ref/原文/time/link，以及它与回执
-支持 Task、已验证卡 proof 或原始 assessment 的实际关系。回执还核对实际 anchor、Task IDs、
+支持 Task或已验证卡 proof 的实际关系。原始 assessment 中额外的正 signal 还必须在独立
+projection receipt 中以相同 signal/ref/兼容的连续原文出现，且关联 receipt 实际 Task 或
+receipt 指向卡片的精确 proof；不能由原始 assessment 自报 Task ID 补足。回执 Task 数按
+真实且不重复的 ID 计算，`[1, 1]` 不可冒充两个 Task。回执还核对实际 anchor、Task IDs、
 card ID、status 和成员；未知 Project 可由 case 明确要求 `anchor_id=null`。重复已有卡 case
 两次回放保持同 card ID 且不新增 Task、Project 或 Attention event。
 
@@ -517,9 +520,14 @@ card ID、status 和成员；未知 Project 可由 case 明确要求 `anchor_id=
 确定性 oracle 回归覆盖：原始字段缺失、Project title 覆盖错位、outcome 错误、缺理由、
 缺必需原句、伪造额外引文、receipt 缺失/错 status/伪 existing card ID、伪 signal ID、
 未关联但元数据相同的真实 signal、错误 time/link，以及正确前缀/额外真实引文正控制。
-新增 oracle 回归先 7 failed 后通过，最终 assessment oracle `16 passed`；
-完整限定测试为 source+multisource `142 passed`、
-Web summary `1 passed`、CLI process-work-items `22 passed / 254 deselected`。本节未运行
+SPEC 修复进一步以真实未关联第二 Signal 复现“只改 raw assessment、receipt 不变”误通过，
+以两真实 Task/两卡成员但 receipt `[1, 1]` 复现重复 ID 误计数；两项均先 RED 后 GREEN，
+并保留已关联、receipt 亦保存的更长额外引文正控制。既有 Project link 的七个拒绝 case
+改用独立 unknown-clue companion，明确绕过 selector coverage 只测试 application guard，
+逐项断言原 missing/unofficial/inactive、cross-project/quote 及 source-ref 错误，不把无效
+link anchor 复制进 assessment 造成提前失败。最终 assessment oracle `19 passed / 117 deselected`；
+source registration + multisource + Web summary `146 passed`，CLI process-work-items
+`22 passed / 254 deselected`。本节未运行
 native Agent、provider、真实 W39、生产数据库、全局 Skill 发布、push、PR、合并或部署。
 
 已有卡 case 的新 proof 字段不能由 pinned baseline `7bf7be5e` 的旧 constructor 原生 seed；
