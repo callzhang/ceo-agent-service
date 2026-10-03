@@ -21,11 +21,12 @@ def source_registration(source_type, task_id, *, with_attention=False):
         quote = report_row
         summary = json.dumps({"markdown": "## 手头项目\n"
             "| 项目名 | 负责内容 | 目标 | DDL | 状态 |\n|---|---|---|---|---|\n"
-            + quote + "\n## 下周工作重点\n" + action + "\n" + risk}, ensure_ascii=False)
+            + quote + "\n## 下周工作重点\n" + action
+            + (("\n" + risk) if with_attention else "")}, ensure_ascii=False)
         authority = source_type
     else:
         quote = meeting_quote
-        summary = quote + "\n" + action + "\n" + risk
+        summary = quote + "\n" + action + (("\n" + risk) if with_attention else "")
         authority = "meeting_decision"
     item = WorkItem.model_validate({
         "source": {"type": source_type, "ref": "source:current"},
@@ -47,6 +48,24 @@ def source_registration(source_type, task_id, *, with_attention=False):
             "anchor_id": None, "related_task_ids": [task_id], "material_trigger": "risk_escalation",
             "evidence": [{"signal_id": None, "source_ref": item.source.ref, "source_excerpt": risk}],
         }
+    payload["project_assessments"] = [{
+        "project_title": title,
+        "outcome": "needs_attention" if with_attention else "insufficient_evidence",
+        "reason": (
+            "客户确认延迟同时影响回款和到期供应商付款。"
+            if with_attention
+            else "当前来源可确认正式 Project 身份和行动，但这个身份测试未提供足够的关注风险事实。"
+        ),
+        "assessment_basis": "current_observation",
+        "evidence": [{
+            "signal_id": None,
+            "source_ref": item.source.ref,
+            "source_excerpt": risk if with_attention else quote,
+        }],
+        "project_decision_index": 0,
+        "decision_indexes": [0],
+        "task_ids": [task_id],
+    }]
     decision = TaskAgentDecision.model_validate(payload)
     return item, decision
 

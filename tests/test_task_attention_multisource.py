@@ -48,6 +48,96 @@ def test_fixed_evaluation_cases_have_independent_inputs_and_expectations():
         )
 
 
+def test_assessment_cases_are_versioned_source_facts_with_post_run_expectations(tmp_path):
+    from app.task_agent import build_task_agent_prompt
+
+    tool = evaluation_tool()
+    cases = tool.load_cases(
+        Path(__file__).parent / "fixtures/task_attention_project_assessments_v1.json"
+    )
+    assert [case["case_id"] for case in cases] == [
+        "assessment-report-needs-attention",
+        "assessment-meeting-needs-attention",
+        "assessment-chat-needs-attention",
+        "assessment-vague-risk-not-needed",
+        "assessment-no-task-insufficient",
+        "assessment-unconfirmed-project",
+        "assessment-routine-not-needed",
+        "assessment-two-tasks-one-project",
+        "assessment-existing-card-idempotent",
+    ]
+    for case in cases:
+        assert set(case) == {"case_id", "work_item", "existing_context", "expected"}
+        item = WorkItem.model_validate(case["work_item"])
+        case["expected"]["secret_label"] = "evaluation_only_secret_expectation"
+        store = AutoReplyStore(tmp_path / f"{case['case_id']}.sqlite3")
+        input_id = tool.seed_case(store, case)
+        stored = store.get_work_summary_input(input_id)
+        assert "evaluation_only_secret_expectation" not in stored.payload_json
+        assert "evaluation_only_secret_expectation" not in build_task_agent_prompt(item, "")
+        if case["case_id"] == "assessment-existing-card-idempotent":
+            card, = store.list_business_attention_items()
+            evidence, = json.loads(card.assessment_json)["evidence"]
+            signal = store.get_business_task_signal(evidence["signal_id"])
+            assert signal is not None
+            assert evidence["source_ref"] == signal.source_ref == item.source.ref
+            assert tool.evidence_contains(signal.evidence_text, evidence["source_excerpt"])
+
+
+def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(tmp_path):
+    from app.task_agent import TaskAgentRunner
+
+    tool = evaluation_tool()
+    cases = tool.load_cases(
+        Path(__file__).parent / "fixtures/task_attention_project_assessments_v1.json"
+    )
+    case = next(
+        item for item in cases if item["case_id"] == "assessment-existing-card-idempotent"
+    )
+    store = AutoReplyStore(tmp_path / "existing-card-idempotent.sqlite3")
+    input_id = tool.seed_case(store, case)
+    card, = store.list_business_attention_items()
+    member, = store.list_business_attention_tasks(card.id)
+    proof, = json.loads(card.assessment_json)["evidence"]
+
+    class Codex:
+        def decide(self, **kwargs):
+            assert "evaluation_only_secret_expectation" not in kwargs["prompt"]
+            return TaskAgentDecision.model_validate({
+                "project_assessments": [{
+                    "project_title": "星海交付",
+                    "outcome": "needs_attention",
+                    "reason": "当前来源重申客户拒绝验收并延后回款，与已保存关注事实相同。",
+                    "assessment_basis": "historical_comparison",
+                    "evidence": [
+                        {"source_ref": proof["source_ref"], "source_excerpt": proof["source_excerpt"]},
+                        {"signal_id": proof["signal_id"], "source_ref": proof["source_ref"],
+                         "source_excerpt": proof["source_excerpt"]},
+                    ],
+                    "anchor_id": card.anchor_id,
+                    "existing_attention_id": card.id,
+                    "task_ids": [member.task_id],
+                }],
+                "task_decisions": [],
+            })
+
+    runner = tool.scoped_runner(TaskAgentRunner, Codex())
+    first = tool.replay_input(
+        store, runner, input_id, source_ref=case["work_item"]["source"]["ref"],
+        expected=case["expected"],
+    )
+    replay = tool.replay_input(
+        store, runner, input_id, source_ref=case["work_item"]["source"]["ref"],
+        expected=case["expected"],
+    )
+    assert first["passed"] and replay["passed"]
+    assert first["projection"]["project_assessments"][0]["status"] == "existing"
+    assert replay["cards"][0]["id"] == first["cards"][0]["id"] == card.id
+    assert replay["changes"]["tasks"]["created_ids"] == []
+    assert replay["changes"]["projects"]["created_ids"] == []
+    assert replay["changes"]["attention_events"]["created_ids"] == []
+
+
 def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_runs(tmp_path):
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / "single.sqlite3")
@@ -145,7 +235,14 @@ def test_fixed_cases_seed_only_existing_facts_and_never_send_expected_labels(tmp
         class Codex:
             def decide(self, **kwargs):
                 assert "evaluation_only_secret_expectation" not in kwargs["prompt"]
-                return TaskAgentDecision.model_validate({"task_decisions": []})
+                return TaskAgentDecision.model_validate({
+                    "project_assessments": [],
+                    "task_decisions": [],
+                    "update_summary": (
+                        "本 fake 只验证评测期望未进入 Agent prompt，"
+                        "不生成 Task 或 Project 业务判断。"
+                    ),
+                })
 
         from app.task_agent import TaskAgentRunner
         result = tool.replay_input(store, tool.scoped_runner(TaskAgentRunner, Codex()),
@@ -162,6 +259,188 @@ def test_evaluation_missing_run_cannot_pass_a_negative_case(tmp_path):
         "attention_projects": [], "project_titles": [], "task_count": 0, "minimum_evidence_sources": 1})
     assert result["passed"] is False
     assert "task_agent_run_missing" in result["failures"]
+
+
+def recorded_assessment_case(store):
+    item = report_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    before = evaluation_tool().read_domain(store)
+    result = apply_task_agent_decision(
+        store,
+        summary_input_id=input_id,
+        work_item=item,
+        decision=TaskAgentDecision.model_validate(decision_payload()),
+    )
+    expected = {
+        "attention_projects": ["示例项目"],
+        "project_titles": ["示例项目"],
+        "task_count": 1,
+        "minimum_evidence_sources": 1,
+        "project_assessments": [{
+            "project_title": "示例项目",
+            "outcome": "needs_attention",
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": RISK_QUOTE}],
+            "application_status": "applied",
+            "task_count": 1,
+            "attention_required": True,
+        }],
+    }
+    return item, input_id, before, result, expected
+
+
+def rewrite_latest_run(store, *, decision=None, projection=None):
+    with store._connect() as db:
+        run = db.execute("select * from task_agent_runs order by id desc limit 1").fetchone()
+        db.execute(
+            "update task_agent_runs set decision_json=?, projection_json=? where id=?",
+            (
+                json.dumps(decision if decision is not None else json.loads(run["decision_json"]), ensure_ascii=False),
+                json.dumps(projection if projection is not None else json.loads(run["projection_json"]), ensure_ascii=False),
+                run["id"],
+            ),
+        )
+
+
+def test_assessment_oracle_observes_missing_raw_field_without_model_defaults(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "assessment-missing.sqlite3")
+    _, input_id, before, _, expected = recorded_assessment_case(store)
+    with store._connect() as db:
+        raw = json.loads(db.execute("select decision_json from task_agent_runs").fetchone()[0])
+    raw.pop("project_assessments")
+    rewrite_latest_run(store, decision=raw)
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    assert not result["passed"]
+    assert "project_assessments_missing" in result["failures"]
+
+
+@pytest.mark.parametrize("fault,expected_failure", [
+    ("wrong_project_title", "project_assessment_coverage_mismatch"),
+    ("wrong_judgment", "project_assessment_outcome_mismatch"),
+    ("unsupported_citation", "project_assessment_evidence_mismatch"),
+    ("missing_negative_reason", "project_assessment_reason_missing"),
+])
+def test_assessment_oracle_rejects_wrong_semantic_readback(tmp_path, fault, expected_failure):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / f"assessment-{fault}.sqlite3")
+    _, input_id, before, _, expected = recorded_assessment_case(store)
+    with store._connect() as db:
+        decision = json.loads(db.execute("select decision_json from task_agent_runs").fetchone()[0])
+    assessment = decision["project_assessments"][0]
+    if fault == "wrong_project_title":
+        assessment["project_title"] = "另一个未期望 Project"
+    elif fault == "wrong_judgment":
+        assessment["outcome"] = "not_needed"
+    elif fault == "unsupported_citation":
+        assessment["evidence"] = [{
+            "signal_id": None,
+            "source_ref": "report:unrelated",
+            "source_excerpt": "未出现在来源中的句子。",
+            "source_time": "",
+            "source_link": "",
+        }]
+    else:
+        assessment["outcome"] = "not_needed"
+        assessment["reason"] = "  "
+        expected["project_assessments"][0]["outcome"] = "not_needed"
+    rewrite_latest_run(store, decision=decision)
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    assert not result["passed"]
+    assert expected_failure in result["failures"]
+
+
+@pytest.mark.parametrize("fault", [
+    "missing", "wrong_status", "false_existing", "forged_signal_id",
+    "unlinked_real_signal", "unlinked_raw_and_receipt", "wrong_source_time",
+    "wrong_source_link",
+])
+def test_assessment_oracle_requires_actual_application_receipt(tmp_path, fault):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / f"assessment-receipt-{fault}.sqlite3")
+    _, input_id, before, applied, expected = recorded_assessment_case(store)
+    with store._connect() as db:
+        projection = json.loads(db.execute("select projection_json from task_agent_runs").fetchone()[0])
+    if fault == "missing":
+        projection["project_assessments"] = []
+    elif fault == "wrong_status":
+        projection["project_assessments"][0]["status"] = "recorded"
+    elif fault == "false_existing":
+        projection["project_assessments"][0].update(
+            status="existing", attention_id=applied.projection_receipt.project_assessments[0].attention_id + 999
+        )
+        expected["project_assessments"][0]["application_status"] = "existing"
+    elif fault == "forged_signal_id":
+        projection["project_assessments"][0]["evidence"][0]["signal_id"] += 999
+    elif fault in {"unlinked_real_signal", "unlinked_raw_and_receipt"}:
+        original = projection["project_assessments"][0]["evidence"][0]
+        unlinked = store.create_business_task_signal(
+            source_type="project_weekly_report",
+            source_ref=original["source_ref"],
+            evidence_text=original["source_excerpt"],
+            source_time=original["source_time"],
+            context_json=json.dumps({"source_link": original["source_link"]}),
+            dedupe_key="eval:unlinked-real-signal",
+        )
+        projection["project_assessments"][0]["evidence"][0]["signal_id"] = unlinked
+        if fault == "unlinked_raw_and_receipt":
+            with store._connect() as db:
+                decision = json.loads(
+                    db.execute("select decision_json from task_agent_runs").fetchone()[0]
+                )
+            decision["project_assessments"][0]["evidence"][0]["signal_id"] = unlinked
+            rewrite_latest_run(store, decision=decision)
+    elif fault == "wrong_source_time":
+        projection["project_assessments"][0]["evidence"][0]["source_time"] = "2099-01-01T00:00:00Z"
+    else:
+        projection["project_assessments"][0]["evidence"][0]["source_link"] = "https://invalid.test/receipt"
+    rewrite_latest_run(store, projection=projection)
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    assert not result["passed"]
+    assert "project_assessment_receipt_mismatch" in result["failures"]
+
+
+@pytest.mark.parametrize("shape,passes", [
+    ("prefix_and_extra", True),
+    ("missing_required", False),
+    ("forged_extra", False),
+])
+def test_assessment_oracle_requires_reviewed_proof_coverage_and_validates_extras(
+    tmp_path, shape, passes
+):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / f"assessment-proof-{shape}.sqlite3")
+    item, input_id, before, _, expected = recorded_assessment_case(store)
+    with store._connect() as db:
+        run = db.execute("select * from task_agent_runs").fetchone()
+        decision = json.loads(run["decision_json"])
+        projection = json.loads(run["projection_json"])
+    if shape == "prefix_and_extra":
+        evidence = [
+            {"signal_id": None, "source_ref": item.source.ref,
+             "source_excerpt": f"## 本周进展\n{RISK_QUOTE}"},
+            {"signal_id": None, "source_ref": item.source.ref, "source_excerpt": PROJECT_ROW},
+        ]
+    elif shape == "missing_required":
+        evidence = [
+            {"signal_id": None, "source_ref": item.source.ref, "source_excerpt": PROJECT_ROW},
+        ]
+    else:
+        evidence = [
+            {"signal_id": None, "source_ref": item.source.ref, "source_excerpt": RISK_QUOTE},
+            {"signal_id": None, "source_ref": item.source.ref,
+             "source_excerpt": "当期毛利已大幅恶化。"},
+        ]
+    decision["project_assessments"][0]["evidence"] = evidence
+    projection["project_assessments"][0]["evidence"] = [
+        {**entry, "source_time": item.source.created_at, "source_link": ""}
+        for entry in evidence
+    ]
+    rewrite_latest_run(store, decision=decision, projection=projection)
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    assert result["passed"] is passes
+    assert ("project_assessment_evidence_mismatch" in result["failures"]) is (not passes)
 
 
 def test_evaluation_new_risk_cannot_pass_with_only_historical_evidence(tmp_path):
@@ -238,6 +517,7 @@ def test_evaluation_checks_both_same_project_actions_are_attention_members(tmp_p
     if not include_second_proposal:
         del second["attention_proposal"]
     payload["task_decisions"].append(second)
+    payload["project_assessments"][0]["decision_indexes"] = [0, 1]
 
     class Codex:
         def decide(self, **kwargs):
@@ -317,7 +597,17 @@ def report_item():
 
 
 def decision_payload():
-    return {"task_decisions": [{
+    return {
+        "project_assessments": [{
+            "project_title": "示例项目",
+            "outcome": "needs_attention",
+            "reason": "客户确认延迟使已交付收入未能确认，并且已需协调供应商付款。",
+            "assessment_basis": "current_observation",
+            "evidence": [{"source_ref": "report:fixture", "source_excerpt": RISK_QUOTE}],
+            "project_decision_index": 0,
+            "decision_indexes": [0],
+        }],
+        "task_decisions": [{
         "action": "record_candidate", "transition": "none",
         "source_ref": "report:fixture", "source_excerpt": TASK_QUOTE,
         "title": "复核示例项目回款及供应商付款计划", "missing_evidence": ["owner"],
@@ -333,7 +623,8 @@ def decision_payload():
             "anchor_id": None, "assessment_basis": "current_observation", "material_trigger": "risk_escalation",
             "evidence": [{"source_ref": "report:fixture", "source_excerpt": RISK_QUOTE}],
         },
-    }]}
+        }],
+    }
 
 
 def test_parse_separate_registry_task_and_attention_evidence_without_inventing_owner():
@@ -402,12 +693,31 @@ def update_risk(store, seed, *, source_type="reply_attempt", evidence=None, rela
                     assessment_basis="historical_comparison" if historical else "current_observation",
                     evidence=citations,
                     related_task_ids=related_ids or [])
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
-        "action": "update_task", "transition": "update_fields", "task_id": seed.task_ids[0],
-        "source_ref": item.source.ref, "source_excerpt": quote, "description": quote,
-        "title": store.get_business_task(seed.task_ids[0]).title,
-        "attention_proposal": proposal,
-    }]})
+    assessment_citations = [{"source_ref": item.source.ref, "source_excerpt": quote}]
+    if historical:
+        assessment_citations.append({
+            "signal_id": seed.attention_proposals[0].signal_id,
+            "source_ref": "report:fixture",
+            "source_excerpt": RISK_QUOTE,
+        })
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "示例项目",
+            "outcome": "needs_attention",
+            "reason": "客户确认继续延迟，付款协调仍未完成。",
+            "assessment_basis": "historical_comparison" if historical else "current_observation",
+            "evidence": assessment_citations,
+            "anchor_id": seed.attention_proposals[0].anchor_id,
+            "decision_indexes": [0],
+            "task_ids": [seed.task_ids[0]],
+        }],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_ids[0],
+            "source_ref": item.source.ref, "source_excerpt": quote, "description": quote,
+            "title": store.get_business_task(seed.task_ids[0]).title,
+            "attention_proposal": proposal,
+        }],
+    })
     return item, decision
 
 
@@ -447,6 +757,9 @@ def seed_report_other_project(store):
     row["source_excerpt"] = row["source_excerpt"].replace("示例项目", "另一个项目")
     row["project_proposal"].update(title="另一个项目", source_excerpt=PROJECT_ROW.replace("示例项目", "另一个项目"))
     row["attention_proposal"]["evidence"][0]["source_ref"] = "report:other"
+    assessment = payload["project_assessments"][0]
+    assessment["project_title"] = "另一个项目"
+    assessment["evidence"][0].update(source_ref="report:other", source_excerpt=RISK_QUOTE)
     return apply_task_agent_decision(store, summary_input_id=3, work_item=item, decision=TaskAgentDecision.model_validate(payload), record_run=False)
 
 
@@ -471,6 +784,7 @@ def test_same_project_multiple_proposals_fold_only_identical_content(tmp_path, d
             row["attention_proposal"]["evidence"].append(
                 dict(row["attention_proposal"]["evidence"][0]))
     payload["task_decisions"].append(second)
+    payload["project_assessments"][0]["decision_indexes"] = [0, 1]
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(), decision=TaskAgentDecision.model_validate(payload), record_run=False)
     receipt = result.projection_receipt
     assert receipt.proposal_count == 2
@@ -536,6 +850,14 @@ def test_registry_count_without_project_or_attention_proposal(tmp_path):
     payload = decision_payload()
     del payload["task_decisions"][0]["project_proposal"]
     del payload["task_decisions"][0]["attention_proposal"]
+    payload["project_assessments"] = [{
+        "project_title": "示例项目",
+        "outcome": "insufficient_evidence",
+        "reason": "来源提及该 Project，但此解析计数专测未提供正式登记提案或关注提案。",
+        "assessment_basis": "current_observation",
+        "evidence": [{"source_ref": "report:fixture", "source_excerpt": PROJECT_ROW}],
+        "decision_indexes": [0],
+    }]
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(), decision=TaskAgentDecision.model_validate(payload), record_run=False)
     assert result.projection_receipt.status == "no_proposal"
     assert result.projection_receipt.registry_row_count == 1
@@ -578,17 +900,30 @@ def test_later_proposal_preserves_open_sibling_and_completion_only_removes_membe
     second = decision_payload()["task_decisions"][0]
     second["title"] = "复核付款协调行动"
     payload["task_decisions"].append(second)
+    payload["project_assessments"][0]["decision_indexes"] = [0, 1]
     seed = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(), decision=TaskAgentDecision.model_validate(payload), record_run=False)
     card, = store.list_business_attention_items()
     item, decision = update_risk(store, seed)
     apply_task_agent_decision(store, summary_input_id=2, work_item=item, decision=decision, record_run=False)
     assert {link.task_id for link in store.list_business_attention_tasks(card.id)} == set(seed.task_ids)
     completion_item = item.model_copy(update={"summary": "回款复核已经完成。", "source": item.source.model_copy(update={"ref": "chat:completed", "created_at": "2026-10-02T16:00:00Z"})})
-    completion = TaskAgentDecision.model_validate({"task_decisions": [{
-        "action": "update_task", "transition": "update_fields", "task_id": seed.task_ids[0],
-        "title": store.get_business_task(seed.task_ids[0]).title,
-        "source_ref": completion_item.source.ref, "source_excerpt": completion_item.summary, "status": "done",
-    }]})
+    completion = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "示例项目",
+            "outcome": "not_needed",
+            "reason": "当前来源明确说明回款复核已完成，此轮不需新增关注提案。",
+            "assessment_basis": "current_observation",
+            "evidence": [{"source_ref": completion_item.source.ref, "source_excerpt": completion_item.summary}],
+            "anchor_id": seed.attention_proposals[0].anchor_id,
+            "decision_indexes": [0],
+            "task_ids": [seed.task_ids[0]],
+        }],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_ids[0],
+            "title": store.get_business_task(seed.task_ids[0]).title,
+            "source_ref": completion_item.source.ref, "source_excerpt": completion_item.summary, "status": "done",
+        }],
+    })
     apply_task_agent_decision(store, summary_input_id=3, work_item=completion_item, decision=completion, record_run=False)
     assert {link.task_id for link in store.list_business_attention_tasks(card.id)} == {seed.task_ids[1]}
     assert store.get_business_attention_item(card.id).status.value == "active"
@@ -615,19 +950,33 @@ def test_skipped_noop_proposal_is_counted_and_diagnosed(tmp_path):
     # actual field changes is skipped by the Task domain instead.
     newer = item.model_copy(update={"source": item.source.model_copy(update={"ref": "chat:no-change"})})
     row = decision.task_decisions[0].model_copy(update={"source_ref": newer.source.ref})
-    skipped = apply_task_agent_decision(store, summary_input_id=4, work_item=newer, decision=decision.model_copy(update={"task_decisions": [row]}), record_run=False)
+    assessment = decision.project_assessments[0].model_copy(update={
+        "evidence": [decision.project_assessments[0].evidence[0].model_copy(update={
+            "source_ref": newer.source.ref,
+        })],
+    })
+    skipped = apply_task_agent_decision(store, summary_input_id=4, work_item=newer,
+        decision=decision.model_copy(update={"project_assessments": [assessment], "task_decisions": [row]}),
+        record_run=False)
     assert skipped.projection_receipt.status == "failed"
     assert skipped.projection_receipt.proposal_count == 1
     assert "no applied Task" in skipped.projection_receipt.outcomes[0].reason
 
 
 def test_raw_skip_proposal_does_not_invent_a_task_id(tmp_path):
-    store = AutoReplyStore(tmp_path / "skip-proposal.sqlite3")
-    row = decision_payload()["task_decisions"][0]
-    row.update(action="skip", skip_reason="No actionable Task")
-    row.pop("project_proposal")
-    row["attention_proposal"]["anchor_id"] = 9
-    result = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(), decision=TaskAgentDecision.model_validate({"task_decisions": [row]}), record_run=False)
+    store, item, seed, anchor_id, _, new_task = existing_project_link_case(tmp_path)
+    valid = TaskAgentDecision.model_validate({
+        "project_assessments": [existing_project_assessment(
+            item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+        )],
+        "task_decisions": [new_task],
+    })
+    result = apply_task_agent_decision(store, summary_input_id=2, work_item=item,
+        decision=valid.model_copy(update={"task_decisions": [
+            valid.task_decisions[0].model_copy(update={
+                "action": "skip", "skip_reason": "No actionable Task",
+            })
+        ]}), record_run=False)
     assert result.projection_receipt.proposal_count == 1
     assert result.projection_receipt.status == "failed"
     assert result.projection_receipt.outcomes[0].task_id is None
@@ -655,7 +1004,10 @@ def test_report_plain_text_with_no_registry_has_zero_rows(tmp_path):
     store = AutoReplyStore(tmp_path / "plain.sqlite3")
     item = report_item().model_copy(update={"summary": TASK_QUOTE})
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-        decision=TaskAgentDecision.model_validate({"task_decisions": []}), record_run=False)
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [], "task_decisions": [],
+            "update_summary": "纯文本中没有正式 Project 登记区域或 Project 线索。",
+        }), record_run=False)
     assert result.projection_receipt.registry_row_count == 0
     assert result.projection_receipt.status == "no_proposal"
 
@@ -664,6 +1016,10 @@ def test_registered_project_without_attention_still_counts_applied_link(tmp_path
     store = AutoReplyStore(tmp_path / "project-only.sqlite3")
     payload = decision_payload()
     del payload["task_decisions"][0]["attention_proposal"]
+    payload["project_assessments"][0].update(
+        outcome="insufficient_evidence",
+        reason="当前夹具只验证 Project 登记与 Task 链接，候选 Task 缺少负责人，未提交关注提案。",
+    )
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(), decision=TaskAgentDecision.model_validate(payload), record_run=False)
     assert result.projection_receipt.project_link_count == 1
     assert result.projection_receipt.proposal_count == result.projection_receipt.applied_count == 0
@@ -689,8 +1045,18 @@ def test_registry_row_count_excludes_repeated_table_separators(tmp_path, project
         PROJECT_ROW + f"\n| {project_header} | 负责内容 | 目标 | DDL | 状态 |\n"
         "| :--- | ---: | --- | --- | --- |\n" + PROJECT_ROW.replace("示例项目", "第二个项目"))
     item = item.model_copy(update={"summary": json.dumps(payload, ensure_ascii=False)})
+    second_row = PROJECT_ROW.replace("示例项目", "第二个项目")
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-        decision=TaskAgentDecision.model_validate({"task_decisions": []}), record_run=False)
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [{
+                "project_title": title,
+                "outcome": "insufficient_evidence",
+                "reason": "此专测只核对登记表行计数，未提供对应真实 Task 或具体经营影响。",
+                "assessment_basis": "current_observation",
+                "evidence": [{"source_ref": item.source.ref, "source_excerpt": quote}],
+            } for title, quote in (("示例项目", PROJECT_ROW), ("第二个项目", second_row))],
+            "task_decisions": [],
+        }), record_run=False)
     assert result.projection_receipt.registry_row_count == 2
 
 
@@ -708,6 +1074,7 @@ def test_repeated_registry_header_cannot_register_project(tmp_path, project_head
     payload["task_decisions"][0]["project_proposal"].update(
         title=project_header, source_excerpt=header
     )
+    payload["project_assessments"][0]["project_title"] = project_header
     with pytest.raises(ValueError, match="cited report registry row"):
         apply_task_agent_decision(store, summary_input_id=1, work_item=item,
             decision=TaskAgentDecision.model_validate(payload), record_run=False)
@@ -726,7 +1093,16 @@ def test_project_link_count_includes_confirmed_candidate_cluster_members(tmp_pat
     first.pop("attention_proposal")
     second = {**first, "title": "复核付款协调行动"}
     seed = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-        decision=TaskAgentDecision.model_validate({"task_decisions": [first, second]}), record_run=False)
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [{
+                "project_title": "示例项目", "outcome": "insufficient_evidence",
+                "reason": "两个候选行动只提供 Task 线索，尚未建立正式 Project 链接或关注证据。",
+                "assessment_basis": "current_observation",
+                "evidence": [{"source_ref": item.source.ref, "source_excerpt": PROJECT_ROW}],
+                "decision_indexes": [0, 1],
+            }],
+            "task_decisions": [first, second],
+        }), record_run=False)
     resolution = BusinessResolutionService(store)
     cluster_id = resolution.create_cluster(title="示例项目", task_ids=list(seed.task_ids))
     resolution.propose_project(cluster_id=cluster_id, title="示例项目", reason="已有项目候选")
@@ -735,8 +1111,16 @@ def test_project_link_count_includes_confirmed_candidate_cluster_members(tmp_pat
         description="新来源补充回款复核细节",
         cluster_proposal={"cluster_id": cluster_id, "task_ids": list(seed.task_ids), "reason": "同一聚类"})
     row.pop("attention_proposal")
+    project_only = decision_payload()["project_assessments"][0]
+    project_only.update(
+        outcome="insufficient_evidence",
+        reason="当前仅确认 Project 登记与聚类链接，未提交关注提案。",
+        decision_indexes=[0],
+    )
     result = apply_task_agent_decision(store, summary_input_id=2, work_item=item,
-        decision=TaskAgentDecision.model_validate({"task_decisions": [row]}), record_run=False)
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [project_only], "task_decisions": [row]
+        }), record_run=False)
     project, = store.list_business_projects()
     expected = {(task_id, project.canonical_anchor_id) for task_id in seed.task_ids}
     with store._connect() as db:
@@ -839,6 +1223,7 @@ def test_invalid_registry_proof_rolls_back_domain_transaction(tmp_path, change):
     store = AutoReplyStore(tmp_path / "invalid-registry.sqlite3")
     payload = decision_payload()
     payload["task_decisions"][0]["project_proposal"].update(change)
+    payload["project_assessments"][0]["project_title"] = payload["task_decisions"][0]["project_proposal"]["title"]
     with pytest.raises(ValueError, match="cited report registry row"):
         apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(),
                                   decision=TaskAgentDecision.model_validate(payload), record_run=False)
@@ -863,6 +1248,7 @@ def test_registry_prose_cannot_register_a_project(tmp_path, quote_from_following
     payload["task_decisions"][0]["project_proposal"].update(
         title=prose, source_excerpt="\n" + second_row if quote_from_following_row else prose,
     )
+    payload["project_assessments"][0]["project_title"] = prose
     with pytest.raises(ValueError, match="cited report registry row"):
         apply_task_agent_decision(
             store, summary_input_id=1, work_item=work_item,
@@ -898,26 +1284,59 @@ def test_each_decision_keeps_its_own_applied_project_anchor(tmp_path, new_projec
     second = decision_payload()["task_decisions"][0]
     second["title"] = "另一项回款复核"
     item = report_item()
+    second_risk = "另一项目客户取消验收，回款延期导致本周供应商款项无法支付。"
     if new_project:
         second_row = PROJECT_ROW.replace("示例项目", "另一项目")
         second["project_proposal"].update(title="另一项目", source_excerpt=second_row)
         second_quote = TASK_QUOTE.replace("示例项目", "另一项目")
         second["source_excerpt"] = second_quote
+        second["attention_proposal"]["evidence"] = [{
+            "source_ref": item.source.ref, "source_excerpt": second_risk,
+        }]
         source = json.loads(item.summary)
         source["markdown"] = source["markdown"].replace(PROJECT_ROW, f"{PROJECT_ROW}\n{second_row}")
-        source["markdown"] += f"\n{second_quote}"
+        source["markdown"] += f"\n{second_risk}\n{second_quote}"
         item = item.model_copy(update={"summary": json.dumps(source, ensure_ascii=False)})
+        payload["project_assessments"].append({
+            "project_title": "另一项目", "outcome": "needs_attention",
+            "reason": "客户取消验收使回款延期，并已影响本周供应商付款。",
+            "assessment_basis": "current_observation",
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": second_risk}],
+            "project_decision_index": 1, "decision_indexes": [1],
+        })
     else:
-        seed = seed_report(store)
+        seed = seed_report_other_project(store)
+        other_project = next(project for project in store.list_business_projects()
+                             if project.title == "另一个项目")
         del second["project_proposal"]
         second.update(action="update_task", transition="update_fields", task_id=seed.task_ids[0])
-        second["attention_proposal"]["anchor_id"] = 987
+        second["attention_proposal"].update(
+            anchor_id=other_project.canonical_anchor_id,
+            evidence=[{"source_ref": item.source.ref, "source_excerpt": second_risk}],
+        )
+        source = json.loads(item.summary)
+        source["markdown"] += f"\n{second_risk}"
+        item = item.model_copy(update={"summary": json.dumps(source, ensure_ascii=False)})
+        payload["project_assessments"].append({
+            "project_title": "另一个项目", "outcome": "needs_attention",
+            "reason": "客户取消验收使回款延期，并已影响本周供应商付款。",
+            "assessment_basis": "current_observation",
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": second_risk}],
+            "anchor_id": other_project.canonical_anchor_id,
+            "decision_indexes": [1], "task_ids": [seed.task_ids[0]],
+        })
     payload["task_decisions"].append(second)
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
                                        decision=TaskAgentDecision.model_validate(payload), record_run=False)
     first, second = result.attention_proposals
-    assert first.anchor_id == store.list_business_projects()[0].canonical_anchor_id
-    expected_second_anchor = store.list_business_projects()[1].canonical_anchor_id if new_project else 987
+    assert first.anchor_id == next(
+        project.canonical_anchor_id for project in store.list_business_projects()
+        if project.title == "示例项目"
+    )
+    expected_second_anchor = next(
+        project.canonical_anchor_id for project in store.list_business_projects()
+        if project.title in ({"另一项目"} if new_project else {"另一个项目"})
+    )
     assert second.anchor_id == expected_second_anchor
     assert second.anchor_id != first.anchor_id
 
@@ -929,6 +1348,13 @@ def test_registry_task_excerpt_without_project_proposal_does_not_register(tmp_pa
     row["source_excerpt"] = PROJECT_ROW
     del row["project_proposal"]
     del row["attention_proposal"]
+    payload["project_assessments"] = [{
+        "project_title": "示例项目", "outcome": "insufficient_evidence",
+        "reason": "登记表行被当作 Task 引文，但没有显式 Project 登记提案，不能由服务端隐式登记。",
+        "assessment_basis": "current_observation",
+        "evidence": [{"source_ref": "report:fixture", "source_excerpt": PROJECT_ROW}],
+        "decision_indexes": [0],
+    }]
     apply_task_agent_decision(store, summary_input_id=1, work_item=report_item(),
                               decision=TaskAgentDecision.model_validate(payload), record_run=False)
     assert store.list_business_projects() == []
@@ -961,6 +1387,14 @@ def test_existing_anchor_does_not_require_new_project_proposal():
     decision["attention_proposal"]["evidence"].append({"signal_id": 11,
         "source_ref": "report:earlier", "source_excerpt": RISK_QUOTE})
     decision["project_link_proposal"] = {"anchor_id": 8, "source_excerpt": TASK_QUOTE, "reason": "当前项目行动"}
+    payload["project_assessments"][0].update(
+        project_decision_index=None,
+        anchor_id=8,
+        assessment_basis="historical_comparison",
+        evidence=decision["attention_proposal"]["evidence"],
+        decision_indexes=[0],
+        task_ids=[3, 9],
+    )
     parsed = TaskAgentDecision.model_validate(payload).task_decisions[0]
     assert parsed.attention_proposal.related_task_ids == [3, 9]
     assert parsed.attention_proposal.evidence[1].signal_id == 11
@@ -1064,13 +1498,37 @@ def existing_project_link_case(tmp_path, source_type="ai_minutes"):
     return store, item, seed, anchor_id, card_id, new_task
 
 
+def existing_project_assessment(
+    *, item, seed, anchor_id, decision_indexes, outcome="needs_attention"
+):
+    return {
+        "project_title": "示例交付项目",
+        "outcome": outcome,
+        "reason": (
+            "客户取消验收且回款延期，已影响本周供应商付款安排。"
+            if outcome == "needs_attention"
+            else "此路径只核对当前 Task 与已登记 Project 的链接，没有提交新关注提案。"
+        ),
+        "assessment_basis": "current_observation",
+        "evidence": [{
+            "source_ref": item.source.ref,
+            "source_excerpt": item.summary.splitlines()[0],
+        }],
+        "anchor_id": anchor_id,
+        "decision_indexes": decision_indexes,
+        "task_ids": [seed.task_id],
+    }
+
+
 @pytest.mark.parametrize("source_type", ["ai_minutes", "reply_attempt"])
 def test_current_source_links_new_task_to_existing_project_and_updates_one_card(tmp_path, source_type):
     from app.task_agent import TaskAgentRunner
 
     store, item, seed, anchor_id, old_card_id, new_task = existing_project_link_case(tmp_path, source_type)
     registered_projects = store.list_business_projects()
-    payload = {"task_decisions": [{
+    payload = {"project_assessments": [existing_project_assessment(
+        item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0, 1]
+    )], "task_decisions": [{
         "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
         "title": "复核示例交付项目验收计划", "description": "客户取消验收后复核计划并补充调整方案。",
         "source_ref": item.source.ref, "source_excerpt": "复核示例交付项目验收计划，补充客户取消验收后的调整。",
@@ -1096,7 +1554,12 @@ def test_current_source_links_new_task_to_existing_project_and_updates_one_card(
     assert receipt["project_link_count"] == 1
     assert link["status"] == "confirmed" and link["anchor_id"] == anchor_id
     replay = apply_task_agent_decision(store, summary_input_id=input_id, work_item=item,
-        decision=TaskAgentDecision.model_validate({"task_decisions": [new_task]}), record_run=False)
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [existing_project_assessment(
+                item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+            )],
+            "task_decisions": [new_task],
+        }), record_run=False)
     assert replay.projection_receipt.status == "completed"
     assert store.list_business_tasks() == tasks
     assert store.list_business_attention_items()[0].id == old_card_id
@@ -1118,7 +1581,12 @@ def test_new_task_relation_and_compound_project_link_use_actual_current_id(tmp_p
     old_update = {"action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
         "title": existing.title, "description": existing.description, "source_ref": item.source.ref,
         "source_excerpt": "复核示例交付项目验收计划"}
-    payload = {"task_decisions": [old_update, new_task]}
+    payload = {
+        "project_assessments": [existing_project_assessment(
+            item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0, 1]
+        )],
+        "task_decisions": [old_update, new_task],
+    }
     class Codex:
         def decide(self, **kwargs):
             return TaskAgentDecision.model_validate(payload)
@@ -1162,7 +1630,14 @@ def test_existing_project_link_rejects_unproven_target_or_current_action(tmp_pat
     else:
         payload["source_ref"] = "other:source"
     payload["attention_proposal"] = None
-    decision = TaskAgentDecision.model_validate({"task_decisions": [payload]})
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [existing_project_assessment(
+            item=item, seed=seed,
+            anchor_id=payload["project_link_proposal"]["anchor_id"],
+            decision_indexes=[0], outcome="not_needed",
+        )],
+        "task_decisions": [payload],
+    })
     with pytest.raises(ValueError):
         apply_task_agent_decision(store, summary_input_id=1, work_item=item, decision=decision, record_run=False)
     assert len(store.list_business_tasks()) == 1
@@ -1177,7 +1652,12 @@ def test_restating_update_does_not_apply_existing_project_link_or_attention(tmp_
     with store._connect() as db:
         before = tuple(db.execute("select evidence_signal_id,reason from business_task_anchor_links").fetchone())
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-        decision=TaskAgentDecision.model_validate({"task_decisions": [payload]}), record_run=False)
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [existing_project_assessment(
+                item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+            )],
+            "task_decisions": [payload],
+        }), record_run=False)
     assert result.task_ids == ()
     assert result.project_links == ()
     assert result.projection_receipt.status == "failed"
@@ -1197,7 +1677,12 @@ def test_existing_unconfirmed_task_can_confirm_project_link_with_real_source_upd
         "title": "复核示例交付项目验收计划", "description": "客户取消验收后调整验收计划。", "source_excerpt": quote,
         "project_link_proposal": {"anchor_id": anchor_id, "source_excerpt": quote, "reason": "当前行动明确属于已登记项目"}}
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-        decision=TaskAgentDecision.model_validate({"task_decisions": [payload]}), record_run=False)
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [existing_project_assessment(
+                item=item, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+            )],
+            "task_decisions": [payload],
+        }), record_run=False)
     assert result.project_links == ((seed.task_id, anchor_id),)
     assert result.projection_receipt.status == "completed"
     assert store.get_business_task(seed.task_id).business_relevance.value == "relevant"
@@ -1211,7 +1696,13 @@ def test_uncertain_anchor_match_remains_proposed_without_deriving_relevance(tmp_
     payload["attention_proposal"] = None
     payload["anchor_match_proposals"] = [{"anchor_id": anchor_id, "reason": "尚待确认的相关性"}]
     result = apply_task_agent_decision(store, summary_input_id=1, work_item=item,
-        decision=TaskAgentDecision.model_validate({"task_decisions": [payload]}), record_run=False)
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [existing_project_assessment(
+                item=item, seed=seed, anchor_id=anchor_id,
+                decision_indexes=[0], outcome="insufficient_evidence",
+            )],
+            "task_decisions": [payload],
+        }), record_run=False)
     new_id = result.task_ids[0]
     assert result.project_links == ()
     assert store.get_business_task(new_id).business_relevance.value == "unknown"

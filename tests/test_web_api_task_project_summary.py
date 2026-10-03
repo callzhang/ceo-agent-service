@@ -31,14 +31,31 @@ def test_project_summary_reads_latest_report_registry_fields(tmp_path):
         }, ensure_ascii=False),
         "context": {"source_conversation_kind": "group"},
     })
-    decision = TaskAgentDecision.model_validate({"task_decisions": [{
-        "action": "record_candidate",
-        "transition": "none",
-        "source_excerpt": row,
-        "source_ref": item.source.ref,
-        "title": "完成 Example project 客户验收",
-        "missing_evidence": ["owner"],
-    }]})
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "Example project",
+            "outcome": "insufficient_evidence",
+            "reason": "当前登记行只给出风险标签，没有说明对验收、收入或回款的具体经营影响。",
+            "assessment_basis": "current_observation",
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": row}],
+            "project_decision_index": 0,
+            "decision_indexes": [0],
+        }],
+        "task_decisions": [{
+            "action": "record_candidate",
+            "transition": "none",
+            "source_excerpt": row,
+            "source_ref": item.source.ref,
+            "title": "完成 Example project 客户验收",
+            "missing_evidence": ["owner"],
+            "project_proposal": {
+                "title": "Example project",
+                "reason": "当前正式周报项目登记表明确列出该 Project。",
+                "authority": "project_weekly_report",
+                "source_excerpt": row,
+            },
+        }],
+    })
 
     result = apply_task_agent_decision(
         store, summary_input_id=1, work_item=item, decision=decision, record_run=False

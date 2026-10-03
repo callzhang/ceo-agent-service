@@ -72,12 +72,28 @@ def seed_case(store, case):
     for attention in context.get("attention", []):
         anchor = anchors[attention["project_title"]]
         names = attention["task_titles"]
+        assessment_json = "{}"
+        if assessment := attention.get("assessment"):
+            evidence_task_title = assessment["evidence_task_title"]
+            assessment_json = json.dumps({
+                "assessment_basis": assessment["assessment_basis"],
+                "material_trigger": assessment["material_trigger"],
+                "inference": attention["why_attention"],
+                "evidence": [{
+                    "signal_id": signals[evidence_task_title],
+                    "source_ref": assessment["source_ref"],
+                    "source_excerpt": assessment["source_excerpt"],
+                    "source_time": assessment["source_time"],
+                    "source_link": assessment["source_link"],
+                }],
+            }, ensure_ascii=False, sort_keys=True)
         BusinessAttentionProjection(store).upsert(AttentionProposal(
             stable_key=f"project:{anchor}", category=AttentionCategory.WATCH,
             title=attention["title"], business_area="", why_attention=attention["why_attention"],
             current_state=attention["current_state"], ceo_action=attention["ceo_action"],
             anchor_id=anchor, task_ids=tuple(tasks[name] for name in names),
             evidence_signal_id=signals[names[0]],
+            assessment_json=assessment_json,
         ))
     item = WorkItem.model_validate(case["work_item"])
     return store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
@@ -196,6 +212,154 @@ def readback(store, *, input_id, before, expected=None):
             failures.append("attention_identity_changed")
         if expected.get("preserve_project_registry") and before["projects"] != after["projects"]:
             failures.append("project_registry_changed")
+        if "project_assessments" in expected and run is not None:
+            raw_assessments = decision.get("project_assessments")
+            if "project_assessments" not in decision:
+                failures.append("project_assessments_missing")
+                raw_assessments = []
+            expected_assessments = expected["project_assessments"]
+            if len(raw_assessments) != len(expected_assessments):
+                failures.append("project_assessment_coverage_mismatch")
+            receipt_assessments = projection.get("project_assessments")
+            if not isinstance(receipt_assessments, list):
+                receipt_assessments = []
+            input_row = store.get_work_summary_input(input_id) if input_id is not None else None
+            work_item = json.loads(input_row.payload_json) if input_row is not None else {}
+            source = work_item.get("source", {})
+            source_text = work_item.get("summary", "")
+            raw_by_title = {
+                assessment.get("project_title"): (index, assessment)
+                for index, assessment in enumerate(raw_assessments)
+            }
+            expected_titles = {
+                assessment["project_title"] for assessment in expected_assessments
+            }
+            if (
+                len(raw_by_title) != len(raw_assessments)
+                or set(raw_by_title) != expected_titles
+            ):
+                failures.append("project_assessment_coverage_mismatch")
+            for wanted_assessment in expected_assessments:
+                matched = raw_by_title.get(wanted_assessment["project_title"])
+                if matched is None:
+                    continue
+                index, actual_assessment = matched
+                if actual_assessment.get("outcome") != wanted_assessment["outcome"]:
+                    failures.append("project_assessment_outcome_mismatch")
+                if not str(actual_assessment.get("reason", "")).strip():
+                    failures.append("project_assessment_reason_missing")
+                wanted_evidence = wanted_assessment["evidence"]
+                actual_evidence = actual_assessment.get("evidence", [])
+                citations_valid = all(
+                    any(
+                        actual.get("source_ref") == required["source_ref"]
+                        and required["source_excerpt"] in actual.get("source_excerpt", "")
+                        for actual in actual_evidence
+                    )
+                    for required in wanted_evidence
+                )
+                for evidence in actual_assessment.get("evidence", []):
+                    signal_id = evidence.get("signal_id")
+                    if signal_id is None:
+                        citations_valid = (
+                            citations_valid
+                            and evidence.get("source_ref") == source.get("ref")
+                            and evidence_contains(source_text, evidence.get("source_excerpt", ""))
+                        )
+                    else:
+                        signal = store.get_business_task_signal(signal_id)
+                        citations_valid = (
+                            citations_valid
+                            and signal is not None
+                            and signal.source_ref == evidence.get("source_ref")
+                            and evidence_contains(signal.evidence_text, evidence.get("source_excerpt", ""))
+                        )
+                if not citations_valid:
+                    failures.append("project_assessment_evidence_mismatch")
+
+                receipt = next((
+                    entry for entry in receipt_assessments
+                    if entry.get("assessment_index") == index
+                ), None)
+                receipt_valid = receipt is not None
+                if receipt is not None:
+                    receipt_valid = (
+                        receipt.get("status") == wanted_assessment["application_status"]
+                        and len(receipt.get("task_ids", [])) == wanted_assessment["task_count"]
+                        and set(receipt.get("task_ids", [])).issubset(task_by_id)
+                    )
+                    anchor_id = receipt.get("anchor_id")
+                    if wanted_assessment.get("anchor_required", True):
+                        receipt_valid = (
+                            receipt_valid
+                            and project_by_anchor.get(anchor_id, {}).get("title")
+                            == wanted_assessment["project_title"]
+                        )
+                    else:
+                        receipt_valid = receipt_valid and anchor_id is None
+                    receipt_evidence = receipt.get("evidence", [])
+                    receipt_valid = receipt_valid and all(
+                        any(
+                            actual.get("source_ref") == required["source_ref"]
+                            and required["source_excerpt"] in actual.get("source_excerpt", "")
+                            for actual in receipt_evidence
+                        )
+                        for required in wanted_evidence
+                    )
+                    for evidence in receipt.get("evidence", []):
+                        signal_id = evidence.get("signal_id")
+                        if signal_id is None:
+                            receipt_valid = (
+                                receipt_valid
+                                and evidence.get("source_ref") == source.get("ref")
+                                and evidence_contains(source_text, evidence.get("source_excerpt", ""))
+                                and evidence.get("source_time", "") == source.get("created_at", "")
+                                and evidence.get("source_link", "") == ""
+                            )
+                        else:
+                            signal = store.get_business_task_signal(signal_id)
+                            signal_link = (
+                                json.loads(signal.context_json).get("source_link", "")
+                                if signal is not None else ""
+                            )
+                            receipt_valid = (
+                                receipt_valid
+                                and signal is not None
+                                and signal.source_ref == evidence.get("source_ref")
+                                and evidence_contains(signal.evidence_text, evidence.get("source_excerpt", ""))
+                                and signal.source_time == evidence.get("source_time", "")
+                                and signal_link == evidence.get("source_link", "")
+                            )
+                            receipt_task_ids = receipt.get("task_ids", [])
+                            if receipt_task_ids:
+                                linked_to_receipt_task = any(
+                                    link.signal_id == signal_id
+                                    for task_id in receipt_task_ids
+                                    for link in store.list_business_task_evidence(task_id)
+                                )
+                                card_has_exact_proof = any(
+                                    proof.get("signal_id") == signal_id
+                                    for card in cards
+                                    if card["id"] == receipt.get("attention_id")
+                                    for proof in card["assessment"].get("evidence", [])
+                                )
+                                receipt_valid = receipt_valid and (
+                                    linked_to_receipt_task
+                                    or card_has_exact_proof
+                                )
+                    if wanted_assessment.get("attention_required"):
+                        attention_id = receipt.get("attention_id")
+                        card = next((card for card in cards if card["id"] == attention_id), None)
+                        receipt_valid = (
+                            receipt_valid
+                            and card is not None
+                            and card["anchor_id"] == anchor_id
+                            and set(receipt.get("task_ids", [])).issubset(card["task_ids"])
+                        )
+                    else:
+                        receipt_valid = receipt_valid and receipt.get("attention_id") is None
+                if not receipt_valid:
+                    failures.append("project_assessment_receipt_mismatch")
     visible_task_ids = {task_id for card in cards for task_id in card["task_ids"]}
     before_tasks = {task["id"]: task for task in before["tasks"]}
     visible_task_ids.update(task["id"] for task in after["tasks"]
@@ -206,6 +370,7 @@ def readback(store, *, input_id, before, expected=None):
             "runtime_attempts": attempts,
             "proposal_count": proposal_count,
             "projection": projection,
+            "project_assessments": decision.get("project_assessments") if "project_assessments" in decision else None,
             "persisted_attention_count": len(active), "duplicate_cards": duplicate_cards,
             "evidence_valid": evidence_valid, "cards": cards,
             "tasks": [{"id": t["id"], "title": t["title"], "stage": t["stage"], "status": t["status"]}

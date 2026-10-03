@@ -26,7 +26,12 @@ SQLite backup 初态由主 Agent 持有：
 
 执行环境先注入生产 launchd 的环境参数，并指定 `CEO_ENV_FILE` 为真实生产 `.env`；脚本在选定 `--code-root` 后才 import app 并读取该配置。`CEO_WORKER_DB` 必须保留生产路径，`--db` 独立选择评估副本：脚本在打开 store 前拒绝等于 worker_db_path 的路径。`CEO_SERVICE_MCP_CONFIG_PATH` 等现有相对配置由调用者解析为实际绝对路径；不建立临时 MCP 配置。须明确提供生产 `CEO_TASK_CODEX_TIMEOUT_SECONDS` 和 `CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS`；脚本按相同版本业务 CLI 的 TASK_AGENT_MAX 常量取 min，输出实际有效值。现有 prompt 的外部写禁止仍为 best-effort，不声称硬隔离。
 
-基线命令使用固定实际 baseline checkout 与其 version 2 Skill，候选使用候选 checkout 和 version 3 Skill；两者显式读取同一 fixture 文件。每个 case 一个全新不存在的数据库路径，顺序执行 9 个命令，即 concurrency=1；不能用候选 app 模块执行“baseline”。以下路径由主 Agent 在实际运行时替换，不能将有现存事实的库作为 fresh case DB。
+以下是 Task 7 原九样例当时的历史调用：baseline checkout 与其 version 2
+Skill、候选 checkout 与 version 3 Skill 分别用 fresh case DB 顺序执行，
+concurrency=1，不用候选 app 冒充 baseline。这两条 `--case-id` 命令只对应
+当时的源码/样例，保留作历史证据；当前 assessment fixture 的已有卡 seed
+包含新 `assessment_json` 事实，pinned baseline constructor 不能直接构造它，
+不得从当前脚本重放这两条命令来宣称新配对评测完成。
 
 ```sh
 CEO_SKILLS_ROOT=/Users/derek/Projects/ceo-agent-service/.worktrees/attention-eval-baseline/ci/shared-skills \
@@ -474,3 +479,55 @@ receipt=no_proposal、project_link_count=4、registry_row_count=5，卡片仍0�
 当前代码的主Agent相关十个Python文件410passed（121.79s）、两页面22passed，
 TypeScript/Vite build与app.cli/worker/email_worker/service_supervisor imports通过。
 这些局部验证不替代最新完整九样例、真实副本重复幂等或生产结果。
+
+## Project assessment 来源接入与冻结 oracle（开发完成，native 待执行）
+
+Task 4 只更新当前测试/评估来源和一次性 replay 读回，不改变生产 Task Agent、领域应用、
+投影、路由、重试或 timeout。Project 登记、混合来源、Web Project summary 以及四个
+`process-work-items` fake producer 现在都显式输出必填 `project_assessments`；正例使用真实
+Project selector、Task ID 和原始引文，负例/未知项写出 `not_needed` 或
+`insufficient_evidence` 的具体理由。Web summary fixture 以当前周报登记行提供显式
+`project_proposal`，不再依赖隐式登记；Project identity 专测仅在不测试 Attention 的分支
+移除额外风险句，短名称、活动正式对象、同名冲突、登记/复用和原断言保持不变。
+
+新增 version 1 fixture `task_attention_project_assessments_v1.json`，冻结 9 个 assessment
+案例：报告、会议、聊天三类明确关注；仅风险标签、无真实 Task、未确认 Project、例行进展
+四类负面/证据不足判断；同一 Project 两个 Task 由一个 assessment 和同一卡成员覆盖；
+以及已有卡的真实保存 proof/实际 ID 重放幂等。expected 仍与 Work Item / existing facts
+分离，测试确认 secret expected 不进入 payload 或 prompt。原 `task_attention_multisource.json`
+九案例及 `task_attention_project_identity.json` 竞争案例未修改，SHA256 仍分别为
+`c2d0846919ffe9452906a6c08b2d17b729db120c102c7ec00e72c9f2ee703338` 和
+`9b56eec4bb74999a40448b1992ea0aed7caa7fff195c7c0c9e8a1acd859dfdf6`。
+
+冻结 oracle 直接读取 run 的原始 `decision_json`；缺少 `project_assessments` 保持可观测，
+不经候选模型默认值补齐。它按唯一 Project title 匹配原始 assessment，再用该原始位置读取
+独立 projection receipt，不强制模型输出顺序。逐案例要求已审阅 outcome 与必需的
+`source_ref + 经营影响原句` 被实际引文覆盖；允许同一 ref 的更长连续原文和额外真实引文，
+但逐一核验所有额外引文。当前 null-signal 引文必须来自 immutable Work Item 并读回原
+source_time/空 link；正 signal 必须核对真实 Signal 的 ref/原文/time/link，以及它与回执
+支持 Task、已验证卡 proof 或原始 assessment 的实际关系。回执还核对实际 anchor、Task IDs、
+card ID、status 和成员；未知 Project 可由 case 明确要求 `anchor_id=null`。重复已有卡 case
+两次回放保持同 card ID 且不新增 Task、Project 或 Attention event。
+
+这些机械检查能证明显式判断覆盖、原始引文、持久化身份和应用结果，不能仅凭非空理由和
+正确引用独立证明自由文本理由的业务语义正确。没有加入关键词、正则、短语黑名单、第二 judge
+或 fixture-exact reason。主 Agent 仍须逐案例对照原文和预期经营影响，并人工审阅真实 W39
+保存理由；机械 `passed=true` 不能标记 business PASS。
+
+确定性 oracle 回归覆盖：原始字段缺失、Project title 覆盖错位、outcome 错误、缺理由、
+缺必需原句、伪造额外引文、receipt 缺失/错 status/伪 existing card ID、伪 signal ID、
+未关联但元数据相同的真实 signal、错误 time/link，以及正确前缀/额外真实引文正控制。
+新增 oracle 回归先 7 failed 后通过，最终 assessment oracle `16 passed`；
+完整限定测试为 source+multisource `142 passed`、
+Web summary `1 passed`、CLI process-work-items `22 passed / 254 deselected`。本节未运行
+native Agent、provider、真实 W39、生产数据库、全局 Skill 发布、push、PR、合并或部署。
+
+已有卡 case 的新 proof 字段不能由 pinned baseline `7bf7be5e` 的旧 constructor 原生 seed；
+不得为此增加旧 schema fallback。当前配对 native 工作流是：先用候选
+domain command 预备一份包含 Work Item、Project、Task、Signal 和已核验卡 proof 的
+固定事实数据库；用 SQLite backup 复制为 baseline/candidate 两份 fresh 副本；
+两边均以各自真实 app 源码和 Skill 走 `--input-id` 且核对 exact source_ref，
+不运行 case seed；运行后再由同一冻结 oracle 以候选读取契约分别只读
+两份 DB，expected 只在 run 后参与。baseline 缺 raw assessment/receipt 应被如实
+记录，不用 candidate runner 代替 baseline 执行。这个公平性组织步骤和 native
+结果由主 Agent 后续执行，本轮没有把 seed constructor 不兼容误记成业务失败。
