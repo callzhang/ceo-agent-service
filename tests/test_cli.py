@@ -2517,10 +2517,58 @@ def test_claimed_work_summary_input_skips_retired_completion_checks(
     work_input = SimpleNamespace(source_type=source_type, id=1)
     runner = SimpleNamespace(codex=object())
 
-    processed = cli._process_claimed_work_summary_input(Store(), runner, work_input)
+    processed = cli._process_claimed_work_summary_input(
+        Store(), runner, work_input,
+        session_lease=SimpleNamespace(assert_owned=lambda: None),
+    )
 
     assert processed is (expected_route == "task")
     assert routed == [expected_route]
+
+
+def test_claimed_work_summary_does_not_start_agent_while_shared_session_is_owned(tmp_path, monkeypatch):
+    from app.task_agent_session import TaskAgentSessionLease
+
+    store = AutoReplyStore(tmp_path / "shared-work-session.sqlite3")
+    item = WorkItem.model_validate({
+        "source": {"type": "reply_attempt", "ref": "shared-session-source"},
+        "summary": "Prepare the report.", "context": {"source_conversation_kind": "direct"},
+    })
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    claimed = store.claim_work_summary_inputs(limit=1)[0]
+    calls = []
+    monkeypatch.setattr(cli, "process_work_item", lambda *args, **kwargs: calls.append(kwargs))
+    lease = TaskAgentSessionLease.try_acquire(store)
+    assert lease is not None
+    with lease:
+        assert cli._process_claimed_work_summary_input(store, object(), claimed) is False
+        assert calls == []
+        lease.assert_owned()
+    assert store.get_work_summary_input(input_id).status.value == "pending"
+
+
+def test_claimed_work_summary_acquires_and_releases_shared_session(tmp_path, monkeypatch):
+    from app.task_agent_session import TaskAgentSessionLease
+
+    store = AutoReplyStore(tmp_path / "work-session-owner.sqlite3")
+    item = WorkItem.model_validate({
+        "source": {"type": "reply_attempt", "ref": "session-owner-source"},
+        "summary": "Prepare the report.", "context": {"source_conversation_kind": "direct"},
+    })
+    store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
+    claimed = store.claim_work_summary_inputs(limit=1)[0]
+
+    def process(*args, **kwargs):
+        kwargs["session_lease"].assert_owned()
+        assert TaskAgentSessionLease.try_acquire(store) is None
+
+    monkeypatch.setattr(cli, "process_work_item", process)
+    assert cli._process_claimed_work_summary_input(store, object(), claimed) is True
+    lease = TaskAgentSessionLease.try_acquire(store)
+    assert lease is not None
+    lease.close()
 
 
 def test_claimed_work_summary_input_retries_after_session_lease_loss(
@@ -4145,6 +4193,10 @@ def test_scan_meeting_todos_once_command_reads_todos_and_honors_limit(
             self.kwargs = kwargs
 
     monkeypatch.setattr("app.task_scanners.scan_meeting_todos", fake_scan)
+    monkeypatch.setattr(
+        "app.task_report_scanner.scan_task_reports",
+        lambda store, dws, *, max_new_items=None: 0,
+    )
     monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
     db_path = tmp_path / "task.sqlite3"
 

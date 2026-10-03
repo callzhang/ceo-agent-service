@@ -1327,6 +1327,13 @@ uses the existing work-summary retry policy; it never guesses an owner or
 changes a technical failure into `needs_human`. Memory-backed ownership still
 requires linked source provenance and an `episode_id`.
 
+Both Cron-dispatched Work Summary consumption and the manual
+`process-work-items` command use the same renewable Task session lease. A
+claimed item whose session is busy is returned to the retry queue before any
+Agent turn starts. Completion, exceptions and repair rounds remain inside that
+lease; serial workers inside one dispatcher do not substitute for cross-process
+session ownership.
+
 An inactive `task-agent-project` anchor is a retained retirement decision.
 Weekly-report registry rows and Agent Project proposals must not reactivate it
 implicitly. The source-backed Task is saved independently, without a Project
