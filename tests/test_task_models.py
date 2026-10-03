@@ -4,6 +4,17 @@ from pydantic import ValidationError
 from app.task_models import TaskAgentDecision, TaskAttentionProjectionReceipt, WorkItem
 
 
+@pytest.mark.parametrize("model_name", ["TaskAttentionProposal", "TaskProjectAssessment"])
+def test_assessment_basis_schema_requires_supplied_originals_for_explicit_comparison(model_name):
+    import app.task_models as models
+
+    description = getattr(models, model_name).model_json_schema()["properties"]["assessment_basis"]["description"]
+    assert "When the current source explicitly compares earlier facts" in description
+    assert "matching original Signals are delivered" in description
+    assert "verify that comparison against the originals and use historical_comparison" in description
+    assert "If the originals are unavailable" in description
+
+
 def test_projection_receipt_preserves_per_assessment_application_readback():
     receipt = TaskAttentionProjectionReceipt.model_validate({
         "status": "completed",

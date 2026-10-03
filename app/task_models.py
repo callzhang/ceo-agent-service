@@ -418,7 +418,7 @@ class TaskAttentionEvidence(StrictTaskModel):
 
 class TaskAttentionProposal(StrictTaskModel):
     assessment_basis: Literal["current_observation", "historical_comparison"] = Field(
-        description="current_observation asserts only current-source facts, not confirmation of history merely retold there. historical_comparison relies on comparison, continuity, escalation or conflict with stored history and requires current null-ID evidence plus positive persisted-ID original evidence.",
+        description="current_observation asserts only current-source facts, not confirmation of history merely retold there. historical_comparison relies on comparison, continuity, escalation or conflict with stored history and requires current null-ID evidence plus positive persisted-ID original evidence. When the current source explicitly compares earlier facts and matching original Signals are delivered, verify that comparison against the originals and use historical_comparison. If the originals are unavailable, mark the comparison uncertain and assert only current facts; never invent historical evidence.",
     )
     category: Literal["fyi", "watch", "decision", "push"]
     title: str
@@ -670,7 +670,7 @@ class TaskProjectAssessment(StrictTaskModel):
         description="Concrete reason for the outcome, grounded in the cited facts; do not restate an inference as an original quote.",
     )
     assessment_basis: Literal["current_observation", "historical_comparison"] = Field(
-        description="current_observation asserts current-source facts. historical_comparison compares them with original persisted evidence and therefore requires both citation shapes.",
+        description="current_observation asserts only current-source facts, not confirmation of history merely retold there. historical_comparison relies on comparison, continuity, escalation or conflict with stored history and requires current null-ID evidence plus positive persisted-ID original evidence. When the current source explicitly compares earlier facts and matching original Signals are delivered, verify that comparison against the originals and use historical_comparison. If the originals are unavailable, mark the comparison uncertain and assert only current facts; never invent historical evidence.",
     )
     evidence: list[TaskAttentionEvidence] = Field(
         min_length=1,
