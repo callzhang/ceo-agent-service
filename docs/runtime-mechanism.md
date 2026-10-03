@@ -1279,3 +1279,11 @@ erase this delivery evidence. Pending or ambiguous verification produces no
 successful History projection. This records one message's actual effect, not
 completion of the whole proposal: the task and external-action completion
 ledger still require the existing Audit lifecycle and evidence checks.
+# Email SQLite Contention Diagnostics
+
+EmailStore reports connection contexts lasting at least one second, including
+elapsed time and the caller's file, line, and function. This duration includes
+lock acquisition, the body, commit, and close; it is not by itself proof of the
+write-lock holder or transaction duration. Logs exclude SQL parameters and mail
+content. Correlate the caller with the operating system's WAL-lock owner and
+the affected run before changing transaction boundaries.
