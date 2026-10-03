@@ -188,6 +188,13 @@ Audit 的结果修正轮不会撤销先前 provider 已接受的外部动作。�
 借用；纯读取和模型自报仍不证明写入。这样首轮完成外部写入但返回无效 JSON 时，后续
 只修正结果的轮次可以验证原回执，不会因当前轮没有再次写入而误报失败或诱发重复发送。
 
+已耗尽结果修正轮的 `codex_result_invalid` 可通过
+`reconcile_failed_audit_with_verified_delivery(task_id, run_id)` 正式恢复：先验证原候选全部
+外部动作的执行证据，再核对同代次、同 parent/revision/operation 的服务发送回执为 `sent`，
+且回执 action key 精确匹配原候选。事务补齐总动作台账并以最新 run 和代次守卫收口任务；
+历史失败 run 保留，不重新执行外部动作。微信成功投递的历史对账也覆盖同一任务较早代次的
+明确 pre-action failure；可能已执行的失败不自动覆盖。
+
 ```text
 执行 Agent 生成 run R0
   -> 审核 Agent 审核 R0

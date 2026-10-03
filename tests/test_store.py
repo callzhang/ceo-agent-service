@@ -2932,6 +2932,57 @@ def test_reconcile_recorded_delivery_closes_needs_human_task(tmp_path: Path) -> 
     assert updated.error == ""
 
 
+@pytest.mark.parametrize("verified,all_effects", [(True, True), (False, True), (True, False)])
+def test_reconcile_failed_audit_requires_verified_delivery_and_all_effects(
+    tmp_path: Path, monkeypatch, verified, all_effects,
+) -> None:
+    from app.dingtalk_send_evidence import DingTalkSendEvidenceDriver
+    from app.business_identity import external_action_key
+
+    store = AutoReplyStore(tmp_path / "audit-recovery.sqlite3")
+    store.enqueue_reply_task(
+        channel="dingtalk", conversation_id="cid-test", conversation_title="Direct",
+        single_chat=True, trigger_message_id="msg-test", trigger_sender="Derek",
+        trigger_create_time="2026-10-03 13:00:00", trigger_text="report",
+    )
+    task = store.claim_reply_tasks(1)[0]
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    action = {"action_identity": "send", "operation": "send", "target": {"user_id": "derek"}}
+    store.complete_agent_run(consumer.id, {"proposal": {"actions": [action]}}, owner="consumer")
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
+        operation_id="operation", owner="audit",
+    ).run
+    key = external_action_key(
+        business_object_key=task.business_object_key, action_identity="send",
+        operation="send", target_identifiers=action["target"],
+    )
+    store.record_agent_message_delivery(
+        agent_run_id=audit.id, external_action_key=key,
+        conversation_id=task.conversation_id, trigger_message_id=task.trigger_message_id,
+        reply_text="Delivered report", provider_result={
+            "verification": {"state": "sent" if verified else "unknown"},
+        },
+    )
+    store.fail_agent_run(audit.id, {"code": "codex_result_invalid"}, owner="audit")
+    store.fail_reply_task(task.id, "codex_result_invalid", expected_execution_generation=task.execution_generation)
+    monkeypatch.setattr(DingTalkSendEvidenceDriver, "audit_run_has_execution_evidence", lambda *a, **k: all_effects)
+    if verified and all_effects:
+        assert store.reconcile_failed_audit_with_verified_delivery(task.id, audit.id)
+        assert store.get_reply_task(task.id).status == "done"
+        assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
+    else:
+        with pytest.raises(ValueError):
+            store.reconcile_failed_audit_with_verified_delivery(task.id, audit.id)
+        assert store.get_reply_task(task.id).status == "failed"
+    assert store.get_agent_run(audit.id).status == "failed"
+
+
 def test_complete_reply_task_never_hides_failed_current_run(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
