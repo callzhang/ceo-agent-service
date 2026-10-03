@@ -2466,6 +2466,7 @@ class AutoReplyStore:
             yield snapshot
             return
         connection = self._open_connection()
+        started_at = time.monotonic()
         try:
             with connection:
                 yield connection
@@ -2474,6 +2475,17 @@ class AutoReplyStore:
             raise
         finally:
             connection.close()
+            elapsed = time.monotonic() - started_at
+            if elapsed >= 1.0:
+                caller = sys._getframe(2)
+                print(
+                    f"slow sqlite context elapsed_seconds={elapsed:.3f} "
+                    f"caller={Path(caller.f_code.co_filename).name}:"
+                    f"{caller.f_lineno}:{caller.f_code.co_name}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                del caller
 
     @contextmanager
     def _optional_connection(
