@@ -37,6 +37,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-native-assessment-support-receipt | Isolated /Users/derek/.codex/worktrees/attention-native-result-fix/ceo-agent-service: app/task_agent.py (_finalize_assessment_results only), tests/test_task_agent.py (support identity receipt regressions), docs/architecture.md and docs/runtime-mechanism.md (receipt only) | Preserve actual successfully saved support Task identities even without confirmed Project links; no business judgment, Task promotion, projection or fixed oracle changes. | 2026-10-03 |
+
 
 
 
