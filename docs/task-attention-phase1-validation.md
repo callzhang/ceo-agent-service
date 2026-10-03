@@ -482,6 +482,15 @@ TypeScript/Vite build与app.cli/worker/email_worker/service_supervisor imports�
 
 ## Project assessment 来源接入与冻结 oracle（开发完成，native 待执行）
 
+当前 source integration 的规格和质量评审均已通过（最终功能修订 `e8866186`）。
+集成 pushed `origin/main` 的 `9493fc87` 后，`8df4291e` 开发快照独立验证：
+十一项相关 backend test files 共 554 passed / 112.56s；限定 CLI 22 passed / 7.47s；
+两真实 page test files 共 22 passed / 6.59s；TypeScript/Vite build 和四项 runtime imports
+通过。未运行全服务测试集，也未在 production checkout 测试、编辑或重启。
+这批结果不继承旧的 native 9/9 或 W39 结论；后续 19 个固定案例配对回放必须记录同一
+冻结候选 code revision、各侧实际 Skill hash/route/model 和有效 900/300 秒超时、
+concurrency=1。生产及全局 Skill 尚未修改。
+
 Task 4 只更新当前测试/评估来源和一次性 replay 读回，不改变生产 Task Agent、领域应用、
 投影、路由、重试或 timeout。Project 登记、混合来源、Web Project summary 以及四个
 `process-work-items` fake producer 现在都显式输出必填 `project_assessments`；正例使用真实

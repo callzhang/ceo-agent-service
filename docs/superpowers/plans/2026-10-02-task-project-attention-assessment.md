@@ -220,6 +220,8 @@ Fresh source-quality review of `ab4bd59e` returned FAIL with three bounded oracl
 
 Formal quality re-review of `e8866186` returned PASS: all three original SQLite false-positive reproducers now reject, permitted reverse order/distinct Tasks/current-selected no-change references remain valid, 30 focused tests / 6.93s, scoped Ruff/diff and unchanged fixture hashes pass. Root CLI verification was 22 passed / 5.39s. This closes Task 4 source integration/oracle review only. `d07f3adf` then integrates pushed `origin/main` at `9493fc87` without rewriting any upstream commit; the sole merge conflict was claim-board metadata, resolved by preserving both sides. Runtime documentation merged normally. Final integrated tests/imports/build and a frozen native comparison remain next; no push, production/global Skill change or native run occurred.
 
+Integrated-source verification at `8df4291e`: the eleven relevant backend files passed 554 tests / 112.56s; the separate CLI group passed 22 / 7.47s; the two actual page files passed 22 / 6.59s; TypeScript/Vite build and four runtime imports passed. The worktree is clean and all three fixture hashes plus the candidate Skill hash are unchanged. This is a scoped development matrix, not the full service suite or production proof. The following metadata commit freezes that integrated source for the 19-case paired native comparison (original nine + competition one + assessment nine), with each actual native result recording its exact code revision and Skill hash. Do not change this candidate checkout during the paired runs. Native and exact W39 gates remain open.
+
 Integration baseline at `f983b72a`: root ran `tests/test_task_source_project_registration.py` and `tests/test_task_attention_multisource.py` (94 failed, 30 passed / 20.79s). Directly inspected current producer fixtures still omit required `project_assessments`; representative failures stop at that required-field validation, before the intended domain assertions. Preserve original positive/negative expectations and deliberately upgrade these producers after the core contract is reviewed. This is an incomplete integration gate, not evidence of 94 distinct business defects, and not permission to synthesize runtime defaults or reinterpret historical runs.
 
 Root refreshed that same two-file integration baseline at `499c7e12` after Task 3 spec approval: 94 failed, 30 passed / 7.10s. The displayed current-source registration failures still stop at missing required `project_assessments`; both test payload factories were read directly and still omit that field. Task 4 must deliberately upgrade current producers and then uncover/verify their original domain assertions, not hide this failure through a runtime default.
@@ -240,7 +242,7 @@ python scripts/inspect_task_attention.py --db /var/folders/74/yj2lxqs162q7rqzm0m
 ```
 
 - [ ] Record code/tests, mechanical completion, business oracle, actual source/entity/card readback separately. If business judgments fail, diagnose saved reasons; do not force cards, weaken the oracle or report parser success as business acceptance.
-- [ ] Run current focused backend tests and existing two page test files, frontend production build and imports. No whole serial suite and no tests in the production checkout.
+- [x] Run current focused backend tests and existing two page test files, frontend production build and imports. No whole serial suite and no tests in the production checkout.
 
 ## Task 5: Continue the existing approved release gates
 
