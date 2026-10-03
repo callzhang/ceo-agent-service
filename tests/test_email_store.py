@@ -6502,6 +6502,56 @@ def test_action_attempts_append_and_duplicate_or_invalid_values_are_rejected(
             )
 
 
+def test_direct_action_claim_does_not_materialize_settled_history(tmp_path: Path, monkeypatch):
+    from contextlib import contextmanager
+
+    store = EmailStore(tmp_path / "bounded-claim.sqlite3")
+    for uid in range(1, 26):
+        classification = _classification(
+            message_id=f"settled-{uid}",
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(EmailAction.ARCHIVE,),
+            action_parameters={},
+            stable_message_identity=f"dingtalk-account:imap:INBOX:42:{uid}",
+            uid=uid,
+        )
+        _persist_scan(store, classification)
+    with store._connect() as db:
+        db.execute("update email_actions set status='done'")
+    fetch_sizes = []
+    connect = store._connect
+
+    class Cursor:
+        def __init__(self, cursor):
+            self.cursor = cursor
+
+        def fetchall(self):
+            rows = self.cursor.fetchall()
+            fetch_sizes.append(len(rows))
+            return rows
+        def __getattr__(self, name):
+            return getattr(self.cursor, name)
+
+    class Connection:
+        def __init__(self, db):
+            self.db = db
+
+        def execute(self, *args):
+            return Cursor(self.db.execute(*args))
+
+        def __getattr__(self, name):
+            return getattr(self.db, name)
+
+    @contextmanager
+    def instrumented():
+        with connect() as db:
+            yield Connection(db)
+
+    monkeypatch.setattr(store, "_connect", instrumented)
+    assert store.claim_next_direct_action(claimed_at="2026-10-03T09:40:00+00:00") is None
+    assert fetch_sizes == [0]
+
+
 def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
     tmp_path: Path,
 ):
