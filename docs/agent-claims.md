@@ -4,6 +4,7 @@
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-attention-native-progress-record | Isolated /Users/derek/.codex/worktrees/attention-native-result-fix/ceo-agent-service: docs/task-attention-phase1-validation.md and docs/agent-claims.md only | Record in-flight frozen fbba12e9 paired results and separately reviewed prompt fixes b965df0c/cc5a52e1. No change to frozen evaluation checkout, fixtures, expectations, runtime, production or release status. | 2026-10-03 |
 | codex-project-attention-assessment-plan | Isolated task-attention-multisource worktree: docs/superpowers/plans/2026-10-02-task-project-attention-assessment.md and approved spec metadata only | Record Derek's approval and the sequential implementation/evaluation steps. Parent core claim owns runtime files; delegate one writer at a time. | 2026-10-02 |
 | codex-task2b-stored-assessment-domain | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: app/task_agent.py; tests/test_task_agent.py; docs/architecture.md and docs/runtime-mechanism.md (Task/Attention stored-validation and applied-mapping paragraphs only); docs/agent-claims.md | Delegated Task 2b only: TDD regressions and stored Project/Task/card provenance validation plus actual applied decision identity mapping. No Task 3 receipts, native eval, deploy, or live data. | 2026-10-02 |
 
