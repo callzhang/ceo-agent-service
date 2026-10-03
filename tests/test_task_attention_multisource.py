@@ -290,6 +290,40 @@ def recorded_assessment_case(store):
     return item, input_id, before, result, expected
 
 
+def recorded_no_task_assessment_case(store):
+    tool = evaluation_tool()
+    cases = tool.load_cases(
+        Path(__file__).parent / "fixtures/task_attention_project_assessments_v1.json"
+    )
+    case = next(
+        item for item in cases if item["case_id"] == "assessment-no-task-insufficient"
+    )
+    input_id = tool.seed_case(store, case)
+    item = WorkItem.model_validate(case["work_item"])
+    before = tool.read_domain(store)
+    project, = store.list_business_projects()
+    expected_assessment = case["expected"]["project_assessments"][0]
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": expected_assessment["project_title"],
+            "outcome": "insufficient_evidence",
+            "reason": "当前只有满意度下降线索，没有真实 Task 或已核实的经营影响。",
+            "assessment_basis": "current_observation",
+            "evidence": expected_assessment["evidence"],
+            "anchor_id": project.canonical_anchor_id,
+        }],
+        "task_decisions": [],
+        "update_summary": "已记录证据不足判断，不创建 Task 或 Attention。",
+    })
+    result = apply_task_agent_decision(
+        store,
+        summary_input_id=input_id,
+        work_item=item,
+        decision=decision,
+    )
+    return item, input_id, before, result, case["expected"]
+
+
 def rewrite_latest_run(store, *, decision=None, projection=None):
     with store._connect() as db:
         run = db.execute("select * from task_agent_runs order by id desc limit 1").fetchone()
@@ -301,6 +335,52 @@ def rewrite_latest_run(store, *, decision=None, projection=None):
                 run["id"],
             ),
         )
+
+
+def test_assessment_oracle_accepts_no_task_insufficient_receipt(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "assessment-no-task-positive.sqlite3")
+    _, input_id, before, applied, expected = recorded_no_task_assessment_case(store)
+
+    assert applied.task_ids == ()
+    assert applied.projection_receipt.project_assessments[0].task_ids == []
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+    assert result["passed"], result["failures"]
+
+
+def test_assessment_oracle_rejects_unlinked_positive_receipt_signal_without_tasks(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "assessment-no-task-unlinked-signal.sqlite3")
+    item, input_id, before, _, expected = recorded_no_task_assessment_case(store)
+    required = expected["project_assessments"][0]["evidence"][0]
+    unlinked_signal_id = store.create_business_task_signal(
+        source_type=item.source.type.value,
+        source_ref=required["source_ref"],
+        evidence_text=required["source_excerpt"],
+        source_time=item.source.created_at,
+        context_json="{}",
+        dedupe_key="eval:no-task-unlinked-receipt-signal",
+    )
+    with store._connect() as db:
+        projection = json.loads(db.execute(
+            "select projection_json from task_agent_runs"
+        ).fetchone()[0])
+    receipt = projection["project_assessments"][0]
+    assert receipt["task_ids"] == []
+    assert receipt["attention_id"] is None
+    receipt["evidence"].append({
+        "signal_id": unlinked_signal_id,
+        "source_ref": required["source_ref"],
+        "source_excerpt": required["source_excerpt"],
+        "source_time": item.source.created_at,
+        "source_link": "",
+    })
+    rewrite_latest_run(store, projection=projection)
+
+    result = tool.readback(store, input_id=input_id, before=before, expected=expected)
+
+    assert not result["passed"]
+    assert "project_assessment_receipt_mismatch" in result["failures"]
 
 
 def test_assessment_oracle_observes_missing_raw_field_without_model_defaults(tmp_path):

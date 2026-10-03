@@ -505,7 +505,8 @@ Project selector、Task ID 和原始引文，负例/未知项写出 `not_needed`
 `source_ref + 经营影响原句` 被实际引文覆盖；允许同一 ref 的更长连续原文和额外真实引文，
 但逐一核验所有额外引文。当前 null-signal 引文必须来自 immutable Work Item 并读回原
 source_time/空 link；正 signal 必须核对真实 Signal 的 ref/原文/time/link，以及它与回执
-支持 Task或已验证卡 proof 的实际关系。原始 assessment 中额外的正 signal 还必须在独立
+支持 Task 或已验证卡 proof 的实际关系。即使合法负面判断的 receipt 没有 Task 和卡片，
+额外正 signal 也不能跳过这项关联核验或凭真实元数据自证。原始 assessment 中额外的正 signal 还必须在独立
 projection receipt 中以相同 signal/ref/兼容的连续原文出现，且关联 receipt 实际 Task 或
 receipt 指向卡片的精确 proof；不能由原始 assessment 自报 Task ID 补足。回执 Task 数按
 真实且不重复的 ID 计算，`[1, 1]` 不可冒充两个 Task。回执还核对实际 anchor、Task IDs、
@@ -525,8 +526,11 @@ SPEC 修复进一步以真实未关联第二 Signal 复现“只改 raw assessme
 并保留已关联、receipt 亦保存的更长额外引文正控制。既有 Project link 的七个拒绝 case
 改用独立 unknown-clue companion，明确绕过 selector coverage 只测试 application guard，
 逐项断言原 missing/unofficial/inactive、cross-project/quote 及 source-ref 错误，不把无效
-link anchor 复制进 assessment 造成提前失败。最终 assessment oracle `19 passed / 117 deselected`；
-source registration + multisource + Web summary `146 passed`，CLI process-work-items
+link anchor 复制进 assessment 造成提前失败。最终补充冻结 no-Task `insufficient_evidence`
+正控制，并以 receipt-only 追加真实但未关联 Signal 复现空支持集合误通过；移除空集合跳过后，
+正常负面判断仍不创建 Task/卡片，篡改回执明确报 `project_assessment_receipt_mismatch`。
+最终 assessment oracle `21 passed / 117 deselected`；
+source registration + multisource + Web summary `148 passed`，CLI process-work-items
 `22 passed / 254 deselected`。本节未运行
 native Agent、provider、真实 W39、生产数据库、全局 Skill 发布、push、PR、合并或部署。
 

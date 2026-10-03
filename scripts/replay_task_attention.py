@@ -334,22 +334,21 @@ def readback(store, *, input_id, before, expected=None):
                                 and signal.source_time == evidence.get("source_time", "")
                                 and signal_link == evidence.get("source_link", "")
                             )
-                            if receipt_task_ids:
-                                linked_to_receipt_task = any(
-                                    link.signal_id == signal_id
-                                    for task_id in receipt_task_ids
-                                    for link in store.list_business_task_evidence(task_id)
-                                )
-                                card_has_exact_proof = any(
-                                    proof.get("signal_id") == signal_id
-                                    for card in cards
-                                    if card["id"] == receipt.get("attention_id")
-                                    for proof in card["assessment"].get("evidence", [])
-                                )
-                                receipt_valid = receipt_valid and (
-                                    linked_to_receipt_task
-                                    or card_has_exact_proof
-                                )
+                            linked_to_receipt_task = any(
+                                link.signal_id == signal_id
+                                for task_id in receipt_task_ids
+                                for link in store.list_business_task_evidence(task_id)
+                            )
+                            card_has_exact_proof = any(
+                                proof.get("signal_id") == signal_id
+                                for card in cards
+                                if card["id"] == receipt.get("attention_id")
+                                for proof in card["assessment"].get("evidence", [])
+                            )
+                            receipt_valid = receipt_valid and (
+                                linked_to_receipt_task
+                                or card_has_exact_proof
+                            )
                     for evidence in actual_assessment.get("evidence", []):
                         signal_id = evidence.get("signal_id")
                         if signal_id is None:
