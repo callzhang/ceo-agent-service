@@ -1,21 +1,23 @@
 # 多来源项目关注第一版验收
 
-状态（2026-10-03）：最新冻结候选 `1732455c` 仍在运行，已完成14/20次Task Agent回放，机械12通过/2失败，不能发布。此前47和421批次均已结束，失败原始记录保留；各版本结果不得继承。真实W39最新版副本重复回放、全局Skill发布、合并部署和上线读回均未完成。
+状态（2026-10-03）：最新冻结候选 `1732455c` 已正常结束，20次Task Agent回放机械18通过/2失败，按19个独立案例17通过/2失败，不能发布。此前47和421批次均已结束，失败原始记录保留；各版本结果不得继承。真实W39最新版副本重复回放、全局Skill发布、合并部署和上线读回均未完成。
 
-## 最新冻结候选1732455c阶段读回
+## 最新冻结候选1732455c最终读回
+
+同项目两个真实行动分别保留Task1/2，关联单一Project1/Card1；普通进展返回not_needed、无卡。无行动信息实际输出skip且Tasks=0；未知项目保留来源明确的核对候选行动但Projects=0/Cards=0，未制造官方身份。已有卡两次复用均receipt=existing，引用原始Signal1/ref/quote和当前null-ID来源，零Task decisions/proposals。主Agent按全部列逐行只读比较九张领域表（Task/Project/anchor、卡及成员/事件、Task事件/Signal/evidence）：原facts与最终副本完全相同，两条新Task Agent runs完成。共享native session及实际attempts另行读取，不以20次业务回放冒充20次底层CLI尝试。
 
 原固定risk-label-only和assessment-vague-risk-not-needed两例均实际返回insufficient_evidence并保留真实来源行动、无关注卡；后者固定oracle通过。负面判断澄清已有本轮原生证据，但不等于全批次业务验收。
 
 chat-with-report-context机械失败：输出current_observation且只引用当前聊天，漏掉原历史Signal1。主Agent只读重建原facts DB检索：Signal1完整原文、eval:historical-report及2026-09-24来源时间都在2,860字符context内。进一步读取421及173的实际native session用户输入，两轮完整发送内容分别88,542和89,230字符，均包含相同历史原文及要求历史比较的指令；421引用两源而173未引用。确认不是历史检索遗漏或该引文截断；整体指令长度是否影响选择尚属未验证假设，未据此修复或放宽oracle。
 
-assessment-meeting-needs-attention机械失败：Agent run completed、判断needs_attention和当前原文引用成立，但update_fields没有实际Task业务字段变化；Attention projection按现有guard拒绝，reason=proposal has no applied Task decision。既有Task/正式Project关联真实，领域事件未新增。需要Derek确认“新证据可独立更新项目关注，无需修改Task字段”的业务规则后才可调整，不能伪造字段变化或暗中绕过已批准的guard。当前无相关代码改动，原批次继续冻结运行。
+assessment-meeting-needs-attention机械失败：Agent run completed、判断needs_attention和当前原文引用成立，但update_fields没有实际Task业务字段变化；Attention projection按现有guard拒绝，reason=proposal has no applied Task decision。既有Task/正式Project关联真实，领域事件未新增。需要Derek确认“新证据可独立更新项目关注，无需修改Task字段”的业务规则后才可调整，不能伪造字段变化或暗中绕过已批准的guard。当前无相关代码改动，原批次已结束且结果冻结。
 
 ## 修复候选 47a56a7f 原生复测
 
 后续冻结421批次已正常结束，20次调用机械19通过/1失败，按独立案例18/19；不能发布。原文换行两例不再被引用检查拒绝，旧卡两次复用均完成，receipt=existing，真实Task1/Project1/Card1保持不变。每次判断并列当前null-ID引文和卡片原始Signal1/ref/quote，没有新增Task决定或提案。人工业务复核另外保留risk-label-only的错误负面outcome，因此业务按独立案例17/19，而不是机械18/19。两个业务问题同属缺少风险影响证据却返回not_needed；固定assessment-vague案例机械失败已暴露同一问题。`853f590e`源码澄清须以新冻结候选重跑全部原19案例和最后一次重复，不继承421已通过项。
 这里20次指Task Agent回放，实际持久化runtime attempts为22：18个normal completed、2个normal superseded、2个既有result_validation_correction completed；项目名称竞争与旧卡首次处理分别使用一次原有同session结构纠正，不是新重试循环。旧卡两个最终完成回合确实复用同一native session，第二回合的source_session_id指向第一回合session。与原facts DB逐表只读比较，Tasks、Projects、anchors、Attention及成员/事件、Task事件/Signals/evidence九张领域表的全部行均完全相同；只有两条新run及其运行记录，证明没有靠伪造字段变化完成复用。
 
-后续已冻结 `1732455cbe12c107f4e9e1a58fb1b6aef7ac8cd1`（功能修订853，Skill SHA256 `f96ccf69130db4a9ac39761659a5032e8fbfb6e1bcda90645a4736a734fa833d`），开始同19案例/20回放的原生重验。两批不并发执行，原421已终止才快进隔离候选checkout；固定事实、原文、oracle、pinned baseline和模型/路由/900/300/并发1配置不变。该批次仍在运行，真实W39、生产及发布门槛均未完成。
+后续冻结 `1732455cbe12c107f4e9e1a58fb1b6aef7ac8cd1`（功能修订853，Skill SHA256 `f96ccf69130db4a9ac39761659a5032e8fbfb6e1bcda90645a4736a734fa833d`），完成同19案例/20回放的原生重验，最终结果见上节。两批不并发执行，原421已终止才快进隔离候选checkout；固定事实、原文、oracle、pinned baseline和模型/路由/900/300/并发1配置不变。真实W39、生产及发布门槛均未完成。
 
 此前冻结 `421af739` 运行期间，主 Agent 读取 `risk-label-only` 的原始 decision 后发现机械检查未覆盖的语义差异：输出为 `not_needed`，但理由明确说具体业务影响和材料性风险证据缺失，原文也仅有风险标签及汇总行动。旧九案例 oracle 正确证明没有误建卡，却没有要求新增 assessment outcome，因此 mechanical PASS 不等于该判断符合本轮 spec。该原始输出保留并记为 BUSINESS FAIL；应按已批准的“缺少经营影响证据 → insufficient_evidence”区分，而不是把未知当成不需关注。
 
