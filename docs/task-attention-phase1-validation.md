@@ -6,6 +6,8 @@
 
 2026-10-03后续源码修订（尚未原生验证）：实际native输入含正文和CI Skill的历史比较选择指令，但Pydantic输出schema的两处assessment_basis描述只定义两类判断，没有同步“当前明确比较历史且原始Signals已交付时必须核对原文”的选择要求。主Agent为两处描述写一致性回归，观察2例RED后仅同步字段说明；test_task_models.py120 passed，Ruff/diff通过。领域/结构validator、fixture/oracle、模型、检索和原始失败未改变。此证据证明指令一致性，不证明模型稳定性已修复；新冻结原生回放仍是验收门槛。
 
+随后将d6a9b074单独冻结于原生候选checkout，仅回放原固定chat-with-report-context（fresh事实副本，同原模型/路由/900/300/并发1，oracle不进入输入）。实际native run/投影成功，固定oracle PASS；原始判断采用historical_comparison，同时引用当前聊天null-ID证据及历史Signal1/eval:historical-report原句，卡片实际保存两源及各自来源时间。该单项诊断已正常结束exit0，不证明全批次或长期稳定性；需在证据独立更新功能合入后重新冻结并验证全部原19案例和旧卡重复回放。
+
 同项目两个真实行动分别保留Task1/2，关联单一Project1/Card1；普通进展返回not_needed、无卡。无行动信息实际输出skip且Tasks=0；未知项目保留来源明确的核对候选行动但Projects=0/Cards=0，未制造官方身份。已有卡两次复用均receipt=existing，引用原始Signal1/ref/quote和当前null-ID来源，零Task decisions/proposals。主Agent按全部列逐行只读比较九张领域表（Task/Project/anchor、卡及成员/事件、Task事件/Signal/evidence）：原facts与最终副本完全相同，两条新Task Agent runs完成。共享native session及实际attempts另行读取，不以20次业务回放冒充20次底层CLI尝试。
 
 原固定risk-label-only和assessment-vague-risk-not-needed两例均实际返回insufficient_evidence并保留真实来源行动、无关注卡；后者固定oracle通过。负面判断澄清已有本轮原生证据，但不等于全批次业务验收。
