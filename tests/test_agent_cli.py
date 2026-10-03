@@ -216,7 +216,10 @@ def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(
     assert dws.calls[0][2]["idempotency_uuid"]
 
 
-def test_approved_dingtalk_reply_uses_persisted_trigger_and_reuses_receipt(tmp_path):
+@pytest.mark.parametrize("verification_state", ("sent", "pending"))
+def test_approved_dingtalk_reply_uses_persisted_trigger_and_reuses_receipt(
+    tmp_path, verification_state
+):
     from app.dingtalk_models import DingTalkMessage
     from app.service_message_sender import agent_message_delivery_key
     from app.store import AgentRole, AutoReplyStore
@@ -326,9 +329,17 @@ def test_approved_dingtalk_reply_uses_persisted_trigger_and_reuses_receipt(tmp_p
         @staticmethod
         def verify_message_send_result(result):
             assert result["result"]["processQueryKey"] == "reply-1"
-            return {"state": "sent", "open_task_id": ""}
+            return {"state": verification_state, "open_task_id": ""}
 
     dws = FakeDws()
+    if verification_state != "sent":
+        with pytest.raises(RuntimeError, match="dingtalk_message_delivery_pending"):
+            agent_cli.send_approved_dingtalk_message(
+                store.path, task.id, "reply-to-report", dws_client=dws
+            )
+        assert store.list_sent_replies_after(0) == []
+        assert store.get_reply_task(task.id).status == "processing"
+        return
     first = agent_cli.send_approved_dingtalk_message(
         store.path,
         task.id,
@@ -350,6 +361,19 @@ def test_approved_dingtalk_reply_uses_persisted_trigger_and_reuses_receipt(tmp_p
     assert conversation.open_conversation_id == trigger.open_conversation_id
     assert received_trigger == trigger
     assert text == prepared.final_body
+
+    # Provider evidence must survive an Audit result-serialization failure.
+    store.fail_agent_run(
+        audit.id,
+        {"code": "codex_result_invalid", "retryable": True},
+        owner="audit",
+    )
+    replies = store.list_sent_replies_after(0)
+    assert len(replies) == 1
+    assert replies[0].agent_run_id == audit.id
+    assert replies[0].reply_text == prepared.final_body
+    assert replies[0].external_action_key
+    assert store.get_reply_task(task.id).status == "processing"
 
 
 def test_audited_email_unsubscribe_tool_reaches_worker_helper(monkeypatch, tmp_path):

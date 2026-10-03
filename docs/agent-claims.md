@@ -6,6 +6,11 @@
 | --- | --- | --- | --- |
 | codex-project-attention-assessment-plan | Isolated task-attention-multisource worktree: docs/superpowers/plans/2026-10-02-task-project-attention-assessment.md and approved spec metadata only | Record Derek's approval and the sequential implementation/evaluation steps. Parent core claim owns runtime files; delegate one writer at a time. | 2026-10-02 |
 | codex-task2b-stored-assessment-domain | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: app/task_agent.py; tests/test_task_agent.py; docs/architecture.md and docs/runtime-mechanism.md (Task/Attention stored-validation and applied-mapping paragraphs only); docs/agent-claims.md | Delegated Task 2b only: TDD regressions and stored Project/Task/card provenance validation plus actual applied decision identity mapping. No Task 3 receipts, native eval, deploy, or live data. | 2026-10-02 |
+| codex-attention-multisource-integration | Isolated task-attention-multisource worktree: docs/agent-claims.md (merge metadata only), assessment and phase-one plan evidence | Integrate pushed origin/main without rewriting foreign commits; preserve both sides of claim-board metadata and record scoped verification/freeze. No production mutation before release gates. | 2026-10-02 |
+
+<!-- codex-ceo-scheduled-rerun-20261002: app/audit_web.py (rerun payload validation only), tests/test_audit_web.py, docs/runtime-mechanism.md; preserve scheduled execution context instead of synthesizing DingTalk input; 320 focused tests passed. -->
+
+<!-- codex-ceo-result-syntax-20261002: app/agent_result.py, tests/test_agent_contracts.py, docs/runtime-mechanism.md; preserve unbalanced JSON as invalid, no result repair or effect policy change; 138 focused tests passed. -->
 
 Several agents (Claude Code sessions and Codex) edit this working tree at the
 same time. This file is the shared claim board: it exists so that two agents

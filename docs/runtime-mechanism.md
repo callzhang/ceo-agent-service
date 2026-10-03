@@ -71,6 +71,12 @@ pending -> processing -> done
 `authorization_required` 错误供人工确认后重试。此门禁与证据质量评分分开，不能通过
 调低 `confidence` 或 `rule_coverage` 伪造 `needs_human` 分类。
 
+已有 typed proposal 只代表待审核的动作，不代表真实外部授权。Audit 返回
+`authorization_required` 时，解析器保留此错误，不将其误判为无效 JSON 或普通 CLI
+确认参数问题。服务认定为不可重试的授权缺失，在 Consumer 和 Audit 两条路径都落为
+`failed_terminal`；再次调度以及任务上已保存同一错误码都不能触发自动重试。
+这不会授权发送、伪造 `needs_human` 或修改历史失败；明确授权后的恢复仍须走正式入口。
+
 当前代次的最新 Attempt 指向失败 run 时，即使关联任务进入 `pending` 等待重试，History 与 Attention
 仍显示该失败，直到后续有效 run/Attempt 给出新的当前状态。没有当前代次失败 run 的 pending
 任务本身不进入 Attention；旧代次失败也不污染新代次。同一定时任务的较早 Reply task 若失败，后续 run 已派发且对应 Reply task 进入 done/skipped，则较早失败及绑定该 run 的读取错误仅保留在 History，不再作为当前 Attention；仅派发、pending 或另一个任务成功均不满足恢复条件。
@@ -1411,3 +1417,26 @@ The CLI's default 20-item pages exhausted its 50-page budget for large
 participant queries such as Melody; retrying the same bounded query could
 never reach the remaining candidates. A partial response still fails closed;
 larger pages do not change recipient ranking or authorize a send.
+
+Worker status reads its local SQLite queue, Email health and component facts
+on every request. These facts are not served from the last background payload:
+after a worker writes its state, the next status request must reflect it.
+External connector authentication probes retain their independent cache.
+
+Typed result parsing preserves malformed or unclosed JSON as a result-stage
+invalid-result failure, including its syntax cause. It is not classified as a
+missing result. An earlier valid result in the same primary turn remains usable;
+no JSON repair or successful external-effect inference is performed.
+
+Manual reruns of scheduled Agent work preserve the saved scheduled execution
+context, including its route and pinned Skill content. A missing or invalid
+scheduled payload is rejected instead of being rebuilt as a DingTalk message;
+the original scheduled run is the authoritative source for explicit recovery.
+
+The approved DingTalk send tool persists its exact prepared body and verified
+provider receipt into `sent_replies` as soon as provider verification reports
+`sent`, before returning to the Audit turn. A later invalid Audit result cannot
+erase this delivery evidence. Pending or ambiguous verification produces no
+successful History projection. This records one message's actual effect, not
+completion of the whole proposal: the task and external-action completion
+ledger still require the existing Audit lifecycle and evidence checks.

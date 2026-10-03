@@ -9486,13 +9486,13 @@ def handle_rerun_attempt_post(
         trigger_create_time = existing_task.trigger_create_time
         conversation_title = existing_task.conversation_title
         single_chat = existing_task.single_chat
-    elif channel == "wechat":
+    elif channel in {"wechat", "scheduled"}:
         return (
             409,
             {},
             render_page(
-                "WeChat trigger unavailable",
-                "<p>WeChat trigger payload is unavailable; rerun was not queued.</p>",
+                "Trigger unavailable",
+                "<p>Original execution payload is unavailable; rerun was not queued.</p>",
             ),
         )
     elif conversation_record is None:
@@ -9656,7 +9656,11 @@ def _is_valid_rerun_trigger_json(
     trigger_message_json: str, *, channel: str = "dingtalk",
 ) -> bool:
     try:
-        if channel == "wechat":
+        if channel == "scheduled":
+            from app.agent_cron.context import ScheduledAgentContext
+
+            ScheduledAgentContext.from_execution_json(trigger_message_json, reply_task_id=0)
+        elif channel == "wechat":
             WechatMessage.model_validate_json(trigger_message_json)
         else:
             DingTalkMessage.model_validate_json(trigger_message_json)
@@ -10006,9 +10010,6 @@ def create_audit_app(
     )
     history_chart_cache: dict[int, tuple[float, dict[str, object]]] = {}
     history_chart_cache_lock = threading.Lock()
-    worker_status_cache = _RecentPayloadCache(
-        DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
-    )
     connector_status_cache = _RecentPayloadCache(
         DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
     )
@@ -10091,64 +10092,8 @@ def create_audit_app(
         service = _launchd_service_status("com.ceo-agent-service.main")
         return _system_health_snapshot(audit_store, service)
 
-    def worker_status_refreshing_payload() -> dict[str, object]:
-        return {
-            "service": {
-                "label": "com.ceo-agent-service.main",
-                "target": "gui/unknown/com.ceo-agent-service.main",
-                "ok": True,
-                "state": "refreshing",
-                "detail": "Status refresh in progress.",
-                "pid": "",
-                "runs": "",
-                "initialized": "",
-                "last_terminating_signal": "",
-                "returncode": 0,
-            },
-            "components": _service_component_snapshots(),
-            "connectors": {},
-            "email": {
-                "status": "refreshing",
-                "updated_at": "",
-                "process": None,
-                "runtime_loops": [],
-                "accounts": [],
-                "checks": [],
-            },
-            "meeting_memory_health": {
-                "pending": 0,
-                "due": 0,
-                "delayed": 0,
-                "processing": 0,
-                "retryable": 0,
-                "failed": 0,
-                "oldest_due_at": "",
-                "oldest_due_seconds": 0,
-                "completed_last_hour": 0,
-                "active_agents": 0,
-                "ghost_runtime_attempts": 0,
-                "delayed_after_seconds": MEETING_MEMORY_HEALTH_DELAY_SECONDS,
-            },
-            "queues": [],
-            "dispatcher_queues": [],
-            "attention_rows": [],
-            "human_decision_rows": [],
-            "database": {"path": str(db_path)},
-            "summary": {
-                "queue_count": 0,
-                "pending": 0,
-                "processing": 0,
-                "failed": 0,
-                "retryable": 0,
-                "attention": 0,
-            },
-        }
-
     def render_settings_status_payload() -> dict[str, object]:
-        payload = worker_status_cache.get_or_refresh(
-            render_worker_status_payload,
-            worker_status_refreshing_payload,
-        )
+        payload = render_worker_status_payload()
         # Queue totals may use the short-lived status snapshot, but Attention
         # is an error surface and must agree with its dedicated endpoint on
         # every refresh. Decisions are read separately so the service-error
@@ -10156,11 +10101,8 @@ def create_audit_app(
         attention_rows = _queue_attention_rows(audit_store)
         human_decision_rows = _human_decision_attention_rows(audit_store)
         summary = dict(payload.get("summary") or {})
-        # Queue counts are the user-facing source of truth for current work.
-        # The worker payload is intentionally cached while slow connector
-        # probes refresh in the background, but serving its queue counts can
-        # leave completed leases visible as processing. Read the authoritative
-        # SQLite summary synchronously so status and Attention do not drift.
+        # Keep feedback backlog totals bound to the same authoritative queue
+        # definitions used by the dedicated feedback endpoint.
         fresh_summary = read_fresh_feedback_backlog()
         summary.update(fresh_summary)
         summary["attention"] = sum(
@@ -10212,7 +10154,6 @@ def create_audit_app(
         if not spa_enabled:
             default_attempt_list_cache.get_or_render(_render_history_busy_page)
             default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
-        worker_status_cache.refresh_in_background(render_worker_status_payload)
         connector_status_cache.refresh_in_background(_connector_status_snapshots)
         wechat_status_cache.refresh_in_background(
             lambda: _wechat_status_snapshot(audit_store)

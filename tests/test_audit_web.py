@@ -3923,6 +3923,33 @@ def test_recent_payload_cache_returns_fallback_while_first_refresh_runs():
     assert payload == {"state": "ready"}
 
 
+def test_worker_status_reads_component_changes_on_next_request(tmp_path):
+    path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(path)
+    store.set_service_health_component(
+        "agent-cron-scheduler", state="healthy", latest_error="before"
+    )
+    client = loopback_test_client(create_audit_app(path))
+
+    def scheduler_error():
+        payload = client.get("/api/workers/status").json()
+        return next(
+            (item["latest_error"] for item in payload["components"]
+             if item["name"] == "agent-cron-scheduler"), None
+        )
+
+    for _ in range(40):
+        if scheduler_error() == "before":
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("initial worker status did not become readable")
+    store.set_service_health_component(
+        "agent-cron-scheduler", state="degraded", latest_error="after"
+    )
+    assert scheduler_error() == "after"
+
+
 def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     client = loopback_test_client(create_audit_app(db_path))
@@ -10476,6 +10503,30 @@ def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation
     assert task.status == "pending"
     assert task.force_new_decision is True
     assert WechatMessage.model_validate_json(task.trigger_message_json) == trigger
+
+
+def test_scheduled_rerun_payload_is_valid_execution_context():
+    from app.audit_web import _is_valid_rerun_trigger_json
+
+    payload = {
+        "schema": "scheduled_agent_execution.v1",
+        "context": {
+            "conversation_id": "scheduled-task-run:1",
+            "conversation_title": "Daily report",
+            "single_chat": False,
+            "trigger_message_id": "event-1",
+            "trigger_sender": "Agent Cron",
+            "trigger_text": "Write report",
+            "trigger_create_time": "2026-10-02T13:00:00Z",
+            "trigger_raw_payload": {},
+        },
+        "route": {"name": "codex_oauth", "runtime_kind": "codex_cli", "credential_mode": "local_oauth", "model": "gpt-5"},
+        "workspace": "/tmp",
+        "reasoning_effort": "",
+        "skill_protocol": "",
+    }
+    assert _is_valid_rerun_trigger_json(json.dumps(payload), channel="scheduled")
+    assert not _is_valid_rerun_trigger_json("{}", channel="scheduled")
 
 
 def test_handle_rerun_attempt_post_replaces_invalid_legacy_task_json(
