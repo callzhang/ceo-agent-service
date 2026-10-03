@@ -6822,14 +6822,17 @@ class AutoReplyStore:
         return tuple(self._business_task_evidence_from_row(row) for row in rows)
 
     def get_business_task_signal_for_task_source_ref_in_transaction(
-        self, *, task_id: int, source_ref: str, _db: sqlite3.Connection
+        self, *, task_id: int, source_ref: str, _db: sqlite3.Connection,
+        source_type: str | None = None,
     ) -> BusinessTaskSignal | None:
+        source_type_filter = " and signal.source_type=?" if source_type is not None else ""
+        args = (task_id, source_ref, source_type) if source_type is not None else (task_id, source_ref)
         row = _db.execute(
             """select signal.* from business_task_signals as signal
                join business_task_evidence as evidence on evidence.signal_id=signal.id
-               where evidence.task_id=? and signal.source_ref=?
-               order by signal.id desc limit 1""",
-            (task_id, source_ref),
+               where evidence.task_id=? and signal.source_ref=?"""
+            + source_type_filter + " order by signal.id desc limit 1",
+            args,
         ).fetchone()
         return self._business_task_signal_from_row(row) if row is not None else None
 

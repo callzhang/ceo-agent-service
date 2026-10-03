@@ -1967,7 +1967,7 @@ def apply_task_agent_decision(
                     original_source = (
                         store.get_business_task_signal_for_task_source_ref_in_transaction(
                             task_id=task_before.id, source_ref=work_item.source.ref,
-                            _db=db,
+                            source_type=signal.source_type, _db=db,
                         )
                     )
                     if original_source is not None:

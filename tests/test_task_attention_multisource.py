@@ -2212,6 +2212,76 @@ def test_field_update_then_identical_attention_replay_preserves_evidence_roles(t
     assert store.get_business_attention_item(card_id) == card_before
 
 
+def test_cited_memory_ref_does_not_replace_current_attention_source(tmp_path):
+    store, current, seed, anchor_id, card_id, new_task = existing_project_link_case(tmp_path)
+    earlier = current.model_copy(update={
+        "source": current.source.model_copy(update={"ref": "source:earlier-envelope"}),
+        "summary": "本轮引用了另一份历史来源。",
+    })
+    cited = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "示例交付项目", "anchor_id": anchor_id,
+            "outcome": "not_needed", "reason": "这份来源只补充验收背景。",
+            "assessment_basis": "current_observation", "decision_indexes": [0],
+            "task_ids": [seed.task_id],
+            "evidence": [{"source_ref": earlier.source.ref,
+                "source_excerpt": "本轮引用了另一份历史来源"}],
+        }],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields",
+            "task_id": seed.task_id, "title": "复核示例交付项目验收计划",
+            "description": "历史来源补充了验收背景。", "evidence_origin": "memory",
+            "source_ref": current.source.ref, "source_excerpt": "历史访谈提及验收背景。",
+            "source_description": "历史访谈纪要中的验收段落",
+        }],
+    })
+    apply_task_agent_decision(store, summary_input_id=1, work_item=earlier,
+        decision=cited, record_run=False)
+    provenance = next(signal for signal in store.list_business_task_signals()
+        if signal.source_type == "memory_provenance")
+    stored_task = store.get_business_task(seed.task_id)
+    payload = {**new_task, "action": "update_task", "transition": "update_fields",
+        "task_id": seed.task_id, "title": stored_task.title,
+        "description": stored_task.description}
+    del payload["project_link_proposal"]
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [existing_project_assessment(
+            item=current, seed=seed, anchor_id=anchor_id, decision_indexes=[0]
+        )], "task_decisions": [payload],
+    })
+
+    first = apply_task_agent_decision(store, summary_input_id=2, work_item=current,
+        decision=decision, record_run=False)
+    assert first.projection_receipt.status == "completed"
+    observed_id = first.applied_decisions[0].signal_id
+    assert observed_id != provenance.id
+    assert store.get_business_task_signal(provenance.id) == provenance
+    assert store.get_business_task_signal(observed_id).source_type == current.source.type.value
+    signals_after = store.list_business_task_signals()
+    evidence_after = store.list_business_task_evidence(seed.task_id)
+    events_after = store.list_business_task_events(seed.task_id)
+    attention_events_after = store.list_business_attention_events(card_id)
+
+    replay = apply_task_agent_decision(store, summary_input_id=2, work_item=current,
+        decision=decision, record_run=False)
+    assert replay.applied_decisions[0].signal_id == observed_id
+    assert store.get_business_task_signal(provenance.id) == provenance
+    assert store.list_business_task_signals() == signals_after
+    assert store.list_business_task_evidence(seed.task_id) == evidence_after
+    assert store.list_business_task_events(seed.task_id) == events_after
+    assert store.list_business_attention_events(card_id) == attention_events_after
+
+    changed_payload = current.model_copy(update={
+        "summary": current.summary + "\n同一来源编号却出现不同正文。",
+    })
+    with pytest.raises(ValueError, match="signal dedupe key source payload mismatch"):
+        apply_task_agent_decision(store, summary_input_id=3,
+            work_item=changed_payload, decision=decision, record_run=False)
+    assert store.get_business_task_signal(provenance.id) == provenance
+    assert store.list_business_task_signals() == signals_after
+    assert store.list_business_task_evidence(seed.task_id) == evidence_after
+
+
 def test_invalid_evidence_only_attention_quote_does_not_save_signal(tmp_path):
     store, item, seed, anchor_id, card_id, new_task = existing_project_link_case(tmp_path)
     task = store.get_business_task(seed.task_id)
