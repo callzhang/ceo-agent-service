@@ -1419,6 +1419,16 @@ def _validate_stored_project_assessments(
             )
         return rows[0] if rows else None
 
+    def signal_is_linked_to_any_task(signal_id: int, task_ids: set[int]) -> bool:
+        return any(
+            db.execute(
+                "select 1 from business_task_evidence "
+                "where task_id=? and signal_id=? limit 1",
+                (task_id, signal_id),
+            ).fetchone() is not None
+            for task_id in task_ids
+        )
+
     existing_task_ids: set[int] = set()
     for item in decision.task_decisions:
         if item.task_id is not None:
@@ -1521,15 +1531,8 @@ def _validate_stored_project_assessments(
                 )
             if not source_contains_quote(signal.evidence_text, evidence.source_excerpt):
                 raise ValueError("historical assessment quote is absent from original source")
-            if not supporting_task_ids or not any(
-                evidence.signal_id
-                in {
-                    row.signal_id
-                    for row in store.list_business_task_evidence_in_transaction(
-                        task_id=task_id, _db=db
-                    )
-                }
-                for task_id in supporting_task_ids
+            if not signal_is_linked_to_any_task(
+                evidence.signal_id, supporting_task_ids
             ):
                 raise ValueError(
                     "historical assessment evidence must be linked to a supporting Task"
@@ -1643,16 +1646,7 @@ def _validate_stored_project_assessments(
                     raise ValueError(
                         "existing Attention original quote is absent from original source"
                     )
-                if not any(
-                    signal.id
-                    in {
-                        row.signal_id
-                        for row in store.list_business_task_evidence_in_transaction(
-                            task_id=task_id, _db=db
-                        )
-                    }
-                    for task_id in member_ids
-                ):
+                if not signal_is_linked_to_any_task(signal.id, member_ids):
                     raise ValueError(
                         "existing Attention original evidence is not linked to a current member"
                     )

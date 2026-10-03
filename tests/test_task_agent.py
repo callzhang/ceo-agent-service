@@ -4074,6 +4074,88 @@ def test_existing_attention_changed_current_words_with_actual_old_proof_is_idemp
     assert len(store.list_business_attention_items()) == 1
 
 
+def test_stored_assessment_membership_checks_do_not_materialize_full_task_evidence(
+    tmp_path, monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "assessment-bounded-evidence-membership.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    second_signal_id = store.create_business_task_signal(
+        source_type="seed", source_ref="seed:second-card-proof",
+        evidence_text="第二条历史交付事实", dedupe_key="seed:second-card-proof",
+    )
+    store.link_business_task_evidence(
+        task_id=seed.task_id, signal_id=second_signal_id, evidence_role="discovery",
+    )
+    stored_evidence = [
+        {
+            "signal_id": seed.signal_id,
+            "source_ref": "seed:售前知识库",
+            "source_excerpt": "售前知识库历史交付风险",
+            "source_time": "",
+            "source_link": "",
+        },
+        {
+            "signal_id": second_signal_id,
+            "source_ref": "seed:second-card-proof",
+            "source_excerpt": "第二条历史交付事实",
+            "source_time": "",
+            "source_link": "",
+        },
+    ]
+    attention_id = BusinessAttentionProjection(store).upsert(AttentionProposal(
+        stable_key=f"project:{anchor_id}",
+        category=AttentionCategory.WATCH,
+        title="售前知识库交付风险",
+        business_area="",
+        why_attention="两条历史事实仍需观察",
+        current_state="等待新的交付结果",
+        ceo_action="暂不介入，观察结果",
+        anchor_id=anchor_id,
+        task_ids=(seed.task_id,),
+        evidence_signal_id=seed.signal_id,
+        assessment_json=json.dumps({"evidence": stored_evidence}, ensure_ascii=False),
+    ))
+    item = _work_item()
+    assessment = _stored_project_assessment(
+        item, seed, anchor_id,
+        outcome="needs_attention",
+        reason="当前来源与两条卡片原始事实支持继续观察。",
+        existing_attention_id=attention_id,
+        assessment_basis="historical_comparison",
+        evidence=[
+            {"source_ref": item.source.ref, "source_excerpt": "补齐来源链接"},
+            *(
+                {
+                    "signal_id": proof["signal_id"],
+                    "source_ref": proof["source_ref"],
+                    "source_excerpt": proof["source_excerpt"],
+                }
+                for proof in stored_evidence
+            ),
+        ],
+    )
+
+    def reject_full_history_materialization(*_args, **_kwargs):
+        raise AssertionError("stored assessment validation must use bounded membership lookup")
+
+    monkeypatch.setattr(
+        store,
+        "list_business_task_evidence_in_transaction",
+        reject_full_history_materialization,
+    )
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item,
+        decision=TaskAgentDecision.model_validate({
+            "project_assessments": [assessment], "task_decisions": [],
+        }),
+        record_run=False,
+    )
+
+    assert result.task_ids == ()
+    assert result.applied_decisions == ()
+
+
 def test_existing_attention_same_current_source_quote_can_cite_card_original_without_signal_id(tmp_path):
     store = AutoReplyStore(tmp_path / "assessment-card-current-repeat.sqlite3")
     seed, anchor_id = _stored_project_task(store)

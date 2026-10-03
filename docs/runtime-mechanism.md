@@ -379,7 +379,7 @@ Work Item ref 和原文摘录；历史正 signal ID 必须解析到相同 ref/qu
 anchor 或预猜未来 ID；新 Project 的 Attention anchor 保持 null，并只从同一事务实际成功登记的 Project 解析。
 `existing_attention_id` 必须是同一 Project 的活动卡片，支持 Task 是当前合格成员，卡片保存的原始 signal/ref/quote 仍存在、未被
 provenance 替代且链接到成员；assessment 必须精确引用该卡片保存的至少一项原始证明，不能换成同一 Task 的另一条真实 Signal。
-当前 Work Item 引文单独核验；变化后的当前措辞可以与实际旧卡片证明组成历史比较，不要求新旧措辞相同，也不增加业务意义/重大性分类器。真正成功应用的
+历史 citation 和卡片 proof 的成员关系按 `(task_id, signal_id)` 做有界存在性查询，不逐条读取完整 Task evidence 历史。当前 Work Item 引文单独核验；变化后的当前措辞可以与实际旧卡片证明组成历史比较，不要求新旧措辞相同，也不增加业务意义/重大性分类器。真正成功应用的
 决定才记录实际 decision position→Task ID/Signal ID/Project anchor；anchor 必须来自本轮成功 Project 应用或 actual Task 的活动 confirmed link；
 没有显式应用身份时，只有唯一一个实际 confirmed 正式 Project 才进入映射，零个或多个关联保持 null，不能仅从 assessment 推断。skip、失败接受和无字段变化 update 没有映射，也不会为了判断
 独立创建事实。逐 assessment 持久化 receipt、只读诊断、native eval、部署和生产读回仍未接入，因此不是完整集成通过或业务结果证明。完成由新证据驱动
