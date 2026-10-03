@@ -10275,6 +10275,24 @@ def test_connect_rolls_back_and_closes_when_the_body_raises(
     assert store.get_account("fd-regression-account") is not None
 
 
+def test_slow_connection_names_caller_without_logging_body_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import app.email_store as module
+
+    store = EmailStore(tmp_path / "slow-context.sqlite3")
+    ticks = iter((0.0, 5.0))
+    monkeypatch.setattr(module, "monotonic", lambda: next(ticks), raising=False)
+    private_payload = "private-mail-content"
+    with store._connect() as db:
+        db.execute("select ?", (private_payload,)).fetchone()
+    assert "elapsed_seconds=5.000" in caplog.text
+    assert "test_slow_connection_names_caller" in caplog.text
+    assert private_payload not in caplog.text
+    with pytest.raises(sqlite3.ProgrammingError):
+        db.execute("select 1")
+
+
 @pytest.mark.skipif(
     not os.path.isdir("/dev/fd"), reason="process fd listing requires /dev/fd"
 )
