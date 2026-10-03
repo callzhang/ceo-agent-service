@@ -1152,6 +1152,13 @@ diagnostics include a bounded caller chain and thread identity, without frame
 locals, SQL parameters, or message bodies. These diagnostics identify the
 waiting operation, not the owner of a cross-process write lock.
 
+A service-command trigger with a persisted execution link has already returned
+from that command. If source terminalization was interrupted, its next consumer
+resumes terminalization under the current claim guard instead of executing the
+command or overwriting the immutable link again. The persisted execution kind
+and command must match the trigger snapshot; mismatches remain errors. This
+closes the result-persisted/source-pending crash window without replaying effects.
+
 Production deployment is serialized at both the repository and service
 boundaries. The deployer first waits for the persisted work leases to drain,
 then bootstraps no new claims by stopping the launchd service before taking a

@@ -425,6 +425,47 @@ def test_command_trigger_runs_in_process_and_never_creates_an_agent_input(tmp_pa
     ) is None
 
 
+def test_command_trigger_resumes_persisted_result_without_reexecuting(tmp_path):
+    store = AutoReplyStore(tmp_path / "command-resume.sqlite3")
+    run = command_task_run(store)
+    adapter = ScheduledTaskQueueAdapter(store)
+    envelope, guard = claim(adapter, run.id, "trigger")
+    store.link_scheduled_task_run_execution(
+        run.id, owner="trigger", execution_kind=SERVICE_COMMAND_EXECUTION_KIND,
+        execution_id="produce-once", result_summary="produce-once queued=2", now=NOW,
+    )
+    calls = []
+    consumer = ScheduledTaskTriggerConsumer(
+        store=store, option_service=None,
+        commands=commands(lambda: calls.append("unexpected replay") or "produce-once queued=0"), now=lambda: NOW,
+    )
+    consumer(envelope, guard)
+    persisted = store.get_scheduled_task_run(run.id)
+    assert calls == []
+    assert persisted.dispatch_status == "dispatched"
+    assert persisted.result_summary == "produce-once queued=2"
+
+
+def test_command_trigger_rejects_mismatched_persisted_execution(tmp_path):
+    store = AutoReplyStore(tmp_path / "command-mismatch.sqlite3")
+    run = command_task_run(store)
+    adapter = ScheduledTaskQueueAdapter(store)
+    envelope, guard = claim(adapter, run.id, "trigger")
+    store.link_scheduled_task_run_execution(
+        run.id, owner="trigger", execution_kind=SERVICE_COMMAND_EXECUTION_KIND,
+        execution_id="calendar-invites-once", result_summary="other command", now=NOW,
+    )
+    calls = []
+    consumer = ScheduledTaskTriggerConsumer(
+        store=store, option_service=None,
+        commands=commands(lambda: calls.append("unexpected replay") or "produce-once queued=0"), now=lambda: NOW,
+    )
+    with pytest.raises(ValueError, match="persisted service command execution"):
+        consumer(envelope, guard)
+    assert calls == []
+    assert store.get_scheduled_task_run(run.id).dispatch_status == "pending"
+
+
 def test_command_trigger_passes_only_snapshot_consumer_prompt_and_skills(tmp_path):
     store, agent_run, options = fixture(tmp_path)
     snapshot = agent_run.snapshot
