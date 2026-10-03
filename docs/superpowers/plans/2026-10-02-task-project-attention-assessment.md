@@ -22,6 +22,16 @@ First synthetic W39 case passed with two correctly supported Project cards and t
 
 ## Working boundary and file map
 
+### Approved amendment — 2026-10-03
+
+Derek explicitly agreed that new evidence may update Attention on an existing confirmed Task/official Project without changing Task fields. This supersedes the original coupling, not the Task no-field-change guard itself.
+
+- [ ] TDD: reproduce the native no-field-change failure with a real stored Task/confirmed Project and current source; expect applied card/receipt with unchanged Task fields/events/lifecycle.
+- [ ] Implement the existing transaction/proposal/projection path for evidence-only processing. Persist actual source provenance; do not fabricate Task changes, register Projects, create/confirm new links, or trigger follow-up/TODO side effects in this path.
+- [ ] Verify same-evidence repeated processing does not duplicate source/card/member/events; unknown/unconfirmed Project, invalid evidence, and plain no-op without proposal retain original behavior.
+- [ ] Synchronize primary prompt, CI Skill and behavior documents; independent spec review then quality review.
+- [ ] Freeze a new candidate and rerun unchanged native cases, followed by exact real-data and release gates. Historical citation omission remains a separate unresolved issue; do not weaken its oracle or alter model settings.
+
 Approved design: `docs/superpowers/specs/2026-10-02-task-project-attention-assessment-design.md`.
 Work only in `/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`.
 One core writer at a time, with spec review followed by quality review between tasks.
