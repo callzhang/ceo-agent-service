@@ -1,6 +1,14 @@
 # 多来源项目关注第一版验收
 
-状态（2026-10-03）：冻结修复候选 `47a56a7f` 的 19 案例复测已结束，共 20 次候选调用（已有卡案例两次），16 次通过、4 次失败，按独立案例为 16/19，不能发布。原 `fbba12e9` 配对 40 次及候选 13/19 的失败记录保留。修复版实际解决了新风险误报旧卡证明、同项目多行动提案分叉和未知项目引用回执问题；剩余失败是两个来源换行被压平的引用，以及已有卡两次未引用其保存的原始证明。`bc99e152` 已统一引文指令，原生效果尚未验证；旧卡引用指引继续修订。真实 W39 最新版副本重复回放、全局 Skill 发布、合并部署和上线读回均未完成。历史通过不由后续版本继承，也不代替真实数据效果。
+状态（2026-10-03）：最新冻结候选 `1732455c` 仍在运行，已完成14/20次Task Agent回放，机械12通过/2失败，不能发布。此前47和421批次均已结束，失败原始记录保留；各版本结果不得继承。真实W39最新版副本重复回放、全局Skill发布、合并部署和上线读回均未完成。
+
+## 最新冻结候选1732455c阶段读回
+
+原固定risk-label-only和assessment-vague-risk-not-needed两例均实际返回insufficient_evidence并保留真实来源行动、无关注卡；后者固定oracle通过。负面判断澄清已有本轮原生证据，但不等于全批次业务验收。
+
+chat-with-report-context机械失败：输出current_observation且只引用当前聊天，漏掉原历史Signal1。主Agent只读重建原facts DB检索：Signal1完整原文、eval:historical-report及2026-09-24来源时间都在2,860字符context内。进一步读取421及173的实际native session用户输入，两轮完整发送内容分别88,542和89,230字符，均包含相同历史原文及要求历史比较的指令；421引用两源而173未引用。确认不是历史检索遗漏或该引文截断；整体指令长度是否影响选择尚属未验证假设，未据此修复或放宽oracle。
+
+assessment-meeting-needs-attention机械失败：Agent run completed、判断needs_attention和当前原文引用成立，但update_fields没有实际Task业务字段变化；Attention projection按现有guard拒绝，reason=proposal has no applied Task decision。既有Task/正式Project关联真实，领域事件未新增。需要Derek确认“新证据可独立更新项目关注，无需修改Task字段”的业务规则后才可调整，不能伪造字段变化或暗中绕过已批准的guard。当前无相关代码改动，原批次继续冻结运行。
 
 ## 修复候选 47a56a7f 原生复测
 
@@ -9,7 +17,7 @@
 
 后续已冻结 `1732455cbe12c107f4e9e1a58fb1b6aef7ac8cd1`（功能修订853，Skill SHA256 `f96ccf69130db4a9ac39761659a5032e8fbfb6e1bcda90645a4736a734fa833d`），开始同19案例/20回放的原生重验。两批不并发执行，原421已终止才快进隔离候选checkout；固定事实、原文、oracle、pinned baseline和模型/路由/900/300/并发1配置不变。该批次仍在运行，真实W39、生产及发布门槛均未完成。
 
-后续冻结 `421af739` 的原生运行仍在同一未改动批次执行。主 Agent 读取 `risk-label-only` 的原始 decision 后发现机械检查未覆盖的语义差异：输出为 `not_needed`，但理由明确说具体业务影响和材料性风险证据缺失，原文也仅有风险标签及汇总行动。旧九案例 oracle 正确证明没有误建卡，却没有要求新增 assessment outcome，因此 mechanical PASS 不等于该判断符合本轮 spec。该原始输出保留并记为 BUSINESS FAIL；应按已批准的“缺少经营影响证据 → insufficient_evidence”区分，而不是把未知当成不需关注。
+此前冻结 `421af739` 运行期间，主 Agent 读取 `risk-label-only` 的原始 decision 后发现机械检查未覆盖的语义差异：输出为 `not_needed`，但理由明确说具体业务影响和材料性风险证据缺失，原文也仅有风险标签及汇总行动。旧九案例 oracle 正确证明没有误建卡，却没有要求新增 assessment outcome，因此 mechanical PASS 不等于该判断符合本轮 spec。该原始输出保留并记为 BUSINESS FAIL；应按已批准的“缺少经营影响证据 → insufficient_evidence”区分，而不是把未知当成不需关注。
 
 对此只澄清 prompt、CI Skill 和 outcome 字段说明中的负面判断含义：not_needed 要有来源事实支持不需关注；风险或经营影响证据缺失须写明缺口并返回 insufficient_evidence。没有修改判定标准、fixture、结构验证、领域应用、投影或原始结果，没有关键词分类器、服务端 outcome 改写或自动补卡。该澄清在主开发工作区进行，冻结421的原生批次不受影响；源码和后续原生证据分开记录。
 三个新增指令一致性回归先 RED；三项相关文件 487 passed（18.40 秒），独立源码审阅 42 项通过，Ruff/diff 检查通过。它们证明源码边界和规则一致，不证明新指令的原生效果；最新候选仍须冻结并重新实际验证。
