@@ -733,6 +733,11 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 Task-first 基础机制已上线；本节新增的多来源关注规则属于当前开发分支，尚未部署。
 前端、语义评估及全局 Skill 发布仍待后续验收，不能据本节新增规则推断生产已经切换。
 
+主 prompt、CI Skill 和字段说明把 `existing_attention_id` 定义为旧卡原始证明的声明，而不是更新目标。
+新风险使用匹配的 `attention_proposal`，现有 Project stable key 已会更新同一张卡；
+没有引用并核实该卡片保存的原始证明时，该可选 ID 保持 null，旧卡的存在本身不证明原始证据。
+真实旧证明与当前提案仍可以同时使用；本次说明澄清不改变领域核验或无字段变化 update 的跳过规则。
+
 报告、会议和聊天都是 Task 与风险证据来源；周报不是风险的唯一来源，也不是关注的前置条件。
 正式 Project 的定义和登记字段优先采用确认的正式周报，明确会议立项登记也可建立正式 Project；
 普通项目提及只形成项目线索。保留报告引用和统计周期。聊天可更新 Task 与风险证据，

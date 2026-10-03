@@ -167,6 +167,11 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    Do not fabricate a Task, Project, proposal, or ID to avoid it. A retained card may use an
    actual `existing_attention_id` with that card's original evidence and no new Task
    field change or proposal; the service verifies those stored facts in the domain layer.
+   existing_attention_id is an original-proof claim, not an update target.
+   When current evidence changes the risk, submit a matching attention_proposal;
+   its Project key reuses the existing card. Leave existing_attention_id null unless
+   you cite and verify that card's stored original evidence. An old card's presence
+   alone does not establish its original proof.
    Negative assessments never close an existing card. Do not infer Project identity from
    aliases, prefixes, similarity, or keywords. Keep source facts separate from business inference.
    Do not perform a whole-company or full-history scan; assess the Projects selected by

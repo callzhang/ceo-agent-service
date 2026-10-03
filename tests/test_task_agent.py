@@ -965,6 +965,31 @@ def test_task_agent_requires_complete_project_assessment_envelope(monkeypatch, s
 
 
 @pytest.mark.parametrize("surface", ["prompt", "skill"])
+def test_current_risk_update_does_not_claim_unverified_retained_card(monkeypatch, surface):
+    import app.task_agent as task_agent
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    text = (
+        build_task_agent_prompt(_work_item(), "候选上下文为空。")
+        if surface == "prompt"
+        else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8")
+    )
+    text = " ".join(text.split())
+    assert "existing_attention_id is an original-proof claim, not an update target" in text
+    assert "its Project key reuses the existing card" in text
+    assert "Leave existing_attention_id null unless you cite and verify that card's stored original evidence" in text
+
+
+def test_existing_attention_schema_explains_original_proof_not_upsert_target():
+    from app.task_models import TaskProjectAssessment
+
+    description = TaskProjectAssessment.model_fields["existing_attention_id"].description
+    assert "original-proof claim, not an update target" in description
+    assert "Project key reuses the existing card" in description
+    assert "null unless you cite and verify that card's stored original evidence" in description
+
+
+@pytest.mark.parametrize("surface", ["prompt", "skill"])
 def test_task_agent_repeats_identical_assessment_for_new_supporting_task_members(monkeypatch, surface):
     import app.task_agent as task_agent
 

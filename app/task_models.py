@@ -692,7 +692,7 @@ class TaskProjectAssessment(StrictTaskModel):
         default=None,
         strict=True,
         gt=0,
-        description="Positive persisted ID of the known existing Attention card retained by a needs_attention outcome; never a list position.",
+        description="Positive persisted ID of a retained needs_attention card: an original-proof claim, not an update target. For current risk changes use attention_proposal; its Project key reuses the existing card. Leave existing_attention_id null unless you cite and verify that card's stored original evidence. Never a list position.",
     )
     decision_indexes: list[Annotated[int, Field(strict=True, ge=0)]] = Field(
         default_factory=list,
