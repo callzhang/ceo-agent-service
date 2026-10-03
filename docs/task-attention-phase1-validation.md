@@ -4,6 +4,8 @@
 
 ## 修复候选 47a56a7f 原生复测
 
+后续冻结421批次已正常结束，20次调用机械19通过/1失败，按独立案例18/19；不能发布。原文换行两例不再被引用检查拒绝，旧卡两次复用均完成，receipt=existing，真实Task1/Project1/Card1保持不变。每次判断并列当前null-ID引文和卡片原始Signal1/ref/quote，没有新增Task决定或提案。人工业务复核另外保留risk-label-only的错误负面outcome，因此业务按独立案例17/19，而不是机械18/19。两个业务问题同属缺少风险影响证据却返回not_needed；固定assessment-vague案例机械失败已暴露同一问题。`853f590e`源码澄清须以新冻结候选重跑全部原19案例和最后一次重复，不继承421已通过项。
+
 后续冻结 `421af739` 的原生运行仍在同一未改动批次执行。主 Agent 读取 `risk-label-only` 的原始 decision 后发现机械检查未覆盖的语义差异：输出为 `not_needed`，但理由明确说具体业务影响和材料性风险证据缺失，原文也仅有风险标签及汇总行动。旧九案例 oracle 正确证明没有误建卡，却没有要求新增 assessment outcome，因此 mechanical PASS 不等于该判断符合本轮 spec。该原始输出保留并记为 BUSINESS FAIL；应按已批准的“缺少经营影响证据 → insufficient_evidence”区分，而不是把未知当成不需关注。
 
 对此只澄清 prompt、CI Skill 和 outcome 字段说明中的负面判断含义：not_needed 要有来源事实支持不需关注；风险或经营影响证据缺失须写明缺口并返回 insufficient_evidence。没有修改判定标准、fixture、结构验证、领域应用、投影或原始结果，没有关键词分类器、服务端 outcome 改写或自动补卡。该澄清在主开发工作区进行，冻结421的原生批次不受影响；源码和后续原生证据分开记录。
