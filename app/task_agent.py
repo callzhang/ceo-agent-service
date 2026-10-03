@@ -2516,7 +2516,7 @@ def _finalize_assessment_results(
                 (task_id, anchor_id),
             ).fetchone() is not None
 
-    def verified_citations(assessment, existing_card) -> list[TaskAttentionVerifiedCitation]:
+    def verified_citations(assessment, existing_card, task_ids) -> list[TaskAttentionVerifiedCitation]:
         card_evidence = []
         if existing_card is not None:
             card_evidence = json.loads(existing_card.assessment_json).get("evidence", [])
@@ -2526,7 +2526,7 @@ def _finalize_assessment_results(
             if signal is None:
                 applied_candidates = [
                     entry for entry in result.applied_decisions
-                    if (
+                    if entry.task_id in task_ids and (
                         entry.decision_index in assessment.decision_indexes
                         or entry.task_id in assessment.task_ids
                     )
@@ -2581,10 +2581,9 @@ def _finalize_assessment_results(
                 actual_anchor_id = exact_existing_project_anchor(assessment.project_title)
 
         actual_task_ids = set(assessment.task_ids if actual_anchor_id is not None else ())
-        actual_task_ids.update(
-            entry.task_id for entry in supported_applied
-            if actual_anchor_id is not None and entry.anchor_id == actual_anchor_id
-        )
+        # Supporting Task identity is not a claim of confirmed Project membership.
+        if actual_anchor_id is not None:
+            actual_task_ids.update(entry.task_id for entry in supported_applied)
         if actual_anchor_id is not None:
             for decision_index in assessment.decision_indexes:
                 item = decision.task_decisions[decision_index]
@@ -2691,7 +2690,7 @@ def _finalize_assessment_results(
             attention_id=attention_id,
             status=status,
             reason=reason,
-            evidence=verified_citations(assessment, existing_card),
+            evidence=verified_citations(assessment, existing_card, actual_task_ids),
         ))
     receipt.project_assessments = assessment_results
     return receipt

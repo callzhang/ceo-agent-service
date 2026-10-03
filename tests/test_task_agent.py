@@ -4154,6 +4154,49 @@ def test_current_project_proposal_reuses_stored_exact_title_and_maps_actual_iden
     assert result.applied_decisions[0].anchor_id == anchor_id
 
 
+@pytest.mark.parametrize("known_project", [False, True])
+def test_assessment_receipt_retains_applied_support_task_without_project_link(tmp_path, known_project):
+    store = AutoReplyStore(tmp_path / "assessment-unlinked-support.sqlite3")
+    anchor_id = None
+    if known_project:
+        _seed, anchor_id = _stored_project_task(store)
+    item = _work_item().model_copy(update={
+        "summary": "售前知识库：有风险。行动：汇总当前进度。",
+    })
+    projects_before = store.list_business_projects()
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "售前知识库", "anchor_id": anchor_id,
+            "outcome": "insufficient_evidence", "reason": "未说明风险的具体经营影响。",
+            "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "售前知识库：有风险。"}],
+        }],
+        "task_decisions": [{
+            "action": "record_candidate", "transition": "none", "title": "汇总当前进度",
+            "source_ref": item.source.ref, "source_excerpt": "行动：汇总当前进度。",
+        }],
+    })
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    [applied] = result.applied_decisions
+    assert applied.anchor_id is None
+    assert store.get_business_task(applied.task_id).title == "汇总当前进度"
+    assert result.projection_receipt is not None
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.task_ids == ([applied.task_id] if known_project else [])
+    assert readback.anchor_id == anchor_id
+    assert readback.status == "recorded"
+    assert readback.attention_id is None
+    assert readback.evidence[0].signal_id == (applied.signal_id if known_project else None)
+    assert readback.evidence[0].source_time == item.source.created_at
+    assert store.list_business_task_anchor_links(task_id=applied.task_id) == ()
+    assert store.list_business_projects() == projects_before
+    assert store.list_business_attention_items() == ()
+
+
 def test_unknown_current_project_clue_is_evidence_only_and_creates_nothing(tmp_path):
     store = AutoReplyStore(tmp_path / "assessment-unknown-clue.sqlite3")
     item = _work_item().model_copy(update={"summary": "也许与远期海外机会有关，但无法确认 Project 或行动。"})
