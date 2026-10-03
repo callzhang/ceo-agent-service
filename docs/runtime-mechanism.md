@@ -382,7 +382,7 @@ provenance 替代且链接到成员；assessment 必须精确引用该卡片保�
 历史 citation 和卡片 proof 的成员关系按 `(task_id, signal_id)` 做有界存在性查询，不逐条读取完整 Task evidence 历史。当前 Work Item 引文单独核验；变化后的当前措辞可以与实际旧卡片证明组成历史比较，不要求新旧措辞相同，也不增加业务意义/重大性分类器。真正成功应用的
 决定才记录实际 decision position→Task ID/Signal ID/Project anchor；anchor 必须来自本轮成功 Project 应用或 actual Task 的活动 confirmed link；
 没有显式应用身份时，只有唯一一个实际 confirmed 正式 Project 才进入映射，零个或多个关联保持 null，不能仅从 assessment 推断。skip、失败接受和无字段变化 update 没有映射，也不会为了判断
-独立创建事实。逐 assessment 持久化 receipt、只读诊断、native eval、部署和生产读回仍未接入，因此不是完整集成通过或业务结果证明。完成由新证据驱动
+独立创建事实。当前功能分支已接入逐 assessment 持久化 receipt 和只读诊断；native eval、发布、部署与生产读回仍未完成，因此不是完整集成通过或业务结果证明。完成由新证据驱动
 （Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：新完成的
 钉钉待办由扫描直接关闭对应 Task（见下文「后台周期性工作」），消息、会议等新信息照常作为 Work Item 进入
 Task Agent。单独的 Task completion Agent（`app/task_completion_agent.py`）已删除，服务不再产生
@@ -457,7 +457,7 @@ registry_row_count 复用既有原始周报结构解析，未提出 Project 也�
 无字段实际变化的 update 仍由既有 `_update_fields_restates_task` 在 Project/Attention 处理前跳过；
 其原始提案保留计数并有 rejected outcome。新风险对 Task 描述的真实补充可更新，不能为了链接
 引文伪造描述/状态变更，也不新增 evidence-only update 路径。
-最终回执还按原始判断位置保存 `project_assessments` 应用读回：`recorded` 表示负面或证据不足判断已留存但未请求卡片动作，`applied` 表示卡片实际写入，`existing` 表示实际活动卡片及其成员/原始证明已核验，`rejected` / `error` 保留该判断自身支持决定对应的拒绝或异常原因。每项的 anchor、Task、Attention ID 只来自本轮成功应用映射或被精确引用并已核验的当前持久化对象；同一 Project 的多个成功 Task 提案折叠后共享一个真实 Attention ID。若同一判断一部分提案成功、一部分支持决定未应用，回执保持 applied 和真实卡 ID，同时在 reason 保留 `proposal has no applied Task decision`；卡片成员仍只反映实际成功的合格 Task。精确同名正式 Project 已存在但 Task 更新无变化时保留既有 Project/Task 身份，支持位置上已确认链接的 Task 即使未重复列在 assessment `task_ids` 也保留真实 ID，真正未登记且未应用的新 Project 不产生身份。未应用的正提案不借用其他 Project 的 outcome，也不从提案猜未来 ID；重算异常只传播到由支持位置或显式 Task ID 对应本轮成功决定的相关判断，并保留为 error reason，不改写 raw outcome。每条 evidence 保存原始 ref/quote，并仅在实际 Signal 存在且与引文匹配时附带 signal ID、来源时间和持久化 locator；匹配候选限于该 assessment 的支持决定及显式 Task ID 在本轮实际写入的 Signal。初始 pending 回执可没有该集合；消费者完成后才独立保存最终集合，原始 `decision_json` 不被回执改写，旧 run 的 `{}` 或缺少判断字段保持历史缺失语义。
+最终回执还按原始判断位置保存 `project_assessments` 应用读回：`recorded` 表示负面或证据不足判断已留存但未请求卡片动作，`applied` 表示卡片实际写入，`existing` 表示实际活动卡片及其成员/原始证明已核验，`rejected` / `error` 保留该判断自身支持决定对应的拒绝或异常原因。每项的 anchor、Task、Attention ID 只来自本轮成功应用映射或被精确引用并已核验的当前持久化对象；同一 Project 的多个成功 Task 提案折叠后共享一个真实 Attention ID。若同一判断一部分提案成功、一部分支持决定未应用，回执保持 applied 和真实卡 ID，同时在 reason 保留 `proposal has no applied Task decision`；卡片成员仍只反映实际成功的合格 Task。若判断既引用已核验活动卡片又提交当前 proposal，回执保留该真实卡 ID，但 status/reason 采用当前 proposal 的实际 applied/rejected/error 结果；只有没有当前 proposal 时才以 existing 表示单纯复用。精确同名正式 Project 已存在但 Task 更新无变化时保留既有 Project/Task 身份，支持位置上已确认链接的 Task 即使未重复列在 assessment `task_ids` 也保留真实 ID，真正未登记且未应用的新 Project 不产生身份。未应用的正提案不借用其他 Project 的 outcome，也不从提案猜未来 ID；重算异常只传播到由支持位置或显式 Task ID 对应本轮成功决定的相关判断，并保留为 error reason，不改写 raw outcome。每条 evidence 保存原始 ref/quote，并仅在实际 Signal 存在且与引文匹配时附带 signal ID、来源时间和持久化 locator；匹配候选限于该 assessment 的支持决定及显式 Task ID 在本轮实际写入的 Signal。初始 pending 回执可没有该集合；消费者完成后才独立保存最终集合，原始 `decision_json` 不被回执改写，旧 run 的 `{}` 或缺少判断字段保持历史缺失语义。
 `business_attention_items.assessment_json` 默认 `{}`，只用于保存已经核验的 material trigger、
 Agent 推断、精确引文及来源 signal ID / source_ref / source_time / link，不复制完整来源。
 引文的时间、链接仅取持久化 signal metadata/context，JSON 按键排序；why_attention 保留纯推断，

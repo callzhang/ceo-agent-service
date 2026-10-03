@@ -3881,6 +3881,67 @@ def test_existing_attention_repeat_with_no_task_field_change_has_no_new_effect(t
     assert store.list_business_attention_events(attention_id) == events_before
 
 
+def test_existing_attention_keeps_card_id_but_reports_current_proposal_error(
+    tmp_path, monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "assessment-existing-card-proposal-error.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    attention_id = _stored_attention_card(store, seed=seed, anchor_id=anchor_id)
+    item = _work_item().model_copy(update={"summary": "售前知识库交付风险继续扩大。"})
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [_stored_project_assessment(
+            item, seed, anchor_id,
+            outcome="needs_attention",
+            reason="当前风险扩大，仍需保留关注。",
+            existing_attention_id=attention_id,
+            decision_indexes=[0],
+            assessment_basis="historical_comparison",
+            evidence=[
+                {"source_ref": item.source.ref, "source_excerpt": "交付风险继续扩大"},
+                {"signal_id": seed.signal_id, "source_ref": "seed:售前知识库",
+                 "source_excerpt": "售前知识库历史交付风险"},
+            ],
+        )],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+            "title": "售前知识库交付", "status": "waiting",
+            "source_ref": item.source.ref, "source_excerpt": "交付风险继续扩大",
+            "attention_proposal": {
+                "category": "watch", "title": "售前知识库交付风险",
+                "why_attention": "交付风险继续扩大", "current_state": "等待交付结果",
+                "ceo_action": "观察结果", "anchor_id": anchor_id,
+                "assessment_basis": "historical_comparison", "material_trigger": "risk_escalation",
+                "evidence": [
+                    {"source_ref": item.source.ref, "source_excerpt": "交付风险继续扩大"},
+                    {"signal_id": seed.signal_id, "source_ref": "seed:售前知识库",
+                     "source_excerpt": "售前知识库历史交付风险"},
+                ],
+            },
+        }],
+    })
+    events_before = store.list_business_attention_events(attention_id)
+
+    def fail_projection(_self, _proposal):
+        raise RuntimeError("existing card proposal failed")
+
+    monkeypatch.setattr(BusinessAttentionProjection, "upsert", fail_projection)
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.projection_receipt is not None
+    assert result.projection_receipt.status == "failed"
+    assert result.projection_receipt.outcomes[0].reason == "existing card proposal failed"
+    [readback] = result.projection_receipt.project_assessments
+    assert readback.status == "error"
+    assert readback.reason == "existing card proposal failed"
+    assert readback.anchor_id == anchor_id
+    assert readback.task_ids == [seed.task_id]
+    assert readback.attention_id == attention_id
+    assert decision.project_assessments[0].outcome == "needs_attention"
+    assert store.list_business_attention_events(attention_id) == events_before
+
+
 def test_negative_assessment_records_known_project_without_closing_existing_card(tmp_path):
     store = AutoReplyStore(tmp_path / "assessment-negative-keeps-card.sqlite3")
     seed, anchor_id = _stored_project_task(store)

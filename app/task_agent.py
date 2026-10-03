@@ -2605,14 +2605,14 @@ def _finalize_assessment_results(
         if actual_anchor_id is None:
             reason = "Assessment recorded without an applied Project or Attention identity."
         if assessment.outcome == "needs_attention":
-            if existing_card is not None:
+            proposal_indexes = {
+                index for index in assessment.decision_indexes
+                if decision.task_decisions[index].attention_proposal is not None
+            }
+            if not proposal_indexes and existing_card is not None:
                 status = "existing"
                 reason = "Existing Attention card verified."
             else:
-                proposal_indexes = {
-                    index for index in assessment.decision_indexes
-                    if decision.task_decisions[index].attention_proposal is not None
-                }
                 proposal_entries = [
                     applied_by_index[index] for index in proposal_indexes
                     if index in applied_by_index
