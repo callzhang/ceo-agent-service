@@ -171,6 +171,10 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    valid inputs. A report is not the sole input or a prerequisite. Candidate Tasks may
    support a needs_attention assessment without promotion. Use `insufficient_evidence`
    only for a genuine unconfirmed Project identity or missing Task/risk evidence.
+   not_needed requires evidence supporting a negative judgment.
+   Missing concrete risk or business-impact evidence is insufficient_evidence,
+   not proof that attention is unnecessary. Explain the missing facts without
+   inventing a risk or creating a card.
    Do not fabricate a Task, Project, proposal, or ID to avoid it. A retained card may use an
    actual `existing_attention_id` with that card's original evidence and no new Task
    field change or proposal; the service verifies those stored facts in the domain layer.

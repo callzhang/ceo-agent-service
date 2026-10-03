@@ -386,6 +386,7 @@ anchor 或预猜未来 ID；新 Project 的 Attention anchor 保持 null，并�
 `existing_attention_id` 必须是同一 Project 的活动卡片，支持 Task 是当前合格成员，卡片保存的原始 signal/ref/quote 仍存在、未被
 provenance 替代且链接到成员；assessment 必须精确引用该卡片保存的至少一项原始证明，不能换成同一 Task 的另一条真实 Signal。
 主 prompt、CI Skill 和字段说明明确：这个 ID 是旧卡原始证明的声明，不是 upsert 目标参数。
+同一套指令明确区分负面判断与信息缺失：`not_needed` 须有来源证据支持不需关注；具体风险或经营影响证据缺失时用 `insufficient_evidence` 并解释缺口。没有足够信息证明需要关注，不等于已经证明不需关注。服务不增加经营关键词判断，也不自动改写 Agent 的原始 outcome 或补卡。
 当前新风险提交匹配的 `attention_proposal`，现有 Project stable key 已会复用同一张卡；
 没有引用并核实旧卡保存的原始证明时，`existing_attention_id` 保持 null。仅有一张旧卡不构成原始证明。
 保留旧卡时，Agent 从检索上下文 `current_project_attention` 的对应条目读取并解析 `assessment_json`，至少引用 `assessment_json.evidence` 中一项，保持其 signal_id、source_ref 和 source_excerpt 不变。本轮重述可以另外引用，不能代替该卡已保存的原始证明。

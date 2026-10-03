@@ -664,7 +664,7 @@ class TaskProjectAssessment(StrictTaskModel):
         description="Registered Project title when its identity is known; when identity is unresolved, preserve the source's Project clue without treating it as a registered Project.",
     )
     outcome: Literal["needs_attention", "not_needed", "insufficient_evidence"] = Field(
-        description="Exactly one judgment for this Project: needs_attention for a retained existing card or matching current proposal, not_needed for a supported negative judgment, or insufficient_evidence only for genuine unconfirmed identity or missing Task/risk evidence.",
+        description="Exactly one judgment for this Project: needs_attention for a retained existing card or matching current proposal, not_needed for a supported negative judgment, or insufficient_evidence only for genuine unconfirmed identity or missing Task/risk evidence. not_needed requires evidence supporting a negative judgment. Missing concrete risk or business-impact evidence is insufficient_evidence, not proof that attention is unnecessary.",
     )
     reason: str = Field(
         description="Concrete reason for the outcome, grounded in the cited facts; do not restate an inference as an original quote.",

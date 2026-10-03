@@ -4,6 +4,11 @@
 
 ## 修复候选 47a56a7f 原生复测
 
+后续冻结 `421af739` 的原生运行仍在同一未改动批次执行。主 Agent 读取 `risk-label-only` 的原始 decision 后发现机械检查未覆盖的语义差异：输出为 `not_needed`，但理由明确说具体业务影响和材料性风险证据缺失，原文也仅有风险标签及汇总行动。旧九案例 oracle 正确证明没有误建卡，却没有要求新增 assessment outcome，因此 mechanical PASS 不等于该判断符合本轮 spec。该原始输出保留并记为 BUSINESS FAIL；应按已批准的“缺少经营影响证据 → insufficient_evidence”区分，而不是把未知当成不需关注。
+
+对此只澄清 prompt、CI Skill 和 outcome 字段说明中的负面判断含义：not_needed 要有来源事实支持不需关注；风险或经营影响证据缺失须写明缺口并返回 insufficient_evidence。没有修改判定标准、fixture、结构验证、领域应用、投影或原始结果，没有关键词分类器、服务端 outcome 改写或自动补卡。该澄清在主开发工作区进行，冻结421的原生批次不受影响；源码和后续原生证据分开记录。
+三个新增指令一致性回归先 RED；三项相关文件 487 passed（18.40 秒），独立源码审阅 42 项通过，Ruff/diff 检查通过。它们证明源码边界和规则一致，不证明新指令的原生效果；最新候选仍须冻结并重新实际验证。
+
 本轮 19 个固定案例及已有卡第二次回放使用同一冻结源码、Skill SHA256 `118250132fd7579afaec136df7fd7feffa299e73e59faf1d31f112cc819eae97`、原固定事实和相同模型/路由/900 秒总时限、300 秒 idle、并发 1。基线沿用此前 pinned `7bf7be5e` 在同一事实和运行配置下的已完成结果，未替换或改写。expected 仍只在原生完成后用于只读核验，没有修改三份 fixture 或 oracle。
 
 16 个独立案例实际通过；`meeting-new-risk`、`chat-with-report-context`、`same-project-two-actions`、`assessment-unconfirmed-project` 的原生失败已经转为通过。单独会议和聊天实际生成关注卡，未依赖周报；同项目两个真实行动保留两个 Task、一个 Project 和一个卡片，成员真实。未知 Project 保留来源行动候选但不伪造 Project/Card，回执没有借用未确认身份的 Signal。

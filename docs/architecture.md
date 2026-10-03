@@ -730,6 +730,8 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 
 ### Task-first 工作跟踪（Task 6 与 Task 7；已上线）
 
+项目判断中的 `not_needed` 需要来源证据支持“不需关注”的结论；缺少具体风险或经营影响证据时记录 `insufficient_evidence` 并解释缺口，不能把“没有足够信息证明需要关注”当作“不需关注”的证明。prompt、CI Skill 和 outcome 字段说明一致；来源含义由 Agent 判断，服务不增加关键词分类器、不替换原始 outcome、不自动补卡。
+
 保留已有关注卡的判断须从 bounded context 的 `current_project_attention` 对应条目解析 `assessment_json`，至少原样引用其 `assessment_json.evidence` 中一项 signal_id、source_ref、source_excerpt；本轮重述另列，不能代替旧卡保存的原始证明。此为 prompt、CI Skill 和字段说明对既有证据契约的操作指引，不改变领域核验或无字段变化更新的行为。
 
 Task-first 基础机制已上线；本节新增的多来源关注规则属于当前开发分支，尚未部署。

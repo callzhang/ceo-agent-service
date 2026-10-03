@@ -990,6 +990,24 @@ def test_existing_attention_schema_explains_original_proof_not_upsert_target():
 
 
 @pytest.mark.parametrize("surface", ["prompt", "skill", "schema"])
+def test_negative_assessment_guidance_distinguishes_unknown_impact(monkeypatch, surface):
+    import app.task_agent as task_agent
+    from app.task_models import TaskProjectAssessment
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    if surface == "prompt":
+        text = build_task_agent_prompt(_work_item(), "候选上下文为空。")
+    elif surface == "skill":
+        text = (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text()
+    else:
+        text = TaskProjectAssessment.model_fields["outcome"].description
+    text = " ".join(text.split())
+    assert "not_needed requires evidence supporting a negative judgment" in text
+    assert "Missing concrete risk or business-impact evidence is insufficient_evidence" in text
+    assert "not proof that attention is unnecessary" in text
+
+
+@pytest.mark.parametrize("surface", ["prompt", "skill", "schema"])
 def test_retained_card_guidance_identifies_exact_stored_proof_fields(monkeypatch, surface):
     import app.task_agent as task_agent
     from app.task_models import TaskProjectAssessment
