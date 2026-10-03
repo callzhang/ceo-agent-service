@@ -1145,6 +1145,13 @@ Derek 2026-09-25。候选只是没确认的猜测，所以可以在控制台“�
 - 系统错误码目录：[`docs/error-catalog.md`](error-catalog.md)
 ### Production deployment lifecycle
 
+SQLite immediate-write retries apply only before the transaction body starts.
+Once the body starts, a lock failure rolls back and propagates the original
+exception; a context manager cannot replay its caller's body. SQLite failure
+diagnostics include a bounded caller chain and thread identity, without frame
+locals, SQL parameters, or message bodies. These diagnostics identify the
+waiting operation, not the owner of a cross-process write lock.
+
 Production deployment is serialized at both the repository and service
 boundaries. The deployer first waits for the persisted work leases to drain,
 then bootstraps no new claims by stopping the launchd service before taking a
