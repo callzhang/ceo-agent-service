@@ -8,6 +8,8 @@
 
 随后将d6a9b074单独冻结于原生候选checkout，仅回放原固定chat-with-report-context（fresh事实副本，同原模型/路由/900/300/并发1，oracle不进入输入）。实际native run/投影成功，固定oracle PASS；原始判断采用historical_comparison，同时引用当前聊天null-ID证据及历史Signal1/eval:historical-report原句，卡片实际保存两源及各自来源时间。该单项诊断已正常结束exit0，不证明全批次或长期稳定性；需在证据独立更新功能合入后重新冻结并验证全部原19案例和旧卡重复回放。
 
+已批准的证据独立更新实现f6501188局部两文件373 passed，但主Agent独立11文件矩阵为1019 passed/2 failed（79.68秒），不能冻结发布：原有source_project_registration两例在首次正常字段更新、相同来源第二次进入无字段变化路径时另建Signal并改变卡片证明/事件。独立规格审阅以真实Store复现同一问题，另发现无效历史proposal引文会在投影拒绝前留下新增Signal/evidence，以及重复relevant值携带Attention时可能落回普通更新副作用路径。这些失败保留、正在修订；不改旧测试预期、不降低引用核验、不改变无Attention的既有相关性确认语义。CLI process_work_items独立22 passed/254 deselected（4.90秒），lint及运行模块导入通过；各自不是全业务通过证明。
+
 同项目两个真实行动分别保留Task1/2，关联单一Project1/Card1；普通进展返回not_needed、无卡。无行动信息实际输出skip且Tasks=0；未知项目保留来源明确的核对候选行动但Projects=0/Cards=0，未制造官方身份。已有卡两次复用均receipt=existing，引用原始Signal1/ref/quote和当前null-ID来源，零Task decisions/proposals。主Agent按全部列逐行只读比较九张领域表（Task/Project/anchor、卡及成员/事件、Task事件/Signal/evidence）：原facts与最终副本完全相同，两条新Task Agent runs完成。共享native session及实际attempts另行读取，不以20次业务回放冒充20次底层CLI尝试。
 
 原固定risk-label-only和assessment-vague-risk-not-needed两例均实际返回insufficient_evidence并保留真实来源行动、无关注卡；后者固定oracle通过。负面判断澄清已有本轮原生证据，但不等于全批次业务验收。
