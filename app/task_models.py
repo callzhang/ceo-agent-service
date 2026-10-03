@@ -423,7 +423,7 @@ class TaskAttentionProposal(StrictTaskModel):
     category: Literal["fyi", "watch", "decision", "push"]
     title: str
     why_attention: str
-    current_state: str
+    current_state: str = Field(description="Project-level risk facts, not per-Task action summaries. Keep this identical across supporting Tasks for the same Project/risk; put each Task's own action in its description or update_summary.")
     ceo_action: str
     anchor_id: int | None = Field(
         default=None, strict=True, gt=0,

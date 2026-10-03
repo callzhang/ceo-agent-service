@@ -755,6 +755,10 @@ For multiple newly created Tasks supporting the same Project and risk, repeat th
 on each supporting TaskDecision. The service folds those identical proposals into
 one card and combines their Task membership. Keep the assessment fields and evidence
 identical across those decisions; anchor resolution and existing related IDs may differ.
+current_state contains Project-level risk facts, not per-Task action summaries.
+Copy one Project-level proposal unchanged to each supporting TaskDecision, including
+current_state. Task-specific actions belong in Task description or update_summary,
+not in customized versions of the shared Attention proposal.
 Use `related_task_ids` only for real existing Task IDs; never invent IDs for new decisions.
 Keep unrelated Project Tasks outside this assessment; conflicting proposal payloads are rejected.
 Other project Tasks receive no Attention merely by membership. For watch, ceo_action

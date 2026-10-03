@@ -990,6 +990,30 @@ def test_existing_attention_schema_explains_original_proof_not_upsert_target():
 
 
 @pytest.mark.parametrize("surface", ["prompt", "skill"])
+def test_same_project_proposal_keeps_shared_facts_not_individual_actions(monkeypatch, surface):
+    import app.task_agent as task_agent
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    text = (
+        build_task_agent_prompt(_work_item(), "候选上下文为空。")
+        if surface == "prompt"
+        else (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(encoding="utf-8")
+    )
+    text = " ".join(text.split())
+    assert "Project-level risk facts, not per-Task action summaries" in text
+    assert "Copy one Project-level proposal unchanged" in text
+    assert "Task-specific actions belong in Task description or update_summary" in text
+
+
+def test_attention_current_state_schema_describes_shared_project_facts():
+    from app.task_models import TaskAttentionProposal
+
+    description = TaskAttentionProposal.model_fields["current_state"].description or ""
+    assert "Project-level risk facts, not per-Task action summaries" in description
+    assert "identical across supporting Tasks" in description
+
+
+@pytest.mark.parametrize("surface", ["prompt", "skill"])
 def test_task_agent_repeats_identical_assessment_for_new_supporting_task_members(monkeypatch, surface):
     import app.task_agent as task_agent
 

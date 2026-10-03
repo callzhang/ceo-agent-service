@@ -389,6 +389,8 @@ provenance 替代且链接到成员；assessment 必须精确引用该卡片保�
 当前新风险提交匹配的 `attention_proposal`，现有 Project stable key 已会复用同一张卡；
 没有引用并核实旧卡保存的原始证明时，`existing_attention_id` 保持 null。仅有一张旧卡不构成原始证明。
 这只澄清既有契约，不改变旧证据核验、允许真实旧证明与当前提案并存的规则，或无字段变化 update 的跳过行为。
+同项目风险的多个支持 Task 复制同一份项目级提案，`current_state` 只保留共享风险事实，不追加各 Task 行动摘要。
+不同 Task 的行动留在其 description/update_summary；prompt/Skill/字段说明对此一致，领域的同提案折叠与矛盾拒绝保持不变。
 历史 citation 和卡片 proof 的成员关系按 `(task_id, signal_id)` 做有界存在性查询，不逐条读取完整 Task evidence 历史。当前 Work Item 引文单独核验；变化后的当前措辞可以与实际旧卡片证明组成历史比较，不要求新旧措辞相同，也不增加业务意义/重大性分类器。真正成功应用的
 决定才记录实际 decision position→Task ID/Signal ID/Project anchor；anchor 必须来自本轮成功 Project 应用或 actual Task 的活动 confirmed link；
 没有显式应用身份时，只有唯一一个实际 confirmed 正式 Project 才进入映射，零个或多个关联保持 null，不能仅从 assessment 推断。skip、失败接受和无字段变化 update 没有映射，也不会为了判断
