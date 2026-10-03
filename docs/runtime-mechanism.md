@@ -1287,3 +1287,9 @@ lock acquisition, the body, commit, and close; it is not by itself proof of the
 write-lock holder or transaction duration. Logs exclude SQL parameters and mail
 content. Correlate the caller with the operating system's WAL-lock owner and
 the affected run before changing transaction boundaries.
+
+Legacy unsubscribe terminalization uses the same lifecycle selector as its
+inventory: only `email_unsubscribe_consumer_direct_v1`. An inventoried object
+replaced by an `email_unsubscribe_audited_v2` task must remain untouched, even
+when its task ID, generation, and pending status otherwise match. The mutation
+checks the lifecycle again under its write transaction.
