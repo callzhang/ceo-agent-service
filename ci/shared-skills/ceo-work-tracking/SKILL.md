@@ -179,6 +179,10 @@ In this Task Agent turn, return structured local Task decisions only. Use connec
    its Project key reuses the existing card. Leave existing_attention_id null unless
    you cite and verify that card's stored original evidence. An old card's presence
    alone does not establish its original proof.
+   For a retained card, read its entry in current_project_attention, decode
+   assessment_json, and cite at least one item from assessment_json.evidence with
+   signal_id, source_ref, and source_excerpt unchanged. A current restatement does
+   not replace that stored proof; cite the current source separately if useful.
    Negative assessments never close an existing card. Do not infer Project identity from
    aliases, prefixes, similarity, or keywords. Keep source facts separate from business inference.
    Do not perform a whole-company or full-history scan; assess the Projects selected by

@@ -37,8 +37,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-native-retained-card-proof-guidance | Isolated task-attention-multisource worktree: app/task_agent.py (retained-card prompt only), app/task_models.py (existing_attention_id description only), ci/shared-skills/ceo-work-tracking/SKILL.md, tests/test_task_agent.py (proof guidance regressions), docs/architecture.md and docs/runtime-mechanism.md (retained-card instruction only), docs/task-attention-phase1-validation.md (native results) | Clarify the exact existing-card evidence location already supplied in bounded context and preserve its signal/ref/quote tuple. Original proof checks and no-field-change behavior unchanged; no oracle/fixture changes. | 2026-10-03 |
-
 
 
 

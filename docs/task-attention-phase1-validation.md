@@ -1,6 +1,16 @@
 # 多来源项目关注第一版验收
 
-状态（2026-10-03）：冻结候选 `fbba12e9` 的 19 案例原生配对已完成，共 40 次调用（已有卡案例每侧两次）。候选 20 次中 13 次通过、7 次失败；按独立案例为 13/19，不能发布。独立修复分支已审查 `b965df0c` / `cc5a52e1` prompt/Skill 澄清和 `58b8e623` 有界应用回执修复，尚未原生复测、合并或部署。真实 W39 最新版副本重复回放、全局 Skill 发布和上线读回均未完成。历史 `fc58e803` 的 9/9 不由后续版本继承，也不代替真实数据效果。
+状态（2026-10-03）：冻结修复候选 `47a56a7f` 的 19 案例复测已结束，共 20 次候选调用（已有卡案例两次），16 次通过、4 次失败，按独立案例为 16/19，不能发布。原 `fbba12e9` 配对 40 次及候选 13/19 的失败记录保留。修复版实际解决了新风险误报旧卡证明、同项目多行动提案分叉和未知项目引用回执问题；剩余失败是两个来源换行被压平的引用，以及已有卡两次未引用其保存的原始证明。`bc99e152` 已统一引文指令，原生效果尚未验证；旧卡引用指引继续修订。真实 W39 最新版副本重复回放、全局 Skill 发布、合并部署和上线读回均未完成。历史通过不由后续版本继承，也不代替真实数据效果。
+
+## 修复候选 47a56a7f 原生复测
+
+本轮 19 个固定案例及已有卡第二次回放使用同一冻结源码、Skill SHA256 `118250132fd7579afaec136df7fd7feffa299e73e59faf1d31f112cc819eae97`、原固定事实和相同模型/路由/900 秒总时限、300 秒 idle、并发 1。基线沿用此前 pinned `7bf7be5e` 在同一事实和运行配置下的已完成结果，未替换或改写。expected 仍只在原生完成后用于只读核验，没有修改三份 fixture 或 oracle。
+
+16 个独立案例实际通过；`meeting-new-risk`、`chat-with-report-context`、`same-project-two-actions`、`assessment-unconfirmed-project` 的原生失败已经转为通过。单独会议和聊天实际生成关注卡，未依赖周报；同项目两个真实行动保留两个 Task、一个 Project 和一个卡片，成员真实。未知 Project 保留来源行动候选但不伪造 Project/Card，回执没有借用未确认身份的 Signal。
+
+`assessment-vague-risk-not-needed` 和 `assessment-routine-not-needed` 的原始经营判断分别为 insufficient_evidence 和 not_needed，但模型将两行原文拼成一行 source_excerpt，原有 immutable Work Item 引文检查拒绝，领域对象没有写入。`assessment-existing-card-idempotent` 两次原始输出均引用当前“项目群重申”全文而非卡片 assessment_json 内保存的原句，却声明 existing_attention_id=1；原始证明检查拒绝，Task、Project、卡片和事件没有新增。旧卡及其精确证据在 bounded context 中存在，不是来源遗漏。三类失败各自保留原始 attempt envelope 和数据库副本，不能因判定业务方向合理或身份未重复而计为通过。
+
+`bc99e152` 仅统一 prompt、CI Skill 和字段说明中的连续逐字引用指引，保留标点、空格及换行，并删除旧文档矛盾说法。普通 Task 和 owner_evidence 的原有验证行为不变，日期及 Project assessment / Attention 按各自原有规则校验。新回归观察 RED 后 GREEN，三项相关文件 481 passed（18.39 秒），独立四项 source review 通过；这不是新版本的原生通过证据。冻结 47 的重点后端 11 文件 1006 passed，CLI process_work_items 22 passed / 254 deselected，两个页面 22 passed、TypeScript/Vite 构建通过，均与上线效果分开记录。
 
 ## 冻结配对最终读回与回执修复
 

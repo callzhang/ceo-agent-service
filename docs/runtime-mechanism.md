@@ -388,6 +388,7 @@ provenance 替代且链接到成员；assessment 必须精确引用该卡片保�
 主 prompt、CI Skill 和字段说明明确：这个 ID 是旧卡原始证明的声明，不是 upsert 目标参数。
 当前新风险提交匹配的 `attention_proposal`，现有 Project stable key 已会复用同一张卡；
 没有引用并核实旧卡保存的原始证明时，`existing_attention_id` 保持 null。仅有一张旧卡不构成原始证明。
+保留旧卡时，Agent 从检索上下文 `current_project_attention` 的对应条目读取并解析 `assessment_json`，至少引用 `assessment_json.evidence` 中一项，保持其 signal_id、source_ref 和 source_excerpt 不变。本轮重述可以另外引用，不能代替该卡已保存的原始证明。
 这只澄清既有契约，不改变旧证据核验、允许真实旧证明与当前提案并存的规则，或无字段变化 update 的跳过行为。
 同项目风险的多个支持 Task 复制同一份项目级提案，`current_state` 只保留共享风险事实，不追加各 Task 行动摘要。
 不同 Task 的行动留在其 description/update_summary；prompt/Skill/字段说明对此一致，领域的同提案折叠与矛盾拒绝保持不变。

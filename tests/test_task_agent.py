@@ -989,6 +989,25 @@ def test_existing_attention_schema_explains_original_proof_not_upsert_target():
     assert "null unless you cite and verify that card's stored original evidence" in description
 
 
+@pytest.mark.parametrize("surface", ["prompt", "skill", "schema"])
+def test_retained_card_guidance_identifies_exact_stored_proof_fields(monkeypatch, surface):
+    import app.task_agent as task_agent
+    from app.task_models import TaskProjectAssessment
+
+    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    if surface == "prompt":
+        text = build_task_agent_prompt(_work_item(), "候选上下文为空。")
+    elif surface == "skill":
+        text = (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text()
+    else:
+        text = TaskProjectAssessment.model_fields["existing_attention_id"].description
+    text = " ".join(text.split())
+    assert "current_project_attention" in text
+    assert "assessment_json.evidence" in text
+    assert "signal_id, source_ref, and source_excerpt unchanged" in text
+    assert "A current restatement does not replace that stored proof" in text
+
+
 @pytest.mark.parametrize("surface", ["prompt", "skill"])
 def test_same_project_proposal_keeps_shared_facts_not_individual_actions(monkeypatch, surface):
     import app.task_agent as task_agent
