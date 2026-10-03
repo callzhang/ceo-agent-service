@@ -69,8 +69,25 @@ class DingTalkSendEvidenceDriver:
             # The proposal this run reviewed cannot be read, so nothing it
             # claims can be checked against anything.
             return False
-        written, unclassifiable = self._touched_objects(run.tool_events)
-        has_receipt = bool(provider_receipts(run.tool_events))
+        events = list(run.tool_events)
+        # Result correction does not undo effects accepted in an earlier turn.
+        # Only the exact reviewed operation may contribute its durable receipts.
+        for earlier in self.store.list_agent_runs_for_task_generation(
+            task.id, run.execution_generation
+        ):
+            if (
+                earlier.id < run.id
+                and earlier.role is AgentRole.AUDIT
+                and earlier.status in {"completed", "failed"}
+                and earlier.execution_generation == run.execution_generation
+                and earlier.parent_agent_run_id == run.parent_agent_run_id
+                and earlier.proposal_revision == run.proposal_revision
+                and run.operation_id
+                and earlier.operation_id == run.operation_id
+            ):
+                events.extend(earlier.tool_events)
+        written, unclassifiable = self._touched_objects(events)
+        has_receipt = bool(provider_receipts(events))
         # Neither `capability` nor `operation` decides anything here: both are
         # free text the model writes, and September alone spelled chat as
         # `dingtalk-chat`, `dingtalk_chat`, `dingtalk chat` and `dws chat`. A
