@@ -3807,6 +3807,114 @@ def test_stored_assessment_accepts_project_proposal_and_attention_on_same_canoni
     assert result.attention_proposals[0].anchor_id == anchor_id
 
 
+def test_new_project_proposal_rejects_attention_anchor_for_different_registered_project_before_writes(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-new-selector-contradiction.sqlite3")
+    _other, other_anchor = _stored_project_task(store, title="另一项目")
+    base = _work_item()
+    item = base.model_copy(update={
+        "source": base.source.model_copy(update={"type": WorkItemSourceType.AI_MINUTES}),
+        "context": base.context.model_copy(update={"source_conversation_kind": WorkItemSourceKind.MINUTES}),
+        "summary": "会议决定启动新业务项目，但交付风险需要观察。",
+    })
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [{
+            "project_title": "新业务项目", "project_decision_index": 0,
+            "outcome": "needs_attention", "reason": "当前交付风险需要观察。",
+            "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+        }],
+        "task_decisions": [{
+            "action": "record_candidate", "transition": "none", "title": "完成新业务交付",
+            "source_ref": item.source.ref, "source_excerpt": "交付风险需要观察",
+            "project_proposal": {
+                "title": "新业务项目", "authority": "meeting_decision",
+                "source_excerpt": "会议决定启动新业务项目", "reason": "会议明确立项",
+            },
+            "attention_proposal": {
+                "category": "watch", "title": "新业务交付风险", "why_attention": "风险待核实",
+                "current_state": "等待交付", "ceo_action": "观察结果",
+                "anchor_id": other_anchor, "assessment_basis": "current_observation",
+                "material_trigger": "risk_escalation",
+                "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+            },
+        }],
+    })
+    tasks_before = store.list_business_tasks()
+    signals_before = store.list_business_task_signals()
+    projects_before = store.list_business_projects()
+
+    with pytest.raises(ValueError, match="different canonical stored Project"):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+        )
+
+    assert store.list_business_tasks() == tasks_before
+    assert store.list_business_task_signals() == signals_before
+    assert store.list_business_projects() == projects_before
+
+
+def test_new_project_attention_rejects_guessed_future_anchor_and_accepts_null_resolution(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-new-project-future-anchor.sqlite3")
+    _first, _first_anchor = _stored_project_task(store)
+    _second, _second_anchor = _stored_project_task(store, title="另一项目")
+    guessed_future_anchor = 3
+    with store.business_task_transaction() as db:
+        assert store.get_business_anchor_in_transaction(
+            anchor_id=guessed_future_anchor, _db=db,
+        ) is None
+    base = _work_item()
+    item = base.model_copy(update={
+        "source": base.source.model_copy(update={"type": WorkItemSourceType.AI_MINUTES}),
+        "context": base.context.model_copy(update={"source_conversation_kind": WorkItemSourceKind.MINUTES}),
+        "summary": "会议决定启动新业务项目，但交付风险需要观察。",
+    })
+    payload = {
+        "project_assessments": [{
+            "project_title": "新业务项目", "project_decision_index": 0,
+            "outcome": "needs_attention", "reason": "当前交付风险需要观察。",
+            "assessment_basis": "current_observation", "decision_indexes": [0], "task_ids": [],
+            "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+        }],
+        "task_decisions": [{
+            "action": "record_candidate", "transition": "none", "title": "完成新业务交付",
+            "source_ref": item.source.ref, "source_excerpt": "交付风险需要观察",
+            "project_proposal": {
+                "title": "新业务项目", "authority": "meeting_decision",
+                "source_excerpt": "会议决定启动新业务项目", "reason": "会议明确立项",
+            },
+            "attention_proposal": {
+                "category": "watch", "title": "新业务交付风险", "why_attention": "风险待核实",
+                "current_state": "等待交付", "ceo_action": "观察结果",
+                "anchor_id": guessed_future_anchor, "assessment_basis": "current_observation",
+                "material_trigger": "risk_escalation",
+                "evidence": [{"source_ref": item.source.ref, "source_excerpt": "交付风险需要观察"}],
+            },
+        }],
+    }
+    tasks_before = store.list_business_tasks()
+    signals_before = store.list_business_task_signals()
+
+    with pytest.raises(ValueError, match="registered active official Project"):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item,
+            decision=TaskAgentDecision.model_validate(payload), record_run=False,
+        )
+
+    assert store.list_business_tasks() == tasks_before
+    assert store.list_business_task_signals() == signals_before
+    payload["task_decisions"][0]["attention_proposal"]["anchor_id"] = None
+    result = apply_task_agent_decision(
+        store, summary_input_id=2, work_item=item,
+        decision=TaskAgentDecision.model_validate(payload), record_run=False,
+    )
+    project = next(project for project in store.list_business_projects()
+                   if project.title == "新业务项目")
+    assert result.applied_decisions[0].anchor_id == project.canonical_anchor_id
+    assert result.attention_proposals[0].anchor_id == project.canonical_anchor_id
+    assert result.projection_receipt is not None
+    assert result.projection_receipt.status == "completed"
+
+
 def test_existing_attention_requires_assessment_to_cite_that_cards_original_proof(tmp_path):
     store = AutoReplyStore(tmp_path / "assessment-card-proof-binding.sqlite3")
     seed, anchor_id = _stored_project_task(store)
@@ -3931,6 +4039,29 @@ def test_applied_mapping_does_not_claim_project_from_assessment_without_actual_l
 
     assert result.applied_decisions[0].anchor_id is None
     assert store.list_business_task_anchor_links(task_id=result.task_ids[0]) == ()
+
+
+def test_applied_mapping_uses_unique_actual_confirmed_project_without_support_index(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-map-unique-confirmed-project.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    item = _work_item()
+    assessment = _stored_project_assessment(
+        item, seed, anchor_id, decision_indexes=[], task_ids=[seed.task_id],
+    )
+    decision = TaskAgentDecision.model_validate({
+        "project_assessments": [assessment],
+        "task_decisions": [{
+            "action": "update_task", "transition": "update_fields", "task_id": seed.task_id,
+            "title": "售前知识库交付", "status": "waiting",
+            "source_ref": item.source.ref, "source_excerpt": "补齐来源链接",
+        }],
+    })
+
+    result = apply_task_agent_decision(
+        store, summary_input_id=1, work_item=item, decision=decision, record_run=False,
+    )
+
+    assert result.applied_decisions[0].anchor_id == anchor_id
 
 
 def test_new_project_rejects_unrelated_existing_task_without_matching_supported_decision(tmp_path):

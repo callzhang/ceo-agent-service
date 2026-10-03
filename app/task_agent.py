@@ -1457,17 +1457,17 @@ def _validate_stored_project_assessments(
             item = decision.task_decisions[index]
             if item.task_id is not None:
                 supporting_task_ids.add(item.task_id)
+            explicit_anchors = {
+                anchor_id
+                for anchor_id in (
+                    item.project_link_proposal.anchor_id
+                    if item.project_link_proposal is not None else None,
+                    item.attention_proposal.anchor_id
+                    if item.attention_proposal is not None else None,
+                )
+                if anchor_id is not None
+            }
             if resolved_anchor is not None:
-                explicit_anchors = {
-                    anchor_id
-                    for anchor_id in (
-                        item.project_link_proposal.anchor_id
-                        if item.project_link_proposal is not None else None,
-                        item.attention_proposal.anchor_id
-                        if item.attention_proposal is not None else None,
-                    )
-                    if anchor_id is not None
-                }
                 if any(anchor_id != resolved_anchor for anchor_id in explicit_anchors):
                     raise ValueError(
                         "supporting decision selects a different canonical stored Project"
@@ -1478,6 +1478,17 @@ def _validate_stored_project_assessments(
                         "one applied Task decision cannot map to contradictory Project identities"
                     )
                 applied_anchor_by_decision[index] = resolved_anchor
+            elif assessment.project_decision_index is not None:
+                for anchor_id in explicit_anchors:
+                    selected_project = official_project(anchor_id)
+                    if selected_project is None:
+                        raise ValueError(
+                            "supporting decision anchor requires a registered active official Project"
+                        )
+                    if selected_project["title"] != assessment.project_title:
+                        raise ValueError(
+                            "supporting decision selects a different canonical stored Project"
+                        )
 
         for evidence in assessment.evidence:
             if evidence.signal_id is None:
@@ -2202,13 +2213,16 @@ def apply_task_agent_decision(
                     anchor_id=attention_anchor_id,
                 ))
             stored_anchor = stored_anchor_by_decision.get(decision_index)
+            confirmed_anchors = _confirmed_official_project_anchors(
+                store, task_id=task_id, db=db
+            )
             actual_anchor = (
                 applied_project_anchor_id
                 if applied_project_anchor_id is not None
                 else stored_anchor
-                if stored_anchor in _confirmed_official_project_anchors(
-                    store, task_id=task_id, db=db
-                )
+                if stored_anchor in confirmed_anchors
+                else next(iter(confirmed_anchors))
+                if len(confirmed_anchors) == 1
                 else None
             )
             applied_decisions.append(AppliedTaskDecision(
