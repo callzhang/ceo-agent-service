@@ -14568,10 +14568,7 @@ class AutoReplyStore:
                               '$.lifecycle_version'
                           )
                           else null
-                      end in (
-                          'email_unsubscribe_consumer_direct_v1',
-                          'email_unsubscribe_audited_v2'
-                      )
+                      end='email_unsubscribe_consumer_direct_v1'
                 """,
                 (task_id, expected_execution_generation, expected_status),
             )
