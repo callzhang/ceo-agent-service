@@ -1287,6 +1287,8 @@ lock acquisition, the body, commit, and close; it is not by itself proof of the
 write-lock holder or transaction duration. Logs exclude SQL parameters and mail
 content. Correlate the caller with the operating system's WAL-lock owner and
 the affected run before changing transaction boundaries.
+Shared Store diagnostics retain up to eight caller frames so a context-manager
+wrapper cannot hide the business method that opened the connection.
 
 Legacy unsubscribe terminalization uses the same lifecycle selector as its
 inventory: only `email_unsubscribe_consumer_direct_v1`. An inventoried object
