@@ -1,13 +1,47 @@
 # 多来源项目关注第一版验收
 
-状态（2026-10-03）：冻结候选 `fbba12e9` 的 19 案例原生配对仍在执行；截至下文明确记录的前 12 对，候选 9 对通过、3 对失败，不是完整评估通过。独立修复分支已完成并审查 `b965df0c` / `cc5a52e1` 两项 prompt/Skill/字段说明澄清，但尚未原生复测、合并或部署。真实 W39 最新版副本重复回放、全局 Skill 发布和上线读回均未完成。历史 `fc58e803` 的 9/9 不由后续版本继承，也不代替真实数据效果。
+状态（2026-10-03）：冻结候选 `fbba12e9` 的 19 案例原生配对已完成，共 40 次调用（已有卡案例每侧两次）。候选 20 次中 13 次通过、7 次失败；按独立案例为 13/19，不能发布。独立修复分支已审查 `b965df0c` / `cc5a52e1` prompt/Skill 澄清和 `58b8e623` 有界应用回执修复，尚未原生复测、合并或部署。真实 W39 最新版副本重复回放、全局 Skill 发布和上线读回均未完成。历史 `fc58e803` 的 9/9 不由后续版本继承，也不代替真实数据效果。
+
+## 冻结配对最终读回与回执修复
+
+原批次已正常结束，没有因空轮询重启。此前前 12 对的记录保留在下一节作为阶段历史；
+本节补齐其余结果，code/Skill/fixture/model/timeout/concurrency 均未中途改变。
+
+| 后续 case | 候选实际结果与人工来源复核 |
+| --- | --- |
+| assessment-chat-needs-attention | 通过：新聊天明确验收推迟及供应商条件性暂停供货，更新原 Task，并以当前真实 Signal 生成 Project1/Card1，不要求周报。 |
+| assessment-vague-risk-not-needed | 失败：风险内容缺失的 insufficient_evidence 判断正确，真实汇总候选 Task1 已保存、无卡；已知 Project1 回执却漏掉支持 Task1，固定 oracle 拒绝。 |
+| assessment-no-task-insufficient | 通过：满意度下降原因和经营影响未核实，且来源明确无行动；零 Task/卡，不为风险制造行动。 |
+| assessment-unconfirmed-project | 失败：未知项目的不足证据判断正确，保留真实核对候选 Task1、无 Project/卡；项目线索回执没有 Task 身份，却附上该 Task 的 Signal1，Task-or-card 引文关系检查拒绝。 |
+| assessment-routine-not-needed | 通过：正常验收及收付款均按计划，真实汇总 Task1/Project1，无卡；“CEO 介入”措辞仍是术语复核项，不等于误关注。 |
+| assessment-two-tasks-one-project | 通过：80 万回款不能按计划实现及供应商到期付款有原文，两个真实 Task1/2、一个正式 Project1、一个 Card1，两成员都真实。 |
+| assessment-existing-card-idempotent（两次） | 两次失败：原生判断同事实无需新 Task/proposal，但 existing_attention_id=1 只引用当前聊天，没有引用该卡原始 proof；领域检查拒绝，Task/Project/card/事件均无新增。身份未重复不等于成功复用。 |
+
+最后案例的旧卡 `assessment_json`、原始 Signal 和支持 Task 都在当前检索 JSON 中；
+失败不是来源未交付，而是输出没有履行原始引用要求。修复分支已有 `b965df0c` 的
+原始 proof 声明澄清；须实际原生重跑才能证明有效，不能用源码文字测试代替。
+
+`58b8e623` 修复两项真实回执问题，固定 oracle 和三个 fixture 完全未改：已解析正式
+Project 的支持位置上实际保存的 Task 编号留在回执，即使没有 confirmed link；编号只是
+支持引用，不宣称正式任务或项目成员。未确认 Project 仍是 evidence-only，回执 Task IDs
+为空，当前引文不借用这些未列入支持任务的 Signal，保留 null ID 和来源时间。
+原始 Task/Signal 的保存、Project 登记、卡片投影、no-field-change guard 均不改变。
+
+两项真实 SQLite 回归先观察失败，再修复；模型/Agent/multisource 478 项通过（36.16 秒），
+独立 17 项有界复核通过（1.89 秒），Ruff/diff 检查通过。每项都从同一固定 facts DB
+另做 fresh backup，使用未改动的已保存原生 decision，仅应用新版领域代码；两个控制
+均通过原固定 oracle。它们是受控领域证据，不是修复版原生运行。初次扩大到未知项目
+Task ID 的控制仍失败，被保留，最终实现收窄到上述已批准边界。
+
+原 batch 的七次失败仍保留。三个修复提交尚未使 native gate 通过；下一轮必须冻结
+同一最新 code/Skill，用原 19 案例及最后案例两次重复执行，不继承旧候选通过。
 
 历史进展：标题和 Project 身份修复均经独立复核；`c87752c0` 新副本实际更新六个原 Task，
 无新增 Task，正式 Project 中汽创智和岚图登记正确；但 proposal_count=0，receipt=no_proposal，
 没有卡片。当前输出不能区分已评估后不关注与漏评，也没有给出这两项风险不关注的理由。
 不得将工具 input 模式 passed=true 或领域提交完成当作真实业务通过。详见末尾本轮结果。
 
-## 19 案例冻结配对的阶段读回（尚未完成）
+## 19 案例冻结配对的前 12 对阶段历史
 
 此节只记录已完成到 `assessment-meeting-needs-attention` 的前 12 对；后续案例及已有卡两次
 重放仍在同一原生批次执行，不因某次观察没有输出而重启。固定 baseline 为
