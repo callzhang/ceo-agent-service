@@ -883,6 +883,18 @@ MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR = (
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 
 
+def _sqlite_caller_chain(frame) -> str:
+    callers = []
+    for _ in range(8):
+        callers.append(
+            f"{Path(frame.f_code.co_filename).name}:{frame.f_lineno}:{frame.f_code.co_name}"
+        )
+        frame = frame.f_back
+        if frame is None:
+            break
+    return " <- ".join(callers)
+
+
 def _name_sqlite_extended_error(path: Path, error: sqlite3.Error) -> None:
     """Name the SQLite extended result code on a failure's way out.
 
@@ -895,19 +907,10 @@ def _name_sqlite_extended_error(path: Path, error: sqlite3.Error) -> None:
     name = getattr(error, "sqlite_errorname", "")
     if not name:
         return
-    frame = sys._getframe(1)
-    callers = []
-    for _ in range(8):
-        callers.append(
-            f"{Path(frame.f_code.co_filename).name}:{frame.f_lineno}:{frame.f_code.co_name}"
-        )
-        frame = frame.f_back
-        if frame is None:
-            break
-    del frame
+    callers = _sqlite_caller_chain(sys._getframe(1))
     print(
         f"sqlite {name} code={getattr(error, 'sqlite_errorcode', '')} "
-        f"path={path} thread={threading.get_ident()} callers={' <- '.join(callers)}: {error}",
+        f"path={path} thread={threading.get_ident()} callers={callers}: {error}",
         file=sys.stderr,
         flush=True,
     )
@@ -2477,15 +2480,12 @@ class AutoReplyStore:
             connection.close()
             elapsed = time.monotonic() - started_at
             if elapsed >= 1.0:
-                caller = sys._getframe(2)
                 print(
                     f"slow sqlite context elapsed_seconds={elapsed:.3f} "
-                    f"caller={Path(caller.f_code.co_filename).name}:"
-                    f"{caller.f_lineno}:{caller.f_code.co_name}",
+                    f"callers={_sqlite_caller_chain(sys._getframe(2))}",
                     file=sys.stderr,
                     flush=True,
                 )
-                del caller
 
     @contextmanager
     def _optional_connection(
