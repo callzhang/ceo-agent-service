@@ -8,6 +8,9 @@
 
 对此只澄清 prompt、CI Skill 和 outcome 字段说明中的负面判断含义：not_needed 要有来源事实支持不需关注；风险或经营影响证据缺失须写明缺口并返回 insufficient_evidence。没有修改判定标准、fixture、结构验证、领域应用、投影或原始结果，没有关键词分类器、服务端 outcome 改写或自动补卡。该澄清在主开发工作区进行，冻结421的原生批次不受影响；源码和后续原生证据分开记录。
 三个新增指令一致性回归先 RED；三项相关文件 487 passed（18.40 秒），独立源码审阅 42 项通过，Ruff/diff 检查通过。它们证明源码边界和规则一致，不证明新指令的原生效果；最新候选仍须冻结并重新实际验证。
+`853f590e` 已提交上述澄清。随后冻结421跑到原固定 `assessment-vague-risk-not-needed`：原有引文问题不再发生，run 完成、真实候选行动和 Project 引用保存、无关注卡；但原始 outcome 仍为 not_needed，固定 oracle 明确返回 project_assessment_outcome_mismatch。因此这不是仅人工偏好或换行问题复发，而是已确认的同一负面判断语义偏差；853的效果仍需实际原生运行证明，不能继承421的通过项。
+
+主 Agent 在853上再次运行相关开发矩阵：11个后端文件1015 passed（44.40秒）；process_work_items CLI22 passed /254 deselected（2.58秒）；配置的frontend Vitest4.1.10两页面22 passed（1.70秒）；TypeScript/Vite构建及四个运行模块导入通过。最初从仓库根目录误用npx导致未配置Vitest5启动失败，不是页面断言失败；改用frontend现有依赖后完成上述正确验证，没有修改依赖文件。未运行整套服务测试，未在生产checkout构建或运行测试。实际会议输入27478在生产与已准备副本中ref、来源时间及完整payload SHA256完全一致，属于后续真实非周报回放准备，尚未原生处理或修改生产。
 
 本轮 19 个固定案例及已有卡第二次回放使用同一冻结源码、Skill SHA256 `118250132fd7579afaec136df7fd7feffa299e73e59faf1d31f112cc819eae97`、原固定事实和相同模型/路由/900 秒总时限、300 秒 idle、并发 1。基线沿用此前 pinned `7bf7be5e` 在同一事实和运行配置下的已完成结果，未替换或改写。expected 仍只在原生完成后用于只读核验，没有修改三份 fixture 或 oracle。
 
