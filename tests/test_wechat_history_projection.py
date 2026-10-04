@@ -12,17 +12,22 @@ from tests.test_console_web_api import _client
 
 
 @pytest.mark.parametrize(
-    "delivery_status,generation,conversation,latest_sent,expected_failed",
+    "delivery_status,generation,conversation,latest_sent,expected_failed,attempt_status",
     [
-        ("failed", "initial", "wechat-current", False, True),
-        ("send_unknown", "initial", "wechat-current", False, True),
-        ("failed", "old-generation", "wechat-current", False, False),
-        ("failed", "initial", "another-conversation", False, False),
-        ("failed", "initial", "wechat-current", True, False),
+        ("failed", "initial", "wechat-current", False, True, "failed"),
+        ("send_unknown", "initial", "wechat-current", False, True, "failed"),
+        ("failed", "old-generation", "wechat-current", False, False, "failed"),
+        ("failed", "initial", "another-conversation", False, False, "failed"),
+        ("failed", "initial", "wechat-current", True, False, "failed"),
+        ("failed", "initial", "wechat-current", False, False, "pending"),
+        ("failed", "initial", "wechat-current", False, False, "sent"),
+        ("failed", "initial", "wechat-current", False, False, "skipped"),
+        ("failed", "initial", "wechat-current", False, False, "needs_human"),
     ],
 )
 def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
     tmp_path, delivery_status, generation, conversation, latest_sent, expected_failed,
+    attempt_status,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
@@ -40,7 +45,7 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
         conversation_id="wechat-current", conversation_title="Morgan",
         trigger_message_id="message-1", trigger_sender="Morgan",
         trigger_text="Can you help later?", action="send_reply",
-        sensitivity_kind="normal", send_status="failed", channel="wechat",
+        sensitivity_kind="normal", send_status=attempt_status, channel="wechat",
     )
     with store._connect() as db:
         db.execute("update reply_tasks set status='done' where id=?", (task.id,))
@@ -75,7 +80,11 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
     chart = audit_web._history_chart_payload(store)
     series = {row["name"]: sum(row["data"]) for row in chart["series"]}
     assert series.get("Failed", 0) == int(expected_failed)
-    assert series.get("Done", 0) == int(not expected_failed)
+    event_label = "Failed" if expected_failed else {
+        "pending": "Pending", "skipped": "Skipped", "needs_human": "Needs human",
+    }.get(attempt_status, "Done")
+    assert series.get(event_label, 0) == 1
+    assert sum(series.values()) == 1
     with store._connect() as db:
         assert [tuple(row) for row in db.execute("select * from wechat_deliveries")] == original_deliveries
         assert [tuple(row) for row in db.execute("select * from reply_tasks")] == original_tasks
