@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.agent_contracts import ConsumerAgentResult
 from app.system_executor import ActionOutcome, SystemExecutor
 
@@ -275,6 +277,38 @@ def test_unavailable_reviewed_source_retries_without_dispatch():
     assert result.error.code == "reviewed_source_unavailable"
     assert result.error.retryable is True
     assert "begin:0" not in store.events
+
+
+@pytest.mark.parametrize("envelope, native_code, authorization", [
+    ({"success": False, "errcode": 90020, "errmsg": "Native quota exceeded"}, "90020", False),
+    ({"success": False, "errorCode": "PAT_MEDIUM_RISK_NO_PERMISSION",
+      "errorMessage": "Native resource permission denied"}, "PAT_MEDIUM_RISK_NO_PERMISSION", True),
+])
+def test_reviewed_source_native_oa_failure_envelope_keeps_error_without_dispatch(
+    envelope, native_code, authorization,
+):
+    from app.agent_contracts import ReviewedSourceBinding
+
+    class Source:
+        def read_oa_approval_detail(self, ref):
+            assert ref == "process"
+            return envelope
+
+    binding = ReviewedSourceBinding(provider="dingtalk-oa", object_ref="process",
+                                    value={"processInstanceId": "process", "formValueVOS": []})
+    store = FakeStore(_candidate().model_copy(update={"source_bindings": (binding,)}))
+    handler = Handler()
+    result = SystemExecutor(store, {("test", "act"): handler}, dws=Source(), owner="worker").execute(
+        store.get_reply_task(1), 1, 2,
+    )
+    assert result.outcome == "failed"
+    assert result.error.code == ("authorization_required" if authorization else "reviewed_source_unavailable")
+    assert result.error.source_code == native_code
+    assert result.error.source == "dingtalk-oa"
+    assert result.error.authorization_required is authorization
+    assert result.error.retryable is False
+    assert handler.calls == [] and "begin:0" not in store.events
+    assert "invalidate:1:business_state_changed" not in store.events
 
 
 def test_reviewed_source_auth_error_keeps_native_code_and_auth_flag():

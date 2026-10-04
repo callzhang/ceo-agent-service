@@ -37,9 +37,33 @@ def test_oa_binding_uses_verified_native_form_fields_without_own_task_transition
 
 
 def test_failed_oa_source_read_cannot_create_a_reviewed_binding(tmp_path):
+    from app.dws_client import DwsError
     from app.reviewed_sources import read_provider_source
     class Dws:
         def read_oa_approval_detail(self, ref):
             return {'success':False, 'result':{}}
-    with pytest.raises(ValueError, match='unavailable'):
+    with pytest.raises(DwsError, match='unavailable'):
         read_provider_source(Dws(), 'dingtalk-oa', 'process')
+
+
+@pytest.mark.parametrize("payload, code, message", [
+    ({"success": False, "errcode": 90020, "errmsg": "Native quota exceeded"},
+     "90020", "Native quota exceeded"),
+    ({"success": False, "errorCode": "PAT_MEDIUM_RISK_NO_PERMISSION",
+      "errorMessage": "Native resource permission denied"},
+     "PAT_MEDIUM_RISK_NO_PERMISSION", "Native resource permission denied"),
+])
+def test_native_oa_failure_envelope_preserves_original_code_and_message(payload, code, message):
+    from app.dws_client import DwsError
+    from app.reviewed_sources import read_provider_source
+
+    class Source:
+        def read_oa_approval_detail(self, ref):
+            assert ref == "process"
+            return payload
+
+    with pytest.raises(DwsError, match=message) as raised:
+        read_provider_source(Source(), "dingtalk-oa", "process")
+    assert raised.value.code == code
+    assert raised.value.server_key == "dingtalk-oa"
+    assert raised.value.retryable_external_dependency is False

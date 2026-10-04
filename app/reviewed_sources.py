@@ -61,6 +61,14 @@ def read_provider_source(dws, provider, object_ref):
         raise ValueError("reviewed source client unavailable")
     if provider == "dingtalk-oa":
         data = dws.read_oa_approval_detail(object_ref)
+        if isinstance(data, dict) and data.get("success") is False:
+            code = data.get("errcode") if "errcode" in data else data.get("errorCode")
+            message = data.get("errmsg") if "errmsg" in data else data.get("errorMessage")
+            raise DwsError(
+                message if isinstance(message, str) and message else "OA source detail unavailable",
+                code=str(code) if type(code) in (str, int) else None,
+                server_key="dingtalk-oa",
+            )
         if not isinstance(data, dict) or data.get("success") is not True or not isinstance(data.get("result"), dict):
             raise ValueError("OA source detail unavailable")
         result = data["result"]

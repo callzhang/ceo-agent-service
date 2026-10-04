@@ -3284,3 +3284,40 @@ def test_source_capture_failure_preserves_native_error_and_authentication(store,
     assert detail["retryable"] is False
     assert "permission denied" in detail["detail"]
     assert run.status == "failed" and not run.final_result_json
+
+
+@pytest.mark.parametrize("envelope, native_code, message, authorization", [
+    ({"success": False, "errcode": 90020, "errmsg": "Native quota exceeded"},
+     "90020", "Native quota exceeded", False),
+    ({"success": False, "errorCode": "PAT_MEDIUM_RISK_NO_PERMISSION",
+      "errorMessage": "Native resource permission denied"},
+     "PAT_MEDIUM_RISK_NO_PERMISSION", "Native resource permission denied", True),
+])
+def test_source_capture_native_oa_failure_envelope_persists_diagnostics(
+    store, task, context, envelope, native_code, message, authorization,
+):
+    from app.reviewed_sources import ReviewedSourceReadError
+
+    class Source:
+        def read_oa_approval_detail(self, ref):
+            assert ref == "process-1"
+            return envelope
+
+    runner = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), source_client=Source(),
+        executor=CapturingExecutor(_proposal_jsonl(
+            {"remark": "Approved"}, capability="dingtalk-oa", operation="approve",
+            target={"process_instance_id": "process-1", "task_id": "task-1"},
+        )),
+    )
+    with pytest.raises(ReviewedSourceReadError, match=message):
+        runner.run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+    detail = json.loads(run.structured_error_json)
+    assert detail["code"] == ("authorization_required" if authorization else "provider_read_failed")
+    assert detail["source_code"] == native_code
+    assert detail["source"] == "dingtalk-oa"
+    assert message in detail["detail"]
+    assert detail["authorization_required"] is authorization
+    assert detail["retryable"] is False
+    assert run.status == "failed" and not run.final_result_json
