@@ -15,7 +15,12 @@
 
 Consumer 的未审核外部效果检测只把写入操作的 provider 回执视作副作用；
 群消息列表中的 `conversationMessagesList[*].messages[*].openMessageId` 是历史消息身份，
-不能据此判定 Consumer 发送了消息或阻止后续安全恢复。
+不能据此判定 Consumer 发送了消息或阻止后续安全恢复。检测只读取 provider 的
+`data` / `result` / `provider_result` 结果封装中的回执，MCP `content[*].text` 与
+`structuredContent` 先按传输封装解码；正式发送工具的 `provider_result.result.openTaskId`
+同样保留为执行证据，不递归
+业务正文、历史消息样本或其重新组织后的预览。拒绝结果不作为已接受的效果，真实
+发送结果继续保留回执的出现顺序并去重。这是诊断证据边界，不改变审核、发送授权或恢复规则。
 
 1. 执行 Agent 读取上下文和证据，形成候选结果或任务结果。
 2. 审核 Agent 独立检查执行结果，决定通过、反馈修改或升级人工处理。

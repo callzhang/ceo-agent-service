@@ -29,33 +29,25 @@ PROVIDER_RECEIPT_FIELDS = (
 )
 
 
-# A provider answer nests: an MCP result wraps its payload in content entries
-# whose text is the provider's JSON re-encoded as a string, and the controlled
-# CLI wraps that again in its own envelope.  The receipt sits at the bottom, so
-# the walk decodes text it meets on the way down instead of stopping at it.
+# Decode transport envelopes, not arbitrary business content. Historical
+# messages and document text can contain the same fields as a send response.
 _MAX_ANSWER_DEPTH = 8
 
 
 def _receipts_in(value: Any, found: list[str], depth: int = 0) -> None:
-    if depth > _MAX_ANSWER_DEPTH:
+    if depth > _MAX_ANSWER_DEPTH or not isinstance(value, dict):
         return
-    if isinstance(value, dict):
-        for key, item in value.items():
-            # Chat history returns openMessageId for each existing message.
-            # Those identifiers are evidence of a read, not a new send.
-            if key == "conversationMessagesList":
-                continue
-            if key in PROVIDER_RECEIPT_FIELDS and isinstance(item, str) and item.strip():
-                found.append(item.strip())
-            else:
-                _receipts_in(item, found, depth + 1)
+    if value.get("success") is False or value.get("ok") is False:
         return
-    if isinstance(value, list):
-        for item in value:
-            _receipts_in(item, found, depth + 1)
-        return
-    if isinstance(value, str) and "{" in value:
-        _receipts_in(_loads(value), found, depth + 1)
+    result = value.get("result")
+    if isinstance(result, dict):
+        if result.get("success") is not False and result.get("ok") is not False:
+            for field, receipt in result.items():
+                if field in PROVIDER_RECEIPT_FIELDS and isinstance(receipt, str) and receipt.strip():
+                    found.append(receipt.strip())
+        _receipts_in(result, found, depth + 1)
+    _receipts_in(value.get("data"), found, depth + 1)
+    _receipts_in(value.get("provider_result"), found, depth + 1)
 
 
 def _provider_answers(event: Any) -> list[Any]:
@@ -83,15 +75,28 @@ def _provider_answers(event: Any) -> list[Any]:
         if item.get("error"):
             return []
         result = item.get("result")
-        return [result] if result else []
+        if not isinstance(result, dict):
+            return [result] if result else []
+        answers = [
+            entry["text"]
+            for entry in result.get("content", [])
+            if isinstance(entry, dict)
+            and entry.get("type") == "text"
+            and isinstance(entry.get("text"), str)
+        ] if isinstance(result.get("content"), list) else []
+        if isinstance(result.get("structuredContent"), dict):
+            answers.append(result["structuredContent"])
+        if "content" not in result:
+            answers.append(result)
+        return answers
     return []
 
 
 def provider_receipts(tool_events: Any) -> tuple[str, ...]:
     """Return the provider receipts a turn's executed calls came back with.
 
-    A non-empty result means the turn reached a provider and the provider
-    accepted the effect, whatever the turn then reported in its typed result.
+    Only receipt fields in provider result envelopes qualify. An identifier in
+    a read projection or quoted business content is not evidence of a new send.
     """
     if not isinstance(tool_events, list):
         return ()
@@ -99,7 +104,8 @@ def provider_receipts(tool_events: Any) -> tuple[str, ...]:
     for event in tool_events:
         for answer in _provider_answers(event):
             if isinstance(answer, str):
-                _receipts_in(_loads(answer), found)
+                for response in _loads(answer):
+                    _receipts_in(response, found)
             else:
                 _receipts_in(answer, found)
     # Preserve first-seen order without repeating an id echoed by later events.
