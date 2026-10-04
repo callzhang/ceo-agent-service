@@ -626,6 +626,10 @@ code 与 Skill/config 条件。`needs_human` 不接受 resolution receipt，项�
 条件不满足时，整个批次保持 `processing`，不部分结案。关联、证据和结果必须通过 Feedback API
 持久化并回读一致。
 
+Feedback API 的 Git 回归使用独立临时仓库初始化 `main`，并将测试 API 与回执指向同一仓库。
+PR 的 detached checkout 或缺少本地 `main` 不应改变测试结果；测试不得修改开发/生产检出的
+分支，也不得用 `HEAD` 代替 main 祖先证明。真实的缺失提交、未合入 main 的提交仍必须拒绝结案。
+
 Feedback API 是现有本地后端边界内的操作接口，供 Workbench 和仓库 Agent 共用；它不对
 公网暴露，也不增加 feedback 专用鉴权或第二套 Agent 流程。
 
