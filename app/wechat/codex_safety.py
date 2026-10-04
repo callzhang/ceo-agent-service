@@ -212,11 +212,22 @@ def make_role_agent_command(
             "approval_policy=", "approvals_reviewer=", "tools.enabled_tools=",
             "sandbox_mode=",
             *(f"features.{feature}=" for feature in ROLE_DISABLED_NATIVE_FEATURES),
+            "features.code_mode=", "features.code_mode_only=",
+            "features.code_mode.excluded_tool_namespaces=",
+            "features.code_mode.direct_only_tool_namespaces=",
         ),
     )
     options = [
         *(option for feature in ROLE_DISABLED_NATIVE_FEATURES
+          if feature != "code_mode_host"
           for option in ("-c", f"features.{feature}=false")),
+        # CodeModeOnly models need the native V8 host to call task-bound MCP
+        # tools. Excluding the built-in functions namespace removes shell and
+        # patch callbacks without removing those named MCP operations.
+        "-c", "features.code_mode_host=true",
+        "-c", "features.code_mode_only=true",
+        "-c", 'features.code_mode.excluded_tool_namespaces=["functions"]',
+        "-c", 'features.code_mode.direct_only_tool_namespaces=[]',
         "-c",
         'sandbox_mode="read-only"',
         "-c",

@@ -22,7 +22,10 @@ def _codex_command() -> list[str]:
         "-c", 'mcp_servers.xiaoqing_interview.url="https://interview.example/mcp"',
         "-c", "features.browser_use=true",
         "-c", "features.image_generation=true",
-        "-c", "features.code_mode_host=true",
+        "-c", "features.code_mode_host=false",
+        "-c", "features.code_mode_only=false",
+        "-c", 'features.code_mode.excluded_tool_namespaces=[]',
+        "-c", 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]',
         "-",
     ]
 
@@ -51,11 +54,19 @@ def test_codex_roles_disable_builtin_execution_and_select_service_tools(tmp_path
         for feature in (
             "browser_use", "browser_use_external", "browser_use_full_cdp_access",
             "in_app_browser", "in_app_local_automation", "in_app_chat",
-            "image_generation", "multi_agent", "code_mode_host",
+            "image_generation", "multi_agent",
             "skill_mcp_dependency_install", "memories",
         ):
             assert f"features.{feature}=false" in command
             assert f"features.{feature}=true" not in command
+        assert "features.code_mode_host=true" in command
+        assert "features.code_mode_host=false" not in command
+        assert "features.code_mode_only=true" in command
+        assert "features.code_mode_only=false" not in command
+        assert 'features.code_mode.excluded_tool_namespaces=["functions"]' in command
+        assert 'features.code_mode.excluded_tool_namespaces=[]' not in command
+        assert 'features.code_mode.direct_only_tool_namespaces=[]' in command
+        assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]' not in command
         assert 'sandbox_mode="read-only"' in command
         assert "mcp_servers.node_repl.enabled=false" in command
         assert "mcp_servers.plaud.enabled=false" in command
