@@ -119,11 +119,10 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(tmp_path,
     class Codex:
         def decide(self, **kwargs):
             assert "evaluation_only_secret_expectation" not in kwargs["prompt"]
-            from app.task_retrieval import retrieve_task_semantic_context, render_task_semantic_context
-
-            rendered = json.loads(render_task_semantic_context(
-                retrieve_task_semantic_context(store, WorkItem.model_validate(case["work_item"]))
-            ))
+            context_text = kwargs["prompt"].split(
+                "Current semantic Task context (rank is context, never authority):", 1
+            )[1].lstrip()
+            rendered, _ = json.JSONDecoder().raw_decode(context_text)
             assert rendered["current_project_attention"][0]["task_ids"] == [member.task_id]
             return TaskAgentDecision.model_validate({
                 "project_assessments": [{

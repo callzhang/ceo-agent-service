@@ -18,6 +18,8 @@
 
 随后精确origin/main226272d6已正常合并为292db466，无冲突、无Task行为改动，保留外部runtime/CI提交且未合并分歧的本地主分支。整合作者相关Task/runtime文件1238 passed/62.96秒，CLI22 passed、lint/imports/diff通过，仍须主Agent最终独立验收。为补充真实多Task重复风险，另增独立version1 fixture task_attention_card_members_v1.json，只有一个case：同正式Project两Task、已有卡仅支持Task1、培训资料Task2不支持验收回款风险。原19case/expected及oracle不变。既有重放单测参数化覆盖原旧卡及新case，两次重放九张领域表逐行全部不变，2 passed/1.00秒；这是合成决定的领域控制，不是native通过。最终冻结将重跑原19及此新增case，并单独验证真实W39两次。
 
+最终规格审阅对157ac5dc新增测试提出覆盖缺口：测试重新调用检索函数而没有证明实际Agent prompt含成员数据，因此不能排除传递层遗漏。修订测试直接从Codex收到的kwargs.prompt解析真实semantic context，断言卡片task_ids仅有实际成员；不再自行重建上下文。两次重复及九表不变的控制重新2 passed/1.76秒，Ruff/diff通过。仅测试证据修订，没有修改runtime、原19fixture/expected或oracle；等待正式复审后冻结。
+
 阶段历史（2026-10-03）：冻结候选 `1732455c` 已正常结束，20次Task Agent回放机械18通过/2失败，按19个独立案例17通过/2失败，不能发布。此前47和421批次均已结束，失败原始记录保留；各版本结果不得继承。真实W39最新版副本重复回放、全局Skill发布、合并部署和上线读回均未完成。
 
 当前源码进展：Derek已明确同意新证据可独立更新已有、已确认Task/正式Project的关注，不必制造Task字段变化。修订`3388c404`通过独立规格复审：首次字段更新后的同来源重放复用原Signal，不新增Signal、Task证据或Task/Attention事件；无效历史引文在新证据写入前拒绝；重复relevant值携带有效关注提案不改变Task事件。原有登记测试的断言保留。主Agent独立11文件矩阵1025 passed（57.15秒），CLI22 passed/254 deselected（2.06秒），Ruff、四个运行模块导入及diff检查通过。质量审阅仍在进行；下文f650失败及173原生失败是保留的历史证据，不代表新修订已原生或上线通过。
