@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -104,7 +104,10 @@ beforeEach(() => {
   window.history.replaceState({}, "", "/");
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function setCompactViewport(compact: boolean) {
   Object.defineProperty(window, "matchMedia", {
@@ -1319,11 +1322,10 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByRole("button", { name: "停止执行" });
-    expect(sources[0].url).toContain("/running-turn/events/stream?after=0");
+    await waitFor(() => expect(sources[0]?.url).toContain("/running-turn/events/stream?after=0"));
     await user.click(screen.getByRole("button", { name: "打开任务 产品规划" }));
     await screen.findByText("开始新的对话");
     expect(sources[0].closed).toBe(true);
-    vi.unstubAllGlobals();
   });
 
   it("keeps tool status scoped to its step and applies terminal SSE state to the task", async () => {
@@ -1361,6 +1363,7 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByRole("button", { name: "停止执行" });
+    await waitFor(() => expect(sources).toHaveLength(1));
     sources[0].emit("tool_completed", 1, {
       tool_call_id: "tool-1",
       tool: "search",

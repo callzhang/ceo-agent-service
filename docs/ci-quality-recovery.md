@@ -101,3 +101,11 @@ input and unwraps the one result. This preserves labels, probabilities, and
 margin without modifying the library, pinning an obsolete NumPy, or catching
 and hiding prediction failures. A contract regression checks the batch input
 and the unchanged prediction output, in addition to real training coverage.
+
+The next Linux run passed all 9,867 backend tests and exposed frontend fixture
+portability issues: decision timestamps were asserted in the developer's
+timezone rather than the viewer's local timezone, and SSE tests inspected a
+connection before the passive effect created it. Timestamp assertions use the
+fixture's exact instant in the current viewer timezone. SSE assertions wait for
+the actual connection, and components are unmounted before global mocks are
+removed. The full frontend suite is also verified under `TZ=UTC`.
