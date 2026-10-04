@@ -780,7 +780,7 @@ Task 关联到该 Project。`project_proposal` 表示采用当前权威来源明
 不成为项目，起始换行也不能导致错读前一行。
 普通项目提及、客户/部门标签和孤立 Task 仍只形成 Project candidate，只有候选项目的明确确认命令才会升级。
 确认命令只能引用 candidate cluster 已有的来源证据，重复点击幂等，不能改绑到另一个 Project。
-正式 Project 可有独立、可选的 `ProjectContext`：它以完整快照追加到版本历史，当前值只读最新版本，不在 Project 行复制可失配的 current JSON。总负责最多一人或未知；个人分工和冲突事实各自保留真实 Signal 的 ref/逐字摘录，绝不从关联 Task owner 推断。`context=null` 只补 Project↔Signal 证明，不覆盖当前快照；显式空分工快照才会清空当前分工，旧版本仍可读。相同结构 JSON 不生成新版本，字典键顺序没有业务含义。Task suggestion 只是来源支持的建议，不写实际 Task owner。本阶段不接入 Task Agent 写入或控制台投影。
+正式 Project 可有独立、可选的 `ProjectContext`：它以完整快照追加到版本历史，当前值只读最新版本，不在 Project 行复制可失配的 current JSON。总负责最多一人或未知；个人分工和冲突事实各自保留真实 Signal 的 ref/逐字摘录，绝不从关联 Task owner 推断。结构化 JSON 来源的逐字摘录可落在一个解码后的字符串叶子，不能拼接不同字段。`context=null` 只补 Project↔Signal 证明，不覆盖当前快照；显式空分工快照才会清空当前分工，旧版本仍可读。相同结构 JSON 不生成新版本，字典键顺序没有业务含义。Task suggestion 只是来源支持的建议，不写实际 Task owner。本阶段不接入 Task Agent 写入或控制台投影。
 一行列出多位个人负责人时，来源证据须覆盖每个人名；钉钉 `@` 标记及名单分隔符
 不应把有效的负责人引用误判为缺失，团队或部门名称仍不能充当个人负责人。
 

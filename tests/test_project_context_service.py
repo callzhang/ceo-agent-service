@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -146,3 +148,41 @@ def test_context_none_only_links_proof_and_explicit_empty_snapshot_clears_roles(
         assert service.apply(project_id=project_id, context=empty, signal_ids=(second_signal,), db=db) is not None
     cleared = store.get_business_project_context(project_id)
     assert cleared is not None and cleared.overall_owner is None and cleared.responsibilities == []
+
+
+def test_context_service_accepts_quote_in_one_decoded_structured_source_string(project_store):
+    store, project_id, _, _ = project_store
+    signal_id = store.create_business_task_signal(
+        source_type="report", source_ref="report:structured",
+        evidence_text=json.dumps({"report": {"line": "张三负责\n交付"}}, ensure_ascii=True),
+        dedupe_key="project-context:structured",
+    )
+    value = ProjectContext(goal="交付", scope="一期", overall_owner={
+        "person_name": "张三", "responsibility": "交付",
+        "evidence": [{"signal_id": signal_id, "source_ref": "report:structured", "source_excerpt": "张三负责\n交付"}],
+    }, responsibilities=[], facts=[])
+    with store.business_task_transaction() as db:
+        assert ProjectContextService(store).apply(
+            project_id=project_id, context=value, signal_ids=(signal_id,), db=db
+        ) is not None
+
+
+def test_context_service_rejection_leaves_no_partial_writes_inside_caller_transaction(project_store):
+    store, project_id, signal_id, _ = project_store
+    value = ProjectContext(goal="交付", scope="一期", overall_owner=None, responsibilities=[], facts=[{
+        "key": "fabricated", "text": "不可拼接", "evidence": [{
+            "signal_id": signal_id, "source_ref": "meeting:project-1",
+            "source_excerpt": "张三负责交付并不存在",
+        }],
+    }])
+    with store.business_task_transaction() as db:
+        with pytest.raises(ValueError, match="faithfully"):
+            ProjectContextService(store).apply(
+                project_id=project_id, context=value, signal_ids=(signal_id,), db=db
+            )
+        assert db.execute(
+            "select count(*) from business_project_evidence where project_id=?", (project_id,)
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "select count(*) from business_project_context_revisions where project_id=?", (project_id,)
+        ).fetchone()[0] == 0

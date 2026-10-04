@@ -69,6 +69,7 @@ from app.task_semantic_service import (
 from app.task_semantic_rules import FormalityEvidence, IdentityEvidence
 from app.task_business_resolution import BusinessResolutionService
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
+from app.task_source_documents import source_contains_quote
 
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 # Field errors quoted back to the model in one correction turn.
@@ -1064,29 +1065,6 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
     if not title or title in {"项目名", "项目", "Project"}:
         return ""
     return title
-
-
-def source_contains_quote(raw: str, quote: str) -> bool:
-    """Check current source text, including decoded strings in structured inputs."""
-    if not quote.strip():
-        return False
-    if quote in raw:
-        return True
-    try:
-        payload = json.loads(raw)
-    except ValueError:
-        return False
-
-    def contains(value: object) -> bool:
-        if isinstance(value, str):
-            return quote in value
-        if isinstance(value, dict):
-            return any(contains(child) for child in value.values())
-        if isinstance(value, list):
-            return any(contains(child) for child in value)
-        return False
-
-    return contains(payload)
 
 
 def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal:

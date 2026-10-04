@@ -4,6 +4,29 @@ import hashlib
 import json
 
 
+def source_contains_quote(raw: str, quote: str) -> bool:
+    """Check raw text or one decoded string inside a structured source body."""
+    if not quote.strip():
+        return False
+    if quote in raw:
+        return True
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        return False
+
+    def contains(value: object) -> bool:
+        if isinstance(value, str):
+            return quote in value
+        if isinstance(value, dict):
+            return any(contains(child) for child in value.values())
+        if isinstance(value, list):
+            return any(contains(child) for child in value)
+        return False
+
+    return contains(payload)
+
+
 def source_document_key(
     *,
     source_type: str,

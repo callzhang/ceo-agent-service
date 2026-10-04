@@ -123,7 +123,8 @@ overall owner is represented by null, never by concatenating names. Conflicting
 claims remain separate sourced facts. Facts may carry a date only when both its
 date type and value are present. Every stored citation has a real persisted
 Signal ID, its exact source reference, and an excerpt contained in that Signal's
-immutable source body. Project context persistence rejects missing Signals,
+immutable source body or in one decoded string leaf of a structured JSON body.
+Validation never joins separate JSON fields to make a quote. Project context persistence rejects missing Signals,
 unresolved citations, or altered references/quotes before writing either table.
 It does not derive an owner or a role from a Task.
 

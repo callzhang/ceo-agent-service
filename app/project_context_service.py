@@ -7,6 +7,7 @@ import sqlite3
 
 from app.store import AutoReplyStore
 from app.task_semantic_models import ProjectContext, SourceCitation
+from app.task_source_documents import source_contains_quote
 
 
 def context_changed(previous_json: str | None, current_json: str) -> bool:
@@ -64,7 +65,10 @@ class ProjectContextService:
                 row = self._require_signal(citation.signal_id, db)
                 if citation.signal_id not in signal_rows:
                     raise ValueError("project citation signal must be included in project evidence")
-                if citation.source_ref != row["source_ref"] or citation.source_excerpt not in row["evidence_text"]:
+                if (
+                    citation.source_ref != row["source_ref"]
+                    or not source_contains_quote(row["evidence_text"], citation.source_excerpt)
+                ):
                     raise ValueError("project citation must faithfully match its source")
         for signal_id in ids:
             db.execute(
