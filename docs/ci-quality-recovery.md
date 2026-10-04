@@ -18,3 +18,9 @@ developer Skills cannot hide missing CI inputs.
 The test environment includes fasttext for real classifier training and zsh for
 the supervisor launcher contract. Neither dependency is replaced with a mock or
 an unconditional skip.
+
+## Successful Runtime Terminals
+
+A successful Codex terminal must not authorize failure failover, route pausing,
+or authorization recovery. Unclassified failures still retain the existing
+failover policy. The adapter regression distinguishes these outcomes explicitly.
