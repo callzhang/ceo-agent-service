@@ -30,6 +30,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-workbench-stream-test-sync | Isolated okr-source-evidence worktree: frontend/src/app.test.tsx (two confirmation stream tests only), docs/runtime-mechanism.md (test verification note only) | Wait for React timeline effects and actual EventSource subscription before emitting progress; full-suite failures proved the prior text-only synchronization raced the subscription. No runtime or confirmation policy change. | 2026-10-04 |
+
 | codex-task-decision-runtime-repair | Isolated okr-source-evidence worktree: app/task_agent.py (semantic repair identity and date prevalidation only), app/store.py (task decision repair key parent/recovery only), tests/test_task_agent_runtime_repair.py (new), tests/test_task_agent.py (repair key assertion only), docs/runtime-mechanism.md | Correct semantic repair receipt reuse with deterministic per-round keys; validate date evidence before writes while preserving existing evidence rules, finite budget and recovery. No Audit, authorization or needs_human policy changes. | 2026-10-04 |
 
 
