@@ -1,8 +1,12 @@
 {
+  "business-source-equivalence-4eddf2c9.json": "dc732fd9be89aecc3b7fdc511d74b43a8b69fe037f7434edcfd04fc4753dc812",
   "business-v2-2403cf28-invalid-release-score.json": "43fe860d416355f16d0e1df5e32fb806c460fe4b2ca2cfd427e6cc461838b8e8",
+  "business-v3-1cedebf1-semantic-review.json": "a51edaad566192e1a56f3c08753fbbda1ea64f707b3ea1c4a4791c388bde49d7",
+  "business-v3-1cedebf1.json": "35107bfc0c27c513927b1a3c5749628977aae65cb69ce469cefc25d2f006dfec",
   "business-v3-6b3b7359-semantic-review.json": "aedd11a495d1623ec7209d82dc4fd8fe7857bc83babb12db3201a7a9b30de084",
   "business-v3-6b3b7359.json": "51c8fbaac23f1621f1369246a71e4567b14dbfd884185da7e09f55d642990bfa",
   "business-v3-73030d17.json": "88eb51566a33cf6dd3909c17e096fda8fce5b077c83fd62176941c184edc25a5",
+  "contract-4eddf2c9.json": "245f291e1844055e85e45ef5e3bb4d60271767966ed4ac46faca2123d8b73820",
   "contract-73030d17.json": "ed77815088889c7ccfed00ce55b1392ff5d9e76474ea0995ff58f99051d222d4",
   "native-audit-role-probe/command_argv.json": "2609b604d42d2683355df2fcf324b1c2701dcab3e8211c81b090b77e85a2b6fe",
   "native-audit-role-probe/expected_nonce.txt": "eb352d181a0c08c2cfed141a04b246ab75051ec2fdd48a1e91679903925dca66",
@@ -12,5 +16,6 @@
   "native-audit-role-probe/summary.json": "771372e6717fb52dad7435b7fcf85c94b58a64d178233fd1e20e70b48bd14bca",
   "native-audit-role-probe/synthetic_agent_cli.py": "01b6043427923a3960f549a6f627a89fa164729f1a1d96cbb8a1ba3069ee1c7c",
   "offline-migration-verification.json": "228d977a46fecb906aa895e52a494d1c84ae9ec0074cf145c5bb05ab79db2daa",
+  "offline-rollback-store-verification.json": "6faa284df88d7cbfee6c2c4887211f59fb5bc5855eb4c6a39bc4effd819e2b10",
   "quality-73030d17.json": "f5e29770dd14853544c83d2e495d5f6082991bc2c1ad30cc07416fb110b2e742"
 }

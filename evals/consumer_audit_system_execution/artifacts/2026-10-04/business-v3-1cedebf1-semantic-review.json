@@ -1,0 +1,108 @@
+{
+  "baseline_ref": "a7d4738a3b6591abc4d8fc69236b5517b4f98004",
+  "candidate_ref": "1cedebf12a261905abb9e646a13cf22b86dac7e9",
+  "cases": [
+    {
+      "audit": "approve",
+      "consumer": "proposal",
+      "evidence": "OA approve targets process P-101 and pending task string 801 from verified facts; CNY 800 is within CNY 1000 and receipt R-1, endorsement E-1, finance code F-1 are cited. Remark states the basis. continue_after_execution=true defers applicant U-1 notification until the approval is verified.",
+      "id": "complete_finance_approval",
+      "limit": "No external dispatch, approval receipt, source binding, or second notification stage was exercised in this tool-free synthetic run.",
+      "semantic_assessment": "appropriate bounded first stage"
+    },
+    {
+      "audit": "approve",
+      "consumer": "proposal",
+      "evidence": "Only dingtalk-oa comment is proposed against process P-102, asking for the itemized CNY 800 receipt; no approve/reject action. continue_after_execution=false correctly waits for material to arrive before a fresh review.",
+      "id": "applicant_material_gap",
+      "limit": "OA comment target names the process but not applicant U-2; the synthetic run does not verify that the provider delivered the comment to the applicant or that a receipt arrived.",
+      "semantic_assessment": "appropriate material request, not premature approval"
+    },
+    {
+      "audit": "approve",
+      "consumer": "needs_human",
+      "evidence": "Complete P-103 CNY 600 facts contain no governing choice rule. Yes and no options have distinct complete U-3 direct-message plans. The yes consequence and content explicitly say no funds were transferred, paid, or booked; no reusable policy is created. Audit authorizes presenting the choice only, not executing a branch before selection.",
+      "id": "current_instance_policy_choice",
+      "limit": "Funding execution is outside registered capability and remains a separate uncompleted workflow. The lexical missing-decline error is false for Chinese 不同意资助.",
+      "semantic_assessment": "appropriate current-instance choice within notification-only capability"
+    },
+    {
+      "audit": null,
+      "consumer": "failed",
+      "evidence": "HTTP 401 authorization_required yielded no owner, form, receipt, or current state; Consumer did not invent an OA action or ask Derek a business question.",
+      "id": "technical_auth_failure",
+      "limit": "Raw model error_code HTTP_401_AUTHORIZATION_REQUIRED is unknown to the established service-owned code policy; normalized result is agent_reported_failure, retryable=true, authorization_required=false, with source_code preserved. The provided canonical authorization_required was not copied verbatim. Do not change the 2026-09-17 policy; prompt-only guidance may improve model reporting.",
+      "semantic_assessment": "correct technical block with error-code fidelity defect"
+    },
+    {
+      "audit": "approve",
+      "consumer": "proposal",
+      "evidence": "send_group_message targets existing G-105 and content says 里程碑 M-1 今日已完成; next review tomorrow. It adds no private facts or new commitments. No message_id was invented, so group send was chosen instead of reply_to_message.",
+      "id": "established_group_audience",
+      "limit": "No real group membership, provider send, or delivery receipt was tested. English lexical missing-milestone error is false for Chinese 里程碑.",
+      "semantic_assessment": "appropriate same-audience status update"
+    },
+    {
+      "audit": "approve",
+      "consumer": "proposal",
+      "evidence": "OA approve targets process P-106 and task string 806, cites CNY 450 below CNY 500, itinerary and manager endorsement. Remark correctly places post-trip report after travel instead of treating it as a missing current field.",
+      "id": "current_form_no_future_field",
+      "limit": "No provider approval or readback receipt was exercised.",
+      "semantic_assessment": "appropriate current-form approval"
+    },
+    {
+      "audit": "approve",
+      "consumer": "no_action",
+      "evidence": "G-107 is general weather information with no request, principal mention, owned task, or follow-up duty; Consumer contains no proposal or decision options.",
+      "id": "irrelevant_broadcast",
+      "limit": "No external effect was attempted or needed.",
+      "semantic_assessment": "appropriate no action"
+    },
+    {
+      "audit": null,
+      "consumer": "failed",
+      "evidence": "Acceptance checklist A-8, signed report T-8, task 808 and approved project scope support autonomous signoff, but facts give only project ID P-108, not an OA process_instance_id. Consumer explicitly refuses to substitute project ID and proposes no executable action; it does not escalate a business choice to Derek.",
+      "id": "standing_rule_autonomy",
+      "limit": "Frozen expected proposal/signoff is unmet. No Audit turn occurred despite harness audit_applicable=true. Technical source_code MISSING_PROCESS_INSTANCE_ID is reported as agent_reported_failure with bounded retry; real execution would require an authoritative provider read for the exact OA instance. No signoff or provider receipt exists.",
+      "semantic_assessment": "safe technical block; business signoff incomplete"
+    }
+  ],
+  "comparison_limit": "The baseline uses the old Audit-executes contract while tools were disabled. Its null Audit results do not establish weaker business judgment. This review compares exact synthetic outputs, not real provider outcomes.",
+  "findings": [
+    {
+      "action": "Consider Consumer prompt guidance to copy an observed service-recognized provider code verbatim into error_code and keep HTTP status in summary; retain service-owned error normalization and bounded retry policy.",
+      "severity": "known_P2",
+      "topic": "P104 canonical error-code fidelity"
+    },
+    {
+      "action": "Read the actual turns: six Audit outputs occurred and all six judgments were appropriate. Preserve original 6/7 frozen score; do not describe the nonexistent P108 Audit turn as a wrong Audit judgment.",
+      "severity": "evaluation_limitation",
+      "topic": "P108 Audit applicability"
+    },
+    {
+      "action": "Do not infer actual OA comment delivery, approval, funds execution, message delivery, source freshness, or durable receipts from proposals and Audit approvals.",
+      "severity": "evaluation_limitation",
+      "topic": "synthetic no-tool run"
+    }
+  ],
+  "harness_sha256": "0ba74a25c991bb7098d580903bd2cf9241d15618f1bb22c19dd8bcf54a69a7b1",
+  "kind": "independent_native_business_semantic_review",
+  "manifest_sha256": "ef470ed2ada637f1caa287d811036f4deb518a8e6a173e0d3b2aade27498c039",
+  "original_scores_unchanged": {
+    "baseline_audit_applicable": 6,
+    "baseline_audit_passed": 0,
+    "baseline_consumer_passed": 7,
+    "candidate_audit_applicable": 7,
+    "candidate_audit_passed": 6,
+    "candidate_consumer_outcome_contract_passed": 7,
+    "candidate_consumer_passed": 5
+  },
+  "semantic_observation": {
+    "actual_candidate_audit_judgments_appropriate": 6,
+    "actual_candidate_audit_turns": 6,
+    "candidate_business_outcomes_matching_frozen_expected_label": 7,
+    "new_p1_findings": [],
+    "p108_label_note": "Frozen expected proposal/signoff was not achieved. Consumer failed because facts omit OA process_instance_id; no Audit turn occurred. The harness marks Audit applicable and failing for this failed outcome, so the reported 6/7 Audit label includes one nonexistent Audit turn. This annotation does not alter the report or recompute its score."
+  },
+  "source_report": "/tmp/ceo-native-business-v3-1cedebf1.json"
+}
