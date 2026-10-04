@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-04: WeChat Reader Skill operations require and forward an explicit
+  service database path. Status and bounded reads can no longer silently inspect
+  a checkout-local database. Missing database arguments fail before IPC starts;
+  Sender behavior, delivery authorization and historical outcomes are unchanged.
+
 - 2026-10-04: Attempt processing steps distinguish the Agent run's business
   status from its runtime call status. A returned model call no longer displays
   a failed Audit run as a completed business step. Both original statuses are

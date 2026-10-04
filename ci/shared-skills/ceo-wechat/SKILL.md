@@ -29,6 +29,12 @@ access the WeChat database or Accessibility APIs directly: those permissions
 remain in the trusted runtime capability boundary. Do not replace that signed boundary with editable
 Skill code.
 
+Every Reader operation (`status`, `read-recent`, and `produce-once`) requires
+`--db <absolute service DB>` from its invocation. Pass the same service database
+to the IPC CLI; never infer account readiness from the checkout's `data/` directory.
+For a bounded read, use `reader.py read-recent --db <absolute service DB>
+--target-id <stable target ID> --limit <count>`.
+
 ## Automatic-reply switch
 
 The **WeChat Auto Reply** switch controls whether new reply tasks are created
