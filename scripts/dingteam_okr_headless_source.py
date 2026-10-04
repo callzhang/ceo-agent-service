@@ -10,6 +10,7 @@ import fcntl
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -191,7 +192,7 @@ def _service_browser(playwright):
 @contextmanager
 def _headless_browser_lock():
     """Serialize Chrome startup across the service's OKR workers."""
-    with open("/private/tmp/ceo-okr-headless.lock", "a", encoding="utf-8") as lock:
+    with (Path(tempfile.gettempdir()) / "ceo-okr-headless.lock").open("a", encoding="utf-8") as lock:
         deadline = time.monotonic() + HEADLESS_LOCK_TIMEOUT_SECONDS
         while True:
             try:

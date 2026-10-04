@@ -29,7 +29,9 @@ class FastTextEmailClassifier:
             handle.flush()
             self._model = fasttext.train_supervised(
                 input=handle.name, loss="softmax", dim=32, bucket=50_000,
-                minCount=1, thread=1, lr=0.1, epoch=50, wordNgrams=2, verbose=0,
+                # fastText initializes one tenth of the input matrix per thread.
+                # Fewer than ten threads leave hashed feature rows uninitialized.
+                minCount=1, thread=10, lr=0.1, epoch=50, wordNgrams=2, verbose=0,
             )
         return self
 

@@ -60,6 +60,16 @@ def test_expired_cache_is_refreshed_headlessly(monkeypatch):
     assert written == [{"Authorization": "Bearer test"}]
 
 
+def test_refresh_lock_uses_system_temporary_directory(monkeypatch, tmp_path):
+    import tempfile
+
+    module = load_module()
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+
+    with module._headless_browser_lock():
+        assert (tmp_path / "ceo-okr-headless.lock").is_file()
+
+
 def test_valid_cache_skips_browser_refresh(monkeypatch):
     module = load_module()
     cached = {"Authorization": "Bearer cached"}

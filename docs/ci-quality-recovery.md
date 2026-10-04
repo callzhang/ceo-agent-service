@@ -68,3 +68,28 @@ History-chart cache tests bind their warm-up event and call counter to their
 own SQLite path. A read for another app/database is explicitly interleaved
 between repeated requests; it must not be mistaken for rebuilding this app's
 cached chart. This prevents background warmers from contaminating the assertion.
+
+## Linux Readback Corrections
+
+The first remote run reduced 83 failures to five, while the local complete suite
+passed. The reaction fixture still depended on an installed `dws` executable;
+it now supplies a fake executable as well as the fake process runner. Queue
+startup recovery tests isolate scheduled-task seeding, which has its own
+coverage, rather than requiring the developer's installed operation Skills.
+
+OKR refresh locking uses `tempfile.gettempdir()` instead of macOS's
+`/private/tmp`; its regression redirects the temporary directory and verifies
+the actual lock file exists there.
+
+fastText 0.9.3 initializes its input matrix in ten native blocks, one per
+initialization thread. The adapter's single thread initialized only the first
+tenth, leaving hashed ngram rows untouched. The new regression reproduced this
+locally (5,006 initialized rows out of 50,005), independently of whether the
+allocator's remaining bytes happened to be zero or NaN. Training uses ten
+threads so every block is initialized, and the regression checks the complete
+matrix and finite predictions. The model remains a frozen candidate; this fix
+does not activate or promote a production classifier.
+
+Native implementation evidence:
+[DenseMatrix initialization](https://github.com/facebookresearch/fastText/blob/main/src/densematrix.cc)
+and [training matrix construction](https://github.com/facebookresearch/fastText/blob/main/src/fasttext.cc).
