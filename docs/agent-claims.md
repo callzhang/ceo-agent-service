@@ -37,6 +37,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-project-centered-task1 | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: app/task_source_documents.py, app/task_semantic_models.py (Signal document reference only), app/store.py (source-document schema/migration and Signal reads/writes only), tests/test_task_source_documents.py, tests/test_task_semantic_store.py, docs/task-semantic-storage.md, docs/architecture.md and docs/runtime-mechanism.md (shared-source storage paragraphs only), docs/superpowers/plans/2026-10-04-project-centered-work.md (execution progress) | Derek-authorized development continuation of parent codex-attention-multisource-core: sequential Task 1 migration, one delegated writer, preserve Signal identity and existing Task/history. No production edits, push or deploy before Tasks 1–9 release acceptance. | 2026-10-04 |
+
 
 
 
