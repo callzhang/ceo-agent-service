@@ -841,7 +841,7 @@ Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写�
 
 ### Audit Agent B
 
-Audit 使用实际只读工具接口审核候选；既无受控发送、审批能力，也无命令执行工具。Consumer 的允许文档和报告能力由固定任务绑定操作接口提供。Codex 原生配置请求关闭 shell、browser、image generation、code-mode host、委派、自动 Skill 安装和记忆写入等入口，并使用 MCP enabled_tools 具名范围；Claude 使用受限内建读工具和角色 MCP；没有对应能力的 Friday 不能承担这两个角色。原生能力的发布验证仍有阻断：Codex 0.154.0 的 CodeModeOnly 模型关闭 code-mode host 后不能证明具名读取和文档工具仍可用，ApplyPatch 又独立依模型注册。只读沙箱拒绝写入不能替代工具接口范围验证；解决这两个问题前本分支不能切换生产角色。
+Audit 使用实际只读工具接口审核候选；既无受控发送、审批能力，也无命令执行工具。Consumer 的允许文档和报告能力由固定任务绑定操作接口提供。Codex 关闭 shell、browser、image generation、委派、自动 Skill 安装和记忆写入等原生入口，使用原生 code_mode_only 与具名 MCP enabled_tools。原生 V8 host 只承载工具调用与计算，不提供文件、网络或模块导入；从它的工具目录排除内建 functions namespace，因此命令和 ApplyPatch 不暴露给角色，而任务绑定 MCP 仍可调用。原生 registry 中 ApplyPatch handler 仍存在，不把目录排除描述为物理注销。Claude 使用受限内建读工具和角色 MCP；没有对应能力的 Friday 不能承担这两个角色。发布验证使用实际具名读取回执及工具目录，不以只读沙箱拒绝写入代替接口范围证明。
 
 ## 会话与反馈周期
 

@@ -295,22 +295,24 @@ def test_context_is_refreshed_between_consumer_and_audit(tmp_path):
     assert audit.calls[0][3].task.trigger_text == "new fact"
 
 
-def test_context_refresh_failure_before_audit_preserves_completed_consumer(tmp_path):
+@pytest.mark.parametrize("retryable", [False, True])
+def test_context_refresh_failure_before_audit_preserves_completed_consumer(tmp_path, retryable):
     store, task, context = task_and_context(tmp_path)
     calls = []
     def refresh():
         calls.append(1)
         if len(calls) > 1:
-            raise DwsError("private token or account detail", code="DWS_SOURCE_UNAVAILABLE")
+            raise DwsError("Source unavailable; Authorization: Bearer test-source-secret", code="DWS_SOURCE_UNAVAILABLE", retryable_external_dependency=retryable)
         return context
     consumer = ScriptedConsumer(store, candidate())
     audit = ScriptedAudit(store, "approve")
     driver, _ = orchestrator(store, consumer, audit)
     result = driver.process(task, context, refresh_context=refresh)
-    assert result.status == "failed_retryable"
+    assert result.status == ("failed_retryable" if retryable else "failed_terminal")
+    assert result.error.retryable is retryable
     assert result.error.code == "agent_context_refresh_failed"
-    assert "DWS_SOURCE_UNAVAILABLE" in result.summary
-    assert "private token" not in result.summary
+    assert result.error.source_code == "DWS_SOURCE_UNAVAILABLE"
+    assert "test-source-secret" not in result.summary
     assert len(consumer.calls) == 1 and len(audit.calls) == 0
 
 

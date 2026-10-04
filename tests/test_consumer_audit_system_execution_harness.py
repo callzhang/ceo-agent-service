@@ -26,4 +26,4 @@ def test_case_process_uses_explicit_source_root(tmp_path: Path):
     empty_checkout.mkdir()
     failed = _run_case("readonly_audit", empty_checkout)
     assert failed["ok"] is False
-    assert failed["error"].startswith("ModuleNotFoundError")
+    assert failed["error"] == "scenario process failed without JSON result (exit 1)"

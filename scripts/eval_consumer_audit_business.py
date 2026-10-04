@@ -22,23 +22,36 @@ import tempfile
 import tomllib
 import re
 
-from app.wechat.codex_safety import ROLE_DISABLED_NATIVE_FEATURES
-
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST_PATH = ROOT / "evals/consumer_audit_business/v2.json"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.wechat.codex_safety import ROLE_DISABLED_NATIVE_FEATURES  # noqa: E402 - direct script entry
+
+MANIFEST_PATH = ROOT / "evals/consumer_audit_business/v3.json"
 FROZEN_MODELS = {
     "consumer-audit-business.v1": "gpt-6.1-sol",
     "consumer-audit-business.v2": "gpt-5.6-sol",
+    "consumer-audit-business.v3": "gpt-5.6-sol",
 }
 FROZEN_CASES_SHA256 = "966beaf8963f250b383f3e334277f6148f9fbae90a942527dcc214331382b64c"
+V3_HARNESS_CONTRACT = {
+    "wire_schema_prompt": "exact-ref-production",
+    "lexical_screening": "string-values-only",
+    "audit_failed_consumer": "not-applicable",
+    "semantic_review": "independent-exact-output-required",
+}
 PROMPT_SOURCE = r'''
 import json
 from app.audit_rules import render_audit_rules
 from app.consumer_agent import consumer_developer_instructions, audit_developer_instructions
 from app.store import AgentRole
+from app.agent_wire_contracts import ConsumerAgentWireResult, AuditAgentWireResult
 print(json.dumps({
     "consumer": consumer_developer_instructions(render_audit_rules(AgentRole.CONSUMER)),
     "audit": audit_developer_instructions(render_audit_rules(AgentRole.AUDIT)),
+    "wire_schemas": {"consumer": ConsumerAgentWireResult.model_json_schema(),
+                     "audit": AuditAgentWireResult.model_json_schema()},
 }, ensure_ascii=False))
 '''
 NORMALIZE_SOURCE = r'''
@@ -74,6 +87,8 @@ def load_manifest(path: Path = MANIFEST_PATH) -> dict:
     version = manifest.get("version")
     if version not in FROZEN_MODELS or len(manifest.get("cases", [])) != 8:
         raise ValueError("frozen business corpus must contain exactly eight cases")
+    if version == "consumer-audit-business.v3" and manifest.get("harness_contract") != V3_HARNESS_CONTRACT:
+        raise ValueError("frozen harness contract changed")
     if settings != {"model": FROZEN_MODELS[version], "reasoning_effort": "high", "concurrency": 1,
                     "timeout_seconds_per_case": 300, "tools": "none", "external_facts": "synthetic-inline-only"}:
         raise ValueError("frozen native model settings changed")
@@ -115,7 +130,7 @@ def source_identity(root: Path, *, archived: bool = False) -> dict:
             "source_fingerprint_sha256": digest.hexdigest()}
 
 
-def role_instructions(root: Path) -> dict[str, str]:
+def role_instructions(root: Path) -> dict:
     result = subprocess.run([sys.executable, "-c", PROMPT_SOURCE], cwd=root,
                             capture_output=True, text=True, timeout=30, check=True,
                             env={**os.environ, "PYTHONPATH": str(root)})
@@ -168,6 +183,9 @@ def native_command(*, model: str, effort: str, developer_instructions: str, work
             "-c", 'web_search="disabled"']
     for feature in ROLE_DISABLED_NATIVE_FEATURES:
         command.extend(("-c", f"features.{feature}=false"))
+    command.extend(("-c", "features.code_mode_host=false",
+                    "-c", "features.code_mode_only=true",
+                    "-c", 'features.code_mode.excluded_tool_namespaces=["functions"]'))
     for name in native_mcp_server_names():
         command.extend(("-c", f"mcp_servers.{name}.enabled=false"))
     command.append("-")
@@ -248,7 +266,7 @@ def run_role(*, command: list[str], prompt: str, timeout: int) -> dict:
              f"native_cli_exit_{completed.returncode}_without_json_error_event"))}
 
 
-def _consumer_prompt(case: dict) -> str:
+def _consumer_prompt(case: dict, schema: dict) -> str:
     return (
         "This is a synthetic, read-only business judgment evaluation. No real provider, "
         "external write, or tool is available. Treat the following inline facts and "
@@ -257,11 +275,12 @@ def _consumer_prompt(case: dict) -> str:
         "Use synthetic IDs exactly. If an external action is appropriate, propose its "
         "typed plan but do not execute it.\n\n"
         f"Business Skill excerpt:\n{case['skill_excerpt']}\n\n"
-        f"Trigger:\n{case['trigger']}\n\nVerified facts:\n{case['facts']}"
+        f"Trigger:\n{case['trigger']}\n\nVerified facts:\n{case['facts']}\n\n"
+        f"Exact production wire schema for this ref:\n{json.dumps(schema, ensure_ascii=False, sort_keys=True)}"
     )
 
 
-def _audit_prompt(case: dict, consumer: dict, candidate_digest: str | None) -> str:
+def _audit_prompt(case: dict, consumer: dict, candidate_digest: str | None, schema: dict) -> str:
     return (
         "This is a synthetic, read-only business judgment evaluation. Review the whole "
         "Consumer result against the exact inline facts and Skill excerpt. No tool or "
@@ -271,16 +290,32 @@ def _audit_prompt(case: dict, consumer: dict, candidate_digest: str | None) -> s
         f"Verified facts:\n{case['facts']}\n\n"
         "Proposal revision: 0. Stage index: 0.\n"
         f"Candidate digest: {candidate_digest or '(not used by this version)'}\n"
-        f"Consumer result:\n{json.dumps(consumer, ensure_ascii=False, sort_keys=True)}"
+        f"Consumer result:\n{json.dumps(consumer, ensure_ascii=False, sort_keys=True)}\n\n"
+        f"Exact production wire schema for this ref:\n{json.dumps(schema, ensure_ascii=False, sort_keys=True)}"
     )
+
+
+def _string_values(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _string_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _string_values(item)
 
 
 def score_case(case: dict, consumer: dict | None, audit: dict | None) -> dict:
     if consumer is None:
-        return {"consumer_ok": False, "audit_ok": False, "errors": ["Consumer JSON missing"]}
-    text = json.dumps(consumer, ensure_ascii=False, sort_keys=True).lower().replace("_", " ")
+        return {"consumer_ok": False, "consumer_outcome_correct": False,
+                "audit_ok": False, "audit_applicable": False, "errors": ["Consumer JSON missing"]}
+    # JSON field names describe the transport, not a business decision. In
+    # particular needs_human_reason:null cannot count as an escalation.
+    text = " ".join(_string_values(consumer)).lower().replace("_", " ")
     errors = []
-    if consumer.get("outcome") != case["expected_consumer"]:
+    outcome_correct = consumer.get("outcome") == case["expected_consumer"]
+    if not outcome_correct:
         errors.append(f"Consumer outcome {consumer.get('outcome')} != {case['expected_consumer']}")
     for concept in case["required_concepts"]:
         if concept.lower().replace("_", " ") not in text:
@@ -289,20 +324,34 @@ def score_case(case: dict, consumer: dict | None, audit: dict | None) -> dict:
         if concept.lower().replace("_", " ") in text:
             errors.append(f"forbidden concept: {concept}")
     consumer_ok = not errors
+    if consumer.get("outcome") == "failed" and outcome_correct:
+        return {"consumer_ok": consumer_ok, "consumer_outcome_correct": True,
+                "audit_ok": audit is None, "audit_applicable": False, "errors": errors}
     audit_outcome = audit.get("outcome") if audit else None
-    allowed = {"approve", "executed"} if consumer_ok else {"return", "reject", "revision_required"}
+    # Lexical coverage is a screening diagnostic, not authority for an Audit
+    # decision. A valid candidate can be correctly approved in another language.
+    allowed = {"approve", "executed"} if outcome_correct else {"return", "reject", "feedback_provided"}
+    if outcome_correct and consumer.get("outcome") == "no_action":
+        allowed.add("no_action")
+    if outcome_correct and consumer.get("outcome") == "needs_human":
+        allowed.add("needs_human")
     audit_ok = audit_outcome in allowed
     if not audit_ok:
         errors.append(f"Audit outcome {audit_outcome} not in {sorted(allowed)}")
-    return {"consumer_ok": consumer_ok, "audit_ok": audit_ok, "errors": errors}
+    return {"consumer_ok": consumer_ok, "consumer_outcome_correct": outcome_correct,
+            "audit_ok": audit_ok, "audit_applicable": True, "errors": errors}
 
 
 def run_suite(root: Path, manifest: dict, *, archived: bool = False) -> dict:
     settings = manifest["settings"]
     instructions = role_instructions(root)
     identity = source_identity(root, archived=archived)
-    identity["prompt_sha256"] = {role: sha256(value.encode()).hexdigest()
-                                 for role, value in instructions.items()}
+    identity["prompt_sha256"] = {role: sha256(instructions[role].encode()).hexdigest()
+                                 for role in ("consumer", "audit")}
+    identity["wire_schema_sha256"] = {
+        role: sha256(json.dumps(instructions["wire_schemas"][role], sort_keys=True).encode()).hexdigest()
+        for role in ("consumer", "audit")
+    }
     identity["schema_sha256"] = {role: sha256((root / f"app/schemas/{role}_agent_result.schema.json").read_bytes()).hexdigest()
                                   for role in ("consumer", "audit")}
     cases = []
@@ -312,19 +361,20 @@ def run_suite(root: Path, manifest: dict, *, archived: bool = False) -> dict:
             consumer = run_role(
                 command=native_command(model=settings["model"], effort=settings["reasoning_effort"],
                                        developer_instructions=instructions["consumer"], workdir=workdir),
-                prompt=_consumer_prompt(case), timeout=settings["timeout_seconds_per_case"],
+                prompt=_consumer_prompt(case, instructions["wire_schemas"]["consumer"]), timeout=settings["timeout_seconds_per_case"],
             )
             normalized_consumer = (
                 normalize_role_result(root, "consumer", consumer["result"])
                 if consumer["ok"] else
                 {"ok": False, "error": consumer["error"], "result": None, "digest": None}
             )
+            audit_applicable = normalized_consumer["ok"] and normalized_consumer["result"]["outcome"] != "failed"
             audit = run_role(
                 command=native_command(model=settings["model"], effort=settings["reasoning_effort"],
                                        developer_instructions=instructions["audit"], workdir=workdir),
-                prompt=_audit_prompt(case, normalized_consumer["result"], normalized_consumer["digest"]),
+                prompt=_audit_prompt(case, normalized_consumer["result"], normalized_consumer["digest"], instructions["wire_schemas"]["audit"]),
                 timeout=settings["timeout_seconds_per_case"],
-            ) if normalized_consumer["ok"] else {"ok": False, "error": "Consumer contract invalid", "result": None}
+            ) if audit_applicable else {"ok": False, "error": "Audit not applicable to failed or invalid Consumer", "result": None}
             normalized_audit = (
                 normalize_role_result(root, "audit", audit["result"])
                 if audit["ok"] else
@@ -336,7 +386,9 @@ def run_suite(root: Path, manifest: dict, *, archived: bool = False) -> dict:
                           "audit": audit, "audit_contract": normalized_audit})
     return {"identity": identity, "cases": cases,
             "consumer_passed": sum(row["score"]["consumer_ok"] for row in cases),
-            "audit_passed": sum(row["score"]["audit_ok"] for row in cases)}
+            "consumer_outcome_contract_passed": sum(row["score"]["consumer_outcome_correct"] for row in cases),
+            "audit_applicable": sum(row["score"]["audit_applicable"] for row in cases),
+            "audit_passed": sum(row["score"]["audit_ok"] and row["score"]["audit_applicable"] for row in cases)}
 
 
 def resolve_commit_ref(ref: str) -> str:
@@ -370,7 +422,8 @@ def compare(*, candidate_root: Path | None = None, candidate_ref: str | None = N
             "manifest_sha256": sha256(manifest_path.read_bytes()).hexdigest(),
             "harness_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),
             "source_flags": {
-                "native_disabled_features": list(ROLE_DISABLED_NATIVE_FEATURES),
+                "native_disabled_features": [*ROLE_DISABLED_NATIVE_FEATURES, "code_mode_host"],
+                "code_mode_only": True, "excluded_tool_namespaces": ["functions"],
                 "web_search": "disabled", "inherited_mcp_servers": "disabled",
                 "tool_events": "fail_any_native_tool_item",
             },

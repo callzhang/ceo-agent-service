@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+from hashlib import sha256
 from io import BytesIO
 import json
 import os
@@ -24,6 +25,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 MANIFEST = ROOT / "evals" / "consumer_audit_system_execution" / "v1.json"
 SCENARIO_SCRIPT = ROOT / "evals" / "consumer_audit_system_execution" / "scenarios.py"
+SCENARIO_ENTRY = """
+import importlib.util, pathlib, runpy, sys
+package = pathlib.Path.cwd() / 'app'
+spec = importlib.util.spec_from_file_location('app', package / '__init__.py', submodule_search_locations=[str(package)])
+module = importlib.util.module_from_spec(spec)
+sys.modules['app'] = module
+spec.loader.exec_module(module)
+runpy.run_path(sys.argv.pop(1), run_name='__main__')
+"""
 
 
 def _manifest() -> dict[str, object]:
@@ -40,17 +50,13 @@ def _manifest() -> dict[str, object]:
     return data
 
 
-def _baseline_snapshot(ref: str, destination: Path) -> None:
+def _snapshot(ref: str, destination: Path) -> None:
     archive = subprocess.run(
         ["git", "archive", "--format=tar", ref], cwd=ROOT,
         check=True, capture_output=True, timeout=120,
     ).stdout
     with tarfile.open(fileobj=BytesIO(archive), mode="r:") as bundle:
-        members = bundle.getmembers()
-        if any(member.name.startswith("/") or ".." in Path(member.name).parts or
-               member.issym() or member.islnk() for member in members):
-            raise ValueError("unsafe path in baseline Git archive")
-        bundle.extractall(destination, members=members, filter="data")
+        bundle.extractall(destination, filter="data")
 
 
 def _run_case(case_id: str, source_root: Path) -> dict[str, object]:
@@ -58,7 +64,7 @@ def _run_case(case_id: str, source_root: Path) -> dict[str, object]:
     env["PYTHONPATH"] = str(source_root)
     try:
         completed = subprocess.run(
-            [sys.executable, str(SCENARIO_SCRIPT), "--case", case_id],
+            [sys.executable, "-c", SCENARIO_ENTRY, str(SCENARIO_SCRIPT), "--case", case_id],
             cwd=source_root, env=env, text=True, capture_output=True, timeout=30,
         )
     except subprocess.TimeoutExpired:
@@ -73,14 +79,27 @@ def _run_case(case_id: str, source_root: Path) -> dict[str, object]:
     return result
 
 
-def compare(*, candidate_root: Path = ROOT, baseline_root: Path | None = None) -> dict[str, object]:
+def compare(*, candidate_root: Path | None = None, candidate_ref: str | None = None,
+            baseline_root: Path | None = None) -> dict[str, object]:
+    if candidate_root is not None and candidate_ref is not None:
+        raise ValueError("candidate_root and candidate_ref are mutually exclusive")
     manifest = _manifest()
     baseline_ref = str(manifest["baseline_ref"])
-    candidate_root = candidate_root.resolve()
+    resolved_candidate_ref = None
+    if candidate_ref is not None:
+        resolved_candidate_ref = subprocess.run(
+            ["git", "rev-parse", "--verify", "--end-of-options", f"{candidate_ref}^{{commit}}"],
+            cwd=ROOT, check=True, capture_output=True, text=True, timeout=30,
+        ).stdout.strip()
     with ExitStack() as stack:
+        if resolved_candidate_ref is not None:
+            candidate_root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="consumer-audit-candidate-")))
+            _snapshot(resolved_candidate_ref, candidate_root)
+        else:
+            candidate_root = (candidate_root or ROOT).resolve()
         if baseline_root is None:
             baseline_root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="consumer-audit-baseline-")))
-            _baseline_snapshot(baseline_ref, baseline_root)
+            _snapshot(baseline_ref, baseline_root)
         else:
             baseline_root = baseline_root.resolve()
         cases = []
@@ -94,7 +113,11 @@ def compare(*, candidate_root: Path = ROOT, baseline_root: Path | None = None) -
         "mode": "synthetic_contract_replay",
         "business_model_evaluation": False,
         "manifest": str(MANIFEST), "baseline_ref": baseline_ref,
-        "candidate_root": str(candidate_root),
+        "manifest_sha256": sha256(MANIFEST.read_bytes()).hexdigest(),
+        "harness_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),
+        "scenario_sha256": sha256(SCENARIO_SCRIPT.read_bytes()).hexdigest(),
+        "candidate_ref": resolved_candidate_ref,
+        "candidate_root": None if resolved_candidate_ref else str(candidate_root),
         "settings": manifest["settings"],
         "total": len(cases),
         "baseline_passed": sum(row["baseline"]["ok"] for row in cases),
@@ -105,12 +128,15 @@ def compare(*, candidate_root: Path = ROOT, baseline_root: Path | None = None) -
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidate-root", type=Path, default=ROOT)
+    candidate_source = parser.add_mutually_exclusive_group()
+    candidate_source.add_argument("--candidate-root", type=Path)
+    candidate_source.add_argument("--candidate-ref")
     parser.add_argument("--baseline-root", type=Path,
                         help="Use an existing baseline checkout; default extracts the frozen Git ref")
     parser.add_argument("--output", type=Path, help="Write the full JSON comparison to this file")
     args = parser.parse_args(argv)
-    report = compare(candidate_root=args.candidate_root, baseline_root=args.baseline_root)
+    report = compare(candidate_root=args.candidate_root, candidate_ref=args.candidate_ref,
+                     baseline_root=args.baseline_root)
     encoded = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output:
         args.output.write_text(encoded + "\n", encoding="utf-8")

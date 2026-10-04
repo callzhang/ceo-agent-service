@@ -22,7 +22,7 @@ from app.wechat.codex_safety import ROLE_DISABLED_NATIVE_FEATURES
 
 def test_frozen_native_business_corpus_is_separate_from_contract_replay():
     manifest = load_manifest()
-    assert MANIFEST_PATH.name == "v2.json"
+    assert MANIFEST_PATH.name == "v3.json"
     assert manifest["baseline_ref"] == "a7d4738a3b6591abc4d8fc69236b5517b4f98004"
     assert manifest["settings"] == {
         "model": "gpt-5.6-sol", "reasoning_effort": "high", "concurrency": 1,
@@ -35,7 +35,7 @@ def test_frozen_native_business_corpus_is_separate_from_contract_replay():
 
 def test_v2_changes_only_model_from_frozen_v1():
     v1 = load_manifest(MANIFEST_PATH.with_name("v1.json"))
-    v2 = load_manifest(MANIFEST_PATH)
+    v2 = load_manifest(MANIFEST_PATH.with_name("v2.json"))
     assert v1["settings"]["model"] == "gpt-6.1-sol"
     assert v2["settings"]["model"] == "gpt-5.6-sol"
     assert v1["cases"] == v2["cases"]
@@ -98,6 +98,59 @@ def test_native_json_error_is_reported_before_rollout_warnings():
     assert _event_error('{"type":"error","message":"authorization: abc123 failed"}') == "authorization=[REDACTED] failed"
 
 
+def test_lexical_screening_ignores_null_human_field_names():
+    case = {"expected_consumer": "proposal", "required_concepts": ["approve", "801"],
+            "forbidden_concepts": ["needs_human"]}
+    consumer = {"outcome": "proposal", "summary": "Approve task 801",
+                "needs_human_reason": None, "decision_basis": None,
+                "decision_options": [], "requested_input": None}
+    assert score_case(case, consumer, {"outcome": "approve"})["consumer_ok"]
+
+
+def test_lexical_warning_does_not_assert_correct_audit_approval_is_wrong():
+    case = {"expected_consumer": "proposal", "required_concepts": ["sign off"],
+            "forbidden_concepts": ["needs_human"]}
+    score = score_case(case, {"outcome": "proposal", "summary": "同意本次验收签署"},
+                       {"outcome": "approve"})
+    assert not score["consumer_ok"]
+    assert score["consumer_outcome_correct"] and score["audit_ok"]
+    assert score["errors"] == ["missing concept: sign off"]
+
+
+def test_technical_failed_consumer_does_not_require_a_business_audit():
+    case = {"expected_consumer": "failed", "required_concepts": ["authorization"],
+            "forbidden_concepts": ["needs_human"]}
+    score = score_case(case, {"outcome": "failed", "summary": "authorization required"}, None)
+    assert score["consumer_ok"] and score["audit_ok"]
+    assert score["audit_applicable"] is False
+
+
+def test_v3_keeps_frozen_cases_and_settings_and_records_scoring_repairs():
+    v2 = load_manifest(MANIFEST_PATH.with_name("v2.json"))
+    v3 = load_manifest()
+    assert v3["version"] == "consumer-audit-business.v3"
+    assert v3["cases"] == v2["cases"] and v3["settings"] == v2["settings"]
+    assert v3["baseline_ref"] == v2["baseline_ref"]
+    assert v3["harness_contract"] == business_eval.V3_HARNESS_CONTRACT
+
+
+def test_ref_specific_wire_schema_is_supplied_to_both_role_prompts():
+    schemas = business_eval.role_instructions(ROOT)["wire_schemas"]
+    case = load_manifest()["cases"][0]
+    assert json.dumps(schemas["consumer"], ensure_ascii=False, sort_keys=True) in business_eval._consumer_prompt(case, schemas["consumer"])
+    assert json.dumps(schemas["audit"], ensure_ascii=False, sort_keys=True) in business_eval._audit_prompt(case, {}, "a" * 64, schemas["audit"])
+
+
+def test_business_script_runs_directly_outside_checkout_without_pythonpath(tmp_path, monkeypatch):
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    import sys
+
+    completed = subprocess.run([sys.executable, str(Path(business_eval.__file__)), "--help"],
+                               cwd=tmp_path, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0
+    assert "--candidate-ref" in completed.stdout
+
+
 def test_native_tool_events_fail_the_no_tools_run_even_with_valid_final_json(monkeypatch):
     stdout = "\n".join(json.dumps(event) for event in (
         {"type": "thread.started", "thread_id": "synthetic"},
@@ -142,7 +195,7 @@ def test_tool_use_violation_cannot_be_scored_or_sent_to_audit(tmp_path: Path, mo
     case = load_manifest()["cases"][0]
     manifest = {"settings": {"model": "gpt-5.6-sol", "reasoning_effort": "high",
                              "timeout_seconds_per_case": 1}, "cases": [case]}
-    monkeypatch.setattr(business_eval, "role_instructions", lambda root: {"consumer": "c", "audit": "a"})
+    monkeypatch.setattr(business_eval, "role_instructions", lambda root: {"consumer": "c", "audit": "a", "wire_schemas": {"consumer": {}, "audit": {}}})
     monkeypatch.setattr(business_eval, "native_command", lambda **kw: ["codex"])
     calls = []
 
@@ -219,7 +272,7 @@ def test_candidate_ref_archives_exact_sha_into_independent_tree_without_model_ca
 
     assert report["candidate_ref"] == expected_sha
     assert report["harness_sha256"] == sha256(Path(business_eval.__file__).read_bytes()).hexdigest()
-    assert report["source_flags"]["native_disabled_features"] == list(ROLE_DISABLED_NATIVE_FEATURES)
+    assert report["source_flags"]["native_disabled_features"] == [*ROLE_DISABLED_NATIVE_FEATURES, "code_mode_host"]
     assert [ref for ref, _ in archived] == [report["baseline_ref"], expected_sha]
     assert archived[0][1] != archived[1][1]
     assert evaluated == [(archived[0][1], True), (archived[1][1], True)]

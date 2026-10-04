@@ -434,7 +434,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
-角色能力发布验证仍未完成：Codex 0.154.0 请求关闭 shell、browser、image generation、code-mode host、委派、自动 Skill 安装和记忆写入，并配置具名 MCP 范围，但 CodeModeOnly 模型关闭 host 后不能证明读取/文档工具仍可用，ApplyPatch 独立依模型注册。只读沙箱阻止效果不等于移除写工具接口；这两个原生边界问题解决前不得切换本分支的生产角色。固定无工具合成业务对比只验证判断和契约，不证明生产工具可用。
+Codex 角色使用原生 code_mode_only，并保留无文件/网络/模块导入接口的 V8 host，供具名 MCP 操作调用与计算；排除内建 functions namespace，同时关闭 shell、browser、image generation、委派、自动 Skill 安装和记忆写入。命令与补丁工具因此不暴露在角色 direct/nested 目录中，任务绑定读取和 Consumer 文档工具仍保留；这不是注销原生 registry 的 ApplyPatch handler。实际读取回执和目录检查验证角色接口范围，固定无工具合成业务对比只验证判断和契约，不证明生产工具可用或已发生业务效果。
 
 ## 用户反馈处理轮次
 
