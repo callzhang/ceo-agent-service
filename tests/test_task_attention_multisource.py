@@ -84,15 +84,19 @@ def test_assessment_cases_are_versioned_source_facts_with_post_run_expectations(
             assert tool.evidence_contains(signal.evidence_text, evidence["source_excerpt"])
 
 
-def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(tmp_path):
+@pytest.mark.parametrize("fixture,case_id", [
+    ("task_attention_project_assessments_v1.json", "assessment-existing-card-idempotent"),
+    ("task_attention_card_members_v1.json", "assessment-existing-card-project-peer"),
+])
+def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(tmp_path, fixture, case_id):
     from app.task_agent import TaskAgentRunner
 
     tool = evaluation_tool()
     cases = tool.load_cases(
-        Path(__file__).parent / "fixtures/task_attention_project_assessments_v1.json"
+        Path(__file__).parent / "fixtures" / fixture
     )
     case = next(
-        item for item in cases if item["case_id"] == "assessment-existing-card-idempotent"
+        item for item in cases if item["case_id"] == case_id
     )
     store = AutoReplyStore(tmp_path / "existing-card-idempotent.sqlite3")
     input_id = tool.seed_case(store, case)
@@ -100,9 +104,27 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(tmp_path)
     member, = store.list_business_attention_tasks(card.id)
     proof, = json.loads(card.assessment_json)["evidence"]
 
+    def domain_snapshot():
+        tables = (
+            "business_tasks", "business_projects", "business_anchors",
+            "business_attention_items", "business_attention_tasks", "business_attention_events",
+            "business_task_events", "business_task_signals", "business_task_evidence",
+        )
+        with store._connect() as db:
+            return {table: [dict(row) for row in db.execute(f"select * from {table} order by rowid")]
+                    for table in tables}
+
+    initial_domain = domain_snapshot()
+
     class Codex:
         def decide(self, **kwargs):
             assert "evaluation_only_secret_expectation" not in kwargs["prompt"]
+            from app.task_retrieval import retrieve_task_semantic_context, render_task_semantic_context
+
+            rendered = json.loads(render_task_semantic_context(
+                retrieve_task_semantic_context(store, WorkItem.model_validate(case["work_item"]))
+            ))
+            assert rendered["current_project_attention"][0]["task_ids"] == [member.task_id]
             return TaskAgentDecision.model_validate({
                 "project_assessments": [{
                     "project_title": "星海交付",
@@ -136,6 +158,7 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(tmp_path)
     assert replay["changes"]["tasks"]["created_ids"] == []
     assert replay["changes"]["projects"]["created_ids"] == []
     assert replay["changes"]["attention_events"]["created_ids"] == []
+    assert domain_snapshot() == initial_domain
 
 
 def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_runs(tmp_path):

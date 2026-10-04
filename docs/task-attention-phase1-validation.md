@@ -14,6 +14,10 @@
 
 上游origin/main=d8805eef已正常整合为baa8d0a6，保留上游owner修复和退休Project处理。整合作者聚焦11文件1031 passed、CLI23 passed；这些是作者源码验证，不是主Agent最终独立验证或新冻结原生通过。上线仍须修复后的独立规格/质量验证、新冻结完整案例、真实两次业务结果和完整发布读回；没有push、部署、全局Skill发布或生产变更。
 
+成员上下文修复e382acb5：真实Store回归先因缺task_ids而RED，指引三项亦先RED；仅为已选活动卡片读取实际成员，renderer输出真实task_ids，现有成员/proof核验不变。独立规格审阅PASS，36 passed/377 deselected；独立质量审阅PASS，9 focused passed/0.60秒，无待解决发现。主Agent独立11文件矩阵1046 passed/62.63秒，CLI process_work_items22 passed/256 deselected/3.73秒，Ruff、四imports、diff检查通过。实际前端两页22 passed/1.31秒，TypeScript/Vite构建通过。主Agent还以只读连接和修复版检索重建真实W39副本上下文，卡1/2/3分别输出实际task_ids=[129]/[130]/[131]，卡3不包含同Project的260。最新origin/main226272d6整合仍待完成，这些源码和只读上下文结果不能替代新冻结原生/真实W39复测或生产效果。
+
+随后精确origin/main226272d6已正常合并为292db466，无冲突、无Task行为改动，保留外部runtime/CI提交且未合并分歧的本地主分支。整合作者相关Task/runtime文件1238 passed/62.96秒，CLI22 passed、lint/imports/diff通过，仍须主Agent最终独立验收。为补充真实多Task重复风险，另增独立version1 fixture task_attention_card_members_v1.json，只有一个case：同正式Project两Task、已有卡仅支持Task1、培训资料Task2不支持验收回款风险。原19case/expected及oracle不变。既有重放单测参数化覆盖原旧卡及新case，两次重放九张领域表逐行全部不变，2 passed/1.00秒；这是合成决定的领域控制，不是native通过。最终冻结将重跑原19及此新增case，并单独验证真实W39两次。
+
 阶段历史（2026-10-03）：冻结候选 `1732455c` 已正常结束，20次Task Agent回放机械18通过/2失败，按19个独立案例17通过/2失败，不能发布。此前47和421批次均已结束，失败原始记录保留；各版本结果不得继承。真实W39最新版副本重复回放、全局Skill发布、合并部署和上线读回均未完成。
 
 当前源码进展：Derek已明确同意新证据可独立更新已有、已确认Task/正式Project的关注，不必制造Task字段变化。修订`3388c404`通过独立规格复审：首次字段更新后的同来源重放复用原Signal，不新增Signal、Task证据或Task/Attention事件；无效历史引文在新证据写入前拒绝；重复relevant值携带有效关注提案不改变Task事件。原有登记测试的断言保留。主Agent独立11文件矩阵1025 passed（57.15秒），CLI22 passed/254 deselected（2.06秒），Ruff、四个运行模块导入及diff检查通过。质量审阅仍在进行；下文f650失败及173原生失败是保留的历史证据，不代表新修订已原生或上线通过。
