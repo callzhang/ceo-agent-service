@@ -51,6 +51,8 @@ const detail = {
     can_recall: false,
     can_submit_feedback: true,
     rerun_url: "/api/console/history/8448/rerun",
+    rerun_label: "重新处理",
+    rerun_confirmation: "确认重新处理这条 Attempt？",
     recall_url: "/api/console/history/8448/recall",
     feedback_url: "/api/console/history/8448/feedback",
     consumer_url: "/attempts/8448/execution/consumer",
@@ -816,6 +818,37 @@ describe("AttemptDetailPage", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "重新处理" }));
+    expect(window.confirm).toHaveBeenCalledWith("确认重新处理这条 Attempt？");
+    expect(command).toHaveBeenCalledWith("/api/console/history/8448/rerun");
+    vi.restoreAllMocks();
+  });
+
+  it("uses the reviewed-candidate rerun wording without changing the rerun command", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: {
+          ...detail.status,
+          raw: "failed",
+          message: "重新评估候选，不重放历史被拒执行",
+        },
+        actions: {
+          ...detail.actions,
+          can_rerun: true,
+          terminal: false,
+          rerun_label: "重新评估候选",
+          rerun_confirmation: "确认重新评估候选？不会重放历史被拒执行。",
+        },
+      },
+      meta: { snapshot_at: "2026-08-29T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByText("重新评估候选，不重放历史被拒执行")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重新评估候选" }));
+    expect(window.confirm).toHaveBeenCalledWith("确认重新评估候选？不会重放历史被拒执行。");
     expect(command).toHaveBeenCalledWith("/api/console/history/8448/rerun");
     vi.restoreAllMocks();
   });

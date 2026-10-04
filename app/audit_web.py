@@ -33,6 +33,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 
 from app.external_failures import external_task_error_sql
+from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
 from app.agent_contracts import (
     ConsumerAgentResult,
     DecisionOption,
@@ -11212,6 +11213,8 @@ def _attempt_detail_body(
     store: AutoReplyStore | None = None,
 ) -> str:
     agent_runs = agent_runs or []
+    rerun = (attempt_rerun_presentation(store, reply_task, agent_runs)
+             if attempt.send_status == "failed" else RerunPresentation())
     closed_after_review = (
         attempt.permission_action.strip() == REPLY_ATTEMPT_CLOSED_AFTER_REVIEW
     )
@@ -11263,12 +11266,14 @@ def _attempt_detail_body(
             attempt,
             sent_reply,
             reply_task=reply_task,
+            rerun=rerun,
         ),
         status_html=_attempt_status_card(
             attempt,
             agent_runs,
             attention,
             closed_after_review=closed_after_review,
+            rerun=rerun,
         ),
         fields=fields,
         pills_html=_attempt_action_pills(
@@ -12225,6 +12230,8 @@ def _related_history_card(
             if store is not None
             else None
         )
+        rerun = (attempt_rerun_presentation(store, reply_task)
+                 if attempt.send_status == "failed" else RerunPresentation())
         rows.append(
             "<tr>"
             f"<td>{_attempt_link(attempt)}</td>"
@@ -12232,7 +12239,7 @@ def _related_history_card(
             f"<td>{escape(attempt.trigger_sender)}</td>"
             f"<td>{_attempt_action_pills(attempt)}</td>"
             f"<td>{escape(_excerpt(attempt.trigger_text, 120))}</td>"
-            f"<td>{_attempt_row_actions(attempt, sent_reply, session_id=session_id, reply_task=reply_task)}</td>"
+            f"<td>{_attempt_row_actions(attempt, sent_reply, session_id=session_id, reply_task=reply_task, rerun=rerun)}</td>"
             "</tr>"
         )
     return (
@@ -12274,6 +12281,7 @@ def _attempt_row_actions(
     *,
     session_id: str = "",
     reply_task: ReplyTask | None = None,
+    rerun: RerunPresentation = RerunPresentation(),
 ) -> str:
     return_to = f"/codex/{quote(session_id, safe='')}" if session_id else f"/attempts/{attempt.id}"
     return_to_query = quote(return_to, safe="/")
@@ -12296,12 +12304,14 @@ def _attempt_row_actions(
         if _sent_reply_has_recall_target(sent_reply)
         else ""
     )
+    confirmation = (rerun.confirmation if rerun.explanation else
+        "确认重新处理这条失败 attempt？可能会实际发送新回复或执行日历/OA动作。")
     return (
         "<div class=\"attempt-row-actions\">"
         + (
             f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun?return_to={return_to_query}\" "
-            "onsubmit=\"return confirm('确认重新处理这条失败 attempt？可能会实际发送新回复或执行日历/OA动作。')\">"
-            "<button class=\"rerun\" type=\"submit\">重新处理</button>"
+            f"onsubmit=\"return confirm('{escape(confirmation)}')\">"
+            f"<button class=\"rerun\" type=\"submit\">{escape(rerun.label)}</button>"
             "</form>"
             if attempt.send_status.strip().lower() == "failed"
             else ""
@@ -12367,7 +12377,9 @@ def _attempt_status_card(
     attention: HistoryAttention | None = None,
     *,
     closed_after_review: bool = False,
+    rerun: RerunPresentation | None = None,
 ) -> str:
+    rerun = rerun or attempt_rerun_presentation(None, None, agent_runs or [])
     active_attempt = attempt
     subject = next(
         (
@@ -12397,6 +12409,8 @@ def _attempt_status_card(
         message = "该事项已核验结案；外部动作未自动执行，具体原因见下方审计说明。"
     elif active_attempt.send_status == "skipped":
         message = "这条事项已判定无需回复，无需你操作。"
+    elif active_attempt.send_status == "failed" and rerun.explanation:
+        message = rerun.explanation
     elif attention is not None:
         return (
             '<section class="card compact-card attempt-status-card">'
@@ -12418,6 +12432,8 @@ def _attempt_status_card(
         f"<br><strong>当前状态：</strong>{message}"
         f"<br><strong>需要你决策：</strong>{'是' if decision_required else '否'}"
         f"{decision_detail}</section>"
+        + (_history_attention_html(attention, actions_html="")
+           if attention is not None and active_attempt.send_status == "failed" and rerun.explanation else "")
     )
 
 

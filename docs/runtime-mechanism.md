@@ -461,6 +461,8 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
+风险拒绝记录的重新处理入口只作候选重新评估，不表示允许重放历史被拒执行。Attempt API 的 `rerun_label` / `rerun_confirmation` 与 React、原生 HTML 按钮说明来自同一业务对象的结构化历史 `code` / `source_code`，跨执行代保留；只认确切 `provider_risk_rejected`，不匹配正文、嵌套文字或其他对象。普通失败保留“重新处理”措辞；手动重新评估入口、排队规则及 System 的既有历史拒绝限制均不改变。
+
 Codex 角色使用原生 code_mode_only，并保留无文件/网络/模块导入接口的 V8 host，供具名 MCP 操作调用与计算；排除内建 functions namespace，同时关闭 shell、browser、image generation、委派、自动 Skill 安装和记忆写入。命令与补丁工具因此不暴露在角色 direct/nested 目录中，任务绑定读取和 Consumer 文档工具仍保留；这不是注销原生 registry 的 ApplyPatch handler。实际读取回执和目录检查验证角色接口范围，固定无工具合成业务对比只验证判断和契约，不证明生产工具可用或已发生业务效果。
 
 ## 用户反馈处理轮次

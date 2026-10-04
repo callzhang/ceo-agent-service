@@ -179,6 +179,8 @@ export interface AttemptDetail {
     can_recall: boolean;
     can_submit_feedback: boolean;
     rerun_url: string;
+    rerun_label: string;
+    rerun_confirmation: string;
     recall_url: string;
     feedback_url: string;
     consumer_url: string;

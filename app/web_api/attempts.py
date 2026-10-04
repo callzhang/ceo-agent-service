@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
 
+from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
 from app.attempt_what_happened import build_what_happened
 from app.web_api.common import json_safe, normalize_display_value
 
@@ -443,6 +444,7 @@ def _action_links(
     reply_task: Any,
     sent_reply: Any,
     wechat_delivery: Any,
+    rerun: RerunPresentation,
 ) -> dict[str, Any]:
     from app.audit_web import _sent_reply_has_recall_target
 
@@ -479,6 +481,8 @@ def _action_links(
     terminal = terminal and not delivery_action_url
     return {
         "can_rerun": status == "failed",
+        "rerun_label": rerun.label,
+        "rerun_confirmation": rerun.confirmation,
         "can_recall": _sent_reply_has_recall_target(sent_reply),
         "can_submit_feedback": True,
         "rerun_url": f"/api/console/history/{int(attempt.id)}/rerun",
@@ -733,6 +737,8 @@ def build_attempt_detail(
     agent_sessions = _agent_sessions(attempt, agent_runs)
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
+    rerun = (attempt_rerun_presentation(store, reply_task, agent_runs)
+             if attempt.send_status == "failed" else RerunPresentation())
     status_message, requires_decision = _status_message(attempt, attention)
     # A sent-reply ledger is direct evidence that a DingTalk response reached
     # the provider. Prefer it to the task projection (which can simply be
@@ -796,6 +802,8 @@ def build_attempt_detail(
                 "skipped": "已按审核通过的停止方案结束，原因已记录。",
             }
             status_message = execution_messages.get(system_execution["status"], status_message)
+    if attempt.send_status == "failed" and rerun.explanation:
+        status_message = rerun.explanation
     try:
         audit_explanation = _attempt_reason_text(attempt)
     except RuntimeError:
@@ -932,7 +940,7 @@ def build_attempt_detail(
             "result": _stored_json(attempt.calendar_response_result_json, {}),
         },
         "actions": _action_links(
-            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery
+            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery, rerun
         ),
         "agent_sessions": agent_sessions,
         "runtime_attempts": runtime_attempts,
