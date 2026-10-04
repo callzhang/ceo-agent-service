@@ -1163,7 +1163,6 @@ describe("App", () => {
   });
 
   it("coalesces a confirmation progress event into an authoritative timeline refresh", async () => {
-    const user = userEvent.setup();
     const sources: ProgressSource[] = [];
     class ProgressSource {
       onopen: ((event: Event) => void) | null = null;
@@ -1202,9 +1201,10 @@ describe("App", () => {
       })
       .mockReturnValueOnce(authoritative.promise);
     window.history.replaceState({}, "", `/?task=${first.id}`);
-    render(<App />);
+    await act(async () => { render(<App />); });
 
     expect(await screen.findByText("旧版待确认操作不会再执行")).toBeInTheDocument();
+    await waitFor(() => expect(sources).toHaveLength(1));
 
     sources[0].emit("status_changed", 2, waiting.id, {
       status: "queued",
@@ -1263,9 +1263,10 @@ describe("App", () => {
       return Promise.resolve(emptyTimeline(second));
     });
     window.history.replaceState({}, "", `/?task=${first.id}`);
-    render(<App />);
+    await act(async () => { render(<App />); });
 
     await screen.findByText("会切换的等待回合");
+    await waitFor(() => expect(sources).toHaveLength(1));
     sources[0].emit("status_changed", 1, waiting.id, { status: "queued", confirmation_id: "confirmation-stale" });
     fireEvent.click(screen.getByRole("button", { name: "打开任务 产品规划" }));
     await screen.findByText("开始新的对话");
