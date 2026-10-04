@@ -36,6 +36,27 @@ from app.skill_features import FeatureRegistry
 NOW = datetime.fromisoformat("2026-07-14T10:10:00+08:00")
 
 
+@pytest.mark.parametrize("status", ["pending", "processing", "retry", "ready_to_send"])
+def test_discovery_failure_preserves_active_meeting_source(tmp_path, status):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    original_source = json.dumps({"calendar_evidence": {"event_id": "event-1"}})
+    original_participants = '[{"user_id":"owner-1","name":"Owner"}]'
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json=original_source,
+        participants_json=original_participants, ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status=status,
+    )
+    meeting_alignment._store_meeting_discovery_terminal_job(
+        store, meeting_id="minutes-1", title="Meeting", list_item={}, info={},
+        status="skipped", error='{"kind":"meeting_roster","message":"DNS failed"}',
+        now=NOW,
+    )
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == status
+    assert job.source_json == original_source
+    assert job.participants_json == original_participants
+
+
 def test_producer_does_not_create_new_job_when_feature_disabled(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = FakeDws()
@@ -2065,16 +2086,11 @@ def test_transcript_meeting_without_calendar_event_marks_calendar_note_skipped(
     source["calendar_evidence"].update(
         source="transcript", event_id="transcript:minutes-1"
     )
-    store.upsert_meeting_alignment_job(
-        meeting_id=job.meeting_id,
-        title=job.title,
+    store.update_meeting_alignment_job(
+        job_id,
         source_json=json.dumps(source, ensure_ascii=False),
-        participants_json=job.participants_json,
-        ended_at=job.ended_at,
-        eligible_at=job.eligible_at,
-        status="pending",
+        status="ready_to_send",
     )
-    store.update_meeting_alignment_job(job_id, status="ready_to_send")
 
     assert consume_meeting_alignment_jobs(
         store, dws, runner, now=NOW + timedelta(minutes=1), limit=1

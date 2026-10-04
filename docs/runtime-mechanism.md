@@ -1318,6 +1318,12 @@ when its task ID, generation, and pending status otherwise match. The mutation
 checks the lifecycle again under its write transaction.
 # Task Evidence Repair And Retired Anchors
 
+Meeting discovery may refresh a waiting recording, but once a job is queued,
+claimed, retrying, ready for delivery or terminal, discovery cannot replace its
+persisted source snapshot or participant evidence. Recovery refreshes failed
+unsent jobs through the explicit replay lifecycle. A failed roster lookup during
+rediscovery must not remove `calendar_evidence` from an already queued job.
+
 Task Agent validates formal creation and candidate promotion owner citations
 before entering its atomic domain transaction. A repairable evidence error is
 returned to the same Task session and run with the rejected candidate and

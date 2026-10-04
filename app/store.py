@@ -17118,6 +17118,7 @@ class AutoReplyStore:
                         else meeting_alignment_jobs.status
                     end,
                     updated_at=current_timestamp
+                where meeting_alignment_jobs.status='waiting'
                 """,
                 (
                     meeting_id,
