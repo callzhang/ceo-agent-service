@@ -326,6 +326,128 @@ def seed_references(db):
     db.execute("insert into work_projects (id, title) values (1, 'Legacy source')")
 
 
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_project_attention_evidence_migration_preserves_original_history_once(tmp_path, confirmed):
+    path = tmp_path / "project-proof-migration.sqlite3"
+    original = AutoReplyStore(path)
+    with original.business_task_transaction() as db:
+        seed_references(db)
+        insert_row(db, "business_task_evidence", ROWS["business_task_evidence"][1])
+        insert_row(db, "business_task_anchor_links", dict(
+            ROWS["business_task_anchor_links"][1], status="confirmed" if confirmed else "proposed"
+        ))
+        insert_row(db, "business_attention_events", ROWS["business_attention_events"][1])
+        before = {
+            table: [dict(row) for row in db.execute(f"select * from {table} order by rowid")]
+            for table in (
+                "business_tasks", "business_task_signals", "business_task_evidence",
+                "business_task_anchor_links", "business_attention_items", "business_attention_events"
+            )
+        }
+        db.execute("delete from service_state where key='business_project_attention_evidence_migrated'")
+        db.execute("update service_state set value='2026-10-04.3' where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,))
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    upgraded = AutoReplyStore(path)
+    assert [(proof.project_id, proof.signal_id) for proof in upgraded.list_business_project_evidence(1)] == (
+        [(1, 1)] if confirmed else []
+    )
+    with upgraded.business_task_transaction() as db:
+        after = {table: [dict(row) for row in db.execute(f"select * from {table} order by rowid")] for table in before}
+        assert before == after
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+        assert db.execute("select value from service_state where key='business_project_attention_evidence_migrated'").fetchone()[0] == "1"
+    # The structural migration is not a read-time or later-initialization healer.
+    later_signal = upgraded.create_business_task_signal(
+        source_type="message", source_ref="later:task-only", evidence_text="任务自己的后续证据。", dedupe_key="later:task-only"
+    )
+    upgraded.link_business_task_evidence(task_id=1, signal_id=later_signal, evidence_role="discovery")
+    upgraded.set_service_state(store_module.STORE_SCHEMA_VERSION_KEY, "2026-10-04.3")
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    reopened = AutoReplyStore(path)
+    assert [proof.signal_id for proof in reopened.list_business_project_evidence(1)] == ([1] if confirmed else [])
+
+
+@pytest.mark.parametrize("case", ["memory_provenance", "session_provenance", "inactive_link", "resolved_card"])
+def test_project_attention_migration_does_not_invent_original_relationships(tmp_path, case):
+    path = tmp_path / f"migration-exclusion-{case}.sqlite3"
+    original = AutoReplyStore(path)
+    with original.business_task_transaction() as db:
+        seed_references(db)
+        signal_id = original.create_business_task_signal_in_transaction(
+            source_type=case if case.endswith("provenance") else "message", source_ref=f"m:{case}",
+            evidence_text="历史项目风险。", dedupe_key=case, _db=db,
+        )
+        original.link_business_task_evidence_in_transaction(task_id=1, signal_id=signal_id, evidence_role="discovery", _db=db)
+        insert_row(db, "business_task_anchor_links", dict(ROWS["business_task_anchor_links"][1], active=case != "inactive_link"))
+        if case == "resolved_card":
+            db.execute("update business_attention_items set status='resolved', resolution_signal_id=?, resolved_at=? where id=1", (signal_id, STAMP))
+        db.execute("delete from service_state where key='business_project_attention_evidence_migrated'")
+        db.execute("update service_state set value='2026-10-04.3' where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,))
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    upgraded = AutoReplyStore(path)
+    assert upgraded.list_business_project_evidence(1) == ()
+    assert upgraded.get_business_task_signal(signal_id).source_type == (case if case.endswith("provenance") else "message")
+
+
+@pytest.mark.parametrize("fail_insert", [False, True])
+def test_project_attention_migration_isolates_projects_deduplicates_and_rolls_back(tmp_path, fail_insert):
+    from app.task_business_resolution import BusinessResolutionService
+
+    path = tmp_path / "two-project-migration.sqlite3"
+    original = AutoReplyStore(path)
+    resolver = BusinessResolutionService(original)
+    projects = []
+    signals = []
+    for number in (1, 2):
+        anchor_id = resolver.register_anchor(anchor_type="project", anchor_ref=f"project:{number}", title=f"项目{number}")
+        project_id = resolver.register_official_project(anchor_id=anchor_id, registry_source=f"meeting:{number}")
+        task_id = original.create_business_task(title=f"交付{number}", stage="candidate")
+        signal_id = original.create_business_task_signal(
+            source_type="message", source_ref=f"m:{number}", evidence_text=f"项目{number}的交付存在风险。", dedupe_key=f"m:{number}"
+        )
+        resolver.confirm_anchor_match(task_id=task_id, anchor_id=anchor_id, evidence_signal_id=signal_id, reason="真实项目关系")
+        original.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="assignment")
+        with original.business_task_transaction() as db:
+            card_id = original.create_business_attention_item_in_transaction(
+                stable_key=f"project:{anchor_id}", category="watch", title=f"项目{number}风险", business_area="交付",
+                why_attention="交付风险", current_state="待明确", ceo_action="观察", anchor_id=anchor_id,
+                evidence_signal_id=signal_id, assessment_json="{}", now=STAMP, _db=db,
+            )
+            original.replace_business_attention_tasks_in_transaction(attention_item_id=card_id, task_ids=(task_id,), _db=db)
+            original.replace_business_attention_proposal_tasks_in_transaction(attention_item_id=card_id, task_ids=(task_id,), _db=db)
+        projects.append(project_id)
+        signals.append(signal_id)
+    preserved = original.create_business_task_signal(source_type="message", source_ref="m:project-only", evidence_text="项目一的独立资料。", dedupe_key="m:project-only")
+    tables = (
+        "business_tasks", "business_task_signals", "business_source_documents", "business_task_evidence",
+        "business_task_events", "business_task_anchor_links", "business_projects", "business_attention_items",
+        "business_attention_tasks", "business_attention_proposal_tasks", "business_attention_events"
+    )
+    with original.business_task_transaction() as db:
+        db.execute("insert into business_project_evidence(project_id, signal_id, created_at) values (?, ?, ?)", (projects[0], preserved, STAMP))
+        before = {table: [tuple(row) for row in db.execute(f"select * from {table} order by rowid")] for table in tables}
+        if fail_insert:
+            db.execute(f"create trigger fixture_fail_project_proof before insert on business_project_evidence when new.project_id={projects[1]} begin select raise(abort, 'fixture migration failure'); end")
+        db.execute("delete from service_state where key='business_project_attention_evidence_migrated'")
+        db.execute("update service_state set value='2026-10-04.3' where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,))
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    if fail_insert:
+        with pytest.raises(sqlite3.IntegrityError, match="fixture migration failure"):
+            AutoReplyStore(path)
+    else:
+        AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        assert before == {table: db.execute(f"select * from {table} order by rowid").fetchall() for table in tables}
+        proofs = db.execute("select project_id, signal_id, created_at from business_project_evidence order by project_id, signal_id").fetchall()
+        assert (projects[0], preserved, STAMP) in proofs
+        assert {(row[0], row[1]) for row in proofs} == (
+            {(projects[0], preserved)} if fail_insert else {(projects[0], preserved), *zip(projects, signals)}
+        )
+        marker = db.execute("select value from service_state where key='business_project_attention_evidence_migrated'").fetchone()
+        assert marker is None if fail_insert else marker == ("1",)
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+
+
 def model_for(table):
     name = ROWS[table][0]
     assert hasattr(models, name), f"missing frozen record {name}"

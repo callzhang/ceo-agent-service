@@ -54,9 +54,9 @@ def complete_business_task_from_external_todo(
             "and status in ('draft','approved','sent')",
             (json.dumps(evidence, ensure_ascii=False), str(evidence.get("reason") or ""), business_task_id),
         )
-    from app.task_agent import _project_task_attention
+    from app.task_attention_projection import BusinessAttentionProjection
 
-    _project_task_attention(store, (), (business_task_id,))
+    BusinessAttentionProjection(store).recompute_for_tasks((business_task_id,))
     return True
 
 def close_todo_with_completion_evidence(
@@ -157,4 +157,3 @@ def _completion_evidence(evidence: dict[str, Any], *, now: str) -> dict[str, Any
     normalized["completed_at"] = completed_at
     normalized.setdefault("checked_at", now)
     return normalized
-

@@ -37,7 +37,16 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-project-centered-task5 | Isolated task-attention-multisource worktree: app/task_models.py, app/task_agent.py, app/project_context_service.py, app/task_business_resolution.py; tests/test_task_models.py, tests/test_task_agent.py, tests/test_task_agent_session.py, tests/test_project_context_service.py, tests/test_task_suggestions.py, tests/test_task_source_project_registration.py, tests/test_task_attention_multisource.py (current wire fixtures only), scripts/inspect_task_attention.py and scripts/replay_task_attention.py (current wire producers only), tests/fixtures/task_attention_multisource.json (current expected contract only), ci/shared-skills/ceo-work-tracking/SKILL.md, docs/architecture.md, docs/runtime-mechanism.md, docs/task-semantic-storage.md, implementation plan | Tasks 3/4 code and independent spec/quality reviews PASS at 209f84ac/13548316. Task 3 legacy TODO completion failures retained for Task 6; real DB migration remains blocked by pre-existing meeting FK and pending user direction. Task 5 single author: independent project_decisions/task_decisions/project_assessments in same Agent, real applied mappings, no old wire aliases, new Agent, approval policy, global Skill publish or deploy. Primary uses executing-plans fallback after subagent thread limit. | 2026-10-04 |
+| codex-project-centered-task8-fixture-oracle | Isolated task-attention-multisource worktree: tests/fixtures/task_project_centered_v1.json and tests/test_task_project_centered_eval.py ONLY | Existing project_context_spec_review agent delegated approved Task 8 versioned original-source cases and persisted-domain oracle counterexamples. No runtime, scripts, existing historical fixtures, docs, commits, native runs or live writes; primary owns runner integration. | 2026-10-04 |
+
+
+
+| codex-project-centered-task7-api | Isolated task-attention-multisource worktree: app/web_api/tasks.py; tests/test_web_api_task_project_summary.py, tests/test_web_api_task_attention.py and directly affected semantic API fixture contracts; owned behavior docs/plan | Primary author Task 7 read-only ProjectContext/roles/facts/suggestions/evidence/revision API. Remove Task-report inference read path, preserve actual owners/dates/stages and independent source Task. No policy, live mutation or deployment. | 2026-10-04 |
+
+| codex-project-centered-task7-console | Isolated task-attention-multisource worktree: frontend/src/api/console.ts, console.test.ts; TasksPage, TaskProjectDetailPage, TaskAttentionDetailPage, TaskParts, taskLabels and affected TaskDetailPage/tests; frontend/dev-mock/tasksMock.ts and Tasks-only responsive styles/tests | Delegated existing source_storage agent: display current API persisted ProjectContext and explicit suggestions; dense accessible light/dark narrow views. No business inference, API/backend edits, dependency migration, automatic dispatch, commit or deploy. | 2026-10-04 |
+
+
+
 
 
 

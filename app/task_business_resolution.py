@@ -396,6 +396,15 @@ class BusinessResolutionService:
                 (int(cluster_row["cluster_id"]),),
             ).fetchall()
             for task_row in task_rows:
+                existing = self.store.get_business_task_anchor_link_in_transaction(
+                    task_id=int(task_row["task_id"]), anchor_id=int(project_row["canonical_anchor_id"]), _db=db,
+                )
+                if existing is not None and existing.status is BusinessRelationStatus.CONFIRMED and existing.active:
+                    self.store.link_business_task_evidence_in_transaction(
+                        task_id=int(task_row["task_id"]), signal_id=evidence_signal_id,
+                        evidence_role=BusinessEvidenceRole.RELEVANCE, _db=db,
+                    )
+                    continue
                 self.confirm_anchor_match(
                     task_id=int(task_row["task_id"]),
                     anchor_id=int(project_row["canonical_anchor_id"]),

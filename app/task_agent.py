@@ -37,6 +37,9 @@ from app.task_models import (
     TaskAttentionProjectionReceipt,
     TaskAttentionAssessmentResult,
     TaskAttentionVerifiedCitation,
+    TaskProjectAssessment,
+    TaskProjectDecisionResult,
+    TaskDecisionResult,
 )
 from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID
 from app.task_retrieval import (
@@ -53,6 +56,9 @@ from app.task_semantic_models import (
     BusinessRelevance,
     FormalTaskBasis,
     AttentionCategory,
+    SourceCitation,
+    ProjectContext,
+    TaskSuggestion,
 )
 from app.task_semantic_service import (
     AcceptancePolarity,
@@ -61,6 +67,7 @@ from app.task_semantic_service import (
     PromoteCandidate,
     RecordCandidate,
     RecordFormalTask,
+    RecordTaskSuggestion,
     SourceSignal,
     TaskDateInput,
     TaskSemanticService,
@@ -69,7 +76,12 @@ from app.task_semantic_service import (
 from app.task_semantic_rules import FormalityEvidence, IdentityEvidence
 from app.task_business_resolution import BusinessResolutionService
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
-from app.task_source_documents import source_contains_quote
+from app.task_source_documents import (
+    source_contains_quote,
+    source_document_key,
+    source_is_observed,
+)
+from app.project_context_service import ProjectContextService
 
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 # Field errors quoted back to the model in one correction turn.
@@ -94,15 +106,16 @@ TASK_RUNTIME_CAPABILITIES = frozenset(
     }
 )
 TASK_RESULT_CODEC = RoutedResultCodec.text(
-    schema_id="task_agent.decision.v1",
+    schema_id="task_agent.decision.v2",
     allow_evidence_source_refs=True,
 )
 
 
 @dataclass(frozen=True)
 class AppliedTaskAttention:
-    decision: TaskDecision
-    task_id: int
+    assessment_index: int
+    assessment: TaskProjectAssessment
+    task_ids: tuple[int, ...]
     signal_id: int
     anchor_id: int
 
@@ -116,6 +129,15 @@ class AppliedTaskDecision:
 
 
 @dataclass(frozen=True)
+class AppliedProjectDecision:
+    project_decision_index: int
+    project_id: int
+    anchor_id: int
+    revision_id: int | None
+    signal_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class TaskAgentApplyResult:
     task_ids: tuple[int, ...]
     attention_proposals: tuple[AppliedTaskAttention, ...]
@@ -124,6 +146,8 @@ class TaskAgentApplyResult:
     projection_receipt: TaskAttentionProjectionReceipt | None = None
     project_links: tuple[tuple[int, int], ...] = ()
     applied_decisions: tuple[AppliedTaskDecision, ...] = ()
+    applied_projects: tuple[AppliedProjectDecision, ...] = ()
+    current_signal_id: int | None = None
 
     def __iter__(self):
         return iter(self.task_ids)
@@ -173,7 +197,6 @@ class RepairableTaskDecisionValidationError(ValueError):
     """A typed Agent decision can be corrected in one bounded follow-up turn."""
 
 
-
 class TaskDecisionRepairExhausted(RepairableTaskDecisionValidationError):
     """The bounded repair rounds ended with a rule still unsatisfied.
 
@@ -215,7 +238,8 @@ def _canonicalize_current_source_provenance(
         ):
             formal_basis = FormalTaskBasis.MEETING_ACTION_ITEM
         if (
-            formal_basis in {
+            formal_basis
+            in {
                 FormalTaskBasis.EXPLICIT_ASSIGNMENT,
                 FormalTaskBasis.EXPLICIT_COMMITMENT,
             }
@@ -240,14 +264,19 @@ def _canonicalize_current_source_provenance(
         ):
             action = "create_task"
             formal_basis = FormalTaskBasis.MEETING_ACTION_ITEM
-        decisions.append(item.model_copy(update={
-            "action": action,
-            "source_ref": source_ref,
-            "owner_evidence": owner_evidence,
-            "date_evidence": date_evidence,
-            "formal_basis": formal_basis,
-        }))
+        decisions.append(
+            item.model_copy(
+                update={
+                    "action": action,
+                    "source_ref": source_ref,
+                    "owner_evidence": owner_evidence,
+                    "date_evidence": date_evidence,
+                    "formal_basis": formal_basis,
+                }
+            )
+        )
     return decision.model_copy(update={"task_decisions": decisions})
+
 
 class TaskCodex(Protocol):
     last_session_id: str
@@ -360,6 +389,7 @@ class TaskAgentCodexRunner:
         self.last_audit_tool_events = session_events or payload["audit_tool_events"]
         return decision
 
+
 def _encode_task_agent_result(raw: str) -> str:
     from app.codex_decision import extract_codex_audit_events
 
@@ -404,16 +434,17 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         )
     return (
         "The previous output was not accepted as a TaskAgentDecision. Resume "
-        "the same task decision and return exactly one valid TaskAgentDecision "
+        "the same Agent turn and return exactly one valid TaskAgentDecision "
         "JSON object.\n\n"
         f"Problems in the previous output:\n{detail}\n\n"
         "Rules that must hold:\n"
-        "- project_assessments is required. Return one outcome, concrete reason, and original evidence for every relevant business Project or Project clue in the current source and current Tasks' confirmed Project links, whether or not this output emitted a selector for it. Semantic coverage is not limited to structured selectors; envelope validation can only prove coverage of emitted selectors. Every attention_proposal requires needs_attention and a supporting decision index; not_needed and insufficient_evidence cannot carry a new attention proposal. Use [] only when there is no relevant business Project or Project clue, with a nonblank update_summary explaining that fact.\n"
+        "- project_decisions, task_decisions and project_assessments are all required (0..N). Return one outcome, concrete reason, and original evidence for every relevant business Project or Project clue in the current source and current Tasks' confirmed Project links, whether or not this output emitted a selector for it. Semantic coverage is not limited to structured selectors. Every attention_proposal belongs to its needs_attention assessment, with optional actual Task membership; zero Tasks is valid. Project selectors index project_decisions, never task_decisions. Use [] assessments only when there is no relevant Project or clue, with a nonblank update_summary.\n"
         "- Return the TaskAgentDecision envelope with task_decisions (0..N); "
         "every non-skip item needs a source_excerpt (a sentence of the source), source_ref and a locator (source_link when there is one, otherwise source_description) "
         "(evidence_origin says whether it is the current Work Item, an earlier session turn, or memory provenance).\n"
         "- A formal assignment requires an explicit owner and authorized "
         "assignment source. Owner evidence alone does not prove authority.\n"
+        "- A display-only suggestion may infer a person from sourced responsibilities plus project facts, without actual owner/formal/date/assignment fields. Reuse the existing Task ID for later updates; do not turn suggestions into human commitments.\n"
         "- Any non-empty owner_name or owner_user_id requires owner_evidence. "
         "Normally it has source_ref and excerpt containing every named person. "
         "When authoritative memory or session context is explicitly bound to "
@@ -448,396 +479,126 @@ def build_task_agent_prompt(
         work_item.scheduled_consumer or None
     )
     current_skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
-    scheduled_consumer_prompt = (
-        "## Scheduled Consumer Prompt\n"
-        f"{scheduled_consumer.prompt}\n"
+    scheduled_prompt = (
+        f"## Scheduled Consumer Prompt\n{scheduled_consumer.prompt}\n"
         if scheduled_consumer is not None
         else ""
     )
     work_item_payload = work_item.model_dump(mode="json")
-    # The semantic renderer bundles current and historical source versions once.
-    # Keep trusted input metadata here, never echo its body a second time.
     work_item_payload.pop("summary")
     scheduled_payload = work_item_payload.get("scheduled_consumer")
     if isinstance(scheduled_payload, dict):
-        # Keep scheduled metadata and its specialized prompt, but do not echo
-        # stale output-contract text inside the source JSON as if authoritative.
         scheduled_payload.pop("skill_protocol", None)
-    work_item_json = json.dumps(
-        work_item_payload,
-        ensure_ascii=False,
-        indent=2,
+    work_item_json = json.dumps(work_item_payload, ensure_ascii=False, indent=2)
+    effective_current_time = (
+        current_time.strip() or datetime.now(timezone.utc).isoformat()
     )
-    memory_status = _memory_connector_prompt_status(memory_issue)
-    weekly_report_rules = ""
-    if work_item.source.type in {
-        WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT,
-        WorkItemSourceType.PROJECT_WEEKLY_REPORT,
-        WorkItemSourceType.DEPARTMENT_WEEKLY_REPORT,
-    }:
-        weekly_report_rules = """
-Weekly-report source rules (non-negotiable): this Work Item is an authoritative
-report revision, not a generic document search hit. Preserve its exact document
-reference and reporting period. When a report row or section names an individual
-owner, `owner_name` may contain co-owners separated by `/`, `、`, or `及`, but
-`owner_evidence` MUST be an object with `source_ref` equal to the current report
-reference and an `excerpt` copied from one report row/sentence that contains every
-named owner (including any @mention or display alias). Do not use a task title or
-your paraphrase as the owner excerpt. If the report does not put the owner and
-deliverable in the same attributable row/sentence, keep the item as a candidate
-instead of creating a formal Task. A team, department, sales role, or unnamed
-group is not an individual owner.
-
-For this report, emit `project_proposal` for each named project/workstream that
-has explicit project-level fields such as an owner, milestone/target, status,
-deliverable, or next task. Use the exact report heading/title and set the
-authority to this source type (`management_weekly_report`,
-`project_weekly_report`, or `department_weekly_report`). Its required
-`source_excerpt` quotes the project registration row separately from the Task's
-action evidence. Do not turn a generic
-department, topic, or isolated task into a Project. Attach the same authoritative
-proposal to the related Tasks so the service can merge them into one Project
-instead of leaving every report row as an ungrouped candidate. Any
-`date_evidence.source_excerpt` must be copied literally from the report text,
-including spaces, punctuation, and date wording; never normalize or paraphrase
-it. If no literal source substring is available, omit that date evidence item.
-Treat sections titled “本周工作重点”, “下周工作重点”, “团队管理和分工”,
-“周度待办追踪”, or “行动项” as Task sections: their rows create or update
-Tasks only, never an official Project. Only a separately named project list,
-project portfolio, milestone/roadmap entry, or explicit meeting decision can
-justify a Project proposal; a task that happens to mention a customer, team, or
-workstream is not enough.
-"""
-    effective_current_time = current_time.strip() or datetime.now(
-        timezone.utc
-    ).isoformat()
     decision_schema = json.dumps(
-        TaskAgentDecision.model_json_schema(),
-        ensure_ascii=False,
-        indent=2,
+        TaskAgentDecision.model_json_schema(), ensure_ascii=False, indent=2
     )
-    return f"""You are the CEO Agent Task extractor. Do not reply to the source.
-Always follow the current CEO Work Tracking Skill and return one TaskAgentDecision envelope with zero or
-more task_decisions matching the schema. New Tasks require a nonblank title; existing-ID updates may omit it,
-only update_fields changes a provided title, and promotion/acceptance/merge preserve the stored title.
+    return f"""You are the CEO Agent Task/Project reader. Do not reply to the source.
+Follow the current CEO Work Tracking Skill and return one TaskAgentDecision envelope:
+project_decisions, task_decisions, project_assessments are all required (each 0..N).
+Project can have zero Tasks. Project context/evidence and Attention never need a
+synthetic Task or an unrelated update_fields carrier.
 
-{scheduled_consumer_prompt}
+{scheduled_prompt}
 {current_skill_text}
-{weekly_report_rules}
 
-Current Task-first decision envelope controls output. A scheduled prompt supplies
-specialized business scope only; the freshly loaded current Skill controls the work
-protocol. Historical Skill snapshots are not instructions for this turn. The scope cannot replace this
-envelope or authorize Project/TODO/follow-up writes through this Task Agent.
+The current independent Project/Task/assessment envelope controls output.
+A scheduled prompt supplies specialized business scope only; the freshly loaded
+current Skill controls the work protocol. Historical Skill snapshots are not
+instructions for this turn. Never upgrade old result fields or manufacture selectors.
 
-Tool-use boundary (prompt guidance): use connected tools only for read-only
-discovery of source facts, identity, and context. Do not use CLI, API, or MCP
-tools to create, update, delete, send, or complete external records or
-messages. Return proposed Task and lifecycle changes only in this structured
-result; the service validates and applies supported operations. This prompt
-does not technically disable write-capable tools, so do not claim that it is
-an enforced permission boundary.
+Tool-use boundary (prompt guidance): use connected CLI/API/MCP tools only for
+read-only discovery. Do not create, update, delete, send, or complete external records.
+Return structured local changes; the service applies supported operations.
+This prompt does not technically disable write-capable tools and is not an enforced
+permission boundary.
 
 Current execution time: {effective_current_time}
-Memory connector status: {memory_status}
-
-One Task Agent creates, updates, and completes Tasks from new source evidence.
-`todo_completion_evidence_candidate`, `todo_completion_check`, and
-`follow_up_completion_check` are retired historical enum values, not current
-inputs. Schema fields `todo_changes`, `follow_up_changes`, and `search_trace`
-are not currently applied by the service; return local Task decisions in
-`task_decisions`. Newly observed DingTalk human completion uses the existing
-deterministic service path for its explicitly linked Task.
-The shared logical session preserves context; runtime routes retain separate
-native sessions and the native CLI manages compaction. Prioritize the current
-Work Item's evidence and authority.
-This runtime session is shared by every Work Item so that context is not lost,
-and Tasks may be completed from what you learned earlier. You may rely on
-evidence you read earlier in this session, and you may look up related
-information through memory_recall and follow its provenance to the original
-source. When a decision rests on that, set evidence_origin to "session" or
-"memory", source_ref to the ORIGINAL source's reference, and source_excerpt to an
-exact quote of the original text; use "current" for the Work Item being processed.
-Earlier or remembered evidence may refine a Task (update_fields) or record a
-candidate. Creating a formal Task, promoting, accepting, and merging identities
-still need the current Work Item's authority and identity metadata, and dates
-still need current, identified source evidence.
-
-Extract every distinct source-backed deliverable, or return an empty list.
-Preserve source punctuation, spaces, and line breaks in every source_excerpt.
-Do not join separate lines or rewrite an excerpt. Use separate evidence entries
-for separate spans; a JSON escape for a line break preserves the original quote.
-In `project_assessments`, return one outcome, concrete reason, and original evidence
-for every relevant Project selected by a current `project_proposal`,
-`project_link_proposal`, or `attention_proposal`. Reports, meetings, and chats are all
-valid inputs. A report is not the sole input or a prerequisite. Candidate Tasks may
-support a needs_attention assessment without promotion. Use `insufficient_evidence`
-only for a genuine unconfirmed Project identity or missing Task/risk evidence.
-not_needed requires evidence supporting a negative judgment.
-Missing concrete risk or business-impact evidence is insufficient_evidence,
-not proof that attention is unnecessary. Explain the missing facts without
-inventing a risk or creating a card.
-Do not fabricate a Task, Project, proposal, or ID to avoid it. A retained card may use an
-actual `existing_attention_id` with that card's original evidence and no new Task
-field change or proposal; the service verifies those stored facts in the domain layer.
-existing_attention_id is an original-proof claim, not an update target.
-When current evidence changes the risk, submit a matching attention_proposal;
-its Project key reuses the existing card. Leave existing_attention_id null unless
-you cite and verify that card's stored original evidence. An old card's presence
-alone does not establish its original proof.
-New verified risk evidence may update Project Attention on an existing Task with an active confirmed official Project link even when no Task business field changes.
-Use update_task/update_fields with that real Task ID, the current source's exact Task and risk quotes, the existing Project anchor, and an attention_proposal. Do not invent a Task field change to carry Attention evidence. Do not repeat or create a Project link solely to update Attention.
-Without a new Attention proposal, an unchanged Task remains a no-op. This path does not create a Task or official Project, confirm a new link, reschedule follow-ups, or enqueue a TODO.
-For a retained card, read its entry in current_project_attention, decode
-assessment_json, and cite at least one item from assessment_json.evidence with
-signal_id, source_ref, and source_excerpt unchanged. A current restatement does
-not replace that stored proof; cite the current source separately if useful.
-Use current_project_attention.task_ids for the card's actual saved Task members;
-Project peers are not automatically card members. A retained-card assessment may
-name supporting Tasks only from that saved membership. For a new Task member or
-changed risk, use the normal attention_proposal path with current original evidence.
-Negative assessments never close an existing card. Do not infer Project identity from
-aliases, prefixes, similarity, or keywords. Keep source facts separate from business inference.
-Do not perform a whole-company or full-history scan; assess the Projects selected by
-this Work Item and its bounded retrieved context. The shared session and native CLI compaction
-remain responsible for continuity; do not synthesize assessments as compatibility output.
-Repeated decisions with the same exact `project_proposal.title`, or the same known anchor,
-share one assessment; do not emit a second business judgment for the duplicate selector.
-Return a judgment for every related business Project or Project clue in the current source,
-and for current Tasks' confirmed Project links, even when no `project_proposal`,
-`project_link_proposal`, or `attention_proposal` is emitted. Emitting no Project selector
-does not prove that no relevant Project exists. When identity is unconfirmed or no real Task
-or risk evidence exists, use `insufficient_evidence` and state the specific missing identity,
-Task, or risk evidence. Use [] only when the current source and current Tasks contain no
-relevant business Project.
-Project registration scope, objectives, and categories are not separate Tasks
-when concrete source actions already cover that work. Use registration text as
-Project evidence attached to those real actions, not as an additional umbrella Task.
-Keep genuine explicit actions wherever they occur in the source.
-One source may yield multiple decisions. Each non-skip item cites its source: the
-source_ref, a contiguous verbatim extract of the original text as source_excerpt,
-and where a reader can find it: source_link
-whenever the source has a link (always give it then); when it has none, describe
-where it is in source_description (a DingTalk message: its group and the person
-who sent it). For the current Work Item the service fills in what it knows, but
-state them whenever you can, and always for earlier or remembered evidence.
-Never invent a task, owner, assignment, acceptance, date, relevance, or
-authority. An owner must be explicit in source text or authoritative source
-metadata; an ownerless assignment stays candidate/unmatched evidence.
-
-For AI Minutes, DingTalk leaves each action item's own executor empty, and the
-Work Item's transcript_excerpts hold the conversation around it, one line per
-sentence as “speaker：text”. Decide the owner from those lines: it is whoever
-the conversation gives the work to or who takes it on, not automatically the
-speaker (“你写下来” from one person assigns the work to the person addressed).
-Set owner_evidence with two keys: "source_ref" (the decision's source_ref) and
-"excerpt" (a sentence, speaker label included, that contains the owner's name; an
-extract is fine). That sentence is often not the item's own source_excerpt: when
-one person hands the work to another (“你写下来”), cite the sentence in which the
-person who takes it on speaks, and keep the assigning sentence as the decision's
-source_excerpt. A generic label such as “发言人 N” is DingTalk's placeholder for a
-speaker it could not name; it is not a person and never an owner. When the lines
-do not settle who owns it, or an action item has no excerpt, leave the owner
-empty.
-
-The Work Item's meeting_summary, when present, is DingTalk's own structured
-summary of the whole meeting: read it too before concluding there is no owner. A
-narrow transcript window keyed to one action item's extraction moment can miss the
-sentence that actually names the owner, and this summary often states an
-assignment explicitly and elsewhere in the meeting (e.g. "行动项：**磊哥**与**周俊杰**
-负责代码 Review"), sometimes for several action items in one place, sometimes long
-after the moment the item itself was raised. An owner citation may come from
-meeting_summary the same way it comes from transcript_excerpts: a sentence
-(an extract is fine) that contains the owner's name; the person named must be an
-individual DingTalk gave a name to, not a team or department ("研发", "算法团队",
-"Product Marketing") and not a placeholder like "发言人 N". When neither the
-transcript window nor the summary names an individual, leave the owner empty:
-that is the source's limit, not something to fill in.
-
-For every AI Minutes item with an owner, also classify the owner evidence:
-`owner_kind` is `individual`, `team`, or `unknown`; `owner_relation` is
-`explicit_assignment` when someone assigns the work to that person,
-`self_commitment` when the named person takes it on, `meeting_summary_action_item`
-when the structured meeting summary names that person for the action item,
-`speaker_only` when the person merely speaks, or `unknown`. A named individual
-with one of the first three relations is a formal `meeting_action_item` Task
-with `assigned_unaccepted` semantics, even when a stable ID, date, or completion
-standard still needs enrichment. A team, speaker-only mention, or unresolved
-relation remains a candidate.
-
-An assignment creates an assigned_unaccepted Task. Only explicit evidence from
-that identified owner may apply_acceptance to exactly one existing formal Task;
-“收到” and external TODO existence are not acceptance. Use explicit
-promote_candidate, apply_acceptance, update_fields, or merge_identity
-transitions with existing IDs. Similarity rank is context only. Generic updates
-cannot set commitment status.
-
-Only identical deliverables may be proposed for identity merge.
-Relations name the existing `related_task_id` and direction relative to this applied Task:
-current_to_related or related_to_current; never guess a new Task's ID or use unrelated endpoints.
-Related Tasks remain linked or clustered. Create only independently completable deliverables;
-scope/content additions to an existing deliverable update that Task by its real ID.
-Identical source quotes alone do not establish Task identity.
-Task action excerpts do not originate extra Tasks from Project registration scope already covered by concrete actions.
-Reports, meetings, and chats all supply Task and risk evidence;
-a weekly report is neither the sole risk source nor a prerequisite for Attention.
-Attention.anchor_id selects the Project assessment; it does not confirm a Task's Project link.
-For a new or unconfirmed Task explicitly belonging to an existing official Project,
-emit `project_link_proposal` with that known positive `anchor_id`, a nonempty exact
-current action `source_excerpt` naming the stored Project/anchor title, and a
-source-grounded `reason`. A complete same-action compound quote may supply the stored
-Project name and contain the shorter Task action quote; not another paragraph or whole report.
-The link quote and exact Task action quote must contain one another in the current source.
-Use the same positive anchor in attention_proposal. The service confirms that Task's
-link and derives relevant business_relevance without promoting its stage.
-Do not set business_relevance on a new Task decision. Reuse existing confirmed Task links.
-Adopt the exact current authoritative Project definition with project_proposal to register or reuse
-its official identity. A different stored name cannot replace that definition merely because the action uses its shorter name.
-Use project_link_proposal when the source explicitly supplements that known Project;
-do not combine these two Project selections in one decision.
-Uncertain matches remain `anchor_match_proposals`; they are proposed, not confirmed.
-Do not infer aliases or identity from a title prefix or similarity; judge whether
-the source explicitly names this existing Project. Quote/title checks establish
-current provenance and a name reference, not independent semantic identity proof.
-An official Project requires confirmed report registration or an explicit meeting
-registration decision. Resolve that current source definition before selecting a stored Project. Prefer the confirmed official weekly report for Project
-definition and registry fields. Chat can update Task/risk evidence but cannot create an
-official Project or silently overwrite official fields. Preserve report references
-and reporting periods. When newer meeting or chat evidence conflicts with official
-fields, preserve both cited sources and their times and mark the conflict pending
-verification. Project candidates must cite an existing cluster and authoritative
-report/meeting evidence; similarity is not authority.
-
-Project resolution is part of this scan. If the current meeting evidence explicitly
-decides to start, approve, 立项, or assign a named project/workstream (not merely
-mentioning it), emit `project_proposal` on each related Task with the exact project
-title, a reason grounded in the source sentence, a separate `source_excerpt`
-quoting the project decision, and `authority="meeting_decision"`.
-This is required even when the related Task is an `update_task` or a previously
-recorded meeting action: update the Task and attach the project proposal in the
-same decision. Read the complete meeting_summary, transcript_excerpts, and action
-item text before deciding that a project was only mentioned. When a sentence
-explicitly asks for a named product or workstream to be planned or set up, use
-that source-named item as the Project title; do not leave the proposal null merely
-because the current Task already exists. The service will register that project
-and link the Task to it. If the source only
-mentions a project or several Tasks appear related without an explicit project
-decision, do not emit `project_proposal`; emit a `cluster_proposal` and a
-`project_candidate_proposal` instead when the existing cluster and evidence support
-that candidate. Never invent a project title from a generic department, topic, or
-single unrelated Task.
-
-Quote only the complete parseable date phrase, not a registry row, in date_evidence.
-Use trusted WorkItem.context.sender_user_id/sender for source-derived date actors;
-next_check_at uses task-agent/CEO Agent. Report/document names are not date actors.
-Without a trusted actor or complete parseable date phrase, retain the wording in the original source without typed date_evidence.
-Normalized value must match that phrase; do not move Project registry deadlines onto Tasks or add absent time precision.
-assigned_at comes only from trusted source timestamp metadata; an estimate is not
-the extracting Agent's estimate, and next_check_at is not an owner commitment. AI Minutes
-has no trusted speaker-to-identity mapping yet, so do not attribute a quoted
-speaker's date to the meeting host or to a model-selected identity (this limit
-is for dates; owners come from transcript_excerpts as above). Only owner
-acceptance can establish committed_deadline_at. No date is required to retain a Task.
-Attention requires an existing confirmed official Project or a valid current-authority
-`project_proposal` in this same TaskDecision, resolved to its registered anchor this turn,
-plus a material trigger: threatened accepted commitment, material change/dispute,
-CEO decision/push, required Gate, or meaningful risk escalation.
-First assessment of a source-observed unresolved material business risk may use watch;
-it does not require a prior card or a fresh delta against a nonexistent assessment.
-Explain the concrete unresolved business impact from the observed source, even when
-the report states the risk as a current fact. An existing card already reflecting
-the same facts does not need a new proposal; repeated facts alone are insufficient.
-Candidate Tasks may support Attention without a formal owner or accepted commitment;
-keep their stage and missing ownership evidence truthful. Relevance, acceptance, ordinary progress, or
-date proximity alone is not attention. Retain real low-impact work when needed,
-but keep it outside attention. “skip” means no plausible retained source task,
-not no Project.
-Attention proposals cite a nonempty `evidence` list: each entry includes
-`source_ref`, an exact `source_excerpt`, and an optional existing `signal_id`.
-Keep `why_attention` as your material business-impact inference, separate from
-`current_state` facts and source quotes. Quote risk evidence from the full current
-source or historical persisted original Signals, separately from Task action
-source_excerpt and ProjectProposal.source_excerpt registration evidence.
-For current evidence use null signal_id and the current source_ref; historical evidence
-requires a real positive persisted signal_id, matching source_ref, and an exact quote.
-Set required `assessment_basis`: `current_observation` asserts only current-source facts;
-`historical_comparison` uses comparison, continuity, escalation or conflict with stored history
-and requires both current null-ID and positive persisted-ID original evidence.
-When the current source explicitly compares earlier facts and matching original Signals
-are delivered, verify that comparison against the originals and use historical_comparison;
-do not reduce it to merely repeating the current source's historical claim.
-A current source's reference to an earlier report is a current claim, not a citation of that original report.
-Select relevant originals, not all retrieved sources or a required source type. A first assessment
-based only on current facts remains allowed. If the original history is unavailable, mark
-the comparison uncertain and assert only current facts; never invent historical evidence.
-Session/memory cited-only provenance cannot support Attention; use stored observed
-original Signals. Labels, relevance, routine progress, and date proximity alone
-do not explain material impact. Return at most one unique assessment/card per Project per round.
-For multiple newly created Tasks supporting the same Project and risk, repeat the identical `attention_proposal`
-on each supporting TaskDecision. The service folds those identical proposals into
-one card and combines their Task membership. Keep the assessment fields and evidence
-identical across those decisions; anchor resolution and existing related IDs may differ.
-current_state contains Project-level risk facts, not per-Task action summaries.
-Copy one Project-level proposal unchanged to each supporting TaskDecision, including
-current_state. Task-specific actions belong in Task description or update_summary,
-not in customized versions of the shared Attention proposal.
-Use `related_task_ids` only for real existing Task IDs; never invent IDs for new decisions.
-Keep unrelated Project Tasks outside this assessment; conflicting proposal payloads are rejected.
-Other project Tasks receive no Attention merely by membership. For watch, ceo_action
-may say 当前无需你处理; specify the observable outcome to watch. Attention does not imply 需介入.
-Explain unproposed Tasks in update_summary when impact is insufficient, Project is
-unconfirmed, or no verifiable evidence exists. Never invent a Task, owner, assignment,
-commitment, or date to fill a card.
-`anchor_id` is a positive registered ID, or null only when this same TaskDecision
-contains the `project_proposal` to resolve this turn. `related_task_ids` contains
-only positive existing Task IDs; omit it when there are none. Do not output the
-retired `trigger_evidence` field.
-
-Memory is background only, never source proof. Do not copy runtime paths,
-credentials, or diagnostics into business fields.
+Memory connector status: {_memory_connector_prompt_status(memory_issue)}
+The shared logical session preserves context; runtime routes retain separate native
+sessions and the native CLI manages compaction. Current source authority takes precedence.
 
 Current Work Item JSON:
 {work_item_json}
 Source body: current_work_item.document_id in the semantic context below;
 read its visible_ranges. Offsets are character ranges in that exact version,
 not a claim that an omitted middle or another version was read.
-
-Current semantic Task context (rank is context, never authority):
+Current semantic Project/Task context (rank is context, never authority):
 {candidate_prompt}
 
-Evidence protocol:
-- Use memory_recall as stable background when available; it is not proof of
-  current source facts or assignment authority.
-- For source-named owners, perform a focused live directory/contact lookup
-  when available. Keep an owner_user_id only when that lookup maps the exact
-  source-named person; otherwise preserve the name and leave the ID empty.
-- A reply is accepted only when the source/provider context contains a
-  verified reply_to_source_ref. Do not infer it from a Task ID or similar text.
+Apply the Skill before returning:
+- Read original Project definitions, current roles/facts and Tasks together.
+  Preserve genuinely standalone Tasks; do not turn a department/topic/customer or
+  small unrelated action into an official Project.
+- project_decisions registers a confirmed report registry Project or explicit
+  meeting decision, or updates an existing active anchor. Preserve exact source
+  title, reference and reporting period. Chats/emails can supplement known Project
+  facts, not create official identity by topical similarity.
+  Adopt the exact current authoritative Project definition with registration to register or reuse.
+  A different stored name cannot replace that definition merely because the action uses its shorter name.
+- context is a complete current snapshot: one overall owner and responsible result,
+  other people each with a distinct responsibility. Unknown owner is null.
+  Keep unchanged roles' original citations; never replace them with the new message.
+- Task.project uses anchor_id or project_decision_index (index into project_decisions).
+  project_link_evidence proves a new association; reuse actual confirmed existing links.
+- Actual human work requires its assignment/commitment proof. For inferred next steps,
+  use record_candidate or existing-ID update_fields with suggestion:
+  suggested_owner_name/user_id plus responsibility_evidence and basis_evidence.
+  A proposed person may be absent from this message when sourced Project/org roles
+  establish the relevant duty. Actual owner fields, assignment metadata, formal basis,
+  typed dates and status remain unset for a pure suggestion. It is display-only.
+- On later evidence reuse the existing Task ID, including an existing suggestion.
+  Do not rely on source-link duplication or wording similarity as Task identity.
+- New Tasks need a nonblank title. Only update_fields changes a supplied title;
+  promotion/acceptance/merge preserve the stored title. Explicit assignment is
+  assigned_unaccepted, not accepted. apply_acceptance needs identified owner proof,
+  cited assignment Signal and verified reply_to_source_ref; “收到” or TODO existence
+  is not acceptance. Similar deliverables are linked/clustered, not identity-merged.
+  For AI Minutes read complete meeting_summary, transcript_excerpts and action items.
+  The assigned person is not automatically the speaker; owner proof quotes the
+  actual sentence with speaker label included when present. A generic speaker
+  placeholder such as 发言人 N is not an owner, nor is a team or department.
+  Actual owner_evidence uses {{"source_ref": "the source reference", "excerpt": "the literal owner-action sentence"}}.
+- In project_assessments provide one factual reason and original proof for every
+  relevant Project/clue in this source and current Tasks' confirmed Project links,
+  even when no Project selector or Task update is emitted. No Task is not insufficient
+  evidence. Supported routine progress is not_needed; genuine missing identity/facts
+  is insufficient_evidence, without inventing risk or a card.
+- Attention belongs once to its assessment. Task decision_indexes and existing task_ids
+  are optional real members, not carriers. Only a real material impact merits watch,
+  decision or push; “需关注” does not mean “需介入”. A retained existing_attention_id
+  requires this card's stored original proof and actual membership, not Project peers.
+  A current update goes in that assessment's attention_proposal. not_needed or an
+  empty Task list never closes a Project risk; completing one Task is not Project completion.
+  First assessment of a source-observed unresolved material business risk does not
+  require a prior card or a fresh delta against a nonexistent assessment. Candidate
+  Tasks may support Attention without a formal owner or accepted commitment.
+  Labels, relevance, routine progress, and date proximity alone do not explain material impact.
+  An existing card already reflecting the same facts does not need a new proposal.
+  Never invent a Task, owner, assignment, commitment, or date to fill a card.
+- All source_excerpt values are exact contiguous quotes, preserving punctuation,
+  spaces and line breaks (a decoded JSON string leaf is allowed). Keep facts and
+  inference separate. Current evidence has null signal_id/current source_ref;
+  historical proof uses real positive observed Signal IDs, matching references/quotes,
+  not session or Memory provenance. historical_comparison needs current and original
+  historical proof; if originals are unavailable, state uncertainty, not invented history.
+- Keep created/assigned/requested/external/committed/estimated/check dates distinct.
+  Date evidence must be literal current-source wording and a trusted actor.
+  AI Minutes has no trusted speaker-to-identity date mapping: do not emit source-derived
+  typed deadlines there. next_check_at is not an accepted due date or invented cadence.
+  Never transfer a Project deadline onto a Task.
+- Schema todo_changes/follow_up_changes/search_trace and old completion-check source
+  enums are historical, not current operations. Human DingTalk completion still updates
+  only its explicitly linked Task through the deterministic service path.
+- Memory is background/discovery, not original observed evidence or human acceptance.
+  Keep runtime paths, credentials and diagnostics out of business fields.
 
 TaskAgentDecision Pydantic JSON schema:
 {decision_schema}
-
-NON-NEGOTIABLE VALIDATION CHECK (apply this before returning JSON):
-- If a decision contains `status` or `business_relevance`, it MUST be an
-  existing Task update: set `action` to `update_task`, provide `task_id`, and
-  set `transition` to `update_fields`. Do not emit those fields on a new task,
-  candidate, or skip decision.
-- If a decision contains `acceptance_polarity` or
-  `acceptance_target_signal_id`, it MUST set `action=update_task`, provide
-  `task_id`, set `transition=apply_acceptance`, and use
-  `acceptance_polarity=accepted` with the cited signal id.
-- For ordinary source-backed work with no lifecycle change, omit both
-  `status` and `business_relevance` rather than guessing an update.
-- For an AI Minutes Work Item, do not emit `date_evidence` for dates spoken
-  in the meeting (`requested_deadline_at`, `external_deadline_at`,
-  `estimated_deadline_at`, or `committed_deadline_at`): speaker identity is
-  not trusted for those facts. Only emit `next_check_at` when it is authored
-  by the CEO Agent itself; otherwise leave `date_evidence` empty.
-- For every other source, every `date_evidence.source_excerpt` must be a
-  literal substring copied from the current Work Item text, preserving exact
-  spaces and punctuation. If you cannot quote it exactly, omit the date
-  evidence rather than paraphrasing it.
-Return the envelope only after checking every item against these rules.
+Return only the envelope after checking every item.
 """
 
 
@@ -846,9 +607,6 @@ def _memory_connector_prompt_status(memory_issue: str) -> str:
     if issue:
         return f"不可用：{issue}"
     return "可用：memory_recall tool is configured."
-
-
-
 
 
 def _json_dumps(value: object) -> str:
@@ -943,7 +701,6 @@ def _validate_task_decision_candidates(
     return None, problems
 
 
-
 def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
     decision, problems = _validate_task_decision_candidates(raw)
     if decision is not None:
@@ -954,13 +711,14 @@ def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
             raw_output=raw,
         )
     raise RoutedResultValidationError(
-        "TaskAgentDecision JSON does not satisfy the schema: "
-        + "; ".join(problems),
+        "TaskAgentDecision JSON does not satisfy the schema: " + "; ".join(problems),
         raw_output=raw,
     )
 
 
-def _source_locator(work_item: WorkItem, item: TaskDecision) -> tuple[str, str, str, str]:
+def _source_locator(
+    work_item: WorkItem, item: TaskDecision | None = None
+) -> tuple[str, str, str, str]:
     """Where a reader can find the source (Derek 2026-09-25): its link when it has one; otherwise a
     description of where it is (a DingTalk message is its group and the person who sent it).
 
@@ -970,9 +728,22 @@ def _source_locator(work_item: WorkItem, item: TaskDecision) -> tuple[str, str, 
     `source_ref` on the record; earlier or remembered evidence must state its own locator
     (the decision model requires it).
     """
-    link, group, person = item.source_link.strip(), item.source_group.strip(), item.source_person.strip()
-    description = item.source_description.strip()
-    if item.evidence_origin != "current" or link or description or (group and person):
+    link, group, person = (
+        (
+            item.source_link.strip(),
+            item.source_group.strip(),
+            item.source_person.strip(),
+        )
+        if item is not None
+        else ("", "", "")
+    )
+    description = item.source_description.strip() if item is not None else ""
+    if (
+        (item is not None and item.evidence_origin != "current")
+        or link
+        or description
+        or (group and person)
+    ):
         return link, group, person, description
     if work_item.source.ref.startswith(("http://", "https://")):
         return work_item.source.ref, group, person, description
@@ -983,7 +754,12 @@ def _source_locator(work_item: WorkItem, item: TaskDecision) -> tuple[str, str, 
     share_url = meeting.get("shareUrl") if isinstance(meeting, dict) else None
     if isinstance(share_url, str) and share_url.strip():
         return share_url.strip(), group, person, description
-    return link, group or work_item.source.conversation_title, person or work_item.context.sender, description
+    return (
+        link,
+        group or work_item.source.conversation_title,
+        person or work_item.context.sender,
+        description,
+    )
 
 
 def _report_markdown(work_item: WorkItem) -> str:
@@ -1023,7 +799,7 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
     )
     if registry_match is None or row_start < registry_match.end():
         return ""
-    next_section = re.search(r"(?m)^##\s+", markdown[registry_match.end():])
+    next_section = re.search(r"(?m)^##\s+", markdown[registry_match.end() :])
     registry_end = (
         registry_match.end() + next_section.start()
         if next_section is not None
@@ -1036,13 +812,13 @@ def _report_project_registry_title(work_item: WorkItem, source_excerpt: str) -> 
     first_row = markdown[row_start:row_end]
     if "|" not in first_row or re.fullmatch(r"\|[\s:|\-]+\|", first_row.strip()):
         return ""
-    following_line = markdown[row_end + 1:].split("\n", 1)[0].strip()
+    following_line = markdown[row_end + 1 :].split("\n", 1)[0].strip()
     if re.fullmatch(r"\|[\s:|\-]+\|", following_line):
         return ""
     cells = [cell.strip() for cell in first_row.strip().strip("|").split("|")]
     if not cells:
         return ""
-    preceding_lines = markdown[registry_match.end():row_start].splitlines()
+    preceding_lines = markdown[registry_match.end() : row_start].splitlines()
     header_cells: list[str] = []
     for index in range(len(preceding_lines) - 2, -1, -1):
         header_line = preceding_lines[index].strip()
@@ -1082,8 +858,10 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
         if not item.source_excerpt.strip():
             raise ValueError("task decision needs a source_excerpt")
     link, group, person, description = _source_locator(work_item, item)
+
     def normalized(value: str) -> str:
         return " ".join(value.split()).casefold()
+
     date_effects = sorted(
         (
             evidence.kind,
@@ -1093,7 +871,10 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
         )
         for evidence in item.date_evidence
     )
-    if item.action in {"create_task", "record_candidate"} or item.transition == "promote_candidate":
+    if (
+        item.action in {"create_task", "record_candidate"}
+        or item.transition == "promote_candidate"
+    ):
         # A source-backed creation is the same semantic item despite wording-only
         # changes to description/reason/attention presentation. Owner and basis
         # remain identity-bearing so same-quote assignments to different people
@@ -1113,12 +894,18 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
         # Updates are idempotent per target and actual business effects. Audit
         # prose, model quality scores, and CEO-attention copy are presentation,
         # not a new Task identity or state transition.
-        current_task_id = (item.identity_proposal.target_task_id
-            if item.transition == "merge_identity" and item.identity_proposal else item.task_id)
-        relation_effects = sorted(
-            (*r.endpoints(current_task_id), r.relation_type) for r in item.relation_proposals
+        current_task_id = (
+            item.identity_proposal.target_task_id
+            if item.transition == "merge_identity" and item.identity_proposal
+            else item.task_id
         )
-        anchor_effects = sorted((proposal.anchor_id,) for proposal in item.anchor_match_proposals)
+        relation_effects = sorted(
+            (*r.endpoints(current_task_id), r.relation_type)
+            for r in item.relation_proposals
+        )
+        anchor_effects = sorted(
+            (proposal.anchor_id,) for proposal in item.anchor_match_proposals
+        )
         semantic_identity = {
             "kind": item.action,
             "transition": item.transition,
@@ -1142,7 +929,8 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
                     "source_signal_id": item.identity_proposal.identity_evidence.source_signal_id,
                     "target_signal_id": item.identity_proposal.identity_evidence.target_signal_id,
                 }
-                if item.identity_proposal else None
+                if item.identity_proposal
+                else None
             ),
             "relations": relation_effects,
             "cluster": (
@@ -1151,7 +939,8 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
                     "title": normalized(item.cluster_proposal.title),
                     "task_ids": sorted(item.cluster_proposal.task_ids),
                 }
-                if item.cluster_proposal else None
+                if item.cluster_proposal
+                else None
             ),
             "anchors": anchor_effects,
             "project_candidate": (
@@ -1159,25 +948,16 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
                     "cluster_id": item.project_candidate_proposal.cluster_id,
                     "title": normalized(item.project_candidate_proposal.title),
                 }
-                if item.project_candidate_proposal else None
-            ),
-            "project": (
-                {
-                    "title": normalized(item.project_proposal.title),
-                    "authority": item.project_proposal.authority,
-                }
-                if item.project_proposal else None
+                if item.project_candidate_proposal
+                else None
             ),
             "date_effects": date_effects,
         }
-        if item.project_link_proposal is not None:
-            semantic_identity["project_link"] = {
-                "anchor_id": item.project_link_proposal.anchor_id,
-                "source_excerpt": item.project_link_proposal.source_excerpt,
-            }
-    stable_item = hashlib.sha256(json.dumps(
-        semantic_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")).hexdigest()
+    stable_item = hashlib.sha256(
+        json.dumps(
+            semantic_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
     if item.evidence_origin != "current":
         # Earlier evidence (this session's history, or provenance Memory pointed to) is
         # kept as its own source signal, under the ORIGINAL reference and text, with the
@@ -1192,10 +972,14 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
             conversation_title=group,
             author_name=person,
             context_json=json.dumps(
-                {"evidence_origin": item.evidence_origin, "cited_while_processing": work_item.source.ref,
-                 **({"source_link": link} if link else {}),
-                 **({"source_description": description} if description else {})},
-                ensure_ascii=False, sort_keys=True,
+                {
+                    "evidence_origin": item.evidence_origin,
+                    "cited_while_processing": work_item.source.ref,
+                    **({"source_link": link} if link else {}),
+                    **({"source_description": description} if description else {}),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
             ),
         )
     return SourceSignal(
@@ -1208,20 +992,35 @@ def _task_source_signal(work_item: WorkItem, item: TaskDecision) -> SourceSignal
         conversation_title=group,
         author_user_id=work_item.context.sender_user_id,
         author_name=person or work_item.context.sender,
-        author_kind=(BusinessActorKind.HUMAN if work_item.context.sender_user_id else BusinessActorKind.UNKNOWN),
+        author_kind=(
+            BusinessActorKind.HUMAN
+            if work_item.context.sender_user_id
+            else BusinessActorKind.UNKNOWN
+        ),
         context_json=json.dumps(
             {
                 "work_item_title": work_item.source.title,
                 "assignment_authorized": work_item.context.assignment_authorized,
                 **({"source_link": link} if link else {}),
                 **({"source_description": description} if description else {}),
-                **({"reply_to_source_ref": work_item.context.reply_to_source_ref}
-                   if work_item.context.reply_to_source_ref else {}),
-                **({"external_task_id": work_item.context.external_task_id}
-                   if work_item.context.external_task_id else {}),
-                **({"owner_identity": work_item.context.owner_identity}
-                   if work_item.context.owner_identity else {}),
-            }, ensure_ascii=False, sort_keys=True
+                **(
+                    {"reply_to_source_ref": work_item.context.reply_to_source_ref}
+                    if work_item.context.reply_to_source_ref
+                    else {}
+                ),
+                **(
+                    {"external_task_id": work_item.context.external_task_id}
+                    if work_item.context.external_task_id
+                    else {}
+                ),
+                **(
+                    {"owner_identity": work_item.context.owner_identity}
+                    if work_item.context.owner_identity
+                    else {}
+                ),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
         ),
     )
 
@@ -1234,19 +1033,32 @@ def _task_date_inputs(
         if evidence.source_ref != item.source_ref:
             raise ValueError("date evidence source_ref must match its task decision")
         if evidence.source_excerpt not in work_item.summary:
-            raise ValueError("date evidence source_excerpt must be an exact source substring")
+            raise ValueError(
+                "date evidence source_excerpt must be an exact source substring"
+            )
         if evidence.kind == "assigned_at":
-            raise ValueError("assigned_at is derived only from trusted source timestamp metadata")
-        if work_item.source.type is WorkItemSourceType.AI_MINUTES and evidence.kind != "next_check_at":
+            raise ValueError(
+                "assigned_at is derived only from trusted source timestamp metadata"
+            )
+        if (
+            work_item.source.type is WorkItemSourceType.AI_MINUTES
+            and evidence.kind != "next_check_at"
+        ):
             raise ValueError(
                 "AI Minutes date actor cannot be attributed without trusted speaker identity metadata"
             )
-        actor_kind = BusinessActorKind.HUMAN if work_item.context.sender_user_id else BusinessActorKind.UNKNOWN
+        actor_kind = (
+            BusinessActorKind.HUMAN
+            if work_item.context.sender_user_id
+            else BusinessActorKind.UNKNOWN
+        )
         actor_user_id = work_item.context.sender_user_id
         actor_name = work_item.context.sender
         agent_date = evidence.kind == "next_check_at"
-        expected_actor = ("task-agent", "CEO Agent") if agent_date else (
-            work_item.context.sender_user_id, work_item.context.sender
+        expected_actor = (
+            ("task-agent", "CEO Agent")
+            if agent_date
+            else (work_item.context.sender_user_id, work_item.context.sender)
         )
         if evidence.actor_user_id and evidence.actor_user_id != expected_actor[0]:
             raise ValueError("date actor_user_id must match the trusted date actor")
@@ -1268,15 +1080,19 @@ def _task_date_inputs(
             actor_name = "CEO Agent"
         else:
             if not work_item.context.sender_user_id:
-                raise ValueError("source date actor is not attributable to an identified source actor")
-        values.append(TaskDateInput(
-            date_type=BusinessTaskDateType(evidence.kind),
-            value_at=evidence.value,
-            raw_phrase=evidence.source_excerpt,
-            actor_kind=actor_kind,
-            actor_user_id=actor_user_id,
-            actor_name=actor_name,
-        ))
+                raise ValueError(
+                    "source date actor is not attributable to an identified source actor"
+                )
+        values.append(
+            TaskDateInput(
+                date_type=BusinessTaskDateType(evidence.kind),
+                value_at=evidence.value,
+                raw_phrase=evidence.source_excerpt,
+                actor_kind=actor_kind,
+                actor_user_id=actor_user_id,
+                actor_name=actor_name,
+            )
+        )
     if (
         (item.action == "create_task" or item.transition == "promote_candidate")
         and item.formal_basis is not None
@@ -1284,14 +1100,16 @@ def _task_date_inputs(
         and work_item.source.created_at
         and work_item.context.sender_user_id
     ):
-        values.append(TaskDateInput(
-            date_type=BusinessTaskDateType.ASSIGNED_AT,
-            value_at=work_item.source.created_at,
-            raw_phrase=work_item.source.created_at,
-            actor_kind=BusinessActorKind.HUMAN,
-            actor_user_id=work_item.context.sender_user_id,
-            actor_name=work_item.context.sender,
-        ))
+        values.append(
+            TaskDateInput(
+                date_type=BusinessTaskDateType.ASSIGNED_AT,
+                value_at=work_item.source.created_at,
+                raw_phrase=work_item.source.created_at,
+                actor_kind=BusinessActorKind.HUMAN,
+                actor_user_id=work_item.context.sender_user_id,
+                actor_name=work_item.context.sender,
+            )
+        )
     return tuple(values)
 
 
@@ -1328,7 +1146,9 @@ def _validate_formal_basis_source(item: TaskDecision, work_item: WorkItem) -> No
             or work_item.context.sender_user_id != owner_id
             or (item.owner_name and work_item.context.sender != item.owner_name)
         ):
-            raise ValueError("explicit commitment must be authored by its identified owner")
+            raise ValueError(
+                "explicit commitment must be authored by its identified owner"
+            )
         return
     if basis is FormalTaskBasis.MEETING_ACTION_ITEM:
         if not (
@@ -1336,9 +1156,13 @@ def _validate_formal_basis_source(item: TaskDecision, work_item: WorkItem) -> No
             and work_item.context.source_conversation_kind is WorkItemSourceKind.MINUTES
             and "#todos-sha256=" in work_item.source.ref
         ):
-            raise ValueError("meeting action item requires a sourced meeting action-item record")
+            raise ValueError(
+                "meeting action item requires a sourced meeting action-item record"
+            )
         if item.owner_kind != "individual" or item.owner_relation not in {
-            "explicit_assignment", "self_commitment", "meeting_summary_action_item",
+            "explicit_assignment",
+            "self_commitment",
+            "meeting_summary_action_item",
         }:
             raise ValueError(
                 "meeting action item requires an explicit individual owner relation"
@@ -1346,13 +1170,16 @@ def _validate_formal_basis_source(item: TaskDecision, work_item: WorkItem) -> No
         return
     if basis is FormalTaskBasis.EXTERNAL_TODO:
         if not (
-            work_item.source.type in {
+            work_item.source.type
+            in {
                 WorkItemSourceType.TODO_COMPLETION_CHECK,
                 WorkItemSourceType.TODO_COMPLETION_EVIDENCE_CANDIDATE,
             }
             and work_item.context.external_task_id.strip()
         ):
-            raise ValueError("external TODO basis requires trusted external TODO source metadata")
+            raise ValueError(
+                "external TODO basis requires trusted external TODO source metadata"
+            )
 
 
 def _validate_task_agent_decision(
@@ -1376,7 +1203,8 @@ def _validate_task_agent_decision(
             try:
                 TaskSemanticService._require_source_backed_owner(
                     signal=_task_source_signal(work_item, item),
-                    owner_user_id=item.owner_user_id, owner_name=item.owner_name,
+                    owner_user_id=item.owner_user_id,
+                    owner_name=item.owner_name,
                     owner_evidence_json=_json_dumps(evidence),
                 )
             except ValueError as exc:
@@ -1385,15 +1213,24 @@ def _validate_task_agent_decision(
                     "or undertaking from the supplied source, or linked memory evidence "
                     "with its episode_id. If ownership is not established, retain a candidate."
                 ) from exc
-        if item.transition == "apply_acceptance" and item.acceptance_polarity != "accepted":
+        if (
+            item.transition == "apply_acceptance"
+            and item.acceptance_polarity != "accepted"
+        ):
             raise RepairableTaskDecisionValidationError(
                 "only explicit accepted owner evidence may use apply_acceptance"
             )
         if item.transition == "apply_acceptance" and item.action != "update_task":
-            raise RepairableTaskDecisionValidationError("apply_acceptance requires update_task")
-        if item.transition == "merge_identity" and item.identity_proposal is not None and (
-            item.identity_proposal.identity_evidence.basis
-            == "same_deliverable_owner_context_time"
+            raise RepairableTaskDecisionValidationError(
+                "apply_acceptance requires update_task"
+            )
+        if (
+            item.transition == "merge_identity"
+            and item.identity_proposal is not None
+            and (
+                item.identity_proposal.identity_evidence.basis
+                == "same_deliverable_owner_context_time"
+            )
         ):
             raise ValueError(
                 "same deliverable, owner, context, and time can link or cluster Tasks but cannot merge identity"
@@ -1418,321 +1255,346 @@ def _confirmed_official_project_anchors(
     }
 
 
+def _project_source_signal(work_item: WorkItem) -> SourceSignal:
+    """One observed source version can support Project facts without a Task."""
+    link, group, person, description = _source_locator(work_item)
+    fields = dict(
+        source_type=work_item.source.type.value,
+        source_ref=work_item.source.ref,
+        evidence_text=work_item.summary,
+        source_time=work_item.source.created_at,
+        conversation_id=work_item.source.conversation_id,
+        author_user_id=work_item.context.sender_user_id,
+        author_name=person or work_item.context.sender,
+        author_kind=(
+            BusinessActorKind.HUMAN
+            if work_item.context.sender_user_id
+            else BusinessActorKind.UNKNOWN
+        ),
+    )
+    return SourceSignal(
+        **fields,
+        dedupe_key=f"project-source:{source_document_key(**fields)}",
+        conversation_title=group,
+        context_json=json.dumps(
+            {
+                "work_item_title": work_item.source.title,
+                **({"source_link": link} if link else {}),
+                **({"source_description": description} if description else {}),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+    )
+
+
+def _project_citations(decision: TaskAgentDecision):
+    for project in decision.project_decisions:
+        yield from project.evidence
+        if project.context is not None:
+            yield from ProjectContextService._citations(project.context)
+    for task in decision.task_decisions:
+        yield from task.project_link_evidence
+        if task.suggestion is not None:
+            yield from task.suggestion.responsibility_evidence
+            yield from task.suggestion.basis_evidence
+    for assessment in decision.project_assessments:
+        yield from assessment.evidence
+        if assessment.attention_proposal is not None:
+            yield from assessment.attention_proposal.evidence
+
+
+def _resolve_project_citation(
+    store: AutoReplyStore,
+    citation,
+    *,
+    work_item: WorkItem,
+    db: sqlite3.Connection,
+    current_signal_id: int | None = None,
+) -> SourceCitation:
+    if citation.signal_id is None:
+        if citation.source_ref != work_item.source.ref:
+            raise ValueError(
+                "current Project evidence must cite the immutable Work Item source_ref"
+            )
+        if not source_contains_quote(work_item.summary, citation.source_excerpt):
+            raise ValueError(
+                "current Project quote is absent from the immutable Work Item"
+            )
+        signal_id = current_signal_id
+    else:
+        signal = store.get_business_task_signal_in_transaction(
+            signal_id=citation.signal_id, _db=db
+        )
+        if signal is None:
+            raise ValueError("historical Project evidence signal does not exist")
+        if signal.source_ref != citation.source_ref:
+            raise ValueError(
+                "historical Project evidence signal/source_ref does not match"
+            )
+        if not source_is_observed(signal.source_type):
+            raise ValueError(
+                "Project evidence must be observed original source, not cited provenance"
+            )
+        if not source_contains_quote(signal.evidence_text, citation.source_excerpt):
+            raise ValueError("historical Project quote is absent from original source")
+        signal_id = signal.id
+    return SourceCitation(
+        signal_id=signal_id,
+        source_ref=citation.source_ref,
+        source_excerpt=citation.source_excerpt,
+    )
+
+
+def _resolved_context(store, context, *, work_item, db, current_signal_id):
+    if context is None:
+        return None
+
+    def role(value):
+        return value.model_copy(
+            update={
+                "evidence": [
+                    _resolve_project_citation(
+                        store,
+                        proof,
+                        work_item=work_item,
+                        db=db,
+                        current_signal_id=current_signal_id,
+                    )
+                    for proof in value.evidence
+                ]
+            }
+        )
+
+    return ProjectContext(
+        goal=context.goal,
+        scope=context.scope,
+        overall_owner=role(context.overall_owner) if context.overall_owner else None,
+        responsibilities=[role(value) for value in context.responsibilities],
+        facts=[
+            value.model_copy(
+                update={
+                    "evidence": [
+                        _resolve_project_citation(
+                            store,
+                            proof,
+                            work_item=work_item,
+                            db=db,
+                            current_signal_id=current_signal_id,
+                        )
+                        for proof in value.evidence
+                    ]
+                }
+            )
+            for value in context.facts
+        ],
+    )
+
+
+def _official_project(store, anchor_id, *, db):
+    row = db.execute(
+        "select p.id from business_projects p join business_anchors a on a.id=p.canonical_anchor_id "
+        "where a.id=? and a.anchor_type='project' and a.active=1",
+        (anchor_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(
+            "Project selector requires a registered active official Project"
+        )
+    return store.get_business_project_in_transaction(project_id=int(row["id"]), _db=db)
+
+
 def _validate_stored_project_assessments(
     store: AutoReplyStore,
     decision: TaskAgentDecision,
     *,
     work_item: WorkItem,
     db: sqlite3.Connection,
-) -> dict[int, int]:
-    """Validate persisted identities and return known Project anchors by decision position."""
+) -> None:
+    """Verify original citations and existing identities before domain writes."""
+    for citation in _project_citations(decision):
+        _resolve_project_citation(store, citation, work_item=work_item, db=db)
 
-    def official_project(anchor_id: int):
-        return db.execute(
-            """select p.*, a.active from business_projects p
-               join business_anchors a on a.id=p.canonical_anchor_id
-               where p.canonical_anchor_id=? and a.anchor_type='project' and a.active=1""",
-            (anchor_id,),
-        ).fetchone()
-
-    def exact_title_project(title: str):
-        rows = db.execute(
-            """select p.*, a.active from business_projects p
-               join business_anchors a on a.id=p.canonical_anchor_id
-               where p.title=? and a.anchor_type='project' and a.active=1 limit 2""",
-            (title,),
+    project_anchors: dict[int, int | None] = {}
+    for index, project in enumerate(decision.project_decisions):
+        if project.anchor_id is not None:
+            project_anchors[index] = _official_project(
+                store, project.anchor_id, db=db
+            ).canonical_anchor_id
+            continue
+        proposal = project.registration
+        assert proposal is not None
+        if proposal.authority == "meeting_decision":
+            valid = (
+                work_item.source.type is WorkItemSourceType.AI_MINUTES
+                or work_item.context.source_conversation_kind
+                is WorkItemSourceKind.MINUTES
+            ) and source_contains_quote(work_item.summary, proposal.source_excerpt)
+            if not valid:
+                raise ValueError(
+                    "meeting Project registration must cite the current official Project source"
+                )
+        else:
+            valid = (
+                work_item.source.type.value == proposal.authority
+                and _report_project_registry_title(work_item, proposal.source_excerpt)
+                == proposal.title
+            )
+            if not valid:
+                raise ValueError(
+                    "report Project registration must match the cited report registry row and source authority"
+                )
+        matches = db.execute(
+            "select p.canonical_anchor_id from business_projects p "
+            "join business_anchors a on a.id=p.canonical_anchor_id "
+            "where p.title=? and a.active=1 and a.anchor_type='project' limit 2",
+            (proposal.title,),
         ).fetchall()
-        if len(rows) > 1:
+        if len(matches) > 1:
             raise ValueError(
                 "Project identity conflict: multiple active official Projects have this exact title"
             )
-        return rows[0] if rows else None
-
-    def signal_is_linked_to_any_task(signal_id: int, task_ids: set[int]) -> bool:
-        return any(
-            db.execute(
-                "select 1 from business_task_evidence "
-                "where task_id=? and signal_id=? limit 1",
-                (task_id, signal_id),
-            ).fetchone() is not None
-            for task_id in task_ids
+        project_anchors[index] = (
+            int(matches[0]["canonical_anchor_id"]) if matches else None
         )
 
-    existing_task_ids: set[int] = set()
-    for item in decision.task_decisions:
-        if item.task_id is not None:
-            if store.get_business_task_in_transaction(task_id=item.task_id, _db=db) is None:
-                raise ValueError(f"supporting Task {item.task_id} does not exist")
-            existing_task_ids.add(item.task_id)
-        if item.transition == "merge_identity" and item.identity_proposal is not None:
-            target_task_id = item.identity_proposal.target_task_id
-            if store.get_business_task_in_transaction(
-                task_id=target_task_id, _db=db
-            ) is None:
-                raise ValueError(f"supporting Task {target_task_id} does not exist")
-            existing_task_ids.add(target_task_id)
-    for assessment in decision.project_assessments:
-        for task_id in assessment.task_ids:
-            if store.get_business_task_in_transaction(task_id=task_id, _db=db) is None:
-                raise ValueError(f"supporting Task {task_id} does not exist")
-            existing_task_ids.add(task_id)
+    def selected_anchor(anchor_id, project_index):
+        if anchor_id is not None:
+            return _official_project(store, anchor_id, db=db).canonical_anchor_id
+        return project_anchors[project_index] if project_index is not None else None
 
-    resolved_anchors: list[int | None] = []
-    applied_anchor_by_decision: dict[int, int] = {}
+    referenced_task_ids: set[int] = set()
+    for task in decision.task_decisions:
+        for task_id in (task.task_id, task.target_task_id):
+            if task_id is not None:
+                if (
+                    store.get_business_task_in_transaction(task_id=task_id, _db=db)
+                    is None
+                ):
+                    raise ValueError(f"supporting Task {task_id} does not exist")
+                referenced_task_ids.add(task_id)
+        if task.project is not None:
+            selected_anchor(task.project.anchor_id, task.project.project_decision_index)
+
+    assessed_anchors: set[int] = set()
     for assessment in decision.project_assessments:
-        project = None
-        if assessment.anchor_id is not None:
-            project = official_project(assessment.anchor_id)
-            if project is None:
-                raise ValueError(
-                    "project assessment anchor_id requires a registered active official Project"
-                )
-            if project["title"] != assessment.project_title:
+        anchor_id = selected_anchor(
+            assessment.anchor_id, assessment.project_decision_index
+        )
+        if anchor_id is not None:
+            project = _official_project(store, anchor_id, db=db)
+            if project.title != assessment.project_title:
                 raise ValueError(
                     "project assessment project_title must match the canonical stored Project title"
                 )
-        elif assessment.project_decision_index is not None:
-            project = exact_title_project(assessment.project_title)
-        resolved_anchor = (
-            int(project["canonical_anchor_id"]) if project is not None else None
-        )
-        resolved_anchors.append(resolved_anchor)
-
-        supporting_task_ids = set(assessment.task_ids)
+            if anchor_id in assessed_anchors:
+                raise ValueError(
+                    "canonical stored Project must have exactly one assessment"
+                )
+            assessed_anchors.add(anchor_id)
+        supporting = set(assessment.task_ids)
         for index in assessment.decision_indexes:
-            item = decision.task_decisions[index]
-            if item.task_id is not None:
-                supporting_task_ids.add(item.task_id)
-            explicit_anchors = {
-                anchor_id
-                for anchor_id in (
-                    item.project_link_proposal.anchor_id
-                    if item.project_link_proposal is not None else None,
-                    item.attention_proposal.anchor_id
-                    if item.attention_proposal is not None else None,
+            task = decision.task_decisions[index]
+            if task.task_id is not None:
+                supporting.add(
+                    task.target_task_id
+                    if task.transition == "merge_identity"
+                    else task.task_id
                 )
-                if anchor_id is not None
-            }
-            if resolved_anchor is not None:
-                if any(anchor_id != resolved_anchor for anchor_id in explicit_anchors):
-                    raise ValueError(
-                        "supporting decision selects a different canonical stored Project"
-                    )
-                previous = applied_anchor_by_decision.get(index)
-                if previous is not None and previous != resolved_anchor:
-                    raise ValueError(
-                        "one applied Task decision cannot map to contradictory Project identities"
-                    )
-                applied_anchor_by_decision[index] = resolved_anchor
-            elif assessment.project_decision_index is not None:
-                for anchor_id in explicit_anchors:
-                    selected_project = official_project(anchor_id)
-                    if selected_project is None:
-                        raise ValueError(
-                            "supporting decision anchor requires a registered active official Project"
+        for task_id in supporting:
+            if store.get_business_task_in_transaction(task_id=task_id, _db=db) is None:
+                raise ValueError(f"supporting Task {task_id} does not exist")
+            referenced_task_ids.add(task_id)
+            confirmed = _confirmed_official_project_anchors(
+                store, task_id=task_id, db=db
+            )
+            selected_for_this_project = any(
+                task.task_id == task_id
+                and task.project is not None
+                and (
+                    (
+                        anchor_id is not None
+                        and selected_anchor(
+                            task.project.anchor_id, task.project.project_decision_index
                         )
-                    if selected_project["title"] != assessment.project_title:
-                        raise ValueError(
-                            "supporting decision selects a different canonical stored Project"
-                        )
-
-        for evidence in assessment.evidence:
-            if evidence.signal_id is None:
-                if evidence.source_ref != work_item.source.ref:
-                    raise ValueError(
-                        "current assessment evidence must cite the immutable Work Item source_ref"
+                        == anchor_id
                     )
-                if not source_contains_quote(work_item.summary, evidence.source_excerpt):
-                    raise ValueError("current assessment quote is absent from the immutable Work Item")
-                continue
-            signal = store.get_business_task_signal_in_transaction(
-                signal_id=evidence.signal_id, _db=db
+                    or (
+                        anchor_id is None
+                        and task.project.project_decision_index
+                        == assessment.project_decision_index
+                    )
+                )
+                for index in assessment.decision_indexes
+                for task in [decision.task_decisions[index]]
             )
-            if signal is None:
-                raise ValueError("historical assessment evidence signal does not exist")
-            if signal.source_ref != evidence.source_ref:
+            if anchor_id not in confirmed and not selected_for_this_project:
                 raise ValueError(
-                    "historical assessment evidence signal/source_ref does not match"
+                    "supporting Task is not confirmed to the assessed Project"
                 )
-            if signal.source_type in {"session_provenance", "memory_provenance"}:
-                raise ValueError(
-                    "historical assessment evidence must be observed original source, not cited provenance"
-                )
-            if not source_contains_quote(signal.evidence_text, evidence.source_excerpt):
-                raise ValueError("historical assessment quote is absent from original source")
-            if not signal_is_linked_to_any_task(
-                evidence.signal_id, supporting_task_ids
-            ):
-                raise ValueError(
-                    "historical assessment evidence must be linked to a supporting Task"
-                )
-
-        if resolved_anchor is not None:
-            for task_id in supporting_task_ids:
-                if resolved_anchor in _confirmed_official_project_anchors(
-                    store, task_id=task_id, db=db
-                ):
-                    continue
-                selected_by_current_decision = any(
-                    index in assessment.decision_indexes
-                    and decision.task_decisions[index].task_id == task_id
-                    and (
-                        (
-                            decision.task_decisions[index].project_link_proposal is not None
-                            and decision.task_decisions[index].project_link_proposal.anchor_id
-                            == resolved_anchor
-                        )
-                        or (
-                            decision.task_decisions[index].project_proposal is not None
-                            and decision.task_decisions[index].project_proposal.title
-                            == assessment.project_title
-                        )
-                    )
-                    for index in range(len(decision.task_decisions))
-                )
-                if not selected_by_current_decision:
-                    raise ValueError(
-                        "supporting Task is not confirmed to the assessed Project"
-                    )
-        elif assessment.project_decision_index is not None:
-            for task_id in supporting_task_ids:
-                supported_by_matching_proposal = any(
-                    index in assessment.decision_indexes
-                    and decision.task_decisions[index].task_id == task_id
-                    and decision.task_decisions[index].project_proposal is not None
-                    and decision.task_decisions[index].project_proposal.title
-                    == assessment.project_title
-                    for index in range(len(decision.task_decisions))
-                )
-                if not supported_by_matching_proposal:
-                    raise ValueError(
-                        "supporting Task is not supported by a matching current Project decision"
-                    )
-
-        if assessment.existing_attention_id is not None:
-            card = store.get_business_attention_item_in_transaction(
-                item_id=assessment.existing_attention_id, _db=db
-            )
-            if card is None:
-                raise ValueError("existing Attention card does not exist")
-            if resolved_anchor is None or card.anchor_id != resolved_anchor:
-                raise ValueError("existing Attention card belongs to a different Project")
-            if card.stable_key != f"project:{resolved_anchor}":
-                raise ValueError("existing Attention card identity does not match its Project")
-            if card.status.value != "active":
-                raise ValueError("existing Attention card must be active")
-            member_ids = {
-                link.task_id
-                for link in store.list_business_attention_tasks_in_transaction(
-                    attention_item_id=card.id, _db=db
-                )
-            }
-            if not supporting_task_ids or not supporting_task_ids.issubset(member_ids):
-                raise ValueError(
-                    "existing Attention card does not contain the assessment's supporting Tasks"
-                )
-            eligible_ids = set(
-                BusinessAttentionProjection(store)._current_eligible_task_ids(
-                    task_ids=tuple(sorted(member_ids)),
-                    anchor_id=resolved_anchor,
-                    db=db,
-                )
-            )
-            if eligible_ids != member_ids:
-                raise ValueError(
-                    "existing Attention card has a member that is not currently qualifying"
-                )
-            try:
-                stored_evidence = json.loads(card.assessment_json)["evidence"]
-            except (KeyError, TypeError, json.JSONDecodeError) as exc:
-                raise ValueError(
-                    "existing Attention card lacks stored original assessment evidence"
-                ) from exc
-            if not isinstance(stored_evidence, list) or not stored_evidence:
-                raise ValueError(
-                    "existing Attention card lacks stored original assessment evidence"
-                )
-            verified_signal_ids: set[int] = set()
-            stored_proofs: set[tuple[int, str, str]] = set()
-            for proof in stored_evidence:
-                if not isinstance(proof, dict) or not isinstance(proof.get("signal_id"), int):
-                    raise ValueError(
-                        "existing Attention card lacks stored original assessment evidence"
-                    )
-                signal = store.get_business_task_signal_in_transaction(
-                    signal_id=proof["signal_id"], _db=db
-                )
-                if signal is None or signal.source_ref != proof.get("source_ref"):
-                    raise ValueError(
-                        "existing Attention original evidence signal/source_ref does not match"
-                    )
-                if signal.source_type in {"session_provenance", "memory_provenance"}:
-                    raise ValueError(
-                        "existing Attention evidence must be observed original source, not cited provenance"
-                    )
-                excerpt = str(proof.get("source_excerpt") or "")
-                if not source_contains_quote(signal.evidence_text, excerpt):
-                    raise ValueError(
-                        "existing Attention original quote is absent from original source"
-                    )
-                if not signal_is_linked_to_any_task(signal.id, member_ids):
-                    raise ValueError(
-                        "existing Attention original evidence is not linked to a current member"
-                    )
-                verified_signal_ids.add(signal.id)
-                stored_proofs.add((
-                    signal.id,
-                    signal.source_ref,
-                    excerpt,
-                ))
-            if card.evidence_signal_id not in verified_signal_ids:
-                raise ValueError(
-                    "existing Attention primary evidence is absent from stored original evidence"
-                )
-            assessment_cites_card_proof = any(
-                (
-                    evidence.signal_id,
-                    evidence.source_ref,
-                    evidence.source_excerpt,
-                ) in stored_proofs
-                if evidence.signal_id is not None
-                else any(
-                    evidence.source_ref == proof_ref
-                    and evidence.source_excerpt == proof_excerpt
-                    for _proof_signal_id, proof_ref, proof_excerpt in stored_proofs
-                )
-                for evidence in assessment.evidence
-            )
-            if not assessment_cites_card_proof:
-                raise ValueError(
-                    "existing Attention assessment must cite this card's stored original evidence"
-                )
-
-    canonical_assessment_counts: dict[int, int] = {}
-    for anchor_id in resolved_anchors:
-        if anchor_id is not None:
-            canonical_assessment_counts[anchor_id] = (
-                canonical_assessment_counts.get(anchor_id, 0) + 1
-            )
-    duplicate_anchor = next(
-        (anchor_id for anchor_id, count in canonical_assessment_counts.items() if count > 1),
-        None,
-    )
-    if duplicate_anchor is not None:
-        raise ValueError(
-            f"canonical stored Project {duplicate_anchor} must have exactly one assessment"
+        if assessment.existing_attention_id is None:
+            continue
+        card = store.get_business_attention_item_in_transaction(
+            item_id=assessment.existing_attention_id, _db=db
         )
+        if card is None:
+            raise ValueError("existing Attention card does not exist")
+        if card.anchor_id != anchor_id or card.stable_key != f"project:{anchor_id}":
+            raise ValueError("existing Attention card belongs to a different Project")
+        if card.status.value != "active":
+            raise ValueError("existing Attention card is not active")
+        members = {
+            link.task_id
+            for link in store.list_business_attention_tasks_in_transaction(
+                attention_item_id=card.id, _db=db
+            )
+        }
+        if not supporting.issubset(members):
+            raise ValueError(
+                "existing Attention card does not contain the assessment's supporting Tasks"
+            )
+        proofs = json.loads(card.assessment_json).get("evidence", [])
+        if not proofs:
+            raise ValueError(
+                "existing Attention card lacks stored original assessment evidence"
+            )
+        verified = set()
+        for proof in proofs:
+            original = SourceCitation.model_validate(
+                {
+                    key: proof[key]
+                    for key in ("signal_id", "source_ref", "source_excerpt")
+                    if key in proof
+                }
+            )
+            if original.signal_id is None:
+                raise ValueError(
+                    "existing Attention card lacks stored original assessment evidence"
+                )
+            _resolve_project_citation(store, original, work_item=work_item, db=db)
+            verified.add(
+                (original.signal_id, original.source_ref, original.source_excerpt)
+            )
+        if card.evidence_signal_id not in {proof[0] for proof in verified}:
+            raise ValueError(
+                "existing Attention primary evidence is absent from stored original evidence"
+            )
+        if not any(
+            (proof.signal_id, proof.source_ref, proof.source_excerpt) in verified
+            for proof in assessment.evidence
+        ):
+            raise ValueError(
+                "existing Attention assessment must cite this card's stored original evidence"
+            )
 
-    for task_id in existing_task_ids:
+    for task_id in referenced_task_ids:
         for anchor_id in _confirmed_official_project_anchors(
             store, task_id=task_id, db=db
         ):
-            if canonical_assessment_counts.get(anchor_id) != 1:
+            if anchor_id not in assessed_anchors:
                 raise ValueError(
                     f"current Task {task_id} confirmed Project {anchor_id} requires exactly one assessment"
                 )
-
-    return applied_anchor_by_decision
 
 
 def _task_project_anchor_is_retired(store: AutoReplyStore, title: str, *, db) -> bool:
@@ -1767,11 +1629,128 @@ def apply_task_agent_decision(
     applied_decisions: list[AppliedTaskDecision] = []
     skipped_reasons: list[str] = []
     project_links: set[tuple[int, int]] = set()
+    applied_projects: list[AppliedProjectDecision] = []
+    current_signal_id: int | None = None
 
     def apply(db: sqlite3.Connection) -> None:
-        stored_anchor_by_decision = _validate_stored_project_assessments(
+        nonlocal current_signal_id
+        _validate_stored_project_assessments(
             store, decision, work_item=work_item, db=db
         )
+        if any(proof.signal_id is None for proof in _project_citations(decision)):
+            current_signal_id = service._signal_id_or_create(
+                signal=_project_source_signal(work_item), db=db, now=service._now()
+            )
+        projects_by_index = {}
+        for index, project_decision in enumerate(decision.project_decisions):
+            if project_decision.anchor_id is not None:
+                project = _official_project(store, project_decision.anchor_id, db=db)
+            else:
+                proposal = project_decision.registration
+                assert proposal is not None
+                if _task_project_anchor_is_retired(store, proposal.title, db=db):
+                    skipped_reasons.append(
+                        f"Project {proposal.title} is retired; not reactivated."
+                    )
+                    continue
+                project = resolution.register_source_project(
+                    title=proposal.title,
+                    registry_source=f"{proposal.authority}:{work_item.source.ref}",
+                    _db=db,
+                )
+            projects_by_index[index] = project
+            context = _resolved_context(
+                store,
+                project_decision.context,
+                work_item=work_item,
+                db=db,
+                current_signal_id=current_signal_id,
+            )
+            citations = [
+                _resolve_project_citation(
+                    store,
+                    proof,
+                    work_item=work_item,
+                    db=db,
+                    current_signal_id=current_signal_id,
+                )
+                for proof in project_decision.evidence
+            ]
+            if context is not None:
+                citations.extend(ProjectContextService._citations(context))
+            ids = tuple(sorted({proof.signal_id for proof in citations}))
+            revision_id = ProjectContextService(store).apply(
+                project_id=project.id, context=context, signal_ids=ids, db=db
+            )
+            applied_projects.append(
+                AppliedProjectDecision(
+                    project_decision_index=index,
+                    project_id=project.id,
+                    anchor_id=project.canonical_anchor_id,
+                    revision_id=revision_id,
+                    signal_ids=ids,
+                )
+            )
+
+        def selected_project(anchor_id, project_index):
+            return (
+                _official_project(store, anchor_id, db=db)
+                if anchor_id is not None
+                else projects_by_index.get(project_index)
+            )
+
+        def apply_project_link(item, task_id):
+            if item.project is None:
+                return None, None
+            project = selected_project(
+                item.project.anchor_id, item.project.project_decision_index
+            )
+            if project is None:
+                return None, None
+            anchor_id = project.canonical_anchor_id
+            proofs = [
+                _resolve_project_citation(
+                    store,
+                    proof,
+                    work_item=work_item,
+                    db=db,
+                    current_signal_id=current_signal_id,
+                )
+                for proof in item.project_link_evidence
+            ]
+            if anchor_id not in _confirmed_official_project_anchors(
+                store, task_id=task_id, db=db
+            ):
+                if not proofs:
+                    raise ValueError(
+                        "new confirmed Project link requires project_link_evidence"
+                    )
+                resolution.confirm_anchor_match(
+                    task_id=task_id,
+                    anchor_id=anchor_id,
+                    evidence_signal_id=proofs[0].signal_id,
+                    reason="Original evidence establishes this Project association.",
+                    relevance=BusinessRelevance.RELEVANT,
+                    _db=db,
+                )
+                affected_task_ids.append(task_id)
+            for proof in proofs:
+                store.link_business_task_evidence_in_transaction(
+                    task_id=task_id,
+                    signal_id=proof.signal_id,
+                    evidence_role=BusinessEvidenceRole.RELEVANCE,
+                    _db=db,
+                )
+            if proofs:
+                ProjectContextService(store).apply(
+                    project_id=project.id,
+                    context=None,
+                    signal_ids=tuple(sorted({proof.signal_id for proof in proofs})),
+                    db=db,
+                )
+            project_links.add((task_id, anchor_id))
+            return anchor_id, proofs[0].signal_id if proofs else None
+
         for decision_index, item in enumerate(decision.task_decisions):
             applied_project_anchor_id = None
             if item.action == "skip":
@@ -1782,13 +1761,34 @@ def apply_task_agent_decision(
                         f"Acceptance for task {item.task_id} was not applied: source has no verified reply-to reference."
                     )
                     continue
-                task = store.get_business_task(item.task_id) if db is None else store.get_business_task_in_transaction(task_id=item.task_id, _db=db)
-                evidence = store.list_business_task_evidence(item.task_id) if db is None else store.list_business_task_evidence_in_transaction(task_id=item.task_id, _db=db)
-                cited = next((row for row in evidence if row.signal_id == item.acceptance_target_signal_id), None)
+                task = (
+                    store.get_business_task(item.task_id)
+                    if db is None
+                    else store.get_business_task_in_transaction(
+                        task_id=item.task_id, _db=db
+                    )
+                )
+                evidence = (
+                    store.list_business_task_evidence(item.task_id)
+                    if db is None
+                    else store.list_business_task_evidence_in_transaction(
+                        task_id=item.task_id, _db=db
+                    )
+                )
+                cited = next(
+                    (
+                        row
+                        for row in evidence
+                        if row.signal_id == item.acceptance_target_signal_id
+                    ),
+                    None,
+                )
                 target_signal = (
                     store.get_business_task_signal(item.acceptance_target_signal_id)
                     if db is None
-                    else store.get_business_task_signal_in_transaction(signal_id=item.acceptance_target_signal_id, _db=db)
+                    else store.get_business_task_signal_in_transaction(
+                        signal_id=item.acceptance_target_signal_id, _db=db
+                    )
                 )
                 linked_assignment = cited is not None and cited.evidence_role in {
                     BusinessEvidenceRole.ASSIGNMENT.value,
@@ -1797,26 +1797,38 @@ def apply_task_agent_decision(
                 same_reply_thread = (
                     target_signal is not None
                     and bool(work_item.source.conversation_id)
-                    and target_signal.conversation_id == work_item.source.conversation_id
+                    and target_signal.conversation_id
+                    == work_item.source.conversation_id
                 )
                 explicit_reply_link = (
                     target_signal is not None
-                    and target_signal.source_ref == work_item.context.reply_to_source_ref
+                    and target_signal.source_ref
+                    == work_item.context.reply_to_source_ref
                 )
                 owner_is_reply_author = (
                     task is not None
                     and bool(work_item.context.sender_user_id)
                     and task.owner_user_id == work_item.context.sender_user_id
-                    and (not task.owner_name or task.owner_name == work_item.context.sender)
+                    and (
+                        not task.owner_name
+                        or task.owner_name == work_item.context.sender
+                    )
                 )
-                if not (task is not None and linked_assignment and same_reply_thread
-                        and explicit_reply_link and owner_is_reply_author):
+                if not (
+                    task is not None
+                    and linked_assignment
+                    and same_reply_thread
+                    and explicit_reply_link
+                    and owner_is_reply_author
+                ):
                     skipped_reasons.append(
                         f"Acceptance for task {item.task_id} was not applied: cited assignment, exact reply link, conversation, or owner identity did not match."
                     )
                     continue
             signal = _task_source_signal(work_item, item)
-            date_facts = _task_date_inputs(item, work_item, is_acceptance=item.transition == "apply_acceptance")
+            date_facts = _task_date_inputs(
+                item, work_item, is_acceptance=item.transition == "apply_acceptance"
+            )
             owner_evidence = dict(item.owner_evidence)
             owner_identity = work_item.context.owner_identity
             source_owner_id = (
@@ -1830,7 +1842,9 @@ def apply_task_agent_decision(
                 # Sender and owner identity metadata describe the current Work Item only.
                 source_owner_id = ""
             if item.owner_user_id and item.owner_user_id != source_owner_id:
-                raise ValueError("owner_user_id is not established by source identity metadata")
+                raise ValueError(
+                    "owner_user_id is not established by source identity metadata"
+                )
             owner_user_id = source_owner_id
             if owner_evidence:
                 # The owner's citation is a sentence from the source, not necessarily word for
@@ -1842,7 +1856,8 @@ def apply_task_agent_decision(
                 owner_evidence.setdefault("name", item.owner_name)
             task_before = (
                 store.get_business_task_in_transaction(task_id=item.task_id, _db=db)
-                if item.task_id is not None else None
+                if item.task_id is not None
+                else None
             )
             formality = FormalityEvidence(
                 basis=item.formal_basis,
@@ -1851,228 +1866,198 @@ def apply_task_agent_decision(
                     or work_item.context.assignment_authorized
                 ),
                 deliverable_is_explicit=(
-                    bool(task_before is not None and task_before.title.strip()) if item.action == "update_task"
+                    bool(task_before is not None and task_before.title.strip())
+                    if item.action == "update_task"
                     else bool(item.title.strip())
                 ),
-                owner_is_explicit=bool(item.owner_user_id.strip() or item.owner_name.strip()),
+                owner_is_explicit=bool(
+                    item.owner_user_id.strip() or item.owner_name.strip()
+                ),
             )
-            if item.action == "update_task" and item.transition == "update_fields" and item.owner_name:
+            if (
+                item.action == "update_task"
+                and item.transition == "update_fields"
+                and item.owner_name
+            ):
                 # One item whose owner the source does not establish must not fail the
                 # meeting's other items: leave that Task as it was and say why.
                 try:
                     TaskSemanticService._require_source_backed_owner(
-                        signal=signal, owner_user_id=owner_user_id, owner_name=item.owner_name,
-                        owner_evidence_json=json.dumps(owner_evidence, ensure_ascii=False),
+                        signal=signal,
+                        owner_user_id=owner_user_id,
+                        owner_name=item.owner_name,
+                        owner_evidence_json=json.dumps(
+                            owner_evidence, ensure_ascii=False
+                        ),
                     )
                 except ValueError as exc:
-                    skipped_reasons.append(f"Task {item.task_id} owner was not applied: {exc}.")
+                    skipped_reasons.append(
+                        f"Task {item.task_id} owner was not applied: {exc}."
+                    )
                     continue
             if (
-                item.action == "update_task" and item.transition == "update_fields"
-                and task_before is not None and not date_facts
-                and _update_fields_restates_task(
-                    task_before, item, owner_user_id,
-                    attention_only=(
-                        item.attention_proposal is not None
-                        and stored_anchor_by_decision.get(decision_index)
-                        in _confirmed_official_project_anchors(
-                            store, task_id=task_before.id, db=db
-                        )
-                    ),
-                )
+                item.suggestion is None
+                and item.action == "update_task"
+                and item.transition == "update_fields"
+                and task_before is not None
+                and not date_facts
+                and _update_fields_restates_task(task_before, item, owner_user_id)
             ):
-                # A new source may change Project Attention without changing any
-                # Task field. Save its original proof on the existing Task only.
-                proposal = item.attention_proposal
-                anchor_id = stored_anchor_by_decision.get(decision_index)
-                if (
-                    proposal is not None
-                    and anchor_id is not None
-                    and anchor_id in _confirmed_official_project_anchors(
-                        store, task_id=task_before.id, db=db
-                    )
-                    and (proposal.anchor_id == anchor_id
-                         or (proposal.anchor_id is None
-                             and item.project_proposal is not None))
-                    and item.evidence_origin == "current"
-                    and item.source_ref == work_item.source.ref
-                    and source_contains_quote(work_item.summary, item.source_excerpt)
-                    and any(evidence.signal_id is None for evidence in proposal.evidence)
-                    and all(
-                        evidence.signal_id is not None or (
-                            evidence.source_ref == work_item.source.ref
-                            and source_contains_quote(
-                                work_item.summary, evidence.source_excerpt
-                            )
-                        )
-                        for evidence in proposal.evidence
-                    )
-                    and not (
-                        item.project_candidate_proposal or item.cluster_proposal
-                        or item.relation_proposals or item.anchor_match_proposals
-                    )
-                ):
-                    project = db.execute(
-                        """select p.title as project_title, a.title as anchor_title
-                           from business_projects p join business_anchors a
-                             on a.id=p.canonical_anchor_id
-                           where p.canonical_anchor_id=? and a.anchor_type='project'
-                             and a.active=1""",
-                        (anchor_id,),
-                    ).fetchone()
-                    assert project is not None
-                    if item.project_link_proposal is not None:
-                        link = item.project_link_proposal
-                        if (
-                            link.anchor_id != anchor_id
-                            or not source_contains_quote(work_item.summary, link.source_excerpt)
-                            or not (item.source_excerpt in link.source_excerpt
-                                    or link.source_excerpt in item.source_excerpt)
-                            or not any(title in link.source_excerpt for title in (
-                                project["project_title"], project["anchor_title"],
-                            ))
-                        ):
-                            raise ValueError("existing Project link must cite the current exact Task action naming its Project")
-                    if item.project_proposal is not None:
-                        project_proposal = item.project_proposal
-                        if project_proposal.title != project["project_title"]:
-                            raise ValueError("evidence-only attention requires the Task's existing official Project")
-                        if project_proposal.authority == "meeting_decision":
-                            valid_project_quote = (
-                                (work_item.source.type is WorkItemSourceType.AI_MINUTES
-                                 or work_item.context.source_conversation_kind is WorkItemSourceKind.MINUTES)
-                                and source_contains_quote(
-                                    work_item.summary, project_proposal.source_excerpt
-                                )
-                            )
-                        else:
-                            valid_project_quote = (
-                                work_item.source.type.value == project_proposal.authority
-                                and _report_project_registry_title(
-                                    work_item, project_proposal.source_excerpt
-                                ) == project_proposal.title
-                            )
-                        if not valid_project_quote:
-                            raise ValueError("project proposal must cite the current official Project source")
-                    for evidence in proposal.evidence:
-                        if evidence.signal_id is None:
-                            continue
-                        original = store.get_business_task_signal_in_transaction(
-                            signal_id=evidence.signal_id, _db=db
-                        )
-                        if (
-                            original is None
-                            or original.source_ref != evidence.source_ref
-                            or original.source_type in {
-                                "session_provenance", "memory_provenance"
-                            }
-                            or not source_contains_quote(
-                                original.evidence_text, evidence.source_excerpt
-                            )
-                            or not any(db.execute(
-                                "select 1 from business_task_evidence "
-                                "where task_id=? and signal_id=? limit 1",
-                                (task_id, original.id),
-                            ).fetchone() is not None for task_id in (
-                                task_before.id, *proposal.related_task_ids
-                            ))
-                        ):
-                            raise ValueError("historical attention quote is absent from linked original source")
-                    original_source = (
-                        store.get_business_task_signal_for_task_source_ref_in_transaction(
-                            task_id=task_before.id, source_ref=work_item.source.ref,
-                            source_type=signal.source_type, _db=db,
+                anchor_id, proof_id = apply_project_link(item, item.task_id)
+                if proof_id is not None:
+                    # An association has its own evidence; it is not a Task details update.
+                    task_ids.append(item.task_id)
+                    applied_decisions.append(
+                        AppliedTaskDecision(
+                            decision_index=decision_index,
+                            task_id=item.task_id,
+                            signal_id=proof_id,
+                            anchor_id=anchor_id,
                         )
                     )
-                    if original_source is not None:
-                        service._require_same_signal(
-                            signal=replace(signal, dedupe_key=original_source.dedupe_key),
-                            persisted=original_source,
-                        )
-                        signal_id = original_source.id
-                    else:
-                        signal = replace(signal, dedupe_key=(
-                            f"task-attention:{work_item.source.type.value}:"
-                            f"{work_item.source.ref}:task:{task_before.id}"
-                        ))
-                        signal_id = service._signal_id_or_create(
-                            signal=signal, db=db, now=service._now()
-                        )
-                    if original_source is None:
-                        store.link_business_task_evidence_in_transaction(
-                            task_id=task_before.id, signal_id=signal_id,
-                            evidence_role=BusinessEvidenceRole.DISCOVERY, _db=db,
-                        )
-                    task_ids.append(task_before.id)
-                    affected_task_ids.append(task_before.id)
-                    attention.append(AppliedTaskAttention(
-                        decision=item, task_id=task_before.id, signal_id=signal_id,
-                        anchor_id=anchor_id,
-                    ))
-                    applied_decisions.append(AppliedTaskDecision(
-                        decision_index=decision_index, task_id=task_before.id,
-                        signal_id=signal_id, anchor_id=anchor_id,
-                    ))
                     continue
-                # A restated Task alone has no business effect.
-                skipped_reasons.append(f"Task {item.task_id} already matches this source; nothing to update.")
+                skipped_reasons.append(
+                    f"Task {item.task_id} already matches this source; nothing to update."
+                )
                 continue
-            if item.action == "record_candidate":
-                result = service.record_candidate(RecordCandidate(
-                    title=item.title,
-                    signal=signal,
-                    description=item.description,
-                    owner_user_id=owner_user_id,
-                    owner_name=item.owner_name,
-                    missing_evidence_json=json.dumps(item.missing_evidence, ensure_ascii=False),
-                    date_facts=date_facts,
-                ), _db=db)
+            if item.suggestion is not None:
+                project = selected_project(
+                    item.project.anchor_id, item.project.project_decision_index
+                )
+                if project is None:
+                    raise ValueError(
+                        "suggestion requires an applied active official Project"
+                    )
+                suggestion = TaskSuggestion(
+                    reason=item.suggestion.reason,
+                    suggested_owner_user_id=item.suggestion.suggested_owner_user_id,
+                    suggested_owner_name=item.suggestion.suggested_owner_name,
+                    responsibility_evidence=[
+                        _resolve_project_citation(
+                            store,
+                            proof,
+                            work_item=work_item,
+                            db=db,
+                            current_signal_id=current_signal_id,
+                        )
+                        for proof in item.suggestion.responsibility_evidence
+                    ],
+                    basis_evidence=[
+                        _resolve_project_citation(
+                            store,
+                            proof,
+                            work_item=work_item,
+                            db=db,
+                            current_signal_id=current_signal_id,
+                        )
+                        for proof in item.suggestion.basis_evidence
+                    ],
+                )
+                result = service.record_suggestion(
+                    RecordTaskSuggestion(
+                        title=item.title or task_before.title,
+                        signal=signal,
+                        suggestion=suggestion,
+                        project_anchor_id=project.canonical_anchor_id,
+                        description=item.description
+                        or (task_before.description if task_before is not None else ""),
+                        task_id=item.task_id,
+                    ),
+                    _db=db,
+                )
+            elif item.action == "record_candidate":
+                result = service.record_candidate(
+                    RecordCandidate(
+                        title=item.title,
+                        signal=signal,
+                        description=item.description,
+                        owner_user_id=owner_user_id,
+                        owner_name=item.owner_name,
+                        missing_evidence_json=json.dumps(
+                            item.missing_evidence, ensure_ascii=False
+                        ),
+                        date_facts=date_facts,
+                    ),
+                    _db=db,
+                )
             elif item.action == "create_task":
-                result = service.record_formal_task(RecordFormalTask(
-                    title=item.title,
-                    signal=signal,
-                    formality=formality,
-                    description=item.description,
-                    owner_user_id=owner_user_id,
-                    owner_name=item.owner_name,
-                    owner_evidence_json=json.dumps(owner_evidence, ensure_ascii=False),
-                    date_facts=date_facts,
-                ), _db=db)
+                result = service.record_formal_task(
+                    RecordFormalTask(
+                        title=item.title,
+                        signal=signal,
+                        formality=formality,
+                        description=item.description,
+                        owner_user_id=owner_user_id,
+                        owner_name=item.owner_name,
+                        owner_evidence_json=json.dumps(
+                            owner_evidence, ensure_ascii=False
+                        ),
+                        date_facts=date_facts,
+                    ),
+                    _db=db,
+                )
             else:
                 assert item.task_id is not None
                 if item.transition == "promote_candidate":
-                    result = service.promote_candidate(PromoteCandidate(
-                        task_id=item.task_id, signal=signal, formality=formality,
-                        owner_user_id=owner_user_id or None,
-                        owner_name=item.owner_name or None,
-                        owner_evidence_json=json.dumps(owner_evidence, ensure_ascii=False) if owner_evidence else None,
-                        date_facts=date_facts,
-                    ), _db=db)
+                    result = service.promote_candidate(
+                        PromoteCandidate(
+                            task_id=item.task_id,
+                            signal=signal,
+                            formality=formality,
+                            owner_user_id=owner_user_id or None,
+                            owner_name=item.owner_name or None,
+                            owner_evidence_json=json.dumps(
+                                owner_evidence, ensure_ascii=False
+                            )
+                            if owner_evidence
+                            else None,
+                            date_facts=date_facts,
+                        ),
+                        _db=db,
+                    )
                 elif item.transition == "apply_acceptance":
-                    result = service.apply_acceptance(ApplyAcceptance(
-                        task_id=item.task_id, signal=signal, acceptance_is_explicit=True,
-                        acceptance_polarity=AcceptancePolarity(item.acceptance_polarity),
-                        acceptance_excerpt=item.source_excerpt,
-                        referenced_signal_id=item.acceptance_target_signal_id,
-                        date_facts=date_facts,
-                    ), _db=db)
+                    result = service.apply_acceptance(
+                        ApplyAcceptance(
+                            task_id=item.task_id,
+                            signal=signal,
+                            acceptance_is_explicit=True,
+                            acceptance_polarity=AcceptancePolarity(
+                                item.acceptance_polarity
+                            ),
+                            acceptance_excerpt=item.source_excerpt,
+                            referenced_signal_id=item.acceptance_target_signal_id,
+                            date_facts=date_facts,
+                        ),
+                        _db=db,
+                    )
                 elif item.transition == "merge_identity":
                     proposal = item.identity_proposal
                     assert proposal is not None
                     _validate_identity_proposal(store, proposal, db=db)
                     identity = IdentityEvidence(
-                        same_external_task_id=proposal.identity_evidence.basis == "same_external_task_id",
-                        explicit_source_reference=proposal.identity_evidence.basis == "explicit_source_reference",
-                        same_deliverable=proposal.identity_evidence.basis == "same_deliverable_owner_context_time",
-                        same_owner=proposal.identity_evidence.basis == "same_deliverable_owner_context_time",
-                        same_context=proposal.identity_evidence.basis == "same_deliverable_owner_context_time",
-                        compatible_time_window=proposal.identity_evidence.basis == "same_deliverable_owner_context_time",
+                        same_external_task_id=proposal.identity_evidence.basis
+                        == "same_external_task_id",
+                        explicit_source_reference=proposal.identity_evidence.basis
+                        == "explicit_source_reference",
+                        same_deliverable=proposal.identity_evidence.basis
+                        == "same_deliverable_owner_context_time",
+                        same_owner=proposal.identity_evidence.basis
+                        == "same_deliverable_owner_context_time",
+                        same_context=proposal.identity_evidence.basis
+                        == "same_deliverable_owner_context_time",
+                        compatible_time_window=proposal.identity_evidence.basis
+                        == "same_deliverable_owner_context_time",
                     )
-                    result = service.merge_same_deliverable(MergeBusinessTasks(
-                        source_task_id=proposal.source_task_id,
-                        target_task_id=proposal.target_task_id,
-                        signal=signal, identity_evidence=identity, reason=proposal.reason,
-                    ), _db=db)
+                    result = service.merge_same_deliverable(
+                        MergeBusinessTasks(
+                            source_task_id=proposal.source_task_id,
+                            target_task_id=proposal.target_task_id,
+                            signal=signal,
+                            identity_evidence=identity,
+                            reason=proposal.reason,
+                        ),
+                        _db=db,
+                    )
                 else:
                     fields = {}
                     if item.title:
@@ -2080,22 +2065,37 @@ def apply_task_agent_decision(
                     if item.description:
                         fields["description"] = item.description
                     if owner_user_id or item.owner_name:
-                        fields.update(owner_user_id=owner_user_id, owner_name=item.owner_name,
-                                      owner_evidence_json=json.dumps(owner_evidence, ensure_ascii=False))
+                        fields.update(
+                            owner_user_id=owner_user_id,
+                            owner_name=item.owner_name,
+                            owner_evidence_json=json.dumps(
+                                owner_evidence, ensure_ascii=False
+                            ),
+                        )
                     if item.status:
                         fields["status"] = BusinessTaskStatus(item.status)
                     if item.business_relevance:
-                        fields["business_relevance"] = BusinessRelevance(item.business_relevance)
-                    result = service.update_task(UpdateBusinessTask(
-                        task_id=item.task_id, signal=signal, date_facts=date_facts,
-                        reason=item.update_summary or "根据来源证据更新了任务字段。",
-                        **fields,
-                    ), _db=db)
+                        fields["business_relevance"] = BusinessRelevance(
+                            item.business_relevance
+                        )
+                    result = service.update_task(
+                        UpdateBusinessTask(
+                            task_id=item.task_id,
+                            signal=signal,
+                            date_facts=date_facts,
+                            reason=item.update_summary
+                            or "根据来源证据更新了任务字段。",
+                            **fields,
+                        ),
+                        _db=db,
+                    )
             if (
                 not result.created
                 and date_facts
-                and (item.action in {"record_candidate", "create_task"}
-                     or item.transition == "promote_candidate")
+                and (
+                    item.action in {"record_candidate", "create_task"}
+                    or item.transition == "promote_candidate"
+                )
             ):
                 existing_dates = db.execute(
                     """select date_type, value_at, raw_phrase, source_signal_id,
@@ -2104,13 +2104,27 @@ def apply_task_agent_decision(
                     (result.task_id,),
                 ).fetchall()
                 existing_date_effects = {
-                    (row["date_type"], row["value_at"], row["raw_phrase"],
-                     row["source_signal_id"], row["actor_kind"], row["actor_user_id"], row["actor_name"])
+                    (
+                        row["date_type"],
+                        row["value_at"],
+                        row["raw_phrase"],
+                        row["source_signal_id"],
+                        row["actor_kind"],
+                        row["actor_user_id"],
+                        row["actor_name"],
+                    )
                     for row in existing_dates
                 }
                 proposed_date_effects = {
-                    (fact.date_type.value, fact.value_at, fact.raw_phrase, result.signal_id,
-                     fact.actor_kind.value, fact.actor_user_id, fact.actor_name)
+                    (
+                        fact.date_type.value,
+                        fact.value_at,
+                        fact.raw_phrase,
+                        result.signal_id,
+                        fact.actor_kind.value,
+                        fact.actor_user_id,
+                        fact.actor_name,
+                    )
                     for fact in date_facts
                 }
                 if not proposed_date_effects.issubset(existing_date_effects):
@@ -2144,22 +2158,30 @@ def apply_task_agent_decision(
                     "update business_task_follow_ups set status='completed', "
                     "evidence_check_json=?, suppressed_reason=?, updated_at=current_timestamp "
                     "where business_task_id=? and status in ('draft','approved','sent')",
-                    (json.dumps(completion_evidence, ensure_ascii=False),
-                     completion_evidence["reason"], task_id),
+                    (
+                        json.dumps(completion_evidence, ensure_ascii=False),
+                        completion_evidence["reason"],
+                        task_id,
+                    ),
                 )
                 linked_todo = db.execute(
                     "select 1 from business_task_dingtalk_links where business_task_id=? "
-                    "and status in ('creating','active') limit 1", (task_id,),
+                    "and status in ('creating','active') limit 1",
+                    (task_id,),
                 ).fetchone()
                 if linked_todo is not None:
                     store.enqueue_business_task_todo_sync_outbox(
                         operation_key=f"task-agent:{summary_input_id}:business-task:{task_id}:complete",
-                        business_task_id=task_id, operation="complete",
-                        evidence_json=json.dumps(completion_evidence, ensure_ascii=False),
+                        business_task_id=task_id,
+                        operation="complete",
+                        evidence_json=json.dumps(
+                            completion_evidence, ensure_ascii=False
+                        ),
                         _db=db,
                     )
             next_checks = (
-                fact for fact in date_facts
+                fact
+                for fact in date_facts
                 if fact.date_type is BusinessTaskDateType.NEXT_CHECK_AT
             )
             if (
@@ -2168,7 +2190,8 @@ def apply_task_agent_decision(
                 and task_after.status.value in {"open", "waiting"}
                 and task_after.owner_user_id.strip()
                 and work_item.source.conversation_id.strip()
-                and work_item.context.source_conversation_kind.value in {"group", "direct"}
+                and work_item.context.source_conversation_kind.value
+                in {"group", "direct"}
             ):
                 for check in next_checks:
                     store.create_business_task_follow_up(
@@ -2193,17 +2216,25 @@ def apply_task_agent_decision(
                     "select 1 from business_task_date_evidence where task_id=? "
                     "and date_type='committed_deadline_at' and trim(value_at)<>'' limit 1",
                     (task_id,),
-                ).fetchone() is not None
+                ).fetchone()
+                is not None
             ):
                 store.enqueue_business_task_todo_sync_outbox(
                     operation_key=f"task-agent:{summary_input_id}:business-task:{task_id}:create",
-                    business_task_id=task_id, operation="create", _db=db,
+                    business_task_id=task_id,
+                    operation="create",
+                    _db=db,
                 )
-            if item.transition == "merge_identity" and item.identity_proposal is not None:
-                affected_task_ids.extend((
-                    item.identity_proposal.source_task_id,
-                    item.identity_proposal.target_task_id,
-                ))
+            if (
+                item.transition == "merge_identity"
+                and item.identity_proposal is not None
+            ):
+                affected_task_ids.extend(
+                    (
+                        item.identity_proposal.source_task_id,
+                        item.identity_proposal.target_task_id,
+                    )
+                )
             for relation in item.relation_proposals:
                 from_task_id, to_task_id = relation.endpoints(task_id)
                 resolution.add_relation(
@@ -2211,222 +2242,179 @@ def apply_task_agent_decision(
                     to_task_id=to_task_id,
                     relation_type=BusinessRelationType(relation.relation_type),
                     evidence_signal_id=result.signal_id,
-                    status="proposed", reason=relation.reason, _db=db,
+                    status="proposed",
+                    reason=relation.reason,
+                    _db=db,
                 )
             if item.cluster_proposal is not None:
                 cluster = item.cluster_proposal
                 if cluster.cluster_id is None:
                     cluster_id = resolution.create_cluster(
                         title=cluster.title or item.title,
-                        task_ids=list(dict.fromkeys([*cluster.task_ids, task_id])), _db=db,
+                        task_ids=list(dict.fromkeys([*cluster.task_ids, task_id])),
+                        _db=db,
                     )
                 else:
                     cluster_id = cluster.cluster_id
-                    if db.execute(
-                        "select 1 from business_work_cluster_tasks where cluster_id=? and task_id=?",
-                        (cluster_id, task_id),
-                    ).fetchone() is None:
+                    if (
+                        db.execute(
+                            "select 1 from business_work_cluster_tasks where cluster_id=? and task_id=?",
+                            (cluster_id, task_id),
+                        ).fetchone()
+                        is None
+                    ):
                         store.add_business_work_cluster_task_in_transaction(
                             cluster_id=cluster_id, task_id=task_id, _db=db
                         )
             else:
                 cluster_id = None
-            report_project_title = ""
-            if item.project_proposal is not None:
-                proposal = item.project_proposal
-                if proposal.authority == "meeting_decision":
-                    if (
-                        item.evidence_origin != "current"
-                        or item.source_ref != work_item.source.ref
-                        or not (
-                            work_item.source.type is WorkItemSourceType.AI_MINUTES
-                            or work_item.context.source_conversation_kind is WorkItemSourceKind.MINUTES
-                        )
-                        or not source_contains_quote(work_item.summary, proposal.source_excerpt)
-                    ):
-                        raise ValueError("project proposal must cite an exact quote in the current meeting source")
-                else:
-                    report_project_title = _report_project_registry_title(
-                        work_item, proposal.source_excerpt
-                    )
-                    if (
-                        item.evidence_origin != "current"
-                        or item.source_ref != work_item.source.ref
-                        or work_item.source.type.value != proposal.authority
-                        or not report_project_title
-                        or proposal.title != report_project_title
-                    ):
-                        raise ValueError("project proposal title and authority must match the cited report registry row")
-            retired_project_proposal = (
-                item.project_proposal is not None
-                and _task_project_anchor_is_retired(
-                    store, item.project_proposal.title, db=db
-                )
-            )
-            if retired_project_proposal:
-                skipped_reasons.append(
-                    f"Project {item.project_proposal.title} is retired; Task retained without reactivation."
-                )
-                report_project_title = ""
-            if report_project_title and cluster_id is None:
-                existing_cluster = db.execute(
-                    """
-                    select c.id from business_work_clusters c
-                    join business_work_cluster_tasks ct on ct.cluster_id=c.id
-                    where c.title=? and ct.task_id=? limit 1
-                    """,
-                    (report_project_title, task_id),
-                ).fetchone()
-                if existing_cluster is not None:
-                    cluster_id = int(existing_cluster["id"])
-                else:
-                    cluster_id = resolution.create_cluster(
-                        title=report_project_title, task_ids=[task_id], _db=db
-                    )
-            report_project_id = None
-            if report_project_title:
-                project = resolution.register_source_project(
-                    title=report_project_title,
-                    registry_source=f"{work_item.source.type.value}:{work_item.source.ref}",
-                    _db=db,
-                )
-                report_anchor_id = project.canonical_anchor_id
-                applied_project_anchor_id = report_anchor_id
-                report_project_id = project.id
-                resolution.confirm_anchor_match(
-                    task_id=task_id,
-                    anchor_id=report_anchor_id,
-                    evidence_signal_id=result.signal_id,
-                    reason=f"{work_item.source.type.value} 的项目登记表明确列出该项目。",
-                    relevance=BusinessRelevance.RELEVANT,
-                    _db=db,
-                )
             for anchor_match in item.anchor_match_proposals:
                 resolution.propose_anchor_match(
-                    task_id=task_id, anchor_id=anchor_match.anchor_id,
-                    evidence_signal_id=result.signal_id, reason=anchor_match.reason, _db=db,
-                )
-            if (
-                item.project_proposal is not None
-                and not retired_project_proposal
-                and not report_project_title
-            ):
-                proposal = item.project_proposal
-                project = resolution.register_source_project(
-                    title=proposal.title,
-                    registry_source=f"{proposal.authority}:{item.source_ref}",
-                    _db=db,
-                )
-                anchor_id = project.canonical_anchor_id
-                applied_project_anchor_id = anchor_id
-                resolution.confirm_anchor_match(
                     task_id=task_id,
-                    anchor_id=anchor_id,
+                    anchor_id=anchor_match.anchor_id,
                     evidence_signal_id=result.signal_id,
-                    reason=proposal.reason,
-                    relevance=BusinessRelevance.RELEVANT,
+                    reason=anchor_match.reason,
                     _db=db,
                 )
-            if item.project_link_proposal is not None:
-                link = item.project_link_proposal
-                project = db.execute(
-                    """select p.title as project_title, a.title as anchor_title
-                       from business_projects p join business_anchors a
-                         on a.id=p.canonical_anchor_id
-                       where p.canonical_anchor_id=? and a.anchor_type='project' and a.active=1""",
-                    (link.anchor_id,),
+            applied_project_anchor_id, _ = apply_project_link(item, task_id)
+            if cluster_id is not None and item.project is not None and item.project.project_decision_index is not None:
+                registration = decision.project_decisions[item.project.project_decision_index].registration
+                project = projects_by_index.get(item.project.project_decision_index)
+                if registration is not None and registration.authority != "meeting_decision" and project is not None:
+                    existing_candidate = db.execute(
+                        "select id from business_project_candidates "
+                        "where cluster_id=? and title=? and status='proposed' limit 1",
+                        (cluster_id, project.title),
+                    ).fetchone()
+                    if existing_candidate is not None:
+                        changed_members = [int(row["task_id"]) for row in db.execute(
+                            "select member.task_id from business_work_cluster_tasks member "
+                            "left join business_task_anchor_links link on link.task_id=member.task_id "
+                            "and link.anchor_id=? where member.cluster_id=? "
+                            "and (link.id is null or link.status<>'confirmed' or link.active=0)",
+                            (project.canonical_anchor_id, cluster_id),
+                        )]
+                        registration_signal_id = service._signal_id_or_create(
+                            signal=_project_source_signal(work_item), db=db, now=service._now()
+                        )
+                        resolution.confirm_project_candidate(
+                            candidate_id=int(existing_candidate["id"]), project_id=project.id,
+                            evidence_signal_id=registration_signal_id, _db=db,
+                        )
+                        affected_task_ids.extend(changed_members)
+                        project_links.update(
+                            (int(link["task_id"]), project.canonical_anchor_id)
+                            for link in db.execute(
+                                "select link.task_id from business_task_anchor_links link "
+                                "join business_work_cluster_tasks member on member.task_id=link.task_id "
+                                "where member.cluster_id=? and link.anchor_id=? "
+                                "and link.status='confirmed' and link.active=1",
+                                (cluster_id, project.canonical_anchor_id),
+                            )
+                        )
+            candidate = item.project_candidate_proposal
+            if candidate is not None:
+                existing = db.execute(
+                    "select id from business_project_candidates "
+                    "where cluster_id=? and title=? and status='proposed' limit 1",
+                    (candidate.cluster_id, candidate.title),
                 ).fetchone()
-                if project is None:
-                    raise ValueError("existing Project link requires an active registered official Project")
-                if (
-                    item.evidence_origin != "current"
-                    or item.source_ref != work_item.source.ref
-                    or not source_contains_quote(work_item.summary, link.source_excerpt)
-                    or not source_contains_quote(work_item.summary, item.source_excerpt)
-                    or not (item.source_excerpt in link.source_excerpt or link.source_excerpt in item.source_excerpt)
-                    or not any(title in link.source_excerpt for title in (
-                        project["project_title"], project["anchor_title"],
-                    ))
-                ):
-                    raise ValueError("existing Project link must cite the current exact Task action naming its Project")
-                resolution.confirm_anchor_match(
-                    task_id=task_id, anchor_id=link.anchor_id, evidence_signal_id=result.signal_id,
-                    reason=link.reason, relevance=BusinessRelevance.RELEVANT, _db=db,
-                )
-                applied_project_anchor_id = link.anchor_id
-            if applied_project_anchor_id is not None:
-                project_links.add((task_id, applied_project_anchor_id))
-            project_candidate = item.project_candidate_proposal
-            if report_project_id is not None:
-                existing_candidate = db.execute(
-                    """
-                    select id from business_project_candidates
-                    where cluster_id=? and title=? and status='proposed' limit 1
-                    """,
-                    (cluster_id, report_project_title),
-                ).fetchone()
-                if existing_candidate is not None:
-                    resolution.confirm_project_candidate(
-                        candidate_id=int(existing_candidate["id"]),
-                        project_id=report_project_id,
-                        evidence_signal_id=result.signal_id,
+                if existing is None:
+                    resolution.propose_project(
+                        cluster_id=candidate.cluster_id,
+                        title=candidate.title,
+                        reason=candidate.reason,
                         _db=db,
                     )
-                    project_links.update(
-                        (int(link["task_id"]), int(link["anchor_id"]))
-                        for link in db.execute(
-                            """select distinct link.task_id, link.anchor_id
-                               from business_task_anchor_links link
-                               join business_work_cluster_tasks member on member.task_id=link.task_id
-                               where member.cluster_id=? and link.anchor_id=?
-                                 and link.status='confirmed' and link.active=1
-                                 and link.evidence_signal_id=?""",
-                            (cluster_id, applied_project_anchor_id, result.signal_id),
-                        )
-                    )
-            elif project_candidate is not None:
-                candidate_cluster_id = project_candidate.cluster_id
-                existing_candidate = db.execute(
-                    """
-                    select id from business_project_candidates
-                    where cluster_id=? and title=? and status='proposed' limit 1
-                    """,
-                    (candidate_cluster_id, project_candidate.title),
-                ).fetchone()
-                if existing_candidate is None:
-                    resolution.propose_project(
-                        cluster_id=candidate_cluster_id, title=project_candidate.title,
-                        reason=project_candidate.reason, _db=db,
-                    )
-            if item.attention_proposal is not None:
-                attention_anchor_id = item.attention_proposal.anchor_id
-                if attention_anchor_id is None:
-                    attention_anchor_id = applied_project_anchor_id
-                if attention_anchor_id is None:
-                    raise ValueError("attention proposal requires this decision's applied Project anchor")
-                attention.append(AppliedTaskAttention(
-                    decision=item, task_id=task_id, signal_id=result.signal_id,
-                    anchor_id=attention_anchor_id,
-                ))
-            stored_anchor = stored_anchor_by_decision.get(decision_index)
-            confirmed_anchors = _confirmed_official_project_anchors(
+            confirmed = _confirmed_official_project_anchors(
                 store, task_id=task_id, db=db
             )
             actual_anchor = (
                 applied_project_anchor_id
                 if applied_project_anchor_id is not None
-                else stored_anchor
-                if stored_anchor in confirmed_anchors
-                else next(iter(confirmed_anchors))
-                if len(confirmed_anchors) == 1
+                else next(iter(confirmed))
+                if len(confirmed) == 1
                 else None
             )
-            applied_decisions.append(AppliedTaskDecision(
-                decision_index=decision_index,
-                task_id=task_id,
-                signal_id=result.signal_id,
-                anchor_id=actual_anchor,
-            ))
+            applied_decisions.append(
+                AppliedTaskDecision(
+                    decision_index=decision_index,
+                    task_id=task_id,
+                    signal_id=result.signal_id,
+                    anchor_id=actual_anchor,
+                )
+            )
+
+        applied_by_index = {value.decision_index: value for value in applied_decisions}
+        for assessment_index, assessment in enumerate(decision.project_assessments):
+            project = selected_project(
+                assessment.anchor_id, assessment.project_decision_index
+            )
+            if project is None:
+                continue
+            ids = set(assessment.task_ids)
+            for index in assessment.decision_indexes:
+                applied = applied_by_index.get(index)
+                if applied is not None:
+                    ids.add(applied.task_id)
+                else:
+                    task = decision.task_decisions[index]
+                    if task.task_id is not None:
+                        ids.add(
+                            task.target_task_id
+                            if task.transition == "merge_identity"
+                            else task.task_id
+                        )
+            for task_id in ids:
+                if (
+                    project.canonical_anchor_id
+                    not in _confirmed_official_project_anchors(
+                        store, task_id=task_id, db=db
+                    )
+                ):
+                    raise ValueError(
+                        "supporting Task is not confirmed to the assessed Project"
+                    )
+            proofs = [
+                *assessment.evidence,
+                *(
+                    assessment.attention_proposal.evidence
+                    if assessment.attention_proposal
+                    else []
+                ),
+            ]
+            resolved = [
+                _resolve_project_citation(
+                    store,
+                    proof,
+                    work_item=work_item,
+                    db=db,
+                    current_signal_id=current_signal_id,
+                )
+                for proof in proofs
+            ]
+            signal_ids = tuple(sorted({proof.signal_id for proof in resolved}))
+            ProjectContextService(store).apply(
+                project_id=project.id, context=None, signal_ids=signal_ids, db=db
+            )
+            if assessment.attention_proposal is not None:
+                primary_signal_id = (
+                    current_signal_id
+                    if any(
+                        proof.signal_id is None
+                        for proof in assessment.attention_proposal.evidence
+                    )
+                    else resolved[0].signal_id
+                )
+                attention.append(
+                    AppliedTaskAttention(
+                        assessment_index=assessment_index,
+                        assessment=assessment,
+                        task_ids=tuple(sorted(ids)),
+                        signal_id=primary_signal_id,
+                        anchor_id=project.canonical_anchor_id,
+                    )
+                )
 
     recorded_run_id = None
     if _db is not None:
@@ -2439,8 +2427,14 @@ def apply_task_agent_decision(
                 summary_input_id=summary_input_id,
                 codex_session_id=codex_session_id,
                 decision_json=_json_dumps(decision.model_dump(mode="json")),
-                audit_summary="; ".join(filter(None, (item.update_summary for item in decision.task_decisions))),
-                memory_recall_used=any(item.memory_recall_used for item in decision.task_decisions),
+                audit_summary="; ".join(
+                    filter(
+                        None, (item.update_summary for item in decision.task_decisions)
+                    )
+                ),
+                memory_recall_used=any(
+                    item.memory_recall_used for item in decision.task_decisions
+                ),
             )
     result = TaskAgentApplyResult(
         task_ids=tuple(task_ids),
@@ -2449,15 +2443,23 @@ def apply_task_agent_decision(
         skipped_reasons=tuple(skipped_reasons),
         project_links=tuple(sorted(project_links)),
         applied_decisions=tuple(applied_decisions),
+        applied_projects=tuple(applied_projects),
+        current_signal_id=current_signal_id,
     )
     receipt = _projection_receipt(work_item, decision, result)
     result = replace(result, projection_receipt=receipt)
     if _db is None:
         if recorded_run_id is not None:
             _save_projection_receipt(store, recorded_run_id, receipt)
-        receipt = _project_task_attention(store, result.attention_proposals, result.affected_task_ids, receipt=receipt)
+        receipt = _project_task_attention(
+            store, result.attention_proposals, result.affected_task_ids, receipt=receipt
+        )
         receipt = _finalize_assessment_results(
-            store, work_item=work_item, decision=decision, result=result, receipt=receipt,
+            store,
+            work_item=work_item,
+            decision=decision,
+            result=result,
+            receipt=receipt,
         )
         result = replace(result, projection_receipt=receipt)
         if recorded_run_id is not None:
@@ -2466,7 +2468,10 @@ def apply_task_agent_decision(
 
 
 def _update_fields_restates_task(
-    task: BusinessTask, item: TaskDecision, owner_user_id: str, *,
+    task: BusinessTask,
+    item: TaskDecision,
+    owner_user_id: str,
+    *,
     attention_only: bool = False,
 ) -> bool:
     """True when every field the decision sets already has that value on the Task."""
@@ -2477,14 +2482,26 @@ def _update_fields_restates_task(
         # "unknown" is the absence of a judgement, so restating it asserts nothing;
         # restating "relevant" normally confirms Task evidence; a supported
         # Attention-only proposal must leave the Task event history unchanged.
-        and (not item.business_relevance
-             or (BusinessRelevance(item.business_relevance) is BusinessRelevance.UNKNOWN
-                 and task.business_relevance is BusinessRelevance.UNKNOWN)
-             or (attention_only
-                 and BusinessRelevance(item.business_relevance) is BusinessRelevance.RELEVANT
-                 and task.business_relevance is BusinessRelevance.RELEVANT))
-        and (not (owner_user_id or item.owner_name)
-             or (owner_user_id == task.owner_user_id and item.owner_name == task.owner_name))
+        and (
+            not item.business_relevance
+            or (
+                BusinessRelevance(item.business_relevance) is BusinessRelevance.UNKNOWN
+                and task.business_relevance is BusinessRelevance.UNKNOWN
+            )
+            or (
+                attention_only
+                and BusinessRelevance(item.business_relevance)
+                is BusinessRelevance.RELEVANT
+                and task.business_relevance is BusinessRelevance.RELEVANT
+            )
+        )
+        and (
+            not (owner_user_id or item.owner_name)
+            or (
+                owner_user_id == task.owner_user_id
+                and item.owner_name == task.owner_name
+            )
+        )
     )
 
 
@@ -2496,171 +2513,236 @@ def _project_task_attention(
     receipt: TaskAttentionProjectionReceipt,
 ) -> TaskAttentionProjectionReceipt:
     applied_ids: set[int] = set()
-    groups: dict[int, list[AppliedTaskAttention]] = {}
+    projection = BusinessAttentionProjection(store)
     for applied in proposals:
-        groups.setdefault(applied.anchor_id, []).append(applied)
-    for anchor_id, group in groups.items():
-        shapes = {
-            json.dumps(entry.decision.attention_proposal.model_dump(
-                mode="json", exclude={"anchor_id", "related_task_ids"}
-            ), sort_keys=True)
-            for entry in group
-        }
-        if len(shapes) != 1:
-            receipt.outcomes.extend(
-                TaskAttentionProjectionOutcome(
-                    task_id=entry.task_id, anchor_id=anchor_id, status="rejected",
-                    reason="multiple distinct proposals for the same Project",
-                ) for entry in group
-            )
-            continue
-        applied = group[0]
-        item, signal_id = applied.decision, applied.signal_id
-        proposal = item.attention_proposal
+        proposal = applied.assessment.attention_proposal
         assert proposal is not None
         try:
-            if anchor_id not in {
-                project.canonical_anchor_id for project in store.list_business_projects()
-            }:
-                raise ValueError("attention requires a registered official Project")
-            task_ids = {entry.task_id for entry in group}
-            task_ids.update(
-                value for entry in group
-                for value in entry.decision.attention_proposal.related_task_ids
-            )
-            projection = BusinessAttentionProjection(store)
             with store.business_task_transaction() as db:
-                eligible = set(projection._current_eligible_task_ids(
-                    task_ids=tuple(sorted(task_ids)), anchor_id=anchor_id, db=db
-                ))
+                project = _official_project(store, applied.anchor_id, db=db)
+                task_ids = set(applied.task_ids)
+                eligible = set(
+                    projection._current_eligible_task_ids(
+                        task_ids=applied.task_ids, anchor_id=applied.anchor_id, db=db
+                    )
+                )
                 if eligible != task_ids:
-                    raise ValueError("every supporting Task must be relevant, open/waiting and confirmed to this active Project")
-                existing = store.get_business_attention_item_by_stable_key_in_transaction(
-                    stable_key=f"project:{anchor_id}", _db=db
+                    raise ValueError(
+                        "every supporting Task must be relevant, open/waiting and confirmed to this active Project"
+                    )
+                existing = (
+                    store.get_business_attention_item_by_stable_key_in_transaction(
+                        stable_key=f"project:{applied.anchor_id}", _db=db
+                    )
                 )
                 if existing is not None:
                     old_ids = tuple(
-                        link.task_id for link in store.list_business_attention_tasks_in_transaction(
+                        link.task_id
+                        for link in store.list_business_attention_tasks_in_transaction(
                             attention_item_id=existing.id, _db=db
                         )
                     )
-                    task_ids.update(projection._current_eligible_task_ids(
-                        task_ids=old_ids, anchor_id=anchor_id, db=db
-                    ))
-            linked_signal_ids = {
-                link.signal_id for member in eligible
-                for link in store.list_business_task_evidence(member)
-            }
-            verified = {}
-            for entry in group:
-                for evidence in entry.decision.attention_proposal.evidence:
-                    source = store.get_business_task_signal(
-                        evidence.signal_id if evidence.signal_id is not None else entry.signal_id
+                    task_ids.update(
+                        projection._current_eligible_task_ids(
+                            task_ids=old_ids, anchor_id=applied.anchor_id, db=db
+                        )
                     )
-                    if source is None or source.source_ref != evidence.source_ref:
-                        raise ValueError("attention evidence signal/source_ref does not match")
-                    if source.source_type in {"session_provenance", "memory_provenance"}:
-                        raise ValueError("attention evidence must be observed original source, not cited provenance")
-                    if not source_contains_quote(source.evidence_text, evidence.source_excerpt):
-                        raise ValueError("attention quote is absent from original source")
-                    if source.id not in linked_signal_ids:
-                        raise ValueError("attention evidence must be linked to a qualifying supporting Task in this Project")
-                    verified_entry = {
-                        "signal_id": source.id, "source_ref": source.source_ref,
-                        "source_excerpt": evidence.source_excerpt,
-                        "source_time": source.source_time,
-                        "source_link": json.loads(source.context_json).get("source_link", ""),
-                    }
-                    verified[json.dumps(verified_entry, ensure_ascii=False, sort_keys=True)] = verified_entry
-            effective = AttentionProposal(
-                stable_key=f"project:{applied.anchor_id}",
-                category=AttentionCategory(proposal.category),
-                title=proposal.title,
-                business_area="",
-                why_attention=proposal.why_attention,
-                current_state=proposal.current_state,
-                ceo_action=proposal.ceo_action,
-                anchor_id=applied.anchor_id,
-                task_ids=tuple(sorted(task_ids)),
-                evidence_signal_id=signal_id,
-                assessment_json=json.dumps({
-                    "assessment_basis": proposal.assessment_basis,
-                    "material_trigger": proposal.material_trigger,
-                    "inference": proposal.why_attention,
-                    "evidence": [verified[key] for key in sorted(
-                        verified, key=lambda key: (verified[key]["signal_id"] != signal_id, key)
-                    )],
-                }, ensure_ascii=False, sort_keys=True),
-            )
-        except ValueError as exc:
-            receipt.outcomes.extend(
-                TaskAttentionProjectionOutcome(task_id=entry.task_id, anchor_id=anchor_id,
-                                               status="rejected", reason=str(exc))
-                for entry in group
-            )
-            continue
-        except Exception as exc:
-            receipt.outcomes.extend(
-                TaskAttentionProjectionOutcome(task_id=entry.task_id, anchor_id=anchor_id,
-                                               status="error", reason=str(exc))
-                for entry in group
-            )
-            continue
-        try:
+                linked_ids = {
+                    value.signal_id
+                    for value in store.list_business_project_evidence_in_transaction(
+                        project_id=project.id,
+                        pinned_signal_ids=tuple(
+                            proof.signal_id
+                            if proof.signal_id is not None
+                            else applied.signal_id
+                            for proof in proposal.evidence
+                        ),
+                        _db=db,
+                    )
+                }
+                verified = {}
+                for proof in proposal.evidence:
+                    signal_id = (
+                        proof.signal_id
+                        if proof.signal_id is not None
+                        else applied.signal_id
+                    )
+                    signal = store.get_business_task_signal_in_transaction(
+                        signal_id=signal_id, _db=db
+                    )
+                    if signal is None or signal.source_ref != proof.source_ref:
+                        raise ValueError(
+                            "attention evidence signal/source_ref does not match"
+                        )
+                    if not source_is_observed(signal.source_type):
+                        raise ValueError(
+                            "attention evidence must be observed original source, not cited provenance"
+                        )
+                    if not source_contains_quote(
+                        signal.evidence_text, proof.source_excerpt
+                    ):
+                        raise ValueError(
+                            "attention quote is absent from original source"
+                        )
+                    if signal.id not in linked_ids:
+                        raise ValueError(
+                            "attention evidence must be linked to the assessed Project"
+                        )
+                    entry = dict(
+                        signal_id=signal.id,
+                        source_ref=signal.source_ref,
+                        source_excerpt=proof.source_excerpt,
+                        source_time=signal.source_time,
+                        source_link=json.loads(signal.context_json).get(
+                            "source_link", ""
+                        ),
+                    )
+                    verified[json.dumps(entry, ensure_ascii=False, sort_keys=True)] = (
+                        entry
+                    )
+                effective = AttentionProposal(
+                    stable_key=f"project:{applied.anchor_id}",
+                    category=AttentionCategory(proposal.category),
+                    title=proposal.title,
+                    business_area="",
+                    why_attention=proposal.why_attention,
+                    current_state=proposal.current_state,
+                    ceo_action=proposal.ceo_action,
+                    anchor_id=applied.anchor_id,
+                    task_ids=tuple(sorted(task_ids)),
+                    evidence_signal_id=applied.signal_id,
+                    assessment_json=json.dumps(
+                        {
+                            "assessment_basis": proposal.assessment_basis,
+                            "material_trigger": proposal.material_trigger,
+                            "inference": proposal.why_attention,
+                            "evidence": [
+                                verified[key]
+                                for key in sorted(
+                                    verified,
+                                    key=lambda key: (
+                                        verified[key]["signal_id"] != applied.signal_id,
+                                        key,
+                                    ),
+                                )
+                            ],
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                )
             attention_id = projection.upsert(effective)
-            applied_ids.add(attention_id)
-            receipt.outcomes.extend(
-                TaskAttentionProjectionOutcome(task_id=entry.task_id, anchor_id=anchor_id,
-                                               attention_id=attention_id, status="applied")
-                for entry in group
+        except ValueError as exc:
+            receipt.outcomes.append(
+                TaskAttentionProjectionOutcome(
+                    task_id=None,
+                    assessment_index=applied.assessment_index,
+                    anchor_id=applied.anchor_id,
+                    status="rejected",
+                    reason=str(exc),
+                )
             )
         except Exception as exc:
-            receipt.outcomes.extend(
-                TaskAttentionProjectionOutcome(task_id=entry.task_id, anchor_id=anchor_id,
-                                               status="error", reason=str(exc))
-                for entry in group
+            receipt.outcomes.append(
+                TaskAttentionProjectionOutcome(
+                    task_id=None,
+                    assessment_index=applied.assessment_index,
+                    anchor_id=applied.anchor_id,
+                    status="error",
+                    reason=str(exc),
+                )
+            )
+        else:
+            applied_ids.add(attention_id)
+            receipt.outcomes.append(
+                TaskAttentionProjectionOutcome(
+                    task_id=None,
+                    assessment_index=applied.assessment_index,
+                    anchor_id=applied.anchor_id,
+                    attention_id=attention_id,
+                    status="applied",
+                    reason="Attention proposal applied.",
+                )
             )
     try:
-        BusinessAttentionProjection(store).recompute_for_tasks(affected_task_ids)
+        projection.recompute_for_tasks(affected_task_ids)
     except Exception as exc:
         receipt.recompute_error = str(exc)
     receipt.applied_count = len(applied_ids)
-    failed = bool(receipt.recompute_error or any(outcome.status != "applied" for outcome in receipt.outcomes))
+    failed = bool(
+        receipt.recompute_error
+        or any(value.status != "applied" for value in receipt.outcomes)
+    )
     receipt.status = (
-        "partial" if failed and applied_ids else "failed" if failed
-        else "completed" if receipt.proposal_count else "no_proposal"
+        "partial"
+        if failed and applied_ids
+        else "failed"
+        if failed
+        else "completed"
+        if receipt.proposal_count
+        else "no_proposal"
     )
     return receipt
 
 
 def _projection_receipt(
-    work_item: WorkItem, decision: TaskAgentDecision, result: TaskAgentApplyResult,
+    work_item: WorkItem,
+    decision: TaskAgentDecision,
+    result: TaskAgentApplyResult,
 ) -> TaskAttentionProjectionReceipt:
-    report_source = work_item.source.type in {
-        WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT, WorkItemSourceType.PROJECT_WEEKLY_REPORT,
-        WorkItemSourceType.DEPARTMENT_WEEKLY_REPORT,
-    }
     registry_rows = None
-    if report_source:
-        markdown = _report_markdown(work_item)
+    if work_item.source.type in {
+        WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT,
+        WorkItemSourceType.PROJECT_WEEKLY_REPORT,
+        WorkItemSourceType.DEPARTMENT_WEEKLY_REPORT,
+    }:
         registry_rows = sum(
             bool(_report_project_registry_title(work_item, line))
-            for line in markdown.splitlines() if line.strip()
+            for line in _report_markdown(work_item).splitlines()
+            if line.strip()
         )
-    unapplied = [
-        item for item in decision.task_decisions
-        if item.attention_proposal is not None
-        and not any(applied.decision is item for applied in result.attention_proposals)
-    ]
+    applied_indexes = {entry.assessment_index for entry in result.attention_proposals}
     return TaskAttentionProjectionReceipt(
-        status="pending", source_type=work_item.source.type.value,
-        task_decision_count=len(decision.task_decisions), project_link_count=len(result.project_links),
+        status="pending",
+        source_type=work_item.source.type.value,
+        task_decision_count=len(decision.task_decisions),
+        project_link_count=len(result.project_links),
         registry_row_count=registry_rows,
-        proposal_count=sum(item.attention_proposal is not None for item in decision.task_decisions),
-        outcomes=[TaskAttentionProjectionOutcome(
-            task_id=item.task_id, anchor_id=item.attention_proposal.anchor_id,
-            status="rejected", reason="proposal has no applied Task decision",
-        ) for item in unapplied],
+        proposal_count=sum(
+            assessment.attention_proposal is not None
+            for assessment in decision.project_assessments
+        ),
+        project_decisions=[
+            TaskProjectDecisionResult(
+                project_decision_index=entry.project_decision_index,
+                project_id=entry.project_id,
+                anchor_id=entry.anchor_id,
+                revision_id=entry.revision_id,
+                signal_ids=list(entry.signal_ids),
+            )
+            for entry in result.applied_projects
+        ],
+        task_decisions=[
+            TaskDecisionResult(
+                decision_index=entry.decision_index,
+                task_id=entry.task_id,
+                signal_id=entry.signal_id,
+                anchor_id=entry.anchor_id,
+            )
+            for entry in result.applied_decisions
+        ],
+        outcomes=[
+            TaskAttentionProjectionOutcome(
+                task_id=None,
+                assessment_index=index,
+                anchor_id=assessment.anchor_id,
+                status="rejected",
+                reason="proposal has no applied Project identity",
+            )
+            for index, assessment in enumerate(decision.project_assessments)
+            if assessment.attention_proposal is not None
+            and index not in applied_indexes
+        ],
     )
 
 
@@ -2672,231 +2754,134 @@ def _finalize_assessment_results(
     result: TaskAgentApplyResult,
     receipt: TaskAttentionProjectionReceipt,
 ) -> TaskAttentionProjectionReceipt:
-    """Attach verified application identities after the projection consumer has run."""
-
-    applied_by_index = {
-        entry.decision_index: entry for entry in result.applied_decisions
+    """Read back only identities actually applied or verified before application."""
+    projects = {
+        entry.project_decision_index: entry for entry in result.applied_projects
     }
-
-    def exact_existing_project_anchor(title: str) -> int | None:
-        with store._connect() as db:
-            rows = db.execute(
-                """select p.canonical_anchor_id from business_projects p
-                   join business_anchors a on a.id=p.canonical_anchor_id
-                   where p.title=? and a.anchor_type='project' and a.active=1 limit 2""",
-                (title,),
-            ).fetchall()
-        if len(rows) > 1:
-            raise ValueError(
-                "Project identity conflict: multiple active official Projects have this exact title"
-            )
-        return int(rows[0]["canonical_anchor_id"]) if rows else None
-
-    def stored_signal(signal_id: int):
-        return store.get_business_task_signal(signal_id)
-
-    def task_is_confirmed_to_project(task_id: int, anchor_id: int) -> bool:
-        with store._connect() as db:
-            return db.execute(
-                """select 1 from business_task_anchor_links link
-                   join business_anchors anchor on anchor.id=link.anchor_id
-                   join business_projects project on project.canonical_anchor_id=link.anchor_id
-                   where link.task_id=? and link.anchor_id=?
-                     and link.status='confirmed' and link.active=1
-                     and anchor.anchor_type='project' and anchor.active=1 limit 1""",
-                (task_id, anchor_id),
-            ).fetchone() is not None
-
-    def verified_citations(assessment, existing_card, task_ids) -> list[TaskAttentionVerifiedCitation]:
-        card_evidence = []
-        if existing_card is not None:
-            card_evidence = json.loads(existing_card.assessment_json).get("evidence", [])
-        citations: list[TaskAttentionVerifiedCitation] = []
-        for evidence in assessment.evidence:
-            signal = stored_signal(evidence.signal_id) if evidence.signal_id is not None else None
-            if signal is None:
-                applied_candidates = [
-                    entry for entry in result.applied_decisions
-                    if entry.task_id in task_ids and (
-                        entry.decision_index in assessment.decision_indexes
-                        or entry.task_id in assessment.task_ids
-                    )
-                ]
-                for applied in applied_candidates:
-                    candidate = stored_signal(applied.signal_id)
-                    if (
-                        candidate is not None
-                        and candidate.source_ref == evidence.source_ref
-                        and source_contains_quote(candidate.evidence_text, evidence.source_excerpt)
-                    ):
-                        signal = candidate
-                        break
-            if signal is None:
-                stored_proof = next((
-                    proof for proof in card_evidence
-                    if proof.get("source_ref") == evidence.source_ref
-                    and proof.get("source_excerpt") == evidence.source_excerpt
-                    and proof.get("signal_id") is not None
-                ), None)
-                if stored_proof is not None:
-                    signal = stored_signal(int(stored_proof["signal_id"]))
-            citations.append(TaskAttentionVerifiedCitation(
-                source_ref=evidence.source_ref,
-                source_excerpt=evidence.source_excerpt,
-                signal_id=signal.id if signal is not None else None,
-                source_time=(signal.source_time if signal is not None else work_item.source.created_at or ""),
-                source_link=(
-                    json.loads(signal.context_json).get("source_link", "")
-                    if signal is not None else ""
-                ),
-            ))
-        return citations
-
-    assessment_results: list[TaskAttentionAssessmentResult] = []
-    for assessment_index, assessment in enumerate(decision.project_assessments):
-        supported_applied = [
-            entry for entry in result.applied_decisions
-            if (
-                entry.decision_index in assessment.decision_indexes
-                or entry.task_id in assessment.task_ids
-            )
-        ]
-        actual_anchor_id = assessment.anchor_id
-        if actual_anchor_id is None and assessment.project_decision_index is not None:
-            actual_anchors = {
-                entry.anchor_id for entry in supported_applied if entry.anchor_id is not None
-            }
-            if len(actual_anchors) == 1:
-                actual_anchor_id = actual_anchors.pop()
-            elif not actual_anchors:
-                actual_anchor_id = exact_existing_project_anchor(assessment.project_title)
-
-        actual_task_ids = set(assessment.task_ids if actual_anchor_id is not None else ())
-        # Supporting Task identity is not a claim of confirmed Project membership.
-        if actual_anchor_id is not None:
-            actual_task_ids.update(entry.task_id for entry in supported_applied)
-        if actual_anchor_id is not None:
-            for decision_index in assessment.decision_indexes:
-                item = decision.task_decisions[decision_index]
-                referenced_task_id = (
-                    item.identity_proposal.target_task_id
-                    if item.identity_proposal is not None
-                    else item.task_id
-                )
-                if (
-                    referenced_task_id is not None
-                    and task_is_confirmed_to_project(referenced_task_id, actual_anchor_id)
-                ):
-                    actual_task_ids.add(referenced_task_id)
-        existing_card = (
-            store.get_business_attention_item(assessment.existing_attention_id)
-            if assessment.existing_attention_id is not None else None
+    tasks = {entry.decision_index: entry for entry in result.applied_decisions}
+    outcomes = {entry.assessment_index: entry for entry in receipt.outcomes}
+    values = []
+    for index, assessment in enumerate(decision.project_assessments):
+        applied_project = projects.get(assessment.project_decision_index)
+        anchor_id = (
+            applied_project.anchor_id
+            if applied_project is not None
+            else assessment.anchor_id
         )
-        attention_id = None
-        if existing_card is not None:
-            attention_id = existing_card.id
-            actual_task_ids.update(
-                link.task_id for link in store.list_business_attention_tasks(existing_card.id)
-            )
-
-        status = "recorded"
-        reason = "Assessment recorded; no Attention application requested."
-        if actual_anchor_id is None:
-            reason = "Assessment recorded without an applied Project or Attention identity."
-        if assessment.outcome == "needs_attention":
-            proposal_indexes = {
-                index for index in assessment.decision_indexes
-                if decision.task_decisions[index].attention_proposal is not None
-            }
-            if not proposal_indexes and existing_card is not None:
-                status = "existing"
-                reason = "Existing Attention card verified."
-            else:
-                proposal_entries = [
-                    applied_by_index[index] for index in proposal_indexes
-                    if index in applied_by_index
-                ]
-                projection_outcomes = [
-                    outcome for outcome in receipt.outcomes
-                    if (
-                        any(outcome.task_id == entry.task_id for entry in proposal_entries)
-                        and (actual_anchor_id is None or outcome.anchor_id == actual_anchor_id)
-                    )
-                ]
-                applied_outcomes = [
-                    outcome for outcome in projection_outcomes if outcome.status == "applied"
-                ]
-                unapplied_shapes = {
-                    (
-                        decision.task_decisions[index].task_id,
-                        decision.task_decisions[index].attention_proposal.anchor_id,
-                    )
-                    for index in proposal_indexes
-                    if index not in applied_by_index
-                }
-                unapplied_outcomes = [
-                    outcome for outcome in receipt.outcomes
-                    if outcome.reason == "proposal has no applied Task decision"
-                    and (outcome.task_id, outcome.anchor_id) in unapplied_shapes
-                ]
-                if applied_outcomes:
-                    status = "applied"
-                    attention_id = applied_outcomes[0].attention_id
-                    failed_reasons = list(dict.fromkeys(
-                        outcome.reason for outcome in [
-                            *projection_outcomes, *unapplied_outcomes,
-                        ]
-                        if outcome.status != "applied"
-                    ))
-                    reason = (
-                        "Attention proposal applied; " + "; ".join(failed_reasons)
-                        if failed_reasons else "Attention proposal applied."
-                    )
+        task_ids = set(assessment.task_ids if anchor_id is not None else ())
+        if anchor_id is not None:
+            for task_index in assessment.decision_indexes:
+                applied_task = tasks.get(task_index)
+                if applied_task is not None:
+                    task_ids.add(applied_task.task_id)
                 else:
-                    failed_outcome = next((
-                        outcome for outcome in [*projection_outcomes, *unapplied_outcomes]
-                        if outcome.status in {"error", "rejected"}
-                    ), None)
-                    if failed_outcome is not None:
-                        status = failed_outcome.status
-                        reason = failed_outcome.reason
-                    else:
-                        status = "error"
-                        reason = receipt.recompute_error or "Attention application result is unavailable."
-
-        if receipt.recompute_error and supported_applied:
-            status = "error"
-            if reason in {
-                "Assessment recorded; no Attention application requested.",
-                "Attention proposal applied.",
-            }:
-                reason = receipt.recompute_error
-            elif receipt.recompute_error not in reason:
-                reason = f"{reason}; recompute_error: {receipt.recompute_error}"
-
-        assessment_results.append(TaskAttentionAssessmentResult(
-            assessment_index=assessment_index,
-            anchor_id=actual_anchor_id,
-            task_ids=sorted(actual_task_ids),
-            attention_id=attention_id,
-            status=status,
-            reason=reason,
-            evidence=verified_citations(assessment, existing_card, actual_task_ids),
-        ))
-    receipt.project_assessments = assessment_results
+                    task = decision.task_decisions[task_index]
+                    task_id = (
+                        task.target_task_id
+                        if task.transition == "merge_identity"
+                        else task.task_id
+                    )
+                    if task_id is not None:
+                        with store._connect() as db:
+                            if anchor_id in _confirmed_official_project_anchors(
+                                store, task_id=task_id, db=db
+                            ):
+                                task_ids.add(task_id)
+        card = (
+            store.get_business_attention_item(assessment.existing_attention_id)
+            if assessment.existing_attention_id is not None
+            else None
+        )
+        attention_id = card.id if card is not None else None
+        if card is not None:
+            task_ids.update(
+                link.task_id for link in store.list_business_attention_tasks(card.id)
+            )
+        status, reason = (
+            "recorded",
+            "Assessment recorded; no Attention application requested.",
+        )
+        if anchor_id is None:
+            reason = (
+                "Assessment recorded without an applied Project or Attention identity."
+            )
+        if assessment.outcome == "needs_attention":
+            if assessment.attention_proposal is not None:
+                outcome = outcomes.get(index)
+                if outcome is not None:
+                    status, reason = outcome.status, outcome.reason
+                    if outcome.attention_id is not None:
+                        attention_id = outcome.attention_id
+                else:
+                    status, reason = (
+                        "error",
+                        "Attention application result is unavailable.",
+                    )
+            elif card is not None:
+                status, reason = "existing", "Existing Attention card verified."
+            else:
+                status, reason = "error", "Attention application result is unavailable."
+        if receipt.recompute_error and task_ids.intersection(result.affected_task_ids):
+            status, reason = (
+                "error",
+                f"{reason}; recompute_error: {receipt.recompute_error}",
+            )
+        citations = []
+        for proof in assessment.evidence:
+            signal_id = (
+                proof.signal_id
+                if proof.signal_id is not None
+                else result.current_signal_id
+            )
+            signal = (
+                store.get_business_task_signal(signal_id)
+                if signal_id is not None
+                else None
+            )
+            citations.append(
+                TaskAttentionVerifiedCitation(
+                    signal_id=signal.id if signal is not None else None,
+                    source_ref=proof.source_ref,
+                    source_excerpt=proof.source_excerpt,
+                    source_time=signal.source_time
+                    if signal is not None
+                    else work_item.source.created_at or "",
+                    source_link=json.loads(signal.context_json).get("source_link", "")
+                    if signal is not None
+                    else "",
+                )
+            )
+        values.append(
+            TaskAttentionAssessmentResult(
+                assessment_index=index,
+                anchor_id=anchor_id,
+                task_ids=sorted(task_ids),
+                attention_id=attention_id,
+                status=status,
+                reason=reason,
+                evidence=citations,
+            )
+        )
+    receipt.project_assessments = values
     return receipt
 
 
 def _save_projection_receipt(
-    store: AutoReplyStore, run_id: int, receipt: TaskAttentionProjectionReceipt,
+    store: AutoReplyStore,
+    run_id: int,
+    receipt: TaskAttentionProjectionReceipt,
 ) -> None:
     try:
         store.record_task_agent_projection(run_id, receipt.model_dump_json())
     except Exception:
-        LOGGER.exception("Task committed but projection receipt could not be saved run_id=%s", run_id)
+        LOGGER.exception(
+            "Task committed but projection receipt could not be saved run_id=%s", run_id
+        )
 
 
-def _validate_identity_proposal(store, proposal, *, db: sqlite3.Connection | None) -> None:
+def _validate_identity_proposal(
+    store, proposal, *, db: sqlite3.Connection | None
+) -> None:
     def get_task(task_id: int):
         if db is None:
             return store.get_business_task(task_id)
@@ -2910,16 +2895,22 @@ def _validate_identity_proposal(store, proposal, *, db: sqlite3.Connection | Non
     def get_signal(signal_id: int):
         if db is None:
             return store.get_business_task_signal(signal_id)
-        return store.get_business_task_signal_in_transaction(signal_id=signal_id, _db=db)
+        return store.get_business_task_signal_in_transaction(
+            signal_id=signal_id, _db=db
+        )
 
     proof = proposal.identity_evidence
     source_task = get_task(proposal.source_task_id)
     target_task = get_task(proposal.target_task_id)
     if source_task is None or target_task is None:
         raise ValueError("identity proposal Tasks must exist")
-    if proof.source_signal_id not in {row.signal_id for row in get_evidence(source_task.id)}:
+    if proof.source_signal_id not in {
+        row.signal_id for row in get_evidence(source_task.id)
+    }:
         raise ValueError("identity source signal is not linked to the source Task")
-    if proof.target_signal_id not in {row.signal_id for row in get_evidence(target_task.id)}:
+    if proof.target_signal_id not in {
+        row.signal_id for row in get_evidence(target_task.id)
+    }:
         raise ValueError("identity target signal is not linked to the target Task")
     source_signal = get_signal(proof.source_signal_id)
     target_signal = get_signal(proof.target_signal_id)
@@ -2931,14 +2922,18 @@ def _validate_identity_proposal(store, proposal, *, db: sqlite3.Connection | Non
         source_external = source_context.get("external_task_id")
         target_external = target_context.get("external_task_id")
         if not source_external or source_external != target_external:
-            raise ValueError("same_external_task_id identity evidence does not match source records")
+            raise ValueError(
+                "same_external_task_id identity evidence does not match source records"
+            )
         return
     if proof.basis == "explicit_source_reference":
         if not (
             source_signal.source_ref == target_context.get("reply_to_source_ref")
             or target_signal.source_ref == source_context.get("reply_to_source_ref")
         ):
-            raise ValueError("explicit_source_reference identity evidence does not match source records")
+            raise ValueError(
+                "explicit_source_reference identity evidence does not match source records"
+            )
         return
     same_owner = (
         bool(source_task.owner_name.strip())
@@ -2948,18 +2943,38 @@ def _validate_identity_proposal(store, proposal, *, db: sqlite3.Connection | Non
         bool(source_signal.conversation_id)
         and source_signal.conversation_id == target_signal.conversation_id
     )
-    same_deliverable = source_task.title.strip().casefold() == target_task.title.strip().casefold()
+    same_deliverable = (
+        source_task.title.strip().casefold() == target_task.title.strip().casefold()
+    )
     if not (same_deliverable and same_owner and same_context):
-        raise ValueError("same-deliverable identity evidence does not match canonical Task and source fields")
+        raise ValueError(
+            "same-deliverable identity evidence does not match canonical Task and source fields"
+        )
     try:
-        source_time = datetime.fromisoformat(source_signal.source_time.replace("Z", "+00:00"))
-        target_time = datetime.fromisoformat(target_signal.source_time.replace("Z", "+00:00"))
+        source_time = datetime.fromisoformat(
+            source_signal.source_time.replace("Z", "+00:00")
+        )
+        target_time = datetime.fromisoformat(
+            target_signal.source_time.replace("Z", "+00:00")
+        )
     except (TypeError, ValueError) as exc:
-        raise ValueError("same-deliverable identity evidence requires parseable source times") from exc
-    source_time = source_time.replace(tzinfo=timezone.utc) if source_time.tzinfo is None else source_time
-    target_time = target_time.replace(tzinfo=timezone.utc) if target_time.tzinfo is None else target_time
+        raise ValueError(
+            "same-deliverable identity evidence requires parseable source times"
+        ) from exc
+    source_time = (
+        source_time.replace(tzinfo=timezone.utc)
+        if source_time.tzinfo is None
+        else source_time
+    )
+    target_time = (
+        target_time.replace(tzinfo=timezone.utc)
+        if target_time.tzinfo is None
+        else target_time
+    )
     if abs((source_time - target_time).total_seconds()) > 30 * 24 * 60 * 60:
-        raise ValueError("same-deliverable identity source times exceed the matching window")
+        raise ValueError(
+            "same-deliverable identity source times exceed the matching window"
+        )
 
 
 def process_work_item(
@@ -2977,19 +2992,24 @@ def process_work_item(
             session_lease.assert_owned()
         work_item = WorkItem.model_validate_json(work_input.payload_json)
         semantic_context = retrieve_task_semantic_context(store, work_item)
-        context_prompt = render_task_semantic_context(semantic_context, work_item=work_item)
+        context_prompt = render_task_semantic_context(
+            semantic_context, work_item=work_item
+        )
         active_run_id = store.begin_task_agent_run(work_input.id)
         memory_issue = memory_connector_config_issue()
         for repair_round in range(TASK_DECISION_REPAIR_ROUNDS + 1):
             if session_lease is not None:
                 session_lease.assert_owned()
             decision = runner.decide(
-                work_item, context_prompt,
+                work_item,
+                context_prompt,
                 memory_issue=memory_issue,
                 run_id=active_run_id,
                 session_scope_id=TASK_AGENT_SESSION_SCOPE_ID,
             )
-            decision = _canonicalize_current_source_provenance(decision, work_item=work_item)
+            decision = _canonicalize_current_source_provenance(
+                decision, work_item=work_item
+            )
             try:
                 _validate_task_agent_decision(decision, work_item=work_item, now=now)
             except RepairableTaskDecisionValidationError as exc:
@@ -2999,7 +3019,9 @@ def process_work_item(
                     render_task_semantic_context(semantic_context, work_item=work_item)
                     + "\n\nDecision validation rejected the previous candidate before any "
                     "domain writes. Correct this evidence error without inventing facts: "
-                    + str(exc) + "\nPrevious candidate:\n" + _json_dumps(decision)
+                    + str(exc)
+                    + "\nPrevious candidate:\n"
+                    + _json_dumps(decision)
                 )
                 continue
             break
@@ -3017,13 +3039,17 @@ def process_work_item(
                 now=now,
                 _db=db,
             )
-            if apply_result.task_ids:
+            if (
+                apply_result.task_ids
+                or apply_result.applied_projects
+                or decision.project_assessments
+            ):
                 store.mark_work_summary_input_done(work_input.id, _db=db)
             else:
                 store.mark_work_summary_input_skipped(
                     work_input.id,
                     "; ".join(apply_result.skipped_reasons)
-                    or "No source-grounded Task decision.",
+                    or "No source-grounded Project or Task decision.",
                     _db=db,
                 )
             store.finish_task_agent_run(
@@ -3031,16 +3057,25 @@ def process_work_item(
                 status="completed",
                 codex_session_id=session_id,
                 decision_json=_json_dumps(decision.model_dump(mode="json")),
-                audit_summary="; ".join(filter(None, (
-                    *(item.update_summary for item in decision.task_decisions),
-                    *apply_result.skipped_reasons,
-                ))),
-                memory_recall_used=any(item.memory_recall_used for item in decision.task_decisions),
+                audit_summary="; ".join(
+                    filter(
+                        None,
+                        (
+                            *(item.update_summary for item in decision.task_decisions),
+                            *apply_result.skipped_reasons,
+                        ),
+                    )
+                ),
+                memory_recall_used=any(
+                    item.memory_recall_used for item in decision.task_decisions
+                ),
                 _db=db,
             )
             receipt = apply_result.projection_receipt
             assert receipt is not None
-            store.record_task_agent_projection(active_run_id, receipt.model_dump_json(), _db=db)
+            store.record_task_agent_projection(
+                active_run_id, receipt.model_dump_json(), _db=db
+            )
         committed_run_id = active_run_id
         active_run_id = None
     except Exception as exc:
@@ -3049,7 +3084,12 @@ def process_work_item(
         store.mark_work_summary_input_failed(work_input.id, str(exc))
         raise
     try:
-        receipt = _project_task_attention(store, apply_result.attention_proposals, apply_result.affected_task_ids, receipt=receipt)
+        receipt = _project_task_attention(
+            store,
+            apply_result.attention_proposals,
+            apply_result.affected_task_ids,
+            receipt=receipt,
+        )
         receipt = _finalize_assessment_results(
             store,
             work_item=work_item,
@@ -3059,4 +3099,6 @@ def process_work_item(
         )
         _save_projection_receipt(store, committed_run_id, receipt)
     except Exception:
-        LOGGER.exception("Task committed but projection did not finish run_id=%s", committed_run_id)
+        LOGGER.exception(
+            "Task committed but projection did not finish run_id=%s", committed_run_id
+        )

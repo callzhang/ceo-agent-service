@@ -67,6 +67,60 @@ def test_inspect_task_attention_missing_input_is_json_error(tmp_path):
     assert json.loads(result.stdout) == {"error": "input_not_found", "input_id": 999}
 
 
+def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old_runs(tmp_path):
+    from app.store import AutoReplyStore
+    from app.project_context_service import ProjectContextService
+    from app.task_business_resolution import BusinessResolutionService
+    from app.task_semantic_models import ProjectContext
+    from app.task_models import TaskAttentionProjectionReceipt
+
+    path = tmp_path / "current-project.sqlite3"
+    store = AutoReplyStore(path)
+    resolver = BusinessResolutionService(store)
+    anchor_id = resolver.register_anchor(anchor_type="project", anchor_ref="project:inspect", title="交付项目")
+    project_id = resolver.register_official_project(anchor_id=anchor_id, registry_source="meeting:inspect")
+    signal_id = store.create_business_task_signal(
+        source_type="message", source_ref="m:inspect", evidence_text="李四总负责交付项目。", dedupe_key="inspect:source"
+    )
+    context = ProjectContext.model_validate({
+        "goal": "完成交付", "scope": "一期", "overall_owner": {
+            "person_name": "李四", "responsibility": "交付",
+            "evidence": [{"signal_id": signal_id, "source_ref": "m:inspect", "source_excerpt": "李四总负责交付项目"}],
+        }, "responsibilities": [], "facts": [],
+    })
+    with store.business_task_transaction() as db:
+        revision_id = ProjectContextService(store).apply(project_id=project_id, context=context, signal_ids=(signal_id,), db=db)
+    input_id = store.enqueue_work_summary_input("reply_attempt", "m:inspect", '{"private": "input body"}')
+    old_id = store.record_task_agent_run(input_id, decision_json='{"private":"old"}')
+    decision = {"project_decisions": [], "task_decisions": [], "project_assessments": []}
+    run_id = store.record_task_agent_run(input_id, decision_json=json.dumps(decision))
+    projection = {"project_decisions": [{"project_decision_index": 0, "project_id": project_id, "anchor_id": anchor_id, "revision_id": revision_id, "signal_ids": [signal_id]}], "task_decisions": [], "project_assessments": []}
+    projection = TaskAttentionProjectionReceipt(
+        status="no_proposal", source_type="reply_attempt", task_decision_count=0,
+        project_link_count=0, proposal_count=0, **projection,
+    ).model_dump(mode="json")
+    store.record_task_agent_projection(run_id, json.dumps(projection))
+    with sqlite3.connect(path) as db:
+        original = db.execute("select id, decision_json, projection_json from task_agent_runs order by id").fetchall()
+    inspected = _inspect(path, input_id)
+    assert inspected.returncode == 0, inspected.stderr
+    runs = json.loads(inspected.stdout)["runs"]
+    assert runs[0]["run_id"] == old_id
+    assert "project_decisions" not in runs[0]
+    assert "project_contexts" not in runs[0]
+    assert runs[1]["project_decisions"] == []
+    assert runs[1]["projection"] == projection
+    [current] = runs[1]["project_contexts"]
+    assert current["project_id"] == project_id
+    assert current["anchor_id"] == anchor_id
+    assert current["revision_id"] == revision_id
+    assert current["context"]["overall_owner"]["person_name"] == "李四"
+    assert "private" not in inspected.stdout
+    assert store.list_business_tasks() == ()
+    with sqlite3.connect(path) as db:
+        assert db.execute("select id, decision_json, projection_json from task_agent_runs order by id").fetchall() == original
+
+
 def test_inspect_task_attention_missing_database_is_not_created(tmp_path):
     path = tmp_path / "missing ?#.sqlite3"
     result = _inspect(path, 7)

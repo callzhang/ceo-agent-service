@@ -153,7 +153,7 @@ from app.task_semantic_models import (
     FormalTaskBasis,
     ProjectContext,
 )
-from app.task_source_documents import source_document_key
+from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
@@ -227,7 +227,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-04.3"
+STORE_SCHEMA_VERSION = "2026-10-04.4"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -5872,6 +5872,31 @@ class AutoReplyStore:
                     "update wechat_deliveries set reply_text=? where id=?",
                     (prepared.final_body, delivery["id"]),
                 )
+            self._migrate_project_attention_evidence(db)
+
+    @staticmethod
+    def _migrate_project_attention_evidence(db: sqlite3.Connection) -> None:
+        """Carry proven original sources to Project evidence once, without changing history."""
+        marker = "business_project_attention_evidence_migrated"
+        if db.execute("select 1 from service_state where key=?", (marker,)).fetchone() is not None:
+            return
+        rows = db.execute(
+            "select distinct project.id as project_id, signal.id as signal_id, signal.source_type "
+            "from business_attention_items card "
+            "join business_projects project on project.canonical_anchor_id=card.anchor_id "
+            "join business_task_anchor_links link on link.anchor_id=card.anchor_id "
+            "join business_task_evidence evidence on evidence.task_id=link.task_id "
+            "join business_task_signals signal on signal.id=evidence.signal_id "
+            "where card.status='active' and link.status='confirmed' and link.active=1"
+        ).fetchall()
+        for row in rows:
+            if source_is_observed(row["source_type"]):
+                db.execute(
+                    "insert into business_project_evidence(project_id, signal_id) values (?, ?) "
+                    "on conflict(project_id, signal_id) do nothing",
+                    (row["project_id"], row["signal_id"]),
+                )
+        db.execute("insert into service_state(key, value) values (?, '1')", (marker,))
 
     def prepare_outbound_postfix(
         self,

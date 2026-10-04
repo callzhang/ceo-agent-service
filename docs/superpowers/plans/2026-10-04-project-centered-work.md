@@ -12,7 +12,7 @@
 
 ## 状态、边界与依赖
 
-设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发已在新对话开始，负责全部 Task 1–9：Task 1–3 代码、局部回归及独立需求/质量审查已通过，当前 Task 4 实施中；真实副本迁移与后续业务评测/发布仍未通过。Task 3 指定 TODO 集成文件仍有两个已证明为基线缺陷的失败，须在 Task 6 移除 Task 完成驱动项目关注路径时解决，不能把全文件报告称为 GREEN。本次业务评测和发布尚未开始；复用旧测试通过记录不能勾选新任务。
+设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发对话负责全部 Task 1–9：Task 1–4 的代码、局部回归及独立需求/质量审查通过，Task 5/6 核心集成已完成：14 文件 636 passed、完整多来源与 Project 读回 161 passed，独立最终复核 PASS。Task 5 正向 Project 关注回归依赖 Task 6 去掉旧 Task carrier 限制，故这两步作为同一当前契约集成验证；没有中间部署。Task 3 的两个 TODO 基线失败已通过 Task 6 的直接成员更新修正，Task 3 指定四文件 172 passed，TODO completion/sync 两文件 59 passed。真实 W39 副本迁移仍被既有会议外键问题阻塞；Task 7 页面、Task 8 原生同案例评测及 Task 9 发布未完成。复用旧业务测试通过记录不能替代本次 native 或生产效果。
 
 执行记录（2026-10-04）：复用下列工作目录，基线 `64dc4c8d`，独立步骤采用单作者实施、需求审查、质量审查。Task 1 文件已认领；因正文列移除直接影响听记负责人回填 SQL 及两个 API 测试的原始 INSERT，认领范围增加这些直接受影响的读路径/fixture，仅改变存储表示，不改变负责人或 API 业务语义。冻结 W39 初态经只读检查仍为 259 Tasks、16 Projects、0 Attention、398 Signals、434 Task events，`quick_check=ok`；该检查不算本次迁移或业务回放通过。
 
@@ -225,7 +225,7 @@ suggestion_fields = {
 - [x] 建议幂等使用现有 Task 身份及证据幂等机制，不用“reason 文案”生成新身份；重复已知 task_id 更新只有实际建议资料变化才记事件。没有 ID 时先由 Agent 比较已检索事项，不用相似度代码自动合并。
 - [x] 增加三项真实库回归：新消息未点名王五但已有职责证明可存建议；后续人的明确指派晋升同一 ID、原建议保留、实际 owner 才写入；重复输入无第二条任务、接受事件、follow-up 或 TODO outbox。原始待明确事项保持 origin=source，不和建议混成一个来源标签。
 - [x] 使用既有候选→正式与 outbox 语义，不另加工具权限层或自动派发路径。检验建议未满足现有正式/接受条件，因此没有外发；转为真实已接受任务后按原生命周期运行，不能因历史 origin 永久阻止它。
-- [ ] 运行 `python -m pytest -q tests/test_task_suggestions.py tests/test_task_semantic_service.py tests/test_task_semantic_rules.py tests/test_todo_sync.py`，预期 GREEN。同步文档并提交 `feat(tasks): distinguish displayed agent suggestions from real assignments`。
+- [x] 运行 `python -m pytest -q tests/test_task_suggestions.py tests/test_task_semantic_service.py tests/test_task_semantic_rules.py tests/test_todo_sync.py`，预期 GREEN。同步文档并提交 `feat(tasks): distinguish displayed agent suggestions from real assignments`。
 
 Task 3 执行记录：`9469363a` 实现来源/建议分离，`0b0753d8` 修正原文与 provenance 区分，并让旧库升级回归在新进程检查物理列/版本。主 Agent 六个领域/来源测试文件 623 passed；独立需求复核 509 passed；建议文件新增后续来源仅补证据的明确 ID 重放约定，17 passed，需求/质量复核均 PASS。无 ID 幂等限定原创建或其他有事件的命令来源；后续更新由 Agent 匹配并持续携带 task_id，不能从可复制、可多任务引用的证据关系猜身份。指定 TODO 文件的两项失败已用 Task 3 前 Store 在内存中复现：`app/todo_completion.py` 调用旧 `_project_task_attention` 缺 receipt；领域完成后才触发 TypeError。保持历史失败记录，Task 6 修正这个直接受新关注语义影响的路径后再运行全文件。当前没有新 Agent wire、Skill 发布或生产部署。
 
@@ -264,7 +264,7 @@ Task 4 执行记录：`323a1ea3` 项目检索/共享来源，`13548316` 同来�
 
 **Files:** 修改 `app/task_models.py:379,451,662,730`、`app/task_agent.py:439,1092,1437,1764,2652,2981`、`app/project_context_service.py`、`app/task_business_resolution.py`；测试 `tests/test_task_models.py`、`tests/test_task_agent.py`、`tests/test_task_agent_session.py`；同步 `ci/shared-skills/ceo-work-tracking/SKILL.md`、`docs/architecture.md`、`docs/runtime-mechanism.md`。
 
-- [ ] 先添加最小 envelope RED：必须有 `project_decisions`，零 Task 不等于零项目；新项目引用的是项目决定索引；越界/双重 ProjectSelector 拒绝；旧嵌套 project/attention 字段不被当前 parser 接受。历史 decision_json 原样读取，不通过当前 parser 重放。
+- [x] 先添加最小 envelope RED：必须有 `project_decisions`，零 Task 不等于零项目；新项目引用的是项目决定索引；越界/双重 ProjectSelector 拒绝；旧嵌套 project/attention 字段不被当前 parser 接受。历史 decision_json 原样读取，不通过当前 parser 重放。
 
 ```python
 def test_current_envelope_requires_independent_project_decisions():
@@ -280,8 +280,8 @@ def test_current_envelope_requires_independent_project_decisions():
     assert result.project_decisions == []
 ```
 
-- [ ] 运行 `python -m pytest -q tests/test_task_models.py -k independent_project`，确认 RED。实现 header 中的 ProjectDecision/ProjectSelector；TaskDecision 用 `project: ProjectSelector | None` 和 `project_link_evidence` 引用项目，用 `suggestion: TaskSuggestion | None` 表达推导，沿用 record_candidate/update_task 等真实 Task transition，不另建第二个候选状态机。
-- [ ] `TaskAgentDecision` 的当前列表字段明确为下面三项，无旧输出自动升级；其余现存字段保持各自语义：
+- [x] 运行 `python -m pytest -q tests/test_task_models.py -k independent_project`，确认 RED。实现 header 中的 ProjectDecision/ProjectSelector；TaskDecision 用 `project: ProjectSelector | None` 和 `project_link_evidence` 引用项目，用 `suggestion: TaskSuggestion | None` 表达推导，沿用 record_candidate/update_task 等真实 Task transition，不另建第二个候选状态机。
+- [x] `TaskAgentDecision` 的当前列表字段明确为下面三项，无旧输出自动升级；其余现存字段保持各自语义：
 
 ```python
 project_decisions: list[ProjectDecision]
@@ -289,12 +289,12 @@ task_decisions: list[TaskDecision]
 project_assessments: list[TaskProjectAssessment]
 ```
 
-- [ ] TaskProjectAssessment 仍使用 `anchor_id`/`project_decision_index`、`project_title`、`outcome`、`reason`、`assessment_basis`、`evidence`、`decision_indexes`（Task 索引）、`task_ids`、`existing_attention_id`；新增自身的 `attention_proposal`。TaskAttentionProposal 去掉重复的 anchor/task selectors，由所属 assessment 的实际 Project 和真实成员唯一决定。`decision_indexes=[]`、`task_ids=[]` 是有效的项目判断。移除 TaskDecision 内旧 `project_proposal`、`project_link_proposal`、`attention_proposal`，逐个修改所有当前 producer/fixtures，不加旧字段 alias。
-- [ ] 在现有领域事务中按实际依赖顺序应用：核验全部 selector/原始引用 → 登记/复用正式 Project → 保存 Project 来源与 context → 调用原 Task 生命周期或 record_suggestion → 收集项目判断及待应用 Attention。当前来源可独立形成原始 Signal，不再依赖某个 Task 才保存它。沿用现有实际来源类型校验、真实项目登记和精确标题复用，不放宽为聊天标题即正式项目。
-- [ ] 上下文中每一条已确认职责须有其原始证明；更新当前快照时未改变的职责保留历史引用，不能拿新消息替换为无依据的人名。新任务建议引用职责来源与项目事实来源两个维度；对当前未点名的人选不执行“必须出现在当前消息”的正式指派判断，但也不提升为正式指派。
-- [ ] 项目改变或建议产生不能触发无关 Task 的 update_fields、next_check、外部 TODO 或催办。对现有 Task 的真实更新继续走原业务方法；不以新项目输出绕开 Task 的接受、身份合并和日期语义。
-- [ ] 修正 `process_work_item` 的完成与回执分支：项目-only 与建议-only 都是有实际业务结果的 run；空 Task 列表不再表示没有任何变化。回执分别记录 `project_decision_index → actual project/anchor/revision/signal IDs` 与 Task 决定映射；没有实际写入不能推测 ID。
-- [ ] Prompt 与 Skill 同步替换为以下规则，删除与其冲突的旧 Task-first/只允许原文明示动作的绝对表述：
+- [x] TaskProjectAssessment 仍使用 `anchor_id`/`project_decision_index`、`project_title`、`outcome`、`reason`、`assessment_basis`、`evidence`、`decision_indexes`（Task 索引）、`task_ids`、`existing_attention_id`；新增自身的 `attention_proposal`。TaskAttentionProposal 去掉重复的 anchor/task selectors，由所属 assessment 的实际 Project 和真实成员唯一决定。`decision_indexes=[]`、`task_ids=[]` 是有效的项目判断。移除 TaskDecision 内旧 `project_proposal`、`project_link_proposal`、`attention_proposal`，逐个修改所有当前 producer/fixtures，不加旧字段 alias。
+- [x] 在现有领域事务中按实际依赖顺序应用：核验全部 selector/原始引用 → 登记/复用正式 Project → 保存 Project 来源与 context → 调用原 Task 生命周期或 record_suggestion → 收集项目判断及待应用 Attention。当前来源可独立形成原始 Signal，不再依赖某个 Task 才保存它。沿用现有实际来源类型校验、真实项目登记和精确标题复用，不放宽为聊天标题即正式项目。
+- [x] 上下文中每一条已确认职责须有其原始证明；更新当前快照时未改变的职责保留历史引用，不能拿新消息替换为无依据的人名。新任务建议引用职责来源与项目事实来源两个维度；对当前未点名的人选不执行“必须出现在当前消息”的正式指派判断，但也不提升为正式指派。
+- [x] 项目改变或建议产生不能触发无关 Task 的 update_fields、next_check、外部 TODO 或催办。对现有 Task 的真实更新继续走原业务方法；不以新项目输出绕开 Task 的接受、身份合并和日期语义。
+- [x] 修正 `process_work_item` 的完成与回执分支：项目-only 与建议-only 都是有实际业务结果的 run；空 Task 列表不再表示没有任何变化。回执分别记录 `project_decision_index → actual project/anchor/revision/signal IDs` 与 Task 决定映射；没有实际写入不能推测 ID。
+- [x] Prompt 与 Skill 同步替换为以下规则，删除与其冲突的旧 Task-first/只允许原文明示动作的绝对表述：
 
 ```text
 先综合本次相关真实项目的原始资料、当前分工和已有任务。
@@ -306,14 +306,16 @@ project_assessments: list[TaskProjectAssessment]
 引用共享原文并区分事实与推断；不要把自己的摘要或上一轮建议当人类安排。
 ```
 
-- [ ] 新增真实库回归：会议登记零 Task 项目；同一会议两个项目；一个项目两项动作；已有独立 Task 无需项目；同一 ID 从建议变真实安排；未明项目线索不注册；项目上下文更新但 Task 行/事件不变；一个成员 Task 完成不改其他成员或项目判断。
-- [ ] 运行 `python -m pytest -q tests/test_task_models.py tests/test_task_agent.py tests/test_task_agent_session.py tests/test_project_context_service.py tests/test_task_suggestions.py`；更新当前输出 fixtures 后预期 GREEN。保留旧业务反例，只对本次批准改变的规则明确改预期。同步文档提交 `feat(tasks): apply project context and task decisions in one agent turn`。
+- [x] 新增真实库回归：会议登记零 Task 项目；同一会议两个项目；一个项目两项动作；已有独立 Task 无需项目；同一 ID 从建议变真实安排；未明项目线索不注册；项目上下文更新但 Task 行/事件不变；一个成员 Task 完成不改其他成员或项目判断。
+- [x] 运行 `python -m pytest -q tests/test_task_models.py tests/test_task_agent.py tests/test_task_agent_session.py tests/test_project_context_service.py tests/test_task_suggestions.py`；更新当前输出 fixtures 后预期 GREEN。保留旧业务反例，只对本次批准改变的规则明确改预期。同步文档提交 `feat(tasks): apply project context and task decisions in one agent turn`。
+
+Task 5 当前执行记录：独立三个必填列表及 codec `task_agent.decision.v2`；Project/建议/评估使用真实原始来源与实际身份。主 Agent 的 Task 文件 225 passed，独立四文件复核 370 passed。已有卡片 ID 可与本轮新提案并存；新提案失败不能被旧卡掩盖。无字段变化的新关联仍保存全部 Project link proof；建议更新保留未提供 description；Project 引文与 Task effect Signal 分开读回。多来源 fixtures 迁移完整 GREEN；14 文件 636 passed，独立最终复核 22 passed。明确报告登记+Task cluster 确认恢复原分组关联，已有首条证明保留，新确认/重新有效成员传给 member-only 刷新；无字段变化新关联同样传播受影响 Task ID。Task 5/6 作为一个依赖集成提交；全局 Skill/native/生产仍未发布。
 
 ## Task 6：项目关注不依赖 Task；保留真实应用回执
 
 **Files:** 修改 `app/task_attention_projection.py:103,176,334`、`app/task_agent.py:2507,2652,2906`、`app/task_models.py` 回执类型、`scripts/inspect_task_attention.py`；测试 `tests/test_task_attention_projection.py`、`tests/test_task_attention_multisource.py`、`tests/test_inspect_task_attention.py`；同步架构/运行文档及 CI Skill。
 
-- [ ] 先添加零 Task 关注的完整失败回归，使用已经存在的 Store/resolution/projection 入口。该测试要求 Task 2 的项目证据关系先成立：
+- [x] 先添加零 Task 关注的完整失败回归，使用已经存在的 Store/resolution/projection 入口。该测试要求 Task 2 的项目证据关系先成立：
 
 ```python
 def test_project_attention_does_not_require_a_task(tmp_path):
@@ -347,26 +349,28 @@ def test_project_attention_does_not_require_a_task(tmp_path):
     assert not store.list_business_attention_tasks(card_id)
 ```
 
-- [ ] 运行 `python -m pytest -q tests/test_task_attention_projection.py -k does_not_require_a_task`，预期在现有“requires at least one Task”处 RED（如实际集合为 tuple，按既有返回类型比较空集合，不改变业务断言）。
-- [ ] `_validate_proposal` 去掉必有 Task 和必须通过 Task 连证据的条件，改为正式活动 Project 与 `business_project_evidence` 的真实关系；有 task_ids 时逐个核验真实关联，不能因为放开空集合而接受别的项目的 Task。普通进展/风险判断仍由 Agent 负责，不在此添加付款关键词规则。
-- [ ] 迁移旧活动卡片的原始证明关系：仅将已存在且确认属于该 Project 的 Task 所链接的原 Signal 建成 Project evidence，不改写卡片、任务或引用身份；不为无法证明的关系补造证据。此步骤随一次性结构迁移在副本验证，重复迁移幂等，不放到读取接口中修复。
-- [ ] `_project_task_attention` 替换为读取顶层 assessment 的唯一投影入口；删除从多个 Task proposal 汇集卡片的旧入口。同 Project 的多个 Task 引用同一判断；卡片成员只取实际提案成员，不自动吞入项目内全部 Task。
-- [ ] 维持 `recompute_for_tasks` 仅重算成员；Task 完成、成员为空或本轮 not_needed 不自动 resolve 卡片。新增风险消失来源时沿原显式 resolve 操作关闭，保留证据与历史，不按“没有任务了”关闭。
-- [ ] 回执扩展独立项目版本/来源映射；0 Task 的 positive assessment 只有卡片真实写入并读回后才为 applied。project-only negative 为 recorded；existing 与 error/rejected 区分不变；上下文持久化成功但投影失败时显示两个实际结果，不新增补偿循环。
-- [ ] 只读检查输出以下可诊断关系；历史缺字段显示缺失，不回填为不关注：
+- [x] 运行 `python -m pytest -q tests/test_task_attention_projection.py -k does_not_require_a_task`，预期在现有“requires at least one Task”处 RED（如实际集合为 tuple，按既有返回类型比较空集合，不改变业务断言）。
+- [x] `_validate_proposal` 去掉必有 Task 和必须通过 Task 连证据的条件，改为正式活动 Project 与 `business_project_evidence` 的真实关系；有 task_ids 时逐个核验真实关联，不能因为放开空集合而接受别的项目的 Task。普通进展/风险判断仍由 Agent 负责，不在此添加付款关键词规则。
+- [x] 迁移旧活动卡片的原始证明关系：仅将已存在且确认属于该 Project 的 Task 所链接的原 Signal 建成 Project evidence，不改写卡片、任务或引用身份；不为无法证明的关系补造证据。此步骤随一次性结构迁移在副本验证，重复迁移幂等，不放到读取接口中修复。
+- [x] `_project_task_attention` 替换为读取顶层 assessment 的唯一投影入口；删除从多个 Task proposal 汇集卡片的旧入口。同 Project 的多个 Task 引用同一判断；卡片成员只取实际提案成员，不自动吞入项目内全部 Task。
+- [x] 维持 `recompute_for_tasks` 仅重算成员；Task 完成、成员为空或本轮 not_needed 不自动 resolve 卡片。新增风险消失来源时沿原显式 resolve 操作关闭，保留证据与历史，不按“没有任务了”关闭。
+- [x] 回执扩展独立项目版本/来源映射；0 Task 的 positive assessment 只有卡片真实写入并读回后才为 applied。project-only negative 为 recorded；existing 与 error/rejected 区分不变；上下文持久化成功但投影失败时显示两个实际结果，不新增补偿循环。
+- [x] 只读检查输出以下可诊断关系；历史缺字段显示缺失，不回填为不关注：
 
 ```json
 {
-  "project_decisions": [{"project_decision_index": 0, "anchor_id": 7,
-                         "context_revision_id": 3, "status": "applied"}],
   "project_assessments": [{"anchor_id": 7, "outcome": "needs_attention",
                            "reason": "原文说明付款顺延影响本期资金安排"}],
-  "projection": {"project_assessments": [{"anchor_id": 7, "task_ids": [],
+  "projection": {"project_decisions": [{"project_decision_index": 0,
+                  "project_id": 4, "anchor_id": 7, "revision_id": 3, "signal_ids": [11]}],
+                 "project_assessments": [{"anchor_id": 7, "task_ids": [],
                   "attention_id": 9, "status": "applied", "reason": ""}]}
 }
 ```
 
-- [ ] 回归：未知 Project、来源未关联、同名异项目、无实际引用、普通进展不应造卡；零 Task 重复无新增事件；旧卡片原成员/同项目非成员不混；模拟应用错误不显示成功。运行 `python -m pytest -q tests/test_task_attention_projection.py tests/test_task_attention_multisource.py tests/test_inspect_task_attention.py tests/test_task_agent.py`，预期 GREEN。同步文档提交 `feat(attention): derive project attention independently of task existence`。
+- [x] 回归：未知 Project、来源未关联、同名异项目、无实际引用、普通进展不应造卡；零 Task 重复无新增事件；旧卡片原成员/同项目非成员不混；模拟应用错误不显示成功。运行 `python -m pytest -q tests/test_task_attention_projection.py tests/test_task_attention_multisource.py tests/test_inspect_task_attention.py tests/test_task_agent.py`，预期 GREEN。同步文档提交 `feat(attention): derive project attention independently of task existence`。
+
+Task 6 当前执行记录：零 Task/Project-only positive、显式 Project proof 解决、跨 Project/Task-only proof 拒绝与成员-only刷新已验证，关注领域文件 24 passed；只读 inspector 5 passed，当前 context 只按实际回执身份读取，历史缺字段不补造。schema `.4` 一次性证明迁移 8 passed，覆盖多项目隔离、多角色去重、已有证明保留、memory/session、失效关联、已解决卡片、插入失败整体回滚和后续不自愈；独立需求审查无确定实现偏差。真实 frozen W39 的外键阻塞不借此掩盖。`tests/test_todo_completion.py` 的 customer 卡片 seed 已按新正式 Project+Project proof 契约迁移；完成只更新真实 Task 与卡片成员，不关闭项目风险。 本次核心整合 14 文件 636 passed；多来源+Project 读回 161 passed，11 项迁移相关回归 passed。评测工具以实际保存的卡片和完整判断回执核验 current proposal，不以 completed 或空 outcomes 判成功；新增三个误报反例先 RED 后 GREEN。
 
 ## Task 7：API 与现有页面同步展示整体情况和建议
 

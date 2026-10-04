@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from app.project_context_service import ProjectContextService
-from app.store import AutoReplyStore
+from app.store import AutoReplyStore, STORE_SCHEMA_VERSION
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_models import (
     BusinessActorKind,
@@ -475,7 +475,7 @@ def test_legacy_task_columns_upgrade_preserves_truth_and_raw_history(project):
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-04.3"
+            == STORE_SCHEMA_VERSION
         )
         assert [
             tuple(row)

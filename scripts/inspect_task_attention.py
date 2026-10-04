@@ -6,6 +6,44 @@ import sqlite3
 from pathlib import Path
 
 
+def inspect_run(db, run):
+    decision = json.loads(run["decision_json"])
+    projection = json.loads(run["projection_json"])
+    inspected = {
+        "run_id": run["id"], "run_status": run["status"], "projection": projection,
+    }
+    if "project_assessments" in decision:
+        inspected["project_assessments"] = decision["project_assessments"]
+    if "project_decisions" in decision:
+        inspected["project_decisions"] = decision["project_decisions"]
+        # Only actual applied identities in the receipt select stored context.
+        project_ids = [entry["project_id"] for entry in projection.get("project_decisions", [])]
+        anchor_ids = [
+            entry["anchor_id"] for entry in projection.get("project_assessments", [])
+            if entry.get("anchor_id") is not None
+        ]
+        rows = db.execute(
+            "select project.id as project_id, project.canonical_anchor_id as anchor_id, "
+            "revision.id as revision_id, revision.context_json "
+            "from business_projects project "
+            "left join business_project_context_revisions revision on revision.id=("
+            "select id from business_project_context_revisions where project_id=project.id "
+            "order by id desc limit 1) "
+            "where project.id in (select value from json_each(?)) "
+            "or project.canonical_anchor_id in (select value from json_each(?)) order by project.id",
+            (json.dumps(project_ids), json.dumps(anchor_ids)),
+        ).fetchall() if project_ids or anchor_ids else []
+        inspected["project_contexts"] = [
+            {
+                "project_id": row["project_id"], "anchor_id": row["anchor_id"],
+                "revision_id": row["revision_id"],
+                "context": json.loads(row["context_json"]) if row["context_json"] is not None else None,
+            }
+            for row in rows
+        ]
+    return inspected
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, required=True)
@@ -25,17 +63,7 @@ def main() -> int:
             "from task_agent_runs where summary_input_id=? order by id",
             (args.input_id,),
         ).fetchall()
-    inspected_runs = []
-    for run in runs:
-        decision = json.loads(run["decision_json"])
-        inspected = {
-            "run_id": run["id"],
-            "run_status": run["status"],
-            "projection": json.loads(run["projection_json"]),
-        }
-        if "project_assessments" in decision:
-            inspected["project_assessments"] = decision["project_assessments"]
-        inspected_runs.append(inspected)
+        inspected_runs = [inspect_run(db, run) for run in runs]
     print(json.dumps({
         "input_id": item["id"],
         "source_type": item["source_type"],

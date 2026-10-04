@@ -9,7 +9,7 @@ not describe deployment; the live Agent and console contracts are documented in
 extensions below follow the approved 2026-10-04 plan; their new Agent wire and
 console integration remain later steps in that plan.
 
-The current source-storage schema version is `2026-10-04.3`. The original
+The current source-storage schema version is `2026-10-04.4`. The original
 semantic initialization added 16 bounded tables to a pre-semantic database
 without reclassifying, copying, or deleting legacy work records. An existing
 `2026-09-22.1` semantic database gains the
@@ -210,9 +210,11 @@ the existing promotion command on the same ID, retains suggestion provenance,
 and stores the actual owner from human evidence. Real acceptance and committed
 dates retain their existing meaning. Suggestions do not create follow-ups,
 notifications or TODO outbox work; after human promotion/acceptance the normal
-TODO eligibility rules apply regardless of the retained origin. The Task Agent
-wire and console integration are subsequent plan steps, not active new paths
-in this storage phase.
+TODO eligibility rules apply regardless of the retained origin. The development
+branch now connects TaskDecision.suggestion to this command in the same Agent
+turn as independent Project decisions and assessments; console integration is
+still pending Task 7. An omitted update title/description retains the stored
+value. This wire is not a second assignment or outbound path and is not deployed.
 
 ## Task dates and events
 
@@ -442,10 +444,11 @@ official Project creation.
 
 `BusinessAttentionProjection` accepts a typed `AttentionProposal` and uses its
 `stable_key` as the durable attention identity. A proposal requires nonblank
-title, why, current-state, and CEO-action text; all linked Tasks must exist and
-be unmerged; at least one must be relevant; and its registered anchor must be
-confirmed and active for at least one linked Task. Its supporting signal must
-exist and already be linked to an underlying Task. A proposal may say
+title, why, current-state, and CEO-action text, an active official Project, and
+a real supporting Signal already linked through `business_project_evidence`.
+Zero Tasks is valid. Optional Task members must each exist, be unmerged and
+relevant, and have an active confirmed link to the same Project. Task-only
+evidence does not substitute for the Project proof relation. A proposal may say
 `当前无需处理`, while still recording material information, risk, decision, or
 push context through its category and explanatory fields.
 
@@ -460,8 +463,8 @@ The command creates an `opened` event for a new item and keeps the same item ID
 when fields or category change. It records `updated`, `category_changed`, or
 `reopened` events with before/after snapshots only when the semantic item fields
 change. Attention Task links are idempotent membership facts, so one item can
-aggregate several independently open Tasks. Resolution requires a persisted
-signal already linked to an underlying Task and appends one `resolved` event.
+aggregate several independently open Tasks or no Tasks. Explicit resolution
+requires a persisted Signal linked to the same Project and appends one `resolved` event.
 `record_viewed` performs no authoritative write and cannot resolve an item.
 
 `recompute_for_tasks` never creates attention from a relevant anchor alone. It
@@ -478,15 +481,22 @@ the same attention item when eligibility returns; a newer explicit proposal
 removal changes the desired set and prevents resurrection. Every immutable
 attention lifecycle snapshot records both `task_ids` (the current eligible
 members) and `proposal_task_ids` (the explicit desired proposal members).
-Historical resolution lineage reads both snapshot sets as well as the current
-desired set, so an explicit proposal removal changes only future membership and
-does not erase evidence needed to resolve an older item. Resolution snapshots
-record the current member IDs on both sides of the state transition. Recompute
-preserves proposal-owned
+Project evidence survives Task membership removal, so explicit resolution does
+not depend on current or historical Task members. Resolution snapshots record
+current member IDs on both sides of the state transition. Recompute preserves proposal-owned
 `current_state` text and changes it only through a later explicit proposal.
 When current membership changes, recompute updates the attention item's
 `updated_at` in the same transaction as its membership event. Repeating
 unchanged recomputation adds no attention event, link, or timestamp update.
+
+Schema `.4` migrates proven original Signals from active legacy cards' Projects
+and their confirmed active Task links to Project evidence once. It excludes
+memory/session provenance, preserves old cards/tasks/history and preexisting
+Project evidence, deduplicates Signal roles, and never reactivates an anchor.
+The migration marker and inserts commit together or roll back together; later
+initialization and read paths do not keep copying new Task evidence to Projects.
+This is verified on isolated synthetic migration copies, not the frozen W39 or
+production database, whose existing unrelated meeting foreign-key fault remains pending.
 
 ## Repair verification
 
