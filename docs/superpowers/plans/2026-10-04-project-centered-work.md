@@ -110,9 +110,11 @@ CREATE INDEX idx_business_signal_document
 - [x] 运行 `python -m pytest -q tests/test_task_source_documents.py tests/test_task_semantic_store.py tests/test_task_semantic_service.py`，预期 GREEN；读回数据库而非只检查函数返回。
 - [x] 同提交更新 schema 版本标记、存储说明和 Signal 读取契约；提交 `refactor(tasks): share immutable source bodies without changing evidence identities`。本步骤不得自行对生产库运行迁移。
 
+Task 1 读回（2026-10-04，`8f8a4a62`）：主 Agent 新跑六个相关测试文件共 **603 passed / 29.26s**，Ruff 与 diff check 通过；需求审查与质量审查均未发现缺项。真实完整 W39 副本迁移被原冻结初态的既有非 Task 外键缺陷阻止：`meeting_alignment_runs` row 2298 引用不存在的 `meeting_alignment_jobs`。对原库和失败后的副本分别执行 foreign_key_check 得到同一缺陷；副本仍保留旧 Signal 正文列、没有共享正文表，旧版本标记未推进，证明回滚。未删除孤儿、忽略检查或修改生产数据；成功的完整真实副本迁移及发布验收仍待完成，不能用 603 个测试代替。原冻结库与失败副本均保留。
+
 ## Task 2：Project 独立上下文、唯一总负责与人员分工
 
-Task 1 读回（2026-10-04，`8f8a4a62`）：主 Agent 新跑六个相关测试文件共 **603 passed / 29.26s**，Ruff 与 diff check 通过；需求审查与质量审查均未发现缺项。真实完整 W39 副本迁移被原冻结初态的既有非 Task 外键缺陷阻止：`meeting_alignment_runs` row 2298 引用不存在的 `meeting_alignment_jobs`。对原库和失败后的副本分别执行 foreign_key_check 得到同一缺陷；副本仍保留旧 Signal 正文列、没有共享正文表，旧版本标记未推进，证明回滚。未删除孤儿、忽略检查或修改生产数据；成功的完整真实副本迁移及发布验收仍待完成，不能用 603 个测试代替。原冻结库与失败副本均保留。
+Task 2 首版为 `76bd759d`，主 Agent 新跑五个相关文件 **603 passed / 23.63s**；独立需求审查发现结构化来源引用缺项：JSON 转义后的原文不应让真实换行摘录失效。复用已有引用检查语义修复并补回归，修复和复审通过前不进入下一任务，也不把测试通过记作需求完成。
 
 **Files:** 修改 `app/task_semantic_models.py:308`、`app/store.py:3863`、`app/task_business_resolution.py:150`；新建 `app/project_context_service.py`、`tests/test_project_context_service.py`；修改 `tests/test_task_semantic_store.py`、`docs/architecture.md` 和 `docs/runtime-mechanism.md` 的项目部分。
 
