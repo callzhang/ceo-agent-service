@@ -1400,6 +1400,18 @@ uses the existing work-summary retry policy; it never guesses an owner or
 changes a technical failure into `needs_human`. Memory-backed ownership still
 requires linked source provenance and an `episode_id`.
 
+Date source, actor and exact-precision validation uses the same pure validator
+before the domain transaction and during apply. Evidence errors enter the same
+bounded correction loop; unidentified source actors or invented dates remain
+invalid. Each semantic correction has a deterministic runtime operation key
+`<task_agent_run_id>:decision_repair.<round>`; the initial turn keeps its run ID.
+The router reuses a completed receipt only within that operation, so a changed
+correction prompt actually executes a new turn in the shared Task session.
+Corrections retain the original active Task run as their parent, not a Project;
+input reset, orphan recovery and expired-terminal recovery close their no-effect
+runtime attempts just as they close the initial turn. Existing memory and
+deadline backfill parent identities are unchanged.
+
 Both Cron-dispatched Work Summary consumption and the manual
 `process-work-items` command use the same renewable Task session lease. A
 claimed item whose session is busy is returned to the retry queue before any

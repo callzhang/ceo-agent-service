@@ -250,6 +250,7 @@ class TaskAgentRunner:
         memory_issue: str = "",
         run_id: int,
         session_scope_id: str,
+        repair_round: int = 0,
     ) -> TaskAgentDecision:
         return self.codex.decide(
             prompt=build_task_agent_prompt(
@@ -257,7 +258,10 @@ class TaskAgentRunner:
                 candidate_prompt,
                 memory_issue=memory_issue,
             ),
-            workload_key=str(run_id),
+            workload_key=(
+                str(run_id) if repair_round == 0
+                else f"{run_id}:decision_repair.{repair_round}"
+            ),
             session_scope_id=session_scope_id,
         )
 
@@ -1280,6 +1284,10 @@ def _validate_task_agent_decision(
             raise ValueError(
                 "same deliverable, owner, context, and time can link or cluster Tasks but cannot merge identity"
             )
+        try:
+            _task_date_inputs(item, work_item, is_acceptance=item.transition == "apply_acceptance")
+        except ValueError as exc:
+            raise RepairableTaskDecisionValidationError(str(exc)) from exc
 
 
 def _task_project_anchor_is_retired(store: AutoReplyStore, title: str, *, db) -> bool:
@@ -1947,6 +1955,7 @@ def process_work_item(
                 memory_issue=memory_issue,
                 run_id=active_run_id,
                 session_scope_id=TASK_AGENT_SESSION_SCOPE_ID,
+                repair_round=repair_round,
             )
             decision = _canonicalize_current_source_provenance(decision, work_item=work_item)
             try:

@@ -11644,9 +11644,14 @@ class AutoReplyStore:
             task_id, separator, suffix = workload_key.partition(":")
             if not task_id.isdecimal() or int(task_id) <= 0:
                 raise ValueError("task workload key must start with a persisted ID")
+            operation, _, round_text = suffix.partition(".")
             if separator and not (
                 suffix == "memory_backfill"
                 or re.fullmatch(r"deadline_backfill(?:\.[1-9]\d*)?", suffix)
+                or (
+                    operation == "decision_repair" and round_text.isdecimal()
+                    and int(round_text) > 0 and str(int(round_text)) == round_text
+                )
             ):
                 raise ValueError("task workload key has an unsupported suffix")
         elif workload_kind == "weekly_okr":
@@ -11785,7 +11790,7 @@ class AutoReplyStore:
                     "select 1 from work_todos where id=? "
                     "and status in ('open', 'waiting_owner')"
                 )
-            elif separator:
+            elif separator and not suffix.startswith("decision_repair."):
                 query = (
                     "select 1 from work_projects where id=? "
                     "and status in ('active', 'waiting', 'done', 'archived')"
@@ -12518,7 +12523,8 @@ class AutoReplyStore:
                     lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
                 where attempt.agent_run_id is null
                   and attempt.workload_kind='task'
-                  and attempt.workload_key not like '%:%'
+                  and (attempt.workload_key not like '%:%'
+                       or attempt.workload_key like '%:decision_repair.%')
                   and attempt.status in ('starting', 'running')
                   and attempt.first_effect_started_at=''
                   and attempt.lease_expires_at!=''
@@ -12526,7 +12532,7 @@ class AutoReplyStore:
                   and exists (
                       select 1
                       from task_agent_runs as task_run
-                      where cast(task_run.id as text)=attempt.workload_key
+                      where task_run.id=cast(attempt.workload_key as integer)
                         and task_run.status in ('completed', 'failed')
                   )
                 """,
@@ -27125,11 +27131,13 @@ class AutoReplyStore:
                 failover_permitted=1, lease_owner='', lease_expires_at='',
                 finished_at=current_timestamp, updated_at=current_timestamp
             where workload_kind='task'
-              and workload_key in ({run_placeholders})
+              and cast(workload_key as integer) in ({run_placeholders})
+              and (workload_key not like '%:%'
+                   or workload_key like '%:decision_repair.%')
               and status in ('starting', 'running')
               and first_effect_started_at=''
             """,
-            [str(run_id) for run_id in run_ids],
+            run_ids,
         )
         return len(run_ids)
 
@@ -29237,11 +29245,13 @@ class AutoReplyStore:
                     failover_permitted=1, lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
                 where workload_kind='task'
-                  and workload_key in ({placeholders})
+                  and cast(workload_key as integer) in ({placeholders})
+                  and (workload_key not like '%:%'
+                       or workload_key like '%:decision_repair.%')
                   and status in ('starting', 'running')
                   and first_effect_started_at=''
                 """,
-                [now_text, now_text, *[str(run_id) for run_id in run_ids]],
+                [now_text, now_text, *run_ids],
             )
             return len(run_ids)
 
