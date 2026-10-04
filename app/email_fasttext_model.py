@@ -38,10 +38,10 @@ class FastTextEmailClassifier:
     def predict(self, text: str) -> EmailModelPrediction:
         if self._model is None:
             raise RuntimeError("classifier is not fitted")
-        labels, probabilities = self._model.predict(text, k=len(self.class_labels()))
+        labels, probabilities = self._model.predict([text], k=len(self.class_labels()))
         values = {
             label.removeprefix("__label__"): float(probability)
-            for label, probability in zip(labels, probabilities, strict=True)
+            for label, probability in zip(labels[0], probabilities[0], strict=True)
         }
         ordered = sorted(values.items(), key=lambda item: item[1], reverse=True)
         label, probability = ordered[0]

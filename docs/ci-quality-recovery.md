@@ -93,3 +93,11 @@ does not activate or promote a production classifier.
 Native implementation evidence:
 [DenseMatrix initialization](https://github.com/facebookresearch/fastText/blob/main/src/densematrix.cc)
 and [training matrix construction](https://github.com/facebookresearch/fastText/blob/main/src/fasttext.cc).
+
+After initialization was repaired, Linux exercised prediction and exposed the
+library's single-string `np.array(probabilities, copy=False)` incompatibility
+with NumPy 2. The adapter uses the public batch prediction API for its one
+input and unwraps the one result. This preserves labels, probabilities, and
+margin without modifying the library, pinning an obsolete NumPy, or catching
+and hiding prediction failures. A contract regression checks the batch input
+and the unchanged prediction output, in addition to real training coverage.
