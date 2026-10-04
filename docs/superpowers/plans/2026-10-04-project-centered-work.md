@@ -12,7 +12,9 @@
 
 ## 状态、边界与依赖
 
-设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。本计划仅编写完成，实施、测试、业务评测和发布均未开始；复用旧测试通过记录不能勾选新任务。
+设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发已在新对话开始，负责全部 Task 1–9：当前 Task 1 实施中，其余任务尚未实施。本次业务评测和发布尚未开始；复用旧测试通过记录不能勾选新任务。
+
+执行记录（2026-10-04）：复用下列工作目录，基线 `64dc4c8d`，独立步骤采用单作者实施、需求审查、质量审查。Task 1 文件已认领；因正文列移除直接影响听记负责人回填 SQL 及两个 API 测试的原始 INSERT，认领范围增加这些直接受影响的读路径/fixture，仅改变存储表示，不改变负责人或 API 业务语义。冻结 W39 初态经只读检查仍为 259 Tasks、16 Projects、0 Attention、398 Signals、434 Task events，`quick_check=ok`；该检查不算本次迁移或业务回放通过。
 
 工作目录：`/Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service`。设计基线 `030378d7`；旧 native 结果冻结于 `da368453`，其首轮项目漏评与普通进展判断问题尚未解决。本计划替代旧 Attention 计划中与新设计冲突的后续实现，不删除旧实验或把它们改成成功。
 
