@@ -1,8 +1,20 @@
 # 多来源项目关注第一版验收
 
-最新执行状态：源码/独立规格/质量门槛完成后，冻结候选46fa2ed6c0f63915335564a290bd08cff4a85db8，CI Skill SHA256=d371dce523c06eab8430e1025177c48695e1f998306b217b9b6902e7bd79352e，于2026-10-03启动原19案例/20次Task回放，沿用同固定事实、oracle、pinned baseline及原模型/路由/900秒总时限/300秒idle/并发1。当前仅首例w39-project-risk通过：保存3个真实样本行动及中汽创智、岚图两Project/两卡，原文与经营影响推断核验成立；会议第二例仍在运行。该W39是合成固定样本，不是实际输入27465。隔离候选checkout保持冻结；没有push、部署、全局Skill发布或生产变更。全批次、实际W39重复和发布门槛保持未完成，不继承较旧候选的通过。
+最新冻结46fa2ed6c0f63915335564a290bd08cff4a85db8批次已结束：原19个独立案例全部通过、20次Task回放完成。CI Skill SHA256=d371dce523c06eab8430e1025177c48695e1f998306b217b9b6902e7bd79352e，原固定事实、oracle、pinned baseline及模型/路由/900秒总时限/300秒idle/并发1未变。父进程的旧观察句柄已不存在，当前无该回放进程；主Agent据19份实际数据库重新运行只读oracle，核验全部保存决定、receipt和引用，不把句柄缺失当业务失败或重启批次。
 
-状态（2026-10-03）：最新冻结候选 `1732455c` 已正常结束，20次Task Agent回放机械18通过/2失败，按19个独立案例17通过/2失败，不能发布。此前47和421批次均已结束，失败原始记录保留；各版本结果不得继承。真实W39最新版副本重复回放、全局Skill发布、合并部署和上线读回均未完成。
+机械与原文业务审阅分别完成：无字段变化的会议风险实际应用；聊天历史比较保存当前null-ID引用和历史Signal1原文，两源时间各自正确；两种模糊风险明确insufficient_evidence，正常交付/验收/付款为有事实支持的not_needed，均无卡；未知Project无正式Project/卡，无行动来源无Task/卡；同一Project两个真实Task共用单卡和两成员。合成W39的中汽创智、岚图两卡证明成立，但不是实际输入27465。
+
+旧卡两次实际run completed、共享session01a1017a-8860-7d02-802c-9f23dae68f66，精确引用原Signal1及当前来源。九张领域表的所有行与原facts逐行相等：Task、Project、anchor、Attention/card成员/events、Task events/Signals/evidence。底层共23个CLI attempts，三例使用既有结构纠正（meeting-new-risk、assessment-chat-needs-attention、旧卡首次）；不把20次Task回放等同于20底层调用。
+
+相同19份固定事实的已完成pinned baseline7bf7be5e结果也重新只读核验：4/19通过（原四个无误建卡负例），15例未通过；当前46候选19/19。基线正例包含缺卡、错Project身份/成员或缺原文证明，新assessment九例缺必填原始判断而失败；不能由候选默认值补齐旧输出，也不能以原native进程完成代替业务通过。此比较沿用已完成基线，并未伪报本轮重新运行baseline。
+
+真实W39的新副本w39-real-final-46fa2ed6.sqlite3两次原生处理已结束，不能发布。初始quick_check=ok，259Tasks/16Projects/0cards/434Task events，精确input27465/source_ref成立。第一次run10662 completed，实际保存中汽创智、岚图及质量三张关注卡，成员分别为Task129、130、131；最终261Tasks/21Projects/3cards/448Task events/3Attention events。新增Task260来自本周明确负责人质量改进行动，Task261来自POC技术澄清工作；不能仅凭相似标题宣称260与下周不同执行者的131相同，也不能把工具input模式passed=true当成完整真实业务验收。
+
+第二次run10663 failed：现有成员核验拒绝existing Attention card does not contain assessment supporting Tasks。实际attempt18955的原始decision对Project37声明task_ids=[131,260]、existing_attention_id=3，但卡3的实际成员仅[131]。第二次九张领域表没有新增或修改，说明未产生错误业务写入，不代表重复处理成功。根因追溯到retrieve/render接口：current_project_attention只包含id/anchor_id/why_attention/current_state/assessment_json/updated_at，遗漏真实成员task_ids；同项目关联Task不能代替卡片成员事实。正在补真实成员上下文及一致指引的RED/GREEN回归，保留现有成员核验，不自动扩大卡片成员，不修改原19案例或oracle。原始baseline、失败副本和attempt输出保留。
+
+上游origin/main=d8805eef已正常整合为baa8d0a6，保留上游owner修复和退休Project处理。整合作者聚焦11文件1031 passed、CLI23 passed；这些是作者源码验证，不是主Agent最终独立验证或新冻结原生通过。上线仍须修复后的独立规格/质量验证、新冻结完整案例、真实两次业务结果和完整发布读回；没有push、部署、全局Skill发布或生产变更。
+
+阶段历史（2026-10-03）：冻结候选 `1732455c` 已正常结束，20次Task Agent回放机械18通过/2失败，按19个独立案例17通过/2失败，不能发布。此前47和421批次均已结束，失败原始记录保留；各版本结果不得继承。真实W39最新版副本重复回放、全局Skill发布、合并部署和上线读回均未完成。
 
 当前源码进展：Derek已明确同意新证据可独立更新已有、已确认Task/正式Project的关注，不必制造Task字段变化。修订`3388c404`通过独立规格复审：首次字段更新后的同来源重放复用原Signal，不新增Signal、Task证据或Task/Attention事件；无效历史引文在新证据写入前拒绝；重复relevant值携带有效关注提案不改变Task事件。原有登记测试的断言保留。主Agent独立11文件矩阵1025 passed（57.15秒），CLI22 passed/254 deselected（2.06秒），Ruff、四个运行模块导入及diff检查通过。质量审阅仍在进行；下文f650失败及173原生失败是保留的历史证据，不代表新修订已原生或上线通过。
 
