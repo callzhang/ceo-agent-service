@@ -1,0 +1,63 @@
+{
+  "candidate_ref": "6b3b73592ff480e59296be021453a6a7e8dcddd5",
+  "report": "business-v3-6b3b7359.json",
+  "mode": "independent-exact-output-semantic-review",
+  "changes_raw_report": false,
+  "consumer_outcomes_match_frozen_expectations": 8,
+  "audit_judgments_semantically_correct": 7,
+  "audit_applicable": 7,
+  "audit_approvals": 6,
+  "audit_returns": 1,
+  "real_provider_effects": false,
+  "cases": [
+    {
+      "id": "complete_finance_approval",
+      "judgment": "correct approval plan with string native IDs and verified-approval-dependent notification stage",
+      "audit": "correct approve"
+    },
+    {
+      "id": "applicant_material_gap",
+      "judgment": "request only; keep task pending; continue_after_execution=false until new applicant input",
+      "audit": "correct approve"
+    },
+    {
+      "id": "current_instance_policy_choice",
+      "judgment": "current-instance yes/no choice with exact decision-notification plans; explicit no payment/budget transfer claim",
+      "audit": "correct approve for the stated notification scope"
+    },
+    {
+      "id": "technical_auth_failure",
+      "judgment": "technical failed; no business question or invented OA facts",
+      "audit": "not applicable",
+      "limitation": "model invents a composite error code; existing service policy maps unknown codes to bounded retry, preserves source_code and ignores Agent flags"
+    },
+    {
+      "id": "established_group_audience",
+      "judgment": "same established audience; approved milestone and next-review facts only",
+      "audit": "correct approve",
+      "lexical_false_negative": "Chinese milestone wording"
+    },
+    {
+      "id": "current_form_no_future_field",
+      "judgment": "approve current supported travel task; future post-trip report is not a present prerequisite",
+      "audit": "correct approve"
+    },
+    {
+      "id": "irrelevant_broadcast",
+      "judgment": "supported no_action, no invented reply",
+      "audit": "correct approve"
+    },
+    {
+      "id": "standing_rule_autonomy",
+      "judgment": "autonomous business decision is supported but Consumer invents OA process identity from project ID",
+      "audit": "correct return for exact source-bound provider target; no execution approved",
+      "lexical_false_negative": "Chinese signoff wording"
+    }
+  ],
+  "baseline_limitations": "Old Audit executes actions; a no-tools benchmark cannot measure its full execution responsibility. Baseline returns for missing remarks are correct judgments, not business failures.",
+  "release_limits": [
+    "Production route/model readback and real receipt remain independent gates",
+    "Final-head Quality and publication code review remain pending",
+    "Xiaoqing write scope remains unanswered"
+  ]
+}
