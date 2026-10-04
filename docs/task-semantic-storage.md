@@ -7,9 +7,10 @@ and typed-date semantic contract of the approved
 not describe a deployed Task Agent cutover. The runtime, console, providers,
 and legacy import workflow still belong to later tasks.
 
-The schema version is `2026-09-23.1`. Initialization adds 16 bounded semantic
-tables to a pre-semantic database without reclassifying, copying, or deleting
-legacy work records. An existing `2026-09-22.1` semantic database gains the
+The current source-storage schema version is `2026-10-04.1`. The original
+semantic initialization added 16 bounded tables to a pre-semantic database
+without reclassifying, copying, or deleting legacy work records. An existing
+`2026-09-22.1` semantic database gains the
 append-only date-evidence table and signal actor kind; its Task events retain
 their IDs and history while their constraint gains `date_evidence_recorded`.
 The migration leaves every old, untyped `business_tasks.deadline_at` value
@@ -21,7 +22,7 @@ that overlapping event rows agree.
 
 ## Records and evidence
 
-Every table has a frozen, extra-forbid Pydantic record in
+Task-domain records use frozen, extra-forbid Pydantic models in
 `app/task_semantic_models.py`, with matching SQLite enum and state constraints.
 The records keep timestamps and JSON documents as strings, matching the plan's
 persisted contract. Object-valued JSON and the missing-evidence array are checked
@@ -39,7 +40,38 @@ and remain valid nonblank content.
 
 `business_task_signals` preserves source type/reference/time, conversation
 identity/title, author identity/name/kind (`human`, `system`, `agent`, or
-`unknown`), original evidence text, and context.
+`unknown`), and context. Its required `source_document_id` is a real foreign key
+to the immutable `business_source_documents` table, which stores the original
+body once per exact source version. That version is the SHA-256 of the UTF-8
+JSON list `[source_type, source_ref, source_time, conversation_id, author_user_id,
+author_name, author_kind, evidence_text]`, encoded with `ensure_ascii=False` and
+compact separators. Task/Signal deduplication keys, conversation titles, and
+per-Signal context do not participate in body identity. Distinct Task Signals
+may share that body while keeping their IDs, deduplication keys, metadata, and
+independent evidence roles. Different references, source types, versions, or
+actors do not share it; memory/session provenance remains separate from an
+observed source even when its reference and quoted text match.
+
+All Signal getters hydrate `BusinessTaskSignal.evidence_text` by joining the
+shared table. The public original-text field remains available, alongside the
+document ID, but no physical `business_task_signals.evidence_text` column or
+legacy read fallback remains. The meeting-owner backfill also joins this body
+table. Source documents reject UPDATE, DELETE, and replacement, just as Signal
+observations do.
+
+The one-time old-body migration uses the Store's existing foreign-key rebuild
+transaction. It creates shared bodies and a replacement Signal table under
+`BEGIN IMMEDIATE`, preserves every Signal ID and the AUTOINCREMENT high-water
+mark, and reads every original field/body back before removing the old table.
+It checks row counts and foreign keys, then installs the final indexes and
+immutability triggers in the same transaction. Failure rolls all source
+representation changes back. Existing Task/evidence relationships and event/run
+JSON are not rewritten. A genuinely older Signal without `author_kind` gets
+the existing `unknown` value before its document identity is computed; it is
+not promoted to a human or observed source. Fresh stores create the final
+structure directly. Reopening an upgraded store does not copy bodies again,
+and the schema marker advances only after the normal manifest verification.
+
 Unknown source context stays empty rather than being fabricated. Evidence text
 and source strings are not trimmed or summarized when stored. The caller supplies
 the source/content deduplication key; its unique constraint rejects duplicates.
@@ -138,8 +170,9 @@ Task event APIs; attention projections remain later work.
   constrained without a generic, unchecked entity ID. No import runs in Task 1.
 
 All semantic references have foreign keys, membership links have unique keys,
-and the required schema manifest covers all 16 tables, their columns, list
-indexes, and source/date-immutability triggers.
+and the required schema manifest covers the semantic and shared-body tables,
+their columns, list/document indexes, removed Signal body column, and
+source/document/date-immutability triggers.
 
 ## Primitive store API
 

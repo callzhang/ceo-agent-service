@@ -9,6 +9,7 @@ import pytest
 from app import store as store_module
 from app import task_semantic_models as models
 from app.store import AutoReplyStore
+from app.task_source_documents import source_document_key
 
 
 NOW = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)
@@ -21,6 +22,7 @@ ROWS = {
         "BusinessTaskSignal",
         {
             "id": 1,
+            "source_document_id": 1,
             "source_type": "reply_attempt",
             "source_ref": "message:42",
             "source_time": STAMP,
@@ -277,10 +279,33 @@ def store(tmp_path):
 
 
 def insert_row(db, table, values):
+    if table == "business_task_signals":
+        values = dict(values)
+        identity_key = source_document_key(**{
+            field: values[field] for field in (
+                "source_type", "source_ref", "source_time", "conversation_id",
+                "author_user_id", "author_name", "author_kind", "evidence_text",
+            )
+        })
+        body = values.pop("evidence_text")
+        insert_row(db, "business_source_documents", {
+            "id": values["source_document_id"], "identity_key": identity_key,
+            "body": body, "created_at": values["created_at"],
+        })
     db.execute(
         f"insert into {table} ({', '.join(values)}) values ({', '.join('?' for _ in values)})",
         tuple(values.values()),
     )
+
+
+def read_record_row(db, table):
+    if table == "business_task_signals":
+        return db.execute(
+            "select signal.*, document.body as evidence_text from business_task_signals signal "
+            "join business_source_documents document on document.id=signal.source_document_id "
+            "order by signal.id limit 1"
+        ).fetchone()
+    return db.execute(f"select * from {table} limit 1").fetchone()
 
 
 def seed_references(db):
@@ -351,7 +376,7 @@ def test_nonblank_text_preserves_surrounding_whitespace(store, table, column, co
     with sqlite3.connect(store.path) as db:
         db.row_factory = sqlite3.Row
         insert_row(db, table, values)
-        row = db.execute(f"select * from {table}").fetchone()
+        row = read_record_row(db, table)
         assert row[column] == text
         assert model_for(table).model_validate(dict(row)) == expected
 
@@ -359,6 +384,8 @@ def test_nonblank_text_preserves_surrounding_whitespace(store, table, column, co
 @pytest.mark.parametrize("table", ROWS)
 def test_schema_manifest_and_complete_record_columns(store, table):
     expected = set(ROWS[table][1])
+    if table == "business_task_signals":
+        expected.remove("evidence_text")
     with store._connect() as db:
         actual = {row["name"] for row in db.execute(f"pragma table_info({table})")}
     assert actual == expected
@@ -392,7 +419,7 @@ def test_sqlite_rows_round_trip_through_their_records(store, table):
             "business_attention_items",
         }:
             insert_row(db, table, values)
-        row = db.execute(f"select * from {table} limit 1").fetchone()
+        row = read_record_row(db, table)
         record = model_for(table).model_validate(dict(row))
     assert record.model_dump(mode="json") == values
 
@@ -453,12 +480,13 @@ def test_signal_preserves_original_evidence_and_provenance(store):
     values = dict(ROWS["business_task_signals"][1])
     values.pop("id")
     values.pop("created_at")
+    values.pop("source_document_id")
     values["evidence_text"] = " \t\u2003王明，周五前提交报价。\n\u00a0"
     signal_id = store.create_business_task_signal(**values, now=NOW)
     signal = store.get_business_task_signal(signal_id)
     assert signal is not None
     assert signal.model_dump(mode="json") == dict(
-        values, id=signal_id, created_at=STAMP
+        values, id=signal_id, source_document_id=signal.source_document_id, created_at=STAMP
     )
     assert store.get_business_task_signal(signal.id) == signal
     assert store.get_business_task_signal(999) is None
@@ -504,10 +532,10 @@ def test_business_task_can_exist_without_project(tmp_path):
 @pytest.mark.parametrize(
     "statement",
     [
-        "update business_task_signals set evidence_text='rewrite' where id=1",
+        "update business_task_signals set source_document_id=999 where id=1",
         "update business_task_signals set source_ref='another source' where id=1",
         "delete from business_task_signals where id=1",
-        "insert or replace into business_task_signals (id, source_type, source_ref, evidence_text, dedupe_key) values (1, 'email', 'changed', 'replacement', 'message:42:v1')",
+        "insert or replace into business_task_signals (id, source_type, source_ref, source_document_id, dedupe_key) values (1, 'email', 'changed', 1, 'message:42:v1')",
     ],
 )
 def test_signal_observations_are_immutable(store, statement):
@@ -912,6 +940,7 @@ def test_attention_resolution_retains_evidence_and_events(store):
 def test_list_indexes_are_present_and_in_the_required_manifest(store):
     expected = {
         "idx_business_task_signals_source",
+        "idx_business_signal_document",
         "idx_business_tasks_updated_id",
         "idx_business_tasks_list",
         "idx_business_tasks_relevance",
@@ -945,6 +974,7 @@ def test_existing_pre_semantic_store_initializes_without_rewriting_legacy(tmp_pa
     with sqlite3.connect(path) as db:
         for table in reversed(ROWS):
             db.execute(f"drop table {table}")
+        db.execute("drop table business_source_documents")
         db.execute(
             "update service_state set value=? where key=?",
             ("2026-09-21.1", store_module.STORE_SCHEMA_VERSION_KEY),
@@ -991,7 +1021,12 @@ def test_previous_semantic_schema_migrates_without_classifying_legacy_deadline(t
             before_json="{}", after_json='{"stage":"candidate"}', reason="旧语义任务",
             _db=db,
         )
-    with original._connect() as db:
+    original_signal = original.get_business_task_signal(signal_id).model_dump(
+        mode="json", exclude={"source_document_id"}
+    )
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        install_legacy_signals(db, [original_signal])
         for trigger in (
             "trg_business_task_date_evidence_immutable_update",
             "trg_business_task_date_evidence_immutable_delete",
@@ -1133,3 +1168,306 @@ def test_json_evidence_fields_reject_wrong_shapes(field):
     wrong = "{}" if field == "missing_evidence_json" else "[]"
     with pytest.raises(ValidationError):
         model_for(table).model_validate(dict(ROWS[table][1], **{field: wrong}))
+
+
+def signal_input(**changes):
+    values = dict(ROWS["business_task_signals"][1], **changes)
+    for field in ("id", "created_at", "source_document_id"):
+        values.pop(field, None)
+    return values
+
+
+def test_distinct_task_signals_share_one_exact_source_body(store):
+    first_id = store.create_business_task_signal(**signal_input(), now=NOW)
+    with store.business_task_transaction() as db:
+        second_id = store.create_business_task_signal_in_transaction(
+            **signal_input(
+                dedupe_key="message:42:another-task", conversation_title="另一任务的标题",
+                context_json='{ "task_context": "另一项任务" }',
+            ), now=NOW, _db=db,
+        )
+    first_task = store.create_business_task(title="提交报价", stage="candidate")
+    second_task = store.create_business_task(title="安排演示", stage="candidate")
+    store.link_business_task_evidence(task_id=first_task, signal_id=first_id, evidence_role="assignment")
+    store.link_business_task_evidence(task_id=second_task, signal_id=second_id, evidence_role="discovery")
+    first = store.get_business_task_signal(first_id)
+    second = store.get_business_task_signal(second_id)
+    assert first.id != second.id
+    assert first.source_document_id == second.source_document_id
+    assert first.dedupe_key != second.dedupe_key
+    assert second.conversation_title == "另一任务的标题"
+    assert second.context_json == '{ "task_context": "另一项任务" }'
+    assert first.evidence_text == second.evidence_text == signal_input()["evidence_text"]
+    assert store.list_business_task_signals() == (first, second)
+    with store.business_task_transaction() as db:
+        assert store.get_business_task_signal_by_dedupe_key(dedupe_key=second.dedupe_key, _db=db) == second
+        assert store.get_business_task_signal_for_task_source_ref_in_transaction(
+            task_id=second_task, source_ref=second.source_ref, _db=db,
+        ) == second
+        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 1
+        assert db.execute("select body from business_source_documents").fetchone()[0] == first.evidence_text
+        assert "evidence_text" not in {r["name"] for r in db.execute("pragma table_info(business_task_signals)")}
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+    assert [(r.signal_id, r.evidence_role.value) for r in store.list_business_task_evidence(first_task)] == [(first_id, "assignment")]
+    assert [(r.signal_id, r.evidence_role.value) for r in store.list_business_task_evidence(second_task)] == [(second_id, "discovery")]
+
+
+@pytest.mark.parametrize("source_type", ["memory_provenance", "session_provenance"])
+def test_cited_provenance_does_not_share_observed_source_body(store, source_type):
+    cited_id = store.create_business_task_signal(
+        **signal_input(source_type=source_type, dedupe_key=f"{source_type}:42"), now=NOW,
+    )
+    observed_id = store.create_business_task_signal(**signal_input(), now=NOW)
+    cited = store.get_business_task_signal(cited_id)
+    observed = store.get_business_task_signal(observed_id)
+    assert cited.source_ref == observed.source_ref
+    assert cited.evidence_text == observed.evidence_text
+    assert cited.source_document_id != observed.source_document_id
+    assert cited.source_type == source_type
+    with store._connect() as db:
+        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 2
+
+
+# Frozen pre-sharing SQLite representation, not a mock of the migration.
+LEGACY_SIGNAL_DDL = """
+create table business_task_signals (
+    id integer primary key autoincrement,
+    source_type text not null check(trim(source_type) <> ''),
+    source_ref text not null check(trim(source_ref) <> ''),
+    source_time text not null default '',
+    conversation_id text not null default '',
+    conversation_title text not null default '',
+    author_user_id text not null default '',
+    author_name text not null default '',
+    evidence_text text not null check(trim(evidence_text) <> ''),
+    context_json text not null default '{}'
+        check(json_valid(context_json) and json_type(context_json) = 'object'),
+    dedupe_key text not null unique check(trim(dedupe_key) <> ''),
+    created_at text not null default current_timestamp,
+    author_kind text not null default 'unknown'
+        check(author_kind in ('human', 'system', 'agent', 'unknown'))
+);
+create index idx_business_task_signals_source
+    on business_task_signals(source_type, source_ref, source_time, id);
+create trigger trg_business_task_signals_immutable_update
+before update on business_task_signals begin
+    select raise(abort, 'business task signals are immutable');
+end;
+create trigger trg_business_task_signals_immutable_delete
+before delete on business_task_signals begin
+    select raise(abort, 'business task signals are immutable');
+end;
+create trigger trg_business_task_signals_immutable_replace
+before insert on business_task_signals
+when exists (select 1 from business_task_signals where id=new.id or dedupe_key=new.dedupe_key)
+begin
+    select raise(abort, 'business task signals are immutable: UNIQUE id or dedupe_key');
+end;
+"""
+
+
+def install_legacy_signals(db, signals):
+    # Fixture-only downgrade, with foreign keys disabled on this independent
+    # temporary-database connection so the existing children keep their names.
+    db.execute("drop table business_task_signals")
+    db.execute("drop table if exists business_source_documents")
+    db.executescript(LEGACY_SIGNAL_DDL)
+    for values in signals:
+        db.execute(
+            f"insert into business_task_signals ({', '.join(values)}) values ({', '.join('?' for _ in values)})",
+            tuple(values.values()),
+        )
+
+
+def legacy_source_store(path, *, include_author_kind=True):
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        first = dict(signal_input(evidence_text=" \t\u2003王明，周五前提交报价。\n\u00a0"), id=1, created_at=STAMP)
+        legacy_signals = [
+            first,
+            dict(first, id=7, dedupe_key="message:42:second-task", context_json='{ "independent": true }'),
+            dict(first, id=11, dedupe_key="message:42:another-author", author_user_id="another-human"),
+        ]
+        install_legacy_signals(db, legacy_signals)
+        # Exercise real children of the immutable parent, with non-contiguous
+        # signal IDs and an AUTOINCREMENT high-water mark above the last row.
+        db.execute("update sqlite_sequence set seq=83 where name='business_task_signals'")
+        db.execute("insert into work_projects (id, title) values (1, 'Legacy project')")
+        for table in ROWS:
+            if table != "business_task_signals":
+                insert_row(db, table, ROWS[table][1])
+                if table == "business_tasks":
+                    insert_row(db, table, dict(ROWS[table][1], id=2, title="安排演示"))
+        insert_row(db, "business_task_evidence", {
+            "task_id": 2, "signal_id": 7, "evidence_role": "discovery", "created_at": STAMP,
+        })
+        insert_row(db, "business_task_evidence", {
+            "task_id": 1, "signal_id": 11, "evidence_role": "acceptance", "created_at": STAMP,
+        })
+        insert_row(db, "business_task_events", dict(
+            ROWS["business_task_events"][1], id=9, task_id=2, signal_id=7,
+            before_json='{ "text": "原来正文\\n" }', after_json='{ "signal_id": 7 }',
+        ))
+        db.execute("insert into work_summary_inputs (id, source_type, source_ref, payload_json) values (5, 'message', 'message:42', ?)", ('{ "body": "原始输入" }',))
+        db.execute("insert into task_agent_runs (id, summary_input_id, decision_json, projection_json, created_at, finished_at, updated_at) values (8, 5, ?, ?, ?, ?, ?)", ('{ "historical": "原始判断", "signal_id": 7 }', '{ "signal_id": 11 }', STAMP, STAMP, STAMP))
+        db.execute("update service_state set value='2026-09-25.1' where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,))
+        if not include_author_kind:
+            db.execute("alter table business_task_signals drop column author_kind")
+            for signal in legacy_signals:
+                signal.pop("author_kind")
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    return legacy_signals
+
+
+def source_history_snapshot(db):
+    tables = [table for table in ROWS if table != "business_task_signals"]
+    tables += ["work_summary_inputs", "task_agent_runs"]
+    return {table: [dict(row) for row in db.execute(f"select * from {table} order by rowid")] for table in tables}
+
+
+@pytest.mark.parametrize("include_author_kind", [True, False])
+def test_legacy_signal_bodies_migrate_without_changing_evidence_identity_or_history(tmp_path, include_author_kind):
+    path = tmp_path / "legacy-source.sqlite3"
+    original_signals = legacy_source_store(path, include_author_kind=include_author_kind)
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        original_history = source_history_snapshot(db)
+    migrated = AutoReplyStore(path)
+    signals = migrated.list_business_task_signals()
+    added_fields = {"source_document_id"}
+    if not include_author_kind:
+        added_fields.add("author_kind")
+        assert all(s.author_kind is models.BusinessActorKind.UNKNOWN for s in signals)
+    assert [s.model_dump(mode="json", exclude=added_fields) for s in signals] == original_signals
+    assert signals[0].source_document_id == signals[1].source_document_id
+    assert signals[0].source_document_id != signals[2].source_document_id
+    with migrated._connect() as db:
+        assert source_history_snapshot(db) == original_history
+        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 2
+        assert db.execute("select seq from sqlite_sequence where name='business_task_signals'").fetchone()[0] == 83
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+        assert "evidence_text" not in {r["name"] for r in db.execute("pragma table_info(business_task_signals)")}
+        assert db.execute("select value from service_state where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,)).fetchone()[0] == store_module.STORE_SCHEMA_VERSION
+    assert migrated._schema_is_current()
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    reopened = AutoReplyStore(path)
+    assert reopened.list_business_task_signals() == signals
+    with reopened._connect() as db:
+        assert source_history_snapshot(db) == original_history
+        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 2
+    repeated_source = signal_input(**(original_signals[0] | {
+        "dedupe_key": "after-migration", "author_kind": "human" if include_author_kind else "unknown",
+    }))
+    new_id = reopened.create_business_task_signal(**repeated_source)
+    assert new_id == 84
+    assert reopened.get_business_task_signal(new_id).source_document_id == signals[0].source_document_id
+    with reopened._connect() as db:
+        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 2
+
+
+def test_source_body_migration_rolls_back_on_foreign_key_failure(tmp_path):
+    path = tmp_path / "legacy-source-failure.sqlite3"
+    original_signals = legacy_source_store(path)
+    with sqlite3.connect(path) as db:
+        db.execute("insert into business_task_evidence (task_id, signal_id, evidence_role) values (2, 999, 'discovery')")
+    with pytest.raises(sqlite3.IntegrityError, match="foreign keys"):
+        AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        assert [dict(r) for r in db.execute("select * from business_task_signals order by id")] == original_signals
+        assert db.execute("select name from sqlite_master where name in ('business_source_documents', 'business_task_signals_source_migration')").fetchall() == []
+        assert db.execute("select seq from sqlite_sequence where name='business_task_signals'").fetchone()[0] == 83
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            db.execute("update business_task_signals set evidence_text='rewritten' where id=1")
+        assert db.execute("select value from service_state where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,)).fetchone()[0] == "2026-09-25.1"
+
+
+@pytest.mark.parametrize("statement", [
+    "update business_source_documents set body='rewritten' where id=1",
+    "update business_source_documents set identity_key='changed' where id=1",
+    "delete from business_source_documents where id=1",
+    "insert or replace into business_source_documents (id, identity_key, body) values (1, 'replacement', 'rewritten')",
+    "insert or replace into business_source_documents (identity_key, body) select identity_key, 'rewritten' from business_source_documents where id=1",
+])
+def test_shared_source_documents_are_immutable(store, statement):
+    signal_id = store.create_business_task_signal(**signal_input())
+    original = store.get_business_task_signal(signal_id)
+    with store._connect() as db:
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            db.execute(statement)
+    assert store.get_business_task_signal(signal_id) == original
+
+
+@pytest.mark.parametrize("upgrade", [False, True])
+def test_source_document_schema_manifest_and_foreign_key_on_fresh_and_upgraded_store(tmp_path, upgrade):
+    path = tmp_path / "source-schema.sqlite3"
+    if upgrade:
+        legacy_source_store(path)
+    store = AutoReplyStore(path)
+    assert "business_source_documents" in store_module.STORE_SCHEMA_REQUIRED_TABLES
+    assert set(store_module.STORE_SCHEMA_REQUIRED_COLUMNS["business_source_documents"]) == {
+        "id", "identity_key", "body", "created_at",
+    }
+    assert "source_document_id" in store_module.STORE_SCHEMA_REQUIRED_COLUMNS["business_task_signals"]
+    assert "evidence_text" in store_module.STORE_SCHEMA_REMOVED_COLUMNS["business_task_signals"]
+    triggers = {f"trg_business_{table}_immutable_{operation}" for table in ("source_documents", "task_signals") for operation in ("update", "delete", "replace")}
+    assert triggers <= set(store_module.STORE_SCHEMA_REQUIRED_TRIGGERS)
+    with store._connect() as db:
+        assert triggers <= {row[0] for row in db.execute("select name from sqlite_master where type='trigger'")}
+        assert [tuple(row) for row in db.execute("pragma foreign_key_list(business_task_signals)")] == [
+            (0, 0, "business_source_documents", "source_document_id", "id", "NO ACTION", "NO ACTION", "NONE"),
+        ]
+        assert [row["name"] for row in db.execute("pragma index_info(idx_business_signal_document)")] == ["source_document_id"]
+        for document_id, error in [(None, "NOT NULL"), (999, "FOREIGN KEY")]:
+            with pytest.raises(sqlite3.IntegrityError, match=error):
+                db.execute(
+                    "insert into business_task_signals (source_type, source_ref, source_document_id, dedupe_key) values ('message', 'new-source', ?, 'new-source')",
+                    (document_id,),
+                )
+        if upgrade:
+            with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+                db.execute("update business_task_signals set source_document_id=2 where id=1")
+            with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+                db.execute("delete from business_source_documents where id=1")
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+    assert store._schema_is_current()
+
+
+@pytest.mark.parametrize("change", [
+    {"source_ref": "another-ref"}, {"source_type": "meeting"},
+    {"source_time": "2026-09-23T12:00:00+00:00"}, {"conversation_id": "chat:8"},
+    {"author_user_id": "another-human"}, {"author_name": "另一个人"},
+    {"author_kind": "system"}, {"evidence_text": "另一版本正文"},
+    {"evidence_text": signal_input()["evidence_text"].strip()},
+])
+def test_persisted_source_version_changes_never_share_a_document(store, change):
+    first_id = store.create_business_task_signal(**signal_input())
+    second_id = store.create_business_task_signal(**signal_input(dedupe_key="second-signal", **change))
+    assert store.get_business_task_signal(first_id).source_document_id != store.get_business_task_signal(second_id).source_document_id
+    with store._connect() as db:
+        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 2
+
+
+def test_duplicate_signal_failure_does_not_leave_an_unreferenced_document(store):
+    signal_id = store.create_business_task_signal(**signal_input())
+    original = store.get_business_task_signal(signal_id)
+    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
+        store.create_business_task_signal(**signal_input(evidence_text="same Signal key, different body"))
+    assert store.list_business_task_signals() == (original,)
+    with store._connect() as db:
+        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 1
+
+
+def test_empty_legacy_signal_table_keeps_its_autoincrement_high_water_mark(tmp_path):
+    path = tmp_path / "empty-legacy-source.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        install_legacy_signals(db, [])
+        db.execute("insert into sqlite_sequence (name, seq) values ('business_task_signals', 83)")
+        db.execute("update service_state set value='2026-09-25.1' where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,))
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    migrated = AutoReplyStore(path)
+    assert migrated.list_business_task_signals() == ()
+    assert migrated.create_business_task_signal(**signal_input()) == 84

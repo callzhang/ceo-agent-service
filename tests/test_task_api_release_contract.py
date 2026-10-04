@@ -1,14 +1,16 @@
 """Release contracts for semantic Tasks links and complete detail readback."""
 
+from datetime import datetime
+
 from app.store import AutoReplyStore
 from tests.test_console_web_api import _client
 
 
-def _signal(db, key: str) -> int:
-    return int(db.execute(
-        "insert into business_task_signals (source_type, source_ref, evidence_text, dedupe_key, created_at) values (?, ?, ?, ?, ?)",
-        ("test", key, key, key, "2026-09-24T00:00:00+00:00"),
-    ).lastrowid)
+def _signal(store, db, key: str) -> int:
+    return store.create_business_task_signal_in_transaction(
+        source_type="test", source_ref=key, evidence_text=key, dedupe_key=key,
+        now=datetime.fromisoformat("2026-09-24T00:00:00+00:00"), _db=db,
+    )
 
 
 def test_semantic_detail_links_match_frontend_routes(tmp_path):
@@ -16,7 +18,7 @@ def test_semantic_detail_links_match_frontend_routes(tmp_path):
     task_id = store.create_business_task(title="Launch", stage="formal", formal_basis="explicit_assignment")
     legacy_id = store.create_work_project(title="Historical", category="dev", status="active", priority="P1", risk_level="low")
     with store._immediate_write_transaction() as db:
-        signal_id = _signal(db, "link-source")
+        signal_id = _signal(store, db, "link-source")
         anchor_id = store.create_business_anchor_in_transaction(anchor_type="project", anchor_ref="launch", title="Launch", _db=db)
         project_id = store.create_business_project_in_transaction(canonical_anchor_id=anchor_id, title="Launch", registry_source="registry", _db=db)
         store.create_business_task_anchor_link_in_transaction(task_id=task_id, anchor_id=anchor_id, status="confirmed", active=True, evidence_signal_id=signal_id, _db=db)
@@ -63,7 +65,7 @@ def test_task_detail_contains_all_relations_and_anchor_links(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = store.create_business_task(title="Central", stage="formal", formal_basis="explicit_assignment")
     with store._immediate_write_transaction() as db:
-        signal_id = _signal(db, "all-links")
+        signal_id = _signal(store, db, "all-links")
         for index in range(101):
             other_id = int(db.execute("insert into business_tasks (title, stage, status, commitment_status, business_relevance, created_at, updated_at) values (?, 'candidate', 'open', 'none', 'relevant', current_timestamp, current_timestamp)", (f"Other {index}",)).lastrowid)
             db.execute("insert into business_task_relations (from_task_id, to_task_id, relation_type, supporting_signal_id) values (?, ?, 'related_to', ?)", (task_id, other_id, signal_id))
@@ -80,7 +82,7 @@ def test_task_detail_contains_all_follow_ups_beyond_store_page(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = store.create_business_task(title="Follow up", stage="formal", formal_basis="explicit_assignment")
     with store._immediate_write_transaction() as db:
-        signal_id = _signal(db, "follow-up-source")
+        signal_id = _signal(store, db, "follow-up-source")
         for index in range(201):
             db.execute(
                 "insert into business_task_follow_ups (business_task_id, source_signal_id, target_conversation_id, target_kind, question_text, scheduled_at, dedupe_key) values (?, ?, 'conversation-1', 'group', 'Status?', '2026-10-01T00:00:00+00:00', ?)",
@@ -96,7 +98,7 @@ def test_project_member_count_agrees_in_task_and_project_details(tmp_path):
     first_id = store.create_business_task(title="First", stage="formal", formal_basis="explicit_assignment")
     second_id = store.create_business_task(title="Second", stage="formal", formal_basis="explicit_assignment")
     with store._immediate_write_transaction() as db:
-        signal_id = _signal(db, "members")
+        signal_id = _signal(store, db, "members")
         anchor_id = store.create_business_anchor_in_transaction(anchor_type="project", anchor_ref="members", title="Members", _db=db)
         project_id = store.create_business_project_in_transaction(canonical_anchor_id=anchor_id, title="Members", registry_source="registry", _db=db)
         for task_id in (first_id, second_id):

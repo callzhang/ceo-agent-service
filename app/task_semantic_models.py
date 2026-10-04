@@ -163,6 +163,7 @@ class _FrozenBusinessModel(BaseModel):
 
 class BusinessTaskSignal(_FrozenBusinessModel):
     id: int
+    source_document_id: int
     source_type: Nonblank
     source_ref: Nonblank
     source_time: str = ""

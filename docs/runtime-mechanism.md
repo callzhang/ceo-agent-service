@@ -231,6 +231,14 @@ Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返�
 每个保留决策都必须引用准确来源；当前来源使用 WorkItem 的 `source_ref`，普通 Task 摘录可摘取。
 session/memory 背景用于完善已有 Task 或记录候选时，必须显式引用原始来源及可回溯位置；
 它们不能替代当前来源的授权与身份元数据，也不能替代 Attention 所需的已观察持久化原始 Signal。
+本分支 schema `2026-10-04.1` 将逐字正文保存在不可变 `business_source_documents`，
+Signal 的 `source_document_id` 通过真实外键关联它。只有来源类型/ref/时间、会话 ID、
+作者 ID/姓名/类型与正文完全相同的来源版本共享正文；不同 Task 的 Signal ID、dedupe_key、
+上下文和证据角色仍各自保留，同 ref 的 memory/session 引文保持独立来源身份。
+旧库在既有 SQLite 重建事务中拷贝并逐行读回所有 Signal 字段/正文，核对行数和外键后
+移除旧正文列，保留原有 Task、事件和运行 JSON；失败连同新正文和临时表一起回滚。
+Signal getters 与会议负责人回填统一 JOIN 共享正文，公开 `evidence_text` 仍为原文，
+无旧列读取分支；新库直接使用最终结构。这项存储变化仍属未部署的整体发布单元。
 本分支 Task Agent 检索上下文增加 `current_project_attention`：仅取返回的正式 Project
 规范 anchor 下的当前 active 卡，数量受既有 `limit_per_kind` 约束，渲染 id、anchor_id、
 保存的成员 task_ids、why_attention、current_state、assessment_json 与 updated_at；

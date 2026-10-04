@@ -150,6 +150,7 @@ from app.task_semantic_models import (
     CommitmentStatus,
     FormalTaskBasis,
 )
+from app.task_source_documents import source_document_key
 from app.wechat.models import WechatReplyScope
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
@@ -223,7 +224,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-25.1"
+STORE_SCHEMA_VERSION = "2026-10-04.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -300,6 +301,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "outbound_postfixes",
     "outbound_postfix_receipts",
     "native_reply_dispatches",
+    "business_source_documents",
     "business_task_signals",
     "business_tasks",
     "business_task_dingtalk_links",
@@ -374,6 +376,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_iteration_decisions_batch",
     "idx_feedback_iteration_decision_items_feedback_round",
     "idx_business_task_signals_source",
+    "idx_business_signal_document",
     "idx_business_tasks_updated_id",
     "idx_business_tasks_list",
     "idx_business_tasks_relevance",
@@ -402,11 +405,13 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 STORE_SCHEMA_REMOVED_COLUMNS = {
     "agent_runs": ("tool_events_json",),
+    "business_task_signals": ("evidence_text",),
 }
 STORE_SCHEMA_REQUIRED_COLUMNS = {
+    "business_source_documents": ("id", "identity_key", "body", "created_at"),
     "business_task_signals": (
         "id", "source_type", "source_ref", "source_time", "conversation_id",
-        "conversation_title", "author_user_id", "author_name", "evidence_text",
+        "conversation_title", "author_user_id", "author_name", "source_document_id",
         "context_json", "dedupe_key", "created_at", "author_kind",
     ),
     "business_tasks": (
@@ -596,6 +601,9 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
+    "trg_business_source_documents_immutable_update",
+    "trg_business_source_documents_immutable_delete",
+    "trg_business_source_documents_immutable_replace",
     "trg_business_task_signals_immutable_update",
     "trg_business_task_signals_immutable_delete",
     "trg_business_task_signals_immutable_replace",
@@ -848,6 +856,77 @@ def _business_nonblank_sql(column: str) -> str:
         "8232,8233,8239,8287,12288)"
     )
     return f"trim({column}, {whitespace}) <> ''"
+
+
+BUSINESS_SOURCE_DOCUMENT_SCHEMA = (
+    f"""create table if not exists business_source_documents (
+        id integer primary key autoincrement,
+        identity_key text not null unique,
+        body text not null check({_business_nonblank_sql("body")}),
+        created_at text not null default current_timestamp
+    )""",
+    """create trigger if not exists trg_business_source_documents_immutable_update
+    before update on business_source_documents begin
+        select raise(abort, 'business source documents are immutable');
+    end""",
+    """create trigger if not exists trg_business_source_documents_immutable_delete
+    before delete on business_source_documents begin
+        select raise(abort, 'business source documents are immutable');
+    end""",
+    """create trigger if not exists trg_business_source_documents_immutable_replace
+    before insert on business_source_documents
+    when exists (
+        select 1 from business_source_documents
+        where id=new.id or identity_key=new.identity_key
+    ) begin
+        select raise(abort, 'business source documents are immutable: UNIQUE id or identity_key');
+    end""",
+)
+
+
+def _business_task_signal_table_sql(table: str) -> str:
+    # Both names are internal schema constants (live table and migration copy).
+    return f"""create table if not exists {table} (
+        id integer primary key autoincrement,
+        source_type text not null check({_business_nonblank_sql("source_type")}),
+        source_ref text not null check({_business_nonblank_sql("source_ref")}),
+        source_time text not null default '',
+        conversation_id text not null default '',
+        conversation_title text not null default '',
+        author_user_id text not null default '',
+        author_name text not null default '',
+        source_document_id integer not null,
+        context_json text not null default '{{}}'
+            check(json_valid(context_json) and json_type(context_json) = 'object'),
+        dedupe_key text not null unique check({_business_nonblank_sql("dedupe_key")}),
+        created_at text not null default current_timestamp,
+        author_kind text not null default 'unknown'
+            check(author_kind in ('human', 'system', 'agent', 'unknown')),
+        foreign key(source_document_id) references business_source_documents(id)
+    )"""
+
+
+BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS = (
+    """create index if not exists idx_business_task_signals_source
+        on business_task_signals(source_type, source_ref, source_time, id)""",
+    """create index if not exists idx_business_signal_document
+        on business_task_signals(source_document_id)""",
+    """create trigger if not exists trg_business_task_signals_immutable_update
+    before update on business_task_signals begin
+        select raise(abort, 'business task signals are immutable');
+    end""",
+    """create trigger if not exists trg_business_task_signals_immutable_delete
+    before delete on business_task_signals begin
+        select raise(abort, 'business task signals are immutable');
+    end""",
+    """create trigger if not exists trg_business_task_signals_immutable_replace
+    before insert on business_task_signals
+    when exists (
+        select 1 from business_task_signals where id=new.id or dedupe_key=new.dedupe_key
+    ) begin
+        select raise(abort, 'business task signals are immutable: UNIQUE id or dedupe_key');
+    end""",
+)
 
 
 def _meeting_alignment_job_span(
@@ -2577,6 +2656,7 @@ class AutoReplyStore:
 
     def _initialize(self) -> None:
         with self._connect() as db:
+            self._migrate_business_task_source_documents(db)
             db.executescript(
                 """
                 create table if not exists conversations (
@@ -3572,44 +3652,9 @@ class AutoReplyStore:
                 );
                 """
                 f"""
-                create table if not exists business_task_signals (
-                    id integer primary key autoincrement,
-                    source_type text not null check({_business_nonblank_sql("source_type")}),
-                    source_ref text not null check({_business_nonblank_sql("source_ref")}),
-                    source_time text not null default '',
-                    conversation_id text not null default '',
-                    conversation_title text not null default '',
-                    author_user_id text not null default '',
-                    author_name text not null default '',
-                    evidence_text text not null check({_business_nonblank_sql("evidence_text")}),
-                    context_json text not null default '{{}}'
-                        check(json_valid(context_json) and json_type(context_json) = 'object'),
-                    dedupe_key text not null unique check({_business_nonblank_sql("dedupe_key")}),
-                    created_at text not null default current_timestamp,
-                    author_kind text not null default 'unknown'
-                        check(author_kind in ('human', 'system', 'agent', 'unknown'))
-                );
-                create index if not exists idx_business_task_signals_source
-                    on business_task_signals(source_type, source_ref, source_time, id);
-                create trigger if not exists trg_business_task_signals_immutable_update
-                before update on business_task_signals
-                begin
-                    select raise(abort, 'business task signals are immutable');
-                end;
-                create trigger if not exists trg_business_task_signals_immutable_delete
-                before delete on business_task_signals
-                begin
-                    select raise(abort, 'business task signals are immutable');
-                end;
-                create trigger if not exists trg_business_task_signals_immutable_replace
-                before insert on business_task_signals
-                when exists (
-                    select 1 from business_task_signals
-                    where id = new.id or dedupe_key = new.dedupe_key
-                )
-                begin
-                    select raise(abort, 'business task signals are immutable: UNIQUE id or dedupe_key');
-                end;
+                {';'.join(BUSINESS_SOURCE_DOCUMENT_SCHEMA)};
+                {_business_task_signal_table_sql("business_task_signals")};
+                {';'.join(BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS)};
                 create table if not exists business_tasks (
                     id integer primary key autoincrement,
                     title text not null check({_business_nonblank_sql("title")}),
@@ -6637,9 +6682,30 @@ class AutoReplyStore:
         self, *, dedupe_key: str, _db: sqlite3.Connection
     ) -> BusinessTaskSignal | None:
         row = _db.execute(
-            "select * from business_task_signals where dedupe_key=?", (dedupe_key,)
+            "select signal.*, document.body as evidence_text from business_task_signals signal "
+            "join business_source_documents document on document.id=signal.source_document_id "
+            "where signal.dedupe_key=?", (dedupe_key,)
         ).fetchone()
         return self._business_task_signal_from_row(row) if row is not None else None
+
+    @staticmethod
+    def _business_source_document_id(db: sqlite3.Connection, source: dict[str, object]) -> int:
+        identity_key = source_document_key(**{
+            field: source[field] for field in (
+                "source_type", "source_ref", "source_time", "conversation_id",
+                "author_user_id", "author_name", "author_kind", "evidence_text",
+            )
+        })
+        row = db.execute(
+            "select id from business_source_documents where identity_key=?", (identity_key,)
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+        cursor = db.execute(
+            "insert into business_source_documents (identity_key, body) values (?, ?)",
+            (identity_key, source["evidence_text"]),
+        )
+        return int(cursor.lastrowid)
 
     def create_business_task_signal_in_transaction(
         self,
@@ -6663,6 +6729,7 @@ class AutoReplyStore:
         ).isoformat(timespec="seconds")
         signal = BusinessTaskSignal(
             id=0,
+            source_document_id=0,
             source_type=source_type,
             source_ref=source_ref,
             source_time=source_time,
@@ -6676,11 +6743,12 @@ class AutoReplyStore:
             dedupe_key=dedupe_key,
             created_at=timestamp,
         )
+        document_id = self._business_source_document_id(_db, signal.model_dump(mode="json"))
         cursor = _db.execute(
             """
             insert into business_task_signals (
                 source_type, source_ref, source_time, conversation_id, conversation_title,
-                author_user_id, author_name, evidence_text, context_json, dedupe_key,
+                author_user_id, author_name, source_document_id, context_json, dedupe_key,
                 created_at, author_kind
             ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -6692,7 +6760,7 @@ class AutoReplyStore:
                 signal.conversation_title,
                 signal.author_user_id,
                 signal.author_name,
-                signal.evidence_text,
+                document_id,
                 signal.context_json,
                 signal.dedupe_key,
                 signal.created_at,
@@ -6853,7 +6921,8 @@ class AutoReplyStore:
         source_type_filter = " and signal.source_type=?" if source_type is not None else ""
         args = (task_id, source_ref, source_type) if source_type is not None else (task_id, source_ref)
         row = _db.execute(
-            """select signal.* from business_task_signals as signal
+            """select signal.*, document.body as evidence_text from business_task_signals as signal
+               join business_source_documents document on document.id=signal.source_document_id
                join business_task_evidence as evidence on evidence.signal_id=signal.id
                where evidence.task_id=? and signal.source_ref=?"""
             + source_type_filter + " order by signal.id desc limit 1",
@@ -7004,40 +7073,21 @@ class AutoReplyStore:
         context_json: str = "{}",
         now: datetime | None = None,
     ) -> int:
-        timestamp = ensure_utc_datetime(
-            now or datetime.now(timezone.utc), field="business task signal now"
-        ).isoformat(timespec="seconds")
-        signal = BusinessTaskSignal(
-            id=0, source_type=source_type, source_ref=source_ref, source_time=source_time,
-            conversation_id=conversation_id, conversation_title=conversation_title,
-            author_user_id=author_user_id, author_name=author_name,
-            author_kind=author_kind,
-            evidence_text=evidence_text, context_json=context_json,
-            dedupe_key=dedupe_key, created_at=timestamp,
-        )
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                """
-                insert into business_task_signals (
-                    source_type, source_ref, source_time, conversation_id, conversation_title,
-                    author_user_id, author_name, evidence_text, context_json, dedupe_key,
-                    created_at, author_kind
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    signal.source_type, signal.source_ref, signal.source_time,
-                    signal.conversation_id, signal.conversation_title,
-                    signal.author_user_id, signal.author_name, signal.evidence_text,
-                    signal.context_json, signal.dedupe_key, signal.created_at,
-                    signal.author_kind.value,
-                ),
+            return self.create_business_task_signal_in_transaction(
+                source_type=source_type, source_ref=source_ref, source_time=source_time,
+                conversation_id=conversation_id, conversation_title=conversation_title,
+                author_user_id=author_user_id, author_name=author_name,
+                author_kind=author_kind, evidence_text=evidence_text,
+                context_json=context_json, dedupe_key=dedupe_key, now=now, _db=db,
             )
-            return int(cursor.lastrowid)
 
     def list_business_task_signals(self) -> tuple[BusinessTaskSignal, ...]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from business_task_signals order by id"
+                "select signal.*, document.body as evidence_text from business_task_signals signal "
+                "join business_source_documents document on document.id=signal.source_document_id "
+                "order by signal.id"
             ).fetchall()
             return tuple(self._business_task_signal_from_row(row) for row in rows)
 
@@ -7049,7 +7099,9 @@ class AutoReplyStore:
         self, *, signal_id: int, _db: sqlite3.Connection
     ) -> BusinessTaskSignal | None:
         row = _db.execute(
-            "select * from business_task_signals where id=?", (signal_id,)
+            "select signal.*, document.body as evidence_text from business_task_signals signal "
+            "join business_source_documents document on document.id=signal.source_document_id "
+            "where signal.id=?", (signal_id,)
         ).fetchone()
         return self._business_task_signal_from_row(row) if row else None
 
@@ -9858,6 +9910,66 @@ class AutoReplyStore:
                 raise sqlite3.IntegrityError(
                     f"{migration_name} migration could not restore foreign keys"
                 )
+
+    @staticmethod
+    def _migrate_business_task_source_documents(db: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in db.execute("pragma table_info(business_task_signals)")}
+        if "evidence_text" not in columns:
+            return
+        # Keep the referenced parent under its original name until every row
+        # has been copied and read back. Renaming the old parent would rewrite
+        # all existing child foreign keys to the temporary table's name.
+        with AutoReplyStore._foreign_key_rebuild(db, migration_name="business source documents"):
+            db.execute("begin immediate")
+            for statement in BUSINESS_SOURCE_DOCUMENT_SCHEMA:
+                db.execute(statement)
+            db.execute(_business_task_signal_table_sql("business_task_signals_source_migration"))
+            old_count = db.execute("select count(*) from business_task_signals").fetchone()[0]
+            old_sequence = db.execute(
+                "select seq from sqlite_sequence where name='business_task_signals'"
+            ).fetchone()
+            for row in db.execute("select * from business_task_signals order by id"):
+                original = dict(row)
+                source = dict(original)
+                if "author_kind" not in source:
+                    source["author_kind"] = "unknown"
+                document_id = AutoReplyStore._business_source_document_id(db, source)
+                values = {key: value for key, value in source.items() if key != "evidence_text"}
+                values["source_document_id"] = document_id
+                db.execute(
+                    f"insert into business_task_signals_source_migration ({', '.join(values)}) "
+                    f"values ({', '.join('?' for _ in values)})", tuple(values.values()),
+                )
+                restored = db.execute(
+                    "select signal.*, document.body as evidence_text "
+                    "from business_task_signals_source_migration signal "
+                    "join business_source_documents document on document.id=signal.source_document_id "
+                    "where signal.id=?", (original["id"],),
+                ).fetchone()
+                if restored is None or {key: restored[key] for key in original} != original:
+                    raise sqlite3.IntegrityError("business source document migration changed a signal")
+            new_count = db.execute(
+                "select count(*) from business_task_signals_source_migration"
+            ).fetchone()[0]
+            if new_count != old_count:
+                raise sqlite3.IntegrityError("business source document migration changed signal count")
+            if db.execute("pragma foreign_key_check").fetchall():
+                raise sqlite3.IntegrityError("business source document migration broke foreign keys")
+            db.execute("drop table business_task_signals")
+            db.execute("alter table business_task_signals_source_migration rename to business_task_signals")
+            if old_sequence is not None:
+                db.execute(
+                    "insert into sqlite_sequence (name, seq) "
+                    "select 'business_task_signals', ? where not exists "
+                    "(select 1 from sqlite_sequence where name='business_task_signals')",
+                    (old_sequence["seq"],),
+                )
+                db.execute(
+                    "update sqlite_sequence set seq=max(seq, ?) where name='business_task_signals'",
+                    (old_sequence["seq"],),
+                )
+            for statement in BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS:
+                db.execute(statement)
 
     @staticmethod
     def _migrate_agent_run_turn_identity(db: sqlite3.Connection) -> None:

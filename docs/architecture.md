@@ -737,6 +737,15 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 Task-first 基础机制已上线；本节新增的多来源关注规则属于当前开发分支，尚未部署。
 前端、语义评估及全局 Skill 发布仍待后续验收，不能据本节新增规则推断生产已经切换。
 
+本分支的来源正文存储使用不可变 `business_source_documents`，Signal 通过真实外键
+`source_document_id` 引用正文；同一精确来源版本涉及不同 Task 时共享正文，但 Signal ID、
+dedupe_key、来源元数据、Task 证据角色和历史均独立保留。正文身份包含来源类型/ref/时间、
+会话 ID、作者 ID/姓名/类型和逐字正文，不使用 Task 去重身份、不做文本归一化；memory/session
+引用不会与 observed 原文合并。旧库在既有 SQLite 重建事务内逐行迁移并核对原字段/正文、
+行数及外键后移除 Signal 的物理正文列；失败回滚，原 Task/event/run JSON 不改写。
+所有 Signal 读取统一 JOIN 共享正文，`BusinessTaskSignal.evidence_text` 继续返回原文，
+新库直接创建最终结构。此表示迁移的 schema 版本是 `2026-10-04.1`，不表示已经部署。
+
 主 prompt、CI Skill 和字段说明把 `existing_attention_id` 定义为旧卡原始证明的声明，而不是更新目标。
 新风险使用匹配的 `attention_proposal`，现有 Project stable key 已会更新同一张卡；
 没有引用并核实该卡片保存的原始证明时，该可选 ID 保持 null，旧卡的存在本身不证明原始证据。

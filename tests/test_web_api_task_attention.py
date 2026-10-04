@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 from app.store import AutoReplyStore
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
@@ -52,7 +53,10 @@ def test_detail_routes_show_source_evidence_and_confirmed_membership(tmp_path):
     task_id = store.create_business_task(title="Launch", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
     closed_id = store.create_business_task(title="Closed project task", stage="candidate", status="done", business_relevance="relevant")
     with store._immediate_write_transaction() as db:
-        signal_id = db.execute("insert into business_task_signals (source_type, source_ref, evidence_text, dedupe_key, created_at) values (?, ?, ?, ?, ?)", ("meeting", "minutes-1", "Derek assigned Launch", "meeting:1", "2026-09-02T00:00:00+00:00")).lastrowid
+        signal_id = store.create_business_task_signal_in_transaction(
+            source_type="meeting", source_ref="minutes-1", evidence_text="Derek assigned Launch",
+            dedupe_key="meeting:1", now=datetime.fromisoformat("2026-09-02T00:00:00+00:00"), _db=db,
+        )
         anchor_id = store.create_business_anchor_in_transaction(anchor_type="project", anchor_ref="official-launch", title="Official launch", _db=db)
         project_id = store.create_business_project_in_transaction(canonical_anchor_id=anchor_id, title="Official launch", registry_source="registry", _db=db)
         store.create_business_task_anchor_link_in_transaction(task_id=task_id, anchor_id=anchor_id, status="confirmed", active=True, evidence_signal_id=signal_id, _db=db)
