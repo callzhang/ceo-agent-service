@@ -782,6 +782,7 @@ Task 关联到该 Project。`project_proposal` 表示采用当前权威来源明
 确认命令只能引用 candidate cluster 已有的来源证据，重复点击幂等，不能改绑到另一个 Project。
 正式 Project 可有独立、可选的 `ProjectContext`：它以完整快照追加到版本历史，当前值只读最新版本，不在 Project 行复制可失配的 current JSON。总负责最多一人或未知；个人分工和冲突事实各自保留真实 Signal 的 ref/逐字摘录，绝不从关联 Task owner 推断。结构化 JSON 来源的逐字摘录可落在一个解码后的字符串叶子，不能拼接不同字段。`context=null` 只补 Project↔Signal 证明，不覆盖当前快照；显式空分工快照才会清空当前分工，旧版本仍可读。相同结构 JSON 不生成新版本，字典键顺序没有业务含义。本阶段不接入 Task Agent 新写入契约或控制台投影。
 领域命令 `RecordTaskSuggestion` 在同一个 `business_tasks` 表保存展示型建议：`origin=agent_suggestion`，建议人与职责/风险引文在 `suggestion_json`，新建的 stage 为 candidate、commitment 为 none，实际 owner/deadline 为空，不发通知、follow-up 或 TODO。建议可引用先前职责来源，而不要求最新风险消息重复点名该人；每条引用仍解析到实际 Signal/ref/逐字摘录。既有建议 ID 仅在资料实际变化时追加事件，重复无变化不写。人类后来明确指派时沿用原 ID 按既有 promotion 晋升，保留 origin/建议历史，实际 owner 来自人类证据；后续接受与 TODO 资格不因历史 origin 受阻。旧行迁移为 source，历史 JSON 不重写；真实 source Task 不能被建议命令重新标记为建议。
+项目上下文/独立项目证据，以及建议的发现与职责/事实引文，须来自已观察的原始 Signal；`memory_provenance` 和 `session_provenance` 是引用记录，不能借此升级为这些对象的原文证明。职责是否支持具体人选仍由 Agent 按来源语义判断，不用硬编码人名、关键词或新增职责分类器。
 一行列出多位个人负责人时，来源证据须覆盖每个人名；钉钉 `@` 标记及名单分隔符
 不应把有效的负责人引用误判为缺失，团队或部门名称仍不能充当个人负责人。
 

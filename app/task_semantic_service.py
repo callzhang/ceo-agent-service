@@ -21,7 +21,7 @@ from contextlib import nullcontext
 
 from app.store import AutoReplyStore
 from app.task_business_resolution import BusinessResolutionService
-from app.task_source_documents import source_contains_quote
+from app.task_source_documents import source_contains_quote, source_is_observed
 from app.task_semantic_models import (
     BusinessActorKind,
     BusinessEvidenceRole,
@@ -492,6 +492,8 @@ class TaskSemanticService:
         _db: sqlite3.Connection | None = None,
     ) -> TaskMutationResult:
         """Record a display-only proposal, not a human assignment or acceptance."""
+        if not source_is_observed(command.signal.source_type):
+            raise ValueError("suggestion discovery requires an observed original source")
         now = self._now()
         with (
             nullcontext(_db)
@@ -522,6 +524,8 @@ class TaskSemanticService:
                 source = self.store.get_business_task_signal_in_transaction(
                     signal_id=citation.signal_id, _db=db
                 )
+                if source is not None and not source_is_observed(source.source_type):
+                    raise ValueError("suggestion evidence requires an observed original source")
                 if (
                     source is None
                     or source.source_ref != citation.source_ref

@@ -186,3 +186,15 @@ def test_context_service_rejection_leaves_no_partial_writes_inside_caller_transa
         assert db.execute(
             "select count(*) from business_project_context_revisions where project_id=?", (project_id,)
         ).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("source_type", ["memory_provenance", "session_provenance"])
+def test_project_context_evidence_requires_observed_original_source(project_store, source_type):
+    store, project_id, _, _ = project_store
+    signal_id = store.create_business_task_signal(source_type=source_type, source_ref="quoted:project",
+        evidence_text="张三负责交付。", dedupe_key=f"{source_type}:project")
+    with store.business_task_transaction() as db:
+        with pytest.raises(ValueError, match="observed"):
+            ProjectContextService(store).apply(project_id=project_id, context=None, signal_ids=(signal_id,), db=db)
+        assert db.execute("select count(*) from business_project_evidence").fetchone()[0] == 0
+        assert db.execute("select count(*) from business_project_context_revisions").fetchone()[0] == 0

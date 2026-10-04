@@ -1,6 +1,8 @@
 from dataclasses import replace
 import json
 import sqlite3
+import subprocess
+import sys
 
 import pytest
 
@@ -330,6 +332,55 @@ def test_old_task_shape_defaults_to_source_without_promotion(project):
     assert task.stage.value == "candidate" and task.commitment_status.value == "none"
 
 
+@pytest.mark.parametrize("provenance_type", ["memory_provenance", "session_provenance"])
+@pytest.mark.parametrize("position", ["discovery", "responsibility", "basis"])
+def test_unobserved_provenance_cannot_be_original_suggestion_proof(
+    project, provenance_type, position
+):
+    store, anchor_id, signal, suggestion = project
+    if position == "discovery":
+        signal = replace(
+            signal,
+            source_type=provenance_type,
+            source_ref="provenance:risk",
+            dedupe_key=f"{provenance_type}:risk",
+        )
+    else:
+        signal_id = store.create_business_task_signal(
+            source_type=provenance_type,
+            source_ref="provenance:duty",
+            evidence_text="王五负责商务和回款。款项尚未到账。",
+            dedupe_key=f"{provenance_type}:duty",
+        )
+        field = (
+            "responsibility_evidence"
+            if position == "responsibility"
+            else "basis_evidence"
+        )
+        suggestion = suggestion.model_copy(
+            update={
+                field: [
+                    SourceCitation(
+                        signal_id=signal_id,
+                        source_ref="provenance:duty",
+                        source_excerpt="王五负责商务和回款",
+                    )
+                ]
+            }
+        )
+    before = counts(store)
+    command = commands.RecordTaskSuggestion(
+        title="核实回款",
+        signal=signal,
+        suggestion=suggestion,
+        project_anchor_id=anchor_id,
+    )
+    with store.business_task_transaction() as db:
+        with pytest.raises(ValueError, match="observed"):
+            TaskSemanticService(store).record_suggestion(command, _db=db)
+        assert counts_in_transaction(db) == before
+
+
 def test_legacy_task_columns_upgrade_preserves_truth_and_raw_history(project):
     store, _, signal, _ = project
     result = TaskSemanticService(store).record_candidate(
@@ -361,6 +412,19 @@ def test_legacy_task_columns_upgrade_preserves_truth_and_raw_history(project):
         db.execute(
             "update service_state set value='2026-10-04.2' where key='store_schema_version'"
         )
+    # A real service upgrade restarts its process; do not let this process's
+    # initialized-path cache bypass the migration being tested.
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from pathlib import Path; from app.store import AutoReplyStore; AutoReplyStore(Path(sys.argv[1]))",
+            str(store.path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     upgraded = AutoReplyStore(store.path)
     current = upgraded.get_business_task(result.task_id).model_dump(mode="json")
     assert current.pop("origin") == "source"
@@ -371,6 +435,15 @@ def test_legacy_task_columns_upgrade_preserves_truth_and_raw_history(project):
     assert current_formal.pop("suggestion_json") == "{}"
     assert current_formal == original_formal
     with upgraded._connect() as db:
+        assert {"origin", "suggestion_json"}.issubset(
+            {row["name"] for row in db.execute("pragma table_info(business_tasks)")}
+        )
+        assert (
+            db.execute(
+                "select value from service_state where key='store_schema_version'"
+            ).fetchone()[0]
+            == "2026-10-04.3"
+        )
         assert [
             tuple(row)
             for row in db.execute("select * from business_task_events order by id")

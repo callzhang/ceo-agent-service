@@ -4,6 +4,11 @@ import hashlib
 import json
 
 
+def source_is_observed(source_type: str) -> bool:
+    """Provenance quotations are not observations of their referenced original."""
+    return source_type not in {"memory_provenance", "session_provenance"}
+
+
 def source_contains_quote(raw: str, quote: str) -> bool:
     """Check raw text or one decoded string inside a structured source body."""
     if not quote.strip():

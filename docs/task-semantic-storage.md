@@ -128,6 +128,8 @@ Signal ID, its exact source reference, and an excerpt contained in that Signal's
 immutable source body or in one decoded string leaf of a structured JSON body.
 Validation never joins separate JSON fields to make a quote. Project context persistence rejects missing Signals,
 unresolved citations, or altered references/quotes before writing either table.
+`memory_provenance` and `session_provenance` quotation records are not observed
+originals and cannot become Project evidence or context proof.
 It does not derive an owner or a role from a Task.
 
 Applying structurally identical JSON does not create another revision (object
@@ -151,6 +153,10 @@ observed Signal IDs with matching references and faithful raw/decoded quotes;
 the Agent's reason is never stored as observed source text. A suggested person
 requires responsibility proof, which may predate the new source and support a
 person not named in that new source.
+Both discovery and cited responsibility/basis Signals must be observations,
+not `memory_provenance`/`session_provenance` quotations. This reuses the existing
+original-source distinction; no new tool permission or semantic classifier is
+introduced.
 
 An explicit existing suggestion ID updates only its actual changed title,
 description or suggestion data; unchanged repetition writes no new event.

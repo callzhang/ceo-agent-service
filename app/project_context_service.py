@@ -7,7 +7,7 @@ import sqlite3
 
 from app.store import AutoReplyStore
 from app.task_semantic_models import ProjectContext, SourceCitation
-from app.task_source_documents import source_contains_quote
+from app.task_source_documents import source_contains_quote, source_is_observed
 
 
 def context_changed(previous_json: str | None, current_json: str) -> bool:
@@ -39,13 +39,15 @@ class ProjectContextService:
     @staticmethod
     def _require_signal(signal_id: int, db: sqlite3.Connection) -> sqlite3.Row:
         row = db.execute(
-            "select signal.source_ref, document.body as evidence_text "
+            "select signal.source_ref, signal.source_type, document.body as evidence_text "
             "from business_task_signals signal "
             "join business_source_documents document on document.id=signal.source_document_id "
             "where signal.id=?", (signal_id,)
         ).fetchone()
         if row is None:
             raise ValueError(f"evidence signal {signal_id} does not exist")
+        if not source_is_observed(row["source_type"]):
+            raise ValueError("Project evidence requires an observed original source")
         return row
 
     def apply(
