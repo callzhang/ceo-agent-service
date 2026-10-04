@@ -1,5 +1,9 @@
 # 多来源项目关注第一版验收
 
+当前冻结da368453dfd1914dd2052a75406cc4a3e10a5707：成员修复及整合的最终规格/质量复审均PASS，质量另独立2 focused passed/2.30秒。主Agent整合后14文件1234 passed/175.15秒，CLI22 passed/256 deselected/4.67秒，Ruff/五imports/diff通过；最新实际Agent prompt断言下multisource全文件151 passed/27.66秒；前端两页22 passed/1.16秒及TypeScript/Vite构建通过。CI Skill SHA256=c8c66dfbce241764c99dbb366c3600f7ef1498cac748f8c7170990687ac1f0f7。原19fixtures哈希未变，新独立成员fixture哈希9e5779976dbb229f94817c4dbd18b6f2a4d89d2ca964a2704108663e65cbf7fe。
+
+新冻结原生批次已启动（父PID3640，观察session44009，2026-10-04）：先由immutable baseline备份为w39-real-final-da368453.sqlite3并quick_check，再真实input27465连续两次、比对九领域表；然后原19加新增成员case共20独立案例/22次固定回放（两个已有卡case各重复两次）。代码/Skill、原始事实/expected/oracle、native路由gpt-5.6-luna、900秒总时限/300秒idle/并发1固定；expected只在实际完成后的只读readback核验中使用，不进入Agent输入。当前仅启动/准备副本，不宣称任何新native或业务PASS。父进程遇到失败会保留原始DB/attempt并停止，不自动重跑或改写结果；旧观察句柄过期须先检查实际进程及保存run，不能因此重启。保留46批次与W39重复失败为阶段历史。尚无push/PR/部署/全局Skill发布/生产变更。
+
 最新冻结46fa2ed6c0f63915335564a290bd08cff4a85db8批次已结束：原19个独立案例全部通过、20次Task回放完成。CI Skill SHA256=d371dce523c06eab8430e1025177c48695e1f998306b217b9b6902e7bd79352e，原固定事实、oracle、pinned baseline及模型/路由/900秒总时限/300秒idle/并发1未变。父进程的旧观察句柄已不存在，当前无该回放进程；主Agent据19份实际数据库重新运行只读oracle，核验全部保存决定、receipt和引用，不把句柄缺失当业务失败或重启批次。
 
 机械与原文业务审阅分别完成：无字段变化的会议风险实际应用；聊天历史比较保存当前null-ID引用和历史Signal1原文，两源时间各自正确；两种模糊风险明确insufficient_evidence，正常交付/验收/付款为有事实支持的not_needed，均无卡；未知Project无正式Project/卡，无行动来源无Task/卡；同一Project两个真实Task共用单卡和两成员。合成W39的中汽创智、岚图两卡证明成立，但不是实际输入27465。
