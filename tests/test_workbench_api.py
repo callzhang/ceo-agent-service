@@ -1195,16 +1195,30 @@ def test_artifact_download_streams_opened_descriptor_across_path_swap(
         )
 
     opened_fd = []
+    closed_artifacts = []
     original_open = workbench_api_module._open_artifact_fd
+
+    class TrackedArtifactOs:
+        def __getattr__(self, name):
+            return getattr(os, name)
+
+        def close(self, fd):
+            metadata = os.fstat(fd)
+            os.close(fd)
+            identity = (fd, metadata.st_dev, metadata.st_ino)
+            if identity in opened_fd:
+                closed_artifacts.append(identity)
 
     def open_then_swap(path, roots):
         result = original_open(path, roots)
-        opened_fd.append(result.fd)
+        metadata = os.fstat(result.fd)
+        opened_fd.append((result.fd, metadata.st_dev, metadata.st_ino))
         artifact_path.unlink()
         artifact_path.symlink_to(outside)
         return result
 
     monkeypatch.setattr(workbench_api_module, "_open_artifact_fd", open_then_swap)
+    monkeypatch.setattr(workbench_api_module, "os", TrackedArtifactOs())
     with _client(tmp_path) as client:
         response = client.get(
             f"/api/workbench/tasks/{task.id}/turns/{turn.id}/artifacts/{artifact_id}/download"
@@ -1213,8 +1227,33 @@ def test_artifact_download_streams_opened_descriptor_across_path_swap(
     assert response.status_code == 200
     assert response.text == "original"
     assert "outside-secret" not in response.text
-    with pytest.raises(OSError):
-        os.fstat(opened_fd[0])
+    assert closed_artifacts == opened_fd, "original artifact descriptor was not closed"
+
+
+def test_artifact_download_regression_detects_missing_stream_close(tmp_path, monkeypatch):
+    original_open = workbench_api_module._open_artifact_fd
+    opened = []
+
+    def capture_open(path, roots):
+        result = original_open(path, roots)
+        opened.append(result.fd)
+        return result
+
+    def leaking_chunks(fd, *, chunk_size=64 * 1024):
+        while chunk := os.read(fd, chunk_size):
+            yield chunk
+
+    monkeypatch.setattr(workbench_api_module, "_open_artifact_fd", capture_open)
+    monkeypatch.setattr(workbench_api_module, "_artifact_chunks", leaking_chunks)
+    try:
+        with pytest.raises(AssertionError, match="original artifact descriptor was not closed"):
+            test_artifact_download_streams_opened_descriptor_across_path_swap(tmp_path, monkeypatch)
+    finally:
+        for fd in opened:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def test_public_event_projection_preserves_nested_local_evidence(

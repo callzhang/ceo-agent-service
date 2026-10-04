@@ -345,6 +345,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_meeting_alignment_runs_active_job",
     "idx_weekly_okr_analysis_jobs_identity",
     "idx_wechat_memory_import_jobs_status",
+    "idx_wechat_deliveries_task_generation",
     "idx_workbench_events_turn_id_id",
     "idx_workbench_artifacts_turn_created_id",
     "idx_workbench_turns_task_created_id",
@@ -4547,6 +4548,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "create index idx_wechat_deliveries_status "
                     "on wechat_deliveries(status, id)"
                 )
+            db.execute(
+                "create index if not exists idx_wechat_deliveries_task_generation "
+                "on wechat_deliveries(reply_task_id, execution_generation, id)"
+            )
             # The guard-replacement helpers below deliberately open their own
             # BEGIN IMMEDIATE transactions. Finish any legacy table/column DDL
             # first; SQLite does not support nested write transactions.

@@ -24,7 +24,8 @@ def project_attempt_status(
     task_status = str(getattr(task, "status", "") or "").strip()
     generation = str(getattr(task, "execution_generation", "") or "").strip()
     if (
-        str(getattr(attempt, "channel", "") or "") == "wechat"
+        fallback == "failed"
+        and str(getattr(attempt, "channel", "") or "") == "wechat"
         and delivery is not None
         and int(getattr(delivery, "task_id", 0) or 0) == int(task.id)
         and str(getattr(delivery, "execution_generation", "") or "") == generation

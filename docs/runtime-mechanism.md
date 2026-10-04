@@ -11,6 +11,11 @@
 不将其降级为通用可重试失败或改成 `needs_human`。恢复必须先取得知情授权或形成实质更安全的
 候选，再按原业务身份经过正式审核、外部回检及投递流程；不得换工具绕过拒绝。
 
+失败 Reply task 的 Attention 保留当前执行代最新 run 的原始诊断：优先 `source_code`，
+否则 `code`，并展示来源及「Agent 说明」`reported_summary`。因此已保存的
+`provider_risk_rejected` 不会只剩通用 `agent_reported_failure`；这些诊断不是外部效果证明。
+旧代或无法解析的诊断不替换任务错误；读取不修改状态或恢复边界。
+
 Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
 候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
@@ -39,6 +44,11 @@ Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 propo
 workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime attempt、失败切换和 CLI
 原生 `auto_review`；页面不启动自己的 Codex runtime，也不定义独立审批策略。
 旧版确认记录只读，不能从页面或 API 恢复执行。
+
+Workbench 下载的路径替换回归以打开时的文件身份和实际成功关闭事件验证描述符生命周期，
+不在请求结束后用数字描述符是否可 `fstat` 判断泄漏；数字描述符可能已被并发线程复用。
+测试只替换 API 模块的 OS 访问代理，不修改共享 `os` 模块；遗漏流关闭的负向回归必须失败，
+且仍须验证路径被替换为符号链接后只返回原文件，不返回链接目标的内容。
 
 模型路由的名字：只有 `codex_oauth`、`claude_oauth`、`friday_runtime` 三条内置路由名字固定；其余
 路由（含名为 `codex_api`、`claude_api` 的）都是添加的线路，由 `CEO_RUNTIME_<名字>_*` 描述、可改名，
@@ -842,6 +852,17 @@ History 也显示定时触发（Derek 2026-09-25，类型「定时命令」/「�
 被跳过的触发，以及结果不交给 Agent 的服务命令（听记同步、听记权限申请、OKR 周报）的每次成功运行；把结果交给
 Agent 的生产命令成功时不进 History，它们排入的每一项各自是一条 History。邮件 provider 动作同样进 History
 （类型「邮件动作」），失败口径与 Attention 相同。
+
+微信 History 的任务完成与消息投递分别投影：同一任务、会话和当前执行代的最新投递为
+`failed` 或 `send_unknown` 时，失败 Attempt 继续在列表筛选、详情、状态计数和图表中显示
+`failed`，不能被候选任务的 `done` 掩盖。旧代、其他会话和已有后续成功投递的失败不覆盖
+当前状态；旧 pending Attempt 对应已完成任务仍显示 `done`。这些读取不改写历史记录或投递
+状态，也不派发重试。
+该投递优先规则只覆盖物理 `send_status=failed` 的 Attempt；非失败历史行继续按原任务投影，
+列表、详情、队列计数和图表不得各用不同的覆盖条件。
+最新投递按 `(reply_task_id, execution_generation, id)` 非唯一覆盖索引关联，避免对每条失败
+Attempt 重扫全部微信投递历史。结构哨兵要求该索引存在，初始化在旧投递表重建后补齐；
+只补索引，不改写回执、失败或发送状态。生产升级先完成并验证 SQLite 备份。
 听记权限扫描在打开后台后显式查询最近 30 天至次日的历史记录；后台默认只筛当天，
 空表不能直接归因为账号缺少管理权限。申请按持久化的 `requested_ids` 去重，
 只有听记页面读回已申请状态才计为成功。

@@ -237,6 +237,11 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
    read-only 分类、receipt 格式或所谓“未知效果”推断业务是否完成。
 5. Attention、Workers 和质量门只统计 current projection；History 才展示旧 task、旧 run 和原始失败。
 
+失败 Reply task 的 Attention 诊断读取该任务当前执行代的最新 run，展示原始 `source_code`
+（没有时使用 `code`）、来源与明确标注为「Agent 说明」的 `reported_summary`。旧代或无法
+解析的诊断不替换任务自己的错误。展示这些字段不证明外部操作已执行，不改变拒绝、重试、
+人工决定或任务状态。
+
 如果同一业务对象的 History 出现多个旧 task，模式迁移可以重建 `business_object_tasks` 的当前映射，
 但不得删除旧输入、run、session、tool event、provider 结果或错误事件。当前投影修正不能被解释为
 “历史从未失败过”。
@@ -587,6 +592,10 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
   其余渠道链到 `/workers`（Derek 2026-09-27：点开原来一律落到 Status 页，看起来像详情坏了）。
 - History 在页面可见时每十秒读取当前快照；已经进入终态的队列任务不得因页面保持打开而继续
   显示为 `processing`。
+- 微信候选任务的 `done` 不证明消息已投递。同一任务、会话和当前执行代的最新投递为
+  `failed` 或 `send_unknown` 时，失败 Attempt 在 History 筛选、详情、状态计数和图表中仍为
+  `failed`；旧代、其他会话或已被后续成功投递取代的失败不覆盖当前任务状态。读取投影不改写
+  Attempt、任务或投递台账，也不触发重新发送。
 - 24 小时图表统计的是该小时内发生的历史事件，不是当前队列的状态计数。重试和执行开始须以
   独立事件标签呈现，不能使用 `processing` 改写旧失败记录；实时 `processing` 只由当前队列
   列表和状态页统计。
