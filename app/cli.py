@@ -1716,6 +1716,31 @@ def _process_claimed_work_summary_input(
     dws=None,
     session_lease: TaskAgentSessionLease | None = None,
 ) -> bool:
+    if session_lease is not None or work_input.source_type in RETIRED_COMPLETION_SOURCE_TYPES:
+        return _process_claimed_work_summary_input_in_session(
+            store, runner, work_input, dws=dws, session_lease=session_lease
+        )
+    lease = TaskAgentSessionLease.try_acquire(store)
+    if lease is None:
+        store.schedule_work_summary_input_retry(
+            work_input.id, "Task Agent shared session is owned by another worker",
+            available_at=_work_summary_retry_available_at(work_input.attempts),
+        )
+        return False
+    with lease:
+        return _process_claimed_work_summary_input_in_session(
+            store, runner, work_input, dws=dws, session_lease=lease
+        )
+
+
+def _process_claimed_work_summary_input_in_session(
+    store,
+    runner,
+    work_input,
+    *,
+    dws=None,
+    session_lease: TaskAgentSessionLease | None = None,
+) -> bool:
     capacity_recovery_active = store.codex_capacity_failure_count() > 0
     try:
         if session_lease is not None:

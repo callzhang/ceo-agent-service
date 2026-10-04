@@ -682,6 +682,10 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
         owner_pid = os.getpid() if owner_pid is None else owner_pid
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
+        ready_at = (
+            "max(datetime(job.eligible_at), "
+            "coalesce(datetime(nullif(job.available_at,'')), datetime(job.eligible_at)))"
+        )
         with self.store._immediate_write_transaction() as db:
 
             def fetch_page(after: sqlite3.Row | None, limit: int):
@@ -695,15 +699,15 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 ]
                 if after is not None:
                     keyset = (
-                        "and (datetime(job.eligible_at)>datetime(?) or "
-                        "(datetime(job.eligible_at)=datetime(?) and job.id>?)) "
+                        f"and ({ready_at}>datetime(?) or "
+                        f"({ready_at}=datetime(?) and job.id>?)) "
                     )
                     params.extend(
-                        [after["eligible_at"], after["eligible_at"], after["id"]]
+                        [after["ready_at"], after["ready_at"], after["id"]]
                     )
                 params.append(limit)
                 return db.execute(
-                    "select job.*, claim.owner as claim_owner, "
+                    f"select job.*, {ready_at} as ready_at, claim.owner as claim_owner, "
                     "claim.generation as claim_generation, "
                     "claim.owner_pid as claim_owner_pid, "
                     "claim.lease_expires_at as claim_expires_at "
@@ -719,7 +723,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                     "or (job.status='processing' and claim.owner<>'' "
                     "and claim.lease_expires_at<=?)) "
                     + keyset
-                    + "order by datetime(job.eligible_at), job.id limit ?",
+                    + f"order by {ready_at}, job.id limit ?",
                     params,
                 ).fetchall()
 

@@ -182,6 +182,19 @@ pending recovery 排除，ask-back 不计 `needs_human`。
 
 ## 审核反馈闭环
 
+Audit 的结果修正轮不会撤销先前 provider 已接受的外部动作。执行证据校验读取当前轮与
+同一任务代次、同一 Consumer parent、同一 proposal revision、同一非空 operation_id 的
+先前终态 Audit 轮的持久化工具事件。不同候选、operation、代次以及后续轮次的回执不得
+借用；纯读取和模型自报仍不证明写入。这样首轮完成外部写入但返回无效 JSON 时，后续
+只修正结果的轮次可以验证原回执，不会因当前轮没有再次写入而误报失败或诱发重复发送。
+
+已耗尽结果修正轮的 `codex_result_invalid` 可通过
+`reconcile_failed_audit_with_verified_delivery(task_id, run_id)` 正式恢复：先验证原候选全部
+外部动作的执行证据，再核对同代次、同 parent/revision/operation 的服务发送回执为 `sent`，
+且回执 action key 精确匹配原候选。事务补齐总动作台账并以最新 run 和代次守卫收口任务；
+历史失败 run 保留，不重新执行外部动作。微信成功投递的历史对账也覆盖同一任务较早代次的
+明确 pre-action failure；可能已执行的失败不自动覆盖。
+
 ```text
 执行 Agent 生成 run R0
   -> 审核 Agent 审核 R0
@@ -1330,6 +1343,20 @@ Derek 2026-09-25。候选只是没确认的猜测，所以可以在控制台“�
 - 系统错误码目录：[`docs/error-catalog.md`](error-catalog.md)
 ### Production deployment lifecycle
 
+SQLite immediate-write retries apply only before the transaction body starts.
+Once the body starts, a lock failure rolls back and propagates the original
+exception; a context manager cannot replay its caller's body. SQLite failure
+diagnostics include a bounded caller chain and thread identity, without frame
+locals, SQL parameters, or message bodies. These diagnostics identify the
+waiting operation, not the owner of a cross-process write lock.
+
+A service-command trigger with a persisted execution link has already returned
+from that command. If source terminalization was interrupted, its next consumer
+resumes terminalization under the current claim guard instead of executing the
+command or overwriting the immutable link again. The persisted execution kind
+and command must match the trigger snapshot; mismatches remain errors. This
+closes the result-persisted/source-pending crash window without replaying effects.
+
 Production deployment is serialized at both the repository and service
 boundaries. The deployer first waits for the persisted work leases to drain,
 then bootstraps no new claims by stopping the launchd service before taking a
@@ -1450,3 +1477,70 @@ erase this delivery evidence. Pending or ambiguous verification produces no
 successful History projection. This records one message's actual effect, not
 completion of the whole proposal: the task and external-action completion
 ledger still require the existing Audit lifecycle and evidence checks.
+# Email SQLite Contention Diagnostics
+
+EmailStore and AutoReplyStore report connection contexts lasting at least one second, including
+elapsed time and the caller's file, line, and function. This duration includes
+lock acquisition, the body, commit, and close; it is not by itself proof of the
+write-lock holder or transaction duration. Logs exclude SQL parameters and mail
+content. Correlate the caller with the operating system's WAL-lock owner and
+the affected run before changing transaction boundaries.
+Shared Store diagnostics retain up to eight caller frames so a context-manager
+wrapper cannot hide the business method that opened the connection.
+
+Direct provider-action claims hold BEGIN IMMEDIATE only over classifications
+with pending or failed actions, rather than materializing every processed
+classification's settled history on each poll. For each selected classification
+all sibling plan versions remain visible: an older processing action still
+blocks the current plan, dependencies and priority remain unchanged, and the
+claim update remains atomic. Fully settled groups cannot yield a claim and are
+excluded before rows are materialized. This requires no migration or replay.
+
+Legacy unsubscribe terminalization uses the same lifecycle selector as its
+inventory: only `email_unsubscribe_consumer_direct_v1`. An inventoried object
+replaced by an `email_unsubscribe_audited_v2` task must remain untouched, even
+when its task ID, generation, and pending status otherwise match. The mutation
+checks the lifecycle again under its write transaction.
+# Task Evidence Repair And Retired Anchors
+
+Meeting claims order attempts by the later of `eligible_at` and `available_at`,
+with the job ID as the tie-breaker. A due retry is not ordered by the meeting's
+original date: otherwise an old external dependency failure can repeatedly
+occupy the single meeting consumer and starve pending meetings. The dispatcher
+keyset scan and legacy claim path use the same ordering; eligibility, lease
+ownership, and external delivery guards are unchanged.
+
+Meeting discovery may refresh a waiting recording, but once a job is queued,
+claimed, retrying, ready for delivery or terminal, discovery cannot replace its
+persisted source snapshot or participant evidence. Recovery refreshes failed
+unsent jobs through the explicit replay lifecycle. A failed roster lookup during
+rediscovery must not remove `calendar_evidence` from an already queued job.
+Recent-meeting replay uses the same ended-recording metadata contract as
+discovery, without requiring the provider status to equal the literal `ended`.
+
+Scheduled service incident reconciliation uses the numeric scheduled-task ID to
+seek the indexed run history, then verifies the exact conversation identity,
+successful command kind and later dispatch time. It must not scan all dispatched
+runs once per unresolved error while holding a SQLite writer transaction.
+
+Task Agent validates formal creation and candidate promotion owner citations
+before entering its atomic domain transaction. A repairable evidence error is
+returned to the same Task session and run with the rejected candidate and
+original context, for at most two correction rounds. No domain changes are
+committed before validation succeeds. Exhaustion retains a real failed run and
+uses the existing work-summary retry policy; it never guesses an owner or
+changes a technical failure into `needs_human`. Memory-backed ownership still
+requires linked source provenance and an `episode_id`.
+
+Both Cron-dispatched Work Summary consumption and the manual
+`process-work-items` command use the same renewable Task session lease. A
+claimed item whose session is busy is returned to the retry queue before any
+Agent turn starts. Completion, exceptions and repair rounds remain inside that
+lease; serial workers inside one dispatcher do not substitute for cross-process
+session ownership.
+
+An inactive `task-agent-project` anchor is a retained retirement decision.
+Weekly-report registry rows and Agent Project proposals must not reactivate it
+implicitly. The source-backed Task is saved independently, without a Project
+link to that retired anchor, and the run records why the Project was not applied.
+The general anchor registration conflict checks remain unchanged.

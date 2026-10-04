@@ -884,6 +884,18 @@ MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR = (
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 
 
+def _sqlite_caller_chain(frame) -> str:
+    callers = []
+    for _ in range(8):
+        callers.append(
+            f"{Path(frame.f_code.co_filename).name}:{frame.f_lineno}:{frame.f_code.co_name}"
+        )
+        frame = frame.f_back
+        if frame is None:
+            break
+    return " <- ".join(callers)
+
+
 def _name_sqlite_extended_error(path: Path, error: sqlite3.Error) -> None:
     """Name the SQLite extended result code on a failure's way out.
 
@@ -896,9 +908,10 @@ def _name_sqlite_extended_error(path: Path, error: sqlite3.Error) -> None:
     name = getattr(error, "sqlite_errorname", "")
     if not name:
         return
+    callers = _sqlite_caller_chain(sys._getframe(1))
     print(
         f"sqlite {name} code={getattr(error, 'sqlite_errorcode', '')} "
-        f"path={path}: {error}",
+        f"path={path} thread={threading.get_ident()} callers={callers}: {error}",
         file=sys.stderr,
         flush=True,
     )
@@ -2457,6 +2470,7 @@ class AutoReplyStore:
             yield snapshot
             return
         connection = self._open_connection()
+        started_at = time.monotonic()
         try:
             with connection:
                 yield connection
@@ -2465,6 +2479,14 @@ class AutoReplyStore:
             raise
         finally:
             connection.close()
+            elapsed = time.monotonic() - started_at
+            if elapsed >= 1.0:
+                print(
+                    f"slow sqlite context elapsed_seconds={elapsed:.3f} "
+                    f"callers={_sqlite_caller_chain(sys._getframe(2))}",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
     @contextmanager
     def _optional_connection(
@@ -2479,6 +2501,7 @@ class AutoReplyStore:
     @contextmanager
     def _immediate_write_transaction(self) -> Iterator[sqlite3.Connection]:
         """Acquire a short SQLite write transaction with bounded lock retry."""
+        body_started = False
         for attempt in range(STORE_WRITE_LOCK_RETRY_ATTEMPTS):
             try:
                 with self._connect() as db:
@@ -2494,11 +2517,13 @@ class AutoReplyStore:
                             STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1)
                         )
                         continue
+                    body_started = True
                     yield db
                     return
             except sqlite3.OperationalError as exc:
                 if (
-                    not _is_sqlite_lock_error(exc)
+                    body_started
+                    or not _is_sqlite_lock_error(exc)
                     or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
                 ):
                     raise
@@ -14572,10 +14597,7 @@ class AutoReplyStore:
                               '$.lifecycle_version'
                           )
                           else null
-                      end in (
-                          'email_unsubscribe_consumer_direct_v1',
-                          'email_unsubscribe_audited_v2'
-                      )
+                      end='email_unsubscribe_consumer_direct_v1'
                 """,
                 (task_id, expected_execution_generation, expected_status),
             )
@@ -16605,7 +16627,8 @@ class AutoReplyStore:
         """
         sent = db.execute(
             """
-            select account_id, target_type, target_id, conversation_id, reply_task_id
+            select account_id, target_type, target_id, conversation_id, reply_task_id,
+                   execution_generation
             from wechat_deliveries
             where id=? and status='sent'
             """,
@@ -16621,7 +16644,9 @@ class AutoReplyStore:
               and target_type=?
               and target_id=?
               and conversation_id=?
-              and reply_task_id < ?
+              and (reply_task_id < ? or (
+                  reply_task_id=? and id < ? and execution_generation<>?
+              ))
               and status='failed'
               and pre_action_failure=1
             """,
@@ -16631,6 +16656,9 @@ class AutoReplyStore:
                 sent["target_id"],
                 sent["conversation_id"],
                 sent["reply_task_id"],
+                sent["reply_task_id"],
+                sent_delivery_id,
+                sent["execution_generation"],
             ),
         ).fetchall()
         error = f"superseded_by_newer_wechat_delivery:{sent_delivery_id}"
@@ -17107,6 +17135,7 @@ class AutoReplyStore:
                         else meeting_alignment_jobs.status
                     end,
                     updated_at=current_timestamp
+                where meeting_alignment_jobs.status='waiting'
                 """,
                 (
                     meeting_id,
@@ -17845,7 +17874,8 @@ class AutoReplyStore:
                           available_at=''
                           or datetime(available_at) <= datetime(?)
                       )
-                    order by datetime(eligible_at), id
+                    order by max(datetime(eligible_at),
+                        coalesce(datetime(nullif(available_at,'')), datetime(eligible_at))), id
                     limit ?
                 )
                 update meeting_alignment_jobs
@@ -17860,7 +17890,11 @@ class AutoReplyStore:
                 (now, now, limit),
             ).fetchall()
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
-            return sorted(jobs, key=lambda job: (job.eligible_at, job.id))
+            return sorted(jobs, key=lambda job: (
+                max(self._parse_stored_timestamp(job.eligible_at),
+                    self._parse_stored_timestamp(job.available_at or job.eligible_at)),
+                job.id,
+            ))
 
     def update_meeting_alignment_job(self, job_id: int, **values: object) -> None:
         if not values:
@@ -20327,6 +20361,89 @@ class AutoReplyStore:
                 (send_run.reply_task_id,),
             )
             return SentReply.model_validate(dict(sent))
+
+    def reconcile_failed_audit_with_verified_delivery(self, task_id: int, run_id: int) -> bool:
+        """Recover result-format failure after every proposed effect was accepted."""
+        from app.dingtalk_send_evidence import DingTalkSendEvidenceDriver
+        from app.business_identity import external_action_key
+
+        task = self.get_reply_task(task_id)
+        run = self.get_agent_run(run_id)
+        if (
+            task is None or run is None or task.status != "failed"
+            or task.error != "codex_result_invalid"
+            or run.role is not AgentRole.AUDIT or run.status != "failed"
+            or run.reply_task_id != task_id
+            or run.execution_generation != task.execution_generation
+            or not run.operation_id or run.parent_agent_run_id is None
+        ):
+            raise ValueError("not a failed result-format Audit on the current task")
+        # Metadata discovery and evidence classification must not hold a writer lock.
+        if not DingTalkSendEvidenceDriver(self).audit_run_has_execution_evidence(
+            task, audit_run_id=run_id,
+        ):
+            raise ValueError("not all proposed effects have execution evidence")
+        consumer = self.get_agent_run(run.parent_agent_run_id) if run.parent_agent_run_id else None
+        if consumer is None or consumer.role is not AgentRole.CONSUMER or consumer.status != "completed":
+            raise ValueError("accepted Consumer proposal is unavailable")
+        actions = json.loads(consumer.final_result_json)["proposal"]["actions"]
+        expected = {
+            external_action_key(
+                business_object_key=task.business_object_key,
+                action_identity=action["action_identity"], operation=action["operation"],
+                target_identifiers=action["target"],
+            ): action for action in actions
+        }
+        with self._immediate_write_transaction() as db:
+            receipt = db.execute(
+                """
+                select replies.* from sent_replies replies
+                join agent_runs sender on sender.id=replies.agent_run_id
+                where sender.reply_task_id=? and sender.execution_generation=?
+                  and sender.role='audit' and sender.id<=?
+                  and sender.parent_agent_run_id is ?
+                  and sender.proposal_revision=? and sender.operation_id=?
+                  and trim(replies.external_action_key)<>''
+                  and json_valid(replies.send_result_json)
+                  and json_extract(replies.send_result_json, '$.verification.state')='sent'
+                """,
+                (task_id, run.execution_generation, run_id, run.parent_agent_run_id,
+                 run.proposal_revision, run.operation_id),
+            ).fetchall()
+            matched = [row for row in receipt if row["external_action_key"] in expected]
+            if not matched:
+                raise ValueError("current reviewed operation has no verified send receipt")
+            for row in matched:
+                action = expected[row["external_action_key"]]
+                db.execute(
+                    """
+                    insert or ignore into external_action_results (
+                        external_action_key, business_object_key, action_identity,
+                        operation, target_identifiers_json, provider_result_json,
+                        result_digest, first_agent_run_id
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (row["external_action_key"], task.business_object_key,
+                     action["action_identity"], action["operation"],
+                     _json_object_text(action["target"], field="target_identifiers"),
+                     row["send_result_json"], _canonical_json_sha256(json.loads(row["send_result_json"])),
+                     row["agent_run_id"]),
+                )
+            cursor = db.execute(
+                """
+                update reply_tasks set status='done', error='', available_at='',
+                    locked_at=null, updated_at=current_timestamp
+                where id=? and status='failed' and error='codex_result_invalid'
+                  and execution_generation=? and ?=(
+                    select max(id) from agent_runs where reply_task_id=?
+                      and execution_generation=?
+                  )
+                """,
+                (task_id, run.execution_generation, run_id, task_id, run.execution_generation),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"failed Audit superseded: {run_id}")
+            return True
 
     def reconcile_failed_reply_tasks_with_recorded_deliveries(self) -> int:
         """Close failed tasks whose completed provider action is in the ledger.
@@ -30001,7 +30118,11 @@ class AutoReplyStore:
                   and exists (
                       select 1
                       from scheduled_task_runs as run
-                      where error_event.conversation_id =
+                      where run.scheduled_task_id=cast(
+                            substr(error_event.conversation_id, length('scheduled-task:') + 1)
+                            as integer
+                        )
+                        and error_event.conversation_id =
                             'scheduled-task:' || cast(run.scheduled_task_id as text)
                         and run.dispatch_status='dispatched'
                         and run.execution_kind='service_command'

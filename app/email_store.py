@@ -14,11 +14,14 @@ from email.message import Message
 from email.parser import Parser
 from hashlib import sha256
 import json
+import logging
 import math
 import re
 import sqlite3
+import sys
 from pathlib import Path
 from types import MappingProxyType
+from time import monotonic
 from typing import Any, ClassVar
 from urllib.parse import unquote, unquote_plus, urlsplit
 from uuid import uuid4
@@ -2855,11 +2858,23 @@ class EmailStore:
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         db = self._open_connection()
+        started_at = monotonic()
         try:
             with db:
                 yield db
         finally:
             db.close()
+            elapsed = monotonic() - started_at
+            if elapsed >= 1.0:
+                caller = sys._getframe(2)
+                logging.getLogger(__name__).warning(
+                    "slow email sqlite context elapsed_seconds=%.3f caller=%s:%s:%s",
+                    elapsed,
+                    Path(caller.f_code.co_filename).name,
+                    caller.f_lineno,
+                    caller.f_code.co_name,
+                )
+                del caller
 
     def list_nonterminal_legacy_unsubscribe_task_attempts(
         self,
@@ -15953,6 +15968,10 @@ class EmailStore:
                 join email_classifications as c on c.id=a.classification_id
                 join email_action_plans as p on p.action_plan_id=a.action_plan_id
                 where c.status='processed'
+                  and a.classification_id in (
+                      select classification_id from email_actions
+                      where status in ('pending', 'failed')
+                  )
                 """
             ).fetchall()
             if not rows:
