@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-04: Attempt processing steps distinguish the Agent run's business
+  status from its runtime call status. A returned model call no longer displays
+  a failed Audit run as a completed business step. Both original statuses are
+  preserved; Audit decisions and recovery eligibility remain unchanged.
+
 - 2026-10-04: History detail initializes EmailStore only for an existing email
   Attempt. Non-email and missing records no longer trigger full email-history
   validation. Email context and unsubscribe receipts remain fresh per request,

@@ -419,6 +419,10 @@ DingTalk 日程卡片改期可能原地覆盖卡片内容而不产生新消息 I
 通过 run 的 task、generation 和关联事件查询。Attempt 页面可以切换多个 Consumer
 或 Audit run，但不能编辑或覆盖旧 run。原始失败、session、runtime attempt、tool
 event 和 provider 结果仍然作为 append-only 事实保留。
+Attempt 详情的每条 runtime 记录分别提供 `status`（运行时调用状态）和 `run_status`
+（所属 Agent run 的业务运行状态），页面分别标注两者。模型调用返回 `completed` 不代表
+业务审核通过、外部动作成功或业务 run 完成；业务 run 仍可能是 `failed` 或 `running`。
+此处只投影已有状态，不改写历史记录、Audit 决策或恢复资格。
 Workers 的当前 attempt 队列统计会排除 `agent_run_id` 指向旧 execution generation
 的记录，即使同一业务对象更新了 trigger message；旧 attempt 仍可在历史详情中查看。
 
