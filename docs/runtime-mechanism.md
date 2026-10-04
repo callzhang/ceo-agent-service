@@ -377,7 +377,7 @@ Task 确认关联规范 anchor 并派生 relevant，candidate stage 不因此提
 `business_project_candidates`，不会直接注册正式 Project。控制台确认只从 cluster 的已有
 Task evidence 选择来源信号，不凭空制造证据；事务会同时把 cluster 中的 Task 关联到 Project，
 重复确认保持幂等，不能把已确认 candidate 改绑到另一个 Project。
-正式 Project 的列表和详情从已关联 Task 的最新权威周报 signal 生成只读摘要：负责人/负责内容、目标、DDL 或统计周期、当前状态、报告标题/周期、原文摘录、来源链接，以及进行中/已完成 Task 数量；没有可解析的周报字段时保留现有登记来源和关联 Task 数，不用普通聊天或孤立 Task 推断字段。
+正式 Project 的独立当前上下文从 `business_project_context_revisions` 最新完整快照读取，历史快照保持追加可读；`business_project_evidence` 单独保留 Project 的 Signal 证明。快照中的总负责只能是一名有来源证据的个人或未知，分工/事实也逐条带实际 Signal ID、source_ref 和原文摘录。读取不从关联 Task 的 owner 推导 Project 总负责或分工。`context=null` 只链接证明，不改上下文；显式空快照才清空分工。相同 JSON 结构不追加版本，键排序无影响；每个 citation 必须在写入前精确核验真实 Signal、ref 和摘录。本阶段 TaskSuggestion 仍只是类型化建议，未写入 Task 或外部系统。
 更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
 
 Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。每个结果显式返回无默认值的

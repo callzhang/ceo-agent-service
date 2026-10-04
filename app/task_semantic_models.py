@@ -313,6 +313,70 @@ class BusinessProject(_FrozenBusinessModel):
     title: Nonblank
     registry_source: Nonblank
     created_at: str
+    context: ProjectContext | None = Field(default=None, exclude=True)
+
+
+class SourceCitation(_FrozenBusinessModel):
+    signal_id: ReferenceId | None = None
+    source_ref: Nonblank
+    source_excerpt: Nonblank
+
+
+class ProjectResponsibility(_FrozenBusinessModel):
+    person_user_id: str = ""
+    person_name: Nonblank
+    responsibility: Nonblank
+    evidence: list[SourceCitation] = Field(min_length=1)
+
+
+class ProjectFact(_FrozenBusinessModel):
+    key: Nonblank
+    text: Nonblank
+    evidence: list[SourceCitation] = Field(min_length=1)
+    date_type: str = ""
+    date_value: str = ""
+
+    @model_validator(mode="after")
+    def validate_date_pair(self) -> ProjectFact:
+        if bool(self.date_type) != bool(self.date_value):
+            raise ValueError("project fact date type and value must both be present or empty")
+        return self
+
+
+class ProjectContext(_FrozenBusinessModel):
+    goal: str
+    scope: str
+    overall_owner: ProjectResponsibility | None
+    responsibilities: list[ProjectResponsibility]
+    facts: list[ProjectFact]
+
+
+class TaskSuggestion(_FrozenBusinessModel):
+    reason: Nonblank
+    suggested_owner_user_id: str = ""
+    suggested_owner_name: str = ""
+    responsibility_evidence: list[SourceCitation] = Field(default_factory=list)
+    basis_evidence: list[SourceCitation] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_named_person_evidence(self) -> TaskSuggestion:
+        if (self.suggested_owner_user_id or self.suggested_owner_name) and not self.responsibility_evidence:
+            raise ValueError("suggested person requires responsibility evidence")
+        return self
+
+
+class BusinessProjectContextRevision(_FrozenBusinessModel):
+    id: int
+    project_id: ReferenceId
+    context: ProjectContext
+    evidence_signal_ids: tuple[ReferenceId, ...]
+    created_at: str
+
+
+class BusinessProjectEvidence(_FrozenBusinessModel):
+    project_id: ReferenceId
+    signal_id: ReferenceId
+    created_at: str
 
 
 class BusinessProjectCandidate(_FrozenBusinessModel):

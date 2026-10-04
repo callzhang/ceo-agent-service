@@ -744,7 +744,7 @@ dedupe_key、来源元数据、Task 证据角色和历史均独立保留。正�
 引用不会与 observed 原文合并。旧库在既有 SQLite 重建事务内逐行迁移并核对原字段/正文、
 行数及外键后移除 Signal 的物理正文列；失败回滚，原 Task/event/run JSON 不改写。
 所有 Signal 读取统一 JOIN 共享正文，`BusinessTaskSignal.evidence_text` 继续返回原文，
-新库直接创建最终结构。此表示迁移的 schema 版本是 `2026-10-04.1`，不表示已经部署。
+新库直接创建最终结构。此表示迁移的 schema 版本是 `2026-10-04.2`，不表示已经部署。
 
 主 prompt、CI Skill 和字段说明把 `existing_attention_id` 定义为旧卡原始证明的声明，而不是更新目标。
 新风险使用匹配的 `attention_proposal`，现有 Project stable key 已会更新同一张卡；
@@ -780,7 +780,7 @@ Task 关联到该 Project。`project_proposal` 表示采用当前权威来源明
 不成为项目，起始换行也不能导致错读前一行。
 普通项目提及、客户/部门标签和孤立 Task 仍只形成 Project candidate，只有候选项目的明确确认命令才会升级。
 确认命令只能引用 candidate cluster 已有的来源证据，重复点击幂等，不能改绑到另一个 Project。
-控制台的正式项目列表和详情从已关联 Task 的最新权威周报证据投影负责人/负责内容、目标、DDL 或统计周期、当前状态、报告标题与周期、原文摘录和来源链接，并同时显示进行中与已完成的关联 Task 数量；这些字段是只读证据投影，不会反向推断或修改 Project 注册表。
+正式 Project 可有独立、可选的 `ProjectContext`：它以完整快照追加到版本历史，当前值只读最新版本，不在 Project 行复制可失配的 current JSON。总负责最多一人或未知；个人分工和冲突事实各自保留真实 Signal 的 ref/逐字摘录，绝不从关联 Task owner 推断。`context=null` 只补 Project↔Signal 证明，不覆盖当前快照；显式空分工快照才会清空当前分工，旧版本仍可读。相同结构 JSON 不生成新版本，字典键顺序没有业务含义。Task suggestion 只是来源支持的建议，不写实际 Task owner。本阶段不接入 Task Agent 写入或控制台投影。
 一行列出多位个人负责人时，来源证据须覆盖每个人名；钉钉 `@` 标记及名单分隔符
 不应把有效的负责人引用误判为缺失，团队或部门名称仍不能充当个人负责人。
 

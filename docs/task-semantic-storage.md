@@ -7,7 +7,7 @@ and typed-date semantic contract of the approved
 not describe a deployed Task Agent cutover. The runtime, console, providers,
 and legacy import workflow still belong to later tasks.
 
-The current source-storage schema version is `2026-10-04.1`. The original
+The current source-storage schema version is `2026-10-04.2`. The original
 semantic initialization added 16 bounded tables to a pre-semantic database
 without reclassifying, copying, or deleting legacy work records. An existing
 `2026-09-22.1` semantic database gains the
@@ -105,6 +105,35 @@ excerpt and source reference. If a source-backed reassignment changes the
 identified owner of an accepted Task, the same `owner_changed` event records
 the prior accepted state and the new `assigned_unaccepted` state. The former
 owner's acceptance does not transfer to the new owner.
+
+## Project context
+
+An official Project has optional, source-backed current context independent of
+its linked Tasks. `business_project_context_revisions` is append-only and holds
+the complete `ProjectContext` snapshot plus the exact signal IDs used by that
+revision; the latest revision is the only current context. There is no mutable
+current-context JSON on `business_projects`. `business_project_evidence` holds
+the Project-to-Signal proof relation independently, so a context-free update
+can attach new proof without overwriting responsibilities or facts.
+
+`ProjectContext` carries a goal, scope, zero or one overall owner, role
+responsibilities, and sourced facts. Each responsibility names one person and
+has a nonblank responsibility plus at least one `SourceCitation`; an unknown
+overall owner is represented by null, never by concatenating names. Conflicting
+claims remain separate sourced facts. Facts may carry a date only when both its
+date type and value are present. Every stored citation has a real persisted
+Signal ID, its exact source reference, and an excerpt contained in that Signal's
+immutable source body. Project context persistence rejects missing Signals,
+unresolved citations, or altered references/quotes before writing either table.
+It does not derive an owner or a role from a Task.
+
+Applying structurally identical JSON does not create another revision (object
+key order is not meaningful). Passing `context=null` adds only validated Project
+evidence. An explicit empty responsibility snapshot is a real later revision
+and therefore clears the current roles while preserving prior revisions. The
+separate `TaskSuggestion` model is an evidence-backed proposal only: naming a
+suggested person requires responsibility evidence, and it does not change a
+Task owner or persist Task suggestion state in this storage step.
 
 `business_task_date_evidence` holds append-only typed facts: `assigned_at`,
 `requested_deadline_at`, `external_deadline_at`, `committed_deadline_at`,

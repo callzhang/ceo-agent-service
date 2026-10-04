@@ -126,6 +126,8 @@ from app.task_semantic_models import (
     BusinessEvidenceRole,
     BusinessProject,
     BusinessProjectCandidate,
+    BusinessProjectContextRevision,
+    BusinessProjectEvidence,
     BusinessRelationStatus,
     BusinessRelationType,
     BusinessRelevance,
@@ -149,6 +151,7 @@ from app.task_semantic_models import (
     BusinessWorkClusterTask,
     CommitmentStatus,
     FormalTaskBasis,
+    ProjectContext,
 )
 from app.task_source_documents import source_document_key
 from app.wechat.models import WechatReplyScope
@@ -224,7 +227,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-04.1"
+STORE_SCHEMA_VERSION = "2026-10-04.2"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -317,6 +320,8 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "business_anchors",
     "business_task_anchor_links",
     "business_projects",
+    "business_project_context_revisions",
+    "business_project_evidence",
     "business_project_candidates",
     "business_attention_items",
     "business_attention_tasks",
@@ -393,6 +398,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_work_cluster_tasks_task",
     "idx_business_task_anchor_links_task",
     "idx_business_project_candidates_cluster",
+    "idx_business_project_context_revisions_project",
     "idx_business_attention_items_list",
     "idx_business_attention_tasks_task",
     "idx_business_attention_proposal_tasks_task",
@@ -473,6 +479,10 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "id", "canonical_anchor_id", "anchor_type", "title", "registry_source",
         "created_at",
     ),
+    "business_project_context_revisions": (
+        "id", "project_id", "context_json", "evidence_json", "created_at",
+    ),
+    "business_project_evidence": ("project_id", "signal_id", "created_at"),
     "business_project_candidates": (
         "id", "cluster_id", "title", "reason", "status", "confirmed_project_id",
         "confirmation_signal_id", "created_at",
@@ -3916,6 +3926,24 @@ class AutoReplyStore:
                     foreign key(canonical_anchor_id, anchor_type)
                         references business_anchors(id, anchor_type)
                 );
+                create table if not exists business_project_context_revisions (
+                    id integer primary key autoincrement,
+                    project_id integer not null,
+                    context_json text not null,
+                    evidence_json text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(project_id) references business_projects(id)
+                );
+                create index if not exists idx_business_project_context_revisions_project
+                    on business_project_context_revisions(project_id, id desc);
+                create table if not exists business_project_evidence (
+                    project_id integer not null,
+                    signal_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(project_id, signal_id),
+                    foreign key(project_id) references business_projects(id),
+                    foreign key(signal_id) references business_task_signals(id)
+                );
                 create table if not exists business_project_candidates (
                     id integer primary key autoincrement,
                     cluster_id integer not null,
@@ -6655,6 +6683,25 @@ class AutoReplyStore:
         return BusinessTaskEvent.model_validate(dict(row))
 
     @staticmethod
+    def _business_project_context_revision_from_row(
+        row: sqlite3.Row,
+    ) -> BusinessProjectContextRevision:
+        values = dict(row)
+        values["context"] = json.loads(values.pop("context_json"))
+        values["evidence_signal_ids"] = json.loads(values.pop("evidence_json"))
+        return BusinessProjectContextRevision.model_validate(values)
+
+    def _business_project_from_row(
+        self, row: sqlite3.Row, *, _db: sqlite3.Connection
+    ) -> BusinessProject:
+        values = dict(row)
+        context = self.get_business_project_context_in_transaction(
+            project_id=int(values["id"]), _db=_db
+        )
+        values["context"] = context
+        return BusinessProject.model_validate(values)
+
+    @staticmethod
     def _business_attention_item_from_row(row: sqlite3.Row) -> BusinessAttentionItem:
         return BusinessAttentionItem.model_validate(dict(row))
 
@@ -7297,7 +7344,7 @@ class AutoReplyStore:
                 """,
                 (task_id,),
             ).fetchall()
-            return [BusinessProject.model_validate(dict(row)) for row in rows]
+            return [self._business_project_from_row(row, _db=db) for row in rows]
 
     # Task 4 resolution primitives deliberately accept an existing transaction.
     # The resolution service owns the policy and composes these rows atomically.
@@ -7367,10 +7414,34 @@ class AutoReplyStore:
     def get_business_project_in_transaction(
         self, *, project_id: int, _db: sqlite3.Connection
     ) -> BusinessProject | None:
+        row = _db.execute("select * from business_projects where id=?", (project_id,)).fetchone()
+        return self._business_project_from_row(row, _db=_db) if row is not None else None
+
+    def get_business_project_context_in_transaction(
+        self, *, project_id: int, _db: sqlite3.Connection
+    ) -> ProjectContext | None:
         row = _db.execute(
-            "select * from business_projects where id=?", (project_id,)
+            "select context_json from business_project_context_revisions "
+            "where project_id=? order by id desc limit 1", (project_id,)
         ).fetchone()
-        return BusinessProject.model_validate(dict(row)) if row is not None else None
+        return ProjectContext.model_validate_json(str(row["context_json"])) if row else None
+
+    def list_business_project_context_revisions_in_transaction(
+        self, *, project_id: int, _db: sqlite3.Connection
+    ) -> tuple[BusinessProjectContextRevision, ...]:
+        rows = _db.execute(
+            "select * from business_project_context_revisions where project_id=? order by id desc",
+            (project_id,),
+        ).fetchall()
+        return tuple(self._business_project_context_revision_from_row(row) for row in rows)
+
+    def list_business_project_evidence_in_transaction(
+        self, *, project_id: int, _db: sqlite3.Connection
+    ) -> tuple[BusinessProjectEvidence, ...]:
+        rows = _db.execute(
+            "select * from business_project_evidence where project_id=? order by signal_id", (project_id,)
+        ).fetchall()
+        return tuple(BusinessProjectEvidence.model_validate(dict(row)) for row in rows)
 
     def derive_business_task_relevance_in_transaction(
         self, *, task_id: int, _db: sqlite3.Connection
@@ -7556,8 +7627,21 @@ class AutoReplyStore:
 
     def get_business_project(self, project_id: int) -> BusinessProject | None:
         with self._connect() as db:
-            row = db.execute("select * from business_projects where id=?", (project_id,)).fetchone()
-            return BusinessProject.model_validate(dict(row)) if row else None
+            return self.get_business_project_in_transaction(project_id=project_id, _db=db)
+
+    def get_business_project_context(self, project_id: int) -> ProjectContext | None:
+        with self._connect() as db:
+            return self.get_business_project_context_in_transaction(project_id=project_id, _db=db)
+
+    def list_business_project_context_revisions(
+        self, project_id: int
+    ) -> tuple[BusinessProjectContextRevision, ...]:
+        with self._connect() as db:
+            return self.list_business_project_context_revisions_in_transaction(project_id=project_id, _db=db)
+
+    def list_business_project_evidence(self, project_id: int) -> tuple[BusinessProjectEvidence, ...]:
+        with self._connect() as db:
+            return self.list_business_project_evidence_in_transaction(project_id=project_id, _db=db)
 
     def list_business_work_clusters(
         self, *, limit: int = 100, offset: int = 0
@@ -7646,7 +7730,7 @@ class AutoReplyStore:
                 "select * from business_projects order by id limit ? offset ?",
                 (limit if limit is not None else -1, offset),
             ).fetchall()
-            return [BusinessProject.model_validate(dict(row)) for row in rows]
+            return [self._business_project_from_row(row, _db=db) for row in rows]
 
     # Task 5 attention primitives accept an existing transaction.  The
     # projection service owns eligibility and event policy so these methods do

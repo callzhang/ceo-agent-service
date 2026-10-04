@@ -191,14 +191,19 @@ class BusinessResolutionService:
             if len(matches) > 1:
                 raise ValueError("Project identity conflict: multiple active official Projects have this exact title")
             if matches:
-                return BusinessProject.model_validate(dict(matches[0]))
+                return self.store.get_business_project_in_transaction(
+                    project_id=int(matches[0]["id"]), _db=db
+                )
             project_key = hashlib.sha256(" ".join(title.split()).casefold().encode("utf-8")).hexdigest()
             anchor_id = self.register_anchor(
                 anchor_type="project", anchor_ref=f"task-agent-project:{project_key}", title=title, _db=db,
             )
             project_id = self.register_official_project(anchor_id=anchor_id, registry_source=registry_source, _db=db)
-            row = db.execute("select * from business_projects where id=?", (project_id,)).fetchone()
-            return BusinessProject.model_validate(dict(row))
+            project = self.store.get_business_project_in_transaction(
+                project_id=project_id, _db=db
+            )
+            assert project is not None
+            return project
 
     def propose_anchor_match(
         self,
