@@ -9493,6 +9493,24 @@ def test_resolve_errors_recovered_by_wechat_reader_keeps_unrelated_errors_open(
     assert unrelated.resolved_at == ""
 
 
+def test_scheduled_service_incident_resolution_uses_task_history_index(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    statements = []
+    original_open = store._open_connection
+
+    def traced_connection():
+        db = original_open()
+        db.set_trace_callback(statements.append)
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", traced_connection)
+    store.resolve_errors_recovered_by_scheduled_service_command()
+    statement = next(sql for sql in statements if "update errors as error_event" in sql)
+    with store._connect() as db:
+        plan = [row[3] for row in db.execute("explain query plan " + statement)]
+    assert any("SEARCH run" in step and "scheduled_task_id=?" in step for step in plan), plan
+
+
 def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = store.create_scheduled_task(

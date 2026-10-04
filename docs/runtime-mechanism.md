@@ -1323,6 +1323,13 @@ claimed, retrying, ready for delivery or terminal, discovery cannot replace its
 persisted source snapshot or participant evidence. Recovery refreshes failed
 unsent jobs through the explicit replay lifecycle. A failed roster lookup during
 rediscovery must not remove `calendar_evidence` from an already queued job.
+Recent-meeting replay uses the same ended-recording metadata contract as
+discovery, without requiring the provider status to equal the literal `ended`.
+
+Scheduled service incident reconciliation uses the numeric scheduled-task ID to
+seek the indexed run history, then verifies the exact conversation identity,
+successful command kind and later dispatch time. It must not scan all dispatched
+runs once per unresolved error while holding a SQLite writer transaction.
 
 Task Agent validates formal creation and candidate promotion owner citations
 before entering its atomic domain transaction. A repairable evidence error is

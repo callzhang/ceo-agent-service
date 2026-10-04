@@ -30076,7 +30076,11 @@ class AutoReplyStore:
                   and exists (
                       select 1
                       from scheduled_task_runs as run
-                      where error_event.conversation_id =
+                      where run.scheduled_task_id=cast(
+                            substr(error_event.conversation_id, length('scheduled-task:') + 1)
+                            as integer
+                        )
+                        and error_event.conversation_id =
                             'scheduled-task:' || cast(run.scheduled_task_id as text)
                         and run.dispatch_status='dispatched'
                         and run.execution_kind='service_command'
