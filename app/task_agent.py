@@ -455,6 +455,9 @@ def build_task_agent_prompt(
         else ""
     )
     work_item_payload = work_item.model_dump(mode="json")
+    # The semantic renderer bundles current and historical source versions once.
+    # Keep trusted input metadata here, never echo its body a second time.
+    work_item_payload.pop("summary")
     scheduled_payload = work_item_payload.get("scheduled_consumer")
     if isinstance(scheduled_payload, dict):
         # Keep scheduled metadata and its specialized prompt, but do not echo
@@ -795,6 +798,9 @@ credentials, or diagnostics into business fields.
 
 Current Work Item JSON:
 {work_item_json}
+Source body: current_work_item.document_id in the semantic context below;
+read its visible_ranges. Offsets are character ranges in that exact version,
+not a claim that an omitted middle or another version was read.
 
 Current semantic Task context (rank is context, never authority):
 {candidate_prompt}
@@ -2971,7 +2977,7 @@ def process_work_item(
             session_lease.assert_owned()
         work_item = WorkItem.model_validate_json(work_input.payload_json)
         semantic_context = retrieve_task_semantic_context(store, work_item)
-        context_prompt = render_task_semantic_context(semantic_context)
+        context_prompt = render_task_semantic_context(semantic_context, work_item=work_item)
         active_run_id = store.begin_task_agent_run(work_input.id)
         memory_issue = memory_connector_config_issue()
         for repair_round in range(TASK_DECISION_REPAIR_ROUNDS + 1):
@@ -2990,7 +2996,7 @@ def process_work_item(
                 if repair_round == TASK_DECISION_REPAIR_ROUNDS:
                     raise TaskDecisionRepairExhausted(str(exc)) from exc
                 context_prompt = (
-                    render_task_semantic_context(semantic_context)
+                    render_task_semantic_context(semantic_context, work_item=work_item)
                     + "\n\nDecision validation rejected the previous candidate before any "
                     "domain writes. Correct this evidence error without inventing facts: "
                     + str(exc) + "\nPrevious candidate:\n" + _json_dumps(decision)

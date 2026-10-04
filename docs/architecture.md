@@ -805,7 +805,7 @@ Task Agent 使用一个统一的 `TaskAgentDecision` 生命周期契约：同一
 正式 Project 身份已解析时，回执的 `task_ids` 保留 assessment 支持位置本轮实际成功保存的 Task，即使该 Task 没有 confirmed Project link；这些编号表示判断的真实支持任务，不表示正式任务、已确认项目归属或 Attention 成员。未确认 Project 线索仍不携带应用 Task 身份；其当前原文引用不借用未列入该回执支持任务的 Signal，保持 null ID 和原始来源时间。Project 身份仍只按实际登记/既有对象解析，卡片成员仍只由投影消费者核验，未应用决定不产生新 Task 编号。
 
 Task 提取使用稳定的 `task-agent:work-tracking:v1` 会话范围；每个 Work Item 仍有独立 `workload_key`、run 和运行记录。会话按 runtime route 分开保存，同一路由的后续 Task Agent 输入会续接该路由的 session。`process-work-items` 在领取输入前持有共享 SQLite session lock，并在处理期间续租；锁被其他进程占用时不领取、不增加输入尝试次数。锁续租失败会在领域事务提交前终止本轮并安排输入重试。此前 run 使用的 `task:<run_id>` 会话记录保留不迁移。Agent 每轮以当前 Work Item、当前检索状态和新来源证据作判断，会话历史只作背景；Codex CLI 的 context compaction 由 Codex 原生机制管理，不是事实存储，也不替代当前来源证据。
-检索上下文中的历史 source signal 保留来源、时间、作者和上下文，但对可能包含完整会议 JSON 的 `evidence_text` 使用有界的首尾摘录；原始证据仍在数据库中，避免重复信号把单次 Agent 输入推过 provider 的输入契约。
+本分支按 Project 优先检索：正式项目的独立当前资料、分工与来源先进入上下文，再检索关联 Tasks，同一来源此前的项目/任务不因词面排名丢失。零 Task 项目仍有可读的最新 context revision、近期 Project evidence 和当前职责/事实引用的原始 Signals；总负责不从 Task owner 推导。历史正文不再逐 Signal 重复，`source_documents` 按精确来源版本提供实际可见字符区间，`source_signals` 保留真实身份/元数据并指向正文；当前 WorkItem 正文也在同一装配中仅出现一次，完整当前输入保留。历史长文沿 2048 字符预算保留首尾及关键引文，解码 JSON 引文标明单一字符串字段路径/局部偏移；范围省略及引用超预算显式可见，不能声称读取全量。来源/正文数与共享前后正文字符数在 source_metrics 中可观察；相似性仍只是检索提示，不证明项目身份或任务关联。Project 历史/证据读取有界，当前资料引用单独保留，历史事实不被摘要替代。这仍是未部署的整体发布单元，Agent 新写入契约与页面由后续步骤接入。
 若 Codex 明确报告 context compaction 自身超过模型窗口，当前 run 会在同一路由清除该 route 的共享 session 指针并用 fresh session 重试一次；若新 session 仍超限，则进入既有 runtime route fallback，不循环新建 session。其他 session 错误不触发该恢复路径。
 
 **定时完成检查已停用**（Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：定期入队路径（`enqueue_todo_completion_evidence_checks`、`check-follow-up-completions` 命令及维护循环/每日维护中的调用）已删除。Task 只在新信息到来时更新——消息、会议由各来源扫描交给 Task Agent；钉钉待办的完成由定时任务「补查遗漏的钉钉消息和日历更新」列出新完成的待办，已链接的直接关闭对应 TODO 或业务 Task（确定性，不经 Agent，证据记为 `dingtalk_todo:<taskId>`），不再逐条轮询每个链接。停用前，定时检查把每条开放 TODO 连同其快照重发给 Task Agent，16 次中 15 次一次都没检索就以自身编号为来源而失败。关闭来源上的 Task 后，Attention 成员在领域提交后更新；同一关注项中仍开放的兄弟 Task 继续保留。
@@ -821,7 +821,7 @@ Task 6 与 Task 7 已随 `46ba55eb`（2026-09-24）一起部署上线，不是�
 本分支 Task Agent 检索上下文增加 `current_project_attention`：仅取返回的正式 Project
 规范 anchor 下的当前 active 卡，数量受既有 `limit_per_kind` 约束，渲染 id、anchor_id、
 保存的成员 task_ids、why_attention、current_state、assessment_json 与 updated_at；
-task_ids 只取已选卡片的实际成员，不扩展完整 source_signals 预算。
+task_ids 只取已选卡片的实际成员，不把项目同伴 Task 自动纳为成员。所选卡片自己的原始证明与其他来源按精确版本共享装载，不再只看保存的评估文字。
 prompt 只读取当前 ceo-work-tracking Skill；定时任务保存的旧 skill_protocol 不再注入指令，
 原始 payload 历史不变，scheduled 元数据和 prompt 的专项业务范围仍保留。
 开发与测试使用隔离的 ci/shared-skills revision 3；实际默认 Skill 路径仍为安装的用户 Skill，

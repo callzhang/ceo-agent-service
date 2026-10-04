@@ -243,7 +243,7 @@ Signal getters 与会议负责人回填统一 JOIN 共享正文，公开 `eviden
 规范 anchor 下的当前 active 卡，数量受既有 `limit_per_kind` 约束，渲染 id、anchor_id、
 保存的成员 task_ids、why_attention、current_state、assessment_json 与 updated_at；
 task_ids 只取这些已选卡片的 `business_attention_tasks`，不把同 Project 的其他 Task 当作成员，
-检索不写回成员，也不扩展完整 source_signals 预算。
+检索不写回成员。所选卡片自己的原始证明进入共享来源装配，不再只依赖评估中的摘录文字；不会把同 Project 的其他 Task 自动纳为成员。
 prompt 只读取当前 ceo-work-tracking Skill；定时任务保存的旧 skill_protocol 不再注入指令，
 原始 payload 历史不变，scheduled 元数据和 prompt 的专项业务范围仍保留。
 开发与测试使用隔离的 ci/shared-skills revision 3；实际默认 Skill 路径仍为安装的用户 Skill，
@@ -377,7 +377,7 @@ Task 确认关联规范 anchor 并派生 relevant，candidate stage 不因此提
 `business_project_candidates`，不会直接注册正式 Project。控制台确认只从 cluster 的已有
 Task evidence 选择来源信号，不凭空制造证据；事务会同时把 cluster 中的 Task 关联到 Project，
 重复确认保持幂等，不能把已确认 candidate 改绑到另一个 Project。
-正式 Project 的独立当前上下文从 `business_project_context_revisions` 最新完整快照读取，历史快照保持追加可读；`business_project_evidence` 单独保留 Project 的 Signal 证明。快照中的总负责只能是一名有来源证据的个人或未知，分工/事实也逐条带实际 Signal ID、source_ref 和原文摘录。读取不从关联 Task 的 owner 推导 Project 总负责或分工。`context=null` 只链接证明，不改上下文；显式空快照才清空分工。相同 JSON 结构不追加版本，键排序无影响；每个 citation 必须在写入前精确核验真实 Signal、ref 和摘录。结构化来源的摘录可在一个解码字符串叶子中匹配，不能跨字段拼接。本阶段 TaskSuggestion 仍只是类型化建议，未写入 Task 或外部系统。
+正式 Project 的独立当前上下文从 `business_project_context_revisions` 最新完整快照读取，历史快照保持追加可读；`business_project_evidence` 单独保留 Project 的 Signal 证明。快照中的总负责只能是一名有来源证据的个人或未知，分工/事实也逐条带实际 Signal ID、source_ref 和原文摘录。读取不从关联 Task 的 owner 推导 Project 总负责或分工。`context=null` 只链接证明，不改上下文；显式空快照才清空分工。相同 JSON 结构不追加版本，键排序无影响；每个 citation 必须在写入前精确核验真实 Signal、ref 和摘录。结构化来源的摘录可在一个解码字符串叶子中匹配，不能跨字段拼接。TaskSuggestion 已由领域命令保存在同一 Task 表作为展示建议（见后文），没有外部派发；Agent 新写入 wire 和页面仍待后续步骤接入。
 更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
 
 Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。每个结果显式返回无默认值的
@@ -449,9 +449,9 @@ session，同一 route 上的后续输入续接既有 session。`process-work-it
 旧 `task:<run_id>` 会话记录不会迁移或覆盖。Task Agent prompt 将此前会话内容限定为背景，决定须依据当轮
 Work Item、当前存储/检索状态和新来源证据。Codex CLI 自己管理上下文自动压缩；其他 route 使用其自身
 会话能力，压缩后的会话仍不能替代 Work Item、数据库或来源证据。
-检索上下文中的历史 source signal 保留来源、时间、作者和上下文，但对可能包含完整会议
-JSON 的 `evidence_text` 使用有界的首尾摘录；原始证据仍在数据库中，避免重复信号把单次
-Agent 输入推过 provider 的输入契约。
+本分支检索先读取正式 Project 的独立当前 context，再读取相关 Tasks；零 Task 项目仍带最新资料版本、近期项目证明及职责/事实引用的旧来源，不从 Task owner 推导项目分工。项目与任务的同来源旧版本不因词面排名丢失；Project context revision 使用 limit=1，证据使用 limit_per_kind 的近期行并保留当前资料明确引用的 Signal，不加载全历史。
+`source_bundle` 让 source_documents 按精确来源版本装载正文一次，source_signals 保留实际 Signal ID、source_document_id、类型、ref、时间、作者、会话和上下文，使用 document_id 引用正文。当前 WorkItem 只在 current_work_item 保留元数据，其正文也进入同一来源装配；顶层 prompt 不再重复 summary。只有八项来源身份完全相同才共用现存正文 ID，否则 current:<identity hash> 仅是本轮输入定位，不伪造持久化 Signal ID。原 WorkItem 不变，继续供应用核验。
+历史长文沿原 2048 字符预算保留首尾及引用区间，输出 full_length、truncated 与真实半开字符 visible_ranges。JSON 解码引文单独标明一个实际字符串叶子的 path/start/end，不跨字段拼接；关键引用超预算时显式 citation_budget_exceeded，不静默删引用。当前输入延续原有完整正文可见性；若与旧 Signal 是同一精确版本，该共享文档保持全量可见。source_metrics 记录来源数、正文数、共享前/唯一/可见正文字符数；这是正文体积观测，不等于整个 prompt 的 token 保证。负责人引文校验仍读取数据库原文或单个解码叶子，输入呈现不改其证据身份。
 若 CLI 明确报告 compaction 自身因模型 context window 超限而失败，当前 run 会清除此 route 的共享
 session 指针并在同一路由的新 session 重试一次；若 fresh session 仍超限，则转入既有 runtime route
 fallback，不循环创建 session。普通会话冲突或其他错误不会清除共享 session。

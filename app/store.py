@@ -7320,6 +7320,38 @@ class AutoReplyStore:
             ).fetchall()
             return tuple(self._business_task_event_from_row(row) for row in rows)
 
+    def list_business_project_ids_for_source(
+        self, *, source_type: str, source_id: str, limit: int = 100, offset: int = 0
+    ) -> tuple[int, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business source pagination requires positive limit and non-negative offset")
+        if not source_id.strip():
+            return ()
+        with self._connect() as db:
+            rows = db.execute(
+                "select distinct evidence.project_id from business_project_evidence evidence "
+                "join business_task_signals signal on signal.id=evidence.signal_id "
+                "where signal.source_type=? and (signal.source_ref=? or substr(signal.source_ref,1,?)=?) "
+                "order by evidence.project_id limit ? offset ?",
+                (source_type, source_id, len(source_id) + 1, source_id + "#", limit, offset),
+            ).fetchall()
+            return tuple(int(row["project_id"]) for row in rows)
+
+    def list_business_task_ids_for_project(
+        self, *, project_id: int, limit: int = 100, offset: int = 0
+    ) -> tuple[int, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business project pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select link.task_id from business_task_anchor_links link "
+                "join business_projects project on project.canonical_anchor_id=link.anchor_id "
+                "join business_anchors anchor on anchor.id=link.anchor_id "
+                "where project.id=? and link.status='confirmed' and link.active=1 and anchor.active=1 "
+                "order by link.task_id desc limit ? offset ?", (project_id, limit, offset),
+            ).fetchall()
+            return tuple(int(row["task_id"]) for row in rows)
+
     def list_business_task_project_links(self, *, task_id: int) -> list[BusinessProject]:
         with self._connect() as db:
             rows = db.execute(
@@ -7415,19 +7447,28 @@ class AutoReplyStore:
         return ProjectContext.model_validate_json(str(row["context_json"])) if row else None
 
     def list_business_project_context_revisions_in_transaction(
-        self, *, project_id: int, _db: sqlite3.Connection
+        self, *, project_id: int, _db: sqlite3.Connection, limit: int = 100, offset: int = 0
     ) -> tuple[BusinessProjectContextRevision, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("project context pagination requires positive limit and non-negative offset")
         rows = _db.execute(
-            "select * from business_project_context_revisions where project_id=? order by id desc",
-            (project_id,),
+            "select * from business_project_context_revisions where project_id=? order by id desc limit ? offset ?",
+            (project_id, limit, offset),
         ).fetchall()
         return tuple(self._business_project_context_revision_from_row(row) for row in rows)
 
     def list_business_project_evidence_in_transaction(
-        self, *, project_id: int, _db: sqlite3.Connection
+        self, *, project_id: int, _db: sqlite3.Connection, limit: int = 100, offset: int = 0,
+        pinned_signal_ids: tuple[int, ...] = (),
     ) -> tuple[BusinessProjectEvidence, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("project evidence pagination requires positive limit and non-negative offset")
         rows = _db.execute(
-            "select * from business_project_evidence where project_id=? order by signal_id", (project_id,)
+            "select * from business_project_evidence where project_id=? and (signal_id in ("
+            "select signal_id from business_project_evidence where project_id=? "
+            "order by signal_id desc limit ? offset ?) or signal_id in "
+            "(select value from json_each(?))) order by signal_id",
+            (project_id, project_id, limit, offset, json.dumps(pinned_signal_ids)),
         ).fetchall()
         return tuple(BusinessProjectEvidence.model_validate(dict(row)) for row in rows)
 
@@ -7622,14 +7663,17 @@ class AutoReplyStore:
             return self.get_business_project_context_in_transaction(project_id=project_id, _db=db)
 
     def list_business_project_context_revisions(
-        self, project_id: int
+        self, project_id: int, *, limit: int = 100, offset: int = 0
     ) -> tuple[BusinessProjectContextRevision, ...]:
         with self._connect() as db:
-            return self.list_business_project_context_revisions_in_transaction(project_id=project_id, _db=db)
+            return self.list_business_project_context_revisions_in_transaction(project_id=project_id, _db=db, limit=limit, offset=offset)
 
-    def list_business_project_evidence(self, project_id: int) -> tuple[BusinessProjectEvidence, ...]:
+    def list_business_project_evidence(
+        self, project_id: int, *, limit: int = 100, offset: int = 0,
+        pinned_signal_ids: tuple[int, ...] = (),
+    ) -> tuple[BusinessProjectEvidence, ...]:
         with self._connect() as db:
-            return self.list_business_project_evidence_in_transaction(project_id=project_id, _db=db)
+            return self.list_business_project_evidence_in_transaction(project_id=project_id, _db=db, limit=limit, offset=offset, pinned_signal_ids=pinned_signal_ids)
 
     def list_business_work_clusters(
         self, *, limit: int = 100, offset: int = 0

@@ -701,7 +701,8 @@ def test_task_agent_prompt_does_not_embed_candidate_specific_workflow():
         }
     )
 
-    prompt = build_task_agent_prompt(item, "候选项目:\n[]\n\n近期 follow-up 候选:\n[]")
+    from app.task_source_documents import source_bundle
+    prompt = build_task_agent_prompt(item, json.dumps(source_bundle((), current_work_item=item), ensure_ascii=False))
 
     assert "xiaoqing_interview" not in prompt
     assert "当前阶段、最终决策、决策时间和决策说明" not in prompt
