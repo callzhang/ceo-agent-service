@@ -1,0 +1,24 @@
+{
+  "candidate_ref": "50311bc349935380086f2a2fb93c8d96c0a16631",
+  "upstream_ref": "13b5c161200aa300df4db1acdad3631ce603ec26",
+  "verified_runtime_ref": "37cd0c34cf5286deb70efc6f59ad9f796b63c0d3",
+  "compared_paths": [
+    "app",
+    "frontend",
+    "ci",
+    "scripts",
+    "evals/consumer_audit_business",
+    "evals/consumer_audit_system_execution/v1.json",
+    "evals/consumer_audit_system_execution/scenarios.py"
+  ],
+  "runtime_or_eval_input_changes": [],
+  "relative_first_parent_files": [
+    "CHANGELOG.md",
+    "docs/runtime-mechanism.md",
+    "tests/test_codex_session_api.py"
+  ],
+  "focused_backend_passed": 38,
+  "independent_missing_session_test_passed": 1,
+  "independent_review": "No new P1/P2 in fixture-only integration.",
+  "scope": "Git source equivalence for test/document-only merge; retains exact37cd contract20/20 and1ced-to37cd model-input evidence. No new contract replay, model turn, CI-success or production claim."
+}
