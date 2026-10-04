@@ -1,0 +1,12 @@
+{
+  "business-v2-2403cf28-invalid-release-score.json": "43fe860d416355f16d0e1df5e32fb806c460fe4b2ca2cfd427e6cc461838b8e8",
+  "business-v3-73030d17.json": "88eb51566a33cf6dd3909c17e096fda8fce5b077c83fd62176941c184edc25a5",
+  "contract-73030d17.json": "ed77815088889c7ccfed00ce55b1392ff5d9e76474ea0995ff58f99051d222d4",
+  "native-audit-role-probe/command_argv.json": "2609b604d42d2683355df2fcf324b1c2701dcab3e8211c81b090b77e85a2b6fe",
+  "native-audit-role-probe/expected_nonce.txt": "eb352d181a0c08c2cfed141a04b246ab75051ec2fdd48a1e91679903925dca66",
+  "native-audit-role-probe/native_stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "native-audit-role-probe/native_stdout.jsonl": "61e1421841bdc1d5105b32510ad1e085eed48c96ced099a89c25dd9eb6c09538",
+  "native-audit-role-probe/prompt.txt": "ef46ea7c105b1b5e635d9b3356b2aac975d1f618dd8b2d0eaeeb791d40399867",
+  "native-audit-role-probe/summary.json": "771372e6717fb52dad7435b7fcf85c94b58a64d178233fd1e20e70b48bd14bca",
+  "native-audit-role-probe/synthetic_agent_cli.py": "01b6043427923a3960f549a6f627a89fa164729f1a1d96cbb8a1ba3069ee1c7c"
+}
