@@ -8,7 +8,6 @@ import importlib
 import json
 from pathlib import Path
 import sqlite3
-from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -147,42 +146,15 @@ class ScriptOutcome(StrEnum):
     FAILED = "failed"
 
 
-class ScriptOaActionReceipt(BaseModel):
-    process_instance_id: str
-    task_id: str = ""
-    action: str
-    remark: str = ""
-    result: dict[str, object] = Field(default_factory=dict)
-
-
 class ScriptResult(BaseModel):
     outcome: ScriptOutcome
     summary: str
     error: AgentError = Field(default_factory=AgentError)
-    oa_action_receipt: ScriptOaActionReceipt | None = None
     typed_decision: bool = True
     risk: str = "high"
     confidence: float = 0.2
     rule_coverage: float = 1.0
     information_completeness: float = 1.0
-    decision_options: list[dict[str, str]] = Field(
-        default_factory=lambda: [
-            {
-                "key": "one_time",
-                "label": "仅本次处理",
-                "instruction": "按已核验的规则处理本次事项。",
-                "consequence": "不修改后续同类事项的规则。",
-                "applies_to": "task_class",
-            },
-            {
-                "key": "skill_update",
-                "label": "更新 Skill",
-                "instruction": "把这条规则更新到适用 Skill 后继续处理。",
-                "consequence": "后续同类事项按更新后的规则自动处理。",
-                "applies_to": "task_class",
-            },
-        ]
-    )
 
 
 def _get_audit_run(store, task_id: int, execution_generation: str):
@@ -212,13 +184,14 @@ def _claim_audit_run(
             proposal_revision=0,
         ),
     )
+    parent_agent_run_id = kwargs.pop("parent_agent_run_id", None)
     return store.claim_agent_run(
         task_id,
         execution_generation,
         role=AgentRole.AUDIT,
         proposal_revision=0,
         turn_attempt=turn_attempt,
-        parent_agent_run_id=None,
+        parent_agent_run_id=parent_agent_run_id,
         operation_id=f"audit-agent:{task_id}:{execution_generation}",
         owner=owner,
         **kwargs,
@@ -280,12 +253,13 @@ class FakeAgentResultRunner:
         self.calls: list[tuple[int, str, AgentTaskContext, str]] = []
         self.owner = "worker-result-agent"
 
-    def run(self, task, context, **_kwargs) -> ScriptedRunResult:
+    def run(self, task, context, **kwargs) -> ScriptedRunResult:
         claim = _claim_audit_run(
             self.store,
             task.id,
             task.execution_generation,
             owner=self.owner,
+            parent_agent_run_id=kwargs.get("parent_agent_run_id"),
         )
         assert claim.claimed
         run = claim.run
@@ -322,7 +296,7 @@ class FakeAgentResultRunner:
         else:
             run = self.store.complete_agent_run(
                 run.id,
-                result.model_dump(mode="json"),
+                kwargs.get("final_result", result.model_dump(mode="json")),
                 owner=self.owner,
                 transcript_end_line=len(events),
             )
@@ -354,7 +328,50 @@ class FakeAgentOrchestrator:
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         runner = self.worker._test_agent_runner
         assert runner is not None
-        run_result = runner.run(task, context)
+        scripted = (runner.scripts[0][0]
+                    if isinstance(runner, FakeAgentResultRunner) and runner.scripts
+                    else None)
+        candidate = review = consumer_result = audit_result = None
+        runner_options = {}
+        if (scripted is not None and scripted.outcome is ScriptOutcome.NEEDS_HUMAN and scripted.typed_decision
+            and not scripted.error.code):
+            consumer_result = ConsumerAgentResult.model_validate({
+                "outcome": "needs_human", "summary": scripted.summary, "proposal": None,
+                "requested_input": scripted.summary, "decision_options": [],
+                "needs_human_reason": scripted.summary,
+                "decision_basis": {
+                    "verified_facts": [{"assertion": "Current trigger needs a specific fact", "references": ["record:current"]}],
+                    "rule_evidence": [{"assertion": scripted.summary, "references": ["policy:current"]}],
+                    "quality_explanation": "The current instance needs a fact from the principal.",
+                    "no_external_action_evidence": [{"assertion": "No action was performed", "references": ["receipt:none"]}],
+                    "conclusion": scripted.summary,
+                },
+                "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+                "information_completeness": 1.0,
+                "error": {"code": "", "retryable": False, "authorization_required": False},
+            })
+            consumer_run = self.worker.store.claim_agent_run(
+                task.id, task.execution_generation, role=AgentRole.CONSUMER,
+                proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+                operation_id="", owner=runner.owner,
+            ).run
+            self.worker.store.complete_agent_run(
+                consumer_run.id, consumer_result.model_dump(mode="json"), owner=runner.owner,
+            )
+            candidate = self.worker.store.persist_review_candidate(
+                task, consumer_run, consumer_result.model_dump(mode="json"),
+            )
+            audit_result = AuditAgentResult.model_validate({
+                "outcome": "approve", "summary": scripted.summary,
+                "proposal_revision": 0, "candidate_digest": candidate["candidate_digest"],
+                "feedback": None, "evidence_refs": ["record:current", "policy:current"],
+                "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+                "information_completeness": 1.0,
+                "error": {"code": "", "retryable": False, "authorization_required": False},
+            })
+            runner_options = {"parent_agent_run_id": consumer_run.id,
+                              "final_result": audit_result.model_dump(mode="json")}
+        run_result = runner.run(task, context, **runner_options)
         result = run_result.result
         if result.outcome is ScriptOutcome.COMPLETED:
             status = "executed"
@@ -365,69 +382,9 @@ class FakeAgentOrchestrator:
         else:
             status = "failed_retryable" if result.error.retryable else "failed_terminal"
 
-        audit_result = None
-        if result.oa_action_receipt is not None:
-            receipt = result.oa_action_receipt
-            run = self.worker.store.get_agent_run(run_result.run_id)
-            assert run is not None
-            audit_result = AuditAgentResult.model_validate(
-                {
-                    "outcome": "executed",
-                    "risk": "low",
-                    "confidence": 1.0,
-                    "rule_coverage": 1.0,
-                    "information_completeness": 1.0,
-                    "summary": result.summary,
-                    "proposal_revision": 0,
-                    "feedback": None,
-                    "external_result": {
-                        "operation_id": run.operation_id,
-                        "live_result_reference": {
-                            "process_instance_id": receipt.process_instance_id,
-                            "task_id": receipt.task_id,
-                            "action": receipt.action,
-                            "remark": receipt.remark,
-                            "result": receipt.result,
-                        },
-                    },
-                    "error": {
-                        "code": "",
-                        "retryable": False,
-                        "authorization_required": False,
-                    },
-                }
-            )
-        elif result.outcome is ScriptOutcome.NEEDS_HUMAN and result.typed_decision:
-            audit_result = AuditAgentResult.model_validate(
-                {
-                    "outcome": "needs_human",
-                    "risk": result.risk,
-                    "confidence": result.confidence,
-                    "rule_coverage": result.rule_coverage,
-                    "information_completeness": result.information_completeness,
-                    "summary": result.summary,
-                    "proposal_revision": 0,
-                    "feedback": None,
-                    "external_result": None,
-                    "decision_options": result.decision_options,
-                    # A human decision must now explain itself: a reason and
-                    # the evidence chain (typed result contract, 2026-09-22).
-                    "needs_human_reason": result.summary,
-                    "decision_basis": {
-                        "verified_facts": [
-                            {"assertion": "The current facts were verified.", "references": ["record:current"]}
-                        ],
-                        "rule_evidence": [
-                            {"assertion": result.summary, "references": ["policy:current"]}
-                        ],
-                        "quality_explanation": "The decision needs a person's choice.",
-                        "no_external_action_evidence": [
-                            {"assertion": "No external action was performed.", "references": ["receipt:none"]}
-                        ],
-                        "conclusion": result.summary,
-                    },
-                    "error": result.error.model_dump(mode="json"),
-                }
+        if candidate is not None and audit_result is not None:
+            review = self.worker.store.record_candidate_review(
+                candidate["id"], run_result.run_id, audit_result.model_dump(mode="json"),
             )
         return OrchestrationResult(
             status=status,
@@ -436,7 +393,10 @@ class FakeAgentOrchestrator:
             summary=result.summary,
             error=result.error,
             feedback_cycles=0,
+            consumer_result=consumer_result,
             audit_result=audit_result,
+            candidate_id=candidate["id"] if candidate else 0,
+            review_id=review["id"] if review else 0,
         )
 
 
@@ -467,333 +427,95 @@ def _record_send_receipt(store, run_id: int, receipt: str, *, owner: str) -> Non
     )
 
 
-def _audit_run_with_receipt(receipt: str = "openTask-1"):
-    """An Audit run whose recorded call stream shows the provider accepted a send."""
-    return SimpleNamespace(
-        tool_events=[
-            {
-                "type": "item.completed",
-                "item": {
-                    "type": "command_execution",
-                    "exit_code": 0,
-                    "output": json.dumps({"result": {"openTaskId": receipt}}),
-                },
-            }
-        ]
+def _persist_approved_worker_candidate(
+    store: AutoReplyStore, *, action: dict[str, object], summary: str = "reviewed",
+    task=None,
+):
+    """Create the current persisted Consumer → Audit binding used by worker projections."""
+    if task is None:
+        store.enqueue_reply_task(
+            conversation_id="cid-1", conversation_title="Group", single_chat=False,
+            trigger_message_id="trigger-1", trigger_create_time="2026-10-04 01:00:00",
+            trigger_sender="Derek", trigger_text="Please act",
+        )
+        task = store.claim_reply_tasks(limit=1)[0]
+    consumer = ConsumerAgentResult.model_validate({
+        "outcome": "proposal", "summary": summary,
+        "proposal": {"objective": summary, "actions": [action],
+                     "sourced_facts": [], "authored_judgment": "Current verified facts"},
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })
+    consumer_run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    store.complete_agent_run(consumer_run.id, consumer.model_dump(mode="json"), owner="consumer")
+    candidate = store.persist_review_candidate(task, consumer_run, consumer.model_dump(mode="json"))
+    audit = AuditAgentResult.model_validate({
+        "outcome": "approve", "summary": summary, "proposal_revision": 0,
+        "candidate_digest": candidate["candidate_digest"], "feedback": None,
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })
+    audit_run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer_run.id,
+        operation_id="review-1", owner="audit",
+    ).run
+    store.complete_agent_run(audit_run.id, audit.model_dump(mode="json"), owner="audit")
+    review = store.record_candidate_review(candidate["id"], audit_run.id, audit.model_dump(mode="json"))
+    return task, candidate, review, consumer, audit, audit_run
+
+
+@pytest.mark.parametrize(
+    ("operation", "target", "payload", "provider_result", "expected_body"),
+    [
+        ("send_group_message", {"conversation_id": "cid-1"},
+         {"content": "来自 proposal 的回复"}, {"openConversationId": "cid-1", "openMessageId": "msg-2"},
+         "来自 proposal 的回复"),
+        ("send_group_message", {"conversation_id": "cid-1"},
+         {"content": "来自 proposal 的群回复"}, {"message_id": "msg-2", "conversation_id": "cid-1"},
+         "来自 proposal 的群回复"),
+        ("reply_to_message", {"conversation_id": "cid-1", "message_id": "trigger-1"},
+         {"reply_text": "引用回复正文"}, {"sent_message_id": "sent-message"}, "引用回复正文"),
+        ("reply_to_message", {"conversation_id": "cid-1", "message_id": "trigger-1"},
+         {"reply_text": "另一条引用回复"}, {"message_id": "sent-message"}, "另一条引用回复"),
+    ],
+)
+def test_canonical_reviewed_delivery_projects_exact_message_body(
+    tmp_path, operation, target, payload, provider_result, expected_body,
+):
+    from app.system_executor import ActionOutcome, SystemExecutor
+
+    store = AutoReplyStore(tmp_path / "canonical-delivery.sqlite3")
+    action = {"description": "Send exact message", "action_identity": "send-result",
+              "capability": "dingtalk-chat", "operation": operation,
+              "target": target, "payload": payload}
+    task, candidate, review, _consumer, _audit, _audit_run = _persist_approved_worker_candidate(
+        store, action=action,
     )
 
+    class VerifiedSend:
+        def dispatch(self, reviewed_action, *, action_key, candidate):
+            return ActionOutcome("verified", provider_result)
 
-def _audit_run_without_receipt():
-    """An Audit run that never reached a provider, whatever it then reported."""
-    return SimpleNamespace(tool_events=[])
+        def reconcile(self, reviewed_action, *, action_key, candidate):
+            raise AssertionError("fresh action must dispatch once")
 
-
-def test_sent_reply_projection_accepts_flat_send_receipt_and_proposal_text():
-    task = SimpleNamespace(
-        channel="dingtalk", conversation_id="cid-1",
-        business_object_key="message:dingtalk:cid-1:trigger-1",
-    )
-    audit_result = AuditAgentResult.model_validate(
-        {
-            "outcome": "executed",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "summary": "sent",
-            "proposal_revision": 0,
-            "feedback": None,
-            "external_result": {
-                "operation_id": "op-1",
-                "live_result_reference": {
-                    "action_identity": "send-result",
-                    "sendStatus": "SUCCESS",
-                    "openConversationId": "cid-1",
-                    "openMessageId": "msg-2",
-                    "readbackComplete": True,
-                },
-            },
-            "error": {
-                "code": "",
-                "retryable": False,
-                "authorization_required": False,
-            },
-        }
-    )
-    consumer_result = ConsumerAgentResult.model_validate(
-        {
-            "outcome": "proposal",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "summary": "send",
-            "proposal": {
-                "objective": "send",
-                "actions": [
-                        {
-                            "description": "send",
-                            "action_identity": "send-result",
-                        "capability": "dingtalk-chat",
-                        "operation": "send_to_group",
-                        "target": {"conversation_id": "cid-1"},
-                        "payload": {"content": "来自 proposal 的回复"},
-                    }
-                ],
-                "sourced_facts": [],
-                "authored_judgment": "",
-            },
-            "error": {
-                "code": "",
-                "retryable": False,
-                "authorization_required": False,
-            },
-        }
-    )
-    result = OrchestrationResult(
-        status="executed",
-        final_run_id=1,
-        final_role=AgentRole.AUDIT,
-        summary="sent",
-        error=AgentError(code="", retryable=False, authorization_required=False),
-        feedback_cycles=0,
-        consumer_result=consumer_result,
-        audit_result=audit_result,
-    )
-
-    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
-        task, result, _audit_run_with_receipt()
-    )
-
-    assert projection is not None
-    assert projection.reply_text == "来自 proposal 的回复"
-    assert projection.action_identity == "send-result"
-
-
-def test_sent_reply_projection_accepts_stable_message_id_without_send_status():
-    task = SimpleNamespace(
-        channel="dingtalk", conversation_id="cid-1",
-        business_object_key="message:dingtalk:cid-1:trigger-1",
-    )
-    audit_result = AuditAgentResult.model_validate(
-        {
-            "outcome": "executed",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "summary": "sent",
-            "proposal_revision": 0,
-            "feedback": None,
-            "external_result": {
-                "operation_id": "op-1",
-                "live_result_reference": {
-                    "action_identity": "send-result",
-                    "message_id": "msg-2",
-                    "conversation_id": "cid-1",
-                    "readback_complete": True,
-                    "readback_failures": [],
-                },
-            },
-            "error": {
-                "code": "",
-                "retryable": False,
-                "authorization_required": False,
-            },
-        }
-    )
-    consumer_result = ConsumerAgentResult.model_validate(
-        {
-            "outcome": "proposal",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "summary": "send",
-            "proposal": {
-                "objective": "send",
-                "actions": [
-                    {
-                        "description": "send",
-                        "action_identity": "send-result",
-                        "capability": "dingtalk-chat",
-                        "operation": "send_to_group",
-                        "target": {"conversation_id": "cid-1"},
-                        "payload": {"content": "来自 proposal 的群回复"},
-                    }
-                ],
-                "sourced_facts": [],
-                "authored_judgment": "",
-            },
-            "error": {
-                "code": "",
-                "retryable": False,
-                "authorization_required": False,
-            },
-        }
-    )
-    result = OrchestrationResult(
-        status="executed",
-        final_run_id=1,
-        final_role=AgentRole.AUDIT,
-        summary="sent",
-        error=AgentError(code="", retryable=False, authorization_required=False),
-        feedback_cycles=0,
-        consumer_result=consumer_result,
-        audit_result=audit_result,
-    )
-
-    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
-        task, result, _audit_run_with_receipt()
-    )
-
-    assert projection is not None
-    assert projection.reply_text == "来自 proposal 的群回复"
-
-
-def test_sent_reply_projection_accepts_delivery_status_and_sent_message_id():
-    task = SimpleNamespace(
-        channel="dingtalk", conversation_id="cid-1",
-        business_object_key="message:dingtalk:cid-1:trigger-1",
-    )
-    audit_result = AuditAgentResult.model_validate(
-        {
-            "outcome": "executed",
-            "risk": "medium",
-            "confidence": 0.98,
-            "rule_coverage": 0.99,
-            "information_completeness": 0.86,
-            "summary": "sent",
-            "proposal_revision": 0,
-            "feedback": None,
-            "external_result": {
-                "operation_id": "op-1",
-                "live_result_reference": {
-                    "action_identity": "reply-to-message",
-                    "delivery_status": "SUCCESS",
-                    "conversation_id": "cid-1",
-                    "referenced_message_id": "trigger-message",
-                    "sent_message_id": "sent-message",
-                    "readback_verified": True,
-                },
-            },
-            "error": {
-                "code": "",
-                "retryable": False,
-                "authorization_required": False,
-            },
-        }
-    )
-    consumer_result = ConsumerAgentResult.model_validate(
-        {
-            "outcome": "proposal",
-            "summary": "reply",
-            "risk": "medium",
-            "confidence": 0.95,
-            "rule_coverage": 1.0,
-            "information_completeness": 0.8,
-            "proposal": {
-                "objective": "reply",
-                "actions": [
-                    {
-                        "description": "reply",
-                        "action_identity": "reply-to-message",
-                        "capability": "dingtalk-chat",
-                        "operation": "messages-reply",
-                        "target": {
-                            "conversation_id": "cid-1",
-                            "message_id": "trigger-message",
-                        },
-                        "payload": {"reply_text": "引用回复正文"},
-                    }
-                ],
-                "sourced_facts": [],
-                "authored_judgment": "",
-            },
-            "error": {
-                "code": "",
-                "retryable": False,
-                "authorization_required": False,
-            },
-        }
-    )
-    result = OrchestrationResult(
-        status="executed",
-        final_run_id=1,
-        final_role=AgentRole.AUDIT,
-        summary="sent",
-        error=AgentError(code="", retryable=False, authorization_required=False),
-        feedback_cycles=0,
-        consumer_result=consumer_result,
-        audit_result=audit_result,
-    )
-
-    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
-        task, result, _audit_run_with_receipt()
-    )
-
-    assert projection is not None
-    assert projection.reply_text == "引用回复正文"
-    assert projection.provider_result["sent_message_id"] == "sent-message"
-
-
-def test_sent_reply_projection_accepts_reply_action_text():
-    task = SimpleNamespace(
-        channel="dingtalk", conversation_id="cid-1",
-        business_object_key="message:dingtalk:cid-1:trigger-1",
-    )
-    audit_result = AuditAgentResult.model_validate(
-        {
-            "outcome": "executed", "summary": "sent", "proposal_revision": 0,
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "feedback": None,
-            "external_result": {"operation_id": "op-1",
-                "live_result_reference": {
-                    "action_identity": "reply-to-message",
-                    "send_status": "SUCCESS",
-                    "conversation_id": "cid-1",
-                    "message_id": "sent-message",
-                }},
-            "error": {"code": "", "retryable": False, "authorization_required": False},
-        }
-    )
-    consumer_result = ConsumerAgentResult.model_validate(
-        {
-            "outcome": "proposal", "summary": "reply",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-                "proposal": {"objective": "reply", "actions": [{
-                    "description": "reply", "capability": "dingtalk-chat",
-                    "action_identity": "reply-to-message",
-                "operation": "messages-reply", "target": {
-                    "conversation_id": "cid-1", "message_id": "trigger-message"
-                },
-                "payload": {"reply_text": "引用回复正文"},
-            }], "sourced_facts": [], "authored_judgment": ""},
-            "error": {"code": "", "retryable": False, "authorization_required": False},
-        }
-    )
-    result = OrchestrationResult(
-        status="executed", final_run_id=1, final_role=AgentRole.AUDIT,
-        summary="sent", error=AgentError(code="", retryable=False, authorization_required=False),
-        feedback_cycles=0, consumer_result=consumer_result, audit_result=audit_result,
-    )
-
-    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
-        task, result, _audit_run_with_receipt()
-    )
-
-    assert projection is not None
-    assert projection.reply_text == "引用回复正文"
-
-
-
-
+    execution = SystemExecutor(store, {("dingtalk-chat", operation): VerifiedSend()},
+                               owner="test-executor").execute(task, candidate["id"], review["id"])
+    assert execution.outcome == "executed"
+    sent = store.get_sent_reply("cid-1", "trigger-1")
+    assert sent is not None
+    assert sent.reply_text == expected_body
+    ledger = store.get_candidate_external_action(sent.external_action_key)
+    assert ledger["action_identity"] == "send-result"
+    assert json.loads(ledger["provider_result_json"]) == provider_result
+    assert store.count_sent_replies() == 1
 
 
 def explicit_agent_result(
@@ -9781,40 +9503,52 @@ def test_structured_approval_card_is_processed_by_audit_agent(
     assert dws.oa_approval_actions == []
 
 
-def test_audit_agent_oa_receipt_is_persisted_with_approval_history(
-    tmp_path: Path, monkeypatch
+def test_verified_system_oa_comment_is_persisted_with_approval_history(
+    tmp_path: Path, monkeypatch,
 ):
-    trigger = message("[Ding]审批待办", single_chat=True)
-    trigger.raw_payload = {
-        "processInstanceId": "proc-1",
-        "taskId": "task-1",
-    }
-    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
-    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    result = ScriptResult(
-        outcome=ScriptOutcome.NEEDS_HUMAN,
-        summary="已评论要求补充复评标准。",
-        error=AgentError(code="OA_MATERIAL_INCOMPLETE"),
-        oa_action_receipt=ScriptOaActionReceipt(
-            process_instance_id="proc-1",
-            task_id="task-1",
-            action="comment",
-            remark="请补充延期时长、量化目标和复评标准。",
-            result={"success": True},
-        ),
+    from app.system_executor import ActionOutcome, SystemExecutor
+
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [message("[Ding]审批待办", single_chat=True)]})
+    worker = make_worker(tmp_path, dws, FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)), monkeypatch)
+    action = {"description": "Comment on the current approval", "action_identity": "oa-comment",
+              "capability": "dingtalk-oa", "operation": "comment",
+              "target": {"process_instance_id": "proc-1", "task_id": "task-1"},
+              "payload": {"remark": "请补充延期时长、量化目标和复评标准。"}}
+    task, candidate, review, consumer, audit, audit_run = _persist_approved_worker_candidate(
+        worker.store, action=action,
     )
-    script_agent_result(worker, result)
 
-    worker.run_once()
+    class VerifiedComment:
+        def dispatch(self, action, *, action_key, candidate):
+            return ActionOutcome("verified", {"success": True, "operationRecordId": "comment-1"})
 
-    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None
+        def reconcile(self, action, *, action_key, candidate):
+            raise AssertionError("fresh OA action must dispatch")
+
+    execution = SystemExecutor(worker.store, {("dingtalk-oa", "comment"): VerifiedComment()},
+                               owner="test-executor").execute(task, candidate["id"], review["id"])
+    result = OrchestrationResult(
+        status="executed", final_run_id=audit_run.id, final_role=AgentRole.AUDIT,
+        summary="已评论要求补充复评标准。", error=AgentError(), feedback_cycles=0,
+        consumer_result=consumer, audit_result=audit, execution_result=execution,
+        candidate_id=candidate["id"], review_id=review["id"],
+    )
+    metadata = worker._orchestration_oa_metadata(task, result)
+    assert metadata["oa_process_instance_id"] == "proc-1"
+    assert metadata["oa_task_id"] == "task-1"
+    assert metadata["oa_action"] == "comment"
+    assert metadata["oa_remark"] == "请补充延期时长、量化目标和复评标准。"
+    assert json.loads(metadata["oa_action_result_json"]) == {"success": True, "operationRecordId": "comment-1"}
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text, action="agent_run", sensitivity_kind="general",
+        send_status="completed", **metadata,
+    )
+    attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt.oa_process_instance_id == "proc-1"
-    assert attempt.oa_task_id == "task-1"
     assert attempt.oa_action == "comment"
-    assert attempt.oa_remark == "请补充延期时长、量化目标和复评标准。"
-    assert json.loads(attempt.oa_action_result_json) == {"success": True}
+    assert json.loads(attempt.oa_action_result_json)["operationRecordId"] == "comment-1"
 
 
 def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
@@ -10531,40 +10265,46 @@ def test_confirmed_oa_result_replies_to_chat_reminder_once(
         trigger_message_json="{}",
         oa_url=oa_url,
     )
+    from app.system_executor import ActionOutcome, SystemExecutor
+
+    action = {"description": "Approve current OA", "action_identity": "oa-approve",
+              "capability": "dingtalk-oa", "operation": "approve",
+              "target": {"process_instance_id": "proc-1", "task_id": "task-1"},
+              "payload": {"remark": "审批已通过并回读成功。"}}
+    task, candidate, review, consumer, audit, audit_run = _persist_approved_worker_candidate(
+        worker.store, action=action, task=task,
+    )
+
+    class VerifiedApprove:
+        def dispatch(self, action, *, action_key, candidate):
+            return ActionOutcome("verified", {"success": True, "taskId": "task-1"})
+
+        def reconcile(self, action, *, action_key, candidate):
+            raise AssertionError("fresh OA action must dispatch")
+
+    execution = SystemExecutor(worker.store, {("dingtalk-oa", "approve"): VerifiedApprove()},
+                               owner="test-executor").execute(task, candidate["id"], review["id"])
+    result = OrchestrationResult(
+        status="executed", final_run_id=audit_run.id, final_role=AgentRole.AUDIT,
+        summary="审批已通过并回读成功。", error=AgentError(), feedback_cycles=0,
+        consumer_result=consumer, audit_result=audit, execution_result=execution,
+        candidate_id=candidate["id"], review_id=review["id"],
+    )
+    metadata = worker._orchestration_oa_metadata(task, result)
     attempt_id = worker.store.record_reply_attempt(
         conversation_id=task.conversation_id,
         conversation_title=task.conversation_title,
         trigger_message_id=task.trigger_message_id,
         trigger_sender=task.trigger_sender,
         trigger_text=task.trigger_text,
-        action="oa_approval",
-        sensitivity_kind="internal_personnel",
-        oa_process_instance_id="proc-1",
-        oa_task_id="task-1",
-        oa_url=oa_url,
-        oa_action="approve",
-        oa_remark="审批已通过并回读成功。",
-        oa_action_result_json='{"success":true}',
-        send_status="completed",
-    )
-
-    worker._deliver_oa_reminder_results(
-        task=task,
-        attempt_id=attempt_id,
-        result=SimpleNamespace(
-            audit_result=SimpleNamespace(external_result=object()),
-            summary="审批已通过并回读成功。",
-        ),
-        audit_run=_audit_run_with_receipt(),
+        action="oa_approval", sensitivity_kind="internal_personnel",
+        send_status="completed", **metadata,
     )
     worker._deliver_oa_reminder_results(
-        task=task,
-        attempt_id=attempt_id,
-        result=SimpleNamespace(
-            audit_result=SimpleNamespace(external_result=object()),
-            summary="审批已通过并回读成功。",
-        ),
-        audit_run=_audit_run_with_receipt(),
+        task=task, attempt_id=attempt_id, result=result, audit_run=audit_run,
+    )
+    worker._deliver_oa_reminder_results(
+        task=task, attempt_id=attempt_id, result=result, audit_run=audit_run,
     )
 
     assert len(dws.reply_messages) == 1
@@ -17151,191 +16891,95 @@ def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monke
 
 
 
-def test_a_delivery_is_not_projected_from_a_claim_with_no_provider_receipt():
-    """Task 384224 reported the trigger's own id as the message it had sent.
-
-    Nothing in that run reached a provider, so the ledger must stay empty:
-    writing the row would record a send that never happened, and History would
-    then show the question as asked.
-    """
-    task = SimpleNamespace(
-        channel="dingtalk", conversation_id="cid-1",
-        business_object_key="message:dingtalk:cid-1:msg7ES1rcEHmu909qE3HjM8Tg==",
-    )
-    audit_result = AuditAgentResult.model_validate(
-        {
-            "outcome": "executed", "risk": "low", "confidence": 0.95,
-            "rule_coverage": 1.0, "information_completeness": 1.0,
-            "summary": "asked", "proposal_revision": 0, "feedback": None,
-            "external_result": {
-                "operation_id": "agent-task:384224:initial:proposal:0",
-                "live_result_reference": {
-                    "action_identity": "request_candidate_info",
-                    "delivered": True,
-                    "message_id": "msg7ES1rcEHmu909qE3HjM8Tg==",
-                },
-            },
-            "error": {"code": "", "retryable": False, "authorization_required": False},
-        }
-    )
-    consumer_result = ConsumerAgentResult.model_validate(
-        {
-            "outcome": "proposal", "risk": "low", "confidence": 0.85,
-            "rule_coverage": 0.9, "information_completeness": 0.4,
-            "summary": "ask",
-            "proposal": {
-                "objective": "ask",
-                "actions": [
-                    {
-                        "description": "ask for the resume",
-                        "action_identity": "request_candidate_info",
-                        "capability": "dingtalk-chat",
-                        "operation": "send",
-                        "target": {"conversation_id": "cid-1"},
-                        "payload": {"content": "简历关键信息能否直接发我？"},
-                    }
-                ],
-                "sourced_facts": [],
-                "authored_judgment": "",
-            },
-            "error": {"code": "", "retryable": False, "authorization_required": False},
-        }
-    )
-    result = OrchestrationResult(
-        status="executed", final_run_id=19557, final_role=AgentRole.AUDIT,
-        summary="asked",
-        error=AgentError(code="", retryable=False, authorization_required=False),
-        feedback_cycles=0, consumer_result=consumer_result, audit_result=audit_result,
-    )
-
-    assert DingTalkAutoReplyWorker._sent_reply_projection_from_result(
-        task, result, _audit_run_without_receipt()
-    ) is None
-
-    # The same claim, from a turn the provider actually answered, still projects.
-    assert DingTalkAutoReplyWorker._sent_reply_projection_from_result(
-        task, result, _audit_run_with_receipt()
-    ) is not None
-
-
-def test_a_send_identified_only_by_its_task_handle_still_reaches_the_ledger():
-    """`dws chat +dm` returns an openTaskId and nothing else.
-
-    Audit run 19678 really delivered and reported that handle, but the
-    projection looked for message-id spellings only, read a real delivery as
-    no delivery, and wrote no ledger row -- which is what lets the next
-    attempt send the same message to the same person a second time.
-    """
-    task = SimpleNamespace(
-        channel="dingtalk", conversation_id="cid-1",
-        business_object_key="message:dingtalk:cid-1:trigger-1",
-    )
-    audit_result = AuditAgentResult.model_validate({
-        "outcome": "executed", "risk": "low", "confidence": 1.0,
-        "rule_coverage": 1.0, "information_completeness": 1.0,
-        "summary": "sent", "proposal_revision": 0, "feedback": None,
-        "external_result": {
-            "operation_id": "op-1",
-            "live_result_reference": {
-                "open_task_id": "ug+Jh+8XPcnS1FFI0wAyhKR/URa7bVoH7cclvy4tUao=",
-                "success": True,
-            },
-        },
-        "error": {"code": "", "retryable": False, "authorization_required": False},
-    })
-    consumer_result = ConsumerAgentResult.model_validate({
-        "outcome": "proposal", "risk": "low", "confidence": 1.0,
-        "rule_coverage": 1.0, "information_completeness": 1.0, "summary": "ask",
-        "proposal": {
-            "objective": "ask", "sourced_facts": [], "authored_judgment": "",
-            "actions": [{
-                "description": "ask", "action_identity": "clarify",
-                "capability": "dingtalk-chat", "operation": "send",
-                "target": {"open_dingtalk_id": "open-recipient"},
-                "payload": {"content": "「其它企业」具体是指哪些企业？"},
-            }],
-        },
-        "error": {"code": "", "retryable": False, "authorization_required": False},
-    })
-    result = OrchestrationResult(
-        status="executed", final_run_id=19678, final_role=AgentRole.AUDIT,
-        summary="sent",
-        error=AgentError(code="", retryable=False, authorization_required=False),
-        feedback_cycles=1, consumer_result=consumer_result, audit_result=audit_result,
-    )
-
-    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
-        task, result, _audit_run_with_receipt("ug+Jh+8XPcnS1FFI0wAyhKR/URa7bVoH7cclvy4tUao=")
-    )
-
-    assert projection is not None
-    assert projection.reply_text == "「其它企业」具体是指哪些企业？"
-
-
-def test_an_audit_terminated_send_finds_its_proposal_through_the_run_lineage(tmp_path):
-    """`_audit_terminal` builds an OrchestrationResult with no consumer_result.
-
-    Every successful send ends that way, so the projection read "no accepted
-    proposal" and wrote no ledger row -- leaving the repair sweep as the only
-    writer and every unswept delivery free to be sent a second time.
-    """
-    store = AutoReplyStore(tmp_path / "lineage.sqlite3")
+def test_historical_audit_claim_without_canonical_provider_receipt_does_not_project_send(tmp_path):
+    """A historical Audit claim and tool output do not constitute reviewed execution."""
+    store = AutoReplyStore(tmp_path / "historical-claim.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-1", conversation_title="Group", single_chat=False,
-        trigger_message_id="trigger-1", trigger_create_time="2026-09-16 01:00:00",
-        trigger_sender="Derek", trigger_text="请回复",
+        trigger_message_id="trigger-1", trigger_create_time="2026-10-04 01:00:00",
+        trigger_sender="Derek", trigger_text="Please send",
     )
     task = store.claim_reply_tasks(limit=1)[0]
-    consumer = store.claim_agent_run(
-        task.id, task.execution_generation, role=AgentRole.CONSUMER,
-        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
-        operation_id="", owner="consumer",
-    ).run
-    consumer_payload = {
-        "outcome": "proposal", "risk": "low", "confidence": 1.0,
-        "rule_coverage": 1.0, "information_completeness": 1.0, "summary": "reply",
-        "proposal": {
-            "objective": "reply", "sourced_facts": [], "authored_judgment": "",
-            "actions": [{
-                "description": "reply", "action_identity": "reply-1",
-                "capability": "dingtalk-chat", "operation": "messages-send",
-                "target": {"conversation_id": "cid-1"},
-                "payload": {"content": "已收到，按这个安排。"},
-            }],
-        },
-        "error": {"code": "", "retryable": False, "authorization_required": False},
-    }
-    store.complete_agent_run(consumer.id, consumer_payload, owner="consumer")
-    audit = store.claim_agent_run(
+    audit_run = store.claim_agent_run(
         task.id, task.execution_generation, role=AgentRole.AUDIT,
-        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
-        operation_id="op-1", owner="audit",
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="historical-audit", owner="audit",
     ).run
-    audit_result = AuditAgentResult.model_validate({
-        "outcome": "executed", "risk": "low", "confidence": 1.0,
-        "rule_coverage": 1.0, "information_completeness": 1.0,
-        "summary": "sent", "proposal_revision": 0, "feedback": None,
-        "external_result": {
-            "operation_id": "op-1",
-            "live_result_reference": {"open_task_id": "openTask-lineage"},
-        },
-        "error": {"code": "", "retryable": False, "authorization_required": False},
-    })
-    _record_send_receipt(store, audit.id, "openTask-lineage", owner="audit")
-    store.complete_agent_run(audit.id, audit_result.model_dump(mode="json"), owner="audit")
+    _record_send_receipt(store, audit_run.id, "trigger-1", owner="audit")
+    store.complete_agent_run(audit_run.id, {
+        "outcome": "executed", "summary": "Claimed a send",
+        "external_result": {"operation_id": "historical-audit",
+                            "live_result_reference": {"message_id": "trigger-1", "delivered": True}},
+    }, owner="audit")
+    assert store.count_sent_replies() == 0
+    assert store.get_sent_reply("cid-1", "trigger-1") is None
+    assert store.list_verified_candidate_actions(task.id) == []
 
+
+def test_reviewed_open_task_handle_is_durable_and_replay_does_not_resend(tmp_path):
+    from app.system_executor import ActionOutcome, SystemExecutor
+
+    store = AutoReplyStore(tmp_path / "task-handle.sqlite3")
+    action = {"description": "Ask applicant", "action_identity": "clarify",
+              "capability": "dingtalk-chat", "operation": "send_direct_message",
+              "target": {"open_dingtalk_id": "open-recipient"},
+              "payload": {"content": "「其它企业」具体是指哪些企业？"}}
+    task, candidate, review, _consumer, _audit, _run = _persist_approved_worker_candidate(
+        store, action=action,
+    )
+    provider_result = {"openTaskId": "ug+Jh+8XPcnS1FFI0wAyhKR/URa7bVoH7cclvy4tUao="}
+
+    class VerifiedSend:
+        calls = 0
+
+        def dispatch(self, action, *, action_key, candidate):
+            self.calls += 1
+            return ActionOutcome("verified", provider_result)
+
+        def reconcile(self, action, *, action_key, candidate):
+            raise AssertionError("verified handle must not be replayed")
+
+    handler = VerifiedSend()
+    executor = SystemExecutor(store, {("dingtalk-chat", "send_direct_message"): handler},
+                              owner="test-executor")
+    first = executor.execute(task, candidate["id"], review["id"])
+    second = executor.execute(task, candidate["id"], review["id"])
+    assert first.outcome == second.outcome == "executed"
+    assert handler.calls == 1
+    assert store.count_sent_replies() == 1
+    sent = store.get_sent_reply("cid-1", "trigger-1")
+    assert sent.reply_text == "「其它企业」具体是指哪些企业？"
+    assert json.loads(store.get_candidate_external_action(sent.external_action_key)["provider_result_json"]) == provider_result
+
+
+def test_audit_result_without_consumer_payload_uses_canonical_execution_projection(tmp_path):
+    from app.system_executor import ActionOutcome, SystemExecutor
+
+    store = AutoReplyStore(tmp_path / "lineage.sqlite3")
+    action = {"description": "Reply", "action_identity": "reply-1",
+              "capability": "dingtalk-chat", "operation": "send_group_message",
+              "target": {"conversation_id": "cid-1"},
+              "payload": {"content": "已收到，按这个安排。"}}
+    task, candidate, review, _consumer, audit, audit_run = _persist_approved_worker_candidate(
+        store, action=action,
+    )
+
+    class VerifiedSend:
+        def dispatch(self, action, *, action_key, candidate):
+            return ActionOutcome("verified", {"openTaskId": "openTask-lineage"})
+
+        def reconcile(self, action, *, action_key, candidate):
+            raise AssertionError("fresh action must dispatch")
+
+    execution = SystemExecutor(store, {("dingtalk-chat", "send_group_message"): VerifiedSend()},
+                               owner="test-executor").execute(task, candidate["id"], review["id"])
     result = OrchestrationResult(
-        status="executed", final_run_id=audit.id, final_role=AgentRole.AUDIT,
-        summary="sent",
-        error=AgentError(code="", retryable=False, authorization_required=False),
-        feedback_cycles=0, audit_result=audit_result,
+        status="executed", final_run_id=audit_run.id, final_role=AgentRole.AUDIT,
+        summary="sent", error=AgentError(), feedback_cycles=0,
+        audit_result=audit, execution_result=execution,
+        candidate_id=candidate["id"], review_id=review["id"],
     )
     assert result.consumer_result is None
-
-    projection = DingTalkAutoReplyWorker._sent_reply_projection_from_result(
-        task, result, store.get_agent_run(audit.id), store
-    )
-
-    assert projection is not None
-    assert projection.reply_text == "已收到，按这个安排。"
-    assert projection.action_identity == "reply-1"
+    assert execution.outcome == "executed"
+    assert store.get_sent_reply("cid-1", "trigger-1").reply_text == "已收到，按这个安排。"
+    assert store.count_sent_replies() == 1
