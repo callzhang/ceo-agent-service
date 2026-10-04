@@ -242,6 +242,11 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
    read-only 分类、receipt 格式或所谓“未知效果”推断业务是否完成。
 5. Attention、Workers 和质量门只统计 current projection；History 才展示旧 task、旧 run 和原始失败。
 
+失败 Reply task 的 Attention 诊断读取该任务当前执行代的最新 run，展示原始 `source_code`
+（没有时使用 `code`）、来源与明确标注为「Agent 说明」的 `reported_summary`。旧代或无法
+解析的诊断不替换任务自己的错误。展示这些字段不证明外部操作已执行，不改变拒绝、重试、
+人工决定或任务状态。
+
 如果同一业务对象的 History 出现多个旧 task，模式迁移可以重建 `business_object_tasks` 的当前映射，
 但不得删除旧输入、run、session、tool event、provider 结果或错误事件。当前投影修正不能被解释为
 “历史从未失败过”。

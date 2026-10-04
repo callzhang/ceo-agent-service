@@ -3199,6 +3199,31 @@ def _clean_work_item_attention_summary(summary: str) -> str:
     return " ".join(lines) or " ".join((summary or "").split())
 
 
+def _reply_task_attention_diagnostics(raw: str, task_error: str) -> dict[str, str]:
+    """Read current-run diagnostics without treating Agent prose as provider evidence."""
+    try:
+        data = json.loads(raw or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {"error": task_error}
+    if not isinstance(data, dict):
+        return {"error": task_error}
+    source_code = data.get("source_code")
+    code = data.get("code")
+    diagnostic = source_code if isinstance(source_code, str) and source_code.strip() else code
+    if not isinstance(diagnostic, str) or not diagnostic.strip():
+        return {"error": task_error}
+    source = data.get("source")
+    source = source.strip() if isinstance(source, str) else ""
+    summary = data.get("reported_summary")
+    summary = summary.strip() if isinstance(summary, str) else ""
+    description = f"运行诊断：{diagnostic}"
+    if source:
+        description += f"（来源：{source}）"
+    if summary:
+        description += f"；Agent 说明：{summary}"
+    return {"error_code": diagnostic, "error": description}
+
+
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) -> list[dict[str, str]]:
     specs = [
         (
@@ -3269,7 +3294,11 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        reply_tasks.status,
                        coalesce(nullif(reply_tasks.conversation_title, ''), reply_tasks.conversation_id) as context,
                        coalesce(nullif(reply_tasks.trigger_text, ''), nullif(reply_tasks.conversation_title, ''), reply_tasks.trigger_message_id) as summary,
-                       reply_tasks.updated_at, reply_tasks.error
+                       reply_tasks.updated_at, reply_tasks.error,
+                       (select current_run.structured_error_json from agent_runs current_run
+                        where current_run.reply_task_id=reply_tasks.id
+                          and current_run.execution_generation=reply_tasks.execution_generation
+                        order by current_run.id desc limit 1) as current_run_error
                 from reply_tasks
                 left join business_object_tasks current_business_object
                   on current_business_object.business_object_key=reply_tasks.business_object_key
@@ -3322,7 +3351,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "context": str(row["context"] or ""),
                         "summary": str(row["summary"] or ""),
                         "updated_at": str(row["updated_at"] or ""),
-                        "error": str(row["error"] or ""),
+                        **_reply_task_attention_diagnostics(
+                            row["current_run_error"], str(row["error"] or "")),
                     }
                 )
         for category, table, status_column, context_column, summary_column, updated_column, error_column, statuses in specs:

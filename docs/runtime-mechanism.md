@@ -11,6 +11,11 @@
 不将其降级为通用可重试失败或改成 `needs_human`。恢复必须先取得知情授权或形成实质更安全的
 候选，再按原业务身份经过正式审核、外部回检及投递流程；不得换工具绕过拒绝。
 
+失败 Reply task 的 Attention 保留当前执行代最新 run 的原始诊断：优先 `source_code`，
+否则 `code`，并展示来源及「Agent 说明」`reported_summary`。因此已保存的
+`provider_risk_rejected` 不会只剩通用 `agent_reported_failure`；这些诊断不是外部效果证明。
+旧代或无法解析的诊断不替换任务错误；读取不修改状态或恢复边界。
+
 每个需要 Agent 处理的任务都经过两个职责不同的角色：
 
 Consumer 的未审核外部效果检测只把写入操作的 provider 回执视作副作用；
