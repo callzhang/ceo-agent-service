@@ -1296,6 +1296,15 @@ erase this delivery evidence. Pending or ambiguous verification produces no
 successful History projection. This records one message's actual effect, not
 completion of the whole proposal: the task and external-action completion
 ledger still require the existing Audit lifecycle and evidence checks.
+# External Command Failure Evidence
+
+External command failure previews retain both the beginning and the end of
+long output within the existing 400-character content budget. Python traceback
+frames must not displace the final exception code and cause. Structured provider
+errors still expose only the existing approved error fields; command argument
+redaction, retry policy and action authorization are unchanged. This improves
+future failure evidence and does not rewrite already-truncated historical runs.
+
 # Email SQLite Contention Diagnostics
 
 EmailStore and AutoReplyStore report connection contexts lasting at least one second, including
