@@ -170,6 +170,88 @@ describe("console API helpers", () => {
     }
   });
 
+  it.each(["provider_risk_rejected", null])("preserves Attention diagnostic error_code %s in Status", async (errorCode) => {
+    const originalFetch = globalThis.fetch;
+    const payload = statusEnvelope();
+    (payload.item.attention_rows as unknown[]).push({
+      category: "Reply task", id: "1", status: "failed", context: "Diagnostic",
+      summary: "Review this request.", updated_at: "now", error: "Tool call rejected",
+      error_code: errorCode,
+    });
+    globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200 });
+    try {
+      await expect(getStatus()).resolves.toEqual(payload);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it.each([{ error_code: 123 }, { error_code: "provider_failure", undeclared_diagnostic: true }])(
+    "rejects malformed or undeclared Attention diagnostics %j", async (diagnostics) => {
+      const originalFetch = globalThis.fetch;
+      const payload = statusEnvelope();
+      (payload.item.attention_rows as unknown[]).push({
+        category: "Reply task", id: "1", status: "failed", context: "Diagnostic",
+        summary: "Review this request.", updated_at: "now", error: "Tool call rejected",
+        ...diagnostics,
+      });
+      globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200 });
+      try {
+        await expect(getStatus()).rejects.toThrow("invalid status response");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
+
+  it("accepts the separately typed nonempty human decision Status rows", async () => {
+    const originalFetch = globalThis.fetch;
+    const payload = statusEnvelope();
+    Object.assign(payload.item, { human_decision_rows: [{
+      category: "Reply task", id: "2", status: "needs_human", context: "Decision",
+      summary: "Current instance decision", updated_at: "now", error: "",
+      error_code: null, root_cause: null, detail_url: "/history/2",
+      detail_label: "Decision basis", detail: "Verified facts and available choices.",
+    }] });
+    globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200 });
+    try {
+      await expect(getStatus()).resolves.toEqual(payload);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it.each([
+    { detail: "Verified facts" }, { detail_label: "Decision basis" },
+    { detail_label: "Decision basis", detail: 123 },
+    { detail_label: "Decision basis", detail: "Verified facts", undeclared_detail: true },
+  ])("rejects invalid human decision Status details %j", async (details) => {
+    const originalFetch = globalThis.fetch;
+    const payload = statusEnvelope();
+    Object.assign(payload.item, { human_decision_rows: [{
+      category: "Reply task", id: "2", status: "needs_human", context: "Decision",
+      summary: "Current instance decision", updated_at: "now", error: "", ...details,
+    }] });
+    globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200 });
+    try {
+      await expect(getStatus()).rejects.toThrow("invalid status response");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it.each([null, {}, "not an array"])("rejects human decision Status rows that are not an array: %j", async (rows) => {
+    const originalFetch = globalThis.fetch;
+    const payload = statusEnvelope();
+    Object.assign(payload.item, { human_decision_rows: rows });
+    globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200 });
+    try {
+      await expect(getStatus()).rejects.toThrow("invalid status response");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("requires the separately paged project candidate metadata", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (input) => {

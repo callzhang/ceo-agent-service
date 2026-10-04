@@ -16,6 +16,14 @@
 `provider_risk_rejected` 不会只剩通用 `agent_reported_failure`；这些诊断不是外部效果证明。
 旧代或无法解析的诊断不替换任务错误；读取不修改状态或恢复边界。
 
+同一诊断生产器用于 Status API 时，后端 `AttentionRow` 与前端 Status 解码器均声明
+可选的字符串或 `null` 字段 `error_code`；无原始诊断的行不必提供它。未知字段与错误类型
+仍严格拒绝。真实任务/run 生成的 Attention 行必须能经过 `/api/console/status` 与前端
+解码，不能只验证生产器自身而让新增诊断导致 HTTP 500 或页面拒绝正常响应。
+人工决策行使用同一基础字段合同并要求字符串 `detail_label` / `detail`，不是普通
+Attention 行；前端保留其独立说明。提供 `human_decision_rows` 时必须是数组，不能把
+错误的对象、字符串或 `null` 当成“无人工决策”。
+
 Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
 候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
