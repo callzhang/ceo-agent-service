@@ -854,9 +854,10 @@ def test_console_history_chart_reuses_a_short_lived_snapshot(monkeypatch, tmp_pa
     warmed = threading.Event()
 
     def fake_chart(_store, *, hours):
-        calls.append(hours)
-        if hours == 24 * 30:
-            warmed.set()
+        if _store.path == tmp_path / "worker.sqlite3":
+            calls.append(hours)
+            if hours == 24 * 30:
+                warmed.set()
         return {"labels": [], "series": [], "total": 0, "range": str(hours)}
 
     monkeypatch.setattr(audit_web_module, "_history_chart_payload", fake_chart)
@@ -866,6 +867,7 @@ def test_console_history_chart_reuses_a_short_lived_snapshot(monkeypatch, tmp_pa
         calls.clear()
         first = client.get("/api/console/history/chart?range=1m")
         first_calls = list(calls)
+        fake_chart(AutoReplyStore(tmp_path / "other.sqlite3"), hours=24 * 30)
         second = client.get("/api/console/history/chart?range=1m")
 
     assert first.status_code == 200

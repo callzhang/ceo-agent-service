@@ -63,3 +63,8 @@ upload tests wait for runtime capability loading to enable the input before
 choosing a file, so they exercise a real user action instead of firing a change
 on a disabled control. The complete frontend suite passes 632 tests; the two
 existing skips are unchanged, and both real workbench browser checks pass.
+
+History-chart cache tests bind their warm-up event and call counter to their
+own SQLite path. A read for another app/database is explicitly interleaved
+between repeated requests; it must not be mistaken for rebuilding this app's
+cached chart. This prevents background warmers from contaminating the assertion.
