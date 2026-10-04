@@ -15,6 +15,16 @@ Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，�
 
 候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
 
+Consumer 的未审核外部效果检测只把写入操作的 provider 回执视作副作用；
+群消息列表中的 `conversationMessagesList[*].messages[*].openMessageId` 是历史消息身份，
+不能据此判定 Consumer 发送了消息或阻止后续安全恢复。检测只读取 provider 的
+`data` / `result` / `provider_result` 结果封装中的回执，MCP `content[*].text` 与
+`structuredContent` 先按传输封装解码；正式发送工具的 `provider_result.result.openTaskId`
+同样保留为执行证据，不递归
+业务正文、历史消息样本或其重新组织后的预览。拒绝结果不作为已接受的效果，真实
+发送结果继续保留回执的出现顺序并去重。这是诊断证据边界，不改变审核、发送授权或恢复规则。
+
+
 Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 proposal_revision；failed 只表示技术失败。Audit 不修改正文、选项，不返回执行回执，也不自行创作另一个人工问题。return 允许保留正文并补足证据；reject 要求实质改变被驳回内容，不能只改描述、元数据。首次提交最多三次内容重提，耗尽为 failed，技术失败不占内容预算。
 
 人工问题也先经过 Audit。Audit 检查：是否确需 Derek、规则/代码/Skill/记忆/会话/读取是否可自行解决、是否应向来源人索取材料、是否把技术失败伪装成决策、上下文和理由是否充分、选项是否可行且确有差异、每个执行分支是否完整并仅限当前实例。只有当前版本 approve 后才进入 needs_human 和通知，审核通过不等于业务 done。
@@ -154,6 +164,119 @@ Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 propo
 选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。不再提供 applies_to=task_class、可复用规则、Skill 更新复选框或此决策处理器的 Skill 写入副作用。
 
 多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，stage_index、predecessor_review_id 绑定前一已完成阶段的回执；阶段上限独立于每阶段三次内容修订预算。
+
+钉钉引用回复由服务使用 DWS `chat +messages-reply` 投递；该入口核验原消息、发送者与会话一致性，且适用于已确认的单聊会话。投递仍沿原业务对象的幂等键和回执核验，不因引用回复失败自动改发普通消息。
+
+会议总结的业务群候选由正文中的业务词与标题共同检索，排除听记摘要里的时间标签、图片链接等元数据。平台中立的共享群发现服务先按标题/摘要与群名筛选，再用完整日历名册的参会人覆盖率缩小候选；唯一或少量通过这两层筛选的群才读取近期消息并交给决策 Agent 做完整业务承接核验。当前运行时只有 DingTalk/DWS 适配器，Lark 和 Slack 需要各自 Provider 的认证、读取和外部读回验证后才能启用。发现服务不选择最终目标，也不把 Provider 故障降级成“找不到群”。没有标题命中时仍保留候选做实时名册检查，不能按搜索接口的原始返回顺序截断候选。排序优先考虑群名是否对应摘要主题，再参考讨论片段；词项交集只是检索线索，Agent 必须核对实际讨论、行动负责人和受众。参会人覆盖率只证明受众交集，不证明业务归属，不能单独强制选群。历史投递仍需本次实时成员覆盖达到门槛，且须与当前议题一致；此前已发送的总结不会因路由修复自动重发。
+
+候选群消息读取明确返回 DWS `code=1001`、业务原因「该群为保密群，无法获取消息记录」，且 `retryable_external_dependency=false` 时，适配器保留原始拒绝，不包装成瞬时错误。会议任务记录 `meeting_group_discovery` 失败并释放执行锁，不继续自动重试；权限或可读取的可信来源恢复后才走正式恢复。该拒绝既不是空消息结果，也不允许跳过该群而改投其他群或组织者。未知读取错误以及 provider 明确标记可重试的故障仍沿原有重试路径处理。
+
+对于源单聊的澄清动作，Consumer 必须在 action target 中提供已经通过实时读取确认的参与者 `open_dingtalk_id`。若该参与者字段以 `verified_participant_open_dingtalk_id` 表示，System Executor 使用候选中已确认的同一稳定接收人身份执行单聊发送；不会把 `conversation_id` 当作群聊目标。
+若单聊候选同时带有原会话的 `conversation_id` 和收件人的 `open_dingtalk_id`，发送入口在核对会话与原任务一致后只保留收件人目标，不把会话 ID 当作第二个互斥目标。DWS 的单聊写入口实际要求 `receiverUid`（userId），因此服务会用原始触发消息中与该 open ID 精确匹配的姓名和 open ID 解析 userId，再只把 userId 传给 DWS；解析不到唯一 userId 时在 provider 写入前失败，不猜姓名、不直接把 open ID 当作 receiverUid。群聊或不匹配会话不作此转换。
+
+当 Audit 因临时授权映射或运行配置失败后被重新调度时，恢复会创建下一次 Audit turn；已失败的 turn 保持历史记录，不能被重复领取。
+
+每个队列任务的 `Original trigger` 是该任务唯一的权威输入，由
+`trigger_message_id` 标识。近期会话消息、材料和实时读取结果只能补充事实，不能把
+Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `return` 或 `reject` 后，服务
+必须把规则、观察结果和修改要求传给下一版 Consumer proposal，再创建对应的 Audit run；
+Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
+
+Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返回 0..N 个 `task_decisions`。
+每个保留决策都必须引用 WorkItem 的准确 `source_ref`，并提供确实出现在来源摘要中的原文
+`source_excerpt`；检索到的 Task、Project 候选及 memory 只能提供背景，不能替代来源证据或授权。
+`skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。
+正式 Project 注册表和当前 Task 状态优先读取最近一次确认的正式周报，尤其是
+项目管理部或管理层周报中明确列出的项目、负责人、目标、DDL、状态和下周任务；
+保留周报文档引用及统计周期。会议纪要、逐字稿或已确认会议行动项是尚未进入
+周报的新决策或变更的次级权威来源。聊天或消息只能补充上下文、负责人、状态或
+链接，不能单独创建正式 Project，也不能自行覆盖周报明确字段。明确决定启动、批准
+或立项的会议行动项可以创建带会议证据的正式 Project；普通项目提及只形成项目线索。
+来源冲突时先取
+最新明确周报字段，再取最新确认的会议决策，并保留精确来源引用。
+周报中的命名项目/工作流若有明确的负责人、目标/里程碑、状态、交付物或下一步，
+Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_proposal`；孤立任务、
+部门或话题不能直接注册 Project。多位个人负责人可以用名单表示。通常其
+`owner_evidence.excerpt` 必须包含每个人名和当前报告的来源引用；如果负责人关系来自已绑定的
+权威 memory 或 session 上下文，则可使用 `linked_source_ref`、稳定的 `episode_id`/`thread_id`
+和包含明确负责人-行动关系的 `memory_excerpt`；校验忽略
+钉钉 `@` 标记和常见名单分隔符，不把多人整串当作一个名字。
+部门/团队标签（例如“项目管理部”“算法团队”）即使被模型误放进
+`project_proposal` 也不会注册为正式 Project；它们仍可作为 Task 的上下文或候选聚类。
+所有 `date_evidence.source_excerpt` 都必须是当前 Work Item 文本中逐字连续的子串，
+包括原始空格与标点，无法逐字引用时省略日期证据。周报“本周工作重点”“下周工作重点”、
+“团队管理和分工”“周度待办追踪”“行动项”章节是 Task 来源，不是 Project 注册表；
+只有单独的项目清单/项目组合、里程碑/路线图条目或明确会议立项才可注册正式 Project。
+项目/管理周报中有明确项目列的“手头项目/项目清单/项目组合”行先由 Task Agent 建立
+cluster，再依据登记表来源直接注册正式 Project，并把 cluster 中的 Task 关联到 Project；
+同一标题复用同一 anchor。普通项目提及、客户/部门标签和孤立 Task 只形成
+`business_project_candidates`，不会直接注册正式 Project。控制台确认只从 cluster 的已有
+Task evidence 选择来源信号，不凭空制造证据；事务会同时把 cluster 中的 Task 关联到 Project，
+重复确认保持幂等，不能把已确认 candidate 改绑到另一个 Project。
+正式 Project 的列表和详情从已关联 Task 的最新权威周报 signal 生成只读摘要：负责人/负责内容、目标、DDL 或统计周期、当前状态、报告标题/周期、原文摘录、来源链接，以及进行中/已完成 Task 数量；没有可解析的周报字段时保留现有登记来源和关联 Task 数，不用普通聊天或孤立 Task 推断字段。
+更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
+
+Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。完成由新证据驱动
+（Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：新完成的
+钉钉待办由扫描直接关闭对应 Task（见下文「后台周期性工作」），消息、会议等新信息照常作为 Work Item 进入
+Task Agent。单独的 Task completion Agent（`app/task_completion_agent.py`）已删除，服务不再产生
+`todo_completion_evidence_candidate`、`todo_completion_check`、`follow_up_completion_check` 三类 Work Item；
+队列里残留的这类输入在交给 Task Agent 之前被标为 `skipped`，原因
+`completion checks retired (Derek 2026-09-25: 完成由新证据驱动)`。三个枚举值保留，只为读取历史记录。
+`TaskAgentDecision` 里的 `todo_changes`、`follow_up_changes`、`search_trace` 字段仍在 schema 中，但当前没有
+服务端路径应用它们。Task Agent prompt 明确要求只读发现，不得通过 CLI/API/MCP 工具创建、更新、删除、
+发送或完成外部记录；这是 prompt-only 的 best-effort 指引，不是运行时权限边界。外部 TODO 完成只走现有
+outbox 同步，避免双写。
+
+这描述当前功能分支的代码契约，不证明变更已部署。Task 6 仍不得单独部署，整体切换仍需发布验收。
+Task-first 输出不承载 Project 写操作或直接创建新外部 TODO；合格 Task 的钉钉镜像由 Task 7
+服务端 outbox 完成。缺少可信 producer 提供的 `external_task_id` 时不得猜测外部对象。
+
+Task Agent 的共享会话不会改变 Task、TODO 或 follow-up 的服务端应用边界；适用操作仍由当前
+Work Item 明确绑定，并在对应服务事务中校验和应用。
+
+定时的 TODO/follow-up 完成检查和 follow-up 投递失败后的 Agent 修复都已删除（Derek 2026-09-25），Task 只随新信息更新，不再有任何来源产生 `follow_up_completion_check`。Task 提取使用稳定的 `task-agent:work-tracking:v1` 会话范围；每个
+Work Item 仍有独立的 workload key、Task Agent run 与 runtime attempt。路由器按 runtime route 保存
+session，同一 route 上的后续输入续接既有 session。`process-work-items` 在恢复队列和领取输入之前
+取得共享 SQLite session lock，运行期间每 60 秒续租；竞争中的进程返回 0 项且不领取、不增加尝试次数。
+执行前与领域事务提交前均检查 lease；失锁后本轮不提交领域更改，并按 work-summary 临时错误策略重试。
+服务内的 dispatcher 以单 worker 运行 `work_summary` 队列（与会议队列相同，见 `SINGLE_SESSION_ADAPTERS`），同一时刻只有一个 Task Agent turn 续接共享 session；2026-09-24 Task-first 上线后该队列曾用两个 worker，第二个 turn 总是撞上 `already has an active writer`，约 70 秒重试后判失败，25 个 Work Item 因此失败。
+旧 `task:<run_id>` 会话记录不会迁移或覆盖。Task Agent prompt 将此前会话内容限定为背景，决定须依据当轮
+Work Item、当前存储/检索状态和新来源证据。Codex CLI 自己管理上下文自动压缩；其他 route 使用其自身
+会话能力，压缩后的会话仍不能替代 Work Item、数据库或来源证据。
+检索上下文中的历史 source signal 保留来源、时间、作者和上下文，但对可能包含完整会议
+JSON 的 `evidence_text` 使用有界的首尾摘录；原始证据仍在数据库中，避免重复信号把单次
+Agent 输入推过 provider 的输入契约。
+若 CLI 明确报告 compaction 自身因模型 context window 超限而失败，当前 run 会清除此 route 的共享
+session 指针并在同一路由的新 session 重试一次；若 fresh session 仍超限，则转入既有 runtime route
+fallback，不循环创建 session。普通会话冲突或其他错误不会清除共享 session。
+
+正式指派不等于负责人接受：有授权来源、明确交付物和明确负责人的指派可成为
+`assigned_unaccepted` Task；只有负责人本人明确接受并且来源上下文带有可信、精确的
+`reply_to_source_ref`，且决策明确引用该 Task 已链接的指派证据，才可转为已接受承诺。模型不能
+制造回复链接或仅凭“收到”、相似文本、TODO 存在推断接受。缺少可信链接时保留未接受状态并记录
+跳过原因。负责人身份 ID 只能来自可信来源映射或与来源发言人匹配的稳定身份，不由模型单独指定。
+
+日期按语义类型保存，不使用含糊的通用 deadline：`assigned_at`（指派日期）、
+`requested_deadline_at`（请求方要求日期）、`external_deadline_at`（外部期限）、
+`committed_deadline_at`（负责人接受的承诺期限）、`estimated_deadline_at`（估算日期）及
+`next_check_at`（下次检查日期）。Task 6 只记录来源明确给出的 next-check 日期，不自动创建检查 cadence，也不把请求/外部期限改写成检查日期。每条日期都要有明确日期值、对应来源引用、原文摘录和行为人；只有
+接受承诺能建立 `committed_deadline_at`。标准化日期必须与原文中精确、可解析的日期短语一致；不能从只写日期的来源扩展出具体时分。周级或其他不可解析表达只保留在已链接的原始来源信号中，不产生 typed date fact，也不猜时间戳。`assigned_at` 只从明确正式指派来源的可信创建时间元数据派生，不是模型提供的日期。估算的行为人沿用作出估算的可信来源发言人；Agent 仅是抽取者。只有 `next_check_at` 由 Task Agent 署名，且必须是来源中明确给出的检查日期；它不自动创建 cadence。其他日期要求可识别的来源行为人，不能伪装或猜测身份。当前 AI Minutes producer 尚无可信的发言人到身份映射，因此不能把纪要中被转述的多方日期归给主持人或模型指定的人；该类日期暂不入 Task，需由 producer 提供映射后另行接通。
+
+一个 work-summary 输入中的全部 Task 变更、来源信号、日期、关系/聚类/锚点/Project 候选提案及
+输入/run 结果在单个数据库事务中提交或回滚。CEO Attention 是派生投影，只在提交后先应用有效提案，再对所有受影响 Task（合并时包括来源和目标两侧）重算成员资格；完成、取消或变为不相关的 Task 会退出当前成员。Task Agent 的类型化完成和外部 TODO 完成也在各自领域事务提交后重算对应 Attention 成员，完成 Task 退出而未完成的兄弟 Task 保留；这不自动把 Attention 标为已解决。投影失败
+不回滚已完成的 Task 事实，也不把已完成 run/input 改成失败。Task 6 不再把 `work_projects`、
+`work_todos` 或 `work_updates` 当作 Task 事实写入；Task 7 的钉钉 TODO 镜像使用独立的
+`business_task_dingtalk_links` 和 `business_task_todo_sync_outbox`，并不把旧 Project/TODO 当作 Task 主键。
+此处描述的是代码分支，不代表已经部署；Task 6 不单独部署或重启服务。
+
+目前通用 work-item 生产者尚未提供所有授权和 owner identity 映射元数据；在来源元数据缺失时，
+不能据此把显式提到负责人的讨论升级成正式授权指派。对应的生产者接线必须作为单独集成范围处理，
+不能由 Task Agent 猜测或合成。
+
+Attention 的 `material_trigger` 是 Agent 对来源证据的语义分类，不是独立机器证明。每项提案必须附带当前来源摘录中的精确 trigger quote、分类理由和明确 CEO action；投影还要求业务锚点已确认、Task 相关且来源信号已链接。系统把 trigger 类型和摘录写入 Attention 原因/事件沿革。系统不靠关键词推断重大性；若未来需要独立机器级判定，应另行定义 canonical trigger facts 或人工确认机制。
+
+
 
 ## Business Object、Task、Agent Run 与 Reply Attempt
 
@@ -1009,6 +1132,15 @@ erase this delivery evidence. Pending or ambiguous verification produces no
 successful History projection. This records one message's actual effect, not
 completion of the whole proposal: the task and external-action completion
 ledger still require the existing Audit lifecycle and evidence checks.
+# External Command Failure Evidence
+
+External command failure previews retain both the beginning and the end of
+long output within the existing 400-character content budget. Python traceback
+frames must not displace the final exception code and cause. Structured provider
+errors still expose only the existing approved error fields; command argument
+redaction, retry policy and action authorization are unchanged. This improves
+future failure evidence and does not rewrite already-truncated historical runs.
+
 # Email SQLite Contention Diagnostics
 
 EmailStore and AutoReplyStore report connection contexts lasting at least one second, including

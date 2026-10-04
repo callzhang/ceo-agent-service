@@ -11,6 +11,17 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Mapping, Protocol, Sequence
 
+from app.dws_client import DwsError
+
+
+def is_non_retryable_dingtalk_group_read_denial(error: Exception) -> bool:
+    return (
+        isinstance(error, DwsError)
+        and error.code == "1001"
+        and error.business_message.strip() == "该群为保密群，无法获取消息记录"
+        and not error.retryable_external_dependency
+    )
+
 
 @dataclass(frozen=True)
 class ProviderScope:
@@ -328,6 +339,8 @@ class DingTalkGroupDiscoveryProvider:
                 for index, message in enumerate(self.dws.read_recent_messages(conversation, limit=limit))
             )
         except Exception as exc:
+            if is_non_retryable_dingtalk_group_read_denial(exc):
+                raise
             raise RetryableProviderError(str(exc)) from exc
 
     def get_group_sendability(self, group: GroupRef) -> Sendability:
