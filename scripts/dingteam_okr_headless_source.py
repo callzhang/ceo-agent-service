@@ -17,7 +17,10 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 
-SCRIPT_DIR = Path.home() / ".agents" / "skills" / "dingtang-okr-review" / "scripts"
+SCRIPT_DIR = Path(
+    os.environ.get("CEO_SKILLS_ROOT", "").strip()
+    or Path.home() / ".agents" / "skills"
+).expanduser() / "dingtang-okr-review" / "scripts"
 LOCAL_SSO_CONFIRM_SCRIPT = Path(__file__).with_name("dingtalk_local_sso_confirm.py")
 HEADLESS_REFRESH_SECONDS = 40
 HEADLESS_LOCK_TIMEOUT_SECONDS = 130
