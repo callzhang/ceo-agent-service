@@ -5810,6 +5810,10 @@ def test_worker_closes_model_once_when_startup_dependency_build_fails(close_rais
 
     model = SimpleNamespace(close=close)
     bootstrap = SimpleNamespace(
+        task_store=SimpleNamespace(),
+        email_store=SimpleNamespace(
+            list_nonterminal_legacy_unsubscribe_task_attempts=lambda: ()
+        ),
         load_enabled_accounts=lambda: ({"account_id": "account-1"},),
         load_active_model=lambda: model,
         build_dependencies=lambda *_args: (_ for _ in ()).throw(
@@ -9573,6 +9577,8 @@ def test_startup_builds_real_loop_dependencies_only_after_accounts_and_model():
     model = object()
     ready_dependencies = _dependencies([])
     bootstrap = SimpleNamespace(
+        task_store=ready_dependencies.task_store,
+        email_store=ready_dependencies.email_store,
         load_enabled_accounts=lambda: events.append("accounts") or accounts,
         load_active_model=lambda: events.append("model") or model,
         build_dependencies=lambda loaded_accounts, loaded_model: (

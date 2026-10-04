@@ -67,12 +67,14 @@ def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
                 "label": "Proceed with the first supported management choice",
                 "instruction": "Execute the first evidence-supported management choice.",
                 "consequence": "The agent will execute and verify that choice.",
+                "applies_to": "task_class",
             },
             {
                 "key": "B",
                 "label": "Proceed with the second supported management choice",
                 "instruction": "Execute the second evidence-supported management choice.",
                 "consequence": "The agent will execute and verify the alternative.",
+                "applies_to": "task_class",
             },
         ]
     return ConsumerAgentResult.model_validate(
@@ -81,6 +83,14 @@ def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
             "summary": case.reason,
             "proposal": proposal,
             "decision_options": decision_options,
+            "needs_human_reason": case.reason if decision_options else None,
+            "decision_basis": {
+                "verified_facts": [{"assertion": case.trigger, "references": [f"eval:{case.id}"]}],
+                "rule_evidence": [{"assertion": case.reason, "references": [f"eval:{case.id}:rule"]}],
+                "quality_explanation": case.reason,
+                "no_external_action_evidence": [{"assertion": "The fixture has performed no writes.", "references": [f"eval:{case.id}:sink"]}],
+                "conclusion": case.reason,
+            } if decision_options else None,
             "error": {"code": "", "retryable": False, "authorization_required": False},
             "risk": "high" if case.consumer_outcome == "needs_human" else "low",
             "confidence": 0.1 if case.consumer_outcome == "needs_human" else 1.0,

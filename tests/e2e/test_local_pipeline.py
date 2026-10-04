@@ -115,6 +115,14 @@ class FakeMeetingDws:
     def search_user_profiles(self, query):
         return []
 
+    def search_conversations(self, query):
+        from app.dingtalk_models import DingTalkConversation
+
+        return [DingTalkConversation(
+            conversation_id="cid-first", open_conversation_id="cid-first",
+            title="项目群", single_chat=False, unread_point=0,
+        )]
+
     def read_recent_messages(self, conversation, limit=50):
         return []
 
@@ -195,7 +203,7 @@ def test_meeting_alignment_pipeline_sends_once_and_appears_in_history(tmp_path):
 
     job = store.get_meeting_alignment_job_by_meeting_id("minutes-e2e-1")
     assert job is not None
-    assert job.status == "sent"
+    assert job.status == "sent", job.error
     assert len(store.list_meeting_alignment_runs(job.id)) == 1
     assert len(dws.sent) == 1
     assert dws.sent[0]["conversation_id"] == "cid-first"
