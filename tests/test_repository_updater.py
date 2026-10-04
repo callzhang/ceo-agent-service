@@ -23,7 +23,7 @@ def git(cwd: Path, *args: str) -> str:
 def fixture_repo(tmp_path: Path) -> tuple[Path, Path]:
     remote = tmp_path / "remote.git"
     local = tmp_path / "local"
-    git(tmp_path, "init", "--bare", str(remote))
+    git(tmp_path, "init", "--bare", "--initial-branch=main", str(remote))
     git(tmp_path, "init", "--initial-branch=main", str(local))
     git(local, "config", "user.name", "Test User")
     git(local, "config", "user.email", "test@example.com")
@@ -68,6 +68,19 @@ def operation(local: Path) -> UpgradeOperation:
         original_commit=local_commit,
         target_commit=remote_commit,
     )
+
+
+@pytest.mark.parametrize("default_branch", ["master", "main"])
+def test_fixture_repo_does_not_depend_on_git_default_branch(tmp_path, monkeypatch, default_branch):
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "init.defaultBranch")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", default_branch)
+
+    local, remote = fixture_repo(tmp_path)
+
+    assert git(remote, "symbolic-ref", "HEAD") == "refs/heads/main"
+    assert git(local, "branch", "--show-current") == "main"
+    assert git(tmp_path / "updater", "branch", "--show-current") == "main"
 
 
 def test_clean_upgrade_fast_forwards_and_verifies(tmp_path: Path):
@@ -359,7 +372,7 @@ def fixture_repo_with_protected_source(tmp_path: Path) -> tuple[Path, list[Path]
     """
     remote = tmp_path / "remote.git"
     local = tmp_path / "local"
-    git(tmp_path, "init", "--bare", str(remote))
+    git(tmp_path, "init", "--bare", "--initial-branch=main", str(remote))
     git(tmp_path, "init", "--initial-branch=main", str(local))
     git(local, "config", "user.name", "Test User")
     git(local, "config", "user.email", "test@example.com")
