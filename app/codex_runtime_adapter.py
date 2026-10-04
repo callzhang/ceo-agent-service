@@ -198,7 +198,7 @@ class CodexRuntimeAdapter:
                 failure_class=RuntimeFailureClass.UNCLASSIFIED,
                 code="runtime_unclassified",
                 detail="Codex completed without a classified runtime failure.",
-                failover_permitted=True,
+                failover_permitted=False,
             )
         if timed_out:
             timeout_code = {

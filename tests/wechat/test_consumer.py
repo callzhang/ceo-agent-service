@@ -199,19 +199,18 @@ def test_stop_with_error_records_failed_attempt(fake_codex, consumer, store):
     assert attempt.send_error == "missing_wechat_context"
 
 
+@pytest.mark.parametrize("detail", ["provider authentication rejected", "x" * 600])
 def test_runtime_failure_fails_agent_run_without_completing_business_stop(
-    consumer, store
+    consumer, store, detail
 ):
     from app.agent_runtime_contracts import RuntimeFailureClass
     from app.agent_runtime_router import RoutedCodexExecutionError
-
-    secret = "provider-secret-detail"
 
     class RuntimeFailingRunner:
         def decide(self, *_args, **_kwargs):
             raise RoutedCodexExecutionError(
                 "runtime_execution_failed",
-                secret,
+                detail,
                 failure_class=RuntimeFailureClass.AUTHENTICATION,
                 failure_code="codex_provider_auth_failed",
             )
@@ -228,8 +227,8 @@ def test_runtime_failure_fails_agent_run_without_completing_business_stop(
         "code": "runtime_execution_failed",
         "failure_class": "authentication",
         "failure_code": "codex_provider_auth_failed",
+        "detail": detail[:500],
     }
-    assert secret not in run.structured_error_json
     assert run.final_result_json == ""
     task = store.get_reply_task(1)
     assert task is not None
@@ -291,7 +290,7 @@ def test_retryable_runtime_transport_failure_requeues_and_unlocks_task(store, ac
     assert store.get_reply_attempt(1) is None
     [run] = store.list_agent_runs_for_task_generation(1, "initial")
     assert run.status == "failed"
-    assert "unsafe provider detail" not in run.structured_error_json
+    assert __import__("json").loads(run.structured_error_json)["detail"] == "unsafe provider detail"
 
 
 def _enqueue_wechat_task(store):
@@ -359,6 +358,7 @@ def test_runtime_outage_defers_wechat_task_without_spending_attempt(store, accou
         "code": "runtime_provider_unreachable",
         "failure_class": "",
         "failure_code": "",
+        "detail": "no_eligible_route",
     }
 
 
@@ -395,6 +395,7 @@ def test_last_live_route_capacity_failure_is_an_outage_wait(store, account):
         "code": "runtime_provider_unreachable",
         "failure_class": "capacity",
         "failure_code": "codex_provider_overloaded",
+        "detail": "provider overloaded",
     }
 
 

@@ -27,14 +27,22 @@ def _structured_needs_human_result(
         "feedback": None,
         "external_result": None,
         "decision_options": options or [
-            {"key": "approve", "label": "Approve", "instruction": "approve", "consequence": "run"},
-            {"key": "reject", "label": "Reject", "instruction": "reject", "consequence": "stop"},
+            {"key": "approve", "label": "Approve", "instruction": "approve", "consequence": "run", "applies_to": "task_class"},
+            {"key": "reject", "label": "Reject", "instruction": "reject", "consequence": "stop", "applies_to": "task_class"},
         ],
-        "error": {"code": "", "message": "", "retryable": False, "authorization_required": False},
+        "error": {"code": "", "retryable": False, "authorization_required": False},
         "risk": risk,
         "confidence": confidence,
         "rule_coverage": rule_coverage,
         "information_completeness": information_completeness,
+        "needs_human_reason": "The applicable task class requires a rule choice.",
+        "decision_basis": {
+            "verified_facts": [{"assertion": "The task was read.", "references": ["task:1"]}],
+            "rule_evidence": [{"assertion": "The rule gap was checked.", "references": ["skill:review"]}],
+            "quality_explanation": "The score reflects the verified evidence and rule gap.",
+            "no_external_action_evidence": [{"assertion": "No write occurred.", "references": ["attempt:1"]}],
+            "conclusion": "A reusable rule choice is required.",
+        },
     }
 
 

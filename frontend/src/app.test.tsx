@@ -924,6 +924,7 @@ describe("App", () => {
     render(<App />);
 
     const input = await screen.findByLabelText("添加图片");
+    await waitFor(() => expect(input).toBeEnabled());
     fireEvent.change(input, { target: { files: [new File(["image"], "stats.png", { type: "image/png" })] } });
 
     await screen.findByText("已上传");

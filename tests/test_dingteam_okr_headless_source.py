@@ -21,6 +21,17 @@ def load_module():
     return module
 
 
+def test_shared_source_respects_configured_skills_root(monkeypatch, tmp_path):
+    root = SCRIPT_PATH.parents[1] / "ci" / "shared-skills"
+    monkeypatch.setenv("CEO_SKILLS_ROOT", str(root))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    module = load_module()
+
+    assert module.SCRIPT_DIR == root / "dingtang-okr-review" / "scripts"
+    assert Path(module.browser.__file__).is_relative_to(root)
+
+
 def test_service_entrypoint_disables_visible_browser_fallback():
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 

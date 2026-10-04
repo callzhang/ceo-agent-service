@@ -25,6 +25,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             frontend/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y zsh
       - run: python -m pip install '.[dev]'
       - run: npm ci
       - run: npm ci --prefix frontend

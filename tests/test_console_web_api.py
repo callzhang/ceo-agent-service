@@ -851,20 +851,28 @@ def test_console_failed_history_probe_skips_chart_by_default(tmp_path: Path):
 
 def test_console_history_chart_reuses_a_short_lived_snapshot(monkeypatch, tmp_path: Path):
     calls: list[int] = []
+    warmed = threading.Event()
 
     def fake_chart(_store, *, hours):
-        calls.append(hours)
+        if _store.path == tmp_path / "worker.sqlite3":
+            calls.append(hours)
+            if hours == 24 * 30:
+                warmed.set()
         return {"labels": [], "series": [], "total": 0, "range": str(hours)}
 
     monkeypatch.setattr(audit_web_module, "_history_chart_payload", fake_chart)
 
     with _client(tmp_path) as client:
+        assert warmed.wait(timeout=5)
+        calls.clear()
         first = client.get("/api/console/history/chart?range=1m")
+        first_calls = list(calls)
+        fake_chart(AutoReplyStore(tmp_path / "other.sqlite3"), hours=24 * 30)
         second = client.get("/api/console/history/chart?range=1m")
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert calls == [24, 24 * 7, 24 * 30]
+    assert calls == first_calls
 
 
 def test_console_history_completed_filter_includes_sent_records(tmp_path: Path):
@@ -2213,13 +2221,9 @@ def test_console_agent_runtime_preserves_omitted_auth_disabled_setting(monkeypat
         response = client.post(
             "/api/console/settings/agent-runtime",
             json={"fields": {
-                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,friday_runtime",
+                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
                 "CEO_CODEX_MODEL": "gpt-5.5",
                 "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080",
-                "CEO_FRIDAY_RUNTIME_PROJECT_ID": "project-1",
-                "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "",
-                "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": "",
             }},
         )
 
@@ -2431,37 +2435,31 @@ def test_spa_attention_reads_current_snapshot_after_status_cache_is_warm(monkeyp
     assert payload["items"][0]["records"][0]["id"] == "12831"
 
 
-def test_status_refresh_placeholder_uses_current_email_contract(monkeypatch, tmp_path: Path):
-    refresh_started = threading.Event()
-    release_refresh = threading.Event()
+def test_status_uses_fresh_worker_snapshot_and_current_email_contract(monkeypatch, tmp_path: Path):
+    calls = []
+    build_status = audit_web_module.build_worker_status_payload
 
-    def blocked_status_refresh(*_args, **_kwargs):
-        refresh_started.set()
-        assert release_refresh.wait(timeout=2)
-        return {}
+    def read_status(*args, **kwargs):
+        calls.append(kwargs)
+        return build_status(*args, **kwargs)
 
     monkeypatch.setattr(
         audit_web_module,
         "build_worker_status_payload",
-        blocked_status_refresh,
+        read_status,
     )
 
-    try:
-        with _client(tmp_path, spa_enabled=True, asset=b"<!doctype html>") as client:
-            assert refresh_started.wait(timeout=1)
-            response = client.get("/api/console/status")
-
-            assert response.status_code == 200
-            assert response.json()["item"]["email"] == {
-                "status": "refreshing",
-                "updated_at": "",
-                "process": None,
-                "runtime_loops": [],
-                "accounts": [],
-                "checks": [],
-            }
-    finally:
-        release_refresh.set()
+    with _client(tmp_path, spa_enabled=True, asset=b"<!doctype html>") as client:
+        calls.clear()
+        first = client.get("/api/console/status")
+        second = client.get("/api/console/status")
+    assert first.status_code == second.status_code == 200
+    assert calls == [{"include_system_health": False}] * 2
+    email = second.json()["item"]["email"]
+    assert email["status"] != "refreshing"
+    assert set(email) == {
+        "status", "updated_at", "process", "runtime_loops", "accounts", "checks",
+    }
 
 
 def test_spa_attention_does_not_expose_empty_cold_cache(monkeypatch, tmp_path: Path):

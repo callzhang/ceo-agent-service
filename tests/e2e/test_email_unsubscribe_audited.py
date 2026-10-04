@@ -674,7 +674,6 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             playwright,
             profile,
             headless=headless,
-            channel="chrome",
             **kwargs,
         )
 

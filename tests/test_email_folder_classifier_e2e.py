@@ -326,6 +326,7 @@ class _E2EAuditRunner:
         )
         action = context.proposal.actions[0].model_dump(mode="json")
         receipt = self.execute(claim.run.id, action)
+        assert receipt["status"] == "done", receipt
         result = AuditAgentResult.model_validate(
             {
                 "outcome": "executed",
@@ -998,7 +999,7 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
             "imap_port": 993,
             "imap_tls": True,
             "imap_username": "derek@example.test",
-            "imap_secret_reference": "keychain://integration-imap",
+            "imap_secret_reference": "CEO_EMAIL_INTEGRATION_IMAP_SECRET",
             "smtp_host": "",
             "smtp_port": 465,
             "smtp_tls": True,
@@ -1065,8 +1066,8 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
 
     monkeypatch.setattr(
         worker_module,
-        "_build_email_source_factory",
-        lambda _settings: lambda _account: Source(),
+        "_build_registry_source_factory",
+        lambda _registry, _priority: lambda _account: Source(),
     )
     browser_calls = []
 
@@ -1143,7 +1144,7 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
     )
     terminal_task = task_store.get_reply_task(task.id)
     assert terminal_task is not None
-    assert terminal_task.status == "done"
+    assert terminal_task.status == "done", terminal_task.error
     lineage = task_store.list_agent_runs_for_task_generation(
         task.id, task.execution_generation
     )

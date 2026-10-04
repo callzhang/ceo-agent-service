@@ -1171,12 +1171,14 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
                 "label": "Approve",
                 "instruction": "Approve the reviewed option.",
                 "consequence": "The reviewed plan may continue.",
+                "applies_to": "task_class",
             },
             {
                 "key": "B",
                 "label": "Hold",
                 "instruction": "Hold the reviewed option.",
                 "consequence": "No further action is taken.",
+                "applies_to": "task_class",
             },
         ]
         if outcome == "needs_human"
