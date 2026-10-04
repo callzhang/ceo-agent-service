@@ -56,3 +56,10 @@ environment secret references. Meeting integration supplies group search and
 typed conversation metadata. External I/O fences, real classifier training,
 headless browser effects, delivery receipts, and authorization gates remain
 covered; no tests are disabled to obtain a passing result.
+
+Frontend fixtures assert the current localized scheduled-run state and password
+visibility accessibility contract, rather than removed explanatory text. Image
+upload tests wait for runtime capability loading to enable the input before
+choosing a file, so they exercise a real user action instead of firing a change
+on a disabled control. The complete frontend suite passes 632 tests; the two
+existing skips are unchanged, and both real workbench browser checks pass.
