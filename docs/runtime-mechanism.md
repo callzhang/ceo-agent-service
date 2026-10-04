@@ -233,7 +233,9 @@ session/memory 背景用于完善已有 Task 或记录候选时，必须显式�
 它们不能替代当前来源的授权与身份元数据，也不能替代 Attention 所需的已观察持久化原始 Signal。
 本分支 Task Agent 检索上下文增加 `current_project_attention`：仅取返回的正式 Project
 规范 anchor 下的当前 active 卡，数量受既有 `limit_per_kind` 约束，渲染 id、anchor_id、
-why_attention、current_state、assessment_json 与 updated_at；不扩展完整 source_signals 预算。
+保存的成员 task_ids、why_attention、current_state、assessment_json 与 updated_at；
+task_ids 只取这些已选卡片的 `business_attention_tasks`，不把同 Project 的其他 Task 当作成员，
+检索不写回成员，也不扩展完整 source_signals 预算。
 prompt 只读取当前 ceo-work-tracking Skill；定时任务保存的旧 skill_protocol 不再注入指令，
 原始 payload 历史不变，scheduled 元数据和 prompt 的专项业务范围仍保留。
 开发与测试使用隔离的 ci/shared-skills revision 3；实际默认 Skill 路径仍为安装的用户 Skill，
@@ -403,6 +405,7 @@ provenance 替代且链接到成员；assessment 必须精确引用该卡片保�
 当前新风险提交匹配的 `attention_proposal`，现有 Project stable key 已会复用同一张卡；
 没有引用并核实旧卡保存的原始证明时，`existing_attention_id` 保持 null。仅有一张旧卡不构成原始证明。
 保留旧卡时，Agent 从检索上下文 `current_project_attention` 的对应条目读取并解析 `assessment_json`，至少引用 `assessment_json.evidence` 中一项，保持其 signal_id、source_ref 和 source_excerpt 不变。本轮重述可以另外引用，不能代替该卡已保存的原始证明。
+同一条目的 `task_ids` 是该卡实际保存的成员；同 Project 的其他 Task 不是卡片成员。保留旧卡的判断只可将这些成员列作支持 Task；新增成员或风险变化使用当前原始证据提交正常 Attention proposal。
 旧卡证明仍按原规则核验，真实旧证明可以与当前提案并存。新来源的 Project 风险证据即使不改变 Task 业务字段，也可在真实既有 Task 与正式 Project 的活动 confirmed 链接上提交 Attention proposal；同一 Task Agent 领域事务只保存当前来源 Signal、Task 证据链接和实际应用映射，随后走原有卡片投影与回执。Task 字段/事件、原 Project 链接、follow-up 和 TODO outbox 不因这项证据改变；相同 Task/来源复用 Signal。没有 proposal 的普通无字段变化 update 仍跳过；未知或未确认 Project、新链接、无效来源不能靠此路径生成卡片。
 同项目风险的多个支持 Task 复制同一份项目级提案，`current_state` 只保留共享风险事实，不追加各 Task 行动摘要。
 证据独立更新只按实际来源类型与source_ref选择可复用的observed Signal，并严格核对完整来源载荷；同ref的memory/session provenance保持独立，不代替原文，也不阻止原文后来进入。复用已关联原文不增加其他证据角色。

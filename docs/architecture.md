@@ -809,7 +809,8 @@ Task 6 与 Task 7 已随 `46ba55eb`（2026-09-24）一起部署上线，不是�
 
 本分支 Task Agent 检索上下文增加 `current_project_attention`：仅取返回的正式 Project
 规范 anchor 下的当前 active 卡，数量受既有 `limit_per_kind` 约束，渲染 id、anchor_id、
-why_attention、current_state、assessment_json 与 updated_at；不扩展完整 source_signals 预算。
+保存的成员 task_ids、why_attention、current_state、assessment_json 与 updated_at；
+task_ids 只取已选卡片的实际成员，不扩展完整 source_signals 预算。
 prompt 只读取当前 ceo-work-tracking Skill；定时任务保存的旧 skill_protocol 不再注入指令，
 原始 payload 历史不变，scheduled 元数据和 prompt 的专项业务范围仍保留。
 开发与测试使用隔离的 ci/shared-skills revision 3；实际默认 Skill 路径仍为安装的用户 Skill，
@@ -909,6 +910,10 @@ related_task_ids 只指定实际风险支持 Task，不自动包含所有项目 
 本分支的只读 Attention 详情 API 将已保存的 `assessment_json` 解析为 `assessment` 对象，
 并返回其中精确 signal ID 引用的全部原始信号，与既有 primary、resolution 和 event 信号取并集；
 不在读路径重新检索或选择依据。历史 `{}` 原样返回为空对象，不补造引文。
+Task Agent 的 `current_project_attention` 对每张被选中的活动卡片同时显示存储的 `task_ids`：
+只读取该卡在 `business_attention_tasks` 中的实际成员，正式 Project 的其他已关联 Task 不自动成为
+卡片成员。保留卡片的 `existing_attention_id` 判断只可引用这些实际成员及该卡原始证明；新成员或
+变化风险走现有 `attention_proposal`，不修改检索时的卡片成员。
 控制台详情将“来源事实”与“Agent 判断”分开，前者逐字展示已保存摘录、来源引用、真实来源时间及
 已有链接，后者使用已保存 inference；历史记录仍显示原 why_attention，并明确没有结构化引文依据。
 列表和详情的 watch 分类使用“关注点”标题并显示原 ceo_action（可为“当前无需你处理”）；

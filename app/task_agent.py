@@ -588,6 +588,10 @@ For a retained card, read its entry in current_project_attention, decode
 assessment_json, and cite at least one item from assessment_json.evidence with
 signal_id, source_ref, and source_excerpt unchanged. A current restatement does
 not replace that stored proof; cite the current source separately if useful.
+Use current_project_attention.task_ids for the card's actual saved Task members;
+Project peers are not automatically card members. A retained-card assessment may
+name supporting Tasks only from that saved membership. For a new Task member or
+changed risk, use the normal attention_proposal path with current original evidence.
 Negative assessments never close an existing card. Do not infer Project identity from
 aliases, prefixes, similarity, or keywords. Keep source facts separate from business inference.
 Do not perform a whole-company or full-history scan; assess the Projects selected by

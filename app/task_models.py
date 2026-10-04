@@ -692,7 +692,7 @@ class TaskProjectAssessment(StrictTaskModel):
         default=None,
         strict=True,
         gt=0,
-        description="Positive persisted ID of a retained needs_attention card: an original-proof claim, not an update target. For current risk changes use attention_proposal; its Project key reuses the existing card. Leave existing_attention_id null unless you cite and verify that card's stored original evidence. Read the card's current_project_attention entry and cite at least one assessment_json.evidence item with signal_id, source_ref, and source_excerpt unchanged. A current restatement does not replace that stored proof. Never a list position.",
+        description="Positive persisted ID of a retained needs_attention card: an original-proof claim, not an update target. For current risk changes use attention_proposal; its Project key reuses the existing card. Leave existing_attention_id null unless you cite and verify that card's stored original evidence. Read the card's current_project_attention entry and cite at least one assessment_json.evidence item with signal_id, source_ref, and source_excerpt unchanged. A current restatement does not replace that stored proof. current_project_attention.task_ids lists actual saved members; Project peers are not automatically card members. Name only saved members as supporting Tasks for a retained card; use attention_proposal with current original evidence for new membership or changed risk. Never a list position.",
     )
     decision_indexes: list[Annotated[int, Field(strict=True, ge=0)]] = Field(
         default_factory=list,

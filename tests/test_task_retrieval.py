@@ -71,10 +71,61 @@ def test_semantic_context_returns_only_bounded_active_attention_for_selected_pro
     assert card.anchor_id == anchors[0]
     payload = json.loads(render_task_semantic_context(context))
     assert payload["current_project_attention"] == [{"id": card.id, "anchor_id": anchors[0],
+        "task_ids": [],
         "why_attention": "影响交付", "current_state": "交付受阻", "assessment_json": assessment,
         "updated_at": card.updated_at}]
     # The card's assessment carries provenance without adding full signals to the budget.
     assert payload["source_signals"] == []
+
+
+def test_semantic_context_renders_saved_attention_members_not_project_peers(tmp_path):
+    from app.task_business_resolution import BusinessResolutionService
+
+    store = AutoReplyStore(tmp_path / "attention-members.sqlite3")
+    resolver = BusinessResolutionService(store)
+    anchor_id = resolver.register_anchor(
+        anchor_type="project", anchor_ref="project:报价", title="报价",
+    )
+    resolver.register_official_project(anchor_id=anchor_id, registry_source="report:registry")
+    member_id = _sourced_formal_task(store, title="报价任务甲", suffix="member")
+    peer_id = _sourced_formal_task(store, title="报价任务乙", suffix="peer")
+    member_signal_id = 0
+    for task_id, suffix in ((member_id, "member"), (peer_id, "peer")):
+        signal_id = store.create_business_task_signal(
+            source_type="message", source_ref=f"message:link:{suffix}",
+            evidence_text=f"报价任务{suffix}属于报价项目", dedupe_key=f"message:link:{suffix}",
+        )
+        resolver.confirm_anchor_match(
+            task_id=task_id, anchor_id=anchor_id, evidence_signal_id=signal_id,
+        )
+        if task_id == member_id:
+            member_signal_id = signal_id
+    with store.business_task_transaction() as db:
+        assessment_json = json.dumps({"evidence": [{
+            "signal_id": member_signal_id, "source_ref": "message:link:member",
+            "source_excerpt": "报价任务member属于报价项目",
+        }]}, ensure_ascii=False)
+        card_id = store.create_business_attention_item_in_transaction(
+            stable_key=f"project:{anchor_id}", category="watch", title="报价风险",
+            business_area="报价", why_attention="交付受阻", current_state="等待恢复",
+            ceo_action="观察", anchor_id=anchor_id, evidence_signal_id=member_signal_id,
+            assessment_json=assessment_json,
+            now="2026-10-02T00:00:00Z", _db=db,
+        )
+        store.replace_business_attention_tasks_in_transaction(
+            attention_item_id=card_id, task_ids=(member_id,), _db=db,
+        )
+    members_before = store.list_business_attention_tasks(card_id)
+    card_before = store.get_business_attention_item(card_id)
+
+    context = retrieve_task_semantic_context(store, _work_item("报价任务甲与报价任务乙"))
+    payload = json.loads(render_task_semantic_context(context))
+
+    assert {row.task_id for row in context.task_anchor_links} >= {member_id, peer_id}
+    assert payload["current_project_attention"][0]["task_ids"] == [member_id]
+    assert peer_id not in payload["current_project_attention"][0]["task_ids"]
+    assert store.list_business_attention_tasks(card_id) == members_before
+    assert store.get_business_attention_item(card_id) == card_before
 
 
 def test_semantic_context_has_no_attention_without_official_project_anchor(tmp_path):

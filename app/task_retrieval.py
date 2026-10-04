@@ -8,7 +8,7 @@ from typing import Any
 from app.store import AutoReplyStore
 from app.task_models import WorkItem, WorkProject, WorkTodo
 from app.task_semantic_models import (
-    AttentionStatus, BusinessAttentionItem,
+    AttentionStatus, BusinessAttentionItem, BusinessAttentionTask,
     BusinessActorKind, BusinessAnchor, BusinessProject, BusinessTask, BusinessTaskAnchorLink,
     BusinessTaskEvidence, BusinessTaskRelation, BusinessTaskSignal,
     BusinessWorkCluster, BusinessWorkClusterTask, BusinessRelationStatus, FormalTaskBasis,
@@ -56,6 +56,7 @@ class TaskSemanticContext:
     anchors: tuple[BusinessAnchor, ...]
     official_projects: tuple[BusinessProject, ...]
     attention_items: tuple[BusinessAttentionItem, ...]
+    attention_memberships: tuple[BusinessAttentionTask, ...]
 
 
 def _all_pages(fetch, *, page_size: int = 100):
@@ -290,6 +291,10 @@ def retrieve_task_semantic_context(
         item for item in store.list_business_attention_items()
         if item.status is AttentionStatus.ACTIVE and item.anchor_id in project_anchor_ids
     )[:limit_per_kind]
+    attention_memberships = tuple(
+        member for item in attention_items
+        for member in store.list_business_attention_tasks(item.id)
+    )
     return TaskSemanticContext(
         task_candidates=candidates,
         formal_tasks=formal,
@@ -303,6 +308,7 @@ def retrieve_task_semantic_context(
         anchors=anchors,
         official_projects=projects,
         attention_items=attention_items,
+        attention_memberships=attention_memberships,
     )
 
 
@@ -333,6 +339,8 @@ def render_task_semantic_context(context: TaskSemanticContext) -> str:
         "official_project_registry": [_model_payload(value) for value in context.official_projects],
         "current_project_attention": [{
             "id": value.id, "anchor_id": value.anchor_id,
+            "task_ids": [member.task_id for member in context.attention_memberships
+                         if member.attention_item_id == value.id],
             "why_attention": value.why_attention, "current_state": value.current_state,
             "assessment_json": value.assessment_json, "updated_at": value.updated_at,
         } for value in context.attention_items],

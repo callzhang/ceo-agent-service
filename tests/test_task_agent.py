@@ -1024,6 +1024,8 @@ def test_retained_card_guidance_identifies_exact_stored_proof_fields(monkeypatch
     assert "assessment_json.evidence" in text
     assert "signal_id, source_ref, and source_excerpt unchanged" in text
     assert "A current restatement does not replace that stored proof" in text
+    assert "current_project_attention.task_ids" in text
+    assert "Project peers are not automatically card members" in text
 
 
 @pytest.mark.parametrize("surface", ["prompt", "skill"])
@@ -4322,6 +4324,44 @@ def test_existing_attention_identity_and_original_proof_are_stored_facts(
             }),
             record_run=False,
         )
+
+
+def test_existing_attention_rejects_same_project_peer_outside_saved_membership(tmp_path):
+    store = AutoReplyStore(tmp_path / "assessment-existing-card-project-peer.sqlite3")
+    member, anchor_id = _stored_project_task(store)
+    attention_id = _stored_attention_card(store, seed=member, anchor_id=anchor_id)
+    peer = TaskSemanticService(store).record_candidate(RecordCandidate(
+        title="售前知识库回款",
+        signal=SourceSignal(source_type="seed", source_ref="seed:collection",
+                            evidence_text="售前知识库回款", dedupe_key="seed:collection"),
+    ))
+    BusinessResolutionService(store).confirm_anchor_match(
+        task_id=peer.task_id, anchor_id=anchor_id, evidence_signal_id=peer.signal_id,
+        reason="同一正式 Project", relevance=BusinessRelevance.RELEVANT,
+    )
+    item = _work_item()
+    assessment = _stored_project_assessment(
+        item, member, anchor_id, outcome="needs_attention",
+        reason="复用现有卡片", existing_attention_id=attention_id,
+        assessment_basis="historical_comparison",
+        task_ids=[member.task_id, peer.task_id],
+        evidence=[
+            {"source_ref": item.source.ref, "source_excerpt": "补齐来源链接"},
+            {"signal_id": member.signal_id, "source_ref": "seed:售前知识库",
+             "source_excerpt": "售前知识库历史交付风险"},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="does not contain the assessment's supporting Tasks"):
+        apply_task_agent_decision(
+            store, summary_input_id=1, work_item=item,
+            decision=TaskAgentDecision.model_validate({
+                "project_assessments": [assessment], "task_decisions": [],
+            }), record_run=False,
+        )
+    assert [row.task_id for row in store.list_business_attention_tasks(attention_id)] == [
+        member.task_id,
+    ]
 
 
 def test_two_current_tasks_share_one_stored_project_judgment(tmp_path):
