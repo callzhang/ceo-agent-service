@@ -267,6 +267,9 @@ def test_command_uses_service_auto_review_without_approval_bypass(
     assert "include_permissions_instructions=false" not in command
     assert "workbench_confirmation" not in command_text
     assert "request_reviewed_action" not in command_text
+    assert "features.shell_tool=false" not in command
+    assert "features.unified_exec=false" not in command
+    assert not any(option.startswith("mcp_servers.agent_cli.") for option in command)
     assert "-m" in command and "gpt-example" in command
     assert "--image" in command and str(image) in command
 

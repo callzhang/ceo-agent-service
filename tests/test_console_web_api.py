@@ -3298,3 +3298,57 @@ def test_console_history_puts_what_waits_on_derek_first(tmp_path: Path):
     items = response.json()["items"]
     assert items[0]["status"] == "needs_human"
     assert [item["status"] for item in items[1:]] == ["sent", "sent", "sent"]
+
+
+@pytest.mark.parametrize("delivery_status,delivery_generation,delivery_conversation,expected_failed", [
+    ("failed", "initial", "melody", True),
+    ("send_unknown", "initial", "melody", True),
+    ("failed", "old-generation", "melody", False),
+    ("failed", "initial", "another-object", False),
+])
+def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done(
+    tmp_path: Path, delivery_status: str, delivery_generation: str,
+    delivery_conversation: str, expected_failed: bool,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="melody", conversation_title="Morgan",
+        single_chat=True, trigger_message_id="message-1",
+        trigger_create_time="2026-10-04 13:05:00", trigger_sender="Morgan",
+        trigger_text="Can you help later?",
+    )
+    task = store.get_reply_task_for_message("melody", "message-1", channel="wechat")
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=task.id, account_id="acct-1", target_type="direct",
+        target_id="melody", conversation_id="melody", reply_text="Yes.",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="melody", conversation_title="Morgan",
+        trigger_message_id="message-1", trigger_sender="Morgan",
+        trigger_text="Can you help later?", action="send_reply",
+        sensitivity_kind="normal", send_status="failed", channel="wechat",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+        db.execute(
+            "update wechat_deliveries set status=?, error='wechat_ui_not_ready', "
+            "pre_action_failure=1, execution_generation=?, conversation_id=? where id=?",
+            (delivery_status, delivery_generation, delivery_conversation, delivery_id),
+        )
+        before = tuple(db.execute(
+            "select status, error from wechat_deliveries where id=?", (delivery_id,)
+        ).fetchone())
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/history?status=failed")
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == int(expected_failed)
+        assert (str(attempt_id) in {str(item["id"]) for item in response.json()["items"]}) == expected_failed
+        detail = client.get(f"/api/console/history/{attempt_id}")
+        assert detail.status_code == 200
+        assert detail.json()["item"]["status"]["raw"] == ("failed" if expected_failed else "done")
+    with store._connect() as db:
+        assert tuple(db.execute(
+            "select status, error from wechat_deliveries where id=?", (delivery_id,)
+        ).fetchone()) == before
+    assert store.get_reply_task(task.id).status == "done"
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"

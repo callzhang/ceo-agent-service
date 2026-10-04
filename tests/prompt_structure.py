@@ -42,8 +42,9 @@ _INVARIANT_RE = re.compile(
     r"(?P<title>[^:]+): (?P<body>.+)",
 )
 _ROLE_BOUNDARY_RE = re.compile(
-    r"Consumer Agent A gathers facts and proposes a typed candidate; "
-    r"Audit Agent B applies the operation Skill and executes an accepted candidate\."
+    r"Consumer Agent A gathers facts and proposes a typed candidate, including current-instance human questions\. "
+    r"Audit Agent B reviews the whole candidate without executing its controlled actions\. "
+    r"System code executes the exact persisted approved plan or selected reviewed option\."
 )
 
 

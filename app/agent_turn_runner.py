@@ -26,9 +26,11 @@ from app.agent_effects import (
     _is_signed_url,
 )
 from app.agent_result import ResultParseError
+from app.reviewed_sources import ReviewedSourceReadError
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
     CredentialMode,
+    ROLE_BOUND_AGENT_TOOLS,
     RuntimeFailureClass,
     RuntimeKind,
     RuntimeRoute,
@@ -198,78 +200,9 @@ def _project_runtime_domain_result(
         field="summary",
         limit=_RUNTIME_RESULT_SUMMARY_MAX_CHARS,
     )
-    if isinstance(result, ConsumerAgentResult):
-        # Consumer proposals are already strict typed business values. Project
-        # fields explicitly so future model additions cannot silently enter the
-        # durable recovery envelope.
-        proposal = None
-        if result.proposal is not None:
-            proposal = {
-                "objective": result.proposal.objective,
-                "actions": [
-                    {
-                        "description": action.description,
-                        "action_identity": action.action_identity,
-                        "capability": action.capability,
-                        "operation": action.operation,
-                        "target": action.target,
-                        "payload": action.payload,
-                    }
-                    for action in result.proposal.actions
-                ],
-                "sourced_facts": [
-                    {
-                        "assertion": fact.assertion,
-                        "references": list(fact.references),
-                    }
-                    for fact in result.proposal.sourced_facts
-                ],
-                "authored_judgment": result.proposal.authored_judgment,
-            }
-        return {
-            "outcome": result.outcome.value,
-            "summary": summary,
-            "risk": result.risk.value,
-            "confidence": result.confidence,
-            "rule_coverage": result.rule_coverage,
-            "information_completeness": result.information_completeness,
-            "proposal": proposal,
-            "decision_options": [
-                option.model_dump(mode="json") for option in result.decision_options
-            ],
-            "error": result.error.model_dump(mode="json"),
-        }
-    external_result = None
-    if result.external_result is not None:
-        external_result = {
-            "operation_id": _bounded_runtime_result_text(
-                result.external_result.operation_id,
-                field="operation_id",
-                limit=512,
-            ),
-            "live_result_reference": _project_runtime_external_reference(
-                result.external_result.live_result_reference
-            ),
-        }
-    return {
-        "outcome": result.outcome.value,
-        "summary": summary,
-        "risk": result.risk.value,
-        "confidence": result.confidence,
-        "rule_coverage": result.rule_coverage,
-        "information_completeness": result.information_completeness,
-        "proposal_revision": result.proposal_revision,
-        "feedback": (
-            result.feedback.model_dump(mode="json")
-            if result.feedback is not None
-            else None
-        ),
-        "external_result": external_result,
-        "decision_options": [
-            option.model_dump(mode="json") for option in result.decision_options
-        ],
-        "error": result.error.model_dump(mode="json"),
-    }
+    projected = result.model_dump(mode="json")
+    projected["summary"] = summary
+    return projected
 
 
 def _reject_runtime_document_fields(value: object) -> None:
@@ -772,6 +705,7 @@ class AgentTurnProcess(Generic[ResultT]):
         force_new_session: bool = False,
         skill_names: tuple[str, ...] = (),
     ) -> AgentTurnRunResult[ResultT]:
+        required_capabilities = required_capabilities | {ROLE_BOUND_AGENT_TOOLS}
         line_count = 0
         saw_json = False
         primary_turn_started = False
@@ -1132,6 +1066,17 @@ class AgentTurnProcess(Generic[ResultT]):
                         session_id=route_session_id,
                         max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
                         reasoning_effort=self.reasoning_effort or None,
+                        policy=(
+                            ClaudeCommandPolicy.consumer(
+                                task_id=self.task.id,
+                                db_path=str(self.store.path),
+                            )
+                            if run.role is AgentRole.CONSUMER
+                            else ClaudeCommandPolicy.audit(
+                                task_id=self.task.id,
+                                db_path=str(self.store.path),
+                            )
+                        ),
                     )
                     claude_normalizer = claude_adapter.new_event_normalizer(
                         expected_session_id=route_session_id,
@@ -1484,6 +1429,22 @@ class AgentTurnProcess(Generic[ResultT]):
                 source="runtime",
                 source_code=exc.failure_code or exc.code,
                 session_continuable=True,
+            )
+            raise
+        except ReviewedSourceReadError as exc:
+            if active_attempt is not None:
+                pending_attempt = self.store.get_agent_runtime_attempt(active_attempt.id)
+                if pending_attempt is not None and pending_attempt.status in {"starting", "running"}:
+                    self.store.fail_agent_runtime_attempt(
+                        pending_attempt.id,
+                        RuntimeFailureClass.AUTHENTICATION.value if exc.error.authorization_required
+                        else RuntimeFailureClass.PROCESS.value,
+                        exc.error.source_code, exc.error.retryable,
+                    )
+            self.store.fail_agent_run(
+                run.id,
+                {**exc.error.model_dump(mode="json"), "detail": _runtime_failure_detail(exc)},
+                owner=self.owner,
             )
             raise
         except Exception as exc:

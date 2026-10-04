@@ -27,6 +27,12 @@ from app.agent_runtime_contracts import (
     RuntimeFailureClass,
     RuntimeKind,
 )
+from app.reviewed_candidate_store import (
+    REVIEWED_CANDIDATE_DDL,
+    REVIEWED_CANDIDATE_INDEXES,
+    REVIEWED_CANDIDATE_TABLES,
+    ReviewedCandidateStoreMixin,
+)
 from app.agent_cron.models import (
     ScheduledTask,
     ScheduledTaskRun,
@@ -73,11 +79,6 @@ from app.feedback_processing import (
     validate_resolution_receipt,
 )
 from app.config import feedback_spike_vercel_base_url
-from app.decision_quality import (
-    StoredNeedsHumanProjection,
-    classify_stored_needs_human_projection,
-    parse_stored_needs_human_decision,
-)
 from app.feedback_spike import (
     extract_configured_feedback_link_context,
     message_body_without_feedback_callbacks,
@@ -222,7 +223,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-25.1"
+STORE_SCHEMA_VERSION = "2026-10-04.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -255,6 +256,7 @@ create index if not exists idx_task_memory_write_events_lease
 """
 
 STORE_SCHEMA_REQUIRED_TABLES = (
+    *REVIEWED_CANDIDATE_TABLES,
     "task_memory_write_events",
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -322,6 +324,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "business_legacy_links",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
+    *REVIEWED_CANDIDATE_INDEXES,
     "idx_feedback_processing_items_status",
     "idx_feedback_processing_items_batch",
     "idx_feedback_processing_rounds_feedback",
@@ -1759,7 +1762,7 @@ def _meeting_memory_settlement_time(now: datetime | None) -> str:
     return value.isoformat()
 
 
-class AutoReplyStore:
+class AutoReplyStore(ReviewedCandidateStoreMixin):
     def __init__(
         self,
         path: Path,
@@ -4893,6 +4896,7 @@ class AutoReplyStore:
                 )
             self._migrate_reply_task_channel_identity(db)
             self._migrate_reply_task_business_objects(db)
+            db.executescript(REVIEWED_CANDIDATE_DDL)
             self._migrate_reply_task_input_revisions(db)
             self._migrate_oa_notification_events(db)
             db.execute(
@@ -24032,7 +24036,7 @@ class AutoReplyStore:
         A task that ends ``done`` also queues the durable memories its final
         Consumer result named, in the same transaction.
         """
-        if task_status not in {"done", "failed", "pending", "unchanged"}:
+        if task_status not in {"done", "failed", "pending", "unchanged", "needs_human", "skipped"}:
             raise ValueError("invalid reply task terminal status")
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
@@ -24416,213 +24420,72 @@ class AutoReplyStore:
             return reconciled
 
     def reconcile_invalid_needs_human_projections(self) -> int:
-        """Replace current non-decision human projections with failed results.
+        """Do not rewrite historical human-decision or terminal projections.
 
-        A status string and a provider-side error cannot create a human task.
-        The current Attempt must instead reference a complete typed rule
-        decision that satisfies the shared decision-quality contract.
+        New questions are created only from a persisted approved candidate.
+        Legacy attempts remain readable, while the current projections and
+        decision endpoint separately decide whether they are actionable.
         """
-        with self._immediate_write_transaction() as db:
-            rows = db.execute(
-                """
-                select attempts.id as attempt_id, attempts.agent_run_id,
-                       attempts.send_status, attempts.send_error,
-                       attempts.channel, attempts.conversation_id,
-                       attempts.trigger_message_id,
-                       runs.reply_task_id, runs.execution_generation,
-                       runs.final_result_json,
-                       runs.structured_error_json
-                from reply_attempts as attempts
-                left join agent_runs as runs on runs.id=attempts.agent_run_id
-                where (
-                        attempts.send_status='needs_human'
-                        or (
-                            attempts.send_status='failed'
-                            and attempts.send_error in (
-                                'needs_human',
-                                'external_action_authorization_required',
-                                'invalid_needs_human_projection'
-                            )
-                        )
-                        or (
-                            attempts.send_status='failed'
-                            and exists (
-                                select 1
-                                from reply_tasks stale_tasks
-                                where stale_tasks.channel=attempts.channel
-                                  and stale_tasks.conversation_id=attempts.conversation_id
-                                  and stale_tasks.trigger_message_id=attempts.trigger_message_id
-                                  and stale_tasks.status='needs_human'
-                            )
-                        )
-                      )
-                  and attempts.reviewed_at is null
-                  and trim(coalesce(attempts.resolved_at, ''))=''
-                  and attempts.id=(
-                      select max(latest.id)
-                      from reply_attempts as latest
-                      where latest.channel=attempts.channel
-                        and latest.conversation_id=attempts.conversation_id
-                        and latest.trigger_message_id=attempts.trigger_message_id
-                  )
-                """
-            ).fetchall()
-            reconciled = 0
-            for row in rows:
-                if (
-                    classify_stored_needs_human_projection(
-                        row["final_result_json"]
-                    )
-                    is StoredNeedsHumanProjection.NEEDS_HUMAN
-                ):
-                    continue
-                # Once strict validation rejects a stored ``needs_human``
-                # payload, its former error code is not trustworthy.  In
-                # particular, ``external_action_authorization_required`` and
-                # ``needs_human`` used to be copied from malformed Consumer
-                # output and made a technical failure look like a live human
-                # authorization request.  Keep the current projection
-                # explicitly classified as invalid instead of preserving the
-                # misleading legacy label.
-                existing_error = str(row["send_error"] or "").strip()
-                error_code = (
-                    "invalid_needs_human_projection"
-                    if existing_error in {
-                        "",
-                        "needs_human",
-                        "external_action_authorization_required",
-                    }
-                    else existing_error
-                )
-                attempt_changed = 0
-                if row["send_status"] == "needs_human":
-                    cursor = db.execute(
-                        """
-                        update reply_attempts
-                        set send_status='failed', send_error=?,
-                            human_decision_options_json='[]', updated_at=current_timestamp
-                        where id=? and send_status='needs_human'
-                        """,
-                        (error_code, row["attempt_id"]),
-                    )
-                    if cursor.rowcount != 1:
-                        continue
-                    attempt_changed = 1
-                if row["reply_task_id"] is not None:
-                    task_cursor = db.execute(
-                        """
-                        update reply_tasks
-                        set status='failed', error=?, available_at='', locked_at=null,
-                            updated_at=current_timestamp
-                        where id=? and execution_generation=?
-                          and channel=? and conversation_id=? and trigger_message_id=?
-                          and status in ('done', 'needs_human', 'pending', 'processing')
-                        """,
-                        (
-                            error_code, row["reply_task_id"], row["execution_generation"],
-                            row["channel"], row["conversation_id"],
-                            row["trigger_message_id"],
-                        ),
-                    )
-                    if task_cursor.rowcount and not attempt_changed:
-                        reconciled += 1
-                reconciled += attempt_changed
-            return reconciled
+        return 0
 
     def reconcile_valid_needs_human_projections(self) -> int:
-        """Project the latest valid Consumer decision onto its current Attempt.
+        """Restore only a current, unselected, Audit-approved persisted question.
 
-        The latest run of the current task generation is authoritative. A
-        completed, typed human decision must not remain displayed as a failed
-        Attempt merely because an older projection stored its authorization
-        boundary as an error.
+        A raw Consumer or Audit result is never sufficient authority, and old
+        generations and previously resolved attempts are left untouched.
         """
         with self._immediate_write_transaction() as db:
-            rows = db.execute(
-                """
-                select tasks.id as task_id, attempts.id as attempt_id,
-                       attempts.send_status, attempts.oa_process_instance_id,
-                       attempts.oa_task_id, runs.id as run_id,
-                       runs.final_result_json
-                from reply_tasks as tasks
-                join agent_runs as runs on runs.id=(
-                    select latest_run.id
-                    from agent_runs as latest_run
-                    where latest_run.reply_task_id=tasks.id
-                      and latest_run.execution_generation=
-                          tasks.execution_generation
-                    order by latest_run.id desc
-                    limit 1
-                )
-                join reply_attempts as attempts on attempts.id=(
-                    select latest_attempt.id
-                    from reply_attempts as latest_attempt
-                    where latest_attempt.channel=tasks.channel
-                      and latest_attempt.conversation_id=tasks.conversation_id
-                      and latest_attempt.trigger_message_id=
-                          tasks.trigger_message_id
-                    order by latest_attempt.id desc
-                    limit 1
-                )
-                where tasks.status in ('failed', 'needs_human')
-                  and runs.status='completed'
-                  and attempts.send_status in ('failed', 'needs_human')
-                  and attempts.reviewed_at is null
-                  and trim(coalesce(attempts.resolved_at, ''))=''
-                order by tasks.id
-                """
-            ).fetchall()
+            rows = db.execute("""
+                select t.id as task_id, t.execution_generation, t.status as task_status,
+                       a.id as attempt_id, a.send_status, a.agent_run_id,
+                       c.id as candidate_id, c.candidate_json, c.candidate_digest,
+                       r.id as review_id, r.audit_run_id
+                from reply_tasks t
+                join review_candidates c on c.task_id=t.id
+                  and c.execution_generation=t.execution_generation
+                  and c.invalidated_at=''
+                join candidate_reviews r on r.candidate_id=c.id
+                  and r.decision='approve' and r.candidate_digest=c.candidate_digest
+                join reply_attempts a on a.channel=t.channel
+                  and a.conversation_id=t.conversation_id
+                  and a.trigger_message_id=t.trigger_message_id
+                left join candidate_selections choice on choice.candidate_id=c.id
+                where t.status in ('failed','needs_human')
+                  and a.send_status in ('failed','needs_human')
+                  and a.reviewed_at is null and trim(coalesce(a.resolved_at,''))=''
+                  and choice.id is null
+                  and c.id=(select max(newest.id) from review_candidates newest
+                      where newest.task_id=t.id and newest.execution_generation=t.execution_generation)
+                  and a.id=(select max(newest.id) from reply_attempts newest
+                      where newest.channel=t.channel and newest.conversation_id=t.conversation_id
+                        and newest.trigger_message_id=t.trigger_message_id)
+                  and exists(select 1 from business_object_tasks current_object
+                      where current_object.business_object_key=t.business_object_key
+                        and current_object.reply_task_id=t.id)
+            """).fetchall()
             reconciled = 0
             for row in rows:
-                decision = parse_stored_needs_human_decision(
-                    row["final_result_json"]
-                )
-                # A proposal that escalates is a question only once Audit has
-                # executed its action; as the latest run it has not been.
-                if decision is None or getattr(decision, "escalates", False) or not self._authorization_plan_matches_attempt(
-                    decision,
-                    oa_process_instance_id=str(row["oa_process_instance_id"] or ""),
-                    oa_task_id=str(row["oa_task_id"] or ""),
-                ):
+                try:
+                    candidate = json.loads(row["candidate_json"])
+                except (TypeError, json.JSONDecodeError):
                     continue
-                decision_options = json.dumps(
-                    [option.model_dump(mode="json") for option in decision.decision_options],
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-                summary = decision.summary
-                attempt_cursor = db.execute(
-                    """
-                    update reply_attempts
-                    set send_status='needs_human', send_error='', agent_run_id=?,
-                        codex_reason=?, audit_summary=?,
-                        human_decision_options_json=?, updated_at=current_timestamp
-                    where id=? and (
-                        send_status<>'needs_human'
-                        or send_error<>''
-                        or agent_run_id<>?
-                        or codex_reason<>?
-                        or audit_summary<>?
-                        or human_decision_options_json<>?
-                    )
-                    """,
-                    (
-                        row["run_id"], summary, summary, decision_options,
-                        row["attempt_id"], row["run_id"], summary, summary,
-                        decision_options,
-                    ),
-                )
-                task_cursor = db.execute(
-                    """
-                    update reply_tasks
-                    set status='needs_human', error='', available_at='',
-                        locked_at=null, updated_at=current_timestamp
-                    where id=? and (status<>'needs_human' or error<>'')
-                    """,
-                    (row["task_id"],),
-                )
-                if attempt_cursor.rowcount or task_cursor.rowcount:
-                    reconciled += 1
+                if candidate.get("outcome") != "needs_human":
+                    continue
+                # A completed Audit run identifies the exact reviewed question.
+                # Never bind a failed projection to a different run.
+                if row["agent_run_id"] != row["audit_run_id"]:
+                    continue
+                if row["send_status"] == "needs_human" and row["task_status"] == "needs_human":
+                    continue
+                db.execute("""update reply_attempts set send_status='needs_human',
+                    send_error='', updated_at=current_timestamp where id=?
+                    and agent_run_id=? and send_status='failed'""",
+                    (row["attempt_id"], row["audit_run_id"]))
+                db.execute("""update reply_tasks set status='needs_human', error='',
+                    available_at='', locked_at=null, updated_at=current_timestamp
+                    where id=? and execution_generation=? and status='failed'""",
+                    (row["task_id"], row["execution_generation"]))
+                reconciled += 1
             return reconciled
 
     @staticmethod
@@ -25365,6 +25228,8 @@ class AutoReplyStore:
         channel: str = "dingtalk",
         oa_url: str = "",
         source_attempt_id: int = 0,
+        review_candidate_id: int = 0,
+        supplement_instruction: str = "",
     ) -> tuple[int, ReplyTask]:
         """Atomically persist one reviewed instruction and queue its generation."""
         feedback = reviewer_feedback.strip()
@@ -25372,6 +25237,22 @@ class AutoReplyStore:
         task: ReplyTask | None = None
         attempt_id = 0
         with self._immediate_write_transaction() as db:
+            if review_candidate_id > 0:
+                candidate = self._candidate_context(db, review_candidate_id)
+                source_review = db.execute("""select r.id from candidate_reviews r
+                    where r.candidate_id=? and r.decision='approve'
+                      and r.candidate_digest=? and r.audit_run_id=(
+                        select agent_run_id from reply_attempts where id=?)""",
+                    (review_candidate_id, candidate["candidate_digest"], source_attempt_id)).fetchone()
+                if (not supplement_instruction.strip() or source_review is None
+                    or candidate["invalidated_at"] or not source_attempt_id
+                    or db.execute("select 1 from candidate_selections where candidate_id=?",
+                                  (review_candidate_id,)).fetchone()):
+                    raise ValueError("reviewed candidate supplement mismatch")
+                db.execute("""insert into candidate_supplements(candidate_id,instruction)
+                    values (?,?)""", (review_candidate_id, supplement_instruction))
+                db.execute("""update review_candidates set invalidated_at=current_timestamp,
+                    invalidation_reason='supplement' where id=?""", (review_candidate_id,))
             source_row = None
             if source_attempt_id > 0:
                 source_row = db.execute(
@@ -25601,6 +25482,8 @@ class AutoReplyStore:
         single_chat: bool,
         trigger_create_time: str,
         trigger_message_json: str,
+        review_candidate_id: int = 0,
+        supplement_instruction: str = "",
     ) -> tuple[int, ReplyTask]:
         feedback = reviewer_feedback.strip()
         if not feedback:
@@ -25622,6 +25505,8 @@ class AutoReplyStore:
             channel=source.channel or "dingtalk",
             oa_url=source.oa_url,
             source_attempt_id=source_attempt_id,
+            review_candidate_id=review_candidate_id,
+            supplement_instruction=supplement_instruction,
         )
 
     def get_reply_attempt(self, attempt_id: int) -> ReplyAttempt | None:
@@ -25676,9 +25561,8 @@ class AutoReplyStore:
         with self._connect() as db:
             rows = db.execute(
                 """
-                select attempts.*, runs.final_result_json as current_run_result_json
+                select attempts.*
                 from reply_attempts as attempts
-                left join agent_runs as runs on runs.id=attempts.agent_run_id
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and __NOT_EXTERNAL__
                   and not exists (
@@ -25771,12 +25655,24 @@ class AutoReplyStore:
             attempts: list[ReplyAttempt] = []
             for row in rows:
                 values = dict(row)
-                run_result = values.pop("current_run_result_json", "")
                 attempt = ReplyAttempt.model_validate(values)
                 if (
                     attempt.send_status == "needs_human"
-                    and classify_stored_needs_human_projection(run_result)
-                    is not StoredNeedsHumanProjection.NEEDS_HUMAN
+                    and not db.execute("""select 1 from reply_tasks t
+                        join review_candidates c on c.task_id=t.id
+                          and c.execution_generation=t.execution_generation and c.invalidated_at=''
+                        join candidate_reviews r on r.candidate_id=c.id
+                          and r.decision='approve' and r.candidate_digest=c.candidate_digest
+                        left join candidate_selections choice on choice.candidate_id=c.id
+                        where t.channel=? and t.conversation_id=? and t.trigger_message_id=?
+                          and t.status='needs_human' and r.audit_run_id=? and choice.id is null
+                          and c.id=(select max(id) from review_candidates
+                            where task_id=t.id and execution_generation=t.execution_generation)
+                          and json_extract(c.candidate_json,'$.outcome')='needs_human'
+                        limit 1""", (
+                            attempt.channel, attempt.conversation_id,
+                            attempt.trigger_message_id, attempt.agent_run_id,
+                        )).fetchone()
                 ):
                     continue
                 attempts.append(attempt)
@@ -30684,6 +30580,25 @@ class AutoReplyStore:
                     'Reply' as category,
                     action as action,
                     case
+                        -- Candidate completion is independent of delivery.
+                        -- Only the latest delivery for this object and its
+                        -- owning task generation supplies its send outcome.
+                        when channel='wechat' and send_status='failed' and exists (
+                            select 1 from wechat_deliveries as delivery
+                            join reply_tasks as delivery_task
+                              on delivery_task.id=delivery.reply_task_id
+                            where delivery_task.channel=reply_attempts.channel
+                              and delivery.conversation_id=reply_attempts.conversation_id
+                              and delivery_task.conversation_id=reply_attempts.conversation_id
+                              and delivery_task.trigger_message_id=reply_attempts.trigger_message_id
+                              and delivery.execution_generation=delivery_task.execution_generation
+                              and delivery.status in ('failed', 'send_unknown')
+                              and delivery.id=(
+                                  select max(current_delivery.id) from wechat_deliveries as current_delivery
+                                  where current_delivery.reply_task_id=delivery_task.id
+                                    and current_delivery.execution_generation=delivery_task.execution_generation
+                              )
+                        ) then 'failed'
                         -- A failed attempt whose own task was handed to Derek
                         -- reads `needs_human`, not `recovered`. The task and
                         -- the attempt are two projections of one piece of

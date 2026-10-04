@@ -13,8 +13,8 @@ DingTalk document and send Derek (磊哥) a short direct message pointing to it.
 
 ## Inputs
 
-- **Service facts**: run the command given in the task prompt with the
-  trigger's `scheduled_task_run_id`. The service works out the report window:
+- **Service facts**: call the task-bound `agent_cli.daily_report_facts` read
+  operation. The service works out the report window:
   from the end of the last report that went out to this trigger, so missed days
   are folded in. Its `report_date` is the document date and its `window_utc` is
   the span every other source is read over. Do not ask anyone to confirm either.
@@ -25,8 +25,9 @@ DingTalk document and send Derek (磊哥) a short direct message pointing to it.
 - **Important mail** is what the mailbox flagged, not a verdict: report only the
   messages with management meaning (a request, approval, customer, partner,
   legal or money matter) and count the rest, such as sign-in codes.
-- **Group chats**: load `dingtalk-chat` and read every accessible group
-  conversation's messages inside the report window, paging until the window is
+- **Group chats**: use the task-bound `agent_cli.recent_dingtalk_conversations`
+  and `agent_cli.read_dingtalk_messages_in_window` read operations for accessible
+  group conversations inside the report window, paging until the window is
   covered. Keep only messages with management meaning: commitments, changes of
   plan, disagreement, escalation, customer or financing signals, blocked work.
   Count the rest.
@@ -59,21 +60,18 @@ with nothing in it says `无`; never pad it.
 
 ## Deliver
 
-1. Load `dingtalk-wiki` and `dingtalk-doc`. In the wiki `🎯  目标与执行`,
-   folder `CEO 每日总结` (create the folder if it is missing), look for a
-   document with exactly today's title. Overwrite it if it exists; otherwise
-   create it. Read the document back and confirm the content matches.
+1. Use the task-bound `agent_cli.consumer_document_write` operation. The
+   service resolves the wiki `🎯  目标与执行`, the `CEO 每日总结` folder, and the
+   exact document title from this scheduled run; it creates or overwrites only
+   that report document. Compare the returned readback with the submitted body.
 2. Send Derek (磊哥) one direct message from his own account, not a bot:
    propose it as a `dingtalk-chat` action with a direct-message operation,
    `target: {"user_id": <principal_user_id>}` and the body in
    `payload.content` — the 今日要点 lines, how many items need his
    intervention, the document title, and the link of the `CEO 每日总结`
-   folder (look it up read-only while writing; the document itself does not
-   exist yet, and the service fixes the body before the Audit round, so it
-   cannot carry the new document's link). The Audit round sends it only with
-   the service's `send_approved_dingtalk_message` tool, never with `dws`
-   from its shell; the service adds the signature, records the delivery and
-   keeps a retry from sending it twice.
+   folder. Consumer proposes the direct message but never sends it. Audit
+   reviews the exact proposal; the System Executor sends an approved message,
+   adds the signature, records delivery and prevents duplicate sends on retry.
 
 These two writes are the run's only external actions. Do not reply in any
 group, change Tasks, or message anyone else.

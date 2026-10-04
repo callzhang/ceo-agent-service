@@ -254,7 +254,8 @@ class ScheduledAgentConsumer:
         mapping = {
             "executed": ("done", "completed", ""),
             "no_action": ("done", "skipped", ""),
-            "needs_human": ("done", "needs_human", result.error.code or "needs_human"),
+            "needs_human": ("needs_human", "needs_human", result.error.code or "needs_human"),
+            "skipped": ("skipped", "skipped", result.error.code),
             "dry_run": ("done", "dry_run", result.error.code),
             "failed_terminal": ("failed", "failed", result.error.code or "agent_failed"),
         }
@@ -264,7 +265,7 @@ class ScheduledAgentConsumer:
         final_run = self._store.get_agent_run(result.final_run_id)
         if final_run is None:
             raise RuntimeError("scheduled orchestration final run was not persisted")
-        decision_options = result.audit_result.decision_options if result.audit_result else ()
+        decision_options = result.consumer_result.decision_options if result.consumer_result else ()
         self._store.finalize_orchestrated_reply_task(
             task_id=task.id, expected_execution_generation=task.execution_generation,
             run_id=final_run.id, task_status=task_status, task_error=error,
@@ -297,7 +298,8 @@ def build_scheduled_orchestrator(
     from app.agent_orchestrator import AgentOrchestrator
     from app.audit_agent import AuditAgentRunner
     from app.consumer_agent import ConsumerAgentRunner
-    from app.dingtalk_send_evidence import DingTalkSendEvidenceDriver
+    from app.system_executor import SystemExecutor
+    from app.dws_client import DwsClient
 
     scoped_config = runtime_config.model_copy(
         update={"routes": scheduled_route_order(built.route, runtime_config.routes)}
@@ -312,14 +314,9 @@ def build_scheduled_orchestrator(
         "execution_environment": execution_environment,
     }
     return AgentOrchestrator(
-        store=store, consumer=ConsumerAgentRunner(**common),
-        # The same evidence the DingTalk worker asks of its Audit rounds: an
-        # executed send or document write needs the provider's receipt.
-        audit=AuditAgentRunner(
-            **common,
-            dry_run=dry_run,
-            domain_continuation=DingTalkSendEvidenceDriver(store),
-        ),
+        store=store, consumer=ConsumerAgentRunner(**common, source_client=DwsClient()),
+        audit=AuditAgentRunner(**common),
+        system_executor=SystemExecutor(store=store, dws=DwsClient(), dry_run=dry_run),
     )
 
 

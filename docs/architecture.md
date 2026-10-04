@@ -19,7 +19,7 @@ pending -> processing -> done
 - `processing`：正在执行或正处于“审核 Agent 要求修改、执行 Agent 重跑”的反馈闭环中；task 在整个闭环期间都停留在这个状态，不会切换到单独的“待反馈”“待修正”状态——修改请求本身记在 `AuditAgentResult.feedback`（`AuditFeedback.rule/observation/requested_revision`），修正次数记在 `proposal_revision` 计数器上。
 - `done`：任务逻辑完成且结果已持久化。
 - `skipped`：判定为不可执行或不必执行，主动收口，不再重试。
-- `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；不是技术读取失败的兜底状态。每个结果必须附带面向用户的 `needs_human_reason` 和可追溯 `decision_basis`（已核验事实、适用规则、质量分值解释、未发生外部动作的依据和结论）。若理由只是技术、路由、schema、Audit 或重试失败，该投影无效并收口为 `failed`。高风险外部动作还必须提供匹配当前对象的单一 `authorization_plan`，说明动作、影响、明确排除的动作及执行后读回；详情页只展示由当前 Attempt 所指 run 的有效结构化依据。
+- `needs_human`：完整的当前实例问题已经 Audit 审核通过，等待绑定选项选择或 requested_input。必须有 needs_human_reason 和 decision_basis；技术失败不能成为管理决策。执行选项绑定完整精确方案，停止选项写明 skipped 和原因；未经审核或旧无绑定选项不可执行。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败，并保留失败阶段和原因。
 
 审核闭环如下（task 状态全程停留在 `processing`，直到最终收口为 `done`/`failed`/`needs_human`/`skipped`）：
@@ -187,12 +187,7 @@ OA 定时任务冻结传入通用 `dingtalk-oa-approval` 与 Stardust 财务、�
 财务 Skill 的规则卡只适用于登记的财务模板，不匹配其他类别不得单独触发升级；规则卡只提供判断标准，动作与其他类别一样按通用决策表（2026-09-24）。适用业务 Skill
 必须覆盖当前事项的规则条件、例外、权限和动作映射，且内容有效，
 `rule_coverage` 才能为 1.0；否则低于 1.0，规则缺口进入 `needs_human`，不得自动批准或拒绝。
-申请人可以补足事实或材料，Consumer 应在原审批评论明确缺口；若同时存在政策缺口，须另行
-进入 `needs_human`，申请人回复不能关闭政策升级。两者在同一结果中表达：proposal 携带评论或
-退回，并同时带 `needs_human_reason`、`decision_basis` 和 2--4 个带 `applies_to=task_class` 的规则选项；
-选项只能描述以后如何处理这一类审批，不能要求 Derek 直接批准或拒绝当前实例；Audit 执行动作后任务以
-`needs_human` 收口（Derek 2026-09-23）。此前结果只能二选一，总会丢掉一半。个人审批偏好只存在于定时任务 Prompt，不是
-公司通用规则。
+申请人可以补足事实或材料；若政策判断仍无法解决，先审核并执行必要的材料请求阶段，再提交带前阶段回执的当前实例人工问题。申请人补足事实不自动覆盖规则或权限边界。个人审批偏好仍来自定时任务 Prompt。
 
 ### Business Object、Task、Agent Run 与 Reply Attempt 的关系
 
@@ -268,7 +263,7 @@ Consumer 为每个 ProposedAction 返回 `action_identity`。同一业务对象�
 钉钉消息 target 在 wire 边界只使用一套服务字段：群发使用 `conversation_id`，引用回复
 同时使用 `conversation_id` 与 `message_id`，单聊使用 `open_dingtalk_id` 等稳定接收人
 身份。Provider 返回的 `openConversationId` 等字段只属于执行结果，不能进入 proposal target。
-这项约束在 typed result 解析时校验，正文准备、Audit 执行和动作键生成不再各自解释别名。
+这项约束在 typed result 解析时校验，正文准备、System 执行和动作键生成不再各自解释别名。
 
 Provider 成功结果按 `external_action_key` 只保存一次。后续 run 再次遇到同一动作时复用既有
 结果，不再次调用 provider；新 run 仍追加自己的观察关联，因此执行历史完整。一个 proposal
@@ -666,31 +661,22 @@ worker 与审计页面会各自打开 SQLite。它们先取得同一个初始化
 
 ### 外部动作结果与重试
 
-服务不维护 `unknown`、`reconciled` 或 `side_effect_state` 状态机，也不启动专门的只读 recovery 回合。
-外部动作中断、回执缺失、读取失败和结果解析失败都按普通 `failed` 记录，并由下一次 Agent turn 依据当前
-业务 Skill 重新读取目标状态后继续处理。Agent 自己负责判断动作是否已完成，不得盲目重复执行。
+系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
-服务仅在 provider 返回时保存三个最小事实：`operation`、`target` 和稳定的 provider result identifier。
-这些字段用于把后续业务处理关联到同一外部对象，并在重试前提供去重依据；它们不是业务审核结论，也不触发
-任何命令、工具或读取权限检查。原始 stdout、工具调用和详细外部响应仍属于 Agent/runtime 的执行记录。
+candidate_executions 保存租约，candidate_action_attempts 在 provider 调用之前保存 dispatch 边界；已验证回执复用。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
 
-### 运行结果与外部写入标识
-
-Skill、CLI 和 MCP 的具体调用属于 Agent/runtime 执行环境，不是应用层业务审核条件。应用层不
-审核命令名称、命令参数或 Skill receipt，也不因读取命令未登记而否定一个结构化业务结果。
-纯读取结果不要求额外 receipt。只有发生外部写入时，才保留 provider 返回的最小
-`operation`、`target` 和稳定结果标识，用于识别同一动作是否已经完成并避免重放；这不是对
-Agent 如何执行命令的二次审核。
+历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
 ## Skill-first 权威处理流
 
 ```text
-trigger/context/material references
-  -> Consumer A discovers and reads business Skill(s)
-  -> A reads operation Skill(s) and proposes an exact action
-  -> Consumer/Audit return a typed business result
-  -> B reviews and executes through its normal runtime capabilities
-  -> service persists the existing run/attempt/provider identifier
+trigger/context/materials
+  -> Consumer business work and complete persisted candidate
+  -> Audit read-only whole-candidate review
+     -> return/reject: Consumer complete revision
+     -> approve action plan: system execution and verified receipt
+     -> approve question: visible needs_human
+        -> exact stored option selection: system execution and verified receipt
 ```
 
 Producer 只根据消息来源、会话类型、明确的 @、稳定卡片类型和去重标识决定是否创建任务。
@@ -704,7 +690,7 @@ Skill。
 
 Service 也不读取正文后替 Agent 解释业务材料。它只传递 trigger、上下文、原始 process/task ID、
 链接、本地受控材料引用和可执行的精确读取命令。文档、文件夹、图片、表格、日历、听记和 OA
-材料是否相关、是否需要继续展开以及它们支持什么结论，都由 A 判断；B 在执行前独立复核。
+材料是否相关、是否需要继续展开以及它们支持什么结论，都由 A 判断；B 在审核时独立复核。
 
 Skill 加载属于 Agent 执行环境，service 不要求或校验普通 Consumer/Audit 结果中的 Skill receipt。
 仅当发生外部写入时，SQLite 保留 provider 返回的操作标识，用于重试时识别已完成动作并避免重复写入。
@@ -812,45 +798,17 @@ frontmatter 并以 SHA 防止并发覆盖。用户、系统或插件目录中的
 
 ### Consumer Agent A
 
-A 的身份是 Derek 本人，而不是旁观审核员。A 会：
+Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
-1. 复用同一业务对话的 Codex session，理解此前已经确认的事实。
-2. 动态发现并读取适用的业务 Skill，再读取完成任务所需的操作 Skill。
-3. 以读取和判断为目的使用安装用户已有的 CLI/MCP，按需读取原始消息和材料引用，不依赖
-   service 预读或解释正文。
-4. 返回结构化候选，其中包含目标、动作、收件人/对象、正文或参数和必要的事实引用。
-5. 对不需要动作的触发返回 `no_action`。
+候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
 
-A 的角色协议禁止主动发送消息、评论、审批、修改文档或执行其他外部写操作；它只能提出候选。
-Service 不为 A/B 建立两套 MCP 权限配置，也不能保证安装用户继承的每个第三方 MCP 都从技术上
-隐藏写工具。因此这里的边界不是“所有写工具在 A 进程中必然不可见”，而是：A 不得调用写工具，
-A 的结果协议不接受其自行执行的外部动作，只有 B 对 accepted candidate 的执行进入正式生命周期。
-Audit Rules 不能把 A 改成执行者。
+Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 proposal_revision；failed 只表示技术失败。Audit 不修改正文、选项，不返回执行回执，也不自行创作另一个人工问题。return 允许保留正文并补足证据；reject 要求实质改变被驳回内容，不能只改描述、元数据。首次提交最多三次内容重提，耗尽为 failed，技术失败不占内容预算。
 
-当缺失事实可以向当前对话参与者获得时，A 必须提出**一个具体澄清问题**作为普通候选，
-由 B 审阅并发送；不得把这种情况转成 `needs_human`，也不得要求 Derek 在“继续处理”和
-“先追问”之间选择。`needs_human` 只用于无法通过读取材料或向参与者提问解决、必须由
-Derek 作出的管理判断。
+人工问题也先经过 Audit。Audit 检查：是否确需 Derek、规则/代码/Skill/记忆/会话/读取是否可自行解决、是否应向来源人索取材料、是否把技术失败伪装成决策、上下文和理由是否充分、选项是否可行且确有差异、每个执行分支是否完整并仅限当前实例。只有当前版本 approve 后才进入 needs_human 和通知，审核通过不等于业务 done。
 
-A 和 B 的结果统一携带 `risk`、`confidence`、`rule_coverage`、`information_completeness`；
-后三者严格为 0--1。先看信息完整度：低于 `0.5` 只产生普通 proposal 或一个具体问题的
-ask-back，继续现有 Audit/send 链路；ask-back 不落新的 outcome，也不计 `needs_human`。否则，
-仅当 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 时进入 `needs_human`，并给出 2--4
-个互斥可执行的规则/Skill 选项；每个选项必须包含唯一稳定的 `key`、显示用 `label`、可执行的
-`instruction` 和 `consequence`/影响；其余由 Skill 自主完成。one-time 与 Skill update 可同时作为
-反馈选择，复用同一业务对象、attempt 和兼容 session，产生新 revision，不新建 session。
-技术、provider、receipt、读取、路由、schema、Audit、retry failure 永远为 `failed`；领域
-`authorization_required` 不泛化为人工升级；只有精确的通用错误码、匹配当前动作的授权计划和统一质量门槛同时成立，才可形成结构化规则决策。
-provider 返回 `confirmation_required` 同样属于运行时失败边界：外部动作尚未执行，服务必须保留具体
-错误并落为 `failed`，不得创建泛化的“确认执行外部操作/停止当前事项”选项。
+选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。不再提供 applies_to=task_class、可复用规则、Skill 更新复选框或此决策处理器的 Skill 写入副作用。
 
-新 wire 四字段必填且严格校验。当前投影不兼容旧的“状态字符串 + 服务生成按钮”逻辑：
-`needs_human` 必须能追溯到完整 `final_result_json`，字段缺失、非法值、outer outcome mismatch、
-无 Agent run、选项不完整或 `error_retryable` 为真都 fail-closed 为 `failed`；`error_authorization_required`
-只有精确通用码 `authorization_required`、匹配的单一授权计划和同一质量门槛全部成立才有效。
-保留原始历史 run/audit，不改写其内容。
-服务启动时幂等修复这种 current projection，同时清空服务生成的选项。Quality gate/Attention
-只统计修复后的 current latest projection；reviewed、historical、pending recovery 排除。
+多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，stage_index、predecessor_review_id 绑定前一已完成阶段的回执；阶段上限独立于每阶段三次内容修订预算。
 
 ### 任务长期记忆
 
@@ -879,33 +837,11 @@ Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写�
 
 ### Audit Agent B
 
-B 不是 Derek 的第二个写作分身，而是独立审计与执行者。B 会：
-
-1. 根据候选内容和当前上下文独立判断适用的业务规则。
-2. 重新读取执行前的实时事实和 Audit Rules。
-3. 检查 A 的候选是否有事实依据、目标准确、内容最小、权限合适且符合当前规则。
-4. 候选合格时按原样执行，并返回 provider 的执行结果。
-5. 业务含义需要变化时返回具体反馈，由 A 生成新 revision；B 不自行改写候选。
-6. 外部动作中断时由下一次 Agent turn 按当前业务 Skill 读取目标状态并决定是否继续；服务不创建专门的恢复回合。
-
-同一任务的 B session 在 provider session 存在且可访问时继续复用；Skill/契约版本更新和 revision 前进不会单独强制创建新 session。只有 session 不存在或认证上下文失效时才创建新 session。
+Audit 使用实际只读工具接口审核候选；既无受控发送、审批能力，也无命令执行工具。Consumer 的允许文档和报告能力由固定任务绑定操作接口提供。Codex 使用原生 features.shell_tool=false、features.unified_exec=false 与 MCP enabled_tools 配置；Claude 使用受限内建读工具和角色 MCP；没有对应能力的 Friday 不能承担这两个角色。
 
 ## 会话与反馈周期
 
-- 每个 `conversation_id` 对应一个长期 A session；同一业务对话的新消息通过
-  `codex exec resume` 进入该 session。
-- 同一任务的候选 revision 优先继续兼容的 B session；revision 前进不等于创建新 session。
-- B 的 `feedback_provided` 会通过持久化反馈消息送回 A；`revision_required` 只作为历史输入术语映射。
-- 一个任务最多允许三个内容反馈周期。基础设施重试不消耗内容反馈周期。
-- A session 缺失或损坏时才创建新的会话；服务不会为每条消息无条件创建新 A session。
-
-当 A 在外部写入之前因进程、解析或会话错误失败时，重试会在同一 revision 创建新的
-Consumer turn。失败 turn、其 session 标识、事件和错误保持不可变，供 History 审计；新
-turn 可以复用仍有效的对话 session，或在该 session 已失效时安全创建新会话。Audit B 始终
-绑定该 revision 最新成功的 A turn，避免覆盖失败记录或把旧 session 标识写入新会话。
-
-同一对话在任一时刻只允许一个 A turn 写入会话 JSONL。会话锁只保护本地 transcript 的
-一致性，不代表业务消息被丢弃；新任务保留在持久队列中等待该 turn 完成。
+Consumer 继续兼容业务会话，Audit 按现有角色会话继续读取和审核。每阶段初始提交加最多三次内容重提；return/reject 消耗预算，运行时和 provider 重试不消耗。原始 run、修订和错误 append-only，任务 processing 在反馈期间保持不变。
 
 ### 任务提取与 follow-up 是一个生命周期
 
@@ -953,7 +889,7 @@ allowlist。安装用户配置中的 MCP 可能同时公开读写工具；servic
 分析和提案，B 才被授权执行并发布 accepted action。任何绕过该顺序的 A-side 外部写入都违反协议，
 不能作为 service 的已完成结果。
 
-服务仍保留职责边界：A 生成候选并按共享 Audit Rules 自检；B 独立审阅并执行被接受的外部动作。
+服务仍保留职责边界：A 生成候选并按共享 Audit Rules 自检；B 只读独立审阅完整候选，System Executor 执行已经持久化审核通过的精确方案。
 两者都可以使用用户安装的工具和 skills。服务只负责 DWS/Lark channel gate、任务去重和结果持久化；
 Agent 不执行 `auth login`、`reset` 或 `logout`。某个 MCP 实际返回未授权时，
 任务如实记录该依赖不可用，不把认证失败伪装成材料缺失。
@@ -1153,140 +1089,13 @@ Friday 会把它当成自己的结构化信封解析，找不到回复正文时�
 
 ## 重复执行与恢复
 
-### 稳定业务动作去重
+系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
-重复保护绑定业务对象、动作身份、operation 和目标，不绑定 run、generation 或 revision。
-反馈 revision 若仍表达同一预期外部结果，必须复用 `action_identity` 并直接复用已经成功的
-provider 结果；只有预期结果、目标或用途真的变化时才产生新的动作身份。
+candidate_executions 保存租约，candidate_action_attempts 在 provider 调用之前保存 dispatch 边界；已验证回执复用。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
 
-OA pending 扫描会先读取当前审批记录。只有最新有效记录来自其他参与者时才生成 review
-任务；如果 Derek 已在该外部更新之后完成评论、审批或其他处理，扫描不再把同一审批重新入队。
-同一个业务 `reply_attempt` 是稳定的当前投影：重跑会在原 attempt 上更新当前状态、结果和错误，
-不会再创建第二个业务 attempt。页面可以在该 attempt 下切换查看多个底层 `agent_runs`；这些
-run、session、runtime attempt、tool event 和原始失败事件仍是 append-only 执行事实，不能被覆盖。
-历史中的原始失败仍可展开查看，但列表默认展示 current projection。
-模式升级可以规范化业务对象键并重建 `business_object_tasks` 当前映射，但不能删除或改写旧
-task、agent run、session、tool event、发送记录或 provider 回执。
+历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
-### Agent 失败重试
-
-Consumer 或 Audit 的运行、依赖、解析和外部系统错误统一进入 `failed`，由 Agent 在下一次 turn 中按当前
-业务 Skill 读取必要事实并决定是否重试。服务不区分“有副作用失败”和“无副作用失败”，也不维护专门的
-独立核对队列。重试仍绑定原任务；已持久化的 `external_action_key` 成功结果由服务机械复用，
-无需 Agent 再次执行同一动作。没有成功结果的动作由下一轮按当前业务状态继续处理。
-
-服务重启后，仍有有效租约的 run 不会被 stale recovery 抢占；租约过期且没有活动进程的
-run 才能被持久队列恢复。
-
-两类运行时失败有明确的结构化处理，而不是落入通用重试：
-
-- **唯一的 fallback 决策**：Agent turn（`app/agent_turn_runner.py`）与其他所有 workload
-  （`app/agent_runtime_router.py` 的 `RoutedCodexExecution`）只有一条 fallback 路径：某次 runtime attempt
-  失败后，两个执行循环都调用 `app.runtime_fallback.plan_runtime_fallback` 决定是否暂停路由、是否等待、
-  下一次在哪条路由执行；执行循环只负责按决策记录各自的 session、transcript 与回执证据。
-  两个循环也使用同一组 runtime adapter（Codex、Claude、Friday），任何 workload 都能到达任何已配置路由。
-- **模型过载（429）**：provider 报告已满（`server_overloaded`、"Selected model is at capacity"、上游 429/5xx
-  包装成的 "high demand"）时，adapter 归为 `capacity` 类且可在同路由重试的 `codex_provider_overloaded`。
-  同一路由按共享指数退避（10 秒、20 秒、40 秒）重试最多 `CAPACITY_RETRIES_ON_SAME_ROUTE`（3）次；
-  重试期间不暂停该路由，其他 workload 照常使用。3 次重试仍失败才暂停该路由并切到下一条已配置路由。
-  计数只看该路由最近一段连续的容量失败，中间出现其他失败或成功即重新计数。
-  `codex_provider_capacity_exhausted`（额度用完）不会在等待中恢复，不在同路由重试，直接暂停并切换。
-  所有路由都过载时，任务按 provider 恢复等待延期重试，不进入终态失败。
-- **路由暂不可用**：所有路由都不可用时，失败码由路由层给出的结构化原因决定，而不是从
-  显示字符串里找子串：探针快照缺失/过期或路由因非认证故障被暂停 → `runtime_provider_unreachable`
-  （延期重试）；全部路由缺能力 → `runtime_capability_missing`；仅认证类暂停 →
-  `runtime_provider_auth_failed`。Email 任务对 `failed_retryable` 的编排结果与 DingTalk worker
-  一致：按退避时间延期重入队，不再当作终态失败。
-  路由层的其他工作负载（任务 Agent、会议、邮件分类、workbench）在选路阶段就发现所有路由暂停/未探测时，
-  同样按可重试的外部依赖延期，而不是判为执行失败。这种“没有进入任何路由”的状态由路由层以
-  `runtime_unavailable` 标记；工作项 worker 据此只延期、不消耗自身的有限重试次数，也不记录逐条
-  Service error（路由暂停本身就是信号）。
-- **Email worker 的文件描述符**：`EmailStore._connect` 是会关闭连接的 context manager（与 `AutoReplyStore`
-  一致）；裸连接只提交/回滚不关闭，靠循环 GC 回收，会把 launchd agent 的 256 个 fd 软上限耗尽并让 worker
-  线程退出、子进程反复重启。plist 模板把 `NumberOfFiles` 提到 4096，改动需 bootout/bootstrap 重装才生效。
-- **会议对齐的供应商中断**：会议消费者与 worker 共用中断判定；全部路由暂停或最后一条路由 capacity/transport
-  失败时任务延期（退避封顶、归还 attempt、不进 Attention），不再首轮判终态失败。
-- **Audit 的 proposal_revision**：由 Audit run 回填，模型回显不同数字不再让轮次硬失败；规则文本说明该值只标识
-  所审阅的候选，不是它请求的修订。
-- **任务 Agent 的修订轮次**：可修订规则最多修订 `TASK_DECISION_REPAIR_ROUNDS`（2）轮，修订后触发另一条可修订规则
-  会继续修订而不是漏成工作项终态失败；耗尽时抛出类型化的 `TaskDecisionRepairExhausted`。修订提示说明
-  `project.memory_context` 的契约（query、召回为空时的说明句、runtime 不可用出口、无变化返回 skip）。
-- **跨进程共享探针结果**：每个服务子进程启动时能力注册表为空；缺少某路由快照时先采用同机其他存活进程在
-  store 里刚写入的新鲜健康快照，而不是自己再探一次（`_shared_healthy_snapshot`）。此前 email-worker 自己的探针
-  在 provider 繁忙时反复失败，Consumer 选路一直是 `snapshot_missing/unhealthy`，整条邮件队列停滞。
-- **中断轮询不留失败 run**：选路时发现所有路由暂停/未探测，turn runner 丢弃刚认领、尚未进入 runtime 的 run
-  （`discard_unstarted_agent_run`，仅认领者可丢弃、且无 runtime attempt/工具事件/effect/回执），编排层直接延期。
-  此前每次轮询都持久化一个失败 Consumer run（单任务累计 458 个 turn_attempt）。
-- **可选字段的 null**：任务 Agent 决策模型（`StrictTaskModel`）把可选字段上的 JSON `null` 视为“未提供”（等同省略，
-  下游仍看到声明的默认值），派生 schema 把这些字段标为可空；必填字段与动作所需的证据对象仍不可为 null。
-- **模型输出不兼容旧结构**：微信/钉钉决策与 OKR 评审的 `AgentEnvelope` 解析不再接受任何旧结构（旧 `CodexDecision`
-  对象、宽松 envelope 回退、`okr_review`+`request_id/result`、无动作的 `no_reply` 简写）；结构错误只做一次同会话修正，
-  仍失败则任务失败并重跑。
-- **修正轮遇到供应商故障**：唯一一次同会话修正轮以 capacity/transport 失败时，最多等待
-  `CAPACITY_WAITS_BEFORE_FAILOVER`（3）次再离开该路由：每次失败以可重试的 `runtime_execution_failed`
-  （`correction_capacity_wait:<n>`）交给调用方退避延期；等待期内该修正会话只在自己的路由上恢复；第 4 次失败换到
-  后继路由，用新会话、原始 prompt 和独立的修正预算。修正轮的非故障类失败仍为终态。
-- **同一 revision 的角色重试上限**：Consumer 或 Audit 在一次 worker pass 内对同一 proposal revision 最多 2 次
-  turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的结果/进程/依赖/原生写入失败时，本 pass 以
-  `failed_retryable` 结束，由调用方延期后进入下一 pass。跨 pass 的上限由编排层按已持久化的 run 计数：同一
-  generation、同一 revision 下该角色**连续**失败满 `MAX_CONSECUTIVE_FAILED_TURNS`（6，即 3 个 pass ×
-  每 pass 2 次 turn，与 DingTalk worker 的 `MAX_REPLY_TASK_ATTEMPTS`=3 一致）后，编排结果进入
-  `failed_terminal`，任务结束为 `failed`，保留最后一个 run 的真实错误码，并把 Agent 原文（`source_code`、
-  以及 typed 失败结果必填的 `summary`，存在错误载荷的 `reported_summary` 字段里，2026-09-28）
-  写进结果摘要和错误诊断，不再回到 `pending`。未满上限的 pass 之间按共享指数退避（`external_retry.retry_delay_seconds`，
-  60 秒起、每 pass 翻倍、封顶 15 分钟，与 DingTalk worker 相同）由 `OrchestrationResult.retry_after_seconds`
-  给出，定时任务消费者据此设置 `available_at`。这条上限存在的原因：定时执行和 Email 任务在延期时归还
-  attempts，任务级计数不前进；2026-09-26 定时周报（任务 385880）的 Audit 因 `proposal_already_executed`
-  被重跑 310 次，每次都立刻重新入队。计数遇到 `completed` run 或等待类错误（授权、`runtime_*`、
-  `codex_provider_*`）即中断，这些按各自的退避延期，不计入该上限。Email 任务在 `failed_retryable`
-  上有自己的退订阶梯（瞬时浏览器错误 4 次、路由拒绝 5 次），仍按原判断，本上限只额外保证不可解释的
-  通用 Agent 失败不会无限重试。
-  内容反馈轮次耗尽但最后一次 Audit 仍有具体修改意见时，编排结果进入 `needs_human` 并提供“按审计意见修订”或
-  “停止不执行”，不能丢掉这条意见后投影为 opaque failed。中断/授权/延期类错误码不计入该上限，按退避延期。
-- **进入最后一条可用路由后才发现的故障**：该路由以 capacity/transport 失败且其余路由均已暂停时，与
-  `runtime_unavailable` 同等处理：工作项和钉钉回复任务以 `runtime_provider_unreachable` 退避延期、attempts 归还、
-  不写 per-item Service error（判定由 `app.worker._is_runtime_outage_error` 统一提供）；认证、结果、进程类失败仍有界。
-- **定时任务的路由暂不可用**：调度器发现任务保存的路由仅是暂停/未探测（用路由层同一个分类器判为
-  `runtime_provider_unreachable`）时只写 `skipped` 运行行并记 warning 日志，不再逐条写 Attention；缺能力、认证类
-  暂停或运行时未配置仍进入 Attention。
-- **结果不合契约时修正提示要说清楚**：任务 Agent 区分“完全没有决策 JSON”与“有对象但不合 schema”，失败原因与
-  修正提示列出最后一个候选的字段错误（只含路径与描述，不回显模型的值）和最常违反的规则；会议对齐的解析失败
-  以 `RoutedResultValidationError` 上报，因此同会话修正轮真正触发，修正提示折叠列表下标并附派生 schema（主提示同样
-  内嵌，第三方 provider 不执行 `--output-schema`）；OKR 评审的 AgentEnvelope 修正提示同理由模型 schema 渲染。
-- **微信通道同样的两条规则**：微信/Codex 决策解析（`app/codex_decision.py`）用共享提取器解析围栏/散文包裹的
-  AgentEnvelope，形似 envelope 但不合 schema 的候选进入唯一一次同会话修正轮（修正提示列字段问题并渲染
-  `AgentEnvelope.model_json_schema()`），不再被宽松回退接受；微信消费者与钉钉 worker 共用供应商中断判定，
-  中断时以 `runtime_provider_unreachable` 退避延期、归还 attempt、不写 `reply_attempts`、不进 Attention；
-  决策轮次按本代已持久化的 Consumer run 推导（终态 run 推进轮次，running 保留），避免同一轮被无限重入。
-- **Provider 的通用过载包装**：Codex 会把上游 429/5xx（限流、MiniMax token plan 用尽、上游过载）
-  统一包装成 "We're currently experiencing high demand"，流里不带 provider 原文；服务把它归为
-  `codex_provider_overloaded`（容量类：同路由先重试 3 次，仍失败才暂停路由并 failover），而不是传输断开。
-- **模型把 JSON 包在说明文字或代码围栏里**：任务 Agent、微信 `AgentEnvelope`、会议对齐三个解析器共用
-  `agent_message_json_objects`，在整段消息里逐个定位顶层 JSON 对象（穿过 ``` 围栏和说明文字），
-  取最后一个满足各自 schema 的对象；只有完全找不到 JSON 时才报“未找到”。JSONL 流两侧的非 JSON 行
-  （Codex 警告、MCP 启动噪音）一律跳过。会议对齐与任务 Agent、微信一样，结果不合 schema 时在同一会话里
-  做一次修正轮，修正提示列出上一次输出的具体字段错误；路由层把每次结果校验失败的原因写入服务日志。
-- **Email 任务的瞬时故障**：加载任务上下文时遇到邮箱/网络瞬时故障（IMAP TLS 握手超时、连接重置、
-  imaplib 传输错误）按退避延期重试（最多 5 次，错误码 `email_provider_transient:<类型>`），不是终态失败；
-  轮次中被 rerun 或孤儿回收轮换掉的任务交给新的 generation 处理。
-- **Email 任务的孤儿回收**：Email Agent 消费循环每轮先回收本频道的过期认领（`processing` 超过 10 分钟
-  且没有活着的 Agent run，或累计超过 60 分钟）并以 `stale_email_task_recovery` 重新入队，再一次只认领
-  5 条；任务在该循环里串行执行，认领过多只会拉长尾部锁定时间，进程重启时会把未开始的任务永久留在
-  `processing`（Attention 看不到它们）。
-- **Audit 无需抄写任何东西**：`unsubscribe_email` 只接受 `task_id`，其余全部从 durable 状态读出；
-  模型漏字段、截断摘要或抄错 operation 都不可能发生，因为没有东西给它抄。退订页面若在
-  `domcontentloaded` 后仍是空白（脚本渲染），浏览器会最多等待 5 秒再判定 `page_state_missing`。
-- **无证据的 executed**：退订任务里，Audit 只有在存在该动作身份的 receipt 时才能返回 `executed`；
-  否则解析阶段就判为 `codex_result_invalid`，下一轮带修正块重做，编排层的 continuation 守卫只作最后兜底。
-  receipt 由服务写入，模型无法伪造，也不按 turn 计数——一次退订一条 receipt，不是一轮一条。
-  有证据的 `executed` 其 `external_result.operation_id` 由服务从 Audit run 回填（不透明操作号是服务
-  自己的，模型抄错不应让任务终态失败）；缺少 `external_result` 则同样进入修正轮。
-- **结果不合契约**：Agent 返回了 JSON 但不满足 wire schema 时，解析器报 `codex_result_invalid`
-  并保留失败字段位置和契约自己的校验说明（不保留模型原文）；同一角色、同一 revision 的下一次 turn 会收到
-  `## Result Correction`，把这些位置和说明反馈给模型，要求只返回修正后的结果。只给类型不给说明
-  （如 `result: value_error`）时模型无从下手：任务 384711 两轮重试原样重交了同一个结果。只有完全没有 JSON
-  对象时才是 `codex_result_missing`，此时下一次 turn 同样收到修正块，说明上一轮只有说明文字。
-  wire 契约中的 `error_code` 接受 `null` 作为“无错误”（等价于空字符串）；模型无需为无错误结果编造字符串哨兵。
+角色同一 revision 每个 pass 最多两个技术 turn；连续六次非等待型失败后终止，保留真实 source_code。路由等待、认证等待、容量等待和活动租约等待沿用已有退避，不消耗内容预算。
 
 ## 统一外发消息后缀
 
@@ -1336,20 +1145,15 @@ History 再启动原生 CLI 去发现命令元数据。运行时发现失败属�
 
 ## 终态语义
 
-| 终态 | 含义 |
+| 状态 | 含义 |
 | --- | --- |
-| `executed` | B 已执行，并返回 provider 结果或稳定外部动作标识。 |
-| `no_action` | A 确认当前触发无需外部动作。 |
-| `feedback_provided` | B 给出结构化反馈，等待 A 在原兼容 session 中生成下一 revision。 |
-| `needs_human` | proposal 也可附带一个独立升级（同样 2 至 4 个选项）：Audit 执行动作后任务以 `needs_human` 收口。除此之外，仅在信息完整且 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 时使用；必须提供 2 至 4 个互斥、可执行的规则/Skill 选项，每项包含唯一稳定 `key`、显示 `label`、可执行 `instruction` 和 `consequence`/影响。普通材料不足走 ask-back，不计入此状态。 |
-| `failed` | 当前 run 失败；错误说明是否可重试。 |
-| `quarantined` | 历史数据中的旧投影标签，仅用于历史展示；新执行不得写入。 |
+| processing | Consumer、审核、内容修订或已选择计划正在执行。 |
+| needs_human | 当前完整问题和分支已审核通过，等待本次输入。 |
+| executed / done | 系统完成全部计划且有验证回执。 |
+| no_action / skipped | 已审核无需动作或选定停止，记录具体原因。 |
+| failed | 技术、外部效果或内容预算最终失败，保留原因。 |
 
-只有诊断、没有完成用户要求的动作时，不能标记为 `executed`。如果缺的是参与者可以回答的
-事实，正确动作是发送一个具体澄清问题，而不是 `needs_human`。
-
-OA 列表读取成功后，个别审批任务或详情读取失败记录在扫描游标中，作为待跟进提醒；只有
-列表读取本身失败才写入扫描器错误状态。
+approve 是审核结论，decision_selected 是选择事实；两者均不能投影为执行成功。旧 executed/feedback_provided Audit 结果仅历史可读，不能作为新计划授权。
 
 ## 关键模块
 
@@ -1359,8 +1163,8 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 | `app.agent_orchestrator.AgentOrchestrator` | 在 A、B、反馈和失败重试之间推进状态机。 |
 | `app.business_skills` / `app.managed_skills` | 提供八个仓库基线 Skill，并管理 SQLite 中不可变 revision、next-start config 和启动 load receipt；不参与业务路由。 |
 | `app.agent_skill_usage` | 提供 Agent 执行环境所需的 Skill 读取辅助；不参与普通业务结果审核。 |
-| `app.consumer_agent.ConsumerAgentRunner` | 复用兼容的 A session，读取、判断并提出候选；应用层不限制其具体工具。 |
-| `app.audit_agent.AuditAgentRunner` | 复用兼容的 B session，审核并执行候选；应用层不审核命令、工具或读取方式。 |
+| `app.consumer_agent.ConsumerAgentRunner` | 复用兼容的 A session，业务准备和完整候选；保留任务绑定文档/报告能力，受控动作由系统执行。 |
+| `app.audit_agent.AuditAgentRunner` | 复用兼容的 B session，只读审核完整候选并返回绑定 digest/revision 的结论；不执行动作或返回回执。 |
 | `app.agent_contracts` | 严格定义 A proposal 与 B audit result。 |
 | `app.audit_rules` | 保存、校验并分别渲染共享 Audit Rules。 |
 | `app.codex_runner.CodexRunner` | 以原生 `codex exec` 启动并继承安装用户的 Codex 配置。 |
@@ -1418,3 +1222,13 @@ DWS/OA 技术错误不得直接暴露给申请人，所有“已评论”“已�
 
 Codex Agent 可以通过 `agent_cli.read_skill` 读取 Skill；Skill 读取属于 Agent 执行环境，
 不是应用层业务结果的前置 receipt。launchd 业务服务不是 Skill 可读性的前置条件。
+
+### 已审核来源、执行进度与失败展示
+
+Consumer 完成候选准备时，把原 trigger、消息/材料和计划涉及的 OA 原表单或文档源事实保存为 source_bindings，参与 candidate digest。System Executor 在每个尚未核验动作派发之前重新读取相同原对象，包括首次执行、同次后续动作和恢复部分执行。OA 已完成动作造成的 task 状态/操作记录变化由具名处理器核验，不作为原表单变化；真实表单、文档或上下文变化使该 review 失效，保留已核验动作回执和原人工回答，在同阶段形成新的完整候选并重审。来源读取失败属于可重试技术失败，不执行旧分支。
+
+Attempt 详情的 system_execution 按 candidate、review、selection 绑定显示当前及历史阶段、声明顺序、未开始动作、失败/不确定状态和 provider 回执。只有 canonical action ledger 中核验成功的动作计为 verified；Audit approve 和用户选择都不能显示为已经执行。
+
+失败 Reply task 的 Attention 诊断只读取本对象本 generation 的当前 run，显示原 source_code（无则 code）与明确标为“Agent 说明”的 reported_summary；缺少或坏 JSON 时保留 task error，不将 Agent 自述当作已证实的 provider 拒绝。History、Attempt 详情和 Reply attempts queue 对微信分别读取本对象当前 generation 最新 delivery：failed/send_unknown 不能被只表示候选完成的 task done 遮蔽。旧 generation 或其他对象的 delivery 不影响当前结果；这些展示不更新任务、投递或授权状态。
+
+独立 Email 退订仍使用原有 direct executor、浏览器步骤和回执。无运行时调用者的旧 Agent continuation driver 已删除；Agent finalizer 不再从历史 Audit 声明触发退订、切换渠道或伪造执行成功。默认 developer prompt 和 OA 规则种子统一为新角色合同；既有自定义规则、managed Skill 配置与 runtime-only Skill 必须在安静的正式发布窗口中逐项发布并记录版本，部署代码本身不会覆盖它们。

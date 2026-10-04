@@ -12,7 +12,6 @@ from pydantic import (
 )
 
 from app.agent_result import AgentError
-from app.decision_quality import DecisionQuality, classify_decision_quality
 
 
 class RiskLevel(StrEnum):
@@ -28,15 +27,13 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
     for field in ("risk", "confidence", "rule_coverage", "information_completeness"):
         if field not in required:
             required.append(field)
-    schema["anyOf"] = [
+    schema["oneOf"] = [
         {
             "type": "object",
             "properties": {
                 "outcome": {"const": "proposal"},
                 "proposal": {"type": "object"},
-                # Empty, or 2-4 options for an independent question the action
-                # does not settle (see ConsumerAgentResult.escalates).
-                "decision_options": {"type": "array", "maxItems": 4},
+                "decision_options": {"type": "array", "maxItems": 0},
             },
         },
         {
@@ -54,10 +51,26 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
             "properties": {
                 "outcome": {"const": "needs_human"},
                 "proposal": {"type": "null"},
-                "decision_options": {"type": "array", "minItems": 2, "maxItems": 4},
+                "decision_options": {"type": "array", "maxItems": 4},
                 "needs_human_reason": {"type": "string", "minLength": 1},
                 "decision_basis": {"type": "object"},
             },
+            "oneOf": [
+                {
+                    "properties": {
+                        "decision_options": {"type": "array", "minItems": 2, "maxItems": 4},
+                        "requested_input": {"type": "null"},
+                    },
+                    "required": ["decision_options"],
+                },
+                {
+                    "properties": {
+                        "decision_options": {"type": "array", "maxItems": 0},
+                        "requested_input": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["decision_options", "requested_input"],
+                },
+            ],
             "required": [
                 "outcome",
                 "proposal",
@@ -74,67 +87,9 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
     for field in ("risk", "confidence", "rule_coverage", "information_completeness"):
         if field not in required:
             required.append(field)
-    null_value = {"type": "null"}
-    schema["anyOf"] = [
-        {
-            "type": "object",
-            "properties": {
-                "outcome": {"const": "executed"},
-                "feedback": null_value,
-                "external_result": {"type": "object"},
-                "decision_options": {"type": "array", "maxItems": 0},
-            },
-            "required": ["outcome", "feedback", "external_result"],
-        },
-        {
-            "type": "object",
-            "properties": {
-                "outcome": {"const": "feedback_provided"},
-                "feedback": {"type": "object"},
-                "external_result": null_value,
-                "decision_options": {"type": "array", "maxItems": 0},
-            },
-            "required": ["outcome", "feedback", "external_result"],
-        },
-        {
-            "type": "object",
-            "properties": {
-                "outcome": {"const": "failed"},
-                "feedback": null_value,
-                "external_result": null_value,
-                "decision_options": {"type": "array", "maxItems": 0},
-            },
-            "required": ["outcome", "feedback", "external_result"],
-        },
-        {
-            "type": "object",
-            "properties": {
-                "outcome": {"const": "needs_human"},
-                "feedback": null_value,
-                "external_result": null_value,
-                "decision_options": {"type": "array", "minItems": 2, "maxItems": 4},
-                "needs_human_reason": {"type": "string", "minLength": 1},
-                "decision_basis": {"type": "object"},
-            },
-            "required": [
-                "outcome",
-                "feedback",
-                "external_result",
-                "decision_options",
-                "needs_human_reason",
-                "decision_basis",
-            ],
-        },
-        {
-            "type": "object",
-            "properties": {
-                "outcome": {"const": "dry_run"},
-                "feedback": null_value,
-                "external_result": null_value,
-                "decision_options": {"type": "array", "maxItems": 0},
-            },
-            "required": ["outcome", "feedback", "external_result"],
-        },
+    schema["oneOf"] = [
+        {"properties": {"outcome": {"const": outcome}, "feedback": {"type": feedback_type}}}
+        for outcome, feedback_type in (("approve", "null"), ("return", "object"), ("reject", "object"), ("failed", "null"))
     ]
 
 
@@ -274,15 +229,49 @@ class ConsumerProposal(BaseModel):
 
 
 class DecisionOption(BaseModel):
-    """One actionable rule choice for a reusable task class."""
+    """One bound choice for the current business instance."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(
+        extra="forbid", strict=True,
+        json_schema_extra={
+            "oneOf": [
+                {
+                    "properties": {
+                        "plan": {"type": "object"},
+                        "terminal_outcome": {"type": "null"},
+                        "reason": {"type": "null"},
+                    },
+                    "required": ["plan"],
+                },
+                {
+                    "properties": {
+                        "plan": {"type": "null"},
+                        "terminal_outcome": {"const": "skipped"},
+                        "reason": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["terminal_outcome", "reason"],
+                },
+            ]
+        },
+    )
 
     key: str = Field(min_length=1)
     label: str = Field(min_length=1)
     instruction: str = Field(min_length=1)
     consequence: str = Field(min_length=1)
-    applies_to: Literal["task_class"]
+    plan: ConsumerProposal | None = None
+    terminal_outcome: Literal["skipped"] | None = None
+    reason: str | None = None
+
+    @model_validator(mode="after")
+    def validate_branch(self) -> "DecisionOption":
+        if (self.plan is None) == (self.terminal_outcome is None):
+            raise ValueError("option requires exactly one plan or terminal outcome")
+        if self.terminal_outcome is not None and not self.reason:
+            raise ValueError("terminal outcome requires a reason")
+        if self.plan is not None and self.reason is not None:
+            raise ValueError("reason is only valid for terminal outcome")
+        return self
 
 
 class DecisionBasis(BaseModel):
@@ -407,6 +396,14 @@ class DurableMemory(BaseModel):
         return value
 
 
+class ReviewedSourceBinding(BaseModel):
+    """Provider facts captured by the service before the candidate is reviewed."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    provider: Literal["task_context", "dingtalk-oa", "dingtalk-doc"]
+    object_ref: str = Field(min_length=1)
+    value: JsonValue
+
+
 class ConsumerAgentResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -425,7 +422,11 @@ class ConsumerAgentResult(BaseModel):
     information_completeness: float = Field(ge=0.0, le=1.0)
     needs_human_reason: str | None = None
     decision_basis: DecisionBasis | None = None
-    authorization_plan: AuthorizationPlan | None = None
+    requested_input: str | None = None
+    stage_index: int = Field(default=0, ge=0)
+    predecessor_review_id: int | None = Field(default=None, ge=1)
+    continue_after_execution: bool = False
+    source_bindings: tuple[ReviewedSourceBinding, ...] = ()
     # Required on the wire the Agent answers in; results stored before the
     # field existed read back as having none.
     durable_memories: tuple[DurableMemory, ...] = ()
@@ -440,18 +441,20 @@ class ConsumerAgentResult(BaseModel):
     def accept_json_risk(cls, value: object) -> object:
         return RiskLevel(value) if isinstance(value, str) else value
 
-    @field_validator("decision_options", "durable_memories", mode="before")
+    @field_validator("decision_options", "durable_memories", "source_bindings", mode="before")
     @classmethod
     def accept_json_decision_options(cls, value: object) -> object:
         return tuple(value) if isinstance(value, list) else value
 
     @model_validator(mode="after")
     def validate_payload(self) -> "ConsumerAgentResult":
+        if (self.stage_index > 0) != (self.predecessor_review_id is not None):
+            raise ValueError("later stage requires predecessor_review_id")
         if (self.outcome is ConsumerOutcome.PROPOSAL) != (self.proposal is not None):
             raise ValueError("proposal is required only for proposal outcome")
         if self.outcome is ConsumerOutcome.NEEDS_HUMAN:
-            if not 2 <= len(self.decision_options) <= 4:
-                raise ValueError("needs_human requires two to four decision options")
+            if not ((2 <= len(self.decision_options) <= 4 and self.requested_input is None) or (not self.decision_options and self.requested_input)):
+                raise ValueError("needs_human requires two to four options or requested_input")
             keys = [option.key for option in self.decision_options]
             if len(keys) != len(set(keys)):
                 raise ValueError("decision option keys must be unique")
@@ -459,68 +462,10 @@ class ConsumerAgentResult(BaseModel):
                 raise ValueError("needs_human_reason is required for needs_human")
             if self.decision_basis is None:
                 raise ValueError("decision_basis is required for needs_human")
-            if self.error.retryable:
-                raise ValueError("needs_human cannot carry a retryable error")
-            if self.error.authorization_required:
-                if self.error.code != "authorization_required":
-                    raise ValueError(
-                        "only authorization_required may carry an authorization needs_human"
-                    )
-                if self.authorization_plan is None:
-                    raise ValueError(
-                        "authorization_plan is required for authorization needs_human"
-                    )
-                if self.risk is not RiskLevel.HIGH:
-                    raise ValueError("authorization needs_human requires high risk")
-                if self.information_completeness < 0.5 or self.rule_coverage < 0.5:
-                    raise ValueError(
-                        "authorization needs_human requires complete information and rule coverage"
-                    )
-            else:
-                if self.error.code:
-                    raise ValueError("needs_human cannot carry a non-authorization error")
-                if self.authorization_plan is not None:
-                    raise ValueError(
-                        "authorization_plan requires authorization needs_human"
-                    )
-            quality = classify_decision_quality(
-                risk=self.risk.value,
-                confidence=self.confidence,
-                rule_coverage=self.rule_coverage,
-                information_completeness=self.information_completeness,
-            )
-            if quality.classification is not DecisionQuality.NEEDS_HUMAN:
-                raise ValueError(
-                    "needs_human outcome must match decision quality classification"
-                )
-        elif self.outcome is ConsumerOutcome.PROPOSAL and (
-            self.decision_options
-            or self.needs_human_reason is not None
-            or self.decision_basis is not None
-        ):
-            # An executable action and an independent question for Derek.
-            # Derek, 2026-09-23: an OA approval with both a material gap the
-            # applicant can fill and a rule gap only he can fill must do both;
-            # 384699 dropped its comment and 384514 never asked for material,
-            # because a result could be a proposal or needs_human, not both.
-            # Audit executes the proposal; the task then ends needs_human.
-            if not 2 <= len(self.decision_options) <= 4:
-                raise ValueError(
-                    "a proposal that escalates needs two to four decision options"
-                )
-            keys = [option.key for option in self.decision_options]
-            if len(keys) != len(set(keys)):
-                raise ValueError("decision option keys must be unique")
-            if not self.needs_human_reason:
-                raise ValueError("a proposal that escalates needs needs_human_reason")
-            if self.decision_basis is None:
-                raise ValueError("a proposal that escalates needs decision_basis")
-            if self.authorization_plan is not None:
-                raise ValueError(
-                    "authorization_plan requires authorization needs_human"
-                )
-            if self.error.code:
-                raise ValueError("a proposal that escalates cannot carry an error")
+            if self.error.code or self.error.retryable or self.error.authorization_required:
+                raise ValueError("needs_human cannot carry a technical error")
+            if self.continue_after_execution:
+                raise ValueError("needs_human cannot continue after execution")
         elif self.decision_options:
             raise ValueError("decision options are only valid for needs_human")
         elif any(
@@ -528,23 +473,19 @@ class ConsumerAgentResult(BaseModel):
             for value in (
                 self.needs_human_reason,
                 self.decision_basis,
-                self.authorization_plan,
+                self.requested_input,
             )
         ):
             raise ValueError("needs_human fields are only valid for needs_human")
+        if self.continue_after_execution and self.outcome is not ConsumerOutcome.PROPOSAL:
+            raise ValueError("only a proposal can continue after execution")
         return self
-
-    @property
-    def escalates(self) -> bool:
-        """A proposal that also asks Derek an independent question."""
-        return self.outcome is ConsumerOutcome.PROPOSAL and bool(self.decision_options)
 
 
 class AuditOutcome(StrEnum):
-    EXECUTED = "executed"
-    FEEDBACK_PROVIDED = "feedback_provided"
-    NEEDS_HUMAN = "needs_human"
-    DRY_RUN = "dry_run"
+    APPROVE = "approve"
+    RETURN = "return"
+    REJECT = "reject"
     FAILED = "failed"
 
 
@@ -564,32 +505,23 @@ class AuditExternalResult(BaseModel):
 
 
 class AuditAgentResult(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        strict=True,
-        json_schema_extra=_audit_result_json_schema,
-    )
+    model_config = ConfigDict(extra="forbid", strict=True, json_schema_extra=_audit_result_json_schema)
 
     outcome: AuditOutcome
     summary: str = Field(min_length=1)
     proposal_revision: int = Field(ge=0)
+    candidate_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    evidence_refs: tuple[str, ...] = ()
     feedback: AuditFeedback | None
-    external_result: AuditExternalResult | None
-    decision_options: tuple[DecisionOption, ...] = ()
     error: AgentError
     risk: RiskLevel
     confidence: float = Field(ge=0.0, le=1.0)
     rule_coverage: float = Field(ge=0.0, le=1.0)
     information_completeness: float = Field(ge=0.0, le=1.0)
-    needs_human_reason: str | None = None
-    decision_basis: DecisionBasis | None = None
-    authorization_plan: AuthorizationPlan | None = None
 
     @field_validator("outcome", mode="before")
     @classmethod
     def accept_json_outcome(cls, value: object) -> object:
-        if isinstance(value, str) and value == "revision_required":
-            value = "feedback_provided"
         return AuditOutcome(value) if isinstance(value, str) else value
 
     @field_validator("risk", mode="before")
@@ -597,83 +529,33 @@ class AuditAgentResult(BaseModel):
     def accept_json_risk(cls, value: object) -> object:
         return RiskLevel(value) if isinstance(value, str) else value
 
-    @field_validator("decision_options", mode="before")
+    @field_validator("evidence_refs", mode="before")
     @classmethod
-    def accept_json_arrays(cls, value: object) -> object:
+    def accept_json_evidence_refs(cls, value: object) -> object:
         return tuple(value) if isinstance(value, list) else value
 
     @model_validator(mode="after")
-    def validate_outcome_payload(self) -> "AuditAgentResult":
-        if self.outcome is AuditOutcome.FEEDBACK_PROVIDED:
-            if self.feedback is None or self.external_result is not None:
-                raise ValueError("feedback_provided needs feedback and no result")
+    def validate_review(self) -> "AuditAgentResult":
+        if self.outcome in (AuditOutcome.RETURN, AuditOutcome.REJECT):
+            if self.feedback is None:
+                raise ValueError("return or reject requires feedback")
         elif self.feedback is not None:
-            raise ValueError("feedback is only valid for feedback_provided")
-        if self.outcome is AuditOutcome.EXECUTED:
-            if self.external_result is None:
-                raise ValueError("executed needs external result")
-        elif self.external_result is not None:
-            raise ValueError("external result is only valid for executed")
-        if self.outcome is AuditOutcome.NEEDS_HUMAN:
-            if not 2 <= len(self.decision_options) <= 4:
-                raise ValueError("needs_human requires two to four decision options")
-            keys = [option.key for option in self.decision_options]
-            if len(keys) != len(set(keys)):
-                raise ValueError("decision option keys must be unique")
-            if not self.needs_human_reason:
-                raise ValueError("needs_human_reason is required for needs_human")
-            if self.decision_basis is None:
-                raise ValueError("decision_basis is required for needs_human")
-            if self.error.retryable:
-                raise ValueError("needs_human cannot carry a retryable error")
-            if self.error.authorization_required:
-                if self.error.code != "authorization_required":
-                    raise ValueError(
-                        "only authorization_required may carry an authorization needs_human"
-                    )
-                if self.authorization_plan is None:
-                    raise ValueError(
-                        "authorization_plan is required for authorization needs_human"
-                    )
-                if self.risk is not RiskLevel.HIGH:
-                    raise ValueError("authorization needs_human requires high risk")
-                if self.information_completeness < 0.5 or self.rule_coverage < 0.5:
-                    raise ValueError(
-                        "authorization needs_human requires complete information and rule coverage"
-                    )
-            else:
-                if self.error.code:
-                    raise ValueError("needs_human cannot carry a non-authorization error")
-                if self.authorization_plan is not None:
-                    raise ValueError(
-                        "authorization_plan requires authorization needs_human"
-                    )
-            quality = classify_decision_quality(
-                risk=self.risk.value,
-                confidence=self.confidence,
-                rule_coverage=self.rule_coverage,
-                information_completeness=self.information_completeness,
-            )
-            if quality.classification is not DecisionQuality.NEEDS_HUMAN:
-                raise ValueError(
-                    "needs_human outcome must match decision quality classification"
-                )
-        elif self.decision_options:
-            raise ValueError("decision options are only valid for needs_human")
-        elif any(
-            value is not None
-            for value in (
-                self.needs_human_reason,
-                self.decision_basis,
-                self.authorization_plan,
-            )
-        ):
-            raise ValueError("needs_human fields are only valid for needs_human")
-        if self.outcome is AuditOutcome.DRY_RUN:
-            if self.error.code != "dry_run_execution_suppressed":
-                raise ValueError("dry_run requires dry_run_execution_suppressed")
-            if self.error.retryable or self.error.authorization_required:
-                raise ValueError(
-                    "dry_run must not be retryable or require authorization"
-                )
+            raise ValueError("feedback is only valid for return or reject")
         return self
+
+
+class SystemExecutionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    outcome: Literal["executed", "skipped", "failed", "dry_run"]
+    summary: str = Field(min_length=1)
+    error: AgentError = Field(default_factory=lambda: AgentError(
+        code="", retryable=False, authorization_required=False
+    ))
+    external_result: AuditExternalResult | None = None
+    completed_action_keys: tuple[str, ...] = ()
+
+    @field_validator("completed_action_keys", mode="before")
+    @classmethod
+    def accept_json_action_keys(cls, value: object) -> object:
+        return tuple(value) if isinstance(value, list) else value

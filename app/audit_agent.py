@@ -1,40 +1,17 @@
+"""Read-only, whole-candidate Audit turns."""
+
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from contextlib import contextmanager
-from hashlib import sha256
 import json
-from pathlib import Path
 import sys
-from tempfile import TemporaryDirectory
-from typing import Protocol
+from collections.abc import Callable, Mapping
+from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import AuditTurnContext
-from app.agent_contracts import (
-    DINGTALK_MESSAGE_CHANNELS,
-    AuditAgentResult,
-    AuditOutcome,
-)
-from app.decision_rules import decision_violations
-from app.agent_effect_claim import (
-    EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
-    claims_external_action_without_tools,
-    generation_tool_events,
-)
-from app.agent_effect_claim import channel_is_judged_by_tool_events as _channel_judged
-from app.outbound_text_authority import (
-    ASKING_ONLY_REQUIREMENT,
-    SHELL_SEND_REQUIREMENT,
-    UNPREPARED_SEND_REQUIREMENT,
-    every_send_text,
-    sends_a_conclusion_on_thin_material,
-    shell_send_commands,
-    provider_send_texts,
-    unprepared_send_texts,
-)
-from app.agent_result import ResultParseError
+from app.agent_contracts import AuditAgentResult
 from app.agent_effects import LEASE_SECONDS
+from app.agent_result import ResultParseError
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import (
@@ -43,81 +20,21 @@ from app.agent_turn_runner import (
     ProcessExecutor,
     result_correction_prompt,
 )
-from app.agent_wire_contracts import parse_audit_agent_wire_result
+from app.agent_wire_contracts import AuditAgentWireResult, parse_audit_agent_wire_result
 from app.audit_rules import render_audit_rules
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
-from app.consumer_agent import audit_developer_instructions
-from app.service_message_sender import agent_message_delivery_key
-from app.external_action_identity import expected_external_action
-from app.store import (
-    AgentRole,
-    AgentRun,
-    AutoReplyStore,
-    ReplyTask,
-)
+from app.reviewed_candidates import candidate_digest
+from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
+
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
 
-@contextmanager
-def _audit_document_materials(workspace: Path, actions):
-    document_actions = [
-        (index, action, action.payload.get("content"))
-        for index, action in enumerate(actions)
-        if action.capability == "dingtalk-doc"
-        and action.operation == "create_document"
-        and isinstance(action.payload, Mapping)
-        and isinstance(action.payload.get("content"), str)
-    ]
-    if not document_actions:
-        yield ""
-        return
-    with TemporaryDirectory(prefix=".ceo-audit-doc-", dir=workspace) as directory:
-        root = Path(directory)
-        lines = [
-            "\n\n### Exact Document Payloads",
-            "The document body is materialized from the durable Consumer proposal. "
-            "For dws doc +create, use --content with the listed @relative path "
-            "from the task workspace; do not retype or rewrite the body. "
-            "These files disappear when this Audit turn ends.",
-        ]
-        for index, action, content in document_actions:
-            path = root / f"{index}.md"
-            path.write_text(content, encoding="utf-8")
-            path.chmod(0o600)
-            relative = path.relative_to(workspace)
-            lines.append(
-                f"action_identity={action.action_identity} "
-                f"content=@{relative} sha256={sha256(content.encode('utf-8')).hexdigest()}"
-            )
-        yield "\n".join(lines)
-
-
-class ExecutionEvidenceDriver(Protocol):
-    def audit_run_has_execution_evidence(
-        self, task: ReplyTask, *, audit_run_id: int
-    ) -> bool: ...
-
-    def execution_evidence_requirement(self) -> str:
-        """The correction the model gets when its executed result has no receipt.
-
-        Each domain names its own evidence, so the sentence travels with the
-        driver rather than being fixed at the one place that raises it.
-        """
-        ...
-
-
 class AuditAgentRunner:
-    """Execute one ordinary Audit turn.
-
-    Audit validates the typed proposal/result contract and delegates provider
-    capabilities to the selected runtime.  It does not maintain an
-    application-level command review, read-only, unknown-outcome, or separate
-    recovery state machine.
-    """
+    """Run an Audit Agent that can inspect, but cannot execute, a candidate."""
 
     def __init__(
         self,
@@ -132,16 +49,13 @@ class AuditAgentRunner:
         friday_adapter: FridayRuntimeAdapter | None = None,
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
-        dry_run: bool = False,
         refresh_runtime_capabilities: Callable[[], object] | None = None,
         forced_runtime_route=None,
         reasoning_effort: str = "",
         skill_protocol_override: str = "",
         execution_environment: Mapping[str, str] | None = None,
-        domain_continuation: ExecutionEvidenceDriver | None = None,
     ) -> None:
         self.store = store
-        self.domain_continuation = domain_continuation
         self.workspace = workspace
         self.codex_bin = codex_bin
         self.runtime_config = runtime_config
@@ -151,7 +65,6 @@ class AuditAgentRunner:
         self.friday_adapter = friday_adapter
         self.executor = executor
         self.owner = owner or f"audit-agent-{uuid4().hex}"
-        self.dry_run = dry_run
         self.refresh_runtime_capabilities = refresh_runtime_capabilities
         self.forced_runtime_route = forced_runtime_route
         self.reasoning_effort = reasoning_effort
@@ -159,11 +72,8 @@ class AuditAgentRunner:
         self.execution_environment = dict(execution_environment or {})
 
     @staticmethod
-    def _required_capabilities(
-        context: AuditTurnContext, *, recovery_phase: str = ""
-    ) -> frozenset[str]:
-        del recovery_phase
-        required = set()
+    def _required_capabilities(context: AuditTurnContext) -> frozenset[str]:
+        required = {"role_bound_agent_tools"}
         if context.task.image_paths:
             required.add("image_input")
         return frozenset(required)
@@ -178,6 +88,21 @@ class AuditAgentRunner:
     ) -> AgentTurnRunResult[AuditAgentResult]:
         if context.task.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
+        exact_digest = candidate_digest(context.candidate)
+        if context.candidate_digest != exact_digest:
+            raise ValueError("Audit candidate digest mismatch")
+        parent = self.store.get_agent_run(parent_agent_run_id)
+        if (
+            parent is None
+            or parent.role is not AgentRole.CONSUMER
+            or parent.status != "completed"
+            or parent.reply_task_id != task.id
+            or parent.execution_generation != task.execution_generation
+            or parent.proposal_revision != context.proposal_revision
+            or not parent.final_result_json
+            or json.loads(parent.final_result_json) != context.candidate.model_dump(mode="json")
+        ):
+            raise ValueError("Audit parent candidate mismatch")
         claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
@@ -192,9 +117,7 @@ class AuditAgentRunner:
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
         return self._execute_claimed(
-            task,
-            context,
-            run=claim.run,
+            task, context, run=claim.run,
             rendered_rules=render_audit_rules(AgentRole.AUDIT),
         )
 
@@ -212,24 +135,22 @@ class AuditAgentRunner:
             role=AgentRole.AUDIT,
             proposal_revision=context.proposal_revision,
         )
-        expected_actions_list: list[dict[str, object]] = []
-        for index, action in enumerate(context.proposal.actions):
-            expected = expected_external_action(
-                action,
-                action_index=index,
-                business_object_key=task.business_object_key,
-            )
-            expected["delivery_key"] = agent_message_delivery_key(
-                business_object_key=task.business_object_key,
-                action_identity=action.action_identity,
-                execution_generation=task.execution_generation,
-                proposal_revision=context.proposal_revision,
-            )
-            expected_actions_list.append(expected)
-        expected_actions = tuple(expected_actions_list)
-        if expected_actions:
-            prompt += _external_action_identity_prompt(expected_actions)
-
+        developer_instructions = "\n\n".join(
+            part for part in (
+                "Audit reads evidence and reviews the complete Consumer candidate. "
+                "Do not send, approve, reject, publish, edit documents, unsubscribe, "
+                "or execute any external action. Return only the Audit wire result. "
+                "Echo the exact proposal_revision and candidate_digest. "
+                "Use approve, return, reject, or failed. A technical failure is failed.",
+                "## Audit Rules\n" + rendered_rules,
+                "## Wire Schema\n" + json.dumps(
+                    AuditAgentWireResult.model_json_schema(),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                self.skill_protocol_override,
+            ) if part
+        )
         process = AgentTurnProcess[AuditAgentResult](
             store=self.store,
             task=task,
@@ -247,341 +168,34 @@ class AuditAgentRunner:
             reasoning_effort=self.reasoning_effort,
             execution_mode_environment=self.execution_environment,
         )
-        email_unsubscribe_tools = self._email_unsubscribe_tools(task, run)
-        dingtalk_message_tools = self._dingtalk_message_tools(
-            task, run, expected_actions=expected_actions
-        )
-        if email_unsubscribe_tools:
-            prompt += (
-                "\n\n### Email Unsubscribe Capability\n"
-                "Call unsubscribe_email once with:\n"
-                f"task_id={task.id}\n"
-                "One call does the whole unsubscribe: it opens the entry this "
-                "task already authorized, operates what the page offers, and "
-                "returns status, outcome, evidence and the redacted page text "
-                "behind them. There is nothing to propose, accept or continue, "
-                "so never retype an operation and never call it twice in one "
-                "turn -- a second call after a receipt returns that same "
-                "receipt. Return executed only after the tool returned a "
-                "receipt; without one return failed, never executed. Report "
-                "the returned outcome in the summary as it stands, including a "
-                "terminal skip, and do not invent an error code for it: the "
-                "service derives the task's terminal state from that receipt. "
-                "Never use reply, SMTP, mailto, or attachment content to "
-                "unsubscribe."
-            )
-        if dingtalk_message_tools:
-            prompt += (
-                "\n\n### DingTalk Message Capability\n"
-                "For an approved DingTalk message action, call "
-                "send_approved_dingtalk_message with this task_id and the exact "
-                "action_identity from the candidate. The tool reads the reviewed "
-                "recipient, service-prepared body and idempotency key from durable "
-                "state; do not call dws directly and do not provide message text or "
-                "a recipient to the tool. Return executed only after the tool "
-                "returns delivery_status=sent, and copy its receipt into "
-                "external_result.live_result_reference. The principal signature "
-                "and configured feedback links in the prepared body are a trusted, "
-                "service-owned delivery postfix, not Consumer-authored content. "
-                "They are added after every Consumer revision, so Audit must not "
-                "request a Consumer revision solely because that postfix or its "
-                "service-generated query parameters are present.\n"
-                f"task_id={task.id}"
-            )
-        prompt += (
-            "\n\n### Needs Human Display Contract\n"
-            "Every result for every task type and outcome must include risk "
-            "(low|medium|high), confidence (0..1), rule_coverage (0..1), and "
-            "information_completeness (0..1). If information_completeness < 0.5, "
-            "return a normal proposal with one ordinary question, do not return "
-            "needs_human, and do not add a persistent outcome; use the existing "
-            "proposal/Audit/send chain. Otherwise, needs_human applies only when "
-            "(risk == high and confidence < 0.5) or rule_coverage < 0.5; provide "
-            "2-4 mutually exclusive, executable rule/Skill options, each marked "
-            "applies_to=task_class; never delegate the current instance, with one-time "
-            "feedback and Skill update selectable together. Otherwise follow the "
-            "Skill autonomously. Technical/provider/read/route/schema/Audit/retry "
-            "failure is always failed. "
-            "For high-risk OA approve, verify exact current-instance authorization "
-            "from the current user for the current task before any provider write; "
-            "general scheduling authority and meeting conclusions do not count. "
-            "Without that authorization, do not call approve; return failed with "
-            "authorization_required and the exact instance/task, without changing "
-            "evidence quality scores. Only the exact generic authorization_required "
-            "code can accompany a needs_human authorization plan, and it must still "
-            "pass the same decision-quality thresholds. Provider confirmation_required "
-            "is failed. Feedback reuses the same business object, attempt, and "
-            "compatible session while creating a new revision, not a new session."
-        )
-        if self.dry_run:
-            prompt += (
-                "\n\n### Dry Run Context\n"
-                "Do not publish an external action in this simulation; return failed "
-                "with error code dry_run_execution_suppressed when execution is suppressed."
-            )
+
         def parse_result(raw: str) -> AuditAgentResult:
-            return _parse_audit_agent_result(
-                raw,
-                has_typed_actions=bool(expected_actions),
-            )
-        with _audit_document_materials(self.workspace, context.proposal.actions) as materials:
-            return process.execute(
-                run=run,
-                skill_names=context.task.skill_names,
-                prompt=prompt + materials,
-                session_id=run.codex_session_id or None,
-                developer_instructions="\n\n".join(
-                    part for part in (
-                        audit_developer_instructions(rendered_rules),
-                        self.skill_protocol_override,
-                    ) if part
-                ),
-                configure_command=lambda command: make_audit_agent_command(
-                    command,
-                    controlled_cli=ControlledCliConfig(
-                        command=sys.executable,
-                        args=("-m", "app.agent_cli"),
-                        cwd=str(SERVICE_ROOT),
-                    ) if email_unsubscribe_tools or dingtalk_message_tools else None,
-                ),
-                parse_result=self._parse_evidenced_result(
-                    task,
-                    run,
-                    parse_result=parse_result,
-                    delivery_keys=tuple(
-                        str(expected.get("delivery_key") or "")
-                        for expected in expected_actions
-                    ),
-                ),
-                persist_conversation_session=False,
-                expected_actions=expected_actions,
-                image_paths=[Path(path) for path in context.task.image_paths],
-                required_capabilities=self._required_capabilities(context),
-            )
-
-    def _prepared_bodies(self, delivery_keys: tuple[str, ...]) -> list[str]:
-        """The exact bodies the service prepared for this proposal's actions."""
-
-        bodies: list[str] = []
-        for key in delivery_keys:
-            if not key:
-                continue
-            prepared = self.store.get_outbound_postfix("dingtalk", key)
-            if prepared is not None:
-                bodies.append(prepared.final_body)
-        return bodies
-
-    def _parse_evidenced_result(
-        self,
-        task: ReplyTask,
-        run: AgentRun,
-        *,
-        parse_result: Callable[[str], AuditAgentResult] = parse_audit_agent_wire_result,
-        delivery_keys: tuple[str, ...] = (),
-    ) -> Callable[[str], AuditAgentResult]:
-        """Accept `executed` only when the audited tool ran for this turn.
-
-        An executed result is a claim about an external write; the durable
-        receipt written by the tool is the evidence. Without it the result is
-        invalid, which sends the model a correction on its next turn instead
-        of ending the task on an unbacked success.
-        """
-
-        def parse(raw: str) -> AuditAgentResult:
-            result = parse_result(raw)
-            # A turn that called no tool cannot report a completed external
-            # action, whatever its outcome says. The evidence gate below asks
-            # a different question: whether a write backs an `executed`.
-            refreshed = self.store.get_agent_run(run.id)
-            generation_events: list[object] = []
-            if refreshed is not None:
-                generation_events = list(
-                    generation_tool_events(
-                        self.store,
-                        reply_task_id=refreshed.reply_task_id,
-                        execution_generation=refreshed.execution_generation,
-                    )
-                )
-            # Sending is the service's to do. This is asked before the
-            # prepared-text check because its correction is the stronger one:
-            # the message is already delivered, so the turn is told not to
-            # send it again rather than to re-propose it.
-            #
-            # Scoped to this turn's own tool events, never the generation's.
-            # A send that already happened is in the generation's history
-            # forever, so judging the generation rejected every later turn for
-            # something no later turn could undo: on 2026-09-19 task 384445
-            # was corrected three times for one send and then failed, with no
-            # result a turn could have returned to satisfy it.
-            if refreshed is not None and shell_send_commands(refreshed.tool_events):
-                raise ResultParseError(SHELL_SEND_REQUIREMENT)
-            if refreshed is not None:
-                sent_texts = provider_send_texts(refreshed.tool_events)
-                unprepared = unprepared_send_texts(
-                    sent_texts, self._prepared_bodies(delivery_keys)
-                )
-                if unprepared:
-                    raise ResultParseError(UNPREPARED_SEND_REQUIREMENT)
-                # On material this thin the message may ask and may not
-                # conclude. Sending is deliberately not held to the score
-                # band -- that would only teach a turn to score itself lower
-                # -- but what it may say is.
-                if sends_a_conclusion_on_thin_material(
-                    result.model_dump(mode="json"),
-                    every_send_text(refreshed.tool_events),
-                ):
-                    raise ResultParseError(ASKING_ONLY_REQUIREMENT)
-            if (
-                refreshed is not None
-                and _channel_judged(task.channel)
-                and claims_external_action_without_tools(
-                    result=result.model_dump(mode="json"),
-                    tool_events=generation_events,
-                )
-            ):
-                raise ResultParseError(EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT)
-            # A decision the rules do not allow is a correction, not a
-            # result. The rules are domain-neutral and their registry says
-            # which commands decide; this gate only asks them and passes their
-            # wording back to the turn.
-            decision_rule_violations = decision_violations(
-                result=result.model_dump(mode="json"),
-                tool_events=generation_events,
-            )
-            if decision_rule_violations:
-                raise ResultParseError(
-                    "\n\n".join(violation.detail for violation in decision_rule_violations)
-                )
-            if (
-                result.outcome is not AuditOutcome.EXECUTED
-                or self.domain_continuation is None
-            ):
-                return result
-            if not self.domain_continuation.audit_run_has_execution_evidence(
-                task, audit_run_id=run.id
-            ):
-                raise ResultParseError(
-                    self.domain_continuation.execution_evidence_requirement()
-                )
-            if result.external_result is None:
-                raise ResultParseError(
-                    "external_result: executed requires external_result with "
-                    "the tool's live_result_reference"
-                )
-            # The tool receipt bound to this run is the evidence; the opaque
-            # operation id is service-owned, so bind it here instead of
-            # failing the turn when the model retyped it.
-            if result.external_result.operation_id != run.operation_id:
-                result = result.model_copy(
-                    update={
-                        "external_result": result.external_result.model_copy(
-                            update={"operation_id": run.operation_id}
-                        )
-                    }
-                )
+            result = parse_audit_agent_wire_result(raw)
+            if result.proposal_revision != context.proposal_revision:
+                raise ResultParseError("Audit proposal_revision does not match candidate")
+            if result.candidate_digest != context.candidate_digest:
+                raise ResultParseError("Audit candidate_digest does not match candidate")
             return result
 
-        return parse
-
-    def _email_unsubscribe_tools(
-        self,
-        task: ReplyTask,
-        run: AgentRun,
-    ) -> tuple[str, ...]:
-        """Grant the unsubscribe tool to the running Audit turn of this task.
-
-        The tool takes one argument the caller cannot forge -- the task id --
-        and reads everything else from durable state, so the grant no longer
-        has to prove which Consumer proposal an operation came from. What the
-        tool will do is already fixed by the ActionPlan.
-        """
-
-        try:
-            payload = json.loads(task.trigger_message_json)
-        except (json.JSONDecodeError, TypeError, RecursionError):
-            return ()
-        if (
-            not isinstance(payload, dict)
-            or task.channel != "email"
-            or payload.get("schema") != "email_agent_action.v1"
-            or payload.get("action_type") != "unsubscribe"
-            or run.reply_task_id != task.id
-            or run.execution_generation != task.execution_generation
-            or run.role is not AgentRole.AUDIT
-            or run.status != "running"
-        ):
-            return ()
-        return ("unsubscribe_email",)
-
-    @staticmethod
-    def _dingtalk_message_tools(
-        task: ReplyTask,
-        run: AgentRun,
-        *,
-        expected_actions: tuple[dict[str, object], ...],
-    ) -> tuple[str, ...]:
-        if (
-            task.channel not in DINGTALK_MESSAGE_CHANNELS
-            or run.reply_task_id != task.id
-            or run.execution_generation != task.execution_generation
-            or run.role is not AgentRole.AUDIT
-            or run.status != "running"
-        ):
-            return ()
-        if not any(
-            str(action.get("capability") or "") == "dingtalk-chat"
-            and bool(str(action.get("delivery_key") or "").strip())
-            for action in expected_actions
-        ):
-            return ()
-        return ("send_approved_dingtalk_message",)
-
-
-def _external_action_identity_prompt(
-    actions: tuple[dict[str, object], ...],
-) -> str:
-    identities = [
-        {
-            "action_index": entry["action_index"],
-            "action_identity": entry["action_identity"],
-            "capability": entry["capability"],
-            "external_action_key": entry["external_action_key"],
-            "delivery_key": entry["delivery_key"],
-        }
-        for entry in actions
-    ]
-    return (
-        "\n\n### External action identities\n"
-        "These stable identities prevent duplicate provider actions across retries. "
-        "They are not command authorizations and do not restrict the runtime tool. "
-        "Reuse the matching external_action_key as the provider idempotency identity "
-        "when the provider supports one.\n"
-        "Read the operation Skill named by an action's `capability` before "
-        "executing that action, and use the operations it documents. The Skill "
-        "is the only place the provider's real command shape is written down; a "
-        "turn that skips it invents a command, finds it missing, and reports a "
-        "provider failure for a provider that was available the whole time.\n"
-        + json.dumps(identities, ensure_ascii=False, separators=(",", ":"))
-    )
-
-
-def _parse_audit_agent_result(
-    raw: str,
-    *,
-    has_typed_actions: bool,
-) -> AuditAgentResult:
-    """Reject CLI confirmation, not a missing external-action authorization."""
-    result = parse_audit_agent_wire_result(raw)
-    if (
-        has_typed_actions
-        and result.outcome is AuditOutcome.FAILED
-        and result.error.code == "confirmation_required"
-        and result.error.authorization_required
-    ):
-        raise ResultParseError(
-            f"error_code: {result.error.code} is not a business decision for "
-            "an already reviewed typed action. Audit approval is the execution "
-            "confirmation; execute with the provider's non-interactive "
-            "confirmation flag and verify the result."
+        return process.execute(
+            run=run,
+            skill_names=context.task.skill_names,
+            prompt=prompt,
+            session_id=run.codex_session_id or None,
+            developer_instructions=developer_instructions,
+            configure_command=lambda command: make_audit_agent_command(
+                command,
+                controlled_cli=ControlledCliConfig(
+                    command=sys.executable,
+                    args=(
+                        "-m", "app.agent_cli", "--role", "audit",
+                        "--task-id", str(task.id), "--db", str(self.store.path),
+                    ),
+                    cwd=str(SERVICE_ROOT),
+                ),
+            ),
+            parse_result=parse_result,
+            persist_conversation_session=False,
+            image_paths=[Path(path) for path in context.task.image_paths],
+            required_capabilities=self._required_capabilities(context),
         )
-    return result

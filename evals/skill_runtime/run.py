@@ -861,6 +861,11 @@ def run_live(
     *,
     operation_skill_paths_by_case: dict[str, tuple[Path, ...]] | None = None,
 ) -> tuple[CaseResult, ...]:
+    raise EvalValidationError(
+        "legacy skill_runtime recordings use the pre-system-execution role contract; "
+        "use scripts/eval_consumer_audit_system_execution.py for current contract "
+        "replay and the native business-model eval for live judgments"
+    )
     skill_paths_by_case = operation_skill_paths_by_case or {}
     unknown_case_ids = set(skill_paths_by_case).difference(
         case.case_id for case in cases

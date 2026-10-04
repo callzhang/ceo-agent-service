@@ -12,7 +12,7 @@ from app.agent_context import (
     AuditTurnContext,
     MaterialReference,
 )
-from app.agent_contracts import ConsumerProposal
+from app.agent_contracts import ConsumerAgentResult, ConsumerProposal
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
@@ -367,8 +367,8 @@ def test_consumer_and_audit_instructions_keep_oa_material_and_policy_gaps_separa
     consumer = consumer_developer_instructions("Verify supported facts.")
     audit = audit_developer_instructions("Verify supported facts.")
 
-    for instructions in (consumer, audit):
-        assert "Do not introduce a new factual requirement" in instructions
+    assert "Do not introduce a new factual requirement" in consumer
+    assert "applicant cannot create or replace a governing rule" in audit
 
     assert "actual OA applicant is authoritative" in consumer
     assert "cannot create, replace, or close a rule" in consumer
@@ -468,7 +468,16 @@ def test_audit_contract_requires_profile_guided_response_to_substantive_input(
         task=task,
         proposal_revision=0,
         operation_id="attempt-8308",
-        proposal=proposal,
+        candidate=ConsumerAgentResult.model_validate({
+            "outcome": "proposal",
+            "summary": "Receipt only.",
+            "proposal": proposal.model_dump(mode="json"),
+            "decision_options": [],
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+            "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+        }),
+        candidate_digest="a" * 64,
         audit_rules="Review reply completeness.",
     )
 
@@ -482,7 +491,7 @@ def test_audit_contract_requires_profile_guided_response_to_substantive_input(
     assert "Discuss meaningful evidence and move the work forward." in composed
     normalized = " ".join(composed.split())
     assert "receipt alone does not complete a response to substantive input" in normalized
-    assert "Return feedback_provided" in composed
+    assert "Return return or reject" in composed
 
 
 def _result_jsonl(*, session: str = "session-a") -> str:
@@ -640,20 +649,21 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert '"expected_verification"' not in instructions
     assert "proposal_json" not in instructions
     assert "decision_options_json" not in instructions
-    assert "proposal is" in instructions
-    assert "decision_options is" in instructions
-    assert "error_code, error_retryable, and error_authorization_required" in instructions
-    assert "Do not return a nested error object" in instructions
+    assert '"proposal"' in instructions
+    assert '"decision_options"' in instructions
+    assert "error_code, error_retryable, error_authorization_required" in instructions
+    assert "do not return a nested error object" in instructions
 
 
 def test_consumer_document_action_keeps_body_out_of_description():
-    instructions = consumer_developer_instructions()
+    instructions = " ".join(consumer_developer_instructions().split())
 
     assert "dingtalk-doc" in instructions
     assert "payload.content" in instructions
     assert "description" in instructions
     assert "2048" in instructions
-    assert "pass that stable user id to" in instructions
+    assert "originatorOpenDingTalkId" in instructions
+    assert "never replace a stable identity with display-name" in instructions
     assert "originatorOpenDingTalkId" in instructions
     assert "display-name search" in instructions
 
@@ -709,12 +719,12 @@ def test_consumer_does_not_require_feedback_queue_identity_for_chat_rule_request
 
 
 def test_consumer_oa_contract_never_requires_fields_absent_from_current_stage():
-    instructions = consumer_developer_instructions("Verify supported facts.")
+    instructions = " ".join(consumer_developer_instructions("Verify supported facts.").split())
 
-    assert "A field absent from the current OA form cannot be treated as mandatory" in instructions
-    assert "Do not import fields from a later business stage" in instructions
-    assert "Rules stated in this contract are active service behavior" in instructions
-    assert "do not describe its implementation as pending" in instructions
+    assert "a field absent from the current OA form cannot be treated as mandatory" in instructions
+    assert "current task, and form" in instructions
+    assert "applicant can supply missing material" in instructions
+    assert "independent policy gap remains" in instructions
 
 
 def test_consumer_oa_finance_rule_card_keeps_material_and_policy_gaps_separate():
@@ -726,7 +736,7 @@ def test_consumer_oa_finance_rule_card_keeps_material_and_policy_gaps_separate()
     assert "finance registry" in instructions
     assert "generic Skill's complete" in instructions
     assert "cannot be reported as 100%" in instructions
-    assert "comment the applicant" in instructions
+    assert "comment on the original approval with the exact missing material" in " ".join(instructions.split())
     assert "independently return `needs_human`" in instructions
     assert "cannot close that policy gap" in instructions
 
@@ -735,8 +745,8 @@ def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
     assert '"decision_options"' in instructions
-    assert "minimum reversible path" in instructions
-    assert "ordinary business" in instructions or "business" in instructions
+    assert "A low-consequence operating choice is autonomous" in instructions
+    assert "Do not ask Derek merely because an equivalent default exists" in instructions
 
 
 def test_consumer_instructions_require_reply_level_risk_controls_for_autonomous_actions():
@@ -744,9 +754,9 @@ def test_consumer_instructions_require_reply_level_risk_controls_for_autonomous_
 
     assert "risk" in instructions
     assert "boundary" in instructions
-    assert "structured top-level fields: `risk` is `low`, `medium`, or `high`" in instructions
-    assert "`rule_coverage`" in instructions
-    assert "`information_completeness`" in instructions
+    assert "risk, confidence, rule_coverage and information_completeness" in instructions
+    assert "rule_coverage" in instructions
+    assert "information_completeness" in instructions
 
 
 def test_consumer_prompt_declares_common_quality_fields_and_priority():
@@ -756,21 +766,14 @@ def test_consumer_prompt_declares_common_quality_fields_and_priority():
 
     for field in ("risk", "confidence", "rule_coverage", "information_completeness"):
         assert field in instructions
-    assert "information_completeness < 0.5" in instructions
-    assert "single ordinary question" in instructions
-    assert "risk == high" in instructions
-    assert "rule_coverage < 0.5" in instructions
-    assert "2-4" in instructions
-    assert "one-time feedback" in instructions
-    assert "Skill update" in instructions
-    assert "technical/provider/read/route/schema/audit/retry failure" in instructions.lower()
-    assert "authorization_required" in instructions
-    assert "same business object" in instructions
-    assert "new revision" in instructions
-    assert "compatible session" in instructions
+    assert "Scores do not automatically create a human question" in instructions
+    assert "Technical/provider, authentication-route, schema, model-output and retry failures are failed" in instructions
+    assert "complete current-instance plans" in instructions
+    assert "requested_input with zero options" in instructions
+    assert "never creates a reusable policy or edits a Skill" in instructions
     assert "needs_human is valid only when risk is high" not in instructions
     assert "only risk and confidence" not in instructions
-    assert "exact current-instance authorization" in instructions
+    assert "Human choices apply only to the current instance" in instructions
 
 
 def test_consumer_instructions_leave_boundary_assessment_to_audit_model():
@@ -792,9 +795,9 @@ def test_consumer_instructions_reserve_human_for_unsupported_skill_only():
         consumer_developer_instructions("Verify every supported fact.").split()
     )
 
-    assert "Make every decision yourself" in instructions
+    assert "Use the applicable application behavior, business Skills" in instructions
     assert "needs_human" in instructions
-    assert "rule gap" in instructions
+    assert "current-instance business choice" in instructions
 
 
 def test_consumer_instructions_use_reply_fallback_when_okr_write_is_unsupported():
@@ -805,7 +808,7 @@ def test_consumer_instructions_use_reply_fallback_when_okr_write_is_unsupported(
     assert "no write operation" in instructions
     assert "reviewed write operation" not in instructions
     assert "OKR record was not changed" in instructions
-    assert "executable fallback, not needs_human" in instructions
+    assert "supported applicant notification" in instructions
 
 
 def test_audit_instructions_accept_the_authorized_low_consequence_standard():
@@ -814,16 +817,14 @@ def test_audit_instructions_accept_the_authorized_low_consequence_standard():
     assert "Provider command names, MCP tools, receipts, and readback procedures" in instructions
 
 
-def test_audit_instructions_treat_review_as_confirmation_for_covered_service_write():
+def test_audit_instructions_leave_covered_service_write_to_system_executor():
     instructions = " ".join(
         audit_developer_instructions("Verify every supported fact.").split()
     )
 
-    assert "Audit approval is the execution confirmation" in instructions
-    assert "service-owned approved-message capability" in instructions
-    assert "never invoke a provider chat send directly from the shell" in instructions
-    assert "pass that flag" in instructions
-    assert "must not request another confirmation from Derek" in instructions
+    assert "system code executes the exact persisted approved action plan" in instructions
+    assert "without executing actions" in instructions
+    assert "candidate_digest" in instructions
 
 
 def test_audit_instructions_verify_dynamic_state_instead_of_requesting_tool_output():
@@ -841,22 +842,22 @@ def test_audit_rejects_requirements_that_are_absent_from_the_current_oa_stage():
 
     assert "Reject a candidate that requires a field absent from the current OA form" in instructions
     assert "later business stage" in instructions
-    assert "Treat rules stated in this contract as active service behavior" in instructions
+    assert "Before approving an OA reject" in instructions
 
 
 def test_audit_instructions_allow_bounded_fact_finding_without_purchase_commitment():
     instructions = audit_developer_instructions("Verify every supported fact.")
 
-    assert "Return feedback_provided with concrete rule" in instructions
+    assert "Return or reject must give concrete feedback" in instructions
 
 
-def test_audit_instructions_execute_okr_notification_when_write_surface_is_missing():
+def test_audit_instructions_review_okr_notification_when_write_surface_is_missing():
     instructions = " ".join(
         audit_developer_instructions("Verify every supported fact.").split()
     )
 
-    assert "execute the supported applicant notification action" in instructions
-    assert "do not turn the covered business judgment into failed or needs_human" in instructions
+    assert "Review the whole action plan" in instructions
+    assert "system code executes the exact persisted approved action plan" in instructions
 
 
 def test_audit_instructions_reserve_human_for_unsupported_skill_only():
@@ -873,24 +874,22 @@ def test_audit_instructions_use_the_same_quality_gate_priority():
         audit_developer_instructions("Verify every supported fact.").split()
     )
 
-    assert "Every Consumer and Audit result" in instructions
-    assert "information_completeness < 0.5" in instructions
-    assert "single ordinary question" in instructions
-    assert "rule_coverage < 0.5" in instructions
-    assert "Technical/provider/read/route/schema/Audit/retry failure" in instructions
-    assert "same business object" in instructions
-    assert "new revision" in instructions
+    assert "risk, confidence, rule_coverage and information_completeness" in instructions
+    assert "technical outcome, not a business judgment" in instructions
+    assert "technical/provider/authentication/schema/runtime/retry failure" in instructions
+    assert "candidate_digest and proposal_revision" in instructions
 
 
 def test_audit_instructions_do_not_create_reconciliation_prompt():
     instructions = audit_developer_instructions("Verify every supported fact.")
 
     assert "unknown-outcome recovery" not in instructions
-    assert "Return executed" in instructions
+    assert "approve, return, reject, or failed" in instructions
+    assert "without executing actions" in instructions
 
 
 def test_consumer_instructions_pin_the_installed_oa_workflow():
-    instructions = consumer_developer_instructions("Verify every supported fact.")
+    instructions = " ".join(consumer_developer_instructions("Verify every supported fact.").split())
 
     # Approval policy comes from the generic + matching business Skills, not
     # a vendor reference or a raw principle document.
@@ -2770,7 +2769,7 @@ def test_consumer_derives_concrete_turn_capabilities_for_images_and_channel(
         replace(context, image_paths=("/tmp/evidence.png",))
     )
 
-    assert required == {"image_input"}
+    assert required == {"role_bound_agent_tools", "image_input"}
     assert not any(
         capability.startswith(("native_cli:", "mcp:", "reviewed_skill:"))
         for capability in required
@@ -3127,7 +3126,7 @@ def test_decision_quality_gate_defines_how_to_score_the_coverage_fields():
     summary listed missing materials reported 0.98.
     """
 
-    text = consumer_agent.DECISION_QUALITY_GATE_INSTRUCTIONS
+    text = " ".join(consumer_agent.DECISION_QUALITY_GATE_INSTRUCTIONS.split())
 
     # The scale is defined, not just thresholded.
     assert "How to score the two coverage fields" in text
@@ -3144,25 +3143,14 @@ def test_decision_quality_gate_defines_how_to_score_the_coverage_fields():
     assert "must agree with your own summary" in text
 
 
-def test_the_protocol_names_the_send_commands_it_forbids():
-    """The abstract rule existed and 80% of sending generations broke it.
+def test_the_protocol_keeps_controlled_actions_as_typed_proposals():
+    """The Consumer may prepare a send but may not dispatch it."""
 
-    Over fourteen days, 473 of 590 generations that sent anything ran a
-    provider send themselves instead of proposing it, with the prompt already
-    saying not to. Naming the commands turns a principle into a list the turn
-    can check itself against.
-    """
+    protocol = " ".join(consumer_agent.CONSUMER_ROLE_BOUNDARY.split())
 
-    protocol = consumer_agent.CONSUMER_ROLE_BOUNDARY
-
-    for command in (
-        "dws chat +dm",
-        "dws chat +messages-send",
-        "dws chat +send-to-group",
-        "dws mail send|reply|forward",
-    ):
-        assert command in protocol
-    assert "Reading is unrestricted" in protocol
+    assert "Controlled structured actions are proposals" in protocol
+    assert "do not dispatch them yourself" in protocol
+    assert "no shell argv" in protocol
 
 
 def test_consumer_checks_existing_audience_before_requesting_group_send_authorization():
@@ -3185,37 +3173,25 @@ def test_audit_checks_existing_audience_before_refusing_group_send():
     assert "already disclosed to" in consumer_agent.audit_developer_instructions("rules")
 
 
-def test_audit_checks_a_terminal_decision_before_running_it():
-    """A check on the result arrives after the provider recorded the decision.
-
-    On 2026-09-23 an FA contract was rejected in DingTalk with a remark asking
-    the applicant to supply facts and resubmit; `revert-activities` was never
-    called, and the rule that caught it ran only after the rejection was final.
-    Audit is the stage that executes, so the checks have to be its own, before
-    it runs the command.
-    """
+def test_audit_checks_terminal_decision_before_system_execution():
+    """Audit must review the entire plan before the system acts."""
 
     boundary = consumer_agent.AUDIT_ROLE_BOUNDARY
 
-    assert "run the command only if every one" in boundary
-    assert "Checking afterwards is useless" in boundary
-    for command in ("oa approval approve", "oa approval reject", "calendar event respond"):
-        assert command in boundary
-    assert "revert-activities" in boundary
-    assert "the action is a revert, not a rejection" in boundary
-    assert "non-empty `--remark`" in boundary
+    assert "without executing actions" in boundary
+    assert "Review the whole action plan" in boundary
+    assert "action order" in boundary
+    assert "applicable rules and prior-stage receipts" in boundary
 
 
-def test_audit_returns_executed_for_a_proposal_that_escalates():
-    """Contract task 384699, run 21117: Audit posted the comment, then raised the
-    candidate's question as its own needs_human. The validator refused its
-    honest scores, and the retries lowered rule coverage from 0.7 to 0.4 until
-    the result passed."""
+def test_audit_reviews_proposal_and_human_question_as_separate_stages():
+    """Audit does not execute a proposal or originate a question."""
     from app.consumer_agent import AUDIT_ROLE_BOUNDARY
 
     text = " ".join(AUDIT_ROLE_BOUNDARY.split())
-    assert "return `executed` with the receipt" in text
-    assert "never lower them to fit an outcome" in text
+    assert "An approved human request authorizes only publication of the question" in text
+    assert "no branch executes until the person selects it" in text
+    assert "Audit never originates a human question" in text
 
 
 def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
@@ -3224,9 +3200,9 @@ def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
     from app.consumer_agent import CONSUMER_ROLE_BOUNDARY
 
     text = " ".join(CONSUMER_ROLE_BOUNDARY.split())
-    assert "DingTalk message body you propose" in text and "structured Markdown" in text
-    assert "OA approval comments and email bodies stay plain text" in text
-    assert "first the one thing he has to decide" in text
+    assert "DingTalk bodies use structured Markdown" in text
+    assert "OA comments and email use plain text" in text
+    assert "the one choice and why it matters" in text
 
 
 def test_a_scheduled_task_message_to_derek_gets_a_prepared_body(tmp_path):
@@ -3242,7 +3218,10 @@ def test_a_scheduled_task_message_to_derek_gets_a_prepared_body(tmp_path):
         id=1, business_object_key="scheduled-task-run:84467",
         execution_generation="scheduled-run-84467",
     )
-    context = SimpleNamespace(channel="scheduled", trigger_text="按 $ceo-daily-report 生成")
+    context = SimpleNamespace(
+        channel="scheduled", trigger_text="按 $ceo-daily-report 生成",
+        trigger_raw_payload={},
+    )
     result = ConsumerAgentResult.model_validate({
         "outcome": "proposal",
         "summary": "Publish and notify.",
@@ -3279,3 +3258,29 @@ def test_a_scheduled_task_message_to_derek_gets_a_prepared_body(tmp_path):
             proposal_revision=0,
         ),
     ) is not None
+
+
+def test_source_capture_failure_preserves_native_error_and_authentication(store, task, context):
+    from app.dws_client import DwsError
+    class Source:
+        def read_oa_approval_detail(self, ref):
+            assert ref == "process-1"
+            raise DwsError("OA permission denied", code="PAT_HIGH_RISK_NO_PERMISSION", server_key="dingtalk-oa")
+    runner = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), source_client=Source(),
+        executor=CapturingExecutor(_proposal_jsonl(
+            {"remark": "Approved"}, capability="dingtalk-oa", operation="approve",
+            target={"process_instance_id": "process-1", "task_id": "task-1"},
+        )),
+    )
+    with pytest.raises(Exception, match="permission denied"):
+        runner.run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+    detail = json.loads(run.structured_error_json)
+    assert detail["code"] == "authorization_required"
+    assert detail["source_code"] == "PAT_HIGH_RISK_NO_PERMISSION"
+    assert detail["source"] == "dingtalk-oa"
+    assert detail["authorization_required"] is True
+    assert detail["retryable"] is False
+    assert "permission denied" in detail["detail"]
+    assert run.status == "failed" and not run.final_result_json

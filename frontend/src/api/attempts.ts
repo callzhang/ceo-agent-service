@@ -94,6 +94,11 @@ export interface AttemptConsumerResult {
 
 export interface AttemptHumanDecision {
   reason: string;
+  requested_input?: string;
+  candidate_id: number;
+  candidate_digest: string;
+  review_id: number;
+  selection?: { option_key: string; status: string } | null;
   basis: {
     verified_facts: Array<{ assertion: string; references: string[] }>;
     rule_evidence: Array<{ assertion: string; references: string[] }>;
@@ -107,6 +112,28 @@ export interface AttemptHumanDecision {
     will_not_do: string[];
     readback: string[];
   } | null;
+}
+
+export interface AttemptSystemExecution {
+  candidate_id: number;
+  review_id: number;
+  stage_index: number;
+  is_current: boolean;
+  execution_id: number | null;
+  status: string;
+  summary: string;
+  error: Record<string, unknown>;
+  verified_actions: number;
+  total_actions: number;
+  actions: Array<{
+    action_index: number;
+    action_identity: string;
+    description: string;
+    operation: string;
+    status: string;
+    result: Record<string, unknown>;
+    receipt: { external_action_key: string; provider_result: Record<string, unknown> } | null;
+  }>;
 }
 
 export interface AttemptDetail {
@@ -128,8 +155,13 @@ export interface AttemptDetail {
   generated_reply: { title: string; text: string };
   references: Array<{ title: string; source: string; relevance: string }>;
   feedback: { reviewer_feedback: string; corrected_reply: string; feedback_url: string; events: AttemptFeedbackEvent[] };
-  decision_options: Array<{ label: string; instruction: string; consequence: string; url: string }>;
+  decision_options: Array<{
+    key: string; label: string; instruction: string; consequence: string; url: string;
+    plan: { objective: string; actions: Array<{ description: string; operation: string; target: Record<string, unknown>; payload: Record<string, unknown> }> } | null;
+    terminal_outcome: "skipped" | null; reason: string | null;
+  }>;
   human_decision?: AttemptHumanDecision | null;
+  system_execution?: AttemptSystemExecution | null;
   audit_summary: string;
   draft_reply: string;
   failure_reason: string;

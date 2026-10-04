@@ -60,11 +60,12 @@ def test_runtime_context_injects_deployment_values_without_skill_literals(monkey
 SKILLS_ROOT = bundled_business_skills_root()
 
 
-def test_consumer_oa_work_is_completed_by_agent_instead_of_generic_handoff():
-    assert "Do not stop at a generic" in AGENT_CAPABILITY_INSTRUCTIONS
-    assert "carry the workflow through the documented" in AGENT_CAPABILITY_INSTRUCTIONS
-    assert "normal retry contract" in AGENT_CAPABILITY_INSTRUCTIONS
-    assert "only when the information required" in AGENT_CAPABILITY_INSTRUCTIONS
+def test_consumer_oa_work_uses_live_identity_and_autonomous_business_rules():
+    instructions = " ".join(AGENT_CAPABILITY_INSTRUCTIONS.split())
+    assert "Use originatorUserid/originatorOpenDingTalkId" in instructions
+    assert "A low-consequence operating choice is autonomous" in instructions
+    assert "A real provider read outage stays failed" in instructions
+    assert "controlled proposal" in instructions
 
 
 CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会议进行了修改，您是否已完成审核？是否可以定稿了？
@@ -161,13 +162,14 @@ def _sha256_for_test(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def test_default_developer_prompt_assigns_execution_to_audit_role():
+def test_default_developer_prompt_assigns_execution_to_system_code():
     prompt = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
 
     assert (
         "1. [role_boundary] Role Boundary: Consumer Agent A gathers facts and proposes "
-        "a typed candidate; Audit Agent B applies the operation Skill and executes an "
-        "accepted candidate."
+        "a typed candidate, including current-instance human questions. Audit Agent B "
+        "reviews the whole candidate without executing its controlled actions. System "
+        "code executes the exact persisted approved plan or selected reviewed option."
     ) in prompt
     assert "read-only representative" not in prompt
 
@@ -281,12 +283,13 @@ def test_developer_prompt_delegates_latest_material_review_to_business_skill():
     assert "independently selects and reads every applicable" in template
 
 
-def test_dynamic_skill_contract_does_not_create_runtime_reconciliation_policy():
+def test_dynamic_skill_contract_leaves_reconciliation_with_system_runtime():
     template = read_developer_prompt_template()
 
     assert "already-unknown effect" not in template
     assert "strictly read-only evidence reconciliation" not in template
-    assert "service retries an ordinary failed turn" in template
+    assert "The service resumes an unchanged technical recovery from its persisted approved plan." in template
+    assert "Provider command names, MCP tools, receipts, and readback procedures remain runtime-owned." in template
 
 
 def test_developer_prompt_defines_role_execution_boundary():
@@ -294,8 +297,9 @@ def test_developer_prompt_defines_role_execution_boundary():
 
     assert (
         "1. [role_boundary] Role Boundary: Consumer Agent A gathers facts and proposes "
-        "a typed candidate; Audit Agent B applies the operation Skill and executes an "
-        "accepted candidate."
+        "a typed candidate, including current-instance human questions. Audit Agent B "
+        "reviews the whole candidate without executing its controlled actions. System "
+        "code executes the exact persisted approved plan or selected reviewed option."
     ) in template
     assert "read-only representative" not in template
 

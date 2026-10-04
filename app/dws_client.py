@@ -2381,6 +2381,24 @@ class DwsClient:
             raise DwsError("invalid OA revert activities response")
         return payload
 
+    def redirect_oa_approval_task(
+        self, task_id: str, to_actioner_id: str, remark: str = ""
+    ) -> dict[str, Any]:
+        """Transfer one exact OA task to a resolved DingTalk user ID."""
+        if not task_id.strip() or not to_actioner_id.strip():
+            raise ValueError("OA redirect needs an exact task and recipient user ID")
+        command = [
+            self.dws_bin, "oa", "approval", "redirect-task", "--task-id", task_id,
+            "--to-actioner-id", to_actioner_id,
+        ]
+        if remark.strip():
+            command.extend(["--remark", remark])
+        command.extend(["--format", "json", "--yes"])
+        payload = self.run_json(command)
+        if not isinstance(payload, dict):
+            raise DwsError("invalid OA redirect response")
+        return payload
+
     def revert_oa_approval_task(
         self,
         *,
@@ -2616,6 +2634,82 @@ class DwsClient:
         payload = self.run_json(self.build_create_markdown_doc_command(name, content))
         if not isinstance(payload, dict):
             raise DwsError("invalid doc create response")
+        return payload
+
+    def create_report_document(
+        self, *, name: str, content: str, doc_format: str, folder_id: str,
+    ) -> dict[str, Any]:
+        """Create one report document in a service-resolved folder."""
+        if not name.strip() or not content.strip() or not folder_id.strip():
+            raise ValueError("report document target and content are required")
+        if doc_format not in {"markdown", "jsonml"}:
+            raise ValueError("unsupported report document format")
+        payload = self.run_json([
+            self.dws_bin, "doc", "+create", "--name", name,
+            "--content", content, "--doc-format", doc_format,
+            "--folder", folder_id, "--format", "json",
+        ])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid report document create response")
+        return payload
+
+    def fetch_report_document_full(self, node_id: str) -> dict[str, Any]:
+        """Read the complete JSONML, including the editing revision."""
+        if not node_id.strip():
+            raise ValueError("report document node is required")
+        payload = self.run_json([
+            self.dws_bin, "doc", "+fetch", "--node", node_id,
+            "--detail", "full", "--scope", "full", "--format", "json",
+        ])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid full report document response")
+        return payload
+
+    def validate_report_jsonml(self, content: str) -> dict[str, Any]:
+        """Ask the native document parser to validate one rendered JSONML body."""
+        if not content.strip():
+            raise ValueError("report document content is required")
+        payload = self.run_json([
+            self.dws_bin, "doc", "+script", "--command", "parse",
+            "--doc-format", "jsonml", "--content", content, "--format", "json",
+        ])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid report document parse response")
+        return payload
+
+    def save_report_document_version(self, node_id: str) -> dict[str, Any]:
+        """Save a recoverable version of the task-resolved weekly document."""
+        if not node_id.strip():
+            raise ValueError("report document node is required")
+        payload = self.run_json([
+            self.dws_bin, "doc", "+version-save", "--node", node_id,
+            "--format", "json", "--yes",
+        ])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid report document version response")
+        return payload
+
+    def overwrite_report_document(
+        self, *, node_id: str, content: str, doc_format: str,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any]:
+        """Overwrite one service-resolved report document at its known revision."""
+        if not node_id.strip() or not content.strip():
+            raise ValueError("report document target and content are required")
+        if doc_format not in {"markdown", "jsonml"}:
+            raise ValueError("unsupported report document format")
+        command = [
+            self.dws_bin, "doc", "+update", "--node", node_id,
+            "--command", "overwrite", "--content", content,
+            "--doc-format", doc_format,
+        ]
+        if doc_format == "jsonml":
+            if type(expected_revision) is not int or expected_revision < 0:
+                raise ValueError("JSONML overwrite requires an expected revision")
+            command += ["--expected-revision", str(expected_revision)]
+        payload = self.run_json(command + ["--yes", "--format", "json"])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid report document update response")
         return payload
 
     def add_doc_editor_permission(
@@ -3268,6 +3362,18 @@ class DwsClient:
         return self.run_json(
             self.build_add_message_emoji_command(conversation_id, message_id, emoji)
         )
+
+    def list_message_emotion_replies(self, message_id: str) -> dict[str, Any]:
+        """Read the native reaction list for one exact DingTalk message ID."""
+        if not message_id.strip():
+            raise ValueError("message id is required for reaction readback")
+        payload = self.run_json([
+            self.dws_bin, "chat", "message", "list-emotion-replies",
+            "--msg-ids", message_id, "--format", "json",
+        ])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid message emotion reply response")
+        return payload
 
     def add_message_text_emotion(
         self,

@@ -37,10 +37,6 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     DecisionOption,
 )
-from app.decision_quality import (
-    StoredNeedsHumanProjection,
-    classify_stored_needs_human_projection,
-)
 from app.approval_history import (
     ApprovalHistoryResult,
     resolve_approval_history_group_result,
@@ -141,7 +137,6 @@ from app.repository_upgrade_web import (
     register_repository_upgrade_routes,
     render_repository_upgrade_mount,
 )
-from app.skill_feedback import SkillFeedbackUpdateError, apply_skill_feedback_update
 from app.store import (
     SQLITE_BUSY_TIMEOUT_SECONDS,
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
@@ -2987,6 +2982,19 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
             select
                 a.*,
                 case
+                    when a.channel='wechat' and lower(a.send_status)='failed'
+                     and exists (
+                        select 1 from wechat_deliveries d
+                        join reply_tasks t on t.id=d.reply_task_id
+                        where t.channel=a.channel and t.conversation_id=a.conversation_id
+                          and d.conversation_id=a.conversation_id
+                          and t.trigger_message_id=a.trigger_message_id
+                          and d.execution_generation=t.execution_generation
+                          and d.status in ('failed', 'send_unknown')
+                          and d.id=(select max(current_delivery.id) from wechat_deliveries current_delivery
+                                    where current_delivery.reply_task_id=t.id
+                                      and current_delivery.execution_generation=t.execution_generation)
+                     ) then 'failed'
                     when lower(a.send_status)='failed'
                      and trim(coalesce(a.resolved_at, ''))<>'' then 'recovered'
                     when lower(a.send_status) in ('failed', 'blocked')
@@ -3186,6 +3194,31 @@ def _clean_work_item_attention_summary(summary: str) -> str:
     return " ".join(lines) or " ".join((summary or "").split())
 
 
+def _reply_task_attention_diagnostics(raw: str, task_error: str) -> dict[str, str]:
+    """Read current-run diagnostics without treating Agent prose as provider evidence."""
+    try:
+        data = json.loads(raw or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {"error": task_error}
+    if not isinstance(data, dict):
+        return {"error": task_error}
+    source_code = data.get("source_code")
+    code = data.get("code")
+    diagnostic = source_code if isinstance(source_code, str) and source_code.strip() else code
+    if not isinstance(diagnostic, str) or not diagnostic.strip():
+        return {"error": task_error}
+    source = data.get("source")
+    source = source.strip() if isinstance(source, str) else ""
+    summary = data.get("reported_summary")
+    summary = summary.strip() if isinstance(summary, str) else ""
+    description = f"运行诊断：{diagnostic}"
+    if source:
+        description += f"（来源：{source}）"
+    if summary:
+        description += f"；Agent 说明：{summary}"
+    return {"error_code": diagnostic, "error": description}
+
+
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) -> list[dict[str, str]]:
     specs = [
         (
@@ -3256,7 +3289,11 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        reply_tasks.status,
                        coalesce(nullif(reply_tasks.conversation_title, ''), reply_tasks.conversation_id) as context,
                        coalesce(nullif(reply_tasks.trigger_text, ''), nullif(reply_tasks.conversation_title, ''), reply_tasks.trigger_message_id) as summary,
-                       reply_tasks.updated_at, reply_tasks.error
+                       reply_tasks.updated_at, reply_tasks.error,
+                       (select current_run.structured_error_json from agent_runs current_run
+                        where current_run.reply_task_id=reply_tasks.id
+                          and current_run.execution_generation=reply_tasks.execution_generation
+                        order by current_run.id desc limit 1) as current_run_error
                 from reply_tasks
                 left join business_object_tasks current_business_object
                   on current_business_object.business_object_key=reply_tasks.business_object_key
@@ -3309,7 +3346,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "context": str(row["context"] or ""),
                         "summary": str(row["summary"] or ""),
                         "updated_at": str(row["updated_at"] or ""),
-                        "error": str(row["error"] or ""),
+                        **_reply_task_attention_diagnostics(
+                            row["current_run_error"], str(row["error"] or "")),
                     }
                 )
         for category, table, status_column, context_column, summary_column, updated_column, error_column, statuses in specs:
@@ -3620,34 +3658,34 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
 def _human_decision_attention_rows(
     store: AutoReplyStore, *, limit: int | None = None
 ) -> list[dict[str, str]]:
-    """Return current, typed rule decisions as a separate Attention category."""
-    from app.decision_quality import parse_stored_needs_human_decision
-
+    """Show only current, unselected Audit-approved persisted questions."""
     sql = """
         select attempts.id, attempts.conversation_title, attempts.updated_at,
-               attempts.agent_run_id, runs.final_result_json
-        from reply_attempts as attempts
-        join agent_runs as runs
-          on runs.id=attempts.agent_run_id
-        join reply_tasks as tasks
-          on tasks.id=runs.reply_task_id
-         and runs.reply_task_id=tasks.id
-         and runs.status='completed'
-        join business_object_tasks as current_object
-          on current_object.business_object_key=tasks.business_object_key
-         and current_object.reply_task_id=tasks.id
-        -- The current Attempt projection explicitly points to its run. Do not
-        -- replace that link with an unrelated later audit turn: a completed
-        -- audit run can be newer in turn order while the Attempt still
-        -- intentionally represents the Consumer's current rule decision.
+               c.candidate_json
+        from reply_attempts attempts
+        join candidate_reviews review on review.audit_run_id=attempts.agent_run_id
+          and review.decision='approve'
+        join review_candidates c on c.id=review.candidate_id
+          and c.candidate_digest=review.candidate_digest and c.invalidated_at=''
+        join reply_tasks task on task.id=c.task_id
+          and task.execution_generation=c.execution_generation
+          and task.status='needs_human'
+        join business_object_tasks current_object
+          on current_object.business_object_key=task.business_object_key
+          and current_object.reply_task_id=task.id
+        left join candidate_selections choice on choice.candidate_id=c.id
         where attempts.send_status='needs_human'
-          and trim(coalesce(attempts.resolved_at, ''))=''
-          and attempts.id=(
-              select max(latest.id) from reply_attempts as latest
+          and attempts.reviewed_at is null
+          and trim(coalesce(attempts.resolved_at,''))=''
+          and choice.id is null
+          and c.id=(select max(newest.id) from review_candidates newest
+              where newest.task_id=task.id
+                and newest.execution_generation=task.execution_generation)
+          and attempts.id=(select max(latest.id) from reply_attempts latest
               where latest.channel=attempts.channel
                 and latest.conversation_id=attempts.conversation_id
-                and latest.trigger_message_id=attempts.trigger_message_id
-          )
+                and latest.trigger_message_id=attempts.trigger_message_id)
+          and json_extract(c.candidate_json,'$.outcome')='needs_human'
         order by attempts.updated_at desc, attempts.id desc
     """
     if limit is not None:
@@ -3656,24 +3694,18 @@ def _human_decision_attention_rows(
         rows = db.execute(sql, (limit,) if limit is not None else ()).fetchall()
     decisions: list[dict[str, str]] = []
     for row in rows:
-        decision = parse_stored_needs_human_decision(row["final_result_json"])
-        if decision is None:
+        try:
+            candidate = json.loads(row["candidate_json"])
+        except (TypeError, json.JSONDecodeError):
             continue
-        decisions.append(
-            {
-                "category": "Rule decision",
-                "id": str(row["id"]),
-                "status": "needs_human",
-                "context": str(row["conversation_title"] or ""),
-                "summary": str(decision.needs_human_reason),
-                "updated_at": str(row["updated_at"] or ""),
-                "error": "",
-                "root_cause": "需要确定处理规则",
-                "detail_label": "判断依据",
-                "detail": str(decision.needs_human_reason),
-                "detail_url": f"/attempts/{int(row['id'])}",
-            }
-        )
+        reason = str(candidate.get("needs_human_reason") or candidate.get("summary") or "")
+        decisions.append({
+            "category": "Rule decision", "id": str(row["id"]),
+            "status": "needs_human", "context": str(row["conversation_title"] or ""),
+            "summary": reason, "updated_at": str(row["updated_at"] or ""),
+            "error": "", "root_cause": "需要确定处理规则", "detail_label": "判断依据",
+            "detail": reason, "detail_url": f"/attempts/{int(row['id'])}",
+        })
     return decisions
 
 
@@ -5310,15 +5342,17 @@ def _history_chart_payload(
             projected_statuses.get(attempt.id, attempt.send_status)
         )
         if event_label == "Failed":
+            from app.attempt_projection import project_attempt_status
             task = store.get_reply_task_for_message(
-                attempt.conversation_id,
-                attempt.trigger_message_id,
-                channel=attempt.channel,
+                attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel,
             )
-            if task is not None:
-                task_label = _history_lifecycle_label(task.status)
-                if task_label != "Failed":
-                    event_label = task_label
+            delivery = (
+                store.get_wechat_delivery_for_task(task.id)
+                if task is not None and attempt.channel == "wechat" else None
+            )
+            event_label = _history_lifecycle_label(
+                project_attempt_status(attempt, task, [], delivery=delivery)
+            )
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     recovered_meeting_run_ids = store.recovered_meeting_alignment_run_ids_since(
         since_utc
@@ -6210,7 +6244,7 @@ def _render_attempt_list(
             attention = reply_history_attention(
                 attempt,
                 task=reply_task,
-                decision_options=_needs_human_decision_options(attempt, agent_runs),
+                decision_options=_needs_human_decision_options(store, attempt),
             )
         attention_html = _history_attention_html(
             attention,
@@ -8169,7 +8203,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
     attention = reply_history_attention(
         display_attempt,
         task=reply_task,
-        decision_options=_needs_human_decision_options(attempt, agent_runs),
+        decision_options=_needs_human_decision_options(store, attempt),
     )
     return 200, render_page(
         f"Attempt #{attempt.id}",
@@ -8185,6 +8219,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             terminal_run=terminal_run,
             current_agent_runs=current_agent_runs,
             historical_resolution=later_terminal_attempt,
+            store=store,
         ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
@@ -9544,108 +9579,57 @@ def handle_needs_human_decision_post(
     source = store.get_reply_attempt(attempt_id)
     if source is None:
         return 404, {}, render_page("Attempt not found", "Attempt not found")
-    terminal_run = store.get_agent_run(source.agent_run_id) if source.agent_run_id else None
-    if (
-        terminal_run is None
-        or classify_stored_needs_human_projection(terminal_run.final_result_json)
-        is not StoredNeedsHumanProjection.NEEDS_HUMAN
-    ):
-        return (
-            409,
-            {},
-            render_page(
-                "Decision unavailable",
-                "<p>该 attempt 没有可追踪的结构化管理决策。</p>",
-            ),
-        )
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
-    instruction = parsed.get("instruction", [""])[0].strip()
-    feedback_scope = parsed.get("feedback_scope", ["one_time"])[0].strip()
-    skill_update_requested = parsed.get("skill_update_requested", [""])[0].strip() in {
-        "1",
-        "true",
-        "on",
-    }
-    if not instruction:
-        return (
-            400,
-            {},
-            render_page("Decision required", "<p>请填写你的判断或处理指令。</p>"),
-        )
-    if feedback_scope not in {"one_time", "reusable_policy"}:
-        return (
-            400,
-            {},
-            render_page("Decision required", "<p>反馈范围无效。</p>"),
-        )
-    if (
-        source.send_status == "pending"
-        and source.codex_reason == "reviewed_message_reply"
-        and source.reviewer_feedback.strip()
-    ):
-        # The source attempt was already rewritten.  Reusing the persisted
-        # feedback keeps repeated POSTs idempotent instead of rotating another
-        # generation for the same decision.
-        reviewer_feedback = source.reviewer_feedback
-    else:
-        reviewer_feedback = (
-            f"Human decision for source attempt #{source.id}: {instruction}\n\n"
-            f"Original ambiguity summary:\n{source.audit_summary or source.codex_reason}"
-        )
-    if source.send_status not in {"failed", "needs_human", "decision_selected"} and not (
-        source.send_status == "pending"
-        and source.codex_reason == "reviewed_message_reply"
-    ):
-        return (
-            409,
-            {},
-            render_page("Decision unavailable", "<p>该 attempt 不再等待人工选择。</p>"),
-        )
-    if (
-        source.send_status == "decision_selected"
-        and source.reviewer_feedback != reviewer_feedback
-    ):
-        return (
-            409,
-            {},
-            render_page("Decision unavailable", "<p>该 attempt 已选择其他处理方式。</p>"),
-        )
-    skill_receipts_json = source.skill_update_receipts_json or "[]"
-    if skill_update_requested:
-        try:
-            receipts = apply_skill_feedback_update(
-                events_json=source.audit_tool_events_json,
-                feedback=instruction,
-                source_attempt_id=source.id,
-            )
-        except SkillFeedbackUpdateError as exc:
-            return 409, {}, render_page("Skill update unavailable", f"<p>{escape(str(exc))}</p>")
-        skill_receipts_json = json.dumps(
-            [receipt.__dict__ for receipt in receipts],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+    kind = parsed.get("kind", [""])[0].strip()
+    expected_fields = (
+        {"kind", "candidate_id", "review_id", "candidate_digest", "option_key"}
+        if kind == "select" else
+        {"kind", "candidate_id", "review_id", "candidate_digest", "instruction"}
+        if kind == "supplement" else set()
+    )
+    if not expected_fields or any(key not in expected_fields or len(values) != 1 for key, values in parsed.items()):
+        return 400, {}, render_page("Decision invalid", "<p>人工决策请求字段无效。</p>")
     try:
-        result = handle_reviewed_message_reply(
-            store,
-            attempt_id=source.id,
-            reply_text="",
-            reviewer_feedback=reviewer_feedback,
-            actionable_source_attempt_id=source.id,
-        )
-        selected_attempt_id = int(result["attempt_id"])
-        store.update_reply_attempt(
-            source.id,
-            feedback_scope=feedback_scope,
-            skill_update_requested=skill_update_requested,
-            skill_update_receipts_json=skill_receipts_json,
-        )
-        if selected_attempt_id != source.id:
-            store.update_reply_attempt(
-                selected_attempt_id,
-                feedback_scope=feedback_scope,
-                skill_update_requested=skill_update_requested,
-                skill_update_receipts_json=skill_receipts_json,
+        candidate_id = int(parsed.get("candidate_id", [""])[0])
+        review_id = int(parsed.get("review_id", [""])[0])
+    except ValueError:
+        return 400, {}, render_page("Decision invalid", "<p>候选与审核编号无效。</p>")
+    if candidate_id <= 0 or review_id <= 0:
+        return 400, {}, render_page("Decision invalid", "<p>候选与审核编号无效。</p>")
+    task = store.get_reply_task_for_message(
+        source.conversation_id, source.trigger_message_id, channel=source.channel,
+    )
+    current = (
+        store.current_reviewed_candidate(task.id, task.execution_generation)
+        if task is not None else None
+    )
+    if (
+        source.send_status != "needs_human" or current is None
+        or current["id"] != candidate_id or current["review_id"] != review_id
+        or current["audit_run_id"] != source.agent_run_id
+        or (parsed.get("candidate_digest") and parsed["candidate_digest"][0] != current["candidate_digest"])
+        or json.loads(current["candidate_json"]).get("outcome") != "needs_human"
+    ):
+        return 409, {}, render_page("Decision unavailable", "<p>这条请求已不是当前审核通过的人工决策。</p>")
+    try:
+        if kind == "select":
+            option_key = parsed.get("option_key", [""])[0].strip()
+            if not option_key:
+                return 400, {}, render_page("Decision invalid", "<p>请选择一个已审核的方案。</p>")
+            store.select_candidate_option(candidate_id, review_id, option_key)
+            store.wake_selected_candidate_execution(candidate_id, review_id)
+        else:
+            instruction = parsed.get("instruction", [""])[0].strip()
+            if not instruction:
+                return 400, {}, render_page("Decision invalid", "<p>请填写新事实或处理要求。</p>")
+            handle_reviewed_message_reply(
+                store, attempt_id=source.id, reply_text="",
+                reviewer_feedback=(
+                    f"New instruction for source attempt #{source.id}: {instruction}\n\n"
+                    f"Original question:\n{source.audit_summary or source.codex_reason}"
+                ), actionable_source_attempt_id=source.id,
+                review_candidate_id=candidate_id,
+                supplement_instruction=instruction,
             )
     except ValueError as exc:
         return 409, {}, render_page("Decision unavailable", f"<p>{escape(str(exc))}</p>")
@@ -9688,23 +9672,29 @@ def handle_reviewed_message_reply(
     reply_text: str,
     reviewer_feedback: str = "",
     actionable_source_attempt_id: int = 0,
+    review_candidate_id: int = 0,
+    supplement_instruction: str = "",
 ) -> dict[str, object]:
     source = store.get_reply_attempt(attempt_id)
     if source is None:
         raise ValueError(f"reply attempt not found: {attempt_id}")
-    if source.channel != "dingtalk":
-        raise ValueError("reviewed reply requires a DingTalk attempt")
+    if source.channel not in {"dingtalk", "scheduled"}:
+        raise ValueError("reviewed reply channel is unsupported")
     task = store.get_reply_task_for_message(
         source.conversation_id,
         source.trigger_message_id,
         channel=source.channel,
     )
-    if task is not None and _is_valid_rerun_trigger_json(task.trigger_message_json):
+    if task is not None and _is_valid_rerun_trigger_json(
+        task.trigger_message_json, channel=source.channel,
+    ):
         trigger_message_json = task.trigger_message_json
         trigger_create_time = task.trigger_create_time
         conversation_title = task.conversation_title
         single_chat = task.single_chat
     else:
+        if source.channel == "scheduled":
+            raise ValueError("scheduled decision has no valid original task input")
         conversation = store.get_conversation(source.conversation_id)
         single_chat = conversation.single_chat if conversation is not None else False
         conversation_title = (
@@ -9729,6 +9719,8 @@ def handle_reviewed_message_reply(
             single_chat=single_chat,
             trigger_create_time=trigger_create_time,
             trigger_message_json=trigger_message_json,
+            review_candidate_id=review_candidate_id,
+            supplement_instruction=supplement_instruction,
         )
     else:
         reviewed_attempt_id, _task = store.record_reviewed_reply_rerun(
@@ -11234,6 +11226,7 @@ def _attempt_detail_body(
     terminal_run: AgentRun | None = None,
     current_agent_runs: list[AgentRun] | None = None,
     historical_resolution: ReplyAttempt | None = None,
+    store: AutoReplyStore | None = None,
 ) -> str:
     agent_runs = agent_runs or []
     closed_after_review = (
@@ -11307,7 +11300,7 @@ def _attempt_detail_body(
         reply_title="生成回复",
         reply_text=_attempt_detail_reply_text(attempt, sent_reply),
         side_html=(
-            f"{_needs_human_decision_card(attempt, agent_runs, reply_task)}"
+            f"{_needs_human_decision_card(attempt, agent_runs, reply_task, store)}"
             f"{_feedback_form(attempt)}"
             f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         ),
@@ -11871,57 +11864,47 @@ def _needs_human_decision_card(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
     reply_task: ReplyTask | None = None,
+    store: AutoReplyStore | None = None,
 ) -> str:
-    if attempt.send_status != "needs_human" or attempt.channel != "dingtalk":
+    del agent_runs
+    if (attempt.send_status != "needs_human" or reply_task is None or store is None
+        or reply_task.status != "needs_human"):
         return ""
-    if (
-        reply_task is not None
-        and reply_task.manual_rerun_attempt_id == attempt.id
-        and reply_task.status in {"pending", "processing"}
-    ):
+    reviewed = store.current_reviewed_candidate(reply_task.id, reply_task.execution_generation)
+    if (reviewed is None or reviewed["audit_run_id"] != attempt.agent_run_id
+        or reviewed["selection_id"] is not None):
+        return ""
+    from app.decision_quality import parse_stored_needs_human_decision
+
+    decision = parse_stored_needs_human_decision(reviewed["candidate_json"])
+    if decision is None:
         return ""
     action = f"/attempts/{attempt.id}/human-decision"
-    options = _needs_human_decision_options(attempt, agent_runs)
-    if not options:
-        # Never turn an error string or stale, manually persisted button list
-        # into a user decision.  The startup reconciler will make the terminal
-        # failure explicit; until then the page remains read-only.
-        return ""
-    option_forms = "".join(
-        "<form method=\"post\" action=\"%s\">"
-        "<input type=\"hidden\" name=\"instruction\" value=\"%s\">"
-        "<input type=\"hidden\" name=\"feedback_scope\" value=\"one_time\">"
-        "<label class=\"feedback-skill-toggle\"><input type=\"checkbox\" "
-        "name=\"skill_update_requested\" value=\"1\"> 同时把这条反馈沉淀为 Skill 规则</label>"
-        "<button class=\"needs-human-option\" type=\"submit\">"
-        "<strong>%s. %s</strong><span>%s</span></button></form>"
-        % (
-            action,
-            escape(option.instruction, quote=True),
-            index,
-            escape(option.label),
-            escape(option.consequence),
-        )
-        for index, option in enumerate(options, 1)
+    common = (
+        f'<input type="hidden" name="candidate_id" value="{reviewed["id"]}">'
+        f'<input type="hidden" name="review_id" value="{reviewed["review_id"]}">'
+        f'<input type="hidden" name="candidate_digest" value="{reviewed["candidate_digest"]}">'
     )
-    choice_section = (
-        "<p class=\"muted\">请选择一条可复用的处理规则。系统会按该规则重新核验、执行并回读；每个选项会说明是否产生外部动作。</p>"
-        + option_forms
+    option_forms = "".join(
+        f'<form method="post" action="{action}">{common}'
+        '<input type="hidden" name="kind" value="select">'
+        f'<input type="hidden" name="option_key" value="{escape(option.key, quote=True)}">'
+        '<button class="needs-human-option" type="submit">'
+        f'<strong>{index}. {escape(option.label)}</strong>'
+        f'<span>{escape(option.consequence)}</span>'
+        f'<small>{escape("；".join(action.description for action in option.plan.actions) if option.plan else option.reason or "")}</small>'
+        '</button></form>'
+        for index, option in enumerate(decision.decision_options, 1)
     )
     return (
-        '<section class="card needs-human-card"><h2>需要你的判断（用于迭代 Skill）</h2>'
-        '<p class="muted">这是当前 Skill 尚未覆盖的一类处理规则；这是无法由服务自动消除的管理分歧时，'
-        '也只需要反馈处理规则，不是把这个具体任务交给你代做。'
-        '请从下方中文选项中选择一条可复用的处理规则；系统会据此重跑当前事项并沿用到同类任务。'
-        '已核验事实见本页“审计摘要”。</p>'
-        f"{choice_section}"
-        f'<form method="post" action="{action}" class="needs-human-custom">'
-        '<label>其他处理指令（默认仅本次）</label>'
-        '<input type="hidden" name="feedback_scope" value="one_time">'
-        '<label class="feedback-skill-toggle"><input type="checkbox" '
-        'name="skill_update_requested" value="1"> 同时把这条反馈沉淀为 Skill 规则</label>'
-        '<textarea name="instruction" required placeholder="例如：采用方案二，并说明交付边界"></textarea>'
-        '<button type="submit">执行并发布</button></form>'
+        '<section class="card needs-human-card"><h2>需要你的判断</h2>'
+        f'<p>{escape(decision.needs_human_reason or "")}</p>'
+        f'{option_forms}'
+        f'<form method="post" action="{action}" class="needs-human-custom">{common}'
+        '<input type="hidden" name="kind" value="supplement">'
+        f'<label>{escape(decision.requested_input or "补充新事实或处理要求")}</label>'
+        '<textarea name="instruction" required></textarea>'
+        '<button type="submit">提交补充信息</button></form>'
         '</section>'
     )
 
@@ -12008,11 +11991,7 @@ def _reply_history_attention_actions(
             help_items.append("技术详情只查看执行记录，不会触发外部动作")
             continue
         label = action.label if action.key == "defer" else f"{action_index}. {action.label}"
-        items.append(
-            f'<form method="post" action="{detail_href}/human-decision?return_to={return_to_query}">'
-            f'<input type="hidden" name="instruction" value="{escape(action.instruction, quote=True)}">'
-            f'<button type="submit">{escape(label)}</button></form>'
-        )
+        items.append(f'<a href="{detail_href}">{escape(label)}</a>')
         if action.key == "defer":
             help_items.append("暂不处理会保留待处理状态；审批类会通知申请人")
         elif action.consequence:
@@ -12121,25 +12100,29 @@ def _attempt_action_pills(
 
 
 def _needs_human_decision_options(
+    store: AutoReplyStore,
     attempt: ReplyAttempt,
-    agent_runs: list[AgentRun],
 ) -> tuple[DecisionOption, ...]:
-    matching_runs = [run for run in agent_runs if run.id == attempt.agent_run_id]
-    for run in matching_runs:
-        if (
-            classify_stored_needs_human_projection(run.final_result_json)
-            is not StoredNeedsHumanProjection.NEEDS_HUMAN
-        ):
-            continue
-        try:
-            result = json.loads(run.final_result_json)
-            return tuple(
-                DecisionOption.model_validate(item)
-                for item in result["decision_options"]
-            )
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            continue
-    return ()
+    if attempt.send_status != "needs_human":
+        return ()
+    task = store.get_reply_task_for_message(
+        attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel,
+    )
+    if task is None or task.status != "needs_human":
+        return ()
+    reviewed = store.current_reviewed_candidate(task.id, task.execution_generation)
+    if (
+        reviewed is None or reviewed["audit_run_id"] != attempt.agent_run_id
+        or reviewed["selection_id"] is not None
+    ):
+        return ()
+    try:
+        candidate = json.loads(reviewed["candidate_json"])
+        if candidate.get("outcome") != "needs_human":
+            return ()
+        return tuple(DecisionOption.model_validate(item) for item in candidate["decision_options"])
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return ()
 
 
 def _action_state_class(value: str) -> str:

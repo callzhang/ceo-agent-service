@@ -18,12 +18,13 @@ SEED_AUDIT_RULES_TEMPLATE = DEFAULTS_DIR / "audit_rules.md"
 
 CONSUMER_RULE_WRAPPER = (
     "Use these rules to self-review the complete candidate. You are Consumer "
-    "Agent A: do not approve the candidate and do not execute any external action."
+    "Agent A: do not approve the candidate and do not execute its proposed business actions. "
+    "Allowed report and document preparation tools remain available."
 )
 AUDIT_RULE_WRAPPER = (
-    "Independently enforce these rules as Audit Agent B. Execute only the accepted "
-    "candidate exactly as authored. If business meaning must change, return concrete "
-    "feedback; do not rewrite the candidate yourself."
+    "Independently enforce these rules as Audit Agent B. Review the complete "
+    "candidate without executing any action. If business meaning must change, "
+    "return concrete feedback; do not rewrite the candidate yourself."
 )
 PUBLICATION_SCOPE_CONTRACT = (
     "Classify the actual information, not the group name or the person's role. "
@@ -175,7 +176,10 @@ def render_audit_rules(role: AgentRole, path: Path | None = None) -> str:
         if role is AgentRole.CONSUMER
         else AUDIT_RULE_WRAPPER
     )
-    return f"{wrapper}\n\n{PUBLICATION_SCOPE_CONTRACT}\n\n{custom}\n\n{memory_write_reminder()}"
+    sections = [wrapper, PUBLICATION_SCOPE_CONTRACT, custom]
+    if role is AgentRole.CONSUMER:
+        sections.append(memory_write_reminder())
+    return "\n\n".join(sections)
 
 
 def _render_audit_variables(body: str) -> str:

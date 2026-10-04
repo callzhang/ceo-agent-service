@@ -11,16 +11,17 @@
 不将其降级为通用可重试失败或改成 `needs_human`。恢复必须先取得知情授权或形成实质更安全的
 候选，再按原业务身份经过正式审核、外部回检及投递流程；不得换工具绕过拒绝。
 
-每个需要 Agent 处理的任务都经过两个职责不同的角色：
+Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
-Consumer 的未审核外部效果检测只把写入操作的 provider 回执视作副作用；
-群消息列表中的 `conversationMessagesList[*].messages[*].openMessageId` 是历史消息身份，
-不能据此判定 Consumer 发送了消息或阻止后续安全恢复。
+候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
 
-1. 执行 Agent 读取上下文和证据，形成候选结果或任务结果。
-2. 审核 Agent 独立检查执行结果，决定通过、反馈修改或升级人工处理。
+Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 proposal_revision；failed 只表示技术失败。Audit 不修改正文、选项，不返回执行回执，也不自行创作另一个人工问题。return 允许保留正文并补足证据；reject 要求实质改变被驳回内容，不能只改描述、元数据。首次提交最多三次内容重提，耗尽为 failed，技术失败不占内容预算。
 
-执行 Agent 不确认自己的结果已经完成。审核 Agent 也不替执行 Agent 重写业务内容；如果业务含义、对象、证据或输出需要变化，审核 Agent 必须给出具体反馈，由执行 Agent 生成修正版。
+人工问题也先经过 Audit。Audit 检查：是否确需 Derek、规则/代码/Skill/记忆/会话/读取是否可自行解决、是否应向来源人索取材料、是否把技术失败伪装成决策、上下文和理由是否充分、选项是否可行且确有差异、每个执行分支是否完整并仅限当前实例。只有当前版本 approve 后才进入 needs_human 和通知，审核通过不等于业务 done。
+
+选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。不再提供 applies_to=task_class、可复用规则、Skill 更新复选框或此决策处理器的 Skill 写入副作用。
+
+多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，stage_index、predecessor_review_id 绑定前一已完成阶段的回执；阶段上限独立于每阶段三次内容修订预算。
 
 主页面 `/` 只是同一 Service Runtime 的一个输入和展示入口。页面 turn 使用 `workbench`
 workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime attempt、失败切换和 CLI
@@ -50,17 +51,7 @@ pending -> processing -> done
   `proposal_revision` 计数器上。
 - `done`：逻辑完成且结果已持久化。
 - `skipped`：判定为不可执行或不必执行，主动收口，不再重试。
-- `needs_human`：只能是有可追溯 Agent run 的完整结构化规则/Skill 缺口：
-  `information_completeness>=0.5`，且 `(risk=high 且 confidence<0.5)` 或
-  `rule_coverage<0.5`，并附 2--4 个互斥、可执行选项。技术读取、provider、receipt、
-  Audit、路由、schema 或重试失败一律使用 `failed`；已完成的外部动作也不改变这条分类。
-  重跑前由 `external_action_key` 和 provider 回读机械去重，而不是把“可能已执行”伪造成
-  Derek 的规则选择。
-- 每个 `needs_human` 结果还必须包含面向用户的 `needs_human_reason` 和可追溯的
-  `decision_basis`：已核验事实、适用规则、质量分值解释、未执行证据和结论。高风险外部
-  动作需要单一、与当前 OA 实例/任务匹配的 `authorization_plan`，写明动作、影响、不会执行
-  的动作以及执行后的读回。Attempt 详情只根据当前 Attempt 指向的有效终态 run 展示这份说明；
-  旧 run 或不完整结果不能把 `done` 投影成当前人工待办。
+- `needs_human`：当前完整 Consumer 人工问题已通过 Audit，只等待本次选择或 requested_input。历史问题和未经审核的 Consumer 输出不能作为当前人工待办。完整选项各自包含精确计划；质量分值是证据指标，不是制造人工问题的机械阈值。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
 ### 失败与人工决策通知
@@ -144,199 +135,25 @@ Consumer 在一次 invocation 开始时获得这一不可变 snapshot，之后�
 runtime config 加载。关闭功能不会取消、删除或改写已存在的 `pending`、`running` 或重试任务。
 缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，并阻止它继续创建新任务；其他功能不受影响。
 
-每个 Consumer 和 Audit 的结构化结果必须统一携带四个字段：`risk`（`low`/`medium`/`high`）、
-`confidence`、`rule_coverage`、`information_completeness`，后三者均为闭区间 `[0, 1]`。
-路由严格按以下顺序执行：`information_completeness < 0.5` 时形成普通 proposal 或一个具体
-问题的 ask-back，沿现有 Audit/send 链路处理，不新增 ask-back 持久化 outcome；否则，
-`(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 才进入 `needs_human`，并提供 2--4 个
-互斥、可执行的规则/Skill 选项；每项必须包含唯一稳定的 `key`、显示用 `label`、可执行的
-`instruction`、`consequence`/影响，以及 `applies_to=task_class`。选项只能选择以后如何处理
-这一类任务的规则，不能让 Derek 直接批准、拒绝或执行当前实例；缺少该字段或违反范围的结果
-按无效人工决策收口为 `failed`。其余由适用 Skill 自主完成。ask-back 不计入 needs_human。
-读到 Skill 不等于它覆盖本案：Skill 自己写明本案所依赖的分支（门槛、例外边界、谁有权决定）未定义时，
-`rule_coverage` 低于 1.0；以缺规则、缺门槛或缺授权为理由的 `needs_human` 配 `rule_coverage=1.0` 属于自相矛盾。
-反馈可同时选择 one-time 与 Skill update；二者复用同一业务对象和同一 attempt，在 provider 仍可访问的
-同一 session 中生成新 revision，不新建 session。技术、provider、读取、路由、schema、Audit 或 retry failure
-永远是 `failed`；领域 `authorization_required` 也不泛化为 `needs_human`。只有精确通用码、
-匹配当前动作的授权计划和统一质量门槛全部成立，才可形成结构化人工规则决策。
-provider 返回 `confirmation_required` 也属于运行时失败边界：它表示外部动作尚未执行，
-不是需要 Derek 决定的业务规则缺口。必须保留具体错误并落为 `failed`，不能生成“确认执行/停止”
-这类泛化的人工作业按钮；修复旧投影时同时清空这类选项。
-同理，持久化的 `needs_human` 结果若声称 `error_retryable` 为真，或
-`error_authorization_required` 为真但缺少精确通用码、授权计划或统一门槛，不能作为规则决策
-展示；启动修复将其收口为 `failed` 并保留该结果给 History 排查。
+每个 Consumer 和 Audit 结果都严格携带 risk、confidence、rule_coverage、information_completeness；后三项在 [0, 1] 内。分值描述本案证据，不按固定阈值决定路由。材料可向申请人获得时先提交完整材料请求计划；技术、认证、路由和解析失败保持 failed。真实的当前实例管理选择由 Consumer 提出，只有精确候选的 Audit approve 才进入 needs_human。停止选项明确 skipped 和原因，开放事实用 requested_input。
 
-新 wire 结果的四字段均为必填并严格校验。旧 `final_result_json` hydration 仅可受控补齐
-`rule_coverage=1.0`、`information_completeness=1.0`，保留旧的 `risk`/`confidence`；原始历史
-run 和 audit 不改写。Quality gate 与 Attention 只按 current latest projection 的结构化结果计数：
-字段缺失、非法值或 outer outcome mismatch 均 fail-closed 为 invalid violation；reviewed、历史、
-pending recovery 排除，ask-back 不计 `needs_human`。
-
-`needs_human` 是 Agent run 的业务决策终态；对应的 `reply_task` 可以已经是
-`done`，但在 Derek 提交决策前仍属于当前待处理项。这类带结构化依据和可执行选项的
-决策在独立的人工决策列表展示，不计入只显示错误的 Attention。无结构化依据或
-`information_completeness<0.5` 的结果是技术失败，保留在 History 和 Attention。
-人工决策列表以当前 `reply_attempt.agent_run_id` 关联的已完成 run 为准，并同时校验
-任务代次和当前 Business Object；不能再用一个按 turn 顺序挑出的“最新 run”覆盖该关联。
-这样，较晚的 Audit turn 不会把当前 Attempt 指向的 Consumer 规则决策从 Attention 投影中隐藏。
-重跑前写入的 `reviewed_at` 只记录上一轮授权反馈；若本轮最新结果再次是未解决的
-`needs_human`，仍须展示为新的人工决策，直到状态变为已选择或显式解决。
+新 wire 严格解析新合同；历史结果只在独立只读历史模型中解释，不补齐后重新执行，不改写原始 run。当前人工决策必须绑定原对象、execution_generation、持久化 candidate/review 和未被替代的当前版本；旧的无绑定选项仍可阅读但不能执行。人工决策和错误分别展示；审核批准不是投递完成。
 
 等 Derek 决定的事项出现在他先看的地方（Derek 2026-09-25）：Agent 首页左栏顶部「需要你决定 · N」列出History 中全部 `needs_human`，每条以事项名称为标题（OA 扫描取「待处理审批：」后的审批名，钉钉 DING 催办取「提醒您审批…」的审批名并注明催办人，评论提及取审批单名），次行是一句原因，点击打开该 attempt。首页原有的「处理反馈 · N」只计消息反馈，与待决事项无关。点击通知时，服务先在已打开的 Chrome/Safari 控制台标签页里切到该 attempt 并把窗口提到前面（AppleScript，按控制台 origin 匹配），只有没有已打开的控制台标签页时才新开页面（Derek 2026-09-25）。首次由服务进程控制浏览器时 macOS 会请求一次自动化权限。
 
 ## 审核反馈闭环
 
-Audit 的结果修正轮不会撤销先前 provider 已接受的外部动作。执行证据校验读取当前轮与
-同一任务代次、同一 Consumer parent、同一 proposal revision、同一非空 operation_id 的
-先前终态 Audit 轮的持久化工具事件。不同候选、operation、代次以及后续轮次的回执不得
-借用；纯读取和模型自报仍不证明写入。这样首轮完成外部写入但返回无效 JSON 时，后续
-只修正结果的轮次可以验证原回执，不会因当前轮没有再次写入而误报失败或诱发重复发送。
+Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
-已耗尽结果修正轮的 `codex_result_invalid` 可通过
-`reconcile_failed_audit_with_verified_delivery(task_id, run_id)` 正式恢复：先验证原候选全部
-外部动作的执行证据，再核对同代次、同 parent/revision/operation 的服务发送回执为 `sent`，
-且回执 action key 精确匹配原候选。事务补齐总动作台账并以最新 run 和代次守卫收口任务；
-历史失败 run 保留，不重新执行外部动作。微信成功投递的历史对账也覆盖同一任务较早代次的
-明确 pre-action failure；可能已执行的失败不自动覆盖。
+候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
 
-```text
-执行 Agent 生成 run R0
-  -> 审核 Agent 审核 R0
-      -> 通过：审核 Agent 执行/发布 R0，provider 返回成功结果后进入 done/sent
-      -> 需要修改：写入反馈 F0，R0 保留为历史 run
-          -> 执行 Agent 收到 F0，生成修正版 R1
-              -> 审核 Agent 审核 R1
-                  -> 通过：发布 R1
-                  -> 再需修改：进入下一反馈周期
-                  -> 超过内容反馈上限：failed
-```
+Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 proposal_revision；failed 只表示技术失败。Audit 不修改正文、选项，不返回执行回执，也不自行创作另一个人工问题。return 允许保留正文并补足证据；reject 要求实质改变被驳回内容，不能只改描述、元数据。首次提交最多三次内容重提，耗尽为 failed，技术失败不占内容预算。
 
-反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和 provider 结果标识之间的关系。同一任务最多允许三个内容反馈周期；基础设施失败不消耗内容反馈周期。内容反馈耗尽是自动闭环失败，终态为 `failed`。只有 Consumer 或 Audit 自身返回的完整、可追溯结构化结果满足 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5`，并同时提供 2--4 个规则/Skill 选项时，任务才进入 `needs_human`。
+人工问题也先经过 Audit。Audit 检查：是否确需 Derek、规则/代码/Skill/记忆/会话/读取是否可自行解决、是否应向来源人索取材料、是否把技术失败伪装成决策、上下文和理由是否充分、选项是否可行且确有差异、每个执行分支是否完整并仅限当前实例。只有当前版本 approve 后才进入 needs_human 和通知，审核通过不等于业务 done。
 
-Consumer 与 Audit 之间自然流逝的时间不是候选事实冲突。当前执行时间只用于判断动作是否过期或上下文是否变旧；Audit 不得要求候选复述精确执行时间，也不得仅因自己的执行时间晚于 Consumer 而拒绝其他方面可执行的候选。
+选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。不再提供 applies_to=task_class、可复用规则、Skill 更新复选框或此决策处理器的 Skill 写入副作用。
 
-钉钉引用回复由服务使用 DWS `chat +messages-reply` 投递；该入口核验原消息、发送者与会话一致性，且适用于已确认的单聊会话。投递仍沿原业务对象的幂等键和回执核验，不因引用回复失败自动改发普通消息。
-
-会议总结的业务群候选由正文中的业务词与标题共同检索，排除听记摘要里的时间标签、图片链接等元数据。平台中立的共享群发现服务先按标题/摘要与群名筛选，再用完整日历名册的参会人覆盖率缩小候选；唯一或少量通过这两层筛选的群才读取近期消息并交给决策 Agent 做完整业务承接核验。当前运行时只有 DingTalk/DWS 适配器，Lark 和 Slack 需要各自 Provider 的认证、读取和外部读回验证后才能启用。发现服务不选择最终目标，也不把 Provider 故障降级成“找不到群”。没有标题命中时仍保留候选做实时名册检查，不能按搜索接口的原始返回顺序截断候选。排序优先考虑群名是否对应摘要主题，再参考讨论片段；词项交集只是检索线索，Agent 必须核对实际讨论、行动负责人和受众。参会人覆盖率只证明受众交集，不证明业务归属，不能单独强制选群。历史投递仍需本次实时成员覆盖达到门槛，且须与当前议题一致；此前已发送的总结不会因路由修复自动重发。
-
-对于源单聊的澄清动作，Consumer 必须在 action target 中提供已经通过实时读取确认的参与者 `open_dingtalk_id`。若该参与者字段以 `verified_participant_open_dingtalk_id` 表示，Audit 将其作为同一稳定接收人身份执行单聊发送；不会把 `conversation_id` 当作群聊目标。
-若单聊候选同时带有原会话的 `conversation_id` 和收件人的 `open_dingtalk_id`，发送入口在核对会话与原任务一致后只保留收件人目标，不把会话 ID 当作第二个互斥目标。DWS 的单聊写入口实际要求 `receiverUid`（userId），因此服务会用原始触发消息中与该 open ID 精确匹配的姓名和 open ID 解析 userId，再只把 userId 传给 DWS；解析不到唯一 userId 时在 provider 写入前失败，不猜姓名、不直接把 open ID 当作 receiverUid。群聊或不匹配会话不作此转换。
-
-当 Audit 因临时授权映射或运行配置失败后被重新调度时，恢复会创建下一次 Audit turn；已失败的 turn 保持历史记录，不能被重复领取。
-
-每个队列任务的 `Original trigger` 是该任务唯一的权威输入，由
-`trigger_message_id` 标识。近期会话消息、材料和实时读取结果只能补充事实，不能把
-Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `feedback_provided` 后，服务
-必须把规则、观察结果和修改要求传给下一版 Consumer proposal，再创建对应的 Audit run；
-Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
-
-Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返回 0..N 个 `task_decisions`。
-每个保留决策都必须引用 WorkItem 的准确 `source_ref`，并提供确实出现在来源摘要中的原文
-`source_excerpt`；检索到的 Task、Project 候选及 memory 只能提供背景，不能替代来源证据或授权。
-`skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。
-正式 Project 注册表和当前 Task 状态优先读取最近一次确认的正式周报，尤其是
-项目管理部或管理层周报中明确列出的项目、负责人、目标、DDL、状态和下周任务；
-保留周报文档引用及统计周期。会议纪要、逐字稿或已确认会议行动项是尚未进入
-周报的新决策或变更的次级权威来源。聊天或消息只能补充上下文、负责人、状态或
-链接，不能单独创建正式 Project，也不能自行覆盖周报明确字段。明确决定启动、批准
-或立项的会议行动项可以创建带会议证据的正式 Project；普通项目提及只形成项目线索。
-来源冲突时先取
-最新明确周报字段，再取最新确认的会议决策，并保留精确来源引用。
-周报中的命名项目/工作流若有明确的负责人、目标/里程碑、状态、交付物或下一步，
-Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_proposal`；孤立任务、
-部门或话题不能直接注册 Project。多位个人负责人可以用名单表示。通常其
-`owner_evidence.excerpt` 必须包含每个人名和当前报告的来源引用；如果负责人关系来自已绑定的
-权威 memory 或 session 上下文，则可使用 `linked_source_ref`、稳定的 `episode_id`/`thread_id`
-和包含明确负责人-行动关系的 `memory_excerpt`；校验忽略
-钉钉 `@` 标记和常见名单分隔符，不把多人整串当作一个名字。
-部门/团队标签（例如“项目管理部”“算法团队”）即使被模型误放进
-`project_proposal` 也不会注册为正式 Project；它们仍可作为 Task 的上下文或候选聚类。
-所有 `date_evidence.source_excerpt` 都必须是当前 Work Item 文本中逐字连续的子串，
-包括原始空格与标点，无法逐字引用时省略日期证据。周报“本周工作重点”“下周工作重点”、
-“团队管理和分工”“周度待办追踪”“行动项”章节是 Task 来源，不是 Project 注册表；
-只有单独的项目清单/项目组合、里程碑/路线图条目或明确会议立项才可注册正式 Project。
-项目/管理周报中有明确项目列的“手头项目/项目清单/项目组合”行先由 Task Agent 建立
-cluster，再依据登记表来源直接注册正式 Project，并把 cluster 中的 Task 关联到 Project；
-同一标题复用同一 anchor。普通项目提及、客户/部门标签和孤立 Task 只形成
-`business_project_candidates`，不会直接注册正式 Project。控制台确认只从 cluster 的已有
-Task evidence 选择来源信号，不凭空制造证据；事务会同时把 cluster 中的 Task 关联到 Project，
-重复确认保持幂等，不能把已确认 candidate 改绑到另一个 Project。
-正式 Project 的列表和详情从已关联 Task 的最新权威周报 signal 生成只读摘要：负责人/负责内容、目标、DDL 或统计周期、当前状态、报告标题/周期、原文摘录、来源链接，以及进行中/已完成 Task 数量；没有可解析的周报字段时保留现有登记来源和关联 Task 数，不用普通聊天或孤立 Task 推断字段。
-更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
-
-Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。完成由新证据驱动
-（Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：新完成的
-钉钉待办由扫描直接关闭对应 Task（见下文「后台周期性工作」），消息、会议等新信息照常作为 Work Item 进入
-Task Agent。单独的 Task completion Agent（`app/task_completion_agent.py`）已删除，服务不再产生
-`todo_completion_evidence_candidate`、`todo_completion_check`、`follow_up_completion_check` 三类 Work Item；
-队列里残留的这类输入在交给 Task Agent 之前被标为 `skipped`，原因
-`completion checks retired (Derek 2026-09-25: 完成由新证据驱动)`。三个枚举值保留，只为读取历史记录。
-`TaskAgentDecision` 里的 `todo_changes`、`follow_up_changes`、`search_trace` 字段仍在 schema 中，但当前没有
-服务端路径应用它们。Task Agent prompt 明确要求只读发现，不得通过 CLI/API/MCP 工具创建、更新、删除、
-发送或完成外部记录；这是 prompt-only 的 best-effort 指引，不是运行时权限边界。外部 TODO 完成只走现有
-outbox 同步，避免双写。
-
-这描述当前功能分支的代码契约，不证明变更已部署。Task 6 仍不得单独部署，整体切换仍需发布验收。
-Task-first 输出不承载 Project 写操作或直接创建新外部 TODO；合格 Task 的钉钉镜像由 Task 7
-服务端 outbox 完成。缺少可信 producer 提供的 `external_task_id` 时不得猜测外部对象。
-
-Task Agent 的共享会话不会改变 Task、TODO 或 follow-up 的服务端应用边界；适用操作仍由当前
-Work Item 明确绑定，并在对应服务事务中校验和应用。
-
-定时的 TODO/follow-up 完成检查和 follow-up 投递失败后的 Agent 修复都已删除（Derek 2026-09-25），Task 只随新信息更新，不再有任何来源产生 `follow_up_completion_check`。Task 提取使用稳定的 `task-agent:work-tracking:v1` 会话范围；每个
-Work Item 仍有独立的 workload key、Task Agent run 与 runtime attempt。路由器按 runtime route 保存
-session，同一 route 上的后续输入续接既有 session。`process-work-items` 在恢复队列和领取输入之前
-取得共享 SQLite session lock，运行期间每 60 秒续租；竞争中的进程返回 0 项且不领取、不增加尝试次数。
-执行前与领域事务提交前均检查 lease；失锁后本轮不提交领域更改，并按 work-summary 临时错误策略重试。
-服务内的 dispatcher 以单 worker 运行 `work_summary` 队列（与会议队列相同，见 `SINGLE_SESSION_ADAPTERS`），同一时刻只有一个 Task Agent turn 续接共享 session；2026-09-24 Task-first 上线后该队列曾用两个 worker，第二个 turn 总是撞上 `already has an active writer`，约 70 秒重试后判失败，25 个 Work Item 因此失败。
-旧 `task:<run_id>` 会话记录不会迁移或覆盖。Task Agent prompt 将此前会话内容限定为背景，决定须依据当轮
-Work Item、当前存储/检索状态和新来源证据。Codex CLI 自己管理上下文自动压缩；其他 route 使用其自身
-会话能力，压缩后的会话仍不能替代 Work Item、数据库或来源证据。
-检索上下文中的历史 source signal 保留来源、时间、作者和上下文，但对可能包含完整会议
-JSON 的 `evidence_text` 使用有界的首尾摘录；原始证据仍在数据库中，避免重复信号把单次
-Agent 输入推过 provider 的输入契约。
-若 CLI 明确报告 compaction 自身因模型 context window 超限而失败，当前 run 会清除此 route 的共享
-session 指针并在同一路由的新 session 重试一次；若 fresh session 仍超限，则转入既有 runtime route
-fallback，不循环创建 session。普通会话冲突或其他错误不会清除共享 session。
-
-正式指派不等于负责人接受：有授权来源、明确交付物和明确负责人的指派可成为
-`assigned_unaccepted` Task；只有负责人本人明确接受并且来源上下文带有可信、精确的
-`reply_to_source_ref`，且决策明确引用该 Task 已链接的指派证据，才可转为已接受承诺。模型不能
-制造回复链接或仅凭“收到”、相似文本、TODO 存在推断接受。缺少可信链接时保留未接受状态并记录
-跳过原因。负责人身份 ID 只能来自可信来源映射或与来源发言人匹配的稳定身份，不由模型单独指定。
-
-日期按语义类型保存，不使用含糊的通用 deadline：`assigned_at`（指派日期）、
-`requested_deadline_at`（请求方要求日期）、`external_deadline_at`（外部期限）、
-`committed_deadline_at`（负责人接受的承诺期限）、`estimated_deadline_at`（估算日期）及
-`next_check_at`（下次检查日期）。Task 6 只记录来源明确给出的 next-check 日期，不自动创建检查 cadence，也不把请求/外部期限改写成检查日期。每条日期都要有明确日期值、对应来源引用、原文摘录和行为人；只有
-接受承诺能建立 `committed_deadline_at`。标准化日期必须与原文中精确、可解析的日期短语一致；不能从只写日期的来源扩展出具体时分。周级或其他不可解析表达只保留在已链接的原始来源信号中，不产生 typed date fact，也不猜时间戳。`assigned_at` 只从明确正式指派来源的可信创建时间元数据派生，不是模型提供的日期。估算的行为人沿用作出估算的可信来源发言人；Agent 仅是抽取者。只有 `next_check_at` 由 Task Agent 署名，且必须是来源中明确给出的检查日期；它不自动创建 cadence。其他日期要求可识别的来源行为人，不能伪装或猜测身份。当前 AI Minutes producer 尚无可信的发言人到身份映射，因此不能把纪要中被转述的多方日期归给主持人或模型指定的人；该类日期暂不入 Task，需由 producer 提供映射后另行接通。
-
-一个 work-summary 输入中的全部 Task 变更、来源信号、日期、关系/聚类/锚点/Project 候选提案及
-输入/run 结果在单个数据库事务中提交或回滚。CEO Attention 是派生投影，只在提交后先应用有效提案，再对所有受影响 Task（合并时包括来源和目标两侧）重算成员资格；完成、取消或变为不相关的 Task 会退出当前成员。Task Agent 的类型化完成和外部 TODO 完成也在各自领域事务提交后重算对应 Attention 成员，完成 Task 退出而未完成的兄弟 Task 保留；这不自动把 Attention 标为已解决。投影失败
-不回滚已完成的 Task 事实，也不把已完成 run/input 改成失败。Task 6 不再把 `work_projects`、
-`work_todos` 或 `work_updates` 当作 Task 事实写入；Task 7 的钉钉 TODO 镜像使用独立的
-`business_task_dingtalk_links` 和 `business_task_todo_sync_outbox`，并不把旧 Project/TODO 当作 Task 主键。
-此处描述的是代码分支，不代表已经部署；Task 6 不单独部署或重启服务。
-
-目前通用 work-item 生产者尚未提供所有授权和 owner identity 映射元数据；在来源元数据缺失时，
-不能据此把显式提到负责人的讨论升级成正式授权指派。对应的生产者接线必须作为单独集成范围处理，
-不能由 Task Agent 猜测或合成。
-
-Attention 的 `material_trigger` 是 Agent 对来源证据的语义分类，不是独立机器证明。每项提案必须附带当前来源摘录中的精确 trigger quote、分类理由和明确 CEO action；投影还要求业务锚点已确认、Task 相关且来源信号已链接。系统把 trigger 类型和摘录写入 Attention 原因/事件沿革。系统不靠关键词推断重大性；若未来需要独立机器级判定，应另行定义 canonical trigger facts 或人工确认机制。
-
-OA 审批中，申请人的补充只可完善其可核验的事实或材料，不能生成、替代或关闭规则、例外、
-授权与动作映射。材料缺口和规则缺口同时存在时，Consumer 在原审批向申请人评论可补材料，
-并独立保留 `needs_human` 处理政策缺口；申请人后续回复只能触发重新读取 OA，不能使
-`rule_coverage` 变成 100%。
-
-两件事放在同一个结果里：`outcome: proposal` 携带可执行的评论或退回，同时填
-`needs_human_reason`、`decision_basis` 和 2--4 个 `decision_options` 描述政策缺口
-（`ConsumerAgentResult.escalates`）。三者必须齐全；不能带 `authorization_plan` 或错误码。
-Audit 按常规审阅并执行 proposal，执行后返回 `executed`，不把候选的问题改写成自己的 `needs_human`
-（384699 的 21117 这样做后分值被判不符，重试把 rule_coverage 从 0.7 压到 0.4 才通过）；Audit
-`executed` 后编排结果为 `needs_human`，选项取自 Consumer 的升级，消息投影照常按 Audit
-的执行记录写入。与“外部动作已完成→needs_human”同一终态：动作已做，剩下的问题归 Derek。
-Derek 2026-09-23 定；此前结果只能二选一，384699 丢了评论，384514 没要材料。
+多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，stage_index、predecessor_review_id 绑定前一已完成阶段的回执；阶段上限独立于每阶段三次内容修订预算。
 
 ## Business Object、Task、Agent Run 与 Reply Attempt
 
@@ -397,7 +214,7 @@ Agent run 决定：最后一个 run 失败则当前投影为 `failed`；只有�
 History 的当前筛选也遵循此投影：同一 generation 的更新 run 已在执行时，旧 attempt
 字段中的失败仅保留在 run 详情，不继续计入当前 `failed` 筛选。
 当失败 Audit 已持有同一稳定动作身份的 receipt 时，服务自动先持久化失败 run，再通过正式
-重试入口开启新的 generation。新一轮 Audit 只读取 receipt，不重新执行外部动作；它成功后才
+重试入口开启新的 generation。新一轮 Audit 只读取 receipt，System Executor 复用已经验证的结果，不重新执行外部动作；处理完成后才
 把 current projection 收口为 `done` 或 `skipped`。
 
 `needs_human` 收到明确人工指令后，必须创建新的 reviewed revision 并重新进入统一
@@ -486,112 +303,11 @@ schema 判断写操作，因此各自失效过一次：
 
 ## 外部动作幂等与依赖
 
-每个 ProposedAction 必须包含稳定的 `action_identity`。服务使用
-`business_object_key + action_identity + operation + target` 生成
-`external_action_key`：
+系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
-- provider 成功结果按该键原子保存一次；
-- feedback revision 或新 agent run 再遇到该键时直接复用，不调用 provider；
-- 一个 proposal 内只有所有较小 action index 都成功后，下一个动作才可 dispatch；
-- 审批动作失败时，后续“审批成功”通知因此不会发送；
-- 消息成功统一写入一条 `sent_replies`，其他 run 只追加 observer 关联。
+candidate_executions 保存租约，candidate_action_attempts 在 provider 调用之前保存 dispatch 边界；已验证回执复用。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
 
-钉钉消息 proposal 的 target 只接受服务 wire 字段：群聊 `conversation_id`，引用回复
-`conversation_id + message_id`，单聊使用稳定接收人 ID。Provider 的字段名只保留在 provider
-结果中。成功结果必须带 `action_identity` 和稳定 provider 消息 ID；运行时以该身份关联唯一 action，
-原子写入 provider 结果、消息投影和 observer。
-
-投递方式由 `dingtalk_chat_delivery(operation)` 一处判定：operation 名里含 `reply` 即引用回复，
-含 `group` 即群发，其余按单聊。契约校验、正文准备和 Audit 执行都只问这一个函数。Consumer 对同一
-动作有二十多种写法（`reply`、`messages-reply`、`reply_to_message`……），任务 384694 用
-`reply_to_message` 提了一条群内回复，执行端只认三种写法，Audit 连续六次被拒为
-`dingtalk_message_action_unsupported`。引用回复仍然只能回到本任务自己的会话和触发消息。
-
-typed result 里的这些字段命名一次外发，但不构成它发生过的证据：它们由做出该声称的同一轮写出，
-其中 `delivery_key` 和 `external_action_key` 本就是服务在 prompt 里交给它的，回显不证明任何事。
-证据是 provider 接受副作用时返回的回执（`openTaskId` / `openMessageId`），它只会出现在运行时
-记录的调用流 `agent_run_events` 里，由服务而非模型写入。
-
-因此，当被接受的 proposal 里存在一个携带外发正文的 `dingtalk-chat` 动作时，Audit 的 `executed`
-要求本轮调用流里至少有一个 provider 回执；没有则该 result 无效，模型在下一轮收到纠正，而不是
-让任务带着没有依据的成功收口。消息投影同样以该回执为前提。这项检查覆盖钉钉消息任务和定时任务
-（`DINGTALK_MESSAGE_CHANNELS`，Derek 2026-09-24）：定时任务的审核轮同样挂 `DingTalkSendEvidenceDriver`，
-日报给 Derek 的单聊、写入的钉钉文档都要有回执。
-
-审核轮执行已持久化的钉钉文档创建动作时，将 Consumer 候选中的正文原样写入该轮工作目录下的临时文件，并向执行器提供相对路径和 SHA-256。文档工具从该文件读取正文，不要求模型在工具参数中重写长文；审核轮结束即清理临时文件。只有文档创建与读回、消息发送的实际回执齐备，日报才可完成。
-Consumer 的文档候选必须将完整正文放在 `payload.content`，`description` 仅作不超过 2048 字符的动作摘要；放错字段的结果不会被当作已审核的文档正文。
-文档创建动作缺少非空 `payload.content` 时在结构化结果校验阶段拒绝，保持同一任务重试生成候选，而不交给 Audit 尝试空文档写入。
-
-回执只回答“副作用是否发生”。至于 typed result 用哪个 ID 标记它，允许来自读回会话——真实发送后
-用 `+chat-messages` 认出自己那条消息是正常做法，要求上报 ID 必须等于回执会拦下已送达的消息，
-而重试等于再发一次。
-
-日程响应、审批、表情等动作的 provider 身份不是这个回执形状，它们维持既有约定，直到各自有可核验
-的回执为止。
-
-Agent 生成的钉钉候选正文在进入 Audit 前按 `execution_generation + proposal_revision` 持久化：
-同一 revision 的重试复用同一准备正文，反馈产生的下一 revision 则持久化修正后的正文，不能被
-第一版正文覆盖。这个准备键不替代跨 revision 稳定的 `external_action_key`；已有 provider 成功
-结果时仍直接复用，不得重复发送。
-
-### 送达只在发送当场记录一次（`721b7f58`）
-
-**执行发送的那一轮，在当场写下这条送达，内容是 provider 的真实返回。写不成就是没发成——
-不补、不猜、不重建。** 服务里不再有任何重建路径：`_repair_completed_message_delivery_projections`、
-它的候选查询、结果再水合，以及 `provider_effect_reconcile` 模块都已删除。
-
-删除的理由是这些重建本身制造了故障：它挂在生产从不调用的 `consume_once` 上，从未在服务里运行过；
-候选 SQL 漏了 `dws chat +dm` 只返回的 `open_task_id`，真实送达永远选不中；它把模型自述的
-`delivery_status: "sent"` 当成送达，写出过七行「History 显示发过、实际没发」的幻影。
-而它存在的唯一理由，是实时写入长期不工作——`_audit_terminal` 构造的结果不带 `consumer_result`，
-投影第一道门就返回 None，直到 `de176316` 才修好。
-
-由此产生一个**有意保留的缺口**：实时写入失败就永久没有记录，没有兜底。唯一会告诉我们实时路径坏了的，
-是 quality gate 的 `executed_without_record`——它报告「报了 executed、有 provider 回执、却没有送达记录」，
-**只报告，不自动补写**。看到它报警要去查实时写入路径，不要把记录补回去：用重建填补一次本该失败的发送，
-正是那七行幻影的成因。
-
-非 Agent 发送（如 OKR 周报）由发送它的那条命令自己记录，同一原则；微信有自己的 `wechat_deliveries`。
-`sent_replies` 里 2026-09 之前的记录早于运行模型，只读保留，不迁移也不改写。
-
-这里只管理稳定身份、动作顺序和 provider 成功事实。应用层不检查 Agent 使用了哪些工具，也不建立
-read-only、unknown 或 reconciliation 状态机：回执核验是对已记录调用流的一次读取，不是新的状态机，
-它只回答“这一轮是否拿到过 provider 回执”，不评判 Agent 选择了什么路径去拿。
-
-## 两道效果检查的共同盲区：自带回执的领域
-
-服务有两道检查判断"外部动作到底发生了没有"，它们从两个方向问同一件事：
-
-- `claims_external_action_without_tools`（`app/agent_effect_claim.py`）问"这一轮到底
-  调过 provider 没有"：结果自称已执行、整代次却零工具调用，就打回纠正。
-- `DingTalkSendEvidenceDriver`（`app/dingtalk_send_evidence.py`）问"效果有没有落到
-  提案指定的对象上"：`executed` 必须有 provider 回执或被原生 CLI 元数据判定为写入的调用。
-
-**两道检查在同一种情况下都是瞎的**：某个领域自己驱动客户端、自己记回执，服务看不到
-工具事件。已知两例：
-
-- **邮件退订**由受审浏览器驱动执行并写自己的回执，所以审核轮如实报告"已执行"时，
-  整代次没有任何工具事件。第一道检查因此误报，把整条端到端流程打挂（`aa252e9d` →
-  `fddac656` 按渠道收窄，排除 email）。
-- **第三方 MCP 服务**（如面试系统）不在原生 CLI 的 schema 里，第二道检查无法区分读写，
-  因此对它们不做判定；能人工整理的目录记在 `data/config/mcp-tool-effects.json`。
-
-**新增渠道或领域时**：只要它自带客户端和回执，两道检查都要同时加豁免，而且**任何一道
-都不会自己发现遗漏**——表现是正当动作被判为"没发生"，然后走纠正轮、耗尽轮次或整条流程失败。
-
-### 第三种盲区：解析器读不懂那条命令
-
-判定「是否写入」要先把 shell 命令解析成 argv，而 `native_command_argv` 对**任何含 shell 操作符的命令
-一律拒绝解析**（这在决定「能不能执行」时是对的，不要放松它）。模型很爱在命令后面加 `2>&1` 或
-`| head`，于是真实执行过的写入被读成「什么都没有」：一次 OA 批准（run 19444，钉钉已记录
-`REDIRECT_PROCESS`）和一次日程接受（task 383208）都因此被判成从未发生，其中一条还据此对同事说了
-不实的话。
-
-证据侧因此只取管道第一段并丢掉文件描述符重定向（`dws … 2>&1 | head` 里真正执行的是 `dws …`），
-命令替换 `$(...)` 仍然拒绝——那时文本已经不能说明执行了什么。
-
-**下判断前先确认解析器读得懂那条命令**：结论「没执行」和结论「解析不了」是两回事，把后者当成前者，
-就会把真实发生过的不可逆动作记成没发生。
+历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
 ## 用户反馈处理轮次
 
@@ -839,7 +555,7 @@ URL 查询参数。外部反馈页可以收集评分，但不能通过链接、�
   成功结果是避免重放所需的最小持久化事实。
 - 已成功的消息发送或 provider 回执不会因为 attempt 后来失败而失效。下一轮上下文直接读取这些
   append-only 执行事实，不能把解析失败、服务重启或 current projection 失败理解成“尚未发送”。
-- Audit 返回 `executed` 后任务即可进入 `done`；外部结果的读取与判断由 Agent 按业务 Skill 完成。
+- Audit approve 后只允许系统执行；全部动作有验证回执后任务才进入 done。
 
 如果任务确定无需执行，应进入 `done`，并在 trace 写入 `agent_output/no_action`；如果结果需要修改，写入 `audit_feedback` 并保持 `running`；如果处理失败，应进入 `failed`。
 
@@ -847,14 +563,11 @@ URL 查询参数。外部反馈页可以收集评分，但不能通过链接、�
 查询读取稳定背景；当前身份和业务事实仍需依赖相应来源/实时读取，memory 不能作为任务存在、指派授权、
 负责人 ID 或接受承诺的证明。
 
-邮件退订任务把不可变 ActionPlan 派生出的首步 `ProposedAction` 作为任务绑定契约直接提供给 Consumer。该动作固定使用 `email_browser/unsubscribe`、精确目标字段和 `operations` payload；内部 `classification_id` 不进入外部工具参数，避免 64 位标识经 JSON 数值链路发生精度变化。
-审计 `proposal_revision` 只表示反馈修订轮次，退订 `operations` 的长度只表示浏览器步骤；两者独立计数。首步动作经过审计反馈后仍可在更高 revision 执行，不能被误判为缺少后续浏览器步骤。
-旧版本若在浏览器预检查阶段失败并错误留下 `uncertain/effect_uncertain` claim，可通过显式恢复命令释放，但必须精确绑定失败 Audit，且确认没有浏览器步骤、完成记录、续跑记录或多个 effect；释放后仍需单独发起正式任务重试。
-当前退订执行只投影明确成功或失败。浏览器动作返回失败且没有持久化步骤、完成记录或续跑记录时，释放本轮 claim 并交给统一重试；不得先写入不可重试的中间状态再让下一次 Audit 撞上 claim 冲突。
+邮件退订由独立系统服务执行，不进入 Consumer/Audit。其原有 ActionPlan、浏览器步骤、回执和退避保留，历史 Audit 退订 run 只作历史事实，不是新的执行路径。
 退订浏览器仅把固定的内部失败类别投影到错误码；已识别的导航超时和页面状态缺失必须与兜底 `email_unsubscribe_browser_failed` 区分，错误码、步骤日志和页面原文里不得写入 URL 或凭证。结果的 `error_detail` 记下失败是什么：已识别的 `UnsubscribeBrowserError` 写固定枚举 `category=<名称>`（没有专属错误码的类别共用兜底码 `email_unsubscribe_browser_failed`，这里是唯一说明具体类别的地方，2026-09-25 有 6 次失败只剩这个兜底码）；未预期异常（兜底）会留下异常类名和截断到 240 字符的消息：URL、cookie/token/session 一类字段和 32 位以上的长串都先替换掉，再写入回执 evidence、这次尝试的 `audit_summary` 和任务的错误文本（`<码>: <类名: 消息>`，重试判断只看第一个冒号前的码）。此前该兜底只留下码，任务 384835（2026-09-25）两次失败因此查不出原因。外部原因造成的退订失败（第三方页面拒绝表单或一键请求、页面操作失败或超时、导航目标无效、控件不可用，清单在 `app/external_failures.py`，靠任务错误文本里的 `category=` 判断，不加字段）保持 `failed`，History 照常列出，但不进 Attention（Derek 2026-09-25）：这些是我们改不了的，同一页面重跑结果不变。
 
 `email_unsubscribe_browser_timeout`、`email_unsubscribe_browser_session_unavailable`、兜底码 `email_unsubscribe_browser_failed` 这三个瞬时失败会先退避重试；用完固定次数后写终态 `failed` 错误文本时，只有兜底码把 `task_error` 里已经带的 `: category=<名称>`（或未预期异常的类名与消息）一并写入，其余两个专属码保持裸码——`app/external_failures.py` 只登记了这个精确格式。此前用完次数一律只写裸码，2026-09-25 那 6 次失败因此从未真正匹配过外部原因清单：它们的错误文本是裸的 `email_unsubscribe_browser_failed`，本该在 Attention 之外却一直在里面（Derek 2026-09-28 指出后修复）。控制台看到的失败原因同样有这道口子：一个还没读到任何页面、因而没有回执的退订任务（浏览器在读页面前就报错），观测时间线过去只给状态不给原因，2026-09-28 起把任务自己的错误文本一并投影进 `kind=unsubscribe` 的记录（`list_email_classification_observability` 和 `list_unsubscribe_states` 的 `error` 字段），控制台把已知的码译成人话，未知的码原样显示而不是不显示。钉钉 OKR 登录失效（`okr_headless_session_expired…`、`okr_authorization_required…`）同样是外部原因：只有人能重新登录，也保持 `failed`、不进 Attention；只有标准错误码 `authorization_required` 才能承载「需要人工」的授权决定，OKR 自己的错误码不行，所以它记为失败而不是人工决定。唯一例外是 `email_unsubscribe_receipts.entry_url`：该列按 Derek 的明确要求保存这次实际打开的完整私密 URL（含 query 与 token），用于人工复现同一个退订入口。写入前校验它的 sha256 等于 `entry_reference` 的摘要，因此不能与生命周期认定的身份漂移；它不经过 `assert_no_credentials`，因为被保存的正是那类 token。打开该 URL 会真实执行退订，任何能读这张表或这个页面的人都能替当事人退订。该列只在本次变更之后产生的 receipt 上有值，历史行为空且无法补全。退订浏览器不再对页面发出的网络请求做 origin 白名单、跳转或资源家族限制。
-同一 generation、同一 proposal revision 内，Consumer 或 Audit 每个 worker pass 最多跑 2 次 turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的通用失败时该 pass 以 `failed_retryable` 结束，并给出 `retry_after_seconds`（共享指数退避：60 秒、120 秒、240 秒……封顶 15 分钟，`external_retry.retry_delay_seconds`）。编排层按持久化的 run 计数该角色在这个 revision 上**连续**失败的 turn 数，满 `MAX_CONSECUTIVE_FAILED_TURNS`（6 = 3 个 pass × 2）后，下一次 pass 耗尽时结果是 `failed_terminal`：错误码不变（例如 `agent_reported_failure`），Agent 原文 `source_code` 保留在错误诊断和结果摘要里，任务结束为 `failed`，不再重新入队。计数遇到 `completed` run 或等待类错误（授权、`runtime_*`、`codex_provider_*`）即中断。这条上限对所有调用方生效：DingTalk worker 的 3 次 attempts 恰好对应同一数字；定时执行与 Email 任务延期时会归还 attempts，此前没有任何计数，2026-09-26 定时周报任务 385880 因 Audit 反复报告 `proposal_already_executed`（`agent_reported_failure`）在同一 generation 里被重跑 310 次，每 12 秒一次。如果 Audit 的内容反馈轮次耗尽且最后一次 Audit 保留了具体修改意见，编排结果进入 `needs_human`，提供“按审计意见修订”或“停止不执行”两个明确选择，避免把可继续处理的审计修订误投影为 opaque failed。
+同一 generation、同一 proposal revision 内，Consumer 或 Audit 每个 worker pass 最多跑 2 次 turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的通用失败时该 pass 以 `failed_retryable` 结束，并给出 `retry_after_seconds`（共享指数退避：60 秒、120 秒、240 秒……封顶 15 分钟，`external_retry.retry_delay_seconds`）。编排层按持久化的 run 计数该角色在这个 revision 上**连续**失败的 turn 数，满 `MAX_CONSECUTIVE_FAILED_TURNS`（6 = 3 个 pass × 2）后，下一次 pass 耗尽时结果是 `failed_terminal`：错误码不变（例如 `agent_reported_failure`），Agent 原文 `source_code` 保留在错误诊断和结果摘要里，任务结束为 `failed`，不再重新入队。计数遇到 `completed` run 或等待类错误（授权、`runtime_*`、`codex_provider_*`）即中断。这条上限对所有调用方生效：DingTalk worker 的 3 次 attempts 恰好对应同一数字；定时执行与 Email 任务延期时会归还 attempts，此前没有任何计数，2026-09-26 定时周报任务 385880 因 Audit 反复报告 `proposal_already_executed`（`agent_reported_failure`）在同一 generation 里被重跑 310 次，每 12 秒一次。内容反馈预算耗尽时进入 failed 并保留具体修改意见，不创建人工问题或停止选项。
 
 ## 周期性工作的归属
 
@@ -1009,7 +722,7 @@ Agent 的生产命令成功时不进 History，它们排入的每一项各自是
 
 所有任务只通过 `app/service_browser.py` 的 `launch_service_chrome` 启动浏览器：真 Chrome、始终无头、指向调用方自己的资料目录；启动前把最新的副本放进该目录的 `Default/Cookies`，并去掉 Playwright 默认的 `--use-mock-keychain`（否则 Chrome 解不开复制来的 cookie）。这样由真 Chrome 自己读“Chrome Safe Storage”钥匙串项，不会弹授权。副本是快照，会话过期后等下一次同步；不连接你正在用的 Chrome（Chrome 136 起默认资料目录不允许远程调试）。
 
-另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。该后台由服务的共享无头 Chrome 打开（`app/service_browser.launch_service_chrome`），带的是每天复制的 Derek 本人 Chrome 登录态；这份副本能把他认到「选择你管理的组织」那一步，再由代码选中「北京星尘纪元智能科技有限公司」（`MINUTES_CONSOLE_ORG`）进入控制台。每次启动都会用当天的副本覆盖 profile，控制台自己的 `access_token` 不会留到下一次，所以这里没有自己保存的会话，也没有过期和续期一说；副本里没有钉钉登录态时命令直接失败，补救办法是在 Chrome 里重新登录钉钉并等当天的 `sync-chrome-cookies` 跑过，而不是在这里扫码。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析和失败数量。OKR 周报同样是服务命令：它唯一的动作就是执行一条确定性命令，而那条命令的实时 OKR 读取会跑到五十分钟以上，任何 Agent 超时都装不下，被杀之后命令还会脱离运行记录继续跑。因此发现与同步类种子任务都不是 Agent 形式，Cron 在所有模型路由都不可用时仍然照常工作。只有两个报告是 Agent 种子任务，走标准 Consumer → Audit 生命周期：每周六 `12:00`（`America/Los_Angeles`）的“准备 CEO 管理周报”（`ceo-weekly-report`），和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入全部来自服务自己的记录：Agent 先运行只读命令 `python -m app.cli daily-report-facts --scheduled-run <触发记录 id>`（`app/daily_report_facts.py`）。报告窗口由服务算：终点是本次触发的 `scheduled_for`，起点是同一任务报告日期更早、且真正发出了报告（执行任务 `done` 且最后一次处理结果为 `completed`；无需处理或线路不可用被跳过的也是 `done`，不算）的最近一次运行的触发时刻（断掉的日子并入下一份，同日重跑沿用原起点），从未成功过则回看 24 小时；报告日期是终点的北京日期。命令取得窗口内结束的会议及其已发会后跟进、当天有活动的 Task-first 业务 Task 及其当天事件、全部未解决的业务需关注项（`business_attention_items`）、当天在邮箱里被标为重要的邮件（已执行的 `flag_important` 动作；Agent 只摘有管理含义的，其余计数）、当天处理过的事项（不含 skipped，只计数），以及 Attention 口径下等 Derek 处理的事项；截止日期不从 `deadline_at` 自行推算（见 `docs/task-semantic-storage.md`）；再扫描窗口内群消息、按需补读听记，写成七段报告，发布到知识库“🎯  目标与执行”/“CEO 每日总结”下的同日文档（同日重跑覆盖同一篇）并读回，最后以 Derek 本人身份单聊发给「磊哥」（不用机器人）：要点、需介入条数、当天文档标题和「CEO 每日总结」文件夹链接（正文在执行轮就由服务定稿，那时文档还不存在，所以放文件夹链接）。这条消息走服务的已审核消息通道：执行轮提 `dingtalk-chat` 单聊动作（`target.user_id` 为 Derek 的 userId），服务加签名并记投递台账，审核轮只能用 `send_approved_dingtalk_message` 发送。该通道接受的任务频道为 `DINGTALK_MESSAGE_CHANNELS`（钉钉消息与定时任务，Derek 2026-09-24）；此前只接受钉钉消息任务，定时任务没有合规的发送方式（运行 84467 因此改用命令行发送并被判不合规）。某个来源读不到只写进报告的覆盖说明，不向 Derek 追问材料。该命令登记在 `app/native_cli_metadata.py` 的服务只读命令中。周报的必需输入同样来自服务：Agent 先运行只读命令 `python -m app.cli weekly-report-materials --scheduled-run <触发记录 id>`（`app/weekly_report_materials.py`，同样登记为服务只读命令）。目标周一是运行时刻（按北京日期）之后的第一个周一（周六跑就是后天的周会，绝不是已开完的那次），窗口为其前一个周一 00:00 到目标周一 00:00（北京），截止取运行时刻与窗口终点的较早者。命令在知识库“🎯  目标与执行”/“1. 管理层周会”下找“{年} 年：管理层周会”（是一篇文档，每周的周会文档是它的子页面；名字比较忽略空白），按标题 `{年}年{月}日管理层周会`（月日不补零）找目标与上期文档，找不到只报 `exists: false` 不猜，同名多篇、列表不完整都直接报错；会议清单来自会议队列（`meeting_alignment_jobs`）里窗口内结束的会议，附参与人、会后跟进和听记链接，归档转写文件在才给路径。周报**只写进目标周会文档的三处**：“二、CEO本周判断”、“三、公司级重点指标”表，以及往“一、重点问题及待办跟踪”表追加本周新问题的新行（已有行、各业务线小节、主题讨论、周报链接都归会议参与人，不动）；目标文档不存在时先照上期文档建；完整七段版留作运行目录里的草稿。业务线还没提交的报告写进覆盖说明，不阻塞发布。周报任务经保存版本 → revision 守卫的一次覆盖写入 → 全文读回核对发布，授权来自 Derek 2026-09-24 对该定时任务的批准。Lark 没有
+另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。该后台由服务的共享无头 Chrome 打开（`app/service_browser.launch_service_chrome`），带的是每天复制的 Derek 本人 Chrome 登录态；这份副本能把他认到「选择你管理的组织」那一步，再由代码选中「北京星尘纪元智能科技有限公司」（`MINUTES_CONSOLE_ORG`）进入控制台。每次启动都会用当天的副本覆盖 profile，控制台自己的 `access_token` 不会留到下一次，所以这里没有自己保存的会话，也没有过期和续期一说；副本里没有钉钉登录态时命令直接失败，补救办法是在 Chrome 里重新登录钉钉并等当天的 `sync-chrome-cookies` 跑过，而不是在这里扫码。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析和失败数量。OKR 周报同样是服务命令：它唯一的动作就是执行一条确定性命令，而那条命令的实时 OKR 读取会跑到五十分钟以上，任何 Agent 超时都装不下，被杀之后命令还会脱离运行记录继续跑。因此发现与同步类种子任务都不是 Agent 形式，Cron 在所有模型路由都不可用时仍然照常工作。只有两个报告是 Agent 种子任务，走标准 Consumer → Audit 生命周期：每周六 `12:00`（`America/Los_Angeles`）的“准备 CEO 管理周报”（`ceo-weekly-report`），和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入全部来自服务自己的记录：Agent 先运行只读命令 `python -m app.cli daily-report-facts --scheduled-run <触发记录 id>`（`app/daily_report_facts.py`）。报告窗口由服务算：终点是本次触发的 `scheduled_for`，起点是同一任务报告日期更早、且真正发出了报告（执行任务 `done` 且最后一次处理结果为 `completed`；无需处理或线路不可用被跳过的也是 `done`，不算）的最近一次运行的触发时刻（断掉的日子并入下一份，同日重跑沿用原起点），从未成功过则回看 24 小时；报告日期是终点的北京日期。命令取得窗口内结束的会议及其已发会后跟进、当天有活动的 Task-first 业务 Task 及其当天事件、全部未解决的业务需关注项（`business_attention_items`）、当天在邮箱里被标为重要的邮件（已执行的 `flag_important` 动作；Agent 只摘有管理含义的，其余计数）、当天处理过的事项（不含 skipped，只计数），以及 Attention 口径下等 Derek 处理的事项；截止日期不从 `deadline_at` 自行推算（见 `docs/task-semantic-storage.md`）；再扫描窗口内群消息、按需补读听记，写成七段报告，发布到知识库“🎯  目标与执行”/“CEO 每日总结”下的同日文档（同日重跑覆盖同一篇）并读回，最后以 Derek 本人身份单聊发给「磊哥」（不用机器人）：要点、需介入条数、当天文档标题和「CEO 每日总结」文件夹链接（正文在执行轮就由服务定稿，那时文档还不存在，所以放文件夹链接）。这条消息走服务的已审核消息通道：执行轮提 `dingtalk-chat` 单聊动作（`target.user_id` 为 Derek 的 userId），服务加签名并记投递台账，Audit 只读审核，审核通过后由 System Executor 使用原生 sender 执行精确持久化动作。该通道接受的任务频道为 `DINGTALK_MESSAGE_CHANNELS`（钉钉消息与定时任务，Derek 2026-09-24）；此前只接受钉钉消息任务，定时任务没有合规的发送方式（运行 84467 因此改用命令行发送并被判不合规）。某个来源读不到只写进报告的覆盖说明，不向 Derek 追问材料。该命令登记在 `app/native_cli_metadata.py` 的服务只读命令中。周报的必需输入同样来自服务：Agent 先运行只读命令 `python -m app.cli weekly-report-materials --scheduled-run <触发记录 id>`（`app/weekly_report_materials.py`，同样登记为服务只读命令）。目标周一是运行时刻（按北京日期）之后的第一个周一（周六跑就是后天的周会，绝不是已开完的那次），窗口为其前一个周一 00:00 到目标周一 00:00（北京），截止取运行时刻与窗口终点的较早者。命令在知识库“🎯  目标与执行”/“1. 管理层周会”下找“{年} 年：管理层周会”（是一篇文档，每周的周会文档是它的子页面；名字比较忽略空白），按标题 `{年}年{月}日管理层周会`（月日不补零）找目标与上期文档，找不到只报 `exists: false` 不猜，同名多篇、列表不完整都直接报错；会议清单来自会议队列（`meeting_alignment_jobs`）里窗口内结束的会议，附参与人、会后跟进和听记链接，归档转写文件在才给路径。周报**只写进目标周会文档的三处**：“二、CEO本周判断”、“三、公司级重点指标”表，以及往“一、重点问题及待办跟踪”表追加本周新问题的新行（已有行、各业务线小节、主题讨论、周报链接都归会议参与人，不动）；目标文档不存在时先照上期文档建；完整七段版留作运行目录里的草稿。业务线还没提交的报告写进覆盖说明，不阻塞发布。周报任务经保存版本 → revision 守卫的一次覆盖写入 → 全文读回核对发布，授权来自 Derek 2026-09-24 对该定时任务的批准。Lark 没有
 访问申请页需等待申请按钮实际可用；按钮仍禁用时保留为申请人未解析，下一轮继续尝试。页面仅显示加载壳或其他非权限内容时不能当作已可读，只有听记读取 API 能确认可读。
 默认 seed。
 内部投递、发送状态确认、错误恢复仍是内部机制，不外化为 Cron；催办不自动发送，只由 Derek 点按钮发送。
@@ -1363,3 +1076,13 @@ Weekly-report registry rows and Agent Project proposals must not reactivate it
 implicitly. The source-backed Task is saved independently, without a Project
 link to that retired anchor, and the run records why the Project was not applied.
 The general anchor registration conflict checks remain unchanged.
+
+### 已审核来源、执行进度与失败展示
+
+Consumer 完成候选准备时，把原 trigger、消息/材料和计划涉及的 OA 原表单或文档源事实保存为 source_bindings，参与 candidate digest。System Executor 在每个尚未核验动作派发之前重新读取相同原对象，包括首次执行、同次后续动作和恢复部分执行。OA 已完成动作造成的 task 状态/操作记录变化由具名处理器核验，不作为原表单变化；真实表单、文档或上下文变化使该 review 失效，保留已核验动作回执和原人工回答，在同阶段形成新的完整候选并重审。来源读取失败属于可重试技术失败，不执行旧分支。
+
+Attempt 详情的 system_execution 按 candidate、review、selection 绑定显示当前及历史阶段、声明顺序、未开始动作、失败/不确定状态和 provider 回执。只有 canonical action ledger 中核验成功的动作计为 verified；Audit approve 和用户选择都不能显示为已经执行。
+
+失败 Reply task 的 Attention 诊断只读取本对象本 generation 的当前 run，显示原 source_code（无则 code）与明确标为“Agent 说明”的 reported_summary；缺少或坏 JSON 时保留 task error，不将 Agent 自述当作已证实的 provider 拒绝。History、Attempt 详情和 Reply attempts queue 对微信分别读取本对象当前 generation 最新 delivery：failed/send_unknown 不能被只表示候选完成的 task done 遮蔽。旧 generation 或其他对象的 delivery 不影响当前结果；这些展示不更新任务、投递或授权状态。
+
+独立 Email 退订仍使用原有 direct executor、浏览器步骤和回执。无运行时调用者的旧 Agent continuation driver 已删除；Agent finalizer 不再从历史 Audit 声明触发退订、切换渠道或伪造执行成功。默认 developer prompt 和 OA 规则种子统一为新角色合同；既有自定义规则、managed Skill 配置与 runtime-only Skill 必须在安静的正式发布窗口中逐项发布并记录版本，部署代码本身不会覆盖它们。

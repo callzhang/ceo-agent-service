@@ -44,61 +44,6 @@
       "title": "AgentError",
       "type": "object"
     },
-    "AuthorizationPlan": {
-      "additionalProperties": false,
-      "description": "One bounded, externally effective action awaiting a human decision.",
-      "properties": {
-        "summary": {
-          "minLength": 1,
-          "title": "Summary",
-          "type": "string"
-        },
-        "primary_action": {
-          "$ref": "#/$defs/ProposedAction"
-        },
-        "follow_up_actions": {
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/ProposedAction"
-          },
-          "title": "Follow Up Actions",
-          "type": "array"
-        },
-        "side_effects": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Side Effects",
-          "type": "array"
-        },
-        "will_not_do": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Will Not Do",
-          "type": "array"
-        },
-        "readback": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Readback",
-          "type": "array"
-        }
-      },
-      "required": [
-        "summary",
-        "primary_action",
-        "side_effects",
-        "will_not_do",
-        "readback"
-      ],
-      "title": "AuthorizationPlan",
-      "type": "object"
-    },
     "ConsumerOutcome": {
       "enum": [
         "proposal",
@@ -197,7 +142,43 @@
     },
     "DecisionOption": {
       "additionalProperties": false,
-      "description": "One actionable rule choice for a reusable task class.",
+      "description": "One bound choice for the current business instance.",
+      "oneOf": [
+        {
+          "properties": {
+            "plan": {
+              "type": "object"
+            },
+            "terminal_outcome": {
+              "type": "null"
+            },
+            "reason": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "plan"
+          ]
+        },
+        {
+          "properties": {
+            "plan": {
+              "type": "null"
+            },
+            "terminal_outcome": {
+              "const": "skipped"
+            },
+            "reason": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "terminal_outcome",
+            "reason"
+          ]
+        }
+      ],
       "properties": {
         "key": {
           "minLength": 1,
@@ -219,18 +200,48 @@
           "title": "Consequence",
           "type": "string"
         },
-        "applies_to": {
-          "const": "task_class",
-          "title": "Applies To",
-          "type": "string"
+        "plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsumerProposal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "terminal_outcome": {
+          "anyOf": [
+            {
+              "const": "skipped",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Terminal Outcome"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
         }
       },
       "required": [
         "key",
         "label",
         "instruction",
-        "consequence",
-        "applies_to"
+        "consequence"
       ],
       "title": "DecisionOption",
       "type": "object"
@@ -399,6 +410,36 @@
       "title": "ProposedAction",
       "type": "object"
     },
+    "ReviewedSourceBinding": {
+      "additionalProperties": false,
+      "description": "Provider facts captured by the service before the candidate is reviewed.",
+      "properties": {
+        "provider": {
+          "enum": [
+            "task_context",
+            "dingtalk-oa",
+            "dingtalk-doc"
+          ],
+          "title": "Provider",
+          "type": "string"
+        },
+        "object_ref": {
+          "minLength": 1,
+          "title": "Object Ref",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "provider",
+        "object_ref",
+        "value"
+      ],
+      "title": "ReviewedSourceBinding",
+      "type": "object"
+    },
     "RiskLevel": {
       "description": "Estimated consequence if the proposed result is acted on incorrectly.",
       "enum": [
@@ -411,7 +452,7 @@
     }
   },
   "additionalProperties": false,
-  "anyOf": [
+  "oneOf": [
     {
       "properties": {
         "outcome": {
@@ -421,7 +462,7 @@
           "type": "object"
         },
         "decision_options": {
-          "maxItems": 4,
+          "maxItems": 0,
           "type": "array"
         }
       },
@@ -446,6 +487,39 @@
       "type": "object"
     },
     {
+      "oneOf": [
+        {
+          "properties": {
+            "decision_options": {
+              "maxItems": 4,
+              "minItems": 2,
+              "type": "array"
+            },
+            "requested_input": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "decision_options"
+          ]
+        },
+        {
+          "properties": {
+            "decision_options": {
+              "maxItems": 0,
+              "type": "array"
+            },
+            "requested_input": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "decision_options",
+            "requested_input"
+          ]
+        }
+      ],
       "properties": {
         "outcome": {
           "const": "needs_human"
@@ -455,7 +529,6 @@
         },
         "decision_options": {
           "maxItems": 4,
-          "minItems": 2,
           "type": "array"
         },
         "needs_human_reason": {
@@ -550,16 +623,49 @@
       ],
       "default": null
     },
-    "authorization_plan": {
+    "requested_input": {
       "anyOf": [
         {
-          "$ref": "#/$defs/AuthorizationPlan"
+          "type": "string"
         },
         {
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "title": "Requested Input"
+    },
+    "stage_index": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Stage Index",
+      "type": "integer"
+    },
+    "predecessor_review_id": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Predecessor Review Id"
+    },
+    "continue_after_execution": {
+      "default": false,
+      "title": "Continue After Execution",
+      "type": "boolean"
+    },
+    "source_bindings": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ReviewedSourceBinding"
+      },
+      "title": "Source Bindings",
+      "type": "array"
     },
     "durable_memories": {
       "default": [],

@@ -783,15 +783,17 @@ def register_console_routes(
     @app.post("/api/console/history/{attempt_id}/human-decision")
     async def console_history_human_decision(attempt_id: int, request: Request):
         payload = await json_object(request)
-        instruction = str(payload.get("instruction") or "").strip()
-        feedback_scope = str(payload.get("feedback_scope") or "one_time").strip()
-        skill_update_requested = bool(payload.get("skill_update_requested", False))
+        kind = payload.get("kind")
+        allowed = (
+            {"kind", "candidate_id", "review_id", "candidate_digest", "option_key"}
+            if kind == "select" else
+            {"kind", "candidate_id", "review_id", "candidate_digest", "instruction"}
+            if kind == "supplement" else set()
+        )
+        if not allowed or not set(payload).issubset(allowed):
+            return JSONResponse({"ok": False, "code": "decision_invalid", "message": "人工决策请求字段无效", "details": {}}, status_code=400)
         from app.audit_web import handle_needs_human_decision_post
-        form = urlencode({
-            "instruction": instruction,
-            "feedback_scope": feedback_scope,
-            "skill_update_requested": "1" if skill_update_requested else "",
-        }).encode("utf-8")
+        form = urlencode({key: str(value) for key, value in payload.items()}).encode("utf-8")
         status, _headers, body = handle_needs_human_decision_post(
             store_factory(), attempt_id, form, return_to="/history"
         )

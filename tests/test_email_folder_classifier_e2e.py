@@ -13,14 +13,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.agent_context import AgentTaskContext
-from app.agent_contracts import (
-    AuditAgentResult,
-    ConsumerAgentResult,
-    ProposedAction,
-)
-from app.agent_orchestrator import AgentOrchestrator
-from app.agent_turn_runner import AgentTurnRunResult
 from app.email_classifier_agent import AgentClassificationResult
 from app.email_classifier_contracts import (
     EmailAction,
@@ -72,15 +64,22 @@ from app.email_task_producer import EmailActionTaskProducer
 from app.email_training_snapshot import build_folder_training_snapshot
 from app.email_training_observer import ProviderTrainingObservationJob
 from app.email_category_config import VerifiedEmailFolderBinding
-from app.email_unsubscribe import extract_unsubscribe_entries
+from app.email_unsubscribe import (
+    RedactedUnsubscribeStep,
+    UnsubscribeExecutionResult,
+    UnsubscribeOutcome,
+    UnsubscribeTerminalReceipt,
+    disposition_for_unsubscribe_outcome,
+    extract_unsubscribe_entries,
+)
 from app.email_worker import (
-    _finalize_email_task,
+    _finalize_direct_email_unsubscribe_task,
     _run_next_direct_action,
     execute_historical_model_actions,
     persist_model_primary_classification,
     run_email_agent_task_loop,
 )
-from app.store import AgentRole, AutoReplyStore
+from app.store import AutoReplyStore
 from app.web_api.email import register_email_routes
 
 
@@ -239,127 +238,6 @@ def _action(
         attempt_number=1,
         claim_started_at="2026-09-08T08:00:00+00:00",
     )
-
-
-class _E2EConsumerRunner:
-    def __init__(self, store, accepted_action):
-        self.store = store
-        self.accepted_action = accepted_action
-        self.owner = "email-e2e-consumer"
-
-    def run(
-        self,
-        task,
-        _context,
-        *,
-        proposal_revision,
-        parent_agent_run_id,
-        feedback=None,
-    ):
-        assert feedback is None
-        claim = self.store.claim_agent_run(
-            task.id,
-            task.execution_generation,
-            role=AgentRole.CONSUMER,
-            proposal_revision=proposal_revision,
-            turn_attempt=self.store.next_agent_run_turn_attempt(
-                task.id,
-                task.execution_generation,
-                role=AgentRole.CONSUMER,
-                proposal_revision=proposal_revision,
-            ),
-            parent_agent_run_id=parent_agent_run_id,
-            operation_id="",
-            owner=self.owner,
-        )
-        result = ConsumerAgentResult.model_validate(
-            {
-                "outcome": "proposal",
-                "risk": "low",
-                "confidence": 1.0,
-                "rule_coverage": 1.0,
-                "information_completeness": 1.0,
-                "summary": "Propose the authorized unsubscribe operation.",
-                "proposal": {
-                    "objective": "Unsubscribe the classified junk source.",
-                    "actions": [self.accepted_action],
-                    "sourced_facts": [],
-                    "authored_judgment": (
-                        "The immutable email ActionPlan authorizes unsubscribe."
-                    ),
-                },
-                "decision_options": [],
-                "error": {"code": "", "retryable": False},
-            }
-        )
-        completed = self.store.complete_agent_run(
-            claim.run.id, result.model_dump(mode="json"), owner=self.owner
-        )
-        return AgentTurnRunResult(completed.id, result, 0, 1)
-
-
-class _E2EAuditRunner:
-    def __init__(self, store, execute):
-        self.store = store
-        self.execute = execute
-        self.owner = "email-e2e-audit"
-
-    def run(
-        self,
-        task,
-        context,
-        *,
-        turn_attempt,
-        parent_agent_run_id,
-        frozen_delivery_retry=False,
-    ):
-        assert frozen_delivery_retry is False
-        claim = self.store.claim_agent_run(
-            task.id,
-            task.execution_generation,
-            role=AgentRole.AUDIT,
-            proposal_revision=context.proposal_revision,
-            turn_attempt=turn_attempt,
-            parent_agent_run_id=parent_agent_run_id,
-            operation_id=context.operation_id,
-            owner=self.owner,
-        )
-        action = context.proposal.actions[0].model_dump(mode="json")
-        receipt = self.execute(claim.run.id, action)
-        assert receipt["status"] == "done", receipt
-        result = AuditAgentResult.model_validate(
-            {
-                "outcome": "executed",
-                "risk": "low",
-                "confidence": 1.0,
-                "rule_coverage": 1.0,
-                "information_completeness": 1.0,
-                "summary": "Audited unsubscribe completed.",
-                "proposal_revision": context.proposal_revision,
-                "feedback": None,
-                "external_result": {
-                    "operation_id": context.operation_id,
-                    "live_result_reference": {
-                        "receipt_id": receipt["receipt_id"],
-                        "status": receipt["status"],
-                    },
-                },
-                "decision_options": [],
-                "error": {"code": "", "retryable": False},
-            }
-        )
-        completed = self.store.complete_agent_run(
-            claim.run.id,
-            result.model_dump(mode="json"),
-            owner=self.owner,
-        )
-        return AgentTurnRunResult(completed.id, result, 0, 1)
-
-    def recover(self, *_args, **_kwargs):
-        raise AssertionError("unexpected audit recovery")
-
-    def execute_recovery(self, *_args, **_kwargs):
-        raise AssertionError("unexpected audit execution recovery")
 
 
 def _maturity(model_id: str) -> CandidateMaturityEvidence:
@@ -1026,32 +904,6 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
     [queued_task] = task_store.list_reply_tasks(channel="email")
     task = queued_task
     payload = json.loads(task.trigger_message_json)
-    [projected_entry] = payload["unsubscribe_entries"]
-    accepted_action = ProposedAction.model_validate(
-        {
-            "description": "Unsubscribe the classified junk source",
-            "action_identity": payload["action_identity"],
-            "capability": "email_browser",
-            "operation": "unsubscribe",
-            "target": {
-                "action_identity": payload["action_identity"],
-                "account_id": "account-1",
-                "stable_message_identity": provider_message["stableMessageIdentity"],
-                "thread_identity": "junk-e2e",
-                "entry_reference": projected_entry["reference"],
-            },
-            "payload": {
-                "operations": [
-                    {
-                        "operation_reference": "operation:integration-e2e",
-                        "kind": "open_entry",
-                        "target_reference": projected_entry["reference"],
-                    }
-                ]
-            },
-        }
-    ).model_dump(mode="json")
-
     class Source:
         def fetch_uid_batch(self, *_args, **_kwargs):
             return type(
@@ -1061,7 +913,7 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
         def logout(self):
             return None
 
-    import app.email_unsubscribe as unsubscribe_module
+    import app.email_unsubscribe_direct as unsubscribe_module
     import app.email_worker as worker_module
 
     monkeypatch.setattr(
@@ -1071,72 +923,47 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
     )
     browser_calls = []
 
-    def fake_browser(effect, selected_entries, **_kwargs):
-        browser_calls.append((effect, selected_entries))
-        return {
-            "status": "done",
-            "outcome": "done",
-            "receipt_id": "provider-receipt:integration-e2e",
-            "evidence": "terminal-page",
-            "result_text": "Unsubscribed",
-            "observation_digest": sha256(b"Unsubscribed").hexdigest(),
-            "started_at": "2026-09-08T08:00:01+00:00",
-            "completed_at": "2026-09-08T08:00:02+00:00",
-            "summary": "Unsubscribed",
-            "final_step": {
-                "sequence": 1,
-                "operation": "open_entry",
-                "state": "done",
-                "reference": "provider-receipt:integration-e2e",
-            },
-        }
+    def fake_browser(effect, selected_entry, **_kwargs):
+        browser_calls.append((effect, selected_entry))
+        assert selected_entry.reference == effect.entry_reference
+        return UnsubscribeExecutionResult(
+            outcome=UnsubscribeOutcome.DONE,
+            disposition=disposition_for_unsubscribe_outcome(UnsubscribeOutcome.DONE),
+            journal=(RedactedUnsubscribeStep(
+                operation="open_entry", state="done",
+                reference="provider-receipt:integration-e2e",
+            ),),
+            receipt=UnsubscribeTerminalReceipt(
+                receipt_id="provider-receipt:integration-e2e",
+                evidence="terminal-page", entry_reference=effect.entry_reference,
+                effect_digest=effect.effect_digest,
+            ),
+            result_text="Unsubscribed",
+            observation_digest=sha256(b"Unsubscribed").hexdigest(),
+            result_text_digest=sha256(b"Unsubscribed").hexdigest(),
+            started_at="2026-09-08T08:00:01+00:00",
+            completed_at="2026-09-08T08:00:02+00:00",
+        )
 
     monkeypatch.setattr(
         unsubscribe_module,
-        "execute_unsubscribe_in_dedicated_profile",
+        "run_unsubscribe_in_dedicated_profile",
         fake_browser,
     )
-    operation = worker_module.build_audited_email_unsubscribe_operation(
+    operation = worker_module.build_direct_email_unsubscribe_operation(
         type("Settings", (), {"db_path": store.path, "workspace": tmp_path})()
     )
 
-    def execute_unsubscribe(audit_run_id, action):
-        return operation.execute(
-            task.id,
-            task.execution_generation,
-            audit_agent_run_id=audit_run_id,
-            accepted_action=action,
-        )
-
-    orchestrator = AgentOrchestrator(
-        store=task_store,
-        consumer=_E2EConsumerRunner(task_store, accepted_action),
-        audit=_E2EAuditRunner(task_store, execute_unsubscribe),
-    )
-
-    def load_context(claimed):
-        claimed_payload = json.loads(claimed.trigger_message_json)
-        return AgentTaskContext(
-            task_id=claimed.id,
-            channel=claimed.channel,
-            conversation_id=claimed.conversation_id,
-            conversation_title=claimed.conversation_title,
-            single_chat=False,
-            trigger_message_id=claimed.trigger_message_id,
-            trigger_sender=claimed.trigger_sender,
-            trigger_text=claimed.trigger_text,
-            trigger_create_time=claimed.trigger_create_time,
-            messages=(),
-            materials=(),
-            prior_receipts=(),
-            trigger_raw_payload=claimed_payload,
-        )
+    def unexpected_agent_path(*_args, **_kwargs):
+        raise AssertionError("Direct unsubscribe must use its durable ActionPlan.")
 
     run_email_agent_task_loop(
         task_store,
-        orchestrator,
-        load_task_context=load_context,
-        finalize_task=lambda claimed, result: _finalize_email_task(
+        type("UnexpectedOrchestrator", (), {"process": staticmethod(unexpected_agent_path)})(),
+        load_task_context=unexpected_agent_path,
+        finalize_task=unexpected_agent_path,
+        direct_unsubscribe_runner=operation.execute,
+        finalize_direct_unsubscribe_task=lambda claimed, result: _finalize_direct_email_unsubscribe_task(
             task_store, claimed, result
         ),
         sleep=lambda _seconds: None,
@@ -1148,13 +975,14 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
     lineage = task_store.list_agent_runs_for_task_generation(
         task.id, task.execution_generation
     )
-    assert [run.role for run in lineage] == [AgentRole.CONSUMER, AgentRole.AUDIT]
-    assert lineage[1].parent_agent_run_id == lineage[0].id
+    assert lineage == []
     unsubscribe_receipt = store.get_email_unsubscribe_receipt(
         payload["action_identity"]
     )
     assert unsubscribe_receipt is not None
     assert unsubscribe_receipt["receipt_id"] == "provider-receipt:integration-e2e"
+    assert len(browser_calls) == 1
+    assert operation.execute(task.id)["receipt_id"] == unsubscribe_receipt["receipt_id"]
     assert len(browser_calls) == 1
     trashed = _run_next_direct_action(
         store,

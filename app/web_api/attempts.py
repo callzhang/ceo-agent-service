@@ -549,31 +549,84 @@ def _consumer_result_with_deciding_scores(
     return updated
 
 
-def _human_decision_payload(attempt: Any, terminal_run: Any) -> dict[str, Any] | None:
-    """Expose only the typed decision whose run owns the current Attempt."""
-    if (
-        str(getattr(attempt, "send_status", "") or "").strip() != "needs_human"
-        or terminal_run is None
-        or str(getattr(terminal_run, "status", "") or "").strip() != "completed"
-        or int(getattr(attempt, "agent_run_id", 0) or 0)
-        != int(getattr(terminal_run, "id", 0) or 0)
-    ):
+def _human_decision_payload(reviewed: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Show persisted reviewed context, including historical answered questions."""
+    if reviewed is None or reviewed["decision"] != "approve":
         return None
     from app.decision_quality import parse_stored_needs_human_decision
 
-    decision = parse_stored_needs_human_decision(
-        getattr(terminal_run, "final_result_json", "")
-    )
+    decision = parse_stored_needs_human_decision(reviewed["candidate_json"])
     if decision is None:
         return None
     return {
         "reason": normalize_display_value(decision.needs_human_reason),
         "basis": json_safe(decision.decision_basis.model_dump(mode="json")),
-        "authorization_plan": (
-            json_safe(decision.authorization_plan.model_dump(mode="json"))
-            if decision.authorization_plan is not None
-            else None
-        ),
+        "requested_input": normalize_display_value(decision.requested_input) if decision.requested_input else "",
+        "candidate_id": reviewed["id"],
+        "candidate_digest": reviewed["candidate_digest"],
+        "review_id": reviewed["review_id"],
+        "selection": {"option_key": reviewed["option_key"], "status": reviewed["selection_status"]}
+        if reviewed["selection_id"] else None,
+        "authorization_plan": None,
+    }
+
+
+def _system_execution_payload(
+    store: Any, reviewed: dict[str, Any] | None, *, is_current: bool,
+) -> dict[str, Any] | None:
+    """Project the bound plan and canonical verified receipts independently."""
+    if reviewed is None:
+        return None
+    candidate = _stored_json(reviewed["candidate_json"], {})
+    branch = _stored_json(reviewed.get("branch_json"), {})
+    if candidate.get("outcome") == "needs_human" and not reviewed.get("selection_id"):
+        return None
+    if not branch and reviewed.get("selection_id"):
+        # Historical review projections retain the selected key, while the
+        # immutable candidate holds that key's exact reviewed action plan.
+        branch = next((option for option in candidate.get("decision_options", [])
+                       if option.get("key") == reviewed.get("option_key")), {})
+    plan = branch.get("plan") if branch else candidate.get("proposal")
+    actions = plan.get("actions", []) if isinstance(plan, dict) else []
+    execution = store.get_candidate_execution(reviewed["id"])
+    if candidate.get("outcome") == "no_action" and execution is None:
+        return None
+    attempts = {
+        item["action_index"]: item
+        for item in store.list_candidate_action_attempts(execution["id"])
+    } if execution else {}
+    result = _stored_json(execution["result_json"], {}) if execution else {}
+    projected_actions = []
+    for index, action in enumerate(actions):
+        attempt = attempts.get(index)
+        receipt = (
+            store.get_candidate_external_action(attempt["external_action_key"])
+            if attempt and attempt["status"] == "verified" else None
+        )
+        projected_actions.append({
+            "action_index": index,
+            "action_identity": action["action_identity"],
+            "description": normalize_display_value(action.get("description")),
+            "operation": action["operation"],
+            "status": (
+                "uncertain" if attempt and attempt["status"] == "verified" and receipt is None
+                else attempt["status"] if attempt else "pending"
+            ),
+            "result": json_safe(_stored_json(attempt["result_json"], {})) if attempt else {},
+            "receipt": {
+                "external_action_key": receipt["external_action_key"],
+                "provider_result": json_safe(_stored_json(receipt["provider_result_json"], {})),
+            } if receipt else None,
+        })
+    return {
+        "candidate_id": reviewed["id"], "review_id": reviewed["review_id"],
+        "stage_index": candidate.get("stage_index", 0), "is_current": is_current,
+        "execution_id": execution["id"] if execution else None,
+        "status": execution["status"] if execution else "pending",
+        "summary": normalize_display_value(result.get("summary")) if execution else "",
+        "error": json_safe(result.get("error", {})),
+        "verified_actions": sum(action["receipt"] is not None for action in projected_actions),
+        "total_actions": len(actions), "actions": projected_actions,
     }
 
 
@@ -611,6 +664,17 @@ def build_attempt_detail(
     reply_task = store.get_reply_task_for_message(
         attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel
     )
+    current_reviewed = (
+        store.current_reviewed_candidate(reply_task.id, reply_task.execution_generation)
+        if reply_task is not None else None
+    )
+    history_reviewed = (
+        store.reviewed_candidate_for_audit_run(attempt.agent_run_id)
+        if attempt.agent_run_id else None
+    )
+    if current_reviewed is not None and current_reviewed["audit_run_id"] != attempt.agent_run_id:
+        current_reviewed = None
+    decision_reviewed = current_reviewed or history_reviewed
     # Some historical/manual rerun Attempts have no agent_run_id.  In that
     # case the Attempt key still identifies the owning task, so load its runs
     # directly instead of incorrectly rendering "no Consumer run".
@@ -646,22 +710,24 @@ def build_attempt_detail(
     # cannot mask a later done/skipped result.
     from app.attempt_projection import project_attempt_status
 
-    attempt = attempt.model_copy(
-        update={
-            "send_status": project_attempt_status(
-                attempt, reply_task, current_agent_runs
-            )
-        }
-    )
     wechat_delivery = (
         store.get_wechat_delivery_for_task(reply_task.id)
         if reply_task is not None and str(attempt.channel or "") == "wechat"
         else None
     )
+    projected_status = project_attempt_status(
+        attempt, reply_task, current_agent_runs, delivery=wechat_delivery
+    )
+    if current_reviewed is not None and reply_task is not None:
+        if reply_task.status == "needs_human" and current_reviewed["selection_id"] is None:
+            projected_status = "needs_human"
+        elif current_reviewed["selection_id"] is not None and reply_task.status in ("pending", "processing"):
+            projected_status = reply_task.status
+    attempt = attempt.model_copy(update={"send_status": projected_status})
     attention = reply_history_attention(
         attempt,
         task=reply_task,
-        decision_options=_needs_human_decision_options(attempt, agent_runs),
+        decision_options=_needs_human_decision_options(store, attempt),
     )
     runtime_attempts = _runtime_payload(agent_runs, store)
     agent_sessions = _agent_sessions(attempt, agent_runs)
@@ -672,7 +738,7 @@ def build_attempt_detail(
     # the provider. Prefer it to the task projection (which can simply be
     # "done") so the person viewing the Attempt is not left guessing whether
     # anything was actually delivered.
-    if sent_reply is not None and str(attempt.channel or "") == "dingtalk":
+    if sent_reply is not None and str(attempt.channel or "") == "dingtalk" and decision_reviewed is None:
         recipient = str(attempt.conversation_title or "").strip() or "对方"
         status_message = f"已向 {recipient} 发送回复，并已记录投递回执。"
         requires_decision = False
@@ -686,17 +752,50 @@ def build_attempt_detail(
         elif delivery_status == "skipped" and delivery_started:
             status_message = "这条微信回复此前未能打开会话，尚未发送；你可以重试。"
     decision_options = []
+    decision_actionable = (
+        attempt.send_status == "needs_human"
+        and reply_task is not None and reply_task.status == "needs_human"
+        and current_reviewed is not None and current_reviewed["selection_id"] is None
+        and json.loads(current_reviewed["candidate_json"]).get("outcome") == "needs_human"
+    )
     if attempt.send_status == "needs_human":
-        for option in _needs_human_decision_options(attempt, agent_runs):
+        requires_decision = bool(decision_actionable)
+    if decision_actionable:
+        from app.decision_quality import parse_stored_needs_human_decision
+
+        decision = parse_stored_needs_human_decision(current_reviewed["candidate_json"])
+        for option in decision.decision_options if decision is not None else ():
             decision_options.append(
                 {
+                    "key": option.key,
                     "label": normalize_display_value(getattr(option, "label", "")),
                     "instruction": normalize_display_value(getattr(option, "instruction", "")),
                     "consequence": normalize_display_value(getattr(option, "consequence", "")),
+                    "plan": json_safe(option.plan.model_dump(mode="json")) if option.plan else None,
+                    "terminal_outcome": option.terminal_outcome,
+                    "reason": option.reason,
                     "url": f"/api/console/history/{int(attempt.id)}/human-decision",
                 }
             )
-    human_decision = _human_decision_payload(attempt, terminal_run)
+    human_decision = _human_decision_payload(decision_reviewed)
+    system_execution = _system_execution_payload(
+        store, decision_reviewed, is_current=current_reviewed is not None,
+    )
+    if current_reviewed is not None:
+        # A previous stage's send is evidence for that stage, never completion
+        # of the current reviewed question or selected plan.
+        status_message, _ = _status_message(attempt, attention)
+        if system_execution is not None:
+            execution_messages = {
+                "pending": "已审核方案等待系统执行；尚未核验业务完成。",
+                "running": "系统正在执行已审核方案，完成状态以核验回执为准。",
+                "retry": "已审核方案没有全部核验完成，系统将按原方案恢复。",
+                "uncertain": "已审核方案没有全部核验完成，外部结果仍待核验。",
+                "failed": "已审核方案执行失败；已完成动作的回执仍保留。",
+                "done": "已审核方案的全部动作已核验完成。",
+                "skipped": "已按审核通过的停止方案结束，原因已记录。",
+            }
+            status_message = execution_messages.get(system_execution["status"], status_message)
     try:
         audit_explanation = _attempt_reason_text(attempt)
     except RuntimeError:
@@ -805,6 +904,7 @@ def build_attempt_detail(
         },
         "decision_options": decision_options,
         "human_decision": human_decision,
+        "system_execution": system_execution,
         "audit_summary": normalize_display_value(attempt.audit_summary),
         "draft_reply": normalize_display_value(attempt.draft_reply_text),
         "failure_reason": normalize_display_value(_agent_failure_reason_text(attempt, agent_runs)),

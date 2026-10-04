@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.agent_context import AgentTaskContext
-from app.agent_contracts import DecisionOption, ProposedAction
+from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -7152,7 +7152,7 @@ def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     ]
 
 
-def test_agent_orchestrator_is_wired_with_email_continuation_driver(
+def test_email_orchestrator_uses_system_executor_without_audit_unsubscribe_driver(
     tmp_path, monkeypatch
 ):
     module = _module()
@@ -7197,13 +7197,9 @@ def test_agent_orchestrator_is_wired_with_email_continuation_driver(
         AutoReplyStore(settings.db_path),
     )
 
-    from app.email_unsubscribe_continuation import (
-        EmailUnsubscribeContinuationDriver,
-    )
-
-    assert result.domain_continuation is captured["domain_continuation"]
-    assert isinstance(result.domain_continuation, EmailUnsubscribeContinuationDriver)
-    assert result.domain_continuation.email_store.path == settings.db_path
+    from app.system_executor import SystemExecutor
+    assert isinstance(result.system_executor, SystemExecutor)
+    assert 'domain_continuation' not in captured
 
 
 def test_email_orchestrator_scopes_runtime_skill_snapshot_to_consumer(
@@ -10144,70 +10140,12 @@ def test_a_durable_step_without_a_receipt_stays_an_ordinary_retry():
     assert json.loads(captured["human_decision_options_json"]) == []
 
 
-def test_structured_authorization_result_keeps_needs_human_options():
+def test_runtime_authorization_cannot_create_a_consumer_business_question():
     module = _module()
-    task = SimpleNamespace(
-        id=7,
-        execution_generation="generation-7",
-        conversation_id="conversation-7",
-        conversation_title="Email unsubscribe",
-        trigger_message_id="trigger-7",
-        trigger_sender="sender@example.com",
-        trigger_text="unsubscribe",
-    )
-    run = SimpleNamespace(
-        id=70,
-        codex_session_id="",
-        transcript_start_line=0,
-        transcript_end_line=0,
-        tool_events=[],
-    )
-    captured = {}
-
-    class Store:
-        def get_agent_run(self, run_id):
-            return run
-
-        def finalize_orchestrated_reply_task(self, **kwargs):
-            captured.update(kwargs)
-
-    options = (
-        DecisionOption(
-            key="authorize",
-            label="授权",
-            instruction="允许继续处理。",
-            consequence="服务继续执行当前操作。",
-            applies_to="task_class",
-        ),
-        DecisionOption(
-            key="stop",
-            label="停止",
-            instruction="停止当前操作。",
-            consequence="不再继续处理。",
-            applies_to="task_class",
-        ),
-    )
-    result = SimpleNamespace(
-        status="needs_human",
-        final_run_id=70,
-        summary="authorization_required",
-        audit_result=SimpleNamespace(decision_options=options),
-        error=SimpleNamespace(code="authorization_required", authorization_required=True),
-    )
-
-    module._finalize_email_task(Store(), task, result)
-
-    assert captured["task_status"] == "done"
-    assert captured["send_status"] == "needs_human"
-    # _decision_options_json persists only the four fields a person reads;
-    # `applies_to` is a constant literal (always "task_class"), not data.
-    assert json.loads(captured["human_decision_options_json"]) == [
-        {
-            field: getattr(option, field)
-            for field in ("key", "label", "instruction", "consequence")
-        }
-        for option in options
-    ]
+    from tests.test_reviewed_orchestration import candidate
+    options = candidate(human=True).decision_options
+    assert json.loads(module._decision_options_json(SimpleNamespace(consumer_result=SimpleNamespace(decision_options=options)))) == [option.model_dump(mode='json') for option in options]
+    assert module._decision_options_json(SimpleNamespace(audit_result=SimpleNamespace(decision_options=options))) == '[]'
 
 
 def test_domain_authorization_rejection_remains_failed():
@@ -10338,130 +10276,29 @@ def _route_refusal_case(error: str = ""):
     return module, captured
 
 
-def test_route_refusing_the_call_is_retried_not_closed_as_a_decision():
-    """Nothing decided anything: the audited tool never ran.
-
-    The Audit model still has to report something, and what it reports reads
-    like a refusal of the unsubscribe. The same call goes through on a route
-    whose provider places it, so the task is retried rather than closed.
-    """
-    module, captured = _route_refusal_case()
-
-    assert captured["deferred"] == (
-        9,
-        f"{module.ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:1",
-    )
-    assert "task_status" not in captured
+def test_historical_route_refusal_stays_failed_without_retry_or_replay():
+    _, captured = _route_refusal_case()
+    assert captured['task_status'] == captured['send_status'] == 'failed'
+    assert captured['send_error'] == 'email_unsubscribe_risk_rejected'
+    assert 'deferred' not in captured
 
 
-def test_route_refusal_runs_service_owned_direct_unsubscribe_once():
-    module = _module()
-    task = SimpleNamespace(
-        id=9,
-        attempts=1,
-        error="",
-        execution_generation="generation-9",
-        conversation_id="conversation-9",
-        conversation_title="Email unsubscribe",
-        trigger_message_id="trigger-9",
-        trigger_sender="sender@example.com",
-        trigger_text="unsubscribe",
-    )
-    run = SimpleNamespace(
-        id=90,
-        codex_session_id="",
-        transcript_start_line=0,
-        transcript_end_line=0,
-        tool_events=[_route_refused_tool_event()],
-    )
-    captured = {}
-    direct_calls = []
-
-    class Store:
-        def get_agent_run(self, _run_id):
-            return run
-
-        def finalize_orchestrated_reply_task(self, **kwargs):
-            captured.update(kwargs)
-
-        def defer_reply_task(self, *_args, **_kwargs):
-            pytest.fail("a route-level refusal must not defer an authorized action")
-
-    module._finalize_email_task(
-        Store(),
-        task,
-        SimpleNamespace(
-            status="failed_terminal",
-            final_run_id=90,
-            summary="email_unsubscribe_risk_rejected",
-            error=SimpleNamespace(
-                code="email_unsubscribe_risk_rejected",
-                authorization_required=True,
-            ),
-        ),
-        direct_unsubscribe_runner=lambda task_id: (
-            direct_calls.append(task_id)
-            or {
-                "status": "done",
-                "outcome": "done",
-                "receipt_id": "unsubscribe-receipt:test",
-            }
-        ),
-    )
-
-    assert direct_calls == [9]
-    assert captured["task_status"] == "done"
-    assert captured["send_status"] == "completed"
-    assert captured["task_error"] == ""
+def test_reviewed_email_finalizer_has_no_alternate_unsubscribe_executor():
+    import inspect
+    assert 'direct_unsubscribe_runner' not in inspect.signature(_module()._finalize_email_task).parameters
 
 
-def test_every_route_refusing_the_call_is_a_plain_failure_not_a_question():
-    """An email needs_human card is a question nobody can answer.
-
-    The console refuses a decision on any non-DingTalk attempt
-    (app/audit_web.py:9683 `if source.channel != "dingtalk"`), so the three
-    options this used to emit returned an error on every click — four such
-    cards reached Derek. The premise was wrong too: the refusal tracked the
-    shape of the tool being offered, not the task, and stopped entirely once
-    the tool took one argument and declared itself idempotent.
-    """
-    module, captured = _route_refusal_case(
-        error=(
-            f"{_module().ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:"
-            f"{_module().ROUTE_REFUSED_UNSUBSCRIBE_RETRIES - 1}"
-        )
-    )
-
-    assert captured["task_status"] == "failed"
-    assert captured["send_status"] == "failed"
-    assert captured["send_error"] == module.ROUTE_REFUSED_UNSUBSCRIBE_ERROR
-    # No decision card, because the email channel has no way to service one.
-    assert json.loads(captured["human_decision_options_json"]) == []
+def test_repeated_historical_refusal_remains_original_failure_without_question():
+    _, captured = _route_refusal_case(error='email_unsubscribe_route_refused:4')
+    assert captured['task_status'] == captured['send_status'] == 'failed'
+    assert captured['send_error'] == 'email_unsubscribe_risk_rejected'
+    assert json.loads(captured['human_decision_options_json']) == []
 
 
-def test_repeated_route_refusals_actually_reach_a_person():
-    """The ladder has to advance, which a task.attempts counter cannot do.
-
-    A deferral returns the attempt budget on purpose: claim adds one and
-    defer_reply_task takes it away, so task.attempts is pinned across
-    deferrals. A ladder keyed on it never escalates, and the task loops
-    instead, which is how three route-refused tasks sat pending forever with
-    458 and 105 agent runs in a single generation.
-    """
-    module = _module()
-    error = ""
-    seen = []
-    for _ in range(module.ROUTE_REFUSED_UNSUBSCRIBE_RETRIES + 2):
-        _module_again, captured = _route_refusal_case(error=error)
-        if "deferred" in captured:
-            error = captured["deferred"][1]
-            seen.append(("deferred", error))
-            continue
-        seen.append(("finalized", captured.get("send_status")))
-        break
-
-    assert seen[-1] == ("finalized", "failed"), seen
-    assert len(seen) == module.ROUTE_REFUSED_UNSUBSCRIBE_RETRIES, seen
+def test_refusal_finalizes_once_without_a_new_retry_ladder():
+    _, captured = _route_refusal_case()
+    assert captured['task_status'] == 'failed'
+    assert 'deferred' not in captured
 
 
 def test_a_call_the_route_did_place_keeps_the_audited_outcome():
@@ -10568,15 +10405,10 @@ def test_audited_unsubscribe_receipt_does_not_override_a_failed_audit_run():
     assert captured["send_status"] == "failed"
     assert captured["send_error"] == "login_required"
     assert captured["task_error"] == "login_required"
-    assert captured["retry"] == (
-        383232,
-        11859,
-        "receipt_reconciliation_requires_successful_run",
-        "email_unsubscribe_receipt_reconciliation",
-    )
+    assert "retry" not in captured
 
 
-def test_audited_unsubscribe_retryable_login_receipt_keeps_retry_pending():
+def test_historical_login_receipt_does_not_reopen_failed_audit():
     module = _module()
     # Live task 383234, Audit run 16936: the same skip receipt after the model
     # called the terminal tool a second time. The domain rejection claimed an
@@ -10605,12 +10437,7 @@ def test_audited_unsubscribe_retryable_login_receipt_keeps_retry_pending():
     # A receipt gets a new generation instead of another turn in the failed
     # generation, so the Audit result can become an explicit success.
     assert "deferred" not in captured
-    assert captured["retry"] == (
-        383234,
-        16936,
-        "receipt_reconciliation_requires_successful_run",
-        "email_unsubscribe_receipt_reconciliation",
-    )
+    assert "retry" not in captured
 
 
 @pytest.mark.parametrize(
@@ -10635,33 +10462,14 @@ def test_audited_unsubscribe_no_work_receipt_keeps_failed_audit_visible(outcome)
     assert captured["send_status"] == "failed"
     assert captured["send_error"] == "unsubscribe_entry_missing"
     assert captured["task_error"] == "unsubscribe_entry_missing"
-    assert captured["retry"][0:2] == (383232, 90)
+    assert "retry" not in captured
 
 
-def test_audited_unsubscribe_skip_never_overrides_a_management_decision():
+def test_unbound_historical_human_result_cannot_publish_a_question():
     module = _module()
-    # Audit reported a real needs_human decision (a sensitive target, a budget
-    # or approval boundary). The receipt says the browser step itself left
-    # nothing to do, but the decision the person has to make is the result.
-    result = SimpleNamespace(
-        status="needs_human",
-        final_run_id=92,
-        summary="sender is a sensitive target",
-        error=SimpleNamespace(
-            code="email_unsubscribe_target_sensitive",
-            authorization_required=False,
-        ),
-    )
-
-    captured = _finalize_audited_unsubscribe(
-        module,
-        result,
-        [_audited_unsubscribe_tool_event("already_unsubscribed")],
-    )
-
-    assert captured["task_status"] == "done"
-    assert captured["send_status"] == "needs_human"
-    assert captured["send_error"] == "email_unsubscribe_target_sensitive"
+    result = SimpleNamespace(status='needs_human', final_run_id=92, summary='Unreviewed historical question', candidate_id=None, review_id=None, error=SimpleNamespace(code='', authorization_required=False))
+    with pytest.raises((AttributeError, ValueError)):
+        _finalize_audited_unsubscribe(module, result, [_audited_unsubscribe_tool_event('already_unsubscribed')])
 
 
 def test_audited_unsubscribe_receipt_keeps_bare_authorization_failure_failed():
@@ -10685,7 +10493,7 @@ def test_audited_unsubscribe_receipt_keeps_bare_authorization_failure_failed():
     assert captured["task_status"] == "failed"
     assert captured["send_status"] == "failed"
     assert captured["send_error"] == "authorization_required"
-    assert captured["retry"][0:2] == (383232, 93)
+    assert "retry" not in captured
 
 
 def test_audited_unsubscribe_browser_failure_remains_failed():
@@ -11089,7 +10897,7 @@ def _browser_failure_result(run, code: str):
     )
 
 
-def test_a_page_timeout_is_retried_in_a_fresh_generation():
+def test_historical_audit_browser_timeout_does_not_switch_to_direct_execution():
     """Spending a generation's turn budget is not the page's verdict.
 
     The orchestrator flattens retryable to False whenever a role exhausts its
@@ -11114,8 +10922,9 @@ def test_a_page_timeout_is_retried_in_a_fresh_generation():
         _browser_failure_result(run, "email_unsubscribe_browser_timeout"),
     )
 
-    assert captured["deferred"] == 91
-    assert captured["defer_error"] == "email_unsubscribe_browser_timeout:1"
+    assert "deferred" not in captured
+    assert captured["task_status"] == "failed"
+    assert captured["send_error"] == "email_unsubscribe_browser_timeout"
 
 
 def test_the_page_timeout_ladder_is_bounded():

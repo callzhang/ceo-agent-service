@@ -2,15 +2,22 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tomllib
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX, _config_string
+from app.codex_runner import (
+    CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+    _config_string,
+    resolved_codex_home,
+)
 
 _TRANSPORT_OPTION = re.compile(
     r"^mcp_servers\.([A-Za-z0-9_-]+)\.(?:url|command)="
 )
+_SERVER_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 _TOOL_ITEM_TYPES = frozenset({
     "command_execution",
     "dynamic_tool_call",
@@ -27,6 +34,58 @@ WECHAT_MEMORY_READ_TOOLS = (
     "timeline_get",
     "user_get",
 )
+
+AGENT_CLI_READ_TOOLS = (
+    "read_skill",
+    "read_text_file",
+    "read_spreadsheet",
+    "read_dingtalk_document",
+    "read_dingtalk_document_full",
+    "read_dingtalk_document_info",
+    "read_dingtalk_document_permissions",
+    "read_dingtalk_drive_info",
+    "list_dingtalk_sheets",
+    "read_dingtalk_sheet_info",
+    "read_dingtalk_sheet_range",
+    "read_dingtalk_oa",
+    "list_dingtalk_pending_oa",
+    "read_dingtalk_oa_records",
+    "read_dingtalk_oa_tasks",
+    "read_dingtalk_oa_revert_activities",
+    "read_dingtalk_calendar_event",
+    "list_dingtalk_calendar_events",
+    "search_dingtalk_contacts",
+    "search_dingtalk_documents",
+    "read_dingtalk_messages",
+    "search_dingtalk_messages",
+    "read_dingtalk_thread_replies",
+    "search_dingtalk_conversations",
+    "list_dingtalk_minutes",
+    "read_dingtalk_minutes",
+    "recent_dingtalk_conversations",
+    "read_dingtalk_messages_in_window",
+    "daily_report_facts",
+    "weekly_report_materials",
+    "read_weekly_report_archive",
+)
+AGENT_CLI_CONSUMER_TOOLS = AGENT_CLI_READ_TOOLS + (
+    "consumer_document_write",
+    "validate_weekly_report",
+    "render_weekly_report",
+)
+
+# Exact tools from the service's reviewed MCP effect registry. New provider
+# operations stay unavailable until their effect is reviewed and named here.
+ROLE_MCP_READ_TOOLS = {
+    "memory_connector": (
+        "user_get", "memory_recall", "memory_get", "timeline_get",
+    ),
+    "exa": ("web_search_exa", "web_fetch_exa"),
+    "xiaoqing_interview": (
+        "search_candidates", "get_dashboard_stats", "get_interview_context",
+        "download_attachment", "list_candidate_interviews",
+    ),
+}
 
 @dataclass(frozen=True)
 class ControlledCliConfig:
@@ -105,30 +164,77 @@ def configured_transport_server_names(command: list[str]) -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
+def inherited_native_server_names() -> tuple[str, ...]:
+    """Inventory only server names from this CLI home's native config."""
+    config_path = resolved_codex_home(os.environ) / "config.toml"
+    if not config_path.is_file():
+        return ()
+    try:
+        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("codex_native_mcp_inventory_unavailable") from exc
+    servers = config.get("mcp_servers", {})
+    if not isinstance(servers, dict) or any(
+        not isinstance(name, str) or _SERVER_NAME.fullmatch(name) is None
+        for name in servers
+    ):
+        raise RuntimeError("codex_native_mcp_inventory_invalid")
+    return tuple(sorted(servers))
+
+
 def make_role_agent_command(
     command: list[str],
     *,
+    role: str,
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
-    """Use the native Codex capability surface and its automatic reviewer.
-
-    Consumer and Audit differ in their typed business contracts, not in their
-    shell or MCP permissions.  The service therefore does not construct a
-    command allowlist or a role-specific read-only sandbox here; the service
-    MCP manifest is already part of every routed Codex command.
-    """
+    """Use native tool selection for a role-bound service turn."""
+    if role not in {"consumer", "audit"}:
+        raise ValueError("unsupported agent role")
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
         command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
     _remove_config_options(
         command,
-        prefixes=("approval_policy=", "approvals_reviewer=", "tools.enabled_tools="),
+        prefixes=(
+            "approval_policy=", "approvals_reviewer=", "tools.enabled_tools=",
+            "features.shell_tool=", "features.unified_exec=", "sandbox_mode=",
+            "features.apps=", "features.plugins=", "features.computer_use=",
+        ),
     )
     options = [
         "-c",
-        'approval_policy="on-failure"',
+        "features.shell_tool=false",
         "-c",
-        'approvals_reviewer="auto_review"',
+        "features.unified_exec=false",
+        "-c",
+        "features.apps=false",
+        "-c",
+        "features.plugins=false",
+        "-c",
+        "features.computer_use=false",
+        "-c",
+        'sandbox_mode="read-only"',
+        "-c",
+        "mcp_servers.agent_cli.enabled_tools="
+        + json.dumps(
+            list(AGENT_CLI_CONSUMER_TOOLS if role == "consumer" else AGENT_CLI_READ_TOOLS)
+        ),
+        "-c",
+        'mcp_servers.agent_cli.default_tools_approval_mode="approve"',
+        "-c",
+        'approval_policy="never"',
     ]
+    configured_names = set(configured_transport_server_names(command))
+    for name in sorted(configured_names):
+        if name != "agent_cli":
+            options.extend([
+                "-c", f"mcp_servers.{name}.enabled_tools="
+                + json.dumps(list(ROLE_MCP_READ_TOOLS.get(name, ()))),
+                "-c", f'mcp_servers.{name}.default_tools_approval_mode="approve"',
+            ])
+    for name in sorted((set(inherited_native_server_names()) | configured_names)
+                       - ({"agent_cli"} | (configured_names & ROLE_MCP_READ_TOOLS.keys()))):
+        options.extend(("-c", f"mcp_servers.{name}.enabled=false"))
     if controlled_cli is not None:
         options.extend(
             [
@@ -158,8 +264,10 @@ def make_role_agent_command(
 
 def make_consumer_agent_command(
     command: list[str],
+    *,
+    controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
-    make_role_agent_command(command)
+    make_role_agent_command(command, role="consumer", controlled_cli=controlled_cli)
 
 
 def make_audit_agent_command(
@@ -169,6 +277,7 @@ def make_audit_agent_command(
 ) -> None:
     make_role_agent_command(
         command,
+        role="audit",
         controlled_cli=controlled_cli,
     )
 

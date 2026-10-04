@@ -1,0 +1,12 @@
+{
+  "manifest_version": "consumer-audit-business.v1",
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "high",
+  "mode": "native_auth_probe",
+  "ok": false,
+  "exit_code": 1,
+  "provider_status": 400,
+  "provider_error_type": "invalid_request_error",
+  "message": "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.",
+  "source": "/tmp/ceo-native-business-probe.json"
+}

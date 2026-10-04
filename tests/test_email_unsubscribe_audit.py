@@ -91,12 +91,12 @@ SECONDARY_ENTRY = extract_unsubscribe_entries(
 )[0]
 
 
-def test_legacy_unsubscribe_write_tool_is_not_registered() -> None:
+def test_unsubscribe_write_tools_are_not_agent_registered() -> None:
     tool_names = {tool.name for tool in asyncio.run(agent_cli.server.list_tools())}
 
     assert "execute_email_unsubscribe" not in tool_names
-    assert "execute_audited_email_unsubscribe" in tool_names
-    assert "unsubscribe_email" in tool_names
+    assert "execute_audited_email_unsubscribe" not in tool_names
+    assert "unsubscribe_email" not in tool_names
 
 
 @dataclass(frozen=True)

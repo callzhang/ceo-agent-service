@@ -31,7 +31,6 @@ from app.workbench.runtime import (
     _release_runtime_owner,
     _runtime_owner,
 )
-from app.wechat.codex_safety import make_role_agent_command
 
 
 _MAX_PREAMBLE_BYTES = 8 * 1024
@@ -722,7 +721,6 @@ class CodexRuntime:
         if model.strip():
             overlay[0:0] = ["-m", model.strip()]
         command[insert_at:insert_at] = overlay
-        make_role_agent_command(command)
         return command
 
     def start(

@@ -1,97 +1,92 @@
+"""Technical authorization failures never become current-instance business choices."""
 import pytest
 from pydantic import ValidationError
 
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 
 
-def _payload(model, *, confidence: float, error_code: str):
-    action = {
-        "description": "Return the current OA task to its supervisor.",
-        "action_identity": "return-current-oa-task",
-        "capability": "dingtalk-oa",
-        "operation": "return_task",
-        "target": {"oa_process_instance_id": "process-1", "oa_task_id": "task-1"},
-        "payload": {},
-        "effect": "external",
-    }
-    result = {
+def _business_choice():
+    fact = {"assertion": "The current OA task is open.", "references": ["task:1"]}
+    return {
         "outcome": "needs_human",
-        "summary": "A concrete authorization decision is required.",
+        "summary": "Derek must choose whether to return this OA task.",
+        "proposal": None,
         "decision_options": [
             {
-                "key": "one_time",
-                "label": "Allow this instance",
+                "key": "return", "label": "Return this task",
                 "instruction": "Return this one OA task.",
-                "consequence": "This OA task is returned to its supervisor.",
-                "applies_to": "task_class",
+                "consequence": "This task returns to its supervisor.",
+                "plan": {
+                    "objective": "Return the current task to its supervisor.",
+                    "actions": [{
+                        "description": "Return the current OA task.",
+                        "action_identity": "return-current-oa-task",
+                        "capability": "dingtalk-oa", "operation": "revert_task",
+                        "target": {"process_instance_id": "process-1", "task_id": "task-1",
+                                   "target_activity_id": "supervisor"},
+                        "payload": {"revert_action": "REDIRECT_PROCESS", "remark": "Review again."},
+                    }],
+                    "sourced_facts": [fact], "authored_judgment": "The current task can be returned.",
+                },
             },
             {
-                "key": "skill_rule",
-                "label": "Define a reusable rule",
-                "instruction": "Add an explicit matching rule to the approval Skill.",
-                "consequence": "Future matching approvals follow that rule.",
-                "applies_to": "task_class",
+                "key": "stop", "label": "Leave this task unchanged",
+                "instruction": "Stop this instance.", "consequence": "No external action occurs.",
+                "terminal_outcome": "skipped", "reason": "Derek chose to leave the task unchanged.",
             },
         ],
-        "risk": "high",
-        "confidence": confidence,
-        "rule_coverage": 1.0,
+        "risk": "high", "confidence": 0.8, "rule_coverage": 1.0,
         "information_completeness": 1.0,
-        "error": {
-            "code": error_code,
-            "retryable": False,
-            "authorization_required": True,
-        },
-        "needs_human_reason": "The exact external action requires an explicit boundary.",
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "needs_human_reason": "Only Derek can choose the treatment of this instance.",
         "decision_basis": {
-            "verified_facts": [
-                {"assertion": "The current task is open.", "references": ["task:1"]}
-            ],
-            "rule_evidence": [
-                {"assertion": "A matching authorization rule applies.", "references": ["skill:approval"]}
-            ],
-            "quality_explanation": "The facts and current rule were checked.",
-            "no_external_action_evidence": [
-                {"assertion": "No provider action has occurred.", "references": ["attempt:1"]}
-            ],
-            "conclusion": "Only the bounded action is awaiting a decision.",
-        },
-        "authorization_plan": {
-            "summary": action["description"],
-            "primary_action": action,
-            "follow_up_actions": [],
-            "side_effects": ["The task is returned to its supervisor."],
-            "will_not_do": ["The OA will not be approved or rejected."],
-            "readback": ["Read the OA history after the action."],
+            "verified_facts": [fact], "rule_evidence": [fact],
+            "quality_explanation": "The facts are complete; the business preference is missing.",
+            "no_external_action_evidence": [fact], "conclusion": "Ask Derek about this task.",
         },
     }
-    if model is ConsumerAgentResult:
-        result["proposal"] = None
-    else:
-        result.update(proposal_revision=0, feedback=None, external_result=None)
-    return result
 
 
-@pytest.mark.parametrize("model", (ConsumerAgentResult, AuditAgentResult))
-def test_authorization_boundary_does_not_bypass_needs_human_quality_thresholds(model):
-    payload = _payload(model, confidence=0.8, error_code="authorization_required")
-
-    with pytest.raises(ValidationError, match="decision quality"):
-        model.model_validate(payload)
-
-
-@pytest.mark.parametrize("model", (ConsumerAgentResult, AuditAgentResult))
-def test_only_generic_authorization_error_can_use_authorization_needs_human(model):
-    payload = _payload(model, confidence=0.49, error_code="confirmation_required")
-
-    with pytest.raises(ValidationError, match="authorization_required"):
-        model.model_validate(payload)
+@pytest.mark.parametrize("error", [
+    {"code": "PAT_HIGH_RISK_NO_PERMISSION", "authorization_required": True},
+    {"code": "authorization_required", "authorization_required": True},
+    {"code": "confirmation_required", "authorization_required": False},
+    {"code": "", "authorization_required": True},
+    {"code": "", "retryable": True},
+])
+def test_technical_authorization_failure_cannot_forge_a_business_question(error):
+    payload = _business_choice()
+    payload["error"].update(error)
+    with pytest.raises(ValidationError, match="cannot carry a technical error"):
+        ConsumerAgentResult.model_validate(payload)
 
 
-@pytest.mark.parametrize("model", (ConsumerAgentResult, AuditAgentResult))
-def test_authorization_plan_requires_applicable_rule_coverage(model):
-    payload = _payload(model, confidence=0.3, error_code="authorization_required")
-    payload["rule_coverage"] = 0.3
+def test_audit_cannot_issue_a_human_question_even_with_complete_choices():
+    payload = _business_choice()
+    payload.pop("proposal")
+    payload.update(proposal_revision=0, candidate_digest="a" * 64, feedback=None)
+    with pytest.raises(ValidationError) as raised:
+        AuditAgentResult.model_validate(payload)
+    assert any(error["loc"] == ("outcome",) for error in raised.value.errors())
 
-    with pytest.raises(ValidationError, match="complete information and rule coverage"):
-        model.model_validate(payload)
+
+def test_business_choice_carries_complete_plans_without_authorization_plan():
+    result = ConsumerAgentResult.model_validate(_business_choice())
+    assert result.decision_options[0].plan.actions[0].target["task_id"] == "task-1"
+    assert result.decision_options[1].terminal_outcome == "skipped"
+    assert "authorization_plan" not in result.model_dump(mode="json")
+
+
+def test_current_instance_choice_rejects_the_obsolete_authorization_plan():
+    payload = _business_choice()
+    payload["authorization_plan"] = {"summary": "Allow this action"}
+    with pytest.raises(ValidationError, match="authorization_plan"):
+        ConsumerAgentResult.model_validate(payload)
+
+
+def test_business_question_requires_complete_branches_even_with_high_scores():
+    payload = _business_choice()
+    payload["confidence"] = 1.0
+    payload["decision_options"][0].pop("plan")
+    with pytest.raises(ValidationError, match="exactly one plan or terminal outcome"):
+        ConsumerAgentResult.model_validate(payload)
