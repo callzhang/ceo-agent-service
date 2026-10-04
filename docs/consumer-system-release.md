@@ -33,11 +33,16 @@ After restart, the deploy checks that the new active configuration and a live
 worker's load receipt contain the six target Skill digests. It also reads back
 the nine files and affected scheduled references. Only then is the release
 receipt marked verified. The exact previous texts remain in that release's
-receipt for rollback review. If restart,
+receipt for rollback review. A live receipt PID alone does not prove that it
+belongs to the replacement worker; the final production readback must compare
+the receipt PID with the launchd supervisor's actual child process. If restart,
 health, or readback fails, the updater stops the replacement service, restores
 the nine prior files and scheduled references, stages an immutable rollback
 configuration, then follows its existing Git rollback and old-service restart
 path. Immutable revision history and additive database schema remain recorded.
+If receipt finalization fails after a healthy, verified restart, deployment
+remains succeeded and the deploy command includes the recorded finalization
+error in its output.
 
 The deploy's progress store writes only the already-present `service_state`
 table before the quiet wait and backup. Constructing the full application

@@ -217,6 +217,43 @@ def test_receipt_finalize_failure_keeps_truthful_healthy_upgrade_status(tmp_path
     assert (local / "version").read_text() == "new\n"
 
 
+def test_deploy_output_shows_publication_finalization_error_without_changing_success(
+    monkeypatch, tmp_path: Path,
+):
+    import app.deploy as deploy_module
+
+    local, _operation = _repo(tmp_path)
+    db = tmp_path / "old-service.sqlite3"
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "create table service_state (key text primary key, value text not null, updated_at text)"
+        )
+
+    class FinalizeFails(_Receipt):
+        def finalize(self) -> None:
+            raise OSError("receipt write failed")
+
+    monkeypatch.setattr(deploy_module, "ensure_production_guards", lambda _root: None)
+    monkeypatch.setattr(deploy_module, "unlock_source_tree", lambda _root: None)
+    monkeypatch.setattr(deploy_module, "lock_source_tree", lambda _root: None)
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db: None)
+    monkeypatch.setattr(deploy_module, "_default_stop", lambda: None)
+    monkeypatch.setattr(deploy_module, "_default_start", lambda: None)
+    monkeypatch.setattr(deploy_module, "build_frontend", lambda _root, _changed: None)
+    monkeypatch.setattr(deploy_module, "verify_imports", lambda _root: None)
+    monkeypatch.setattr(deploy_module, "wait_for_health", lambda: True)
+    monkeypatch.setattr(
+        deploy_module, "publish_consumer_system_contracts",
+        lambda **_kwargs: FinalizeFails([]),
+    )
+
+    message = deploy_module.deploy(local, db, publish_contracts=True)
+
+    assert message.startswith("deployed ")
+    assert "publication receipt finalization failed: receipt write failed" in message
+    assert (local / "version").read_text() == "new\n"
+
+
 def test_formal_deploy_does_not_migrate_live_database_before_backup(
     monkeypatch, tmp_path: Path,
 ):

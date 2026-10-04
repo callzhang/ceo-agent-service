@@ -200,7 +200,8 @@ def deploy(
         raise SystemExit(f"nothing was deployed: {exc}") from None
     finally:
         lock_source_tree(root)
-    return f"deployed {current[:8]} -> {result.installed_commit[:8]}"
+    message = f"deployed {current[:8]} -> {result.installed_commit[:8]}"
+    return f"{message}; {result.error}" if result.error else message
 
 
 def restart_only(database_path: Path, *, restart=_default_restart) -> str:
