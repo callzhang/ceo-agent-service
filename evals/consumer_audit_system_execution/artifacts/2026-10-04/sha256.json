@@ -8,5 +8,7 @@
   "native-audit-role-probe/native_stdout.jsonl": "61e1421841bdc1d5105b32510ad1e085eed48c96ced099a89c25dd9eb6c09538",
   "native-audit-role-probe/prompt.txt": "ef46ea7c105b1b5e635d9b3356b2aac975d1f618dd8b2d0eaeeb791d40399867",
   "native-audit-role-probe/summary.json": "771372e6717fb52dad7435b7fcf85c94b58a64d178233fd1e20e70b48bd14bca",
-  "native-audit-role-probe/synthetic_agent_cli.py": "01b6043427923a3960f549a6f627a89fa164729f1a1d96cbb8a1ba3069ee1c7c"
+  "native-audit-role-probe/synthetic_agent_cli.py": "01b6043427923a3960f549a6f627a89fa164729f1a1d96cbb8a1ba3069ee1c7c",
+  "offline-migration-verification.json": "228d977a46fecb906aa895e52a494d1c84ae9ec0074cf145c5bb05ab79db2daa",
+  "quality-73030d17.json": "f5e29770dd14853544c83d2e495d5f6082991bc2c1ad30cc07416fb110b2e742"
 }

@@ -1,0 +1,27 @@
+{
+  "backup_source": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-04.sqlite3",
+  "copy_path": "/Users/derek/Documents/memory/ceo-consumer-audit-system-execution-20261004/offline-migration/production-backup-copy.sqlite3",
+  "initialization_count": 2,
+  "integrity": "ok",
+  "historical_counts_unchanged": true,
+  "retained_counts": {
+    "reply_tasks": 7045,
+    "reply_attempts": 14423,
+    "agent_runs": 18195,
+    "external_action_results": 218,
+    "sent_replies": 2240
+  },
+  "canonical_tables": [
+    "business_project_candidates",
+    "candidate_action_attempts",
+    "candidate_executions",
+    "candidate_reviews",
+    "candidate_selections",
+    "candidate_supplements",
+    "email_historical_candidates",
+    "review_candidates",
+    "service_bugfix_candidates",
+    "todo_evidence_candidates",
+    "wechat_memory_candidates"
+  ]
+}
