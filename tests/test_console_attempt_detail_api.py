@@ -462,7 +462,7 @@ def test_email_attempt_carries_its_message_and_unsubscribe_receipt(tmp_path: Pat
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = _seed_email_attempt(store, with_agent_runs=False)
 
-    _, item = build_attempt_detail(store, attempt_id, email_store=_FakeEmailStore())
+    _, item = build_attempt_detail(store, attempt_id, email_store_factory=_FakeEmailStore)
 
     assert item is not None
     email = item["email"]
@@ -497,10 +497,91 @@ def test_non_email_attempt_has_no_email_context(tmp_path: Path):
         send_status="sent",
     )
 
-    _, item = build_attempt_detail(store, attempt_id, email_store=_FakeEmailStore())
+    _, item = build_attempt_detail(store, attempt_id, email_store_factory=_FakeEmailStore)
 
     assert item is not None
     assert item["email"] is None
+
+
+@pytest.mark.parametrize("channel", ["dingtalk", "wechat", None])
+def test_history_detail_does_not_initialize_unrelated_email_store(
+    tmp_path: Path, monkeypatch, channel
+):
+    from tests.test_console_web_api import _client
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = 999999
+    if channel is not None:
+        attempt_id = store.record_reply_attempt(
+            channel=channel,
+            conversation_id="context-test",
+            conversation_title="Context test",
+            trigger_message_id="message-test",
+            trigger_sender="Sender",
+            trigger_text="Status request",
+            action="send_reply",
+            sensitivity_kind="general",
+            send_status="failed",
+        )
+
+    def unrelated_email_store(_path):
+        raise AssertionError("non-email history must not scan email durable state")
+
+    with _client(tmp_path) as client:
+        monkeypatch.setattr("app.audit_web.EmailStore", unrelated_email_store)
+        response = client.get(f"/api/console/history/{attempt_id}")
+
+    assert response.status_code == (404 if channel is None else 200)
+    if channel is not None:
+        assert response.json()["item"]["email"] is None
+
+
+def test_email_history_detail_reads_fresh_context_on_each_request(
+    tmp_path: Path, monkeypatch
+):
+    from tests.test_console_web_api import _client
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+    reads = []
+
+    class FreshEmailStore(_FakeEmailStore):
+        def get_classification(self, classification_id):
+            result = super().get_classification(classification_id)
+            return {**result, "subject": f"Revision {len(reads)}"}
+
+    def email_store_factory(_path):
+        reads.append(_path)
+        return FreshEmailStore()
+
+    with _client(tmp_path) as client:
+        monkeypatch.setattr("app.audit_web.EmailStore", email_store_factory)
+        first = client.get(f"/api/console/history/{attempt_id}")
+        second = client.get(f"/api/console/history/{attempt_id}")
+
+    assert first.status_code == second.status_code == 200
+    assert len(reads) == 2
+    assert first.json()["item"]["email"]["subject"] == "Revision 1"
+    assert second.json()["item"]["email"]["subject"] == "Revision 2"
+    assert second.json()["item"]["email"]["unsubscribe"]["evidence"] == "page-not-operable"
+
+
+def test_email_history_detail_preserves_store_validation_failure(
+    tmp_path: Path, monkeypatch
+):
+    from app.email_store import EmailPersistenceCorruption
+    from tests.test_console_web_api import _client
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+
+    def invalid_email_store(_path):
+        raise EmailPersistenceCorruption("test-invalid-email-state")
+
+    with _client(tmp_path) as client:
+        monkeypatch.setattr("app.audit_web.EmailStore", invalid_email_store)
+        with pytest.raises(EmailPersistenceCorruption, match="test-invalid-email-state"):
+            client.get(f"/api/console/history/{attempt_id}")
 
 
 def test_codex_session_roles_resolve_both_transcripts_of_one_attempt(tmp_path: Path):

@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-04: History detail initializes EmailStore only for an existing email
+  Attempt. Non-email and missing records no longer trigger full email-history
+  validation. Email context and unsubscribe receipts remain fresh per request,
+  and persistence validation failures still propagate.
+
 - 2026-10-04: Status reuses the worker payload's fresh read-only SQLite
   snapshot for queue totals, Attention and human decisions. It no longer
   scans each section twice or mixes snapshots within one response; subsequent
