@@ -132,6 +132,53 @@ def test_historical_question_stays_readable_but_cannot_be_selected(tmp_path):
     assert store.get_reply_task(task.id).status == "needs_human"
 
 
+def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_executable(tmp_path):
+    path = tmp_path / "legacy-choice.sqlite3"
+    store = AutoReplyStore(path)
+    store.enqueue_reply_task(
+        conversation_id="cid-legacy", conversation_title="Legacy request", single_chat=True,
+        trigger_message_id="msg-legacy", trigger_create_time="2026-10-04 13:42:55",
+        trigger_sender="Applicant", trigger_text="Allocate this request",
+    )
+    task = store.claim_reply_tasks(1)[0]
+    options = [
+        {"key": "initial", "label": "Prepare initial allocation", "instruction": "For future requests use an initial proportional allocation", "consequence": "A standing rule changes", "applies_to": "task_class"},
+        {"key": "evidence", "label": "Get evidence first", "instruction": "For future requests obtain evidence before confirming", "consequence": "A standing rule changes", "applies_to": "task_class"},
+    ]
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    body = {"outcome": "needs_human", "summary": "Choose a standing rule", "decision_options": options}
+    store.complete_agent_run(run.id, body, owner="consumer")
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text, action="agent_run", sensitivity_kind="general",
+        audit_summary="Historical rule question", send_status="needs_human",
+        human_decision_options_json=json.dumps(options),
+    )
+    with store._connect() as db:
+        db.execute("update reply_attempts set agent_run_id=? where id=?", (run.id, attempt_id))
+        db.execute("update reply_tasks set status='needs_human' where id=?", (task.id,))
+    reopened = AutoReplyStore(path)
+    assert reopened.reconcile_invalid_needs_human_projections() == 0
+    assert reopened.reconcile_valid_needs_human_projections() == 0
+    _, detail = build_attempt_detail(reopened, attempt_id)
+    assert detail["decision_options"] == []
+    assert detail["status"]["requires_decision"] is False
+    assert _submit(reopened, attempt_id, instruction=options[0]["instruction"])[0] == 400
+    assert _submit(reopened, attempt_id, kind="select", candidate_id=1, review_id=1, option_key="initial")[0] == 409
+    assert reopened.get_reply_attempt(attempt_id).send_status == "needs_human"
+    assert json.loads(reopened.get_reply_attempt(attempt_id).human_decision_options_json) == options
+    assert reopened.get_reply_task(task.id).status == "needs_human"
+    assert json.loads(reopened.get_agent_run(run.id).final_result_json) == body
+    with reopened._connect() as db:
+        assert db.execute("select count(*) from candidate_selections").fetchone()[0] == 0
+        assert db.execute("select count(*) from candidate_executions").fetchone()[0] == 0
+
+
 def test_supplement_and_generation_rerun_commit_together(tmp_path, monkeypatch):
     store, task, candidate, review, attempt_id = _approved_question(tmp_path / "choice.sqlite3")
     original = store._enqueue_manual_rerun_reply_task_in_connection

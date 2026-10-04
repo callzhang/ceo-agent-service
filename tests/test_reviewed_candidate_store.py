@@ -147,19 +147,34 @@ def test_failed_business_state_change_finishes_and_invalidates_atomically(tmp_pa
         store.begin_candidate_action(claim["id"], "worker", 0, "state-key")
 
 
-def test_historical_hard_refusal_blocks_execution_without_erasing_review(tmp_path: Path):
+@pytest.mark.parametrize("error", [
+    {"code": "agent_reported_failure", "source_code": "provider_risk_rejected", "retryable": False},
+    {"code": "provider_risk_rejected", "source": "agent", "source_code": "provider_risk_rejected", "retryable": False},
+])
+@pytest.mark.parametrize("options", [False, True])
+def test_historical_hard_refusal_blocks_execution_without_erasing_review(tmp_path: Path, error, options):
     store = AutoReplyStore(tmp_path / "candidate.sqlite3")
-    task, candidate, review, _ = _reviewed(store, options=False)
+    task, candidate, review, _ = _reviewed(store, options=options)
+    if options:
+        store.select_candidate_option(candidate["id"], review["id"], "execute")
     with store._connect() as db:
         db.execute("""insert into agent_runs
             (reply_task_id,execution_generation,role,proposal_revision,turn_attempt,status,structured_error_json)
             values (?,?,'audit',99,0,'failed',?)""", (
                 task.id, "older-generation",
-                json.dumps({"code": "agent_reported_failure", "source_code": "provider_risk_rejected"}),
+                json.dumps(error),
             ))
+    # Restarting into the System executor cannot make an approved proposal or
+    # previously selected human branch bypass the original provider refusal.
+    store = AutoReplyStore(tmp_path / "candidate.sqlite3")
     with pytest.raises(ValueError, match="historical_runtime_risk_refusal"):
         store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
     assert store.get_review_candidate(candidate["id"])["invalidated_at"] == ""
+    with store._connect() as db:
+        preserved = db.execute("select status,structured_error_json from agent_runs where reply_task_id=? and proposal_revision=99", (task.id,)).fetchone()
+        assert preserved["status"] == "failed"
+        assert json.loads(preserved["structured_error_json"]) == error
+        assert db.execute("select count(*) from candidate_executions").fetchone()[0] == 0
 
 
 def test_generation_rotation_prevents_old_approved_plan(tmp_path: Path):
