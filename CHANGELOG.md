@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-04: The OKR service wrapper reuses the shared source's validated
+  request-header collector. An early expired or incomplete request no longer
+  prevents a later valid SSO token from being captured. Expired credentials
+  are still rejected before the live API read, without printing tokens.
+
 - 2026-10-04: OKR local SSO selects an already-visible target organization
   without requiring a nonexistent native confirmation dialog. An organization
   selection failure on the login page remains a failure; only a completed

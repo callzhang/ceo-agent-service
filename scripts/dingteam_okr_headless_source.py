@@ -220,9 +220,7 @@ def _capture_stable_headless_headers() -> dict[str, str]:
                 def on_request(request):
                     if "/data/okr/" not in request.url or captured:
                         return
-                    for key, value in request.headers.items():
-                        if key.lower() in browser.AUTH_HEADER_KEYS:
-                            captured[browser._canonical(key)] = value
+                    browser._capture_candidate_headers(captured, request.headers)
 
                 context.on("request", on_request)
                 page = context.new_page()

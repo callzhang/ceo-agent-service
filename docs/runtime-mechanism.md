@@ -1065,6 +1065,8 @@ Attempt 重扫全部微信投递历史。结构哨兵要求该索引存在，初
 归为外部依赖故障而不计入待工程修复的 Attention；浏览器/会话自身错误仍计入 Attention。
 ## Chrome 登录态副本（系统服务）
 
+OKR 服务包装器与共享来源复用同一有效请求头收集器：首次请求头缺少令牌或令牌已过期时继续等待后续有效请求，不能用第一条不完整请求锁定整个刷新轮次。只有满足有效期与提前刷新窗口的令牌才进入缓存，实际 API 读取前仍校验有效期；不输出令牌或认证头。
+
 OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；组织选择页仍使用 `login.dingtalk.com`，不能仅凭该域名就认定需要原生确认弹窗。指定组织已可见时直接选择原组织；尚未可见才进入既有原生叮当 OKR 确认路径。组织选择失败且仍在登录页时必须失败，只有已跳转到业务页面的单组织流程可省略选择。此区分不改变账号、组织、权限或无头实时来源要求。
 
 需要登录的无头浏览器任务（退订链接、听记权限申请、Dingteam OKR）不各自重新登录：服务每天 `06:00`（`Asia/Shanghai`）运行“同步 Chrome 登录态”（`sync-chrome-cookies`，定时任务，`chrome-cookie-copy-daily-v1`），用 SQLite 备份接口把 `~/Library/Application Support/Google/Chrome/Default/Cookies` 复制到服务数据库旁的 `chrome-cookies/Default/Cookies`，再按明文 `host_key` 删掉 `CEO_CHROME_COOKIE_DENY_DOMAINS`（逗号分隔的域名，含子域名）里的银行、券商和支付类域名，其余全部保留供各任务复用；这份名单为空时命令拒绝执行。整个过程不解密任何 cookie，也不碰钥匙串。

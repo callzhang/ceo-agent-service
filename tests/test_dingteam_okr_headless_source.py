@@ -566,6 +566,73 @@ def test_header_refresh_reuses_the_authenticated_persistent_context(monkeypatch,
     assert closed == [True]
 
 
+@pytest.mark.parametrize(
+    "initial_headers",
+    [{"authorization": "Bearer expired"}, {"x-dingteam-auth-app-id": "40707"}],
+)
+def test_header_refresh_waits_for_valid_auth_after_early_request(
+    monkeypatch, tmp_path, initial_headers
+):
+    module = load_module()
+
+    class Request:
+        url = "https://dingokr.dingteam.com/data/okr/person/period/list"
+
+        def __init__(self, headers):
+            self.headers = headers
+
+    class Page:
+        url = "https://dingokr.dingteam.com/web/okr/pc/index.html"
+
+        def goto(self, *_args, **_kwargs):
+            context.handler(Request(initial_headers))
+            context.handler(Request({"authorization": "Bearer refreshed"}))
+
+        def wait_for_timeout(self, _milliseconds):
+            pass
+
+        def evaluate(self, _script):
+            if "root:" in _script:
+                return {"root": True, "mounted": True}
+            return None
+
+    class Context:
+        def on(self, _event, handler):
+            self.handler = handler
+
+        def new_page(self):
+            return Page()
+
+        def close(self):
+            pass
+
+    context = Context()
+
+    @contextmanager
+    def service_browser(_playwright):
+        yield context
+
+    @contextmanager
+    def playwright():
+        yield object()
+
+    monkeypatch.setattr(module.browser, "PROFILE_DIR", tmp_path)
+    monkeypatch.setattr(
+        module.browser,
+        "_jwt_exp",
+        lambda headers: int(time.time()) + 3600
+        if headers.get("Authorization") == "Bearer refreshed"
+        else 0,
+    )
+    monkeypatch.setattr(module, "HEADLESS_REFRESH_SECONDS", 0)
+    monkeypatch.setattr(module, "_service_browser", service_browser)
+    monkeypatch.setattr(module, "sync_playwright", playwright)
+
+    assert module._capture_stable_headless_headers() == {
+        "Authorization": "Bearer refreshed"
+    }
+
+
 def test_expired_captured_session_is_rejected_before_api_fetch(monkeypatch):
     module = load_module()
     monkeypatch.setattr(module.browser, "_jwt_exp", lambda _headers: int(time.time()) - 1)
