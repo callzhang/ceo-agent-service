@@ -131,8 +131,43 @@ def dingtalk_chat_delivery(operation: str) -> Literal["reply", "group", "direct"
     return "direct"
 
 
+_OA_ACTION_TARGET_FIELDS = {
+    "approve": ("process_instance_id", "task_id"),
+    "reject": ("process_instance_id", "task_id"),
+    "revert_task": ("process_instance_id", "task_id", "target_activity_id"),
+    "redirect_task": ("process_instance_id", "task_id", "to_actioner_id"),
+    "comment": ("process_instance_id",),
+}
+
+
+def _proposed_action_json_schema(schema: dict[str, object]) -> None:
+    schema["allOf"] = [
+        {
+            "if": {
+                "properties": {
+                    "capability": {"const": "dingtalk-oa"},
+                    "operation": {"enum": [
+                        operation for operation, fields in _OA_ACTION_TARGET_FIELDS.items()
+                        if field in fields
+                    ]},
+                },
+                "required": ["capability", "operation"],
+            },
+            "then": {
+                "properties": {
+                    "target": {
+                        "properties": {field: {"type": "string", "pattern": r"\S"}},
+                        "required": [field],
+                    },
+                },
+            },
+        }
+        for field in ("process_instance_id", "task_id", "target_activity_id", "to_actioner_id")
+    ]
+
+
 class ProposedAction(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True, json_schema_extra=_proposed_action_json_schema)
 
     description: str = Field(min_length=1)
     action_identity: str = Field(min_length=1)
@@ -160,6 +195,11 @@ class ProposedAction(BaseModel):
 
     @model_validator(mode="after")
     def validate_dingtalk_message_target(self) -> "ProposedAction":
+        if self.capability == "dingtalk-oa":
+            for field in _OA_ACTION_TARGET_FIELDS.get(self.operation, ()):
+                value = self.target.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"dingtalk-oa {self.operation} requires target.{field} as a nonempty string")
         if self.capability == "dingtalk-doc" and self.operation == "create_document":
             content = self.payload.get("content")
             if not isinstance(content, str) or not content.strip():

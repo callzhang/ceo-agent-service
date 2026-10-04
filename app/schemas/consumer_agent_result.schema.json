@@ -352,6 +352,147 @@
     },
     "ProposedAction": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "capability": {
+                "const": "dingtalk-oa"
+              },
+              "operation": {
+                "enum": [
+                  "approve",
+                  "reject",
+                  "revert_task",
+                  "redirect_task",
+                  "comment"
+                ]
+              }
+            },
+            "required": [
+              "capability",
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "properties": {
+                  "process_instance_id": {
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "process_instance_id"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "capability": {
+                "const": "dingtalk-oa"
+              },
+              "operation": {
+                "enum": [
+                  "approve",
+                  "reject",
+                  "revert_task",
+                  "redirect_task"
+                ]
+              }
+            },
+            "required": [
+              "capability",
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "properties": {
+                  "task_id": {
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "task_id"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "capability": {
+                "const": "dingtalk-oa"
+              },
+              "operation": {
+                "enum": [
+                  "revert_task"
+                ]
+              }
+            },
+            "required": [
+              "capability",
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "properties": {
+                  "target_activity_id": {
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target_activity_id"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "capability": {
+                "const": "dingtalk-oa"
+              },
+              "operation": {
+                "enum": [
+                  "redirect_task"
+                ]
+              }
+            },
+            "required": [
+              "capability",
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "properties": {
+                  "to_actioner_id": {
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "to_actioner_id"
+                ]
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "description": {
           "minLength": 1,

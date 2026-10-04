@@ -189,6 +189,68 @@ def test_proposed_action_requires_stable_action_identity():
         ProposedAction.model_validate(action)
 
 
+@pytest.mark.parametrize(
+    ("operation", "target"),
+    [
+        ("approve", {"process_instance_id": "P-101", "task_id": "801"}),
+        ("reject", {"process_instance_id": "P-101", "task_id": "801"}),
+        ("revert_task", {"process_instance_id": "P-101", "task_id": "801", "target_activity_id": "activity-1"}),
+        ("redirect_task", {"process_instance_id": "P-101", "task_id": "801", "to_actioner_id": "U-2"}),
+        ("comment", {"process_instance_id": "P-101"}),
+    ],
+)
+def test_registered_oa_action_target_identifiers_are_nonempty_strings(operation, target):
+    action = {
+        **_proposal()["actions"][0],
+        "capability": "dingtalk-oa",
+        "operation": operation,
+        "target": target,
+        "payload": {},
+    }
+    schema = ProposedAction.model_json_schema()
+    validator = Draft202012Validator(schema)
+    validator.validate(action)
+    ProposedAction.model_validate(action)
+    for field in target:
+        for wrong in (801, "", "  "):
+            invalid = {**action, "target": {**target, field: wrong}}
+            with pytest.raises(JsonSchemaValidationError):
+                validator.validate(invalid)
+            with pytest.raises(ValidationError, match=field):
+                ProposedAction.model_validate(invalid)
+        missing_target = dict(target)
+        missing_target.pop(field)
+        invalid = {**action, "target": missing_target}
+        with pytest.raises(JsonSchemaValidationError):
+            validator.validate(invalid)
+        with pytest.raises(ValidationError):
+            ProposedAction.model_validate(invalid)
+
+
+def test_consumer_wire_schema_rejects_numeric_oa_task_id_before_review():
+    proposal = _proposal()
+    proposal["actions"][0].update(
+        capability="dingtalk-oa", operation="approve",
+        target={"process_instance_id": "P-101", "task_id": "801"},
+        payload={"remark": "Receipt and budget verified."},
+    )
+    payload = _consumer_wire_payload(outcome="proposal", proposal=proposal)
+    validator = Draft202012Validator(ConsumerAgentWireResult.model_json_schema())
+    validator.validate(payload)
+    ConsumerAgentWireResult.model_validate(payload)
+    proposal["actions"][0]["target"]["task_id"] = 801
+    with pytest.raises(JsonSchemaValidationError):
+        validator.validate(payload)
+    with pytest.raises(ValidationError, match="task_id"):
+        ConsumerAgentWireResult.model_validate(payload)
+
+
+def test_non_oa_action_targets_keep_generic_json_identifier_types():
+    action = {**_proposal()["actions"][0], "target": {"task_id": 801}}
+    Draft202012Validator(ProposedAction.model_json_schema()).validate(action)
+    assert ProposedAction.model_validate(action).target["task_id"] == 801
+
+
 def test_document_create_requires_body_in_payload_not_description():
     action = {
         "description": "# Daily report\n" * 300,
