@@ -515,10 +515,6 @@ def queue_recent_meeting_alignment_replay(
             result["outcome"] = "short_recording"
             results.append(result)
             continue
-        if metadata.status and metadata.status != "ended":
-            results.append(result)
-            continue
-
         existing = store.get_meeting_alignment_job_by_meeting_id(meeting_id)
         if existing is not None:
             result["job_id"] = existing.id

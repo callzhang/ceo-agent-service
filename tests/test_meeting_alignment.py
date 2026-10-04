@@ -885,7 +885,8 @@ def test_producer_keeps_recording_exactly_five_minutes(tmp_path):
     assert dws.calendar_calls == [""]
 
 
-def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_path):
+@pytest.mark.parametrize("provider_status", ["ended", 2, 4])
+def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_path, provider_status):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     short = ended_meeting(
         meeting_id="minutes-short",
@@ -893,6 +894,7 @@ def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_p
         end="2026-07-14T09:04:59+08:00",
     )
     eligible = ended_meeting(meeting_id="minutes-replay")
+    eligible["status"] = provider_status
 
     class ReplayDws(FakeDws):
         def list_minutes_page(
