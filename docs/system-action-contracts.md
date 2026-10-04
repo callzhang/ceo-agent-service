@@ -31,6 +31,8 @@ an example or a previous instance. An unsupported operation fails explicitly.
 | `dingtalk-oa` | `revert_task` | `process_instance_id`, `task_id`, `target_activity_id` | `revert_action`, `remark` | Exact owned task completed with `REDIRECT_PROCESS` |
 | `dingtalk-oa` | `redirect_task` | `process_instance_id`, `task_id`, `to_actioner_id` | Optional `remark` | Source task redirected and a distinct running task owned by the named recipient |
 | `dingtalk-oa` | `comment` | `process_instance_id` | `content` | Provider comment ID; otherwise uncertain |
+| `dingtalk-doc` | `create_document` | `name` | Markdown `content` | Provider `nodeId` plus exact document name and Markdown readback |
+| `dingtalk-doc` | `create_doc_comment` | `node_id` | `content` | Provider `commentKey`; otherwise uncertain |
 
 For these registered OA operations, `process_instance_id`, `task_id`,
 `target_activity_id` and `to_actioner_id`, where required above, are exact
@@ -40,8 +42,6 @@ an OA process ID, and a numeric task ID must be represented as the provider's
 exact string before Audit reviews the action. Audit checks that source binding,
 while the action model and wire schema reject malformed identifier types before
 review.
-| `dingtalk-doc` | `create_document` | `name` | Markdown `content` | Provider `nodeId` plus exact document name and Markdown readback |
-| `dingtalk-doc` | `create_doc_comment` | `node_id` | `content` | Provider `commentKey`; otherwise uncertain |
 
 For message sends, the service first stores the composed final body. The
 Consumer action must carry that same body. The service does not compose a new
