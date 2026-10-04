@@ -464,6 +464,15 @@
         "decision_options": {
           "maxItems": 0,
           "type": "array"
+        },
+        "requested_input": {
+          "type": "null"
+        },
+        "needs_human_reason": {
+          "type": "null"
+        },
+        "decision_basis": {
+          "type": "null"
         }
       },
       "type": "object"
@@ -482,6 +491,15 @@
         "decision_options": {
           "maxItems": 0,
           "type": "array"
+        },
+        "requested_input": {
+          "type": "null"
+        },
+        "needs_human_reason": {
+          "type": "null"
+        },
+        "decision_basis": {
+          "type": "null"
         }
       },
       "type": "object"

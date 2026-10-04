@@ -770,6 +770,8 @@ def test_consumer_prompt_declares_common_quality_fields_and_priority():
     assert "Technical/provider, authentication-route, schema, model-output and retry failures are failed" in instructions
     assert "complete current-instance plans" in instructions
     assert "requested_input with zero options" in instructions
+    assert "For proposal, no_action, and failed, decision_options must be empty" in instructions
+    assert "requested_input, needs_human_reason, and decision_basis must be null" in instructions
     assert "never creates a reusable policy or edits a Skill" in instructions
     assert "needs_human is valid only when risk is high" not in instructions
     assert "only risk and confidence" not in instructions

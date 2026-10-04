@@ -34,6 +34,9 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
                 "outcome": {"const": "proposal"},
                 "proposal": {"type": "object"},
                 "decision_options": {"type": "array", "maxItems": 0},
+                "requested_input": {"type": "null"},
+                "needs_human_reason": {"type": "null"},
+                "decision_basis": {"type": "null"},
             },
         },
         {
@@ -44,6 +47,9 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
                 },
                 "proposal": {"type": "null"},
                 "decision_options": {"type": "array", "maxItems": 0},
+                "requested_input": {"type": "null"},
+                "needs_human_reason": {"type": "null"},
+                "decision_basis": {"type": "null"},
             },
         },
         {

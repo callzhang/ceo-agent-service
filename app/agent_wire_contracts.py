@@ -19,6 +19,7 @@ from app.agent_contracts import (
     DecisionOption,
     DurableMemory,
     RiskLevel,
+    _consumer_result_json_schema,
 )
 from app.agent_reported_error import agent_error_payload
 from app.agent_result import ResultParseError, parse_typed_agent_result
@@ -77,6 +78,10 @@ class _ConsumerWireBase(_WireBase):
 
 
 class _ConsumerWire(_ConsumerWireBase):
+    model_config = ConfigDict(
+        extra="forbid", strict=True,
+        json_schema_extra=_consumer_result_json_schema,
+    )
     outcome: Literal["proposal", "needs_human", "no_action", "failed"]
     proposal: ConsumerProposal | None
     decision_options: list[DecisionOption] = Field(default_factory=list, max_length=4)

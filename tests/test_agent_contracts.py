@@ -577,6 +577,49 @@ def test_contract_schemas_match_models_and_do_not_enumerate_business_actions():
             assert business_action not in serialized
 
 
+@pytest.mark.parametrize("outcome", ["proposal", "no_action", "failed"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("needs_human_reason", "Ask Derek to decide."),
+        ("decision_basis", _decision_basis()),
+        ("requested_input", "Please supply the missing fact."),
+        ("decision_options", [{
+            "key": "stop", "label": "Stop", "instruction": "Stop this item.",
+            "consequence": "The item is skipped.", "plan": None,
+            "terminal_outcome": "skipped", "reason": "No action is appropriate.",
+        }]),
+    ],
+)
+def test_non_human_consumer_schemas_reject_human_decision_fields(outcome, field, value):
+    proposal = _proposal() if outcome == "proposal" else None
+    contract_payload = {
+        "outcome": outcome,
+        "summary": "The current outcome is complete.",
+        "proposal": proposal,
+        "decision_options": [],
+        "error": {**_error(), "stage": "", "source": "", "source_code": "", "session_continuable": False},
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    }
+    wire_payload = _consumer_wire_payload(outcome=outcome, proposal=proposal)
+    for schema, payload in (
+        (ConsumerAgentResult.model_json_schema(), contract_payload),
+        (ConsumerAgentWireResult.model_json_schema(), wire_payload),
+    ):
+        validator = Draft202012Validator(schema)
+        validator.validate(payload)
+        validator.validate({**payload, "needs_human_reason": None, "decision_basis": None, "requested_input": None})
+        with pytest.raises(JsonSchemaValidationError):
+            validator.validate({**payload, field: value})
+    with pytest.raises(ValidationError):
+        ConsumerAgentResult.model_validate({**contract_payload, field: value})
+    with pytest.raises(ValidationError):
+        ConsumerAgentWireResult.model_validate({**wire_payload, field: value})
+
+
 @pytest.mark.parametrize(
     ("schema_name", "payload"),
     [

@@ -255,6 +255,9 @@ feasible alternatives and consequences. Every executable option includes a
 complete current-instance plan; a stop choice has terminal_outcome skipped and
 reason. Use requested_input without options when an open-ended fact is needed.
 Do not propose long-term rule choices, applies_to, or Skill updates.
+For proposal, no_action, and failed, decision_options must be empty and
+requested_input, needs_human_reason, and decision_basis must be null. Use
+those fields only for a needs_human result.
 An action plan and a human question are separate candidates. When source work
 must run before a later decision, submit the first complete plan with
 continue_after_execution true. Its verified receipt is evidence for a new
