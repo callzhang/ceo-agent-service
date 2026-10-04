@@ -1,5 +1,6 @@
 {
   "business-source-equivalence-4eddf2c9.json": "dc732fd9be89aecc3b7fdc511d74b43a8b69fe037f7434edcfd04fc4753dc812",
+  "business-source-equivalence-78d70a91.json": "0d31525f1c5ee98c28c24e27f31adcca017940bb00f7a157180641aa32ae10e5",
   "business-source-equivalence-ab4a8bed.json": "cc605c0131209a7f65ff04891b999965e6d217f21d38357769fe4987be12b6da",
   "business-source-equivalence-aeadb015.json": "0eca5f1f901072e61b011a936a20e40390367064ef480685d20bbcbc3f15eb64",
   "business-v2-2403cf28-invalid-release-score.json": "43fe860d416355f16d0e1df5e32fb806c460fe4b2ca2cfd427e6cc461838b8e8",
@@ -10,6 +11,7 @@
   "business-v3-73030d17.json": "88eb51566a33cf6dd3909c17e096fda8fce5b077c83fd62176941c184edc25a5",
   "contract-4eddf2c9.json": "245f291e1844055e85e45ef5e3bb4d60271767966ed4ac46faca2123d8b73820",
   "contract-73030d17.json": "ed77815088889c7ccfed00ce55b1392ff5d9e76474ea0995ff58f99051d222d4",
+  "contract-78d70a91.json": "c30885712f23f4cb6451835b7926c4ab88f904a3be6f75dd6b0398dc86f5715c",
   "contract-ab4a8bed.json": "7ae245e552777ebabd5926d38806cae0cf175e577d33e486bd40af71b7e73fa5",
   "contract-aeadb015.json": "e295b97ceb8d3f00b4407e0539890ce956f4873a9db8e37aeca82aee2c592322",
   "native-audit-role-probe/command_argv.json": "2609b604d42d2683355df2fcf324b1c2701dcab3e8211c81b090b77e85a2b6fe",
@@ -22,5 +24,6 @@
   "offline-migration-verification.json": "228d977a46fecb906aa895e52a494d1c84ae9ec0074cf145c5bb05ab79db2daa",
   "offline-rollback-store-verification.json": "6faa284df88d7cbfee6c2c4887211f59fb5bc5855eb4c6a39bc4effd819e2b10",
   "quality-73030d17.json": "f5e29770dd14853544c83d2e495d5f6082991bc2c1ad30cc07416fb110b2e742",
+  "quality-9fde859c.json": "003882e1b8bf29d09767d46dcc6676d47b18aabb496f345f19723347343a67fb",
   "quality-ffb34e02.json": "c72b0f2183f3c4b10f392a6bbc4961de6e3483abf77b56873b0955f4c3ee14ca"
 }
