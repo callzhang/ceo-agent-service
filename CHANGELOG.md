@@ -13,6 +13,8 @@
   status from its runtime call status. A returned model call no longer displays
   a failed Audit run as a completed business step. Both original statuses are
   preserved; Audit decisions and recovery eligibility remain unchanged.
+  Session-unavailable tests also provide the real AgentRun status contract and
+  verify that unavailable transcripts do not alter either execution status.
 
 - 2026-10-04: History detail initializes EmailStore only for an existing email
   Attempt. Non-email and missing records no longer trigger full email-history
