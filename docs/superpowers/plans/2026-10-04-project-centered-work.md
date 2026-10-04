@@ -12,7 +12,7 @@
 
 ## 状态、边界与依赖
 
-设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发已在新对话开始，负责全部 Task 1–9：Task 1 代码、局部回归及两轮独立审查已通过，当前 Task 2 实施中；真实副本迁移与后续业务评测/发布仍未通过。本次业务评测和发布尚未开始；复用旧测试通过记录不能勾选新任务。
+设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发已在新对话开始，负责全部 Task 1–9：Task 1–3 代码、局部回归及独立需求/质量审查已通过，当前 Task 4 实施中；真实副本迁移与后续业务评测/发布仍未通过。Task 3 指定 TODO 集成文件仍有两个已证明为基线缺陷的失败，须在 Task 6 移除 Task 完成驱动项目关注路径时解决，不能把全文件报告称为 GREEN。本次业务评测和发布尚未开始；复用旧测试通过记录不能勾选新任务。
 
 执行记录（2026-10-04）：复用下列工作目录，基线 `64dc4c8d`，独立步骤采用单作者实施、需求审查、质量审查。Task 1 文件已认领；因正文列移除直接影响听记负责人回填 SQL 及两个 API 测试的原始 INSERT，认领范围增加这些直接受影响的读路径/fixture，仅改变存储表示，不改变负责人或 API 业务语义。冻结 W39 初态经只读检查仍为 259 Tasks、16 Projects、0 Attention、398 Signals、434 Task events，`quick_check=ok`；该检查不算本次迁移或业务回放通过。
 
@@ -196,9 +196,9 @@ def context_changed(previous_json: str | None, current_json: str) -> bool:
 
 **Files:** 修改 `app/task_semantic_models.py:180`、`app/task_semantic_service.py`、`app/store.py`；新建 `tests/test_task_suggestions.py`；回归 `tests/test_todo_sync.py`、`tests/test_task_semantic_rules.py`；同步存储与运行文档。
 
-- [ ] 增加 `BusinessTask.origin` 和 `suggestion_json`，旧行默认 source，不改变 stage/status/owner/commitment。`TaskSuggestion` 为有类型的建议资料；实际 owner 字段继续只承载实际安排，建议人选只在 suggestion 中。
-- [ ] 添加命令 `RecordTaskSuggestion(title, description, signal, suggestion, project_anchor_id, task_id=None)` 和 `TaskSemanticService.record_suggestion(command)`。新建沿用候选 Task 存储、证据、事件及 project link 操作；更新要求引用已存在建议的 task_id，保留其身份。这里的 signal 是实际原始来源，不把 Agent 生成的理由伪装成原文。
-- [ ] 先写以下状态回归（测试文件中构造实际 SourceSignal、登记项目和职责，再调用新命令，不 mock Store）：
+- [x] 增加 `BusinessTask.origin` 和 `suggestion_json`，旧行默认 source，不改变 stage/status/owner/commitment。`TaskSuggestion` 为有类型的建议资料；实际 owner 字段继续只承载实际安排，建议人选只在 suggestion 中。
+- [x] 添加命令 `RecordTaskSuggestion(title, description, signal, suggestion, project_anchor_id, task_id=None)` 和 `TaskSemanticService.record_suggestion(command)`。新建沿用候选 Task 存储、证据、事件及 project link 操作；更新要求引用已存在建议的 task_id，保留其身份。这里的 signal 是实际原始来源，不把 Agent 生成的理由伪装成原文。
+- [x] 先写以下状态回归（测试文件中构造实际 SourceSignal、登记项目和职责，再调用新命令，不 mock Store）：
 
 ```python
 def assert_display_only_suggestion(task):
@@ -211,7 +211,7 @@ def assert_display_only_suggestion(task):
     assert task.deadline_at == ""
 ```
 
-- [ ] 运行 `python -m pytest -q tests/test_task_suggestions.py`，确认状态/新命令 RED。实现存储时的新行固定值：
+- [x] 运行 `python -m pytest -q tests/test_task_suggestions.py`，确认状态/新命令 RED。实现存储时的新行固定值：
 
 ```python
 suggestion_fields = {
@@ -222,12 +222,14 @@ suggestion_fields = {
 }
 ```
 
-- [ ] 建议幂等使用现有 Task 身份及证据幂等机制，不用“reason 文案”生成新身份；重复已知 task_id 更新只有实际建议资料变化才记事件。没有 ID 时先由 Agent 比较已检索事项，不用相似度代码自动合并。
-- [ ] 增加三项真实库回归：新消息未点名王五但已有职责证明可存建议；后续人的明确指派晋升同一 ID、原建议保留、实际 owner 才写入；重复输入无第二条任务、接受事件、follow-up 或 TODO outbox。原始待明确事项保持 origin=source，不和建议混成一个来源标签。
-- [ ] 使用既有候选→正式与 outbox 语义，不另加工具权限层或自动派发路径。检验建议未满足现有正式/接受条件，因此没有外发；转为真实已接受任务后按原生命周期运行，不能因历史 origin 永久阻止它。
+- [x] 建议幂等使用现有 Task 身份及证据幂等机制，不用“reason 文案”生成新身份；重复已知 task_id 更新只有实际建议资料变化才记事件。没有 ID 时先由 Agent 比较已检索事项，不用相似度代码自动合并。
+- [x] 增加三项真实库回归：新消息未点名王五但已有职责证明可存建议；后续人的明确指派晋升同一 ID、原建议保留、实际 owner 才写入；重复输入无第二条任务、接受事件、follow-up 或 TODO outbox。原始待明确事项保持 origin=source，不和建议混成一个来源标签。
+- [x] 使用既有候选→正式与 outbox 语义，不另加工具权限层或自动派发路径。检验建议未满足现有正式/接受条件，因此没有外发；转为真实已接受任务后按原生命周期运行，不能因历史 origin 永久阻止它。
 - [ ] 运行 `python -m pytest -q tests/test_task_suggestions.py tests/test_task_semantic_service.py tests/test_task_semantic_rules.py tests/test_todo_sync.py`，预期 GREEN。同步文档并提交 `feat(tasks): distinguish displayed agent suggestions from real assignments`。
 
 ## Task 4：项目上下文优先检索，共同原文只装载一次
+
+Task 3 执行记录：`9469363a` 实现来源/建议分离，`0b0753d8` 修正原文与 provenance 区分，并让旧库升级回归在新进程检查物理列/版本。主 Agent 六个领域/来源测试文件 623 passed；独立需求复核 509 passed；建议文件新增后续来源仅补证据的明确 ID 重放约定，17 passed，需求/质量复核均 PASS。无 ID 幂等限定原创建或其他有事件的命令来源；后续更新由 Agent 匹配并持续携带 task_id，不能从可复制、可多任务引用的证据关系猜身份。指定 TODO 文件的两项失败已用 Task 3 前 Store 在内存中复现：`app/todo_completion.py` 调用旧 `_project_task_attention` 缺 receipt；领域完成后才触发 TypeError。保持历史失败记录，Task 6 修正这个直接受新关注语义影响的路径后再运行全文件。当前没有新 Agent wire、Skill 发布或生产部署。
 
 **Files:** 修改 `app/task_retrieval.py:46,153,315`、`app/task_source_documents.py`、`app/store.py` 相关有界查询；测试 `tests/test_task_retrieval.py`、`tests/test_task_source_documents.py`；同步运行文档。
 

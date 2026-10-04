@@ -185,6 +185,39 @@ def test_suggestion_replay_and_changed_details_keep_identity(project):
     assert counts(store) == after
 
 
+def test_evidence_only_suggestion_update_reuses_explicit_identity(project):
+    store, anchor_id, signal, suggestion = project
+    first = record(project)
+    before = counts(store)
+    later_source = replace(
+        signal,
+        source_ref="chat:p:2",
+        evidence_text="P 项目回款仍未到账，待核实进展。",
+        dedupe_key="chat:p:2:risk",
+    )
+    command = commands.RecordTaskSuggestion(
+        title="核实回款进展",
+        description="确认延期原因",
+        signal=later_source,
+        suggestion=suggestion,
+        project_anchor_id=anchor_id,
+        task_id=first.task_id,
+    )
+    service = TaskSemanticService(store)
+    result = service.record_suggestion(command)
+    after = counts(store)
+    assert result.task_id == first.task_id
+    assert after["business_tasks"] == before["business_tasks"]
+    assert after["business_task_events"] == before["business_task_events"]
+    assert after["business_task_signals"] == before["business_task_signals"] + 1
+    assert after["business_task_evidence"] == before["business_task_evidence"] + 1
+    assert service.record_suggestion(command).task_id == first.task_id
+    assert counts(store) == after
+    # No-ID replay belongs to the original event-backed creation source.
+    assert record(project).task_id == first.task_id
+    assert counts(store) == after
+
+
 @pytest.mark.parametrize(
     "invalid", ["missing_signal", "wrong_ref", "fabricated_quote", "missing_project"]
 )

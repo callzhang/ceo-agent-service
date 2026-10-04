@@ -160,8 +160,13 @@ introduced.
 
 An explicit existing suggestion ID updates only its actual changed title,
 description or suggestion data; unchanged repetition writes no new event.
-Source identity/event deduplication preserves the original ID on a replay
-without an ID, including after human promotion. A suggestion update cannot
+Replaying the original creation (or other event-backed command) source without
+an ID preserves its recorded result ID, including after human promotion.
+An evidence-only update from a later source must retain the explicit Task ID
+on every application/replay: evidence links alone are not a command-result
+identity, because one source may support several Tasks and links can be copied
+by a merge. The Agent must match a later source to a retrieved Task and supply
+its ID; this service does not infer identity from shared citations. A suggestion update cannot
 relabel a real source Task or downgrade a promoted Task. Human assignment uses
 the existing promotion command on the same ID, retains suggestion provenance,
 and stores the actual owner from human evidence. Real acceptance and committed
