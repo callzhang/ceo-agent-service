@@ -114,11 +114,11 @@ Task 1 读回（2026-10-04，`8f8a4a62`）：主 Agent 新跑六个相关测试�
 
 ## Task 2：Project 独立上下文、唯一总负责与人员分工
 
-Task 2 首版为 `76bd759d`，主 Agent 新跑五个相关文件 **603 passed / 23.63s**；独立需求审查发现结构化来源引用缺项：JSON 转义后的原文不应让真实换行摘录失效。复用已有引用检查语义修复并补回归，修复和复审通过前不进入下一任务，也不把测试通过记作需求完成。
+Task 2 首版为 `76bd759d`，主 Agent 新跑五个相关文件 **603 passed / 23.63s**；独立需求审查发现结构化来源引用缺项：JSON 转义后的原文不应让真实换行摘录失效。`76ab1ca2` 提取并复用既有引用检查，补结构化摘录和事务内捕获失败的回归；主 Agent 对修复前的真实服务代码运行新增引用用例，确认 RED，再独立重跑六个相关文件 **757 passed / 39.41s**，Ruff/diff check 通过。需求复审通过，质量审查中；质量通过前不进入下一任务。
 
 **Files:** 修改 `app/task_semantic_models.py:308`、`app/store.py:3863`、`app/task_business_resolution.py:150`；新建 `app/project_context_service.py`、`tests/test_project_context_service.py`；修改 `tests/test_task_semantic_store.py`、`docs/architecture.md` 和 `docs/runtime-mechanism.md` 的项目部分。
 
-- [ ] 在 semantic models 定义上述 `SourceCitation`、`ProjectResponsibility`、`ProjectFact`、`ProjectContext`。`overall_owner` 是单个对象或空值，不接受列表；每条负责事项必须有人员名、非空职责及来源。持久化要求 citations 已解析为实际 Signal，不能猜未来 ID。
+- [x] 在 semantic models 定义上述 `SourceCitation`、`ProjectResponsibility`、`ProjectFact`、`ProjectContext`。`overall_owner` 是单个对象或空值，不接受列表；每条负责事项必须有人员名、非空职责及来源。持久化要求 citations 已解析为实际 Signal，不能猜未来 ID。
 
 新增类型主体如下，复用该文件已有的 `_FrozenBusinessModel`、`Nonblank`、`ReferenceId`；`Field` 从 pydantic 导入。职责冲突保留为有来源的 facts，当前总负责未知时置空，而不是把两个名字串进一个人名字段。
 
@@ -157,7 +157,7 @@ class TaskSuggestion(_FrozenBusinessModel):
 ```
 
 日期字段必须同时提供或同时为空；指定建议人选时 responsibility_evidence 不得为空，未指定人选则允许空。用两个 model validator 和正反例验证这两条结构关系，不能用关键词判定职责是否合理。
-- [ ] 先写模型回归：一个总负责＋两项分工成功；两个总负责人数组失败；未知总负责但有项目事实成功。测试数据如下，固定来源不包含任何模型预期结论：
+- [x] 先写模型回归：一个总负责＋两项分工成功；两个总负责人数组失败；未知总负责但有项目事实成功。测试数据如下，固定来源不包含任何模型预期结论：
 
 ```python
 def test_project_context_has_one_overall_owner():
@@ -176,9 +176,9 @@ def test_project_context_has_one_overall_owner():
                        responsibilities=[], facts=[])
 ```
 
-- [ ] 运行 `python -m pytest -q tests/test_project_context_service.py`，确认 RED 后增加两个小表：`business_project_context_revisions(id, project_id, context_json, evidence_json, created_at)`，索引 `(project_id, id DESC)`；`business_project_evidence(project_id, signal_id, created_at)`，主键 `(project_id, signal_id)`、两个真实对象外键。当前上下文取最新版本，不再另存一份可失配的 current JSON。
-- [ ] 实现 `ProjectContextService.apply(*, project_id, context, signal_ids, db) -> int | None`：核对现存正式 Project 和实际 Signal；插入尚不存在的证据关系；读取最后快照；context 为空或规范化 JSON 与上次相等时不追加快照；变更时追加并返回真实版本 ID。函数使用调用方同一事务，不自行调用 Agent 或提交外部操作。
-- [ ] 快照比较固定为结构比较，不把 dict 顺序当业务变化。实现服务内纯比较方法：
+- [x] 运行 `python -m pytest -q tests/test_project_context_service.py`，确认 RED 后增加两个小表：`business_project_context_revisions(id, project_id, context_json, evidence_json, created_at)`，索引 `(project_id, id DESC)`；`business_project_evidence(project_id, signal_id, created_at)`，主键 `(project_id, signal_id)`、两个真实对象外键。当前上下文取最新版本，不再另存一份可失配的 current JSON。
+- [x] 实现 `ProjectContextService.apply(*, project_id, context, signal_ids, db) -> int | None`：核对现存正式 Project 和实际 Signal；插入尚不存在的证据关系；读取最后快照；context 为空或规范化 JSON 与上次相等时不追加快照；变更时追加并返回真实版本 ID。函数使用调用方同一事务，不自行调用 Agent 或提交外部操作。
+- [x] 快照比较固定为结构比较，不把 dict 顺序当业务变化。实现服务内纯比较方法：
 
 ```python
 def context_changed(previous_json: str | None, current_json: str) -> bool:
@@ -188,8 +188,8 @@ def context_changed(previous_json: str | None, current_json: str) -> bool:
     return json.loads(previous_json) != json.loads(current_json)
 ```
 
-- [ ] Store 提供 `get_business_project_context(project_id)`、`list_business_project_context_revisions(project_id)`、`list_business_project_evidence(project_id)`；事务内对应方法沿用 `_db` 风格。`BusinessProject` 读取提供当前 context；无记录是未知，不从任意 Task owner 补全。
-- [ ] 在真实 SQLite 测试登记一个零 Task 项目，存一版分工，再更新负责人；断言当前只有新负责人、两版历史均可读、证据关系均保留；相同输入再应用，版本/关系行数不变。再测试缺失来源导致事务不写入、context=null 保留原分工、明确空分工快照与“不更新”不同。
+- [x] Store 提供 `get_business_project_context(project_id)`、`list_business_project_context_revisions(project_id)`、`list_business_project_evidence(project_id)`；事务内对应方法沿用 `_db` 风格。`BusinessProject` 读取提供当前 context；无记录是未知，不从任意 Task owner 补全。
+- [x] 在真实 SQLite 测试登记一个零 Task 项目，存一版分工，再更新负责人；断言当前只有新负责人、两版历史均可读、证据关系均保留；相同输入再应用，版本/关系行数不变。再测试缺失来源导致事务不写入、context=null 保留原分工、明确空分工快照与“不更新”不同。
 - [ ] 运行 `python -m pytest -q tests/test_project_context_service.py tests/test_task_business_resolution.py tests/test_task_semantic_store.py`，预期 GREEN。同步行为文档并提交 `feat(projects): persist source-backed project context and responsibilities`。
 
 ## Task 3：在同一个 Task 体系记录“Agent 建议”
