@@ -44,3 +44,11 @@ table before the quiet wait and backup. Constructing the full application
 store, which may migrate schema, happens only in the stopped publication
 window after the database backup. A normal `python -m app.deploy` does not
 publish these external contracts.
+
+The offline rollback-startup check covers an installed old Skill whose
+content was a `runtime:agents-skills` revision while the prior active
+configuration pointed at another revision. On restart, repository import may
+record the same content as a distinct `repository:skills` revision: revision
+identity includes its source. The restored runtime configuration and scheduled
+references still select their original revision IDs, and the old service can
+load its snapshot normally.

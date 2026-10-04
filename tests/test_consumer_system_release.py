@@ -84,12 +84,22 @@ def _fixture(tmp_path: Path):
 
 def _store_with_refs(
     db: Path, old: dict[str, bytes], *, pinned: tuple[str, ...] = (),
+    prior_runtime_edit: tuple[str, ...] = (),
 ) -> tuple[AutoReplyStore, int, int]:
     store = AutoReplyStore(db)
     bindings = []
     refs = []
     for index, name in enumerate(SKILLS):
         skill = store.create_managed_skill(name, name)
+        if name in prior_runtime_edit:
+            store.create_managed_skill_revision(
+                skill.id, _skill(name, True, "repository baseline").decode(),
+                source="repository:skills",
+            )
+            store.create_managed_skill_revision(
+                skill.id, old[f"{name}/SKILL.md"].decode(),
+                source="runtime:agents-skills",
+            )
         content = _skill(name, True, "pinned") if name in pinned else old[f"{name}/SKILL.md"]
         revision = store.create_managed_skill_revision(
             skill.id, content.decode(), source="repository:skills"
@@ -359,6 +369,63 @@ def test_failed_health_restores_real_release_files_and_refs_before_old_restart(
     assert {b.revision_id for b in store.list_runtime_skill_bindings(current_config.id)} == {
         b.revision_id for b in store.list_runtime_skill_bindings(old_config_id)
     }
+
+
+def test_post_rollback_startup_preserves_old_binding_with_runtime_edit_file(
+    tmp_path: Path, monkeypatch,
+):
+    """The installed old file may have a different SHA than the active binding."""
+    import app.managed_skills as managed_skills
+
+    root, skills, rules, manifest, old, _new = _fixture(tmp_path)
+    db = tmp_path / "service.sqlite3"
+    store, old_config_id, _task_id = _store_with_refs(
+        db, old, pinned=("ceo-mail-review",),
+        prior_runtime_edit=("ceo-mail-review",),
+    )
+    payload = json.loads(manifest.read_text())
+    mail_entry = next(
+        entry for entry in payload["files"]
+        if entry["source"] == "ci/shared-skills/ceo-mail-review/SKILL.md"
+    )
+    mail_entry["old_managed_sha256"] = _digest(_skill("ceo-mail-review", True, "pinned"))
+    manifest.write_text(json.dumps(payload))
+    mail_skill = store.get_managed_skill_by_name("ceo-mail-review")
+    prior_revisions = store.list_managed_skill_revisions(mail_skill.id)
+    assert [revision.source for revision in prior_revisions] == [
+        "repository:skills", "runtime:agents-skills", "repository:skills",
+    ]
+
+    receipt = publish_consumer_system_contracts(
+        root=root, database_path=db, operation_id="rollback-import",
+        skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
+    )
+    receipt.rollback()
+    assert (skills / "ceo-mail-review/SKILL.md").read_bytes() == old["ceo-mail-review/SKILL.md"]
+    assert store.get_pending_or_active_runtime_skill_config().id != old_config_id
+
+    monkeypatch.setattr(
+        managed_skills, "_repository_managed_skills",
+        lambda: (("ceo-mail-review", (skills / "ceo-mail-review/SKILL.md").read_text()),),
+    )
+    snapshot = managed_skills.resolve_pending_runtime_skills(store, pid=os.getpid())
+    managed_skills.capture_runtime_skill_edits(store, skills_root=skills)
+
+    binding = next(
+        binding for binding in store.list_runtime_skill_bindings(snapshot.config_id)
+        if binding.skill_id == mail_skill.id
+    )
+    assert store.get_managed_skill_revision(binding.revision_id).sha256 == _digest(
+        _skill("ceo-mail-review", True, "pinned")
+    )
+    matching_old_file = [
+        revision for revision in store.list_managed_skill_revisions(mail_skill.id)
+        if revision.sha256 == _digest(old["ceo-mail-review/SKILL.md"])
+    ]
+    assert {revision.source for revision in matching_old_file} == {
+        "runtime:agents-skills", "repository:skills",
+    }
+    assert all(revision.content == matching_old_file[0].content for revision in matching_old_file)
 
 
 def _store_refs(store: AutoReplyStore, config_id: int):
