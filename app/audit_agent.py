@@ -20,7 +20,7 @@ from app.agent_turn_runner import (
     ProcessExecutor,
     result_correction_prompt,
 )
-from app.agent_wire_contracts import AuditAgentWireResult, parse_audit_agent_wire_result
+from app.agent_wire_contracts import parse_audit_agent_wire_result
 from app.audit_rules import render_audit_rules
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
@@ -135,22 +135,11 @@ class AuditAgentRunner:
             role=AgentRole.AUDIT,
             proposal_revision=context.proposal_revision,
         )
-        developer_instructions = "\n\n".join(
-            part for part in (
-                "Audit reads evidence and reviews the complete Consumer candidate. "
-                "Do not send, approve, reject, publish, edit documents, unsubscribe, "
-                "or execute any external action. Return only the Audit wire result. "
-                "Echo the exact proposal_revision and candidate_digest. "
-                "Use approve, return, reject, or failed. A technical failure is failed.",
-                "## Audit Rules\n" + rendered_rules,
-                "## Wire Schema\n" + json.dumps(
-                    AuditAgentWireResult.model_json_schema(),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
-                self.skill_protocol_override,
-            ) if part
-        )
+        from app.consumer_agent import audit_developer_instructions
+
+        developer_instructions = audit_developer_instructions(rendered_rules)
+        if self.skill_protocol_override:
+            developer_instructions += "\n\n" + self.skill_protocol_override
         process = AgentTurnProcess[AuditAgentResult](
             store=self.store,
             task=task,

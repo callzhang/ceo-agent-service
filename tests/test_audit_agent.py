@@ -236,3 +236,16 @@ def test_audit_parent_must_be_completed_exact_consumer_candidate(setup):
     store.complete_agent_run(other.id, {"outcome": "no_action"}, owner="other")
     with pytest.raises(ValueError, match="parent candidate mismatch"):
         _runner(setup, CapturingExecutor("")).run(task, context, turn_attempt=0, parent_agent_run_id=other.id)
+
+
+def test_actual_audit_runner_uses_production_review_instructions(setup):
+    from app.audit_rules import render_audit_rules
+    from app.consumer_agent import audit_developer_instructions
+
+    _store, task, parent, _context, _config, _router = setup
+    executor = CapturingExecutor(_wire(_context.candidate_digest))
+    _runner(setup, executor).run(task, _context, turn_attempt=0, parent_agent_run_id=parent.id)
+    command = executor.commands[0]
+    setting = next(value for value in command if value.startswith("developer_instructions="))
+    actual = json.loads(setting.split("=", 1)[1])
+    assert actual == audit_developer_instructions(render_audit_rules(AgentRole.AUDIT))

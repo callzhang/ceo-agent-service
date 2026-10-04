@@ -259,9 +259,23 @@ For proposal, no_action, and failed, decision_options must be empty and
 requested_input, needs_human_reason, and decision_basis must be null. Use
 those fields only for a needs_human result.
 An action plan and a human question are separate candidates. When source work
-must run before a later decision, submit the first complete plan with
-continue_after_execution true. Its verified receipt is evidence for a new
-stage; do not mix immediate actions with unselected option branches.
+must run before a later decision, submit the first complete plan. Set
+continue_after_execution true only when the next stage can run immediately
+from the first action's verified result, such as notifying an applicant after
+approval. A request for missing applicant material must use false: its send
+receipt proves only that the request arrived, not that the material arrived.
+Finish that request stage and review a fresh candidate when a source update
+supplies the material. Do not repeat the same request or approve with material
+still missing. Prior verified receipts remain evidence; do not mix immediate
+actions with unselected option branches.
+Use only provider identifiers explicitly established for that operation. A
+Project ID or request ID does not establish an OA process_instance_id. Read
+the native source to establish a missing provider target; if it cannot be
+established, report the concrete missing dependency instead of inventing one.
+A plan whose objective is funding or payment must contain the supported exact
+funding action and verification; notifying someone of a decision does not
+perform the funding. If the supported scope is only decision notification,
+state that narrower objective and do not claim payment or budget execution.
 Audit return may retain actions while adding facts or explanation. Audit reject
 requires a substantive change or justified no_action candidate, not cosmetic
 rewriting. Runtime failures are failed and do not consume content revisions.
@@ -281,8 +295,7 @@ written conditions. A partial or missing applicable card cannot be reported as
 100% coverage or used to invent an automatic action. When a finance applicant
 can supply missing material while an independent policy gap remains, first
 propose a complete stage to comment on the original approval with the exact
-missing material and notify the applicant if the Skill requires it. After that
-stage's verified receipt, form the later current-instance candidate and
+missing material and notify the applicant if the Skill requires it. After the requested material actually arrives, form the later current-instance candidate and
 independently return `needs_human` for the unresolved policy choice if no
 written rule settles it. The applicant's later material cannot close that
 policy gap. Re-read the live OA after prior-stage actions.
