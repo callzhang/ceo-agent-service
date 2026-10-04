@@ -16,6 +16,14 @@
 `provider_risk_rejected` 不会只剩通用 `agent_reported_failure`；这些诊断不是外部效果证明。
 旧代或无法解析的诊断不替换任务错误；读取不修改状态或恢复边界。
 
+同一诊断生产器用于 Status API 时，后端 `AttentionRow` 与前端 Status 解码器均声明
+可选的字符串或 `null` 字段 `error_code`；无原始诊断的行不必提供它。未知字段与错误类型
+仍严格拒绝。真实任务/run 生成的 Attention 行必须能经过 `/api/console/status` 与前端
+解码，不能只验证生产器自身而让新增诊断导致 HTTP 500 或页面拒绝正常响应。
+人工决策行使用同一基础字段合同并要求字符串 `detail_label` / `detail`，不是普通
+Attention 行；前端保留其独立说明。提供 `human_decision_rows` 时必须是数组，不能把
+错误的对象、字符串或 `null` 当成“无人工决策”。
+
 每个需要 Agent 处理的任务都经过两个职责不同的角色：
 
 Consumer 的未审核外部效果检测只把写入操作的 provider 回执视作副作用；
