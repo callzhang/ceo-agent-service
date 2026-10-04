@@ -1966,6 +1966,41 @@ def test_meeting_group_discovery_failure_does_not_become_direct_fallback(tmp_pat
     assert dws.send_calls == []
 
 
+@pytest.mark.parametrize("prior_attempts", [0, 411])
+def test_confidential_group_read_denial_fails_without_retry_or_fallback(tmp_path, prior_attempts):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.search_conversations = lambda query: [DingTalkConversation(
+        open_conversation_id="cid-first", title="上线项目群",
+        single_chat=False, unread_point=0,
+    )] if query == "上线" else []
+
+    def fail_read(conversation, limit=50):
+        raise DwsError(
+            f"group={conversation.open_conversation_id} read refused",
+            code="1001",
+            business_message="该群为保密群，无法获取消息记录",
+            server_key="chat",
+        )
+
+    dws.read_recent_messages = fail_read
+    job_id = seed_consumer_job(store, dws)
+    with store._connect() as db:
+        db.execute("update meeting_alignment_jobs set attempts=? where id=?", (prior_attempts, job_id))
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "failed"
+    assert json.loads(job.error)["kind"] == "meeting_group_discovery"
+    assert "cid-first" in job.error
+    assert job.locked_at is None
+    assert runner.calls == 0
+    assert dws.send_calls == []
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW + timedelta(hours=1), limit=1) == 0
+
+
 def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

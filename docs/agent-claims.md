@@ -30,6 +30,7 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-ceo-confidential-group-read | app/group_discovery.py (DingTalk message-read error classification only), app/meeting_alignment.py (group discovery failure handler only), tests/test_group_discovery.py and tests/test_meeting_alignment.py (confidential read denial regressions only), docs/runtime-mechanism.md and docs/architecture.md (group-read retry note only) | Preserve DWS's explicit non-retryable confidential-group read denial instead of wrapping it into unlimited retry; never change delivery targets or treat denied evidence as an empty group result. | 2026-10-04 |
 
 | codex-quality-lint-repair | app/email_action_reconcile.py, app/email_classifier_training.py, app/email_store.py, app/email_training_snapshot.py, app/email_worker.py, app/minutes_access.py, app/task_scanners.py, app/web_api/attempts.py, app/worker.py, tests/e2e/test_consumer_audit_live.py, tests/test_agent_orchestrator.py, tests/test_agent_runtime_worker.py, tests/test_claude_runtime_adapter.py, tests/test_email_account_connector.py, tests/test_email_model_registry.py, tests/test_email_provider_actions.py, tests/test_email_unsubscribe.py, tests/test_minutes_access.py, tests/test_task_scanners.py, docs/agent-claims.md | Repair the Quality workflow's 22 ruff errors on main and verify the full CI lint/test command. | 2026-09-29 |
 

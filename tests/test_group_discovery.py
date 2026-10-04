@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from app.dws_client import DwsError
 from app.group_discovery import (
     DingTalkGroupDiscoveryProvider,
     DiscussionEvidence,
@@ -128,3 +129,39 @@ def test_dingtalk_adapter_scopes_ids_and_messages():
     assert group.provider_scope == scope
     assert adapter.list_group_members(group) == (MemberRef(scope, "open-u1"),)
     assert adapter.read_recent_group_messages(group, limit=30)[0].text_excerpt == "销售招聘进展"
+
+
+@pytest.mark.parametrize("retryable", [False, True])
+def test_dingtalk_message_read_preserves_non_retryable_confidential_denial(retryable):
+    error = DwsError(
+        "confidential group read refused",
+        code="1001",
+        business_message="该群为保密群，无法获取消息记录",
+        retryable_external_dependency=retryable,
+        server_key="chat",
+    )
+
+    class Dws:
+        def read_recent_messages(self, conversation, limit):
+            raise error
+
+    adapter = DingTalkGroupDiscoveryProvider(Dws())
+    group = GroupRef(adapter.scope, "cid-confidential", "Private group")
+    expected = RetryableProviderError if retryable else DwsError
+
+    with pytest.raises(expected) as caught:
+        adapter.read_recent_group_messages(group, limit=30)
+
+    if not retryable:
+        assert caught.value is error
+
+
+@pytest.mark.parametrize("code,message", [("1001", "other business failure"), ("500", "该群为保密群，无法获取消息记录")])
+def test_dingtalk_unknown_message_read_failure_remains_retryable(code, message):
+    class Dws:
+        def read_recent_messages(self, conversation, limit):
+            raise DwsError("read failed", code=code, business_message=message)
+
+    adapter = DingTalkGroupDiscoveryProvider(Dws())
+    with pytest.raises(RetryableProviderError):
+        adapter.read_recent_group_messages(GroupRef(adapter.scope, "cid", "Group"), limit=30)
