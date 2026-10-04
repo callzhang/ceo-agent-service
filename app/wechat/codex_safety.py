@@ -87,6 +87,19 @@ ROLE_MCP_READ_TOOLS = {
     ),
 }
 
+# These native surfaces can mutate local/app state or delegate work outside
+# the task-bound MCP catalog. The service roles use the named MCP operations
+# below instead; Consumer's report-document tool remains available there.
+ROLE_DISABLED_NATIVE_FEATURES = (
+    "shell_tool", "unified_exec", "unified_exec_tty", "shell_snapshot",
+    "apps", "plugins", "remote_plugin", "hooks", "computer_use",
+    "browser_use", "browser_use_external", "browser_use_full_cdp_access",
+    "in_app_browser", "in_app_local_automation", "in_app_chat",
+    "image_generation", "multi_agent", "code_mode_host", "goals",
+    "worktrees", "in_app_updates",
+    "skill_mcp_dependency_install", "memories",
+)
+
 @dataclass(frozen=True)
 class ControlledCliConfig:
     command: str
@@ -197,21 +210,13 @@ def make_role_agent_command(
         command,
         prefixes=(
             "approval_policy=", "approvals_reviewer=", "tools.enabled_tools=",
-            "features.shell_tool=", "features.unified_exec=", "sandbox_mode=",
-            "features.apps=", "features.plugins=", "features.computer_use=",
+            "sandbox_mode=",
+            *(f"features.{feature}=" for feature in ROLE_DISABLED_NATIVE_FEATURES),
         ),
     )
     options = [
-        "-c",
-        "features.shell_tool=false",
-        "-c",
-        "features.unified_exec=false",
-        "-c",
-        "features.apps=false",
-        "-c",
-        "features.plugins=false",
-        "-c",
-        "features.computer_use=false",
+        *(option for feature in ROLE_DISABLED_NATIVE_FEATURES
+          for option in ("-c", f"features.{feature}=false")),
         "-c",
         'sandbox_mode="read-only"',
         "-c",

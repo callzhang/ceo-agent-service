@@ -20,6 +20,9 @@ def _codex_command() -> list[str]:
         "codex", "exec", "--json", "-c",
         'mcp_servers.memory_connector.url="https://memory.example/mcp"',
         "-c", 'mcp_servers.xiaoqing_interview.url="https://interview.example/mcp"',
+        "-c", "features.browser_use=true",
+        "-c", "features.image_generation=true",
+        "-c", "features.code_mode_host=true",
         "-",
     ]
 
@@ -45,6 +48,14 @@ def test_codex_roles_disable_builtin_execution_and_select_service_tools(tmp_path
         assert "features.apps=false" in command
         assert "features.plugins=false" in command
         assert "features.computer_use=false" in command
+        for feature in (
+            "browser_use", "browser_use_external", "browser_use_full_cdp_access",
+            "in_app_browser", "in_app_local_automation", "in_app_chat",
+            "image_generation", "multi_agent", "code_mode_host",
+            "skill_mcp_dependency_install", "memories",
+        ):
+            assert f"features.{feature}=false" in command
+            assert f"features.{feature}=true" not in command
         assert 'sandbox_mode="read-only"' in command
         assert "mcp_servers.node_repl.enabled=false" in command
         assert "mcp_servers.plaud.enabled=false" in command

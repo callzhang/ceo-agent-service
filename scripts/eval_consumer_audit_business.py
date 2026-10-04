@@ -22,6 +22,8 @@ import tempfile
 import tomllib
 import re
 
+from app.wechat.codex_safety import ROLE_DISABLED_NATIVE_FEATURES
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "evals/consumer_audit_business/v2.json"
 FROZEN_MODELS = {
@@ -163,10 +165,9 @@ def native_command(*, model: str, effort: str, developer_instructions: str, work
             "-c", f"model_reasoning_effort={_toml_string(effort)}",
             "-c", f"developer_instructions={_toml_string(developer_instructions)}",
             "-c", 'approval_policy="never"',
-            "-c", "features.plugins=false", "-c", "features.apps=false",
-            "-c", "features.shell_tool=false", "-c", "features.unified_exec=false",
-            "-c", "features.apply_patch=false", "-c", "features.computer_use=false",
             "-c", 'web_search="disabled"']
+    for feature in ROLE_DISABLED_NATIVE_FEATURES:
+        command.extend(("-c", f"features.{feature}=false"))
     for name in native_mcp_server_names():
         command.extend(("-c", f"mcp_servers.{name}.enabled=false"))
     command.append("-")
@@ -206,22 +207,45 @@ def _event_error(stdout: str) -> str:
     return ""
 
 
+def _native_tool_item_types(stdout: str) -> list[str]:
+    """Identify actual native tool activity without retaining arguments or output."""
+    types: set[str] = set()
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") not in {"item.started", "item.updated", "item.completed"}:
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type not in {"reasoning", "agent_message", "error"}:
+            types.add(item_type if isinstance(item_type, str) else "unknown")
+    return sorted(types)
+
+
 def run_role(*, command: list[str], prompt: str, timeout: int) -> dict:
     try:
         completed = subprocess.run(command, input=prompt, text=True, capture_output=True,
                                    timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"native model timeout after {timeout}s"}
+        return {"ok": False, "error": f"native model timeout after {timeout}s",
+                "tool_item_types": []}
     raw = _last_message(completed.stdout)
+    tool_item_types = _native_tool_item_types(completed.stdout)
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
         parsed = None
-    return {"ok": completed.returncode == 0 and isinstance(parsed, dict),
+    valid = completed.returncode == 0 and isinstance(parsed, dict)
+    return {"ok": valid and not tool_item_types,
             "exit_code": completed.returncode, "result": parsed,
-            "raw": raw[:20000], "error": "" if completed.returncode == 0 and parsed else
-            (_event_error(completed.stdout) or
-             f"native_cli_exit_{completed.returncode}_without_json_error_event")}
+            "raw": raw[:20000], "tool_item_types": tool_item_types,
+            "error": "native_tool_use_violation" if tool_item_types else
+            ("" if valid else (_event_error(completed.stdout) or
+             f"native_cli_exit_{completed.returncode}_without_json_error_event"))}
 
 
 def _consumer_prompt(case: dict) -> str:
@@ -290,14 +314,22 @@ def run_suite(root: Path, manifest: dict, *, archived: bool = False) -> dict:
                                        developer_instructions=instructions["consumer"], workdir=workdir),
                 prompt=_consumer_prompt(case), timeout=settings["timeout_seconds_per_case"],
             )
-            normalized_consumer = normalize_role_result(root, "consumer", consumer["result"])
+            normalized_consumer = (
+                normalize_role_result(root, "consumer", consumer["result"])
+                if consumer["ok"] else
+                {"ok": False, "error": consumer["error"], "result": None, "digest": None}
+            )
             audit = run_role(
                 command=native_command(model=settings["model"], effort=settings["reasoning_effort"],
                                        developer_instructions=instructions["audit"], workdir=workdir),
                 prompt=_audit_prompt(case, normalized_consumer["result"], normalized_consumer["digest"]),
                 timeout=settings["timeout_seconds_per_case"],
             ) if normalized_consumer["ok"] else {"ok": False, "error": "Consumer contract invalid", "result": None}
-            normalized_audit = normalize_role_result(root, "audit", audit["result"])
+            normalized_audit = (
+                normalize_role_result(root, "audit", audit["result"])
+                if audit["ok"] else
+                {"ok": False, "error": audit["error"], "result": None, "digest": None}
+            )
             cases.append({"id": case["id"],
                           "score": score_case(case, normalized_consumer["result"], normalized_audit["result"]),
                           "consumer": consumer, "consumer_contract": normalized_consumer,
@@ -336,6 +368,12 @@ def compare(*, candidate_root: Path | None = None, candidate_ref: str | None = N
             candidate = run_suite((candidate_root or ROOT).resolve(), manifest)
     return {"mode": "native_synthetic_business_judgment", "business_model_evaluation": True,
             "manifest_sha256": sha256(manifest_path.read_bytes()).hexdigest(),
+            "harness_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),
+            "source_flags": {
+                "native_disabled_features": list(ROLE_DISABLED_NATIVE_FEATURES),
+                "web_search": "disabled", "inherited_mcp_servers": "disabled",
+                "tool_events": "fail_any_native_tool_item",
+            },
             "baseline_ref": manifest["baseline_ref"], "candidate_ref": resolved_candidate_ref,
             "settings": manifest["settings"],
             "baseline": baseline, "candidate": candidate}

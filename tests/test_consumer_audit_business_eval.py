@@ -1,4 +1,6 @@
 from pathlib import Path
+from hashlib import sha256
+import json
 import subprocess
 
 import pytest
@@ -15,6 +17,7 @@ from scripts.eval_consumer_audit_business import (
     source_identity,
     ROOT,
 )
+from app.wechat.codex_safety import ROLE_DISABLED_NATIVE_FEATURES
 
 
 def test_frozen_native_business_corpus_is_separate_from_contract_replay():
@@ -60,10 +63,11 @@ def test_native_invocation_disables_inherited_tools_and_pins_model(tmp_path: Pat
     assert "--sandbox read-only" in joined
     assert "--model gpt-5.6-sol" in joined
     assert 'model_reasoning_effort="high"' in joined
-    for disabled in ("features.shell_tool=false", "features.unified_exec=false",
-                     "features.apply_patch=false", "features.computer_use=false",
-                     "features.apps=false", "features.plugins=false", 'web_search="disabled"',
-                     "mcp_servers.node_repl.enabled=false", "mcp_servers.future.enabled=false"):
+    for disabled in (
+        *(f"features.{feature}=false" for feature in ROLE_DISABLED_NATIVE_FEATURES),
+        'web_search="disabled"',
+        "mcp_servers.node_repl.enabled=false", "mcp_servers.future.enabled=false",
+    ):
         assert disabled in joined
     assert "tools.enabled_tools=[]" not in joined
     assert "mcp_servers={}" not in joined
@@ -92,6 +96,71 @@ def test_business_score_normalizes_contract_enum_spelling():
 def test_native_json_error_is_reported_before_rollout_warnings():
     assert _event_error('{"type":"turn.failed","error":{"message":"model unavailable"}}') == "model unavailable"
     assert _event_error('{"type":"error","message":"authorization: abc123 failed"}') == "authorization=[REDACTED] failed"
+
+
+def test_native_tool_events_fail_the_no_tools_run_even_with_valid_final_json(monkeypatch):
+    stdout = "\n".join(json.dumps(event) for event in (
+        {"type": "thread.started", "thread_id": "synthetic"},
+        {"type": "item.started", "item": {"type": "reasoning", "id": "reason"}},
+        {"type": "item.completed", "item": {"type": "mcp_tool_call", "id": "write"}},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": '{"outcome":"proposal"}'}},
+    ))
+    monkeypatch.setattr(business_eval.subprocess, "run", lambda *a, **kw:
+                        subprocess.CompletedProcess(a[0], 0, stdout, ""))
+    result = business_eval.run_role(command=["codex"], prompt="synthetic", timeout=1)
+    assert result["ok"] is False
+    assert result["error"] == "native_tool_use_violation"
+    assert result["tool_item_types"] == ["mcp_tool_call"]
+
+
+def test_native_reasoning_events_do_not_count_as_tool_use(monkeypatch):
+    stdout = "\n".join(json.dumps(event) for event in (
+        {"type": "item.started", "item": {"type": "reasoning", "id": "reason"}},
+        {"type": "item.completed", "item": {"type": "reasoning", "id": "reason"}},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": '{"ok":true}'}},
+    ))
+    monkeypatch.setattr(business_eval.subprocess, "run", lambda *a, **kw:
+                        subprocess.CompletedProcess(a[0], 0, stdout, ""))
+    result = business_eval.run_role(command=["codex"], prompt="synthetic", timeout=1)
+    assert result["ok"] is True
+    assert result["tool_item_types"] == []
+
+
+def test_native_error_item_does_not_count_as_tool_use(monkeypatch):
+    stdout = "\n".join(json.dumps(event) for event in (
+        {"type": "item.completed", "item": {"type": "error", "message": "tool unavailable"}},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": '{"wrote":false}'}},
+    ))
+    monkeypatch.setattr(business_eval.subprocess, "run", lambda *a, **kw:
+                        subprocess.CompletedProcess(a[0], 0, stdout, ""))
+    result = business_eval.run_role(command=["codex"], prompt="synthetic", timeout=1)
+    assert result["ok"] is True
+    assert result["tool_item_types"] == []
+
+
+def test_tool_use_violation_cannot_be_scored_or_sent_to_audit(tmp_path: Path, monkeypatch):
+    case = load_manifest()["cases"][0]
+    manifest = {"settings": {"model": "gpt-5.6-sol", "reasoning_effort": "high",
+                             "timeout_seconds_per_case": 1}, "cases": [case]}
+    monkeypatch.setattr(business_eval, "role_instructions", lambda root: {"consumer": "c", "audit": "a"})
+    monkeypatch.setattr(business_eval, "native_command", lambda **kw: ["codex"])
+    calls = []
+
+    def tool_using_role(**kwargs):
+        calls.append(kwargs)
+        return {"ok": False, "error": "native_tool_use_violation",
+                "result": {"outcome": case["expected_consumer"]},
+                "tool_item_types": ["mcp_tool_call"]}
+
+    monkeypatch.setattr(business_eval, "run_role", tool_using_role)
+    monkeypatch.setattr(business_eval, "normalize_role_result",
+                        lambda *args: pytest.fail("invalid run was normalized"))
+    report = business_eval.run_suite(ROOT, manifest)
+    row = report["cases"][0]
+    assert len(calls) == 1
+    assert row["consumer_contract"]["error"] == "native_tool_use_violation"
+    assert row["score"]["consumer_ok"] is False
+    assert row["score"]["audit_ok"] is False
 
 
 def test_current_role_wire_is_normalized_with_exact_candidate_digest():
@@ -149,6 +218,8 @@ def test_candidate_ref_archives_exact_sha_into_independent_tree_without_model_ca
     report = business_eval.compare(candidate_ref="HEAD")
 
     assert report["candidate_ref"] == expected_sha
+    assert report["harness_sha256"] == sha256(Path(business_eval.__file__).read_bytes()).hexdigest()
+    assert report["source_flags"]["native_disabled_features"] == list(ROLE_DISABLED_NATIVE_FEATURES)
     assert [ref for ref, _ in archived] == [report["baseline_ref"], expected_sha]
     assert archived[0][1] != archived[1][1]
     assert evaluated == [(archived[0][1], True), (archived[1][1], True)]
