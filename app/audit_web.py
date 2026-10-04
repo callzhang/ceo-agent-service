@@ -2987,6 +2987,19 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
             select
                 a.*,
                 case
+                    when a.channel='wechat' and lower(a.send_status)='failed'
+                     and exists (
+                        select 1 from wechat_deliveries d
+                        join reply_tasks t on t.id=d.reply_task_id
+                        where t.channel=a.channel and t.conversation_id=a.conversation_id
+                          and d.conversation_id=a.conversation_id
+                          and t.trigger_message_id=a.trigger_message_id
+                          and d.execution_generation=t.execution_generation
+                          and d.status in ('failed', 'send_unknown')
+                          and d.id=(select max(current_delivery.id) from wechat_deliveries current_delivery
+                                    where current_delivery.reply_task_id=t.id
+                                      and current_delivery.execution_generation=t.execution_generation)
+                     ) then 'failed'
                     when lower(a.send_status)='failed'
                      and trim(coalesce(a.resolved_at, ''))<>'' then 'recovered'
                     when lower(a.send_status) in ('failed', 'blocked')
@@ -5310,15 +5323,20 @@ def _history_chart_payload(
             projected_statuses.get(attempt.id, attempt.send_status)
         )
         if event_label == "Failed":
+            from app.attempt_projection import project_attempt_status
+
             task = store.get_reply_task_for_message(
                 attempt.conversation_id,
                 attempt.trigger_message_id,
                 channel=attempt.channel,
             )
-            if task is not None:
-                task_label = _history_lifecycle_label(task.status)
-                if task_label != "Failed":
-                    event_label = task_label
+            delivery = (
+                store.get_wechat_delivery_for_task(task.id)
+                if task is not None and attempt.channel == "wechat" else None
+            )
+            event_label = _history_lifecycle_label(
+                project_attempt_status(attempt, task, [], delivery=delivery)
+            )
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     recovered_meeting_run_ids = store.recovered_meeting_alignment_run_ids_since(
         since_utc

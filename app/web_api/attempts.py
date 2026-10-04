@@ -646,17 +646,17 @@ def build_attempt_detail(
     # cannot mask a later done/skipped result.
     from app.attempt_projection import project_attempt_status
 
-    attempt = attempt.model_copy(
-        update={
-            "send_status": project_attempt_status(
-                attempt, reply_task, current_agent_runs
-            )
-        }
-    )
     wechat_delivery = (
         store.get_wechat_delivery_for_task(reply_task.id)
         if reply_task is not None and str(attempt.channel or "") == "wechat"
         else None
+    )
+    attempt = attempt.model_copy(
+        update={
+            "send_status": project_attempt_status(
+                attempt, reply_task, current_agent_runs, delivery=wechat_delivery
+            )
+        }
     )
     attention = reply_history_attention(
         attempt,

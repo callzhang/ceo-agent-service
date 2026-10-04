@@ -8,7 +8,9 @@ from typing import Any
 _TERMINAL_TASK_STATES = {"done", "skipped", "needs_human"}
 
 
-def project_attempt_status(attempt: Any, task: Any, runs: list[Any]) -> str:
+def project_attempt_status(
+    attempt: Any, task: Any, runs: list[Any], *, delivery: Any = None
+) -> str:
     """Return the current state for an Attempt without rewriting history.
 
     Physical ``reply_attempts.send_status`` is immutable history.  The current
@@ -21,6 +23,16 @@ def project_attempt_status(attempt: Any, task: Any, runs: list[Any]) -> str:
         return fallback
     task_status = str(getattr(task, "status", "") or "").strip()
     generation = str(getattr(task, "execution_generation", "") or "").strip()
+    if (
+        str(getattr(attempt, "channel", "") or "") == "wechat"
+        and delivery is not None
+        and int(getattr(delivery, "task_id", 0) or 0) == int(task.id)
+        and str(getattr(delivery, "execution_generation", "") or "") == generation
+        and str(getattr(delivery, "conversation_id", "") or "")
+        == str(getattr(attempt, "conversation_id", "") or "")
+        and str(getattr(delivery, "status", "") or "") in {"failed", "send_unknown"}
+    ):
+        return "failed"
     current_runs = [
         run
         for run in runs

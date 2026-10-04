@@ -30684,6 +30684,25 @@ class AutoReplyStore:
                     'Reply' as category,
                     action as action,
                     case
+                        -- Candidate completion is independent of delivery.
+                        -- Only the latest delivery for this object and its
+                        -- owning task generation supplies its send outcome.
+                        when channel='wechat' and send_status='failed' and exists (
+                            select 1 from wechat_deliveries as delivery
+                            join reply_tasks as delivery_task
+                              on delivery_task.id=delivery.reply_task_id
+                            where delivery_task.channel=reply_attempts.channel
+                              and delivery.conversation_id=reply_attempts.conversation_id
+                              and delivery_task.conversation_id=reply_attempts.conversation_id
+                              and delivery_task.trigger_message_id=reply_attempts.trigger_message_id
+                              and delivery.execution_generation=delivery_task.execution_generation
+                              and delivery.status in ('failed', 'send_unknown')
+                              and delivery.id=(
+                                  select max(current_delivery.id) from wechat_deliveries as current_delivery
+                                  where current_delivery.reply_task_id=delivery_task.id
+                                    and current_delivery.execution_generation=delivery_task.execution_generation
+                              )
+                        ) then 'failed'
                         -- A failed attempt whose own task was handed to Derek
                         -- reads `needs_human`, not `recovered`. The task and
                         -- the attempt are two projections of one piece of
