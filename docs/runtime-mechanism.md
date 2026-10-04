@@ -1365,6 +1365,13 @@ the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
 
+The Console history-detail handler passes an EmailStore factory, not an already
+initialized EmailStore, to the Attempt DTO builder. Only an existing
+email-channel Attempt opens that store for its classification and unsubscribe
+context. DingTalk, WeChat and missing Attempts do not scan email durable state.
+Each email detail request still initializes and validates the store and reads
+current receipts; initialization failures are not suppressed or cached.
+
 Direct provider-action claims hold BEGIN IMMEDIATE only over classifications
 with pending or failed actions, rather than materializing every processed
 classification's settled history on each poll. For each selected classification

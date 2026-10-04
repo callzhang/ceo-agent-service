@@ -1,6 +1,7 @@
 """Structured Attempt detail payloads for the React console."""
 
 import json
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
@@ -297,7 +298,7 @@ def _consumer_result_payload(
 
 
 def _email_payload(
-    attempt: Any, reply_task: Any, email_store: Any
+    attempt: Any, reply_task: Any, email_store_factory: Callable[[], Any] | None
 ) -> dict[str, Any] | None:
     """Return the email an email-channel Attempt acted on, and what it did.
 
@@ -340,8 +341,9 @@ def _email_payload(
         payload["candidate_source"] = normalize_display_value(
             parameters.get("candidate_source")
         )
-    if email_store is None:
+    if email_store_factory is None:
         return payload
+    email_store = email_store_factory()
     if classification_id.isdigit():
         classification = email_store.get_classification(int(classification_id))
         if classification is not None:
@@ -578,7 +580,7 @@ def _human_decision_payload(attempt: Any, terminal_run: Any) -> dict[str, Any] |
 
 
 def build_attempt_detail(
-    store: Any, attempt_id: int, *, email_store: Any = None
+    store: Any, attempt_id: int, *, email_store_factory: Callable[[], Any] | None = None
 ) -> tuple[int, dict[str, Any] | None]:
     """Build a rich, JSON-safe Attempt DTO without rendering HTML."""
     attempt = store.get_reply_attempt(attempt_id)
@@ -795,7 +797,7 @@ def build_attempt_detail(
                 or _attempt_detail_reply_text(attempt, sent_reply)
             ),
         },
-        "email": _email_payload(attempt, reply_task, email_store),
+        "email": _email_payload(attempt, reply_task, email_store_factory),
         "references": _references_payload(attempt),
         "feedback": {
             "reviewer_feedback": normalize_display_value(attempt.reviewer_feedback),
