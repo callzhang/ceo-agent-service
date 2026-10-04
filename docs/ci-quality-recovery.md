@@ -24,3 +24,13 @@ an unconditional skip.
 A successful Codex terminal must not authorize failure failover, route pausing,
 or authorization recovery. Unclassified failures still retain the existing
 failover policy. The adapter regression distinguishes these outcomes explicitly.
+
+## Bounded Fresh-Session Retries
+
+The route selector can authorize one fresh retry after a transient failure in
+a fresh CLI process. This is not evidence of an incompatible persisted resume
+session, so the turn runner must not invoke resume-session clearing for it.
+Keep that clearing operation fenced by its persisted session failure evidence.
+Do not pause a route before its authorized same-route fresh retry is claimed;
+pause and switch routes if the bounded retry fails again. Integration tests
+cover recovery on the second process and exhaustion into the eligible API route.

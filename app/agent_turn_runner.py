@@ -1342,7 +1342,11 @@ class AgentTurnProcess(Generic[ResultT]):
                     raise AssertionError("unreachable process failure")
                 previous_route_name = route.name
                 route = decision.route
-                if decision.fresh_session:
+                if (
+                    decision.fresh_session
+                    and failed_attempt.session_mode == RuntimeAttemptSessionMode.RESUME
+                    and failed_attempt.failure_class == RuntimeFailureClass.SESSION.value
+                ):
                     self._clear_incompatible_route_session_for_fresh_retry(
                         run=run,
                         route=route,

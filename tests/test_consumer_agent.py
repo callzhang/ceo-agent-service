@@ -1476,11 +1476,12 @@ def test_consumer_claude_runtime_receives_parent_execution_mode(
     assert executor.environments[0]["ANTHROPIC_API_KEY"] == "test-claude-secret"
 
 
-def test_transport_failure_opens_route_pause_before_api_successor(
-    store, task, context
+@pytest.mark.parametrize("failure_count", [1, 2])
+def test_transport_failure_retries_fresh_route_once_before_api_successor(
+    store, task, context, failure_count
 ):
     executor = SequencedRuntimeExecutor(
-        ProcessRunResult(
+        *[ProcessRunResult(
             1,
             "\n".join(
                 (
@@ -1496,7 +1497,7 @@ def test_transport_failure_opens_route_pause_before_api_successor(
                 )
             ),
             "",
-        ),
+        )] * failure_count,
         ProcessRunResult(0, _result_jsonl(session="api-success"), ""),
     )
     config, router, adapter = _consumer_runtime_dependencies(store)
@@ -1511,10 +1512,15 @@ def test_transport_failure_opens_route_pause_before_api_successor(
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     assert result.result.outcome.value == "no_action"
-    assert len(executor.commands) == 2
+    assert len(executor.commands) == failure_count + 1
     assert store.active_runtime_route_pause(
         "codex_oauth", now="2026-08-20 00:00:00"
-    ) == "codex_transport_disconnected"
+    ) == (None if failure_count == 1 else "codex_transport_disconnected")
+    attempts = store.list_agent_runtime_attempts(result.run_id)
+    assert [attempt.route_name for attempt in attempts] == (
+        ["codex_oauth"] * 2 + (["codex_api"] if failure_count == 2 else [])
+    )
+    assert [attempt.session_mode.value for attempt in attempts] == ["fresh"] * (failure_count + 1)
 
 
 @pytest.mark.skip(reason="API fallback is selected by runtime capability evidence")
