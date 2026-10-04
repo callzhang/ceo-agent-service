@@ -37,6 +37,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-project-centered-task2-quote | Isolated task-attention-multisource worktree: app/task_source_documents.py and tests/test_task_source_documents.py (reuse existing structured-source quote semantics only), app/task_agent.py (move quote helper to shared import only), tests/test_project_context_service.py (structured quotes and caught validation regression), Task 2 source-citation documentation | Fix independent Task 2 spec finding: valid decoded report/meeting quotes must not be rejected because JSON escapes them. Same existing quote semantics, no new agent wire, policy, or classification. Sequential author codex-project-centered-task2. | 2026-10-04 |
+
 | codex-project-centered-task2 | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: app/task_semantic_models.py (project context/citation/responsibility/fact/suggestion types only), app/store.py (project context revision/evidence schema and bounded readers only), app/task_business_resolution.py (hydrated Project reads only), app/project_context_service.py, tests/test_project_context_service.py, tests/test_task_semantic_store.py (project context contract only), docs/architecture.md and docs/runtime-mechanism.md (Project context only), docs/task-semantic-storage.md (new Project storage tables), docs/superpowers/plans/2026-10-04-project-centered-work.md (primary progress) | Task 1 code/test/spec/quality reviews passed at 8f8a4a62; original frozen W39 copy migration correctly rejects pre-existing unrelated meeting FK defect, recorded separately. Sequential Task 2 single author, preserve Tasks and source identity; no production mutation or deploy. | 2026-10-04 |
 
 
