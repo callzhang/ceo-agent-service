@@ -33,6 +33,47 @@ class UpgradeStateStore(Protocol):
     def set_service_state(self, key: str, value: str) -> None: ...
 
 
+class ExistingSchemaUpgradeStateStore:
+    """Persist deploy progress without constructing a newer application store.
+
+    A full AutoReplyStore construction can migrate the live database before
+    the quiet wait and backup. The existing service_state table is enough for
+    this upgrader's progress record.
+    """
+
+    def __init__(self, database_path: Path) -> None:
+        self.database_path = Path(database_path)
+
+    def get_service_state(self, key: str) -> str | None:
+        with sqlite3.connect(
+            f"file:{self.database_path}?mode=rw", uri=True, timeout=30
+        ) as db:
+            row = db.execute("select value from service_state where key=?", (key,)).fetchone()
+            return None if row is None else str(row[0])
+
+    def set_service_state(self, key: str, value: str) -> None:
+        with sqlite3.connect(
+            f"file:{self.database_path}?mode=rw", uri=True, timeout=30
+        ) as db:
+            db.execute(
+                """insert into service_state (key, value, updated_at)
+                   values (?, ?, current_timestamp)
+                   on conflict(key) do update set
+                     value=excluded.value, updated_at=current_timestamp""",
+                (key, value),
+            )
+
+
+class UpgradePublication(Protocol):
+    """External release assets changed while the service is stopped."""
+
+    def verify_loaded(self) -> None: ...
+
+    def rollback(self) -> None: ...
+
+    def finalize(self) -> None: ...
+
+
 @dataclass(frozen=True)
 class UpgradeOperation:
     operation_id: str
@@ -271,6 +312,7 @@ class RepositoryUpdater:
         stop: Callable[[], None] = lambda: None,
         health: Callable[[], bool] = _default_health,
         wait_for_quiet: Callable[[], None] = lambda: None,
+        publication: Callable[[], UpgradePublication] | None = None,
     ) -> None:
         self.repository = GitRepository(repository_root)
         self.store = store
@@ -283,6 +325,7 @@ class RepositoryUpdater:
         self.stop = stop
         self.health = health
         self.wait_for_quiet = wait_for_quiet
+        self.publication = publication
 
     @property
     def target_ref(self) -> str:
@@ -304,6 +347,8 @@ class RepositoryUpdater:
             if records:
                 self._preserve_local_changes(operation)
             self._persist(operation, "updating", backup_path=backup_path)
+            published: UpgradePublication | None = None
+            replacement_start_attempted = False
             try:
                 self.repository._run(
                     ["merge", "--ff-only", self.remote_ref],
@@ -312,13 +357,25 @@ class RepositoryUpdater:
                 self._persist(operation, "verifying", backup_path=backup_path)
                 self.dependency_sync()
                 self.verification()
+                if self.publication is not None:
+                    # The service is stopped and the database backup exists.
+                    # Publication is responsible for restoring a partial swap
+                    # if it raises before returning its rollback receipt.
+                    published = self.publication()
                 self._persist(operation, "restarting", backup_path=backup_path)
+                replacement_start_attempted = True
                 self.restart()
                 if not self.health():
                     raise UpgradeFailed("replacement service health check failed")
+                if published is not None:
+                    published.verify_loaded()
             except Exception as exc:
                 rollback_status = "failed"
                 try:
+                    if published is not None:
+                        if replacement_start_attempted:
+                            self.stop()
+                        published.rollback()
                     installed = self.repository.resolve_ref(self.target_ref)
                     if installed == operation.target_commit and not self.repository.status_records():
                         self.repository._run(
@@ -342,18 +399,29 @@ class RepositoryUpdater:
                     error="upgrade verification or restart failed",
                 )
                 raise UpgradeFailed("upgrade verification or restart failed") from exc
+            finalize_error = ""
+            if published is not None:
+                try:
+                    published.finalize()
+                except Exception as exc:
+                    # The replacement passed health and loaded-file readback.
+                    # Receipt cleanup failure must not turn a healthy service
+                    # into an apparent rollback or leave progress at restarting.
+                    finalize_error = f"publication receipt finalization failed: {exc}"
             installed = self.repository.resolve_ref(self.target_ref)
             self._persist(
                 operation,
                 "succeeded",
                 backup_path=backup_path,
                 installed_commit=installed,
+                error=finalize_error,
             )
             return UpgradeResult(
                 operation_id=operation.operation_id,
                 status="succeeded",
                 installed_commit=installed,
                 backup_path=str(backup_path) if backup_path else "",
+                error=finalize_error,
             )
 
     def _recheck(self, operation: UpgradeOperation) -> list[object]:

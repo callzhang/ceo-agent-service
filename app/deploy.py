@@ -15,12 +15,16 @@ already moved and stops.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+import plistlib
 import stat
 from uuid import uuid4
 
-from app.config import PRODUCTION_CHECKOUT_MESSAGE, service_root, worker_db_path
+from app.config import PRODUCTION_CHECKOUT_MESSAGE, read_env_file, service_root, worker_db_path
+from app.consumer_system_release import publish_consumer_system_contracts
 from app.repository_updater import (
+    ExistingSchemaUpgradeStateStore,
     RepositoryUpdater,
     UpgradePreconditionError,
     UpgradeOperation,
@@ -112,15 +116,26 @@ def unlock_source_tree(root: Path) -> None:
         _chmod_tree(root / relative, writable=True)
 
 
-def deploy(root: Path, database_path: Path) -> str:
-    from app.store import AutoReplyStore
+def _production_audit_rules_path(root: Path) -> Path:
+    """Resolve the worker's Audit rules path from its own environment."""
+    configured = read_env_file(root / ".env").get("CEO_AUDIT_RULES_TEMPLATE_PATH", "")
+    plist = Path.home() / "Library/LaunchAgents/com.ceo-agent-service.main.plist"
+    if plist.exists():
+        launch_environment = plistlib.loads(plist.read_bytes()).get("EnvironmentVariables", {})
+        configured = launch_environment.get("CEO_AUDIT_RULES_TEMPLATE_PATH", configured)
+    path = Path(os.path.expandvars(configured)).expanduser() if configured else root / "data/prompts/audit_rules.md"
+    return path if path.is_absolute() else root / path
 
+
+def deploy(
+    root: Path, database_path: Path, *, publish_contracts: bool = False,
+) -> str:
     ensure_production_guards(root)
     repository = GitRepository(root)
     repository.fetch(REMOTE)
     current = repository.resolve_ref(f"refs/heads/{BRANCH}")
     target = repository.resolve_ref(f"refs/remotes/{REMOTE}/{BRANCH}")
-    if current == target:
+    if current == target and not publish_contracts:
         return f"already current at {current[:8]}"
     records = repository.status_records()
     if records:
@@ -151,7 +166,7 @@ def deploy(root: Path, database_path: Path) -> str:
     ).stdout.decode().split()
     updater = RepositoryUpdater(
         root,
-        AutoReplyStore(database_path),
+        ExistingSchemaUpgradeStateStore(database_path),
         remote=REMOTE,
         branch=BRANCH,
         database_path=database_path,
@@ -161,6 +176,15 @@ def deploy(root: Path, database_path: Path) -> str:
         dependency_sync=lambda: build_frontend(root, changed),
         verification=lambda: verify_imports(root),
         health=wait_for_health,
+        publication=(
+            (lambda: publish_consumer_system_contracts(
+                root=root,
+                database_path=database_path,
+                operation_id=operation.operation_id,
+                audit_rules_path=_production_audit_rules_path(root),
+            ))
+            if publish_contracts else None
+        ),
     )
     # Unlocked for exactly the checkout + build + verify window; the source
     # tree is locked again in `finally` whether this succeeds, rolls back, or
@@ -203,11 +227,21 @@ def main() -> int:
         action="store_true",
         help="restart on the current code (a setting changed), instead of deploying a commit",
     )
+    parser.add_argument(
+        "--publish-consumer-system-contracts",
+        action="store_true",
+        help="publish the reviewed Consumer/Audit Skill and Audit-rule files in the quiet deploy window",
+    )
     args = parser.parse_args()
+    if args.restart and args.publish_consumer_system_contracts:
+        parser.error("--restart cannot publish Consumer/Audit contracts")
     if args.restart:
         print(restart_only(args.db or worker_db_path()), flush=True)
         return 0
-    print(deploy(args.root or service_root(), args.db or worker_db_path()), flush=True)
+    print(deploy(
+        args.root or service_root(), args.db or worker_db_path(),
+        publish_contracts=args.publish_consumer_system_contracts,
+    ), flush=True)
     return 0
 
 
