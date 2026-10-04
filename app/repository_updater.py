@@ -348,7 +348,7 @@ class RepositoryUpdater:
                 self._preserve_local_changes(operation)
             self._persist(operation, "updating", backup_path=backup_path)
             published: UpgradePublication | None = None
-            replacement_start_attempted = False
+            replacement_started = False
             try:
                 self.repository._run(
                     ["merge", "--ff-only", self.remote_ref],
@@ -363,8 +363,8 @@ class RepositoryUpdater:
                     # if it raises before returning its rollback receipt.
                     published = self.publication()
                 self._persist(operation, "restarting", backup_path=backup_path)
-                replacement_start_attempted = True
                 self.restart()
+                replacement_started = True
                 if not self.health():
                     raise UpgradeFailed("replacement service health check failed")
                 if published is not None:
@@ -373,7 +373,7 @@ class RepositoryUpdater:
                 rollback_status = "failed"
                 try:
                     if published is not None:
-                        if replacement_start_attempted:
+                        if replacement_started:
                             self.stop()
                         published.rollback()
                     installed = self.repository.resolve_ref(self.target_ref)

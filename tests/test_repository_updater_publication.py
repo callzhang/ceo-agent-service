@@ -121,6 +121,34 @@ def test_health_failure_stops_replacement_and_restores_publication_before_old_st
     assert (local / "version").read_text() == "old\n"
 
 
+def test_failed_bootstrap_restores_publication_without_stopping_absent_replacement(
+    tmp_path: Path,
+):
+    local, operation = _repo(tmp_path)
+    events: list[str] = []
+
+    def start() -> None:
+        events.append("start")
+        if events.count("start") == 1:
+            raise OSError("replacement bootstrap failed")
+
+    updater = RepositoryUpdater(
+        local, _State(), database_path=tmp_path / "absent.db",
+        stop=lambda: events.append("stop"),
+        publication=lambda: events.append("publish") or _Receipt(events),
+        restart=start,
+        health=lambda: events.append("health") or True,
+    )
+
+    with pytest.raises(UpgradeFailed):
+        updater.execute(operation)
+
+    assert events == [
+        "stop", "publish", "start", "rollback_publication", "start", "health",
+    ]
+    assert (local / "version").read_text() == "old\n"
+
+
 def test_deploy_state_store_does_not_initialize_new_application_schema(tmp_path: Path):
     db = tmp_path / "Application Support/old-service.sqlite3"
     db.parent.mkdir()
