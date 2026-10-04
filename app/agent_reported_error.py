@@ -50,6 +50,9 @@ def _reportable_policies() -> dict[str, ErrorPolicy]:
         "management_authorization_missing": _WAIT_FOR_PERSON,
         # The run was told not to execute; nothing to retry.
         "dry_run_execution_suppressed": _FINAL,
+        # Runtime risk refusal requires a safer action or informed approval,
+        # not another automatic Audit turn. Keep it failed, not needs_human.
+        "provider_risk_rejected": _FINAL,
         # The provider refused the send because the identical message is
         # already delivered. Reply task 135612 failed four runs in a row on
         # this: the turn notifies the applicant, DingTalk suppresses the

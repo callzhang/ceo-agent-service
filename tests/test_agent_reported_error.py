@@ -74,3 +74,12 @@ def test_a_provider_duplicate_does_not_retry_into_the_same_suppression():
     assert payload["retryable"] is False
     assert payload["authorization_required"] is False
     assert payload["source_code"] == "PROVIDER_DUPLICATE_NO_READBACK"
+
+
+def test_a_runtime_risk_rejection_never_enters_automatic_retry():
+    payload = agent_error_payload("PROVIDER_RISK_REJECTED", failed=True)
+
+    assert payload["code"] == "provider_risk_rejected"
+    assert payload["retryable"] is False
+    assert payload["authorization_required"] is False
+    assert payload["source_code"] == "PROVIDER_RISK_REJECTED"
