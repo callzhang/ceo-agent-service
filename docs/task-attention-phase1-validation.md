@@ -1,5 +1,11 @@
 # 多来源项目关注第一版验收
 
+最新实际读回（冻结da368453，2026-10-04）：真实W39副本两次run10662/10663均completed，三张实际关注卡分别支持中汽创智Task129、岚图Task130、质量Task131。第二次九张领域表全部逐行不变；卡片真实成员混淆未重现。259个原Tasks未增加；正式Projects从16到20，来源明确的四个Project实际登记。第一轮五个Task decisions包括来源明确共同负责人支持的Task129正式指派，不等于负责人已接受。第二轮task_decisions=[]。底层attempt18952正常完成，重复处理18953 superseded后18954通过既有result_validation_correction完成；这不是新增重试逻辑。
+
+首次业务覆盖仍未通过：原W39项目清单包含中汽创智、岚图、项目管理、Einride POC、抽检包生命周期五项，第一轮仅四项project_assessments，漏掉Einride POC；第二轮才补充该项insufficient_evidence，保持null身份/空支持Task且无伪造Project、Task或卡片。不能用第二轮补齐替代首次逐项目覆盖验收，也不能由三张正确卡片或input模式passed=true宣称全部业务通过。实际native transcript中的第一轮415,113字符、第二轮440,319字符输入都包含POC原始项目行和逐来源Project判断要求，因此不是该行或指令未交付。只读重建上下文发现80个Signal、19个来源身份、17段不同截取正文，source_signals约243,163字符，其中evidence_text合计163,840字符；context_json仅约15,644字符。重复正文/输入体积是待验证的原因假设，不是已证实根因；尚未改检索预算、来源识别、模型或validator。
+
+当前同冻结固定回放已有前11个独立case实际完成并通过原oracle（原多来源九例、Project身份竞争一例、report assessment一例）；第12项meeting assessment运行中。全20案例/22次固定回放仍未结束，不能继承旧46批次全通过。父PID3640/session44009仍有效，冻结源码不变；尚无push、PR、部署、全局Skill发布或生产修改。
+
 当前冻结da368453dfd1914dd2052a75406cc4a3e10a5707：成员修复及整合的最终规格/质量复审均PASS，质量另独立2 focused passed/2.30秒。主Agent整合后14文件1234 passed/175.15秒，CLI22 passed/256 deselected/4.67秒，Ruff/五imports/diff通过；最新实际Agent prompt断言下multisource全文件151 passed/27.66秒；前端两页22 passed/1.16秒及TypeScript/Vite构建通过。CI Skill SHA256=c8c66dfbce241764c99dbb366c3600f7ef1498cac748f8c7170990687ac1f0f7。原19fixtures哈希未变，新独立成员fixture哈希9e5779976dbb229f94817c4dbd18b6f2a4d89d2ca964a2704108663e65cbf7fe。
 
 新冻结原生批次已启动（父PID3640，观察session44009，2026-10-04）：先由immutable baseline备份为w39-real-final-da368453.sqlite3并quick_check，再真实input27465连续两次、比对九领域表；然后原19加新增成员case共20独立案例/22次固定回放（两个已有卡case各重复两次）。代码/Skill、原始事实/expected/oracle、native路由gpt-5.6-luna、900秒总时限/300秒idle/并发1固定；expected只在实际完成后的只读readback核验中使用，不进入Agent输入。当前仅启动/准备副本，不宣称任何新native或业务PASS。父进程遇到失败会保留原始DB/attempt并停止，不自动重跑或改写结果；旧观察句柄过期须先检查实际进程及保存run，不能因此重启。保留46批次与W39重复失败为阶段历史。尚无push/PR/部署/全局Skill发布/生产变更。
