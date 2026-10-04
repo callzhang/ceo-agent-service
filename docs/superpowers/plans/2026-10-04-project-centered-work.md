@@ -12,7 +12,7 @@
 
 ## 状态、边界与依赖
 
-设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发已在新对话开始，负责全部 Task 1–9：当前 Task 1 实施中，其余任务尚未实施。本次业务评测和发布尚未开始；复用旧测试通过记录不能勾选新任务。
+设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发已在新对话开始，负责全部 Task 1–9：Task 1 代码、局部回归及两轮独立审查已通过，当前 Task 2 实施中；真实副本迁移与后续业务评测/发布仍未通过。本次业务评测和发布尚未开始；复用旧测试通过记录不能勾选新任务。
 
 执行记录（2026-10-04）：复用下列工作目录，基线 `64dc4c8d`，独立步骤采用单作者实施、需求审查、质量审查。Task 1 文件已认领；因正文列移除直接影响听记负责人回填 SQL 及两个 API 测试的原始 INSERT，认领范围增加这些直接受影响的读路径/fixture，仅改变存储表示，不改变负责人或 API 业务语义。冻结 W39 初态经只读检查仍为 259 Tasks、16 Projects、0 Attention、398 Signals、434 Task events，`quick_check=ok`；该检查不算本次迁移或业务回放通过。
 
@@ -59,7 +59,7 @@
 
 **Files:** 新建 `app/task_source_documents.py`、`tests/test_task_source_documents.py`；修改 `app/store.py` 的 Business Signal DDL/写入/读取、`app/task_semantic_models.py:164`、`tests/test_task_semantic_store.py`、`docs/task-semantic-storage.md`。
 
-- [ ] 在新测试文件先写精确身份回归：同一原文的两个任务 Signal 共享正文；不同 ref、source type、原文版本或作者不共享；不把 memory/session 引文升级为已观察原文。
+- [x] 在新测试文件先写精确身份回归：同一原文的两个任务 Signal 共享正文；不同 ref、source type、原文版本或作者不共享；不把 memory/session 引文升级为已观察原文。
 
 ```python
 from app.task_source_documents import source_document_key
@@ -77,7 +77,7 @@ def test_body_identity_does_not_use_task_dedupe_key():
         **(source | {"author_user_id": "u2"}))
 ```
 
-- [ ] 运行 `python -m pytest -q tests/test_task_source_documents.py`，确认因尚无 helper 而 RED。实现以下纯函数（不做空白归一化或正文相似合并）：
+- [x] 运行 `python -m pytest -q tests/test_task_source_documents.py`，确认因尚无 helper 而 RED。实现以下纯函数（不做空白归一化或正文相似合并）：
 
 ```python
 import hashlib
@@ -92,7 +92,7 @@ def source_document_key(*, source_type: str, source_ref: str, source_time: str,
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 ```
 
-- [ ] 增加共享表，Signal 新增 `source_document_id` 指向它。Signal ID、dedupe_key、每条来源元数据和 Task evidence 关系不变；所有正文读取统一 JOIN 共享表，返回的 `BusinessTaskSignal.evidence_text` 保持原文接口，调用者不另写兼容分支。
+- [x] 增加共享表，Signal 新增 `source_document_id` 指向它。Signal ID、dedupe_key、每条来源元数据和 Task evidence 关系不变；所有正文读取统一 JOIN 共享表，返回的 `BusinessTaskSignal.evidence_text` 保持原文接口，调用者不另写兼容分支。
 
 ```sql
 CREATE TABLE business_source_documents (
@@ -106,11 +106,13 @@ CREATE INDEX idx_business_signal_document
 ```
 
 - [ ] 在 Store 既有 schema 初始化/升级事务中，对旧 Signal 按上述精确身份逐条迁移正文并填引用，保持 ID 及所有关系。完成逐条读回相等、外键和行数核对后，迁移中移除 Signal 的重复正文列，之后只有一条 JOIN 读取路径；新库直接建最终结构。历史 run/event JSON 不重写。这是数据表示迁移，不做业务合并；先仅在临时测试库与备份副本验证。
-- [ ] `tests/test_task_semantic_store.py` 增加真实旧库→新库回归：两个同正文 Signal、独立 evidence 角色、一个不同作者 Signal；迁移前后每个 Signal 原有公开字段、任务与事件完全相同，正文行数为 2；再次初始化无新增正文。增加当前 observer 与 memory provenance 同 ref 的分离用例。
-- [ ] 运行 `python -m pytest -q tests/test_task_source_documents.py tests/test_task_semantic_store.py tests/test_task_semantic_service.py`，预期 GREEN；读回数据库而非只检查函数返回。
-- [ ] 同提交更新 schema 版本标记、存储说明和 Signal 读取契约；提交 `refactor(tasks): share immutable source bodies without changing evidence identities`。本步骤不得自行对生产库运行迁移。
+- [x] `tests/test_task_semantic_store.py` 增加真实旧库→新库回归：两个同正文 Signal、独立 evidence 角色、一个不同作者 Signal；迁移前后每个 Signal 原有公开字段、任务与事件完全相同，正文行数为 2；再次初始化无新增正文。增加当前 observer 与 memory provenance 同 ref 的分离用例。
+- [x] 运行 `python -m pytest -q tests/test_task_source_documents.py tests/test_task_semantic_store.py tests/test_task_semantic_service.py`，预期 GREEN；读回数据库而非只检查函数返回。
+- [x] 同提交更新 schema 版本标记、存储说明和 Signal 读取契约；提交 `refactor(tasks): share immutable source bodies without changing evidence identities`。本步骤不得自行对生产库运行迁移。
 
 ## Task 2：Project 独立上下文、唯一总负责与人员分工
+
+Task 1 读回（2026-10-04，`8f8a4a62`）：主 Agent 新跑六个相关测试文件共 **603 passed / 29.26s**，Ruff 与 diff check 通过；需求审查与质量审查均未发现缺项。真实完整 W39 副本迁移被原冻结初态的既有非 Task 外键缺陷阻止：`meeting_alignment_runs` row 2298 引用不存在的 `meeting_alignment_jobs`。对原库和失败后的副本分别执行 foreign_key_check 得到同一缺陷；副本仍保留旧 Signal 正文列、没有共享正文表，旧版本标记未推进，证明回滚。未删除孤儿、忽略检查或修改生产数据；成功的完整真实副本迁移及发布验收仍待完成，不能用 603 个测试代替。原冻结库与失败副本均保留。
 
 **Files:** 修改 `app/task_semantic_models.py:308`、`app/store.py:3863`、`app/task_business_resolution.py:150`；新建 `app/project_context_service.py`、`tests/test_project_context_service.py`；修改 `tests/test_task_semantic_store.py`、`docs/architecture.md` 和 `docs/runtime-mechanism.md` 的项目部分。
 
