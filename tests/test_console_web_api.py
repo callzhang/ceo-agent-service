@@ -1181,6 +1181,75 @@ def test_console_status_route_registers_a_response_model(tmp_path: Path):
     assert route.response_model is not None
 
 
+@pytest.mark.parametrize("path", ("/api/console/status", "/api/workers/status"))
+def test_status_reads_each_queue_section_once_from_one_fresh_snapshot(
+    monkeypatch, tmp_path: Path, path: str,
+):
+    monkeypatch.setattr(
+        audit_web_module, "_launchd_service_status", _running_launchd_service_status,
+    )
+    monkeypatch.setattr(audit_web_module, "_connector_status_snapshots", lambda: {})
+    monkeypatch.setattr(
+        audit_web_module, "_wechat_status_snapshot", lambda _store: _ready_wechat_status(),
+    )
+    monkeypatch.setattr(
+        audit_web_module, "_system_health_snapshot",
+        lambda _store, _service: {
+            "state": "healthy", "detail": "No violations.",
+            "checked_at": "2026-10-04T00:00:00Z", "violations": 0,
+        },
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    work_input_id = store.enqueue_work_summary_input(
+        "reply_attempt", "snapshot-test", '{"summary":"A current work item"}',
+    )
+    reads = []
+
+    def observe(name, original):
+        def read(current_store, *args, **kwargs):
+            reads.append((name, current_store._read_snapshot_connection.get()))
+            return original(current_store, *args, **kwargs)
+        return read
+
+    with _client(tmp_path) as client:
+        for name in (
+            "_queue_status_snapshots", "_queue_attention_rows",
+            "_human_decision_attention_rows",
+        ):
+            monkeypatch.setattr(
+                audit_web_module, name, observe(name, getattr(audit_web_module, name)),
+            )
+        first = client.get(path)
+        assert first.status_code == 200
+        first_item = first.json()["item"] if "item" in first.json() else first.json()
+        assert first_item["summary"]["pending"] == 1
+        assert first_item["summary"]["attention"] == 0
+        first_reads = reads[:]
+        reads.clear()
+
+        store.mark_work_summary_input_failed(work_input_id, "processing failed")
+        second = client.get(path)
+        assert second.status_code == 200
+        second_item = second.json()["item"] if "item" in second.json() else second.json()
+        assert second_item["summary"]["pending"] == 0
+        assert second_item["summary"]["failed"] == 1
+        assert second_item["summary"]["attention"] == 1
+        assert second_item["attention_rows"][0]["id"] == str(work_input_id)
+        assert second_item["human_decision_rows"] == []
+        second_reads = reads[:]
+
+    expected = [
+        "_queue_status_snapshots", "_queue_attention_rows",
+        "_human_decision_attention_rows",
+    ]
+    for request_reads in (first_reads, second_reads):
+        assert [name for name, _snapshot in request_reads] == expected
+        snapshot = request_reads[0][1]
+        assert snapshot is not None
+        assert all(current is snapshot for _name, current in request_reads)
+    assert first_reads[0][1] is not second_reads[0][1]
+
+
 def test_console_status_accepts_human_decision_evidence(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         audit_web_module,
@@ -1288,6 +1357,7 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
             "queues": [],
             "dispatcher_queues": [],
             "attention_rows": [],
+            "human_decision_rows": [],
             # A Path is not JSON-native; the endpoint must normalise it before
             # the strict response contract validates the snapshot.
             "database": {"path": database},

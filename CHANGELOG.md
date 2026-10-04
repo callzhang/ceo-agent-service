@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- 2026-10-04: Status reuses the worker payload's fresh read-only SQLite
+  snapshot for queue totals, Attention and human decisions. It no longer
+  scans each section twice or mixes snapshots within one response; subsequent
+  requests still read current state, and existing failure/recovery rules stay
+  unchanged.
+
 - 2026-10-02: Meeting group discovery requests the supported 100-item DWS
   search pages so large participant queries finish within the pagination budget.
   Incomplete provider results still block recipient selection.

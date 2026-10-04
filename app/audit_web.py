@@ -10141,23 +10141,9 @@ def create_audit_app(
         return _system_health_snapshot(audit_store, service)
 
     def render_settings_status_payload() -> dict[str, object]:
+        # The worker payload already reads all queue projections from one
+        # fresh snapshot. Re-reading here doubles the scans and mixes snapshots.
         payload = render_worker_status_payload()
-        # Queue totals may use the short-lived status snapshot, but Attention
-        # is an error surface and must agree with its dedicated endpoint on
-        # every refresh. Decisions are read separately so the service-error
-        # list remains distinct from actual rule questions.
-        attention_rows = _queue_attention_rows(audit_store)
-        human_decision_rows = _human_decision_attention_rows(audit_store)
-        summary = dict(payload.get("summary") or {})
-        # Keep feedback backlog totals bound to the same authoritative queue
-        # definitions used by the dedicated feedback endpoint.
-        fresh_summary = read_fresh_feedback_backlog()
-        summary.update(fresh_summary)
-        summary["attention"] = sum(
-            max(0, int(row.get("count") or 1))
-            for row in attention_rows
-            if isinstance(row, Mapping)
-        )
         connector_statuses = connector_status_cache.get_or_refresh(
             _connector_status_snapshots,
             lambda: {},
@@ -10182,9 +10168,6 @@ def create_audit_app(
         )
         return {
             **payload,
-            "attention_rows": attention_rows,
-            "human_decision_rows": human_decision_rows,
-            "summary": summary,
             "connectors": connector_statuses,
             "wechat": wechat_status,
             "system_health": system_health,
