@@ -199,6 +199,50 @@ def test_loaded_readback_requires_the_new_config_and_exact_files(tmp_path: Path)
         receipt.verify_loaded()
 
 
+@pytest.mark.parametrize("mutation", ("remove_managed", "replace_source_and_name"))
+def test_loaded_readback_rejects_missing_or_replaced_scheduled_refs(
+    tmp_path: Path, mutation: str,
+):
+    root, skills, rules, manifest, old, _new = _fixture(tmp_path)
+    db = tmp_path / "service.sqlite3"
+    store, _old_config_id, task_id = _store_with_refs(db, old)
+    receipt = publish_consumer_system_contracts(
+        root=root, database_path=db, operation_id=f"readback-{mutation}",
+        skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
+    )
+    config = store.get_pending_or_active_runtime_skill_config()
+    store.record_runtime_skill_load(
+        config.id, pid=os.getpid(),
+        loaded={
+            binding.skill_id: store.get_managed_skill_revision(binding.revision_id).sha256
+            for binding in store.list_runtime_skill_bindings(config.id) if binding.enabled
+        },
+    )
+    receipt.verify_loaded()
+    task = store.get_scheduled_task(task_id)
+    if mutation == "remove_managed":
+        changed = tuple(
+            replace(ref, position=index)
+            for index, ref in enumerate(
+                ref for ref in task.skill_refs if ref.skill_source == "operation"
+            )
+        )
+    else:
+        changed = tuple(
+            replace(
+                ref, skill_source="operation", skill_name="dingtalk-chat",
+                managed_skill_id=None, managed_revision_id=None,
+            ) if ref.skill_name == "ceo-mail-review" else ref
+            for ref in task.skill_refs
+        )
+    store.update_scheduled_task(
+        task_id, expected_version=task.version, skill_refs=changed,
+    )
+
+    with pytest.raises(ValueError, match="scheduled Skill reference changed"):
+        receipt.verify_loaded()
+
+
 def test_explicit_old_managed_digest_can_differ_from_installed_file(tmp_path: Path):
     root, skills, rules, manifest, old, new = _fixture(tmp_path)
     db = tmp_path / "service.sqlite3"

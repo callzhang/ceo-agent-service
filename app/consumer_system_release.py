@@ -193,14 +193,18 @@ class ConsumerSystemPublication:
         for plan in self.plans:
             if _sha256(plan.target.read_bytes()) != plan.new_sha256:
                 raise ValueError(f"Consumer system released file changed: {plan.source}")
-        for task_id in self.original_task_refs:
+        for task_id, original_refs in self.original_task_refs.items():
             task = self.store.get_scheduled_task(task_id)
             if task is None:
                 raise ValueError("Consumer system scheduled task disappeared")
-            for ref in task.skill_refs:
-                if ref.skill_source == "managed" and ref.skill_name in self.new_revisions:
-                    if ref.managed_revision_id != self.new_revisions[ref.skill_name]:
-                        raise ValueError("Consumer system scheduled Skill reference changed")
+            expected_refs = tuple(
+                replace(ref, managed_revision_id=self.new_revisions[ref.skill_name])
+                if ref.skill_source == "managed" and ref.skill_name in self.new_revisions
+                else ref
+                for ref in original_refs
+            )
+            if task.skill_refs != expected_refs:
+                raise ValueError("Consumer system scheduled Skill reference changed")
 
     def rollback(self) -> None:
         for task_id, updated_version in reversed(tuple(self.updated_task_versions.items())):

@@ -31,7 +31,9 @@ as they were.
 
 After restart, the deploy checks that the new active configuration and a live
 worker's load receipt contain the six target Skill digests. It also reads back
-the nine files and affected scheduled references. Only then is the release
+the nine files and each affected task's complete scheduled reference tuple,
+including source, name, order, and all six managed revision IDs. Removed or
+replaced references fail this readback. Only then is the release
 receipt marked verified. The exact previous texts remain in that release's
 receipt for rollback review. A live receipt PID alone does not prove that it
 belongs to the replacement worker; the final production readback must compare
