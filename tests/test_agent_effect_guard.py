@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from app.agent_effect_guard import provider_receipts
@@ -108,54 +109,38 @@ def test_malformed_input_is_tolerated() -> None:
     assert provider_receipts([_command("not json at all")]) == ()
 
 
-def test_the_consumer_records_an_unreviewed_effect_it_actually_produced(tmp_path) -> None:
-    """The wiring, exercised with the event shape run 14017 produced."""
-    from types import SimpleNamespace
+def test_consumer_role_keeps_report_documents_without_controlled_write_tools(tmp_path) -> None:
+    """The role catalog is the execution boundary; old event diagnosis is not."""
+    from app.agent_cli import build_role_server
+    from app.consumer_agent import ConsumerAgentRunner
 
-    from app.consumer_agent import CONSUMER_UNREVIEWED_EFFECT, ConsumerAgentRunner
-    from app.store import AutoReplyStore
+    db_path = tmp_path / "role.sqlite3"
+    consumer = {tool.name for tool in asyncio.run(build_role_server(
+        "consumer", task_id=1, db_path=db_path,
+    ).list_tools())}
+    audit = {tool.name for tool in asyncio.run(build_role_server(
+        "audit", task_id=1, db_path=db_path,
+    ).list_tools())}
 
-    store = AutoReplyStore(tmp_path / "effects.sqlite3")
-    runner = ConsumerAgentRunner.__new__(ConsumerAgentRunner)
-    runner.store = store
-    task = SimpleNamespace(id=383537, conversation_id="cid-1", trigger_message_id="msg-1")
-
-    receipt = json.dumps({"data": {"result": {"openTaskId": "nexgdfcC="}}})
-    store.get_agent_run = lambda _run_id: SimpleNamespace(  # type: ignore[method-assign]
-        tool_events=[_command(receipt)]
-    )
-    runner._report_unreviewed_provider_effects(task, SimpleNamespace(run_id=14017))
-
-    with store._connect() as db:
-        rows = [dict(r) for r in db.execute("select kind, detail from errors")]
-    assert [row["kind"] for row in rows] == [CONSUMER_UNREVIEWED_EFFECT]
-    assert "nexgdfcC=" in rows[0]["detail"]
-    assert "must not be retried blindly" in rows[0]["detail"]
-
-    # A clean proposal turn records nothing.
-    store.get_agent_run = lambda _run_id: SimpleNamespace(tool_events=[])  # type: ignore[method-assign]
-    runner._report_unreviewed_provider_effects(task, SimpleNamespace(run_id=14018))
-    with store._connect() as db:
-        assert db.execute("select count(*) from errors").fetchone()[0] == 1
+    assert {"daily_report_facts", "weekly_report_materials",
+            "validate_weekly_report", "render_weekly_report",
+            "consumer_document_write"} <= consumer
+    assert "consumer_document_write" not in audit
+    assert {"read_dingtalk_oa", "read_dingtalk_document"} <= consumer & audit
+    assert {"send_approved_dingtalk_message", "execute_reviewed_write",
+            "execute_audited_email_unsubscribe"}.isdisjoint(consumer | audit)
+    assert not hasattr(ConsumerAgentRunner, "_report_unreviewed_provider_effects")
 
 
-def test_the_consumer_boundary_forbids_causing_external_effects() -> None:
-    """The prompt is the primary control; the guard only catches what slips past.
-
-    The boundary used to read "The application does not impose a command or
-    read-only policy", which a model can fairly read as permission to send.
-    Consumer run 14017 did exactly that.
-    """
+def test_consumer_boundary_preserves_report_work_and_proposes_controlled_actions() -> None:
+    """The business role can prepare documents while system code owns dispatch."""
     from app.consumer_agent import CONSUMER_ROLE_BOUNDARY as boundary
 
-    assert "does not impose a command or read-only policy" not in boundary
-    # It still must not invite refusing work on invented policy grounds.
-    assert "never refuse work by citing a policy" in boundary
-    # It must forbid causing an effect, and say where the action belongs.
-    assert "Do not\nrun a command that produces an external effect" in boundary
-    assert "let the next stage perform it" in boundary
-    # The reason is stated so the rule generalises past the one command.
-    assert "postfix" in boundary and "sends it a second time" in boundary
+    flowed = " ".join(boundary.split())
+    assert "including report and document work" in flowed
+    assert "Controlled structured actions are proposals: do not dispatch them yourself" in flowed
+    assert "Audit reads and reviews the complete candidate; system code executes its exact" in flowed
+    assert "Supply canonical typed capability/operation, exact target and payload; no shell argv" in flowed
 
 
 def _mcp_call(result, *, error=None, tool: str = "execute_reviewed_write"):
