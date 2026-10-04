@@ -3661,3 +3661,25 @@ def test_waiting_for_the_runtime_does_not_count_toward_the_failure_bound():
         )
         == 1
     )
+
+
+def test_consumer_human_question_must_wait_for_whole_candidate_audit(store):
+    """A Consumer assertion cannot publish an actionable question by itself."""
+    task = _task(store, message_id='review-question-regression')
+    audit_question = _audit_result('needs_human', 0)
+    question = ConsumerAgentResult(
+        outcome='needs_human',
+        summary='Two current priorities require the principal to choose.',
+        proposal=None,
+        decision_options=audit_question.decision_options,
+        needs_human_reason='这两项已有承诺冲突，需要决定本次先推进哪一项。',
+        decision_basis=audit_question.decision_basis,
+        risk='high', confidence=0.1, rule_coverage=1.0,
+        information_completeness=1.0, error=AgentError(code=''),
+    )
+    consumer = ScriptedConsumer(store, question)
+    consumer.run(task, _context(task), proposal_revision=0, parent_agent_run_id=None)
+    orchestrator = AgentOrchestrator(store=store, consumer=consumer, audit=ScriptedAudit(store))
+    state = orchestrator._derive_state(task)
+    assert isinstance(state, _NextAudit), 'unreviewed human question was published without Audit'
+    assert state.parent_run_id == consumer.calls[0]['run_id']
