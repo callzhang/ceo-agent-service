@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, listHistoryTypes, renameRuntimeRoute } from "./console";
+import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, listBusinessTasks, getBusinessProjectDetail, listHistoryTypes, renameRuntimeRoute } from "./console";
 
 function statusEnvelope() {
   return {
@@ -43,6 +43,41 @@ function statusEnvelope() {
 }
 
 describe("console API helpers", () => {
+  it.each(["origin", "suggested_owner", "suggestion_reason", "deadline_type"])("requires Task %s instead of accepting the obsolete Task contract", async (field) => {
+    const task: Record<string, unknown> = { id: "1", title: "客户回款", origin: "agent_suggestion", suggested_owner: "王五", suggestion_reason: "需要确认付款日期", stage: "candidate", status: "open", commitment_status: "none", owner: "", deadline_at: "", deadline_type: "", business_relevance: "relevant", anchor_labels: [], updated_at: "now", detail_url: "/tasks/item/1" };
+    delete task[field];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({ items: [task], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "now" } }), { status: 200 });
+    try { await expect(listBusinessTasks()).rejects.toThrow("invalid business task response"); }
+    finally { globalThis.fetch = originalFetch; }
+  });
+
+  it.each(["overall_owner", "overall_responsibility", "attention_reason", "updated_at"])("requires persisted project %s", async (field) => {
+    const project: Record<string, unknown> = { id: "2", title: "客户项目", registry_source: "经营会", canonical_anchor_id: 3, confirmed_task_count: 0, detail_url: "/tasks/project/2", overall_owner: "", overall_responsibility: "", attention_reason: "", updated_at: "now" };
+    delete project[field];
+    const meta = { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "now" };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({ items: [project], candidates: [], candidate_meta: { ...meta, total: 0 }, meta }), { status: 200 });
+    try { await expect(listBusinessProjects()).rejects.toThrow("invalid business project response"); }
+    finally { globalThis.fetch = originalFetch; }
+  });
+
+  it("requires the explicit nullable project context, suggestions and bounded evidence/history", async () => {
+    const summary = { id: "2", title: "客户项目", registry_source: "经营会", canonical_anchor_id: 3, confirmed_task_count: 0, detail_url: "/tasks/project/2", overall_owner: "", overall_responsibility: "", attention_reason: "", updated_at: "now" };
+    const pageMeta = { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "now" };
+    const item: Record<string, unknown> = { summary, confirmed_tasks: [], context: null, responsibilities: [], suggestions: [], evidence_signals: [], context_revisions: [], evidence_meta: pageMeta, context_revision_meta: pageMeta };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({ item, meta: { snapshot_at: "now" } }), { status: 200 });
+    try {
+      expect((await getBusinessProjectDetail("2")).item.context).toBeNull();
+      for (const field of ["context", "responsibilities", "suggestions", "evidence_signals", "context_revisions", "evidence_meta", "context_revision_meta"]) {
+        const saved = item[field];
+        delete item[field];
+        await expect(getBusinessProjectDetail("2")).rejects.toThrow("invalid business project detail");
+        item[field] = saved;
+      }
+    } finally { globalThis.fetch = originalFetch; }
+  });
   it("preserves 64-bit email IDs from JSON through the feedback URL", async () => {
     const originalFetch = globalThis.fetch;
     const id = "8423079112545370123";

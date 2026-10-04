@@ -37,13 +37,13 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-project-centered-task8-runner | Isolated task-attention-multisource worktree: scripts/replay_task_attention.py, scripts/inspect_task_attention.py; tests/test_replay_task_attention_project.py and tests/test_inspect_task_attention.py; docs/task-project-centered-validation.md and approved implementation plan | Primary author approved Task 8 existing-runner source sequence, independent source/Project-context seeds for unit cases, persisted-domain oracle and context metrics. Same original inputs for baseline/candidate; no new runner/model, historical oracle rewrite, native production session, live repair or deployment. | 2026-10-04 |
+
 | codex-project-centered-task8-fixture-oracle | Isolated task-attention-multisource worktree: tests/fixtures/task_project_centered_v1.json and tests/test_task_project_centered_eval.py ONLY | Existing project_context_spec_review agent delegated approved Task 8 versioned original-source cases and persisted-domain oracle counterexamples. No runtime, scripts, existing historical fixtures, docs, commits, native runs or live writes; primary owns runner integration. | 2026-10-04 |
 
 
 
-| codex-project-centered-task7-api | Isolated task-attention-multisource worktree: app/web_api/tasks.py; tests/test_web_api_task_project_summary.py, tests/test_web_api_task_attention.py and directly affected semantic API fixture contracts; owned behavior docs/plan | Primary author Task 7 read-only ProjectContext/roles/facts/suggestions/evidence/revision API. Remove Task-report inference read path, preserve actual owners/dates/stages and independent source Task. No policy, live mutation or deployment. | 2026-10-04 |
 
-| codex-project-centered-task7-console | Isolated task-attention-multisource worktree: frontend/src/api/console.ts, console.test.ts; TasksPage, TaskProjectDetailPage, TaskAttentionDetailPage, TaskParts, taskLabels and affected TaskDetailPage/tests; frontend/dev-mock/tasksMock.ts and Tasks-only responsive styles/tests | Delegated existing source_storage agent: display current API persisted ProjectContext and explicit suggestions; dense accessible light/dark narrow views. No business inference, API/backend edits, dependency migration, automatic dispatch, commit or deploy. | 2026-10-04 |
 
 
 

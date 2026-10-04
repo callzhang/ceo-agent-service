@@ -2,17 +2,48 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
-const getBusinessTaskDetail = vi.hoisted(() => vi.fn());
+const getBusinessTaskDetail = vi.hoisted(() => vi.fn<typeof import("../api/console").getBusinessTaskDetail>());
 const sendBusinessTaskFollowUp = vi.hoisted(() => vi.fn());
 const decideCandidateTask = vi.hoisted(() => vi.fn());
 vi.mock("../api/console", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api/console")>()), getBusinessTaskDetail, sendBusinessTaskFollowUp, decideCandidateTask }));
 import { TaskDetailPage } from "./TaskDetailPage";
 
 describe("TaskDetailPage", () => {
+  it("keeps the suggestion history of a promoted Task without presenting it as unassigned", async () => {
+    getBusinessTaskDetail.mockResolvedValue({ item: {
+      summary: { id: "90", title: "已指派的回款确认", origin: "agent_suggestion", suggested_owner: "", suggestion_reason: "", stage: "formal", status: "open", commitment_status: "accepted", owner: "赵六", deadline_at: "2026-10-12", deadline_type: "committed_deadline_at", business_relevance: "relevant", anchor_labels: ["客户项目"], updated_at: "2026-10-04", detail_url: "/tasks/item/90" },
+      suggestion: { reason: "最初建议由王五确认", suggested_owner_user_id: "wang", suggested_owner_name: "王五", responsibility_evidence: [{ signal_id: 31, source_ref: "meeting-31", source_excerpt: "王五负责商务与回款。" }], basis_evidence: [{ signal_id: 32, source_ref: "chat-32", source_excerpt: "客户尚未给出付款日期。" }] },
+      evidence: [], date_evidence: [], events: [], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [],
+    }, meta: { snapshot_at: "2026-10-04" } });
+    render(<MemoryRouter><TaskDetailPage taskId="90" /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "历史建议依据" })).toBeInTheDocument();
+    expect(screen.getByText("负责人").nextElementSibling).toHaveTextContent("赵六");
+    expect(screen.getByText("最初建议负责人").nextElementSibling).toHaveTextContent("王五");
+    expect(screen.getByText("承诺完成日期").nextElementSibling).toHaveTextContent("2026-10-12");
+    expect(screen.getByText("源于 Agent 建议")).toBeInTheDocument();
+    expect(screen.queryByText(/建议尚未指派/)).not.toBeInTheDocument();
+    expect(screen.queryByText("建议负责人", { exact: true })).not.toBeInTheDocument();
+  });
+  it("shows an Agent suggestion as proposed responsibility with separate reasons and evidence", async () => {
+    getBusinessTaskDetail.mockResolvedValue({ item: {
+      summary: { id: "88", title: "确认客户回款时间", origin: "agent_suggestion", suggested_owner: "王五", suggestion_reason: "回款存在不确定性", stage: "candidate", status: "open", commitment_status: "none", owner: "", deadline_at: "", deadline_type: "", business_relevance: "relevant", anchor_labels: ["客户项目"], updated_at: "2026-10-04", detail_url: "/tasks/item/88" },
+      suggestion: { reason: "建议由负责商务与回款的王五确认客户付款计划。", suggested_owner_user_id: "wang", suggested_owner_name: "王五", responsibility_evidence: [{ signal_id: 31, source_ref: "meeting-31", source_excerpt: "王五负责商务与回款。" }], basis_evidence: [{ signal_id: 32, source_ref: "chat-32", source_excerpt: "客户尚未给出付款日期。" }] },
+      description: "", evidence: [], date_evidence: [], events: [], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [],
+    }, meta: { snapshot_at: "2026-10-04" } });
+    render(<MemoryRouter><TaskDetailPage taskId="88" /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "确认客户回款时间" })).toBeInTheDocument();
+    expect(screen.getByText("Agent 建议")).toBeInTheDocument();
+    expect(screen.getByText("建议负责人").nextElementSibling).toHaveTextContent("王五");
+    expect(screen.getByText("负责人").nextElementSibling).toHaveTextContent("待明确");
+    for (const text of ["建议由负责商务与回款的王五确认客户付款计划。", "职责依据", "建议依据", "王五负责商务与回款。", "客户尚未给出付款日期。"]) expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.queryByText("已指派，未接受")).not.toBeInTheDocument();
+    expect(screen.queryByText("截止日期")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "自动派发" })).not.toBeInTheDocument();
+  });
   it("shows Task stage, commitment and source evidence without pretending it is a Project", async () => {
     getBusinessTaskDetail.mockResolvedValue({ item: {
-      summary: { id: "42", title: "交付报价首版", stage: "formal", status: "open", commitment_status: "assigned_unaccepted", owner: "王明", deadline_at: "2026-09-28", business_relevance: "relevant", anchor_labels: ["美国市场"], updated_at: "2026-09-24", detail_url: "/tasks/item/42" },
-      description: "为美国客户准备", evidence: [{ role: "assignment", signal: { id: 3, source_type: "meeting", evidence_text: "王明周一交付报价首版" } }], date_evidence: [{ id: 6, date_type: "committed_deadline_at", value_at: "2026-09-28", raw_phrase: "下周一交付" }], events: [{ id: 5, event_type: "assignment", created_at: "2026-09-24" }], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [],
+      summary: { id: "42", title: "交付报价首版", origin: "source", suggested_owner: "", suggestion_reason: "", stage: "formal", status: "open", commitment_status: "assigned_unaccepted", owner: "王明", deadline_at: "2026-09-28", deadline_type: "requested_deadline_at", business_relevance: "relevant", anchor_labels: ["美国市场"], updated_at: "2026-09-24", detail_url: "/tasks/item/42" },
+      suggestion: null, description: "为美国客户准备", evidence: [{ role: "assignment", signal: { id: 3, source_type: "meeting", evidence_text: "王明周一交付报价首版" } }], date_evidence: [{ id: 6, date_type: "requested_deadline_at", value_at: "2026-09-28", raw_phrase: "下周一交付" }], events: [{ id: 5, event_type: "assignment", created_at: "2026-09-24" }], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [],
     }, meta: { snapshot_at: "2026-09-24" } });
     render(<MemoryRouter><TaskDetailPage taskId="42" /></MemoryRouter>);
     expect(await screen.findByRole("heading", { name: "交付报价首版" })).toBeInTheDocument();
@@ -24,9 +55,9 @@ describe("TaskDetailPage", () => {
   });
 
   it("sends a follow-up only when Derek clicks it, and shows a withdrawn one without a button", async () => {
-    const detail = (followUps: Array<Record<string, unknown>>) => ({ item: {
-      summary: { id: "42", title: "交付报价首版", stage: "formal", status: "open", commitment_status: "accepted", owner: "王明", deadline_at: "", business_relevance: "relevant", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/42" },
-      description: "", evidence: [], date_evidence: [], events: [], relations: [], clusters: [], anchors: [], official_projects: [], dingtalk_todos: [], follow_ups: followUps,
+    const detail = (followUps: Array<Record<string, unknown>>): Awaited<ReturnType<typeof getBusinessTaskDetail>> => ({ item: {
+      summary: { id: "42", title: "交付报价首版", origin: "source", suggested_owner: "", suggestion_reason: "", stage: "formal", status: "open", commitment_status: "accepted", owner: "王明", deadline_at: "", deadline_type: "", business_relevance: "relevant", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/42" },
+      suggestion: null, description: "", evidence: [], date_evidence: [], events: [], relations: [], clusters: [], anchors: [], official_projects: [], dingtalk_todos: [], follow_ups: followUps,
     }, meta: { snapshot_at: "2026-09-25" } });
     const pending = { id: 7, revision: 3, status: "draft", question_text: "请确认报价首版进展", target_kind: "group", owner_name: "王明", scheduled_at: "2026-09-26 09:00:00" };
     const withdrawn = { id: 6, revision: 2, status: "cancelled", question_text: "旧的催办", target_kind: "direct", owner_name: "王明", scheduled_at: "2026-09-20 09:00:00", suppressed_reason: "Task 已被新信息更新" };
@@ -49,8 +80,8 @@ describe("TaskDetailPage", () => {
   it("shows JSON evidence as a readable line with the raw record folded, and Chinese status labels", async () => {
     const raw = { meeting: { title: "每周friday视频内容进展同步", durationMicros: 1972792000 } };
     getBusinessTaskDetail.mockResolvedValue({ item: {
-      summary: { id: "43", title: "整理访谈问题清单", stage: "candidate", status: "open", commitment_status: "none", owner: "", deadline_at: "", business_relevance: "unknown", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/43" },
-      description: "", evidence: [{ role: "discovery", signal: { id: 43, source_type: "ai_minutes", source_time: "2026-09-24T11:29:21+08:00", evidence_text: JSON.stringify(raw), context_json: JSON.stringify({ work_item_title: "每周friday视频内容进展同步行动项" }) } }],
+      summary: { id: "43", title: "整理访谈问题清单", origin: "source", suggested_owner: "", suggestion_reason: "", stage: "candidate", status: "open", commitment_status: "none", owner: "", deadline_at: "", deadline_type: "", business_relevance: "unknown", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/43" },
+      suggestion: null, description: "", evidence: [{ role: "discovery", signal: { id: 43, source_type: "ai_minutes", source_time: "2026-09-24T11:29:21+08:00", evidence_text: JSON.stringify(raw), context_json: JSON.stringify({ work_item_title: "每周friday视频内容进展同步行动项" }) } }],
       date_evidence: [], events: [{ id: 43, event_type: "created", reason: "Candidate task recorded", created_at: "2026-09-24 23:48:47" }], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [],
     }, meta: { snapshot_at: "2026-09-25" } });
     render(<MemoryRouter><TaskDetailPage taskId="43" /></MemoryRouter>);
@@ -66,8 +97,8 @@ describe("TaskDetailPage", () => {
   });
 
   it("ignores a candidate from its own page and shows the result", async () => {
-    const summary = (status: string) => ({ id: "43", title: "整理访谈问题清单", stage: "candidate", status, commitment_status: "none", owner: "", deadline_at: "", business_relevance: "unknown", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/43" });
-    const detail = (status: string) => ({ item: { summary: summary(status), description: "", evidence: [], date_evidence: [], events: [], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [] }, meta: { snapshot_at: "2026-09-25" } });
+    const summary = (status: string): import("../api/console").BusinessTaskSummary => ({ id: "43", title: "整理访谈问题清单", origin: "source", suggested_owner: "", suggestion_reason: "", stage: "candidate", status, commitment_status: "none", owner: "", deadline_at: "", deadline_type: "", business_relevance: "unknown", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/43" });
+    const detail = (status: string): Awaited<ReturnType<typeof getBusinessTaskDetail>> => ({ item: { summary: summary(status), suggestion: null, description: "", evidence: [], date_evidence: [], events: [], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [] }, meta: { snapshot_at: "2026-09-25" } });
     getBusinessTaskDetail.mockResolvedValueOnce(detail("open")).mockResolvedValue(detail("cancelled"));
     decideCandidateTask.mockResolvedValue({ ok: true, message: "已忽略这个候选任务", meta: { updated_at: "" } });
     render(<MemoryRouter><TaskDetailPage taskId="43" /></MemoryRouter>);
@@ -79,12 +110,12 @@ describe("TaskDetailPage", () => {
 
   it("treats a candidate without an owner as ordinary, not as something missing", async () => {
     getBusinessTaskDetail.mockResolvedValue({ item: {
-      summary: { id: "43", title: "整理访谈问题清单", stage: "candidate", status: "open", commitment_status: "none", owner: "", deadline_at: "", business_relevance: "unknown", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/43" },
-      description: "", missing_evidence: ["明确任务负责人"], evidence: [], date_evidence: [], events: [], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [],
+      summary: { id: "43", title: "整理访谈问题清单", origin: "source", suggested_owner: "", suggestion_reason: "", stage: "candidate", status: "open", commitment_status: "none", owner: "", deadline_at: "", deadline_type: "", business_relevance: "unknown", anchor_labels: [], updated_at: "2026-09-24", detail_url: "/tasks/item/43" },
+      suggestion: null, description: "", missing_evidence: ["明确任务负责人"], evidence: [], date_evidence: [], events: [], relations: [], clusters: [], anchors: [], official_projects: [], follow_ups: [], dingtalk_todos: [],
     }, meta: { snapshot_at: "2026-09-25" } });
     render(<MemoryRouter><TaskDetailPage taskId="43" /></MemoryRouter>);
     expect(await screen.findByText("转为正式任务还需")).toBeInTheDocument();
-    expect(screen.getByText("未指定")).toBeInTheDocument();
+    expect(screen.getByText("负责人").nextElementSibling).toHaveTextContent("待明确");
     expect(screen.queryByText("还缺依据")).not.toBeInTheDocument();
     expect(screen.queryByText(/尚无明确负责人|负责人未明确/)).not.toBeInTheDocument();
   });

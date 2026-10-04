@@ -1,7 +1,6 @@
 """Task management DTOs and read-only console payload builders."""
 
 import json
-import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -18,11 +17,15 @@ from app.task_retrieval import load_project_task_detail, resolve_task_owner_disp
 from app.task_semantic_models import (
     BusinessAttentionEvent,
     BusinessProjectCandidate,
+    BusinessProjectContextRevision,
     BusinessTaskAnchorLink,
     BusinessTaskDateEvidence,
     BusinessTaskEvent,
     BusinessTaskRelation,
     BusinessTaskSignal,
+    ProjectContext,
+    ProjectResponsibility,
+    TaskSuggestion,
 )
 from app.web_api.common import (
     ApiItemEnvelope,
@@ -723,6 +726,10 @@ class ConsoleBusinessTaskSummary(BaseModel):
     anchor_labels: list[str]
     updated_at: str
     detail_url: str
+    origin: str
+    suggested_owner: str
+    suggestion_reason: str
+    deadline_type: str
 
 
 class ConsoleBusinessProjectSummary(BaseModel):
@@ -733,6 +740,10 @@ class ConsoleBusinessProjectSummary(BaseModel):
     canonical_anchor_id: int
     confirmed_task_count: int
     detail_url: str
+    overall_owner: str
+    overall_responsibility: str
+    attention_reason: str
+    updated_at: str
     responsible_content: str = ""
     goal: str = ""
     deadline: str = ""
@@ -796,6 +807,7 @@ class ConsoleBusinessTaskDetail(BaseModel):
     official_projects: list[ConsoleBusinessProjectSummary]
     follow_ups: list[dict[str, Any]]
     dingtalk_todos: list[dict[str, Any]]
+    suggestion: TaskSuggestion | None
 
 
 class ConsoleBusinessProjectDetail(BaseModel):
@@ -803,6 +815,13 @@ class ConsoleBusinessProjectDetail(BaseModel):
     summary: ConsoleBusinessProjectSummary
     anchor: dict[str, Any]
     confirmed_tasks: list[ConsoleBusinessTaskSummary]
+    context: ProjectContext | None
+    responsibilities: list[ProjectResponsibility]
+    suggestions: list[ConsoleBusinessTaskSummary]
+    evidence_signals: list[BusinessTaskSignal]
+    context_revisions: list[BusinessProjectContextRevision]
+    evidence_meta: ApiListMeta
+    context_revision_meta: ApiListMeta
 
 
 class ConsoleBusinessAttentionDetailEnvelope(ApiItemEnvelope):
@@ -867,6 +886,10 @@ def _task_summary_payload(store: Any, task: Any, anchors: dict[int, Any]) -> dic
     links = _all_pages(store.list_business_task_anchor_links, task_id=task.id)
     labels = [anchors[link.anchor_id].title for link in links
               if link.status.value == "confirmed" and link.active and link.anchor_id in anchors and anchors[link.anchor_id].active]
+    suggestion = TaskSuggestion.model_validate_json(task.suggestion_json) if task.origin == "agent_suggestion" and task.stage.value == "candidate" else None
+    matching_dates = [row for row in store.list_business_task_date_evidence(task.id)
+                      if task.deadline_at and row.value_at == task.deadline_at
+                      and row.date_type.value in {"requested_deadline_at", "committed_deadline_at", "external_deadline_at"}]
     return {
         "id": task.id, "title": task.title, "stage": task.stage.value,
         "status": task.status.value, "commitment_status": task.commitment_status.value,
@@ -874,109 +897,11 @@ def _task_summary_payload(store: Any, task: Any, anchors: dict[int, Any]) -> dic
         "business_relevance": task.business_relevance.value,
         "anchor_labels": labels, "updated_at": task.updated_at,
         "detail_url": f"/tasks/item/{task.id}",
+        "origin": task.origin,
+        "suggested_owner": (suggestion.suggested_owner_name or suggestion.suggested_owner_user_id) if suggestion else "",
+        "suggestion_reason": suggestion.reason if suggestion else "",
+        "deadline_type": matching_dates[-1].date_type.value if matching_dates else "",
     }
-
-
-_REPORT_PROJECT_SOURCES = {
-    "management_weekly_report",
-    "project_weekly_report",
-    "department_weekly_report",
-}
-
-
-def _normalized_project_cell(value: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", value)).strip().casefold()
-
-
-def _report_project_registry_snapshot(
-    store: Any, project: Any, tasks: list[Any]
-) -> dict[str, str]:
-    """Read the latest explicit report row backing a Project.
-
-    Project rows are kept as immutable Task-signal evidence.  This read path
-    deliberately derives the display summary from that evidence instead of
-    copying model text into a second mutable Project record.
-    """
-    matches: list[tuple[str, dict[str, str]]] = []
-    target = _normalized_project_cell(project.title)
-    for task in tasks:
-        for link in store.list_business_task_anchor_links(task_id=task.id):
-            if link.anchor_id != project.canonical_anchor_id or link.status.value != "confirmed":
-                continue
-            signal = store.get_business_task_signal(link.evidence_signal_id)
-            if signal is None or signal.source_type not in _REPORT_PROJECT_SOURCES:
-                continue
-            try:
-                source = json.loads(signal.evidence_text)
-            except (TypeError, ValueError):
-                continue
-            report = source.get("report") if isinstance(source, dict) else None
-            markdown = source.get("markdown", "") if isinstance(source, dict) else ""
-            if not isinstance(report, dict) or not isinstance(markdown, str):
-                continue
-            heading = re.search(
-                r"(?mi)^##\s+\**(?:手头项目|项目清单|项目组合)\**\s*$",
-                markdown,
-            )
-            if heading is None:
-                continue
-            section = markdown[heading.end():]
-            next_section = re.search(r"(?m)^##\s+", section)
-            if next_section is not None:
-                section = section[: next_section.start()]
-            lines = section.splitlines()
-            header_cells: list[str] = []
-            row_cells: list[str] | None = None
-            row_excerpt = ""
-            for index, line in enumerate(lines[:-1]):
-                if not line.strip().startswith("|") or not lines[index + 1].strip().startswith("|"):
-                    continue
-                if not re.fullmatch(r"\|[\s:|\-]+\|", lines[index + 1].strip()):
-                    continue
-                header_cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-                for candidate in lines[index + 2:]:
-                    if not candidate.strip().startswith("|"):
-                        break
-                    cells = [cell.strip() for cell in candidate.strip().strip("|").split("|")]
-                    if cells and _normalized_project_cell(cells[0]) == target:
-                        row_cells = cells
-                        row_excerpt = candidate
-                        break
-                if row_cells is not None:
-                    break
-            if not header_cells or row_cells is None:
-                continue
-            values = {
-                _normalized_project_cell(header): row_cells[index]
-                for index, header in enumerate(header_cells)
-                if index < len(row_cells)
-            }
-
-            def value_for(*names: str, contains: tuple[str, ...] = ()) -> str:
-                for name in names:
-                    value = values.get(_normalized_project_cell(name), "").strip()
-                    if value:
-                        return value
-                for header, value in values.items():
-                    if value and any(token in header for token in contains):
-                        return value.strip()
-                return ""
-
-            period = str(report.get("reporting_period") or "")
-            matches.append((period, {
-                "responsible_content": value_for("负责内容", "负责人", "负责事项", contains=("负责",)),
-                "goal": value_for("目标", "目的", "Goal", contains=("目标",)),
-                "deadline": value_for("DDL", "截止", "截止时间", "目标时间", "Deadline", contains=("ddl", "截止", "时间")),
-                "current_status": value_for("状态", "当前状态", "Status", contains=("状态",)),
-                "source_title": str(report.get("title") or ""),
-                "reporting_period": period,
-                "source_url": str(report.get("url") or ""),
-                "source_excerpt": row_excerpt,
-            }))
-    if not matches:
-        return {}
-    matches.sort(key=lambda item: (item[0], item[1]["source_title"]), reverse=True)
-    return matches[0][1]
 
 
 def business_task_list_response(store: Any, *, page: int, page_size: int,
@@ -1033,20 +958,33 @@ def business_attention_list_response(store: Any, *, page: int, page_size: int,
 
 
 def _project_summary_payload(store: Any, project: Any, tasks: list[Any]) -> dict[str, Any]:
-    count = sum(project.id in {linked.id for linked in store.list_business_task_project_links(task_id=task.id)} for task in tasks)
     linked_tasks = [
         task for task in tasks
-        if project.id in {linked.id for linked in store.list_business_task_project_links(task_id=task.id)}
+        if not (task.origin == "agent_suggestion" and task.stage.value == "candidate")
+        and project.id in {linked.id for linked in store.list_business_task_project_links(task_id=task.id)}
     ]
-    report = _report_project_registry_snapshot(store, project, linked_tasks)
+    context = store.get_business_project_context(project.id)
+    owner = context.overall_owner if context else None
+    with store._connect() as db:
+        revision_time = db.execute("select max(created_at) from business_project_context_revisions where project_id=?", (project.id,)).fetchone()[0]
+        evidence_time = db.execute("select max(created_at) from business_project_evidence where project_id=?", (project.id,)).fetchone()[0]
+        attention_reasons = [row[0] for row in db.execute(
+            "select why_attention from business_attention_items where anchor_id=? and status='active' order by id", (project.canonical_anchor_id,)
+        )]
     return {
         "id": project.id,
         "title": project.title,
         "registry_source": project.registry_source,
         "canonical_anchor_id": project.canonical_anchor_id,
-        "confirmed_task_count": count,
+        "confirmed_task_count": len(linked_tasks),
         "detail_url": f"/tasks/project/{project.id}",
-        **report,
+        "overall_owner": owner.person_name if owner else "",
+        "overall_responsibility": owner.responsibility if owner else "",
+        "responsible_content": owner.responsibility if owner else "",
+        "goal": context.goal if context else "",
+        "current_status": "\n".join(fact.text for fact in context.facts) if context else "",
+        "attention_reason": "\n".join(attention_reasons),
+        "updated_at": max(time for time in (project.created_at, revision_time, evidence_time) if time),
         "open_task_count": sum(task.status.value not in {"done", "cancelled"} for task in linked_tasks),
         "done_task_count": sum(task.status.value == "done" for task in linked_tasks),
     }
@@ -1147,6 +1085,7 @@ def business_task_detail(store: Any, task_id: int) -> ConsoleBusinessTaskDetail 
         anchors=[{"link": json_safe(link), "anchor": json_safe(anchors.get(link.anchor_id))} for link in anchor_links],
         official_projects=[ConsoleBusinessProjectSummary.model_validate(_project_summary_payload(store, project, project_members)) for project in projects],
         follow_ups=follow_ups, dingtalk_todos=dingtalk_todos,
+        suggestion=TaskSuggestion.model_validate_json(task.suggestion_json) if task.origin == "agent_suggestion" else None,
     )
 
 
@@ -1156,8 +1095,27 @@ def business_project_detail(store: Any, project_id: int) -> ConsoleBusinessProje
         return None
     tasks = [task for task in _all_business_tasks(store) if project.id in {linked.id for linked in store.list_business_task_project_links(task_id=task.id)}]
     anchors = _anchors_by_id(store)
+    context = store.get_business_project_context(project_id)
+    citations = (
+        [citation for responsibility in ([context.overall_owner] if context.overall_owner else []) + context.responsibilities for citation in responsibility.evidence]
+        + [citation for fact in context.facts for citation in fact.evidence]
+    ) if context else []
+    proof_ids = tuple(sorted({citation.signal_id for citation in citations if citation.signal_id is not None}))
+    evidence = store.list_business_project_evidence(project_id, limit=20, pinned_signal_ids=proof_ids)
+    revisions = store.list_business_project_context_revisions(project_id, limit=20)
+    with store._connect() as db:
+        evidence_count = db.execute("select count(*) from business_project_evidence where project_id=?", (project_id,)).fetchone()[0]
+        revision_count = db.execute("select count(*) from business_project_context_revisions where project_id=?", (project_id,)).fetchone()[0]
+    def metadata(total: int, visible: int) -> ApiListMeta:
+        return ApiListMeta(snapshot_at=snapshot_at(), page=1, page_size=20, total=total,
+                           has_more=total > visible, next_cursor="")
     return ConsoleBusinessProjectDetail(
         summary=ConsoleBusinessProjectSummary.model_validate(_project_summary_payload(store, project, tasks)),
         anchor=json_safe(anchors[project.canonical_anchor_id]) if project.canonical_anchor_id in anchors else {},
-        confirmed_tasks=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks],
+        confirmed_tasks=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks if not (task.origin == "agent_suggestion" and task.stage.value == "candidate")],
+        context=context,
+        responsibilities=list(context.responsibilities) if context else [],
+        suggestions=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks if task.origin == "agent_suggestion" and task.stage.value == "candidate"],
+        evidence_signals=[signal for proof in evidence if (signal := store.get_business_task_signal(proof.signal_id)) is not None],
+        context_revisions=list(revisions), evidence_meta=metadata(evidence_count, len(evidence)), context_revision_meta=metadata(revision_count, len(revisions)),
     )

@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 
 from app.store import AutoReplyStore
+from app.project_context_service import ProjectContextService
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
 from app.task_semantic_models import AttentionCategory, BusinessTaskStatus
 from app.task_semantic_service import SourceSignal, TaskSemanticService, UpdateBusinessTask
@@ -107,7 +108,8 @@ def test_attention_detail_removes_completed_member_without_resolving_or_mutating
     with store.business_task_transaction() as db:
         signal_id = store.create_business_task_signal_in_transaction(source_type="meeting", source_ref="delivery-risk", evidence_text="Delivery remains at risk", dedupe_key="delivery-risk", _db=db)
         anchor_id = store.create_business_anchor_in_transaction(anchor_type="project", anchor_ref="delivery-project", title="Delivery project", _db=db)
-        store.create_business_project_in_transaction(canonical_anchor_id=anchor_id, title="Delivery project", registry_source="registry", _db=db)
+        project_id = store.create_business_project_in_transaction(canonical_anchor_id=anchor_id, title="Delivery project", registry_source="registry", _db=db)
+        ProjectContextService(store).apply(project_id=project_id, context=None, signal_ids=(signal_id,), db=db)
         for task_id in task_ids:
             store.create_business_task_anchor_link_in_transaction(task_id=task_id, anchor_id=anchor_id, status="confirmed", active=True, evidence_signal_id=signal_id, _db=db)
             store.link_business_task_evidence_in_transaction(task_id=task_id, signal_id=signal_id, evidence_role="discovery", _db=db)

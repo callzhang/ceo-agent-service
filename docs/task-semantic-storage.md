@@ -212,8 +212,9 @@ dates retain their existing meaning. Suggestions do not create follow-ups,
 notifications or TODO outbox work; after human promotion/acceptance the normal
 TODO eligibility rules apply regardless of the retained origin. The development
 branch now connects TaskDecision.suggestion to this command in the same Agent
-turn as independent Project decisions and assessments; console integration is
-still pending Task 7. An omitted update title/description retains the stored
+turn as independent Project decisions and assessments. Console integration reads
+persisted Project context and distinguishes current candidate suggestions from
+same-ID human-promoted formal Tasks; the retained origin is historical. An omitted update title/description retains the stored
 value. This wire is not a second assignment or outbound path and is not deployed.
 
 ## Task dates and events

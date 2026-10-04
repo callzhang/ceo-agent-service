@@ -733,7 +733,8 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 Task-first 基础工作跟踪已上线；以下为 2026-10-04 获批设计在本分支的当前实现。
 Task 1–4 的存储、领域与检索已局部验证；Task 5 独立 Agent 输出和 Task 6 Project-owned
 关注已实现，14 个核心相关文件 636 项回归通过，多来源及独立 Project 读回 161 项通过；
-独立最终复核 PASS。Task 7 页面收尾、Task 8 原生业务评测和 Task 9 发布未完成。
+独立最终复核 PASS。Task 7 API 25 项、前端 86 项、构建及合成浏览器检查通过；
+Task 8 原生业务评测和 Task 9 发布未完成。
 Task 1–7 是整体发布单元，不能把本节当成上线或业务效果证明。
 
 #### 来源、项目与任务
@@ -883,7 +884,17 @@ skill_protocol 不注入；scheduled prompt 仅保留专项业务范围，旧 pa
 
 Attention 只读详情读取实际保存的 assessment_json 与准确引用 Signals，不重检索或补造历史 {}；
 页面现有“来源事实/Agent 判断”、watch“关注点”与 decision/push“你的动作”保留。
-项目总负责/分工与建议人选的列表/详情集成属于待做 Task 7，不从 Task owner 或周报读路径反推分工。
+项目列表直接读保存的 ProjectContext，展示唯一总负责人、整体负责事项、事实近况和实际活动卡片
+的关注原因。删除从关联 Task 周报重新推导项目的读路径；未知仍待明确，不借 Task owner。
+详情按整体情况、总负责及分工、关注原因、来源任务、Agent 建议、来源与修订展示；来源任务
+包含 Project 已确认关联的来源候选，实际安排以任务阶段和承诺为准，执行计数不是项目经营结论。
+当前建议仅指 origin=agent_suggestion 且 stage=candidate；同 ID 人类晋升后进入真实任务，
+显示实际 owner/date，原 origin 和 suggestion 仅作为历史依据，不再计入建议。
+Task 日期标签只采用与实际日期匹配的 typed date evidence；未知类型不猜请求或承诺截止。
+Project 资料更新时间取实际保存的 Project/context revision/evidence 时间，不借 Task 时间或报告周期。
+Project 来源首批最近 20 条加当前引用原 Signal，修订最近 20 条，并返回真实 total/has_more；
+页面明确未展示全部历史，没有假的加载更多。零 Task 关注保留来源与判断，显示暂无关联任务。
+API、TypeScript、mock、页面同步；合成浅/暗/窄屏验证不等于 native 或生产业务验收。
 
 业务 Skill 说明“如何判断”，操作 Skill 说明“如何读取或执行”。OA、面试和 OKR 已有成熟的专业
 Skill，CEO Skill 只负责识别需要委派的场景，不复制专业规则：分别加载

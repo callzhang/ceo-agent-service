@@ -12,7 +12,7 @@
 
 ## 状态、边界与依赖
 
-设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发对话负责全部 Task 1–9：Task 1–4 的代码、局部回归及独立需求/质量审查通过，Task 5/6 核心集成已完成：14 文件 636 passed、完整多来源与 Project 读回 161 passed，独立最终复核 PASS。Task 5 正向 Project 关注回归依赖 Task 6 去掉旧 Task carrier 限制，故这两步作为同一当前契约集成验证；没有中间部署。Task 3 的两个 TODO 基线失败已通过 Task 6 的直接成员更新修正，Task 3 指定四文件 172 passed，TODO completion/sync 两文件 59 passed。真实 W39 副本迁移仍被既有会议外键问题阻塞；Task 7 页面、Task 8 原生同案例评测及 Task 9 发布未完成。复用旧业务测试通过记录不能替代本次 native 或生产效果。
+设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发对话负责全部 Task 1–9：Task 1–4 的代码、局部回归及独立需求/质量审查通过，Task 5/6 核心集成已完成：14 文件 636 passed、完整多来源与 Project 读回 161 passed，独立最终复核 PASS。Task 5 正向 Project 关注回归依赖 Task 6 去掉旧 Task carrier 限制，故这两步作为同一当前契约集成验证；没有中间部署。Task 3 的两个 TODO 基线失败已通过 Task 6 的直接成员更新修正，Task 3 指定四文件 172 passed，TODO completion/sync 两文件 59 passed。真实 W39 副本迁移仍被既有会议外键问题阻塞；Task 7 API/页面实现与局部测试、构建、独立复核和合成浏览器检查通过；Task 8 原生同案例评测及 Task 9 发布未完成。复用旧业务测试通过记录不能替代本次 native 或生产效果。
 
 执行记录（2026-10-04）：复用下列工作目录，基线 `64dc4c8d`，独立步骤采用单作者实施、需求审查、质量审查。Task 1 文件已认领；因正文列移除直接影响听记负责人回填 SQL 及两个 API 测试的原始 INSERT，认领范围增加这些直接受影响的读路径/fixture，仅改变存储表示，不改变负责人或 API 业务语义。冻结 W39 初态经只读检查仍为 259 Tasks、16 Projects、0 Attention、398 Signals、434 Task events，`quick_check=ok`；该检查不算本次迁移或业务回放通过。
 
@@ -376,10 +376,10 @@ Task 6 当前执行记录：零 Task/Project-only positive、显式 Project proo
 
 **Files:** 修改 `app/web_api/tasks.py:713,728,801,891,1035,1153`、`frontend/src/api/console.ts:106,119,172`、`frontend/src/pages/TasksPage.tsx`、`TaskProjectDetailPage.tsx`、`TaskAttentionDetailPage.tsx`、`TaskParts.tsx`、`taskLabels.ts`，必要时仅编辑 Tasks 局部样式；测试 `tests/test_web_api_task_project_summary.py`、`tests/test_web_api_task_attention.py`、三页同名 `.test.tsx`；同步 `frontend/dev-mock/tasksMock.ts` 和行为文档。
 
-- [ ] 先写 API 回归：零 Task 项目的总负责/分工从持久化 ProjectContext 读出；建议负责人不混入实际 owner；项目事实与 Task 完成统计同时存在但不互相替代；两个项目不能借到彼此的人员。运行 `python -m pytest -q tests/test_web_api_task_project_summary.py tests/test_web_api_task_attention.py`，新增断言预期 RED。
-- [ ] `ConsoleBusinessProjectSummary` 增加 `overall_owner`、`overall_responsibility`、`attention_reason`；detail 增加 `context`、`responsibilities`、`suggestions`、`evidence_signals`、`context_revisions`。项目标题、登记来源及真实任务计数继续保留。删除 `_report_project_registry_snapshot` 这条从 Task 周报重新推导项目的读路径；旧项目无 context 时显示待明确，历史资料由 Task 2/9 的明确重读流程补充，不在页面查询时推断。
-- [ ] `ConsoleBusinessTaskSummary` 与 TS 类型同步增加 `origin`、`suggested_owner`、`suggestion_reason`、`deadline_type`。实际 owner、承诺状态和实际日期仍是原字段；UI 不从 suggestion 复制覆盖它们。正式 Task 列表按 stage 取真实任务；来源线索与 Agent 建议在候选区域分组，项目详情把建议与已安排任务分开；不增加自动派发按钮。
-- [ ] 创建/修改组件测试，至少验证以下直接可见文字，而不是只测快照：
+- [x] 先写 API 回归：零 Task 项目的总负责/分工从持久化 ProjectContext 读出；建议负责人不混入实际 owner；项目事实与 Task 完成统计同时存在但不互相替代；两个项目不能借到彼此的人员。运行 `python -m pytest -q tests/test_web_api_task_project_summary.py tests/test_web_api_task_attention.py`，新增断言预期 RED。
+- [x] `ConsoleBusinessProjectSummary` 增加 `overall_owner`、`overall_responsibility`、`attention_reason`；detail 增加 `context`、`responsibilities`、`suggestions`、`evidence_signals`、`context_revisions`。项目标题、登记来源及真实任务计数继续保留。删除 `_report_project_registry_snapshot` 这条从 Task 周报重新推导项目的读路径；旧项目无 context 时显示待明确，历史资料由 Task 2/9 的明确重读流程补充，不在页面查询时推断。
+- [x] `ConsoleBusinessTaskSummary` 与 TS 类型同步增加 `origin`、`suggested_owner`、`suggestion_reason`、`deadline_type`。实际 owner、承诺状态和实际日期仍是原字段；UI 不从 suggestion 复制覆盖它们。正式 Task 列表按 stage 取真实任务；来源线索与 Agent 建议在候选区域分组，项目详情把建议与已安排任务分开；不增加自动派发按钮。
+- [x] 创建/修改组件测试，至少验证以下直接可见文字，而不是只测快照：
 
 ```tsx
 expect(screen.getByText("总负责人")).toBeInTheDocument();
@@ -391,10 +391,12 @@ expect(screen.getByText("建议负责人：王五")).toBeInTheDocument();
 expect(screen.queryByRole("button", { name: "自动派发" })).not.toBeInTheDocument();
 ```
 
-- [ ] 项目详情顺序固定：目标/总体情况 → 唯一总负责及分工 → 关注理由 → 已安排任务 → Agent 建议 → 来源与历史。项目列表不点开就能见负责人/事项/近况/关注原因。Task 列表显示项目、实际或建议负责人、来源标签和明确日期类型，不出现含糊“截止/周期”。
-- [ ] 无 Task 的 Attention detail 显示“暂无关联任务”，仍展示事实/推断及来源，不显示加载错误；缺负责人显示“待明确”；冲突事实展示各自来源而非拼成共同负责人。保留 loading、empty、error、长标题与来源链接状态。
-- [ ] 运行 `npm --prefix frontend test -- --run src/pages/TasksPage.test.tsx src/pages/TaskProjectDetailPage.test.tsx src/pages/TaskAttentionDetailPage.test.tsx` 和 `npm --prefix frontend run build`，预期测试/构建成功。并重新运行上述两个 API 文件。
-- [ ] 用合成 mock 与浏览器逐页检查：需关注列表/详情、正式项目列表/详情、正式任务、待明确线索/建议、任务详情；每页浅色/深色、宽屏/窄屏各查看关键字段、换行、对比度和横向溢出。UI 通过不等于真实项目判断通过。同步文档提交 `feat(console): show project accountability and distinguish task suggestions`。
+- [x] 项目详情顺序固定：目标/总体情况 → 唯一总负责及分工 → 关注理由 → 来源任务（按阶段明确实际安排） → Agent 建议 → 来源与历史。项目列表不点开就能见负责人/事项/近况/关注原因。Task 列表显示项目、实际或建议负责人、来源标签和明确日期类型，不出现含糊“截止/周期”。
+- [x] 无 Task 的 Attention detail 显示“暂无关联任务”，仍展示事实/推断及来源，不显示加载错误；缺负责人显示“待明确”；冲突事实展示各自来源而非拼成共同负责人。保留 loading、empty、error、长标题与来源链接状态。
+- [x] 运行 `npm --prefix frontend test -- --run src/pages/TasksPage.test.tsx src/pages/TaskProjectDetailPage.test.tsx src/pages/TaskAttentionDetailPage.test.tsx` 和 `npm --prefix frontend run build`，预期测试/构建成功。并重新运行上述两个 API 文件。
+- [x] 用合成 mock 与浏览器逐页检查：需关注列表/详情、正式项目列表/详情、正式任务、待明确线索/建议、任务详情；每页浅色/深色、宽屏/窄屏各查看关键字段、换行、对比度和横向溢出。UI 通过不等于真实项目判断通过。同步文档提交 `feat(console): show project accountability and distinguish task suggestions`。
+
+Task 7 执行记录：API 新独立 ProjectContext 回归先 5 RED 后 GREEN，人类建议晋升误分类 1 RED 后 GREEN；API 四相关文件 25 passed。前端新增 22 RED 后 GREEN，晋升 3 RED、来源候选标题 3 RED 后分别修正；最终 8 文件 86 passed，构建及独立需求/质量复核 PASS。合成浏览器主要路由浅/暗、宽/窄（1600/433/320 CSS px）与空/错/加载状态检查通过，无横向溢出。规范按现有 React/Python/SQLite 例外，不迁移技术栈；没有派发按钮、读时推断或假分页。这不是 native/W39/生产验收。
 
 ## Task 8：固定案例、真实原文与可观测结果验收
 
