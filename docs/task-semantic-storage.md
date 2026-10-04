@@ -4,10 +4,12 @@ This document describes the storage, atomic commands, decision rules, and busine
 resolution commands introduced by Tasks 1–5, plus the Task 6 owner, acceptance,
 and typed-date semantic contract of the approved
 [implementation plan](superpowers/plans/2026-09-22-task-first-tasks.md). It does
-not describe a deployed Task Agent cutover. The runtime, console, providers,
-and legacy import workflow still belong to later tasks.
+not describe deployment; the live Agent and console contracts are documented in
+`architecture.md` and `runtime-mechanism.md`. The Project-centered domain
+extensions below follow the approved 2026-10-04 plan; their new Agent wire and
+console integration remain later steps in that plan.
 
-The current source-storage schema version is `2026-10-04.2`. The original
+The current source-storage schema version is `2026-10-04.3`. The original
 semantic initialization added 16 bounded tables to a pre-semantic database
 without reclassifying, copying, or deleting legacy work records. An existing
 `2026-09-22.1` semantic database gains the
@@ -131,10 +133,39 @@ It does not derive an owner or a role from a Task.
 Applying structurally identical JSON does not create another revision (object
 key order is not meaningful). Passing `context=null` adds only validated Project
 evidence. An explicit empty responsibility snapshot is a real later revision
-and therefore clears the current roles while preserving prior revisions. The
-separate `TaskSuggestion` model is an evidence-backed proposal only: naming a
-suggested person requires responsibility evidence, and it does not change a
-Task owner or persist Task suggestion state in this storage step.
+and therefore clears the current roles while preserving prior revisions.
+
+## Display-only Task suggestions
+
+`business_tasks.origin` records discovery provenance (`source` or
+`agent_suggestion`); `suggestion_json` stores a typed `TaskSuggestion` with its
+reason, suggested person, responsibility citations, and basis citations. Schema
+version `2026-10-04.3` adds these columns with `source`/`{}` defaults. It does not
+promote old candidates, change owners or commitment states, or rewrite old run
+and event JSON.
+
+`RecordTaskSuggestion` uses the same Task, Signal, evidence, event and confirmed
+Project-link mechanisms. A new suggestion is an open candidate with no formal
+basis, commitment, actual owner or deadline. Citations must resolve to real
+observed Signal IDs with matching references and faithful raw/decoded quotes;
+the Agent's reason is never stored as observed source text. A suggested person
+requires responsibility proof, which may predate the new source and support a
+person not named in that new source.
+
+An explicit existing suggestion ID updates only its actual changed title,
+description or suggestion data; unchanged repetition writes no new event.
+Source identity/event deduplication preserves the original ID on a replay
+without an ID, including after human promotion. A suggestion update cannot
+relabel a real source Task or downgrade a promoted Task. Human assignment uses
+the existing promotion command on the same ID, retains suggestion provenance,
+and stores the actual owner from human evidence. Real acceptance and committed
+dates retain their existing meaning. Suggestions do not create follow-ups,
+notifications or TODO outbox work; after human promotion/acceptance the normal
+TODO eligibility rules apply regardless of the retained origin. The Task Agent
+wire and console integration are subsequent plan steps, not active new paths
+in this storage phase.
+
+## Task dates and events
 
 `business_task_date_evidence` holds append-only typed facts: `assigned_at`,
 `requested_deadline_at`, `external_deadline_at`, `committed_deadline_at`,

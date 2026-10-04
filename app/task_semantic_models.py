@@ -182,6 +182,8 @@ class BusinessTask(_FrozenBusinessModel):
     id: int
     title: Nonblank
     description: str = ""
+    origin: Literal["source", "agent_suggestion"] = "source"
+    suggestion_json: JsonObject = "{}"
     stage: BusinessTaskStage
     status: BusinessTaskStatus = BusinessTaskStatus.OPEN
     formal_basis: FormalTaskBasis | None = None
@@ -199,6 +201,8 @@ class BusinessTask(_FrozenBusinessModel):
 
     @model_validator(mode="after")
     def validate_state(self) -> BusinessTask:
+        if self.origin == "agent_suggestion":
+            TaskSuggestion.model_validate_json(self.suggestion_json)
         if self.stage is BusinessTaskStage.FORMAL and self.formal_basis is None:
             raise ValueError("formal task requires formal_basis")
         if self.stage is BusinessTaskStage.CANDIDATE and self.formal_basis is not None:

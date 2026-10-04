@@ -227,7 +227,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-04.2"
+STORE_SCHEMA_VERSION = "2026-10-04.3"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -425,6 +425,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "commitment_status", "owner_user_id", "owner_name", "owner_evidence_json",
         "deadline_at", "business_relevance", "missing_evidence_json",
         "merged_into_task_id", "created_at", "updated_at", "last_activity_at",
+        "origin", "suggestion_json",
     ),
     "business_task_dingtalk_links": (
         "id", "business_task_id", "dingtalk_task_id", "executor_user_id",
@@ -3670,6 +3671,9 @@ class AutoReplyStore:
                     title text not null check({_business_nonblank_sql("title")}),
                     description text not null default '',
                     stage text not null check(stage in ('candidate', 'formal')),
+                    origin text not null default 'source' check(origin in ('source', 'agent_suggestion')),
+                    suggestion_json text not null default '{{}}'
+                        check(json_valid(suggestion_json) and json_type(suggestion_json) = 'object'),
                     status text not null default 'open' check(status in (
                         'open', 'waiting', 'done', 'cancelled', 'merged'
                     )),
@@ -5254,6 +5258,15 @@ class AutoReplyStore:
                         f"alter table dispatcher_claim_leases "
                         f"add column {column} {definition}"
                     )
+            business_task_columns = {
+                row["name"] for row in db.execute("pragma table_info(business_tasks)").fetchall()
+            }
+            for column, definition in (
+                ("origin", "text not null default 'source' check(origin in ('source','agent_suggestion'))"),
+                ("suggestion_json", "text not null default '{}' check(json_valid(suggestion_json) and json_type(suggestion_json)='object')"),
+            ):
+                if column not in business_task_columns:
+                    db.execute(f"alter table business_tasks add column {column} {definition}")
             work_todo_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(work_todos)").fetchall()
@@ -6826,6 +6839,8 @@ class AutoReplyStore:
         formal_basis: FormalTaskBasis | str | None = None,
         business_relevance: BusinessRelevance | str = BusinessRelevance.UNKNOWN,
         description: str = "",
+        origin: str = "source",
+        suggestion_json: str = "{}",
         owner_user_id: str = "",
         owner_name: str = "",
         owner_evidence_json: str = "{}",
@@ -6843,6 +6858,8 @@ class AutoReplyStore:
             id=0,
             title=title,
             description=description,
+            origin=origin,
+            suggestion_json=suggestion_json,
             stage=stage,
             status=status,
             commitment_status=commitment_status,
@@ -6864,8 +6881,8 @@ class AutoReplyStore:
                 title, description, stage, status, commitment_status, formal_basis,
                 business_relevance, merged_into_task_id, owner_user_id, owner_name,
                 owner_evidence_json, deadline_at, missing_evidence_json,
-                last_activity_at, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_activity_at, created_at, updated_at, origin, suggestion_json
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.title,
@@ -6884,6 +6901,8 @@ class AutoReplyStore:
                 task.last_activity_at,
                 task.created_at,
                 task.updated_at,
+                task.origin,
+                task.suggestion_json,
             ),
         )
         return int(cursor.lastrowid)
@@ -6905,7 +6924,7 @@ class AutoReplyStore:
                 title=?, description=?, stage=?, status=?, commitment_status=?, formal_basis=?,
                 business_relevance=?, merged_into_task_id=?, owner_user_id=?, owner_name=?,
                 owner_evidence_json=?, deadline_at=?, missing_evidence_json=?,
-                last_activity_at=?, updated_at=?
+                last_activity_at=?, updated_at=?, origin=?, suggestion_json=?
             where id=?
             """,
             (
@@ -6924,6 +6943,8 @@ class AutoReplyStore:
                 task.missing_evidence_json,
                 task.last_activity_at,
                 task.updated_at,
+                task.origin,
+                task.suggestion_json,
                 task.id,
             ),
         )
@@ -7162,6 +7183,8 @@ class AutoReplyStore:
         formal_basis: FormalTaskBasis | str | None = None,
         business_relevance: BusinessRelevance | str = BusinessRelevance.UNKNOWN,
         description: str = "",
+        origin: str = "source",
+        suggestion_json: str = "{}",
         owner_user_id: str = "",
         owner_name: str = "",
         owner_evidence_json: str = "{}",
@@ -7171,51 +7194,16 @@ class AutoReplyStore:
         last_activity_at: str | None = None,
         now: datetime | None = None,
     ) -> int:
-        timestamp = ensure_utc_datetime(
-            now or datetime.now(timezone.utc), field="business task now"
-        ).isoformat(timespec="seconds")
-        # Validate the model before writing so the Python and SQLite contracts
-        # reject the same invalid stage and merge combinations.
-        task = BusinessTask(
-            id=0,
-            title=title,
-            description=description,
-            stage=stage,
-            status=status,
-            commitment_status=commitment_status,
-            formal_basis=formal_basis,
-            business_relevance=business_relevance,
-            merged_into_task_id=merged_into_task_id,
-            owner_user_id=owner_user_id,
-            owner_name=owner_name,
-            owner_evidence_json=owner_evidence_json,
-            deadline_at=deadline_at,
-            missing_evidence_json=missing_evidence_json,
-            last_activity_at=timestamp if last_activity_at is None else last_activity_at,
-            created_at=timestamp,
-            updated_at=timestamp,
-        )
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                """
-                insert into business_tasks (
-                    title, description, stage, status, commitment_status, formal_basis,
-                    business_relevance, merged_into_task_id, owner_user_id, owner_name,
-                    owner_evidence_json, deadline_at, missing_evidence_json,
-                    last_activity_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    task.title, task.description, task.stage.value, task.status.value,
-                    task.commitment_status.value,
-                    task.formal_basis.value if task.formal_basis is not None else None,
-                    task.business_relevance.value, task.merged_into_task_id,
-                    task.owner_user_id, task.owner_name, task.owner_evidence_json,
-                    task.deadline_at, task.missing_evidence_json, task.last_activity_at,
-                    task.created_at, task.updated_at,
-                ),
+            return self.create_business_task_in_transaction(
+                title=title, description=description, stage=stage, status=status,
+                commitment_status=commitment_status, formal_basis=formal_basis,
+                business_relevance=business_relevance, merged_into_task_id=merged_into_task_id,
+                owner_user_id=owner_user_id, owner_name=owner_name, owner_evidence_json=owner_evidence_json,
+                deadline_at=deadline_at, missing_evidence_json=missing_evidence_json,
+                origin=origin, suggestion_json=suggestion_json,
+                last_activity_at=last_activity_at, now=now, _db=db,
             )
-            return int(cursor.lastrowid)
 
     def get_business_task(self, task_id: int) -> BusinessTask | None:
         with self._connect() as db:

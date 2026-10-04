@@ -43,6 +43,8 @@ ROWS = {
             "id": 1,
             "title": "提交报价",
             "description": "美国客户报价第一版",
+            "origin": "source",
+            "suggestion_json": "{}",
             "stage": "formal",
             "status": "open",
             "formal_basis": "explicit_assignment",

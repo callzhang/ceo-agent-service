@@ -20,6 +20,8 @@ import sqlite3
 from contextlib import nullcontext
 
 from app.store import AutoReplyStore
+from app.task_business_resolution import BusinessResolutionService
+from app.task_source_documents import source_contains_quote
 from app.task_semantic_models import (
     BusinessActorKind,
     BusinessEvidenceRole,
@@ -32,6 +34,7 @@ from app.task_semantic_models import (
     BusinessTaskStatus,
     CommitmentStatus,
     FormalTaskBasis,
+    TaskSuggestion,
 )
 from app.task_semantic_rules import (
     FormalityEvidence,
@@ -82,6 +85,16 @@ class RecordCandidate:
     deadline_at: str = ""
     missing_evidence_json: str = "[]"
     date_facts: tuple[TaskDateInput, ...] = ()
+
+
+@dataclass(frozen=True)
+class RecordTaskSuggestion:
+    title: str
+    signal: SourceSignal
+    suggestion: TaskSuggestion
+    project_anchor_id: int
+    description: str = ""
+    task_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -471,6 +484,187 @@ class TaskSemanticService:
                 _db=db,
             )
             return TaskMutationResult(task_id=task_id, signal_id=signal_id, created=True)
+
+    def record_suggestion(
+        self,
+        command: RecordTaskSuggestion,
+        *,
+        _db: sqlite3.Connection | None = None,
+    ) -> TaskMutationResult:
+        """Record a display-only proposal, not a human assignment or acceptance."""
+        now = self._now()
+        with (
+            nullcontext(_db)
+            if _db is not None
+            else self.store.business_task_transaction()
+        ) as db:
+            project = db.execute(
+                "select project.id from business_projects project "
+                "join business_anchors anchor on anchor.id=project.canonical_anchor_id "
+                "where anchor.id=? and anchor.anchor_type='project' and anchor.active=1",
+                (command.project_anchor_id,),
+            ).fetchone()
+            if project is None:
+                raise ValueError(
+                    "suggestion requires an existing active official Project"
+                )
+            # Citations refer to already observed sources, not Agent-authored explanations.
+            suggestion = TaskSuggestion.model_validate(
+                command.suggestion.model_dump(mode="json")
+            )
+            cited_ids: set[int] = set()
+            for citation in (
+                *suggestion.responsibility_evidence,
+                *suggestion.basis_evidence,
+            ):
+                if citation.signal_id is None:
+                    raise ValueError("suggestion citation requires an actual signal ID")
+                source = self.store.get_business_task_signal_in_transaction(
+                    signal_id=citation.signal_id, _db=db
+                )
+                if (
+                    source is None
+                    or source.source_ref != citation.source_ref
+                    or not source_contains_quote(
+                        source.evidence_text,
+                        citation.source_excerpt,
+                    )
+                ):
+                    raise ValueError(
+                        "suggestion citation must faithfully match an observed source"
+                    )
+                cited_ids.add(source.id)
+            existing_id = command.task_id
+            if existing_id is None:
+                replay = self._replay_result(signal=command.signal, db=db)
+                if replay is not None:
+                    existing_id = replay.task_id
+            task = None
+            if existing_id is not None:
+                task = self._require_task(
+                    self.store.get_business_task_in_transaction(
+                        task_id=existing_id, _db=db
+                    ),
+                    existing_id,
+                )
+                if (
+                    command.task_id is None
+                    and task.origin == "agent_suggestion"
+                    and (
+                        task.stage is BusinessTaskStage.FORMAL
+                        or task.status
+                        in {
+                            BusinessTaskStatus.MERGED,
+                            BusinessTaskStatus.DONE,
+                            BusinessTaskStatus.CANCELLED,
+                        }
+                    )
+                ):
+                    return replay
+                if (
+                    task.origin != "agent_suggestion"
+                    or task.stage is not BusinessTaskStage.CANDIDATE
+                ):
+                    raise ValueError(
+                        "suggestion update requires an existing candidate suggestion"
+                    )
+                if task.status in {
+                    BusinessTaskStatus.MERGED,
+                    BusinessTaskStatus.DONE,
+                    BusinessTaskStatus.CANCELLED,
+                }:
+                    raise ValueError("cannot update a terminal suggestion")
+                different_project = db.execute(
+                    "select 1 from business_task_anchor_links link join business_projects project "
+                    "on project.canonical_anchor_id=link.anchor_id "
+                    "where link.task_id=? and link.status='confirmed' and link.active=1 "
+                    "and link.anchor_id<>? limit 1",
+                    (task.id, command.project_anchor_id),
+                ).fetchone()
+                if different_project is not None:
+                    raise ValueError("suggestion update cannot change its Project")
+            suggestion_json = json.dumps(
+                suggestion.model_dump(mode="json"),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if task is None:
+                result = self._record_new_task(
+                    signal=command.signal,
+                    task_fields={
+                        "title": command.title,
+                        "description": command.description,
+                        "origin": "agent_suggestion",
+                        "suggestion_json": suggestion_json,
+                        "stage": BusinessTaskStage.CANDIDATE,
+                        "status": BusinessTaskStatus.OPEN,
+                        "commitment_status": CommitmentStatus.NONE,
+                        "formal_basis": None,
+                        "owner_user_id": "",
+                        "owner_name": "",
+                        "owner_evidence_json": "{}",
+                        "deadline_at": "",
+                    },
+                    evidence_role=BusinessEvidenceRole.DISCOVERY,
+                    reason=suggestion.reason,
+                    _db=db,
+                )
+            else:
+                signal_id = self._signal_id_or_create(
+                    signal=command.signal, db=db, now=now
+                )
+                result = TaskMutationResult(
+                    task_id=task.id, signal_id=signal_id, created=False
+                )
+                if (task.title, task.description, json.loads(task.suggestion_json)) != (
+                    command.title,
+                    command.description,
+                    json.loads(suggestion_json),
+                ):
+                    updated = task.model_copy(
+                        update={
+                            "title": command.title,
+                            "description": command.description,
+                            "suggestion_json": suggestion_json,
+                            "updated_at": self._timestamp(now),
+                            "last_activity_at": self._timestamp(now),
+                        }
+                    )
+                    # Validate changed title/data through the same persistent model contract.
+                    updated = BusinessTask.model_validate(
+                        updated.model_dump(mode="json")
+                    )
+                    self.store.update_business_task_in_transaction(task=updated, _db=db)
+                    self.store.append_business_task_event(
+                        task_id=task.id,
+                        event_type=BusinessTaskEventType.DETAILS_CHANGED,
+                        signal_id=signal_id,
+                        before_json=self._snapshot(task),
+                        after_json=self._snapshot(updated),
+                        reason=suggestion.reason,
+                        _db=db,
+                    )
+            for signal_id in cited_ids | {result.signal_id}:
+                self.store.link_business_task_evidence_in_transaction(
+                    task_id=result.task_id,
+                    signal_id=signal_id,
+                    evidence_role=BusinessEvidenceRole.DISCOVERY,
+                    _db=db,
+                )
+            # An already confirmed Project link is stable under an unchanged replay.
+            link = self.store.get_business_task_anchor_link_in_transaction(
+                task_id=result.task_id, anchor_id=command.project_anchor_id, _db=db
+            )
+            if link is None or link.status.value != "confirmed" or not link.active:
+                BusinessResolutionService(self.store).confirm_anchor_match(
+                    task_id=result.task_id,
+                    anchor_id=command.project_anchor_id,
+                    evidence_signal_id=result.signal_id,
+                    reason=suggestion.reason,
+                    _db=db,
+                )
+            return result
 
     def record_candidate(
         self, command: RecordCandidate, *, _db: sqlite3.Connection | None = None
