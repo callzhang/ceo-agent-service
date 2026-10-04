@@ -227,16 +227,16 @@ suggestion_fields = {
 - [x] 使用既有候选→正式与 outbox 语义，不另加工具权限层或自动派发路径。检验建议未满足现有正式/接受条件，因此没有外发；转为真实已接受任务后按原生命周期运行，不能因历史 origin 永久阻止它。
 - [ ] 运行 `python -m pytest -q tests/test_task_suggestions.py tests/test_task_semantic_service.py tests/test_task_semantic_rules.py tests/test_todo_sync.py`，预期 GREEN。同步文档并提交 `feat(tasks): distinguish displayed agent suggestions from real assignments`。
 
-## Task 4：项目上下文优先检索，共同原文只装载一次
-
 Task 3 执行记录：`9469363a` 实现来源/建议分离，`0b0753d8` 修正原文与 provenance 区分，并让旧库升级回归在新进程检查物理列/版本。主 Agent 六个领域/来源测试文件 623 passed；独立需求复核 509 passed；建议文件新增后续来源仅补证据的明确 ID 重放约定，17 passed，需求/质量复核均 PASS。无 ID 幂等限定原创建或其他有事件的命令来源；后续更新由 Agent 匹配并持续携带 task_id，不能从可复制、可多任务引用的证据关系猜身份。指定 TODO 文件的两项失败已用 Task 3 前 Store 在内存中复现：`app/todo_completion.py` 调用旧 `_project_task_attention` 缺 receipt；领域完成后才触发 TypeError。保持历史失败记录，Task 6 修正这个直接受新关注语义影响的路径后再运行全文件。当前没有新 Agent wire、Skill 发布或生产部署。
+
+## Task 4：项目上下文优先检索，共同原文只装载一次
 
 **Files:** 修改 `app/task_retrieval.py:46,153,315`、`app/task_source_documents.py`、`app/store.py` 相关有界查询；测试 `tests/test_task_retrieval.py`、`tests/test_task_source_documents.py`；同步运行文档。
 
-- [ ] 先扩展现有真实库 fixture：零 Task 的已登记 Project 有职责/来源/风险；同一来源涉及两个项目；80 个 Signal 指向少量共享正文；source/memory 同 ref 不同身份；保留实际 Attention 成员与项目同伴 Task 的区分。
-- [ ] 运行 `python -m pytest -q tests/test_task_retrieval.py -k 'project_context or shared_source or project_without_task'`，新增用例必须实际被收集并 RED，不接受“0 tests”作为验证。
-- [ ] `TaskSemanticContext` 增加相关 `project_contexts` 和 `project_evidence`。保留已有正式项目匹配入口，从已选项目直接读取它的资料/证据，再读取相关 Tasks；同来源既有 Task 继续强制包含以避免重建。项目分工不再靠 Task owner 推测。
-- [ ] `render_task_semantic_context` 用 `source_documents` 提供正文，用 `source_signals` 提供真实 Signal 身份及 `document_id`，不再在每个 Signal 中复制 body。引用仍使用实际 Signal ID；这只是输入呈现，不改变证明身份。核心装配函数如下：
+- [x] 先扩展现有真实库 fixture：零 Task 的已登记 Project 有职责/来源/风险；同一来源涉及两个项目；80 个 Signal 指向少量共享正文；source/memory 同 ref 不同身份；保留实际 Attention 成员与项目同伴 Task 的区分。
+- [x] 运行 `python -m pytest -q tests/test_task_retrieval.py -k 'project_context or shared_source or project_without_task'`，新增用例必须实际被收集并 RED，不接受“0 tests”作为验证。
+- [x] `TaskSemanticContext` 增加相关 `project_contexts` 和 `project_evidence`。保留已有正式项目匹配入口，从已选项目直接读取它的资料/证据，再读取相关 Tasks；同来源既有 Task 继续强制包含以避免重建。项目分工不再靠 Task owner 推测。
+- [x] `render_task_semantic_context` 用 `source_documents` 提供正文，用 `source_signals` 提供真实 Signal 身份及 `document_id`，不再在每个 Signal 中复制 body。引用仍使用实际 Signal ID；这只是输入呈现，不改变证明身份。核心装配函数如下：
 
 ```python
 def source_bundle(signals):
@@ -254,9 +254,11 @@ def source_bundle(signals):
             "source_signals": references}
 ```
 
-- [ ] 当前 WorkItem 正文也纳入同一来源呈现，不能在顶层 prompt 和 source_documents 再各放一遍；保留输入的 source/context/task_signals 元数据，原 immutable WorkItem 继续用于应用核验。长文沿已有预算处理，但输出实际可见字符区间及 full_length，不把首尾截取称为全量；当前正文与已有关键引用区间必须可定位。
-- [ ] 断言正文出现一次、每条 Signal 引用可反解；不同版本仍有两份、被省略范围可见；无 Task 项目资料可检索；Task 来源 owner 校验与历史比较仍取得正确原文。不得因压缩而删掉来源时间、作者、引用类型或证明上下文。
-- [ ] 运行 `python -m pytest -q tests/test_task_retrieval.py tests/test_task_source_documents.py tests/test_task_agent_session.py`，预期 GREEN；记录同一测试输入的前后正文字符数，不预先承诺固定压缩比例。同步文档并提交 `refactor(tasks): retrieve project context and share source bodies in prompts`。
+- [x] 当前 WorkItem 正文也纳入同一来源呈现，不能在顶层 prompt 和 source_documents 再各放一遍；保留输入的 source/context/task_signals 元数据，原 immutable WorkItem 继续用于应用核验。长文沿已有预算处理，但输出实际可见字符区间及 full_length，不把首尾截取称为全量；当前正文与已有关键引用区间必须可定位。
+- [x] 断言正文出现一次、每条 Signal 引用可反解；不同版本仍有两份、被省略范围可见；无 Task 项目资料可检索；Task 来源 owner 校验与历史比较仍取得正确原文。不得因压缩而删掉来源时间、作者、引用类型或证明上下文。
+- [x] 运行 `python -m pytest -q tests/test_task_retrieval.py tests/test_task_source_documents.py tests/test_task_agent_session.py`，预期 GREEN；记录同一测试输入的前后正文字符数，不预先承诺固定压缩比例。同步文档并提交 `refactor(tasks): retrieve project context and share source bodies in prompts`。
+
+Task 4 执行记录：`323a1ea3` 项目检索/共享来源，`13548316` 同来源正式 bucket 预算保留。初始新测试 7 项 RED；当前 prompt 重复正文 2→1 的回归 RED；JSON 解码引用仍计入 2048 字符预算（2055 的回归先 RED）；4 个同来源正式 Task 与 1 个无关高排名 Task 在 limit=1 时返回 5 的回归先 RED，修后只保留必要 4 个。同输入 80 Signals 引用的正文从 1200 字符变 15，所有 Signal 身份和元数据仍存在，不声称总 token 比例。主回归六文件 785 passed，最后预算修订四文件 292 passed；独立需求复核 58 passed 及修订 2 passed，需求/质量均 PASS。完整正式 Project 注册表仍需词面排序，当前 Context 分别查询的增长风险留作观测项，没有已测性能退化，不增加猜测性索引。没有生产/全局 Skill/新 wire 更改。
 
 ## Task 5：同一 Agent 返回独立项目更新、任务与判断
 
