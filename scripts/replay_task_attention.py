@@ -35,7 +35,22 @@ def load_cases(path):
 
 def scoped_runner(runner_type, codex):
     class AttentionEvaluationRunner(runner_type):
+        def __init__(self, codex):
+            super().__init__(codex)
+            self.context_deliveries = []
+
         def decide(self, *args, **kwargs):
+            payload, _ = json.JSONDecoder().raw_decode(args[1] if len(args) > 1 else kwargs["candidate_prompt"])
+            documents = payload.get("source_documents")
+            self.context_deliveries.append({
+                "notice": "Actual delivered context ranges, not proof of what the Agent read.",
+                "source_metrics": payload.get("source_metrics"),
+                "source_documents": [{
+                    **{key: document[key] for key in ("document_id", "full_length", "truncated", "citation_budget_exceeded") if key in document},
+                    "visible_ranges": [{"start": span["start"], "end": span["end"]} for span in document["visible_ranges"]],
+                    "decoded_excerpts": [{key: value for key, value in span.items() if key != "text"} for span in document.get("decoded_excerpts", [])],
+                } for document in documents] if documents is not None else None,
+            })
             kwargs["session_scope_id"] = EVALUATION_SCOPE
             return super().decide(*args, **kwargs)
 
@@ -56,12 +71,30 @@ def seed_case(store, case):
         BusinessAttentionProjection,
     )
     from app.task_semantic_models import AttentionCategory
-    from app.project_context_service import ProjectContextService
 
     context = case["existing_context"]
     resolution = BusinessResolutionService(store)
     anchors = {}
     projects = {}
+    project_signals = []
+
+    def source_signal_id(source_ref, excerpt):
+        from app.task_source_documents import source_contains_quote
+        matches = [signal.id for signal in project_signals
+                   if signal.source_ref == source_ref and source_contains_quote(signal.evidence_text, excerpt)]
+        if len(matches) != 1:
+            raise ValueError("seed citation must identify exactly one original source version")
+        return matches[0]
+
+    def resolve_context_citations(value):
+        if isinstance(value, list):
+            return [resolve_context_citations(entry) for entry in value]
+        if not isinstance(value, dict):
+            return value
+        result = {key: resolve_context_citations(entry) for key, entry in value.items()}
+        if "source_ref" in result and "source_excerpt" in result and result.get("signal_id") is None:
+            result["signal_id"] = source_signal_id(result["source_ref"], result["source_excerpt"])
+        return result
     for project in context.get("projects", []):
         anchor = resolution.register_anchor(
             anchor_type="project", anchor_ref=project["ref"], title=project["title"]
@@ -71,6 +104,18 @@ def seed_case(store, case):
         )
         anchors[project["title"]] = anchor
         projects[project["title"]] = project_id
+        if project.get("evidence") or project.get("context"):
+            from app.project_context_service import ProjectContextService
+            from app.task_semantic_models import ProjectContext
+            from dataclasses import asdict
+            ids = []
+            for source in project.get("evidence", []):
+                signal_id = store.create_business_task_signal(**asdict(SourceSignal(**source)))
+                ids.append(signal_id)
+                project_signals.append(store.get_business_task_signal(signal_id))
+            stored_context = ProjectContext.model_validate(resolve_context_citations(project["context"])) if project.get("context") is not None else None
+            with store.business_task_transaction() as db:
+                ProjectContextService(store).apply(project_id=project_id, context=stored_context, signal_ids=tuple(ids), db=db)
     tasks = {}
     signals = {}
     for task in context.get("tasks", []):
@@ -90,6 +135,7 @@ def seed_case(store, case):
                 evidence_signal_id=result.signal_id,
             )
             with store.business_task_transaction() as db:
+                from app.project_context_service import ProjectContextService
                 ProjectContextService(store).apply(
                     project_id=projects[task["project_title"]], context=None,
                     signal_ids=(result.signal_id,), db=db,
@@ -98,8 +144,9 @@ def seed_case(store, case):
         anchor = anchors[attention["project_title"]]
         names = attention["task_titles"]
         assessment_json = "{}"
+        primary_signal_id = None
         if assessment := attention.get("assessment"):
-            evidence_task_title = assessment["evidence_task_title"]
+            primary_signal_id = source_signal_id(assessment["evidence_source_ref"], assessment["source_excerpt"]) if "evidence_source_ref" in assessment else signals[assessment["evidence_task_title"]]
             assessment_json = json.dumps(
                 {
                     "assessment_basis": assessment["assessment_basis"],
@@ -107,7 +154,7 @@ def seed_case(store, case):
                     "inference": attention["why_attention"],
                     "evidence": [
                         {
-                            "signal_id": signals[evidence_task_title],
+                            "signal_id": primary_signal_id,
                             "source_ref": assessment["source_ref"],
                             "source_excerpt": assessment["source_excerpt"],
                             "source_time": assessment["source_time"],
@@ -129,7 +176,7 @@ def seed_case(store, case):
                 ceo_action=attention["ceo_action"],
                 anchor_id=anchor,
                 task_ids=tuple(tasks[name] for name in names),
-                evidence_signal_id=signals[names[0]],
+                evidence_signal_id=primary_signal_id if primary_signal_id is not None else signals[names[0]],
                 assessment_json=assessment_json,
             )
         )
@@ -137,6 +184,166 @@ def seed_case(store, case):
     return store.enqueue_work_summary_input(
         item.source.type.value, item.source.ref, item.model_dump_json()
     )
+
+
+def domain_snapshot(store) -> dict[str, tuple[str, ...]]:
+    """Read exact persisted domain state; exclude Agent run/attempt bookkeeping."""
+    with store._connect() as db:
+        tables = [row[0] for row in db.execute(
+            "select name from sqlite_master where type='table' and name glob 'business_*' order by name"
+        )]
+        return {
+            table: tuple(sorted(json.dumps(dict(row), ensure_ascii=False, sort_keys=True)
+                                for row in db.execute(f"select * from {table}")))
+            for table in tables
+        }
+
+
+def comparison_capabilities(store):
+    """Inspect actual schema without upgrading the runtime under comparison."""
+    with store._connect() as db:
+        tables = {row[0] for row in db.execute("select name from sqlite_master where type='table'")}
+    required = {"business_project_context_revisions", "business_project_evidence", "business_source_documents"}
+    return {"missing_tables": sorted(required - tables)}
+
+
+def source_is_observed(source_type):
+    """Frozen evaluation rule, independent of the runtime's installed modules."""
+    return source_type not in {"memory_provenance", "session_provenance"}
+
+
+def read_project_centered_expectations(store, before, expected):
+    """Compare fixed offline expectations to actual Project/Task/Attention rows."""
+    if comparison_capabilities(store)["missing_tables"]:
+        return ("project_centered_storage_missing",)
+    failures: list[str] = []
+    with store._connect() as db:
+        projects = [dict(row) for row in db.execute("select * from business_projects")]
+        tasks = [dict(row) for row in db.execute("select * from business_tasks")]
+        cards = [dict(row) for row in db.execute(
+            "select * from business_attention_items where status='active'"
+        )]
+        memberships = {
+            (int(row["attention_item_id"]), int(row["task_id"]))
+            for row in db.execute("select attention_item_id,task_id from business_attention_tasks")
+        }
+        project_by_anchor = {int(row["canonical_anchor_id"]): row["title"] for row in projects}
+        links: dict[int, set[str]] = {}
+        for row in db.execute(
+            "select task_id,anchor_id from business_task_anchor_links "
+            "where status='confirmed' and active=1"
+        ):
+            title = project_by_anchor.get(int(row["anchor_id"]))
+            if title is not None:
+                links.setdefault(int(row["task_id"]), set()).add(title)
+        evidence_refs = {
+            row["source_ref"] for row in db.execute(
+                "select distinct signal.source_ref from business_project_evidence proof "
+                "join business_task_signals signal on signal.id=proof.signal_id"
+            )
+        }
+        contexts = {
+            row["id"]: db.execute(
+                "select context_json from business_project_context_revisions "
+                "where project_id=? order by id desc limit 1", (row["id"],)
+            ).fetchone()
+            for row in projects
+        }
+
+    if "project_titles" in expected and sorted(row["title"] for row in projects) != sorted(expected["project_titles"]):
+        failures.append("project_titles_mismatch")
+    for title, wanted in expected.get("project_contexts", {}).items():
+        matching = [project for project in projects if project["title"] == title]
+        if len(matching) > 1:
+            failures.append("project_identity_ambiguous")
+            continue
+        row = contexts.get(matching[0]["id"]) if matching else None
+        if row is None:
+            failures.append("project_context_missing")
+            continue
+        actual = json.loads(row["context_json"])
+        owner = actual.get("overall_owner")
+        if (owner or {}).get("person_name") != wanted.get("overall_owner"):
+            failures.append("project_owner_mismatch")
+        wanted_roles = wanted.get("responsibilities", [])
+        actual_roles = actual.get("responsibilities", [])
+        if sorted(role["person_name"] for role in actual_roles) != sorted(role["person_name"] for role in wanted_roles) or any(
+            not any(actual_role["person_name"] == wanted_role["person_name"] and (
+                wanted_role["responsibility_contains"] in actual_role["responsibility"]
+                if "responsibility_contains" in wanted_role else actual_role["responsibility"] == wanted_role["responsibility"]
+            ) for actual_role in actual_roles) for wanted_role in wanted_roles
+        ):
+            failures.append("project_responsibilities_mismatch")
+        fact_texts = [fact["text"] for fact in actual.get("facts", [])]
+        if any(
+            not any(phrase in text for text in fact_texts)
+            for phrase in wanted.get("fact_text_contains", [])
+        ):
+            failures.append("project_facts_mismatch")
+
+    actual_attention = sorted(project_by_anchor.get(int(card["anchor_id"])) for card in cards)
+    if "attention_projects" in expected and actual_attention != sorted(expected["attention_projects"]):
+        failures.append("attention_projects_mismatch")
+    for title in expected.get("zero_task_attention_projects", []):
+        matching = [card for card in cards if project_by_anchor.get(int(card["anchor_id"])) == title]
+        if len(matching) != 1 or any(
+            card_id == int(matching[0]["id"]) for card_id, _ in memberships
+        ):
+            failures.append("zero_task_attention_mismatch")
+    for title, count in expected.get("attention_member_counts", {}).items():
+        matching = [card for card in cards if project_by_anchor.get(int(card["anchor_id"])) == title]
+        if len(matching) != 1 or sum(card_id == int(matching[0]["id"]) for card_id, _ in memberships) != count:
+            failures.append("attention_member_count_mismatch")
+    for title, required_titles in expected.get("attention_member_task_title_contains", {}).items():
+        card_ids = {int(card["id"]) for card in cards if project_by_anchor.get(int(card["anchor_id"])) == title}
+        member_ids = {task_id for card_id, task_id in memberships if card_id in card_ids}
+        member_titles = [task["title"] for task in tasks if int(task["id"]) in member_ids]
+        if any(not any(phrase in actual for actual in member_titles) for phrase in required_titles):
+            failures.append("attention_member_task_mismatch")
+    if "task_count" in expected and len(tasks) != expected["task_count"]:
+        failures.append("task_count_mismatch")
+    if "allowed_task_counts" in expected and len(tasks) not in expected["allowed_task_counts"]:
+        failures.append("task_count_mismatch")
+    for wanted in expected.get("task_expectations", []):
+        def matches(task: dict[str, object]) -> bool:
+            suggestion = json.loads(task["suggestion_json"])
+            fields = (
+                "origin", "stage", "owner_name", "commitment_status", "status",
+            )
+            return (
+                all(task[field] == wanted[field] for field in fields if field in wanted)
+                and wanted.get("title_contains", "") in task["title"]
+                and ("project_title" not in wanted
+                     or wanted["project_title"] in links.get(int(task["id"]), set()))
+                and ("suggested_owner_name" not in wanted
+                     or suggestion.get("suggested_owner_name", "") == wanted["suggested_owner_name"])
+            )
+        if not any(matches(task) for task in tasks):
+            failures.append("task_expectation_mismatch")
+    if not set(
+        expected.get("required_project_source_refs", [])
+    ).issubset(evidence_refs):
+        failures.append("project_evidence_mismatch")
+    with store._connect() as db:
+        for source_ref, count in expected.get("minimum_signal_versions_for_ref", {}).items():
+            actual = db.execute("select count(distinct source_document_id) from business_task_signals where source_ref=?", (source_ref,)).fetchone()[0]
+            if actual < count:
+                failures.append("signal_version_count_mismatch")
+
+    after = domain_snapshot(store)
+    if "max_outbound_intent_delta" in expected:
+        if before is None:
+            raise ValueError("outbound delta expectation requires before snapshot")
+        intents = ("business_task_todo_sync_outbox", "business_task_follow_ups")
+        delta = sum(len(after[table]) - len(before[table]) for table in intents)
+        if delta > expected["max_outbound_intent_delta"]:
+            failures.append("outbound_intent_increase")
+    if expected.get("repeat_domain_unchanged"):
+        if before is None:
+            raise ValueError("repeat comparison requires before snapshot")
+        if after != before:
+            failures.append("repeat_domain_changed")
+    return tuple(dict.fromkeys(failures))
 
 
 def read_domain(store):
@@ -176,9 +383,8 @@ def evidence_contains(text, quote):
     return contains(value)
 
 
-def readback(store, *, input_id, before, expected=None):
-    from app.task_source_documents import source_is_observed
-
+def readback(store, *, input_id, before, expected=None, project_before=None):
+    capabilities = comparison_capabilities(store)
     after = read_domain(store)
     with store._connect() as db:
         run = db.execute(
@@ -202,7 +408,7 @@ def readback(store, *, input_id, before, expected=None):
                 "select p.canonical_anchor_id,e.signal_id from business_projects p "
                 "join business_project_evidence e on e.project_id=p.id"
             )
-        }
+        } if not capabilities["missing_tables"] else set()
         active_anchors = {
             row["id"] for row in db.execute("select id from business_anchors where active=1")
         }
@@ -288,6 +494,8 @@ def readback(store, *, input_id, before, expected=None):
         else {}
     )
     failures = []
+    if capabilities["missing_tables"]:
+        failures.append("project_centered_storage_missing")
     if proposal_count and not projection:
         failures.append("projection_not_successful")
     if projection and (
@@ -330,6 +538,8 @@ def readback(store, *, input_id, before, expected=None):
     if input_id is not None and run is None:
         failures.append("task_agent_run_missing")
     if expected is not None:
+        if any(key in expected for key in ("project_contexts", "task_expectations", "zero_task_attention_projects", "max_outbound_intent_delta", "required_project_source_refs", "attention_member_counts", "attention_member_task_title_contains", "minimum_signal_versions_for_ref", "repeat_domain_unchanged")):
+            failures.extend(read_project_centered_expectations(store, project_before, expected))
         actual_projects = sorted(card["project_title"] for card in cards)
         wanted = sorted(expected["attention_projects"])
         if actual_projects != wanted:
@@ -479,13 +689,23 @@ def readback(store, *, input_id, before, expected=None):
                 receipt_valid = receipt is not None
                 if receipt is not None:
                     receipt_task_ids = receipt.get("task_ids", [])
+                    wanted_member_counts = (
+                        wanted_assessment["allowed_task_counts"]
+                        if "allowed_task_counts" in wanted_assessment
+                        else [wanted_assessment["task_count"]]
+                    )
+                    wanted_statuses = (
+                        wanted_assessment["allowed_application_statuses"]
+                        if "allowed_application_statuses" in wanted_assessment
+                        else [wanted_assessment["application_status"]]
+                    )
                     receipt_task_ids_are_integers = all(
                         isinstance(task_id, int) and not isinstance(task_id, bool)
                         for task_id in receipt_task_ids
                     )
                     receipt_valid = (
-                        receipt.get("status") == wanted_assessment["application_status"]
-                        and len(receipt_task_ids) == wanted_assessment["task_count"]
+                        receipt.get("status") in wanted_statuses
+                        and len(receipt_task_ids) in wanted_member_counts
                         and receipt_task_ids_are_integers
                         and len(set(receipt_task_ids)) == len(receipt_task_ids)
                         and set(receipt_task_ids).issubset(task_by_id)
@@ -598,6 +818,7 @@ def readback(store, *, input_id, before, expected=None):
         if task["id"] not in before_tasks or task != before_tasks[task["id"]]
     )
     return {
+        "comparison_capabilities": capabilities,
         "project_decisions": decision.get("project_decisions")
         if "project_decisions" in decision
         else None,
@@ -673,7 +894,9 @@ def replay_input(store, runner, input_id, *, source_ref, expected=None):
     if lease is None:
         raise RuntimeError("database-copy Task Agent session lease is occupied")
     before = read_domain(store)
+    project_before = domain_snapshot(store) if expected else None
     error = None
+    delivery_start = len(getattr(runner, "context_deliveries", []))
     with lease:
         lease.assert_owned()
         with store._connect() as db:
@@ -691,9 +914,47 @@ def replay_input(store, runner, input_id, *, source_ref, expected=None):
         except Exception as exc:
             # Failed model/schema turns are comparison evidence, never normalized.
             error = f"{type(exc).__name__}: {exc}"
-    result = readback(store, input_id=input_id, before=before, expected=expected)
+    result = readback(store, input_id=input_id, before=before, expected=expected, project_before=project_before)
+    result["context_deliveries"] = getattr(runner, "context_deliveries", [])[delivery_start:]
     if error is not None:
         result["execution_error"] = error
+        result["passed"] = False
+    return result
+
+
+def replay_case(store, runner, case):
+    """Each original version is enqueued immediately before its existing turn."""
+    from app.task_models import WorkItem
+
+    inputs = case["source_inputs"] if "source_inputs" in case else [case["work_item"]]
+    if not inputs or inputs[-1] != case["work_item"]:
+        raise ValueError("source_inputs must end with the fixed work_item")
+    initial = read_domain(store)
+    initial_project = domain_snapshot(store)
+    steps = []
+    seen = set()
+    for index, raw in enumerate(inputs):
+        item = WorkItem.model_validate(raw)
+        before_repeat = domain_snapshot(store)
+        key = item.model_dump_json()
+        input_id = seed_case(store, {**case, "work_item": raw}) if index == 0 else store.enqueue_work_summary_input(
+            item.source.type.value, item.source.ref, item.model_dump_json()
+        )
+        step = replay_input(store, runner, input_id, source_ref=item.source.ref)
+        step.update(source_ref=item.source.ref, source_time=item.source.created_at)
+        if key in seen and case["expected"].get("repeat_domain_unchanged") and domain_snapshot(store) != before_repeat:
+            step["failures"].append("repeat_domain_changed")
+            step["passed"] = False
+        steps.append(step)
+        seen.add(key)
+        if step.get("execution_error") or step["run_status"] != "completed" or "projection_not_successful" in step["failures"]:
+            break
+    expected = {key: value for key, value in case["expected"].items() if key != "repeat_domain_unchanged"}
+    result = readback(store, input_id=input_id, before=initial, expected=expected, project_before=initial_project)
+    result["source_steps"] = steps
+    if len(steps) != len(inputs) or any(not step["passed"] for step in steps):
+        incomplete = ["source_sequence_incomplete"] if len(steps) != len(inputs) else []
+        result["failures"] = list(dict.fromkeys(result["failures"] + [failure for step in steps for failure in step["failures"]] + incomplete))
         result["passed"] = False
     return result
 
@@ -741,9 +1002,6 @@ def main():
             if case["case_id"] == args.case_id
         ]
         store = AutoReplyStore(args.db)
-        input_id = seed_case(store, case)
-        source_ref = case["work_item"]["source"]["ref"]
-        expected = case["expected"]
     else:
         if not args.db.is_file():
             raise ValueError("input replay requires an existing database copy")
@@ -766,7 +1024,7 @@ def main():
     runner = scoped_runner(
         TaskAgentRunner, TaskAgentCodexRunner(routed_execution=routed)
     )
-    result = replay_input(
+    result = replay_case(store, runner, case) if args.case_id else replay_input(
         store, runner, input_id, source_ref=source_ref, expected=expected
     )
     result.update(

@@ -127,3 +127,21 @@ def test_inspect_task_attention_missing_database_is_not_created(tmp_path):
     assert result.returncode != 0
     assert "unable to open database file" in result.stderr
     assert not path.exists()
+
+
+def test_inspector_reads_exact_replay_delivery_artifact_without_reconstructing_history(tmp_path):
+    path = tmp_path / "delivery.sqlite3"
+    _database(path)
+    artifact = tmp_path / "result.json"
+    artifact.write_text(json.dumps({"input_id": 7, "run_id": 11, "context_deliveries": [{
+        "source_metrics": {"signal_count": 3, "document_count": 1, "unique_body_chars": 9000, "visible_body_chars": 2048},
+        "source_documents": [{"document_id": 8, "full_length": 9000, "visible_ranges": [{"start": 0, "end": 2048}]}],
+    }]}))
+    before = path.read_bytes()
+    result = subprocess.run([sys.executable, str(SCRIPT), "--db", str(path), "--input-id", "7", "--replay-result", str(artifact)],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    [old, current] = json.loads(result.stdout)["runs"]
+    assert "context_deliveries" not in old
+    assert current["context_deliveries"][0]["source_metrics"]["document_count"] == 1
+    assert path.read_bytes() == before

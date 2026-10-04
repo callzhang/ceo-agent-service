@@ -48,6 +48,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--input-id", type=int, required=True)
+    parser.add_argument("--replay-result", type=Path, help="Exact evaluation result artifact for delivered context metrics; no history reconstruction")
     args = parser.parse_args()
     with sqlite3.connect(args.db.resolve().as_uri() + "?mode=ro", uri=True) as db:
         db.row_factory = sqlite3.Row
@@ -64,6 +65,17 @@ def main() -> int:
             (args.input_id,),
         ).fetchall()
         inspected_runs = [inspect_run(db, run) for run in runs]
+        if args.replay_result:
+            artifact = json.loads(args.replay_result.read_text())
+            deliveries = artifact["source_steps"] if "source_steps" in artifact else [artifact]
+            matched = [step for step in deliveries if step.get("input_id") == args.input_id]
+            if not matched:
+                raise ValueError("replay result does not match this input")
+            by_run = {run["run_id"]: run for run in inspected_runs}
+            for step in matched:
+                if step.get("run_id") not in by_run:
+                    raise ValueError("replay result does not match a persisted run")
+                by_run[step["run_id"]]["context_deliveries"] = step["context_deliveries"]
     print(json.dumps({
         "input_id": item["id"],
         "source_type": item["source_type"],

@@ -402,11 +402,11 @@ Task 7 执行记录：API 新独立 ProjectContext 回归先 5 RED 后 GREEN，�
 
 **Files:** 新建 `tests/fixtures/task_project_centered_v1.json`、`tests/test_task_project_centered_eval.py`、`docs/task-project-centered-validation.md`；修改 `scripts/replay_task_attention.py`、`scripts/inspect_task_attention.py` 的新契约读回，保留旧 fixture/oracle 的历史版本。
 
-- [ ] 固定至少下列案例，预期只在离线 oracle，不能放进 Agent 输入：多来源同项目、单报告多项目、无周报的会议/聊天、零 Task 的真实风险、正常进展、模糊风险、未确认 Project、独立明确 Task、按职责推导未点名人选、未知总负责、职责变更/冲突、建议变实际指派、同 Task 更新、不同交付不可合并、同源重复、同 ref 不同版本、旧卡片成员与同项目同伴、Task 完成但项目风险未消除。
-- [ ] fixture 沿用现有版本 1/`cases` 读取格式，扩展 `existing_context.projects` 的 context/evidence，而不是另写 runner。具体建议案例内容为：项目负责人张三、商务职责王五；当前来源只有“付款日期未确定，影响本期现金安排”；预期已有项目、watch、建议王五确认排期、没有实际 owner/承诺/外发。另加完全相同职责但“款项已按计划到账”的负例，不应继续提出同一风险建议。
-- [ ] 旧/新对照必须具有相同的原始职责/项目证据，不能只给 candidate 额外的人工分工结论。需要形成先前上下文时，对两边按同一顺序输入原始会议与当前消息；扩展现有 replay 为按 fixture 的 `source_inputs` 顺序调用原来的单次处理函数，各次保存实际结果。单元测试可直接 seed 新 context，native 业务对照不能以这种 seed 替代原文理解；旧能力不支持的新结果按明确的预期差异记录。
-- [ ] `tests/test_task_project_centered_eval.py` 先用错误持久化结果测试 oracle 确实拒绝：错误总负责、建议伪装正式、漏掉第二项目、空 Task 卡片未真正保存、重复副本、外发 intent 增加。再给正确结果验证接受。读取 domain 行而非模型总结作为实际结果。
-- [ ] 扩展只读检查的 context 指标：独立来源数、Signal 数、实际可见范围、完整/可见字符数；按项目列出识别、判断、上下文/任务/关注实际应用结果。原文项目未被识别的遗漏仍由固定人工预期集合检查，不声称程序能从 Agent 自己的输出证明零遗漏。
+- [x] 固定至少下列案例，预期只在离线 oracle，不能放进 Agent 输入：多来源同项目、单报告多项目、无周报的会议/聊天、零 Task 的真实风险、正常进展、模糊风险、未确认 Project、独立明确 Task、按职责推导未点名人选、未知总负责、职责变更/冲突、建议变实际指派、同 Task 更新、不同交付不可合并、同源重复、同 ref 不同版本、旧卡片成员与同项目同伴、Task 完成但项目风险未消除。
+- [x] fixture 沿用现有版本 1/`cases` 读取格式，扩展 `existing_context.projects` 的 context/evidence，而不是另写 runner。具体建议案例内容为：项目负责人张三、商务职责王五；当前来源只有“付款日期未确定，影响本期现金安排”；预期已有项目、watch、建议王五确认排期、没有实际 owner/承诺/外发。另加完全相同职责但“款项已按计划到账”的负例，不应继续提出同一风险建议。
+- [x] 旧/新对照必须具有相同的原始职责/项目证据，不能只给 candidate 额外的人工分工结论。需要形成先前上下文时，对两边按同一顺序输入原始会议与当前消息；扩展现有 replay 为按 fixture 的 `source_inputs` 顺序调用原来的单次处理函数，各次保存实际结果。单元测试可直接 seed 新 context，native 业务对照不能以这种 seed 替代原文理解；旧能力不支持的新结果按明确的预期差异记录。
+- [x] `tests/test_task_project_centered_eval.py` 先用错误持久化结果测试 oracle 确实拒绝：错误总负责、建议伪装正式、漏掉第二项目、空 Task 卡片未真正保存、重复副本、外发 intent 增加。再给正确结果验证接受。读取 domain 行而非模型总结作为实际结果。
+- [x] 扩展只读检查的 context 指标：独立来源数、Signal 数、实际可见范围、完整/可见字符数；按项目列出识别、判断、上下文/任务/关注实际应用结果。原文项目未被识别的遗漏仍由固定人工预期集合检查，不声称程序能从 Agent 自己的输出证明零遗漏。
 - [ ] 运行 `python -m pytest -q tests/test_task_project_centered_eval.py tests/test_inspect_task_attention.py`，预期 GREEN；冻结代码与 CI Skill 哈希，baseline/candidate 同样例、模型、路由、时间预算和并发。
 - [ ] 使用现有 replay 参数运行，每个候选库是已确认的数据库副本；命令形状由现有入口支持，真实路径在运行前填入验证记录：
 
@@ -421,6 +421,8 @@ python scripts/inspect_task_attention.py --db <同一个真实W39副本绝对路
 - [ ] 对同一 frozen W39 原文逐项目比“预期 vs 实际”：首轮覆盖人工核对的全部相关项目/线索（包括此前遗漏的 Einride POC；身份不足可明确记录，不强登记），按经营影响解释正常/风险、人员/负责事项、来源与建议。第二次重复检查所有原 domain 表及新增表，不新增任务、项目、重复版本或无变化事件；run/attempt 记录独立计数。
 - [ ] 比较正文体积和首轮判断覆盖。若去重已改善但仍漏判，记录两者分别结果，继续定位输入是否送达、是否读取、判断还是应用错误，不强造结果、不调低预期或偷偷换模型。只有本次已批准“无 Task 可关注、允许职责推导建议”等预期变化可以版本化更新 oracle。
 - [ ] 输出验证文档：代码/Skill 版本、来源清单、旧/新逐案例结论、首次与重复域快照、原始失败、业务人工核对、未完成发布项。提交 `test(tasks): evaluate project-centered work against frozen evidence`。
+
+Task 8 脚手架记录（2026-10-04）：版本 1 固定 19 个案例，原始输入对两侧完全相同，所有最终项目判断预期仅在离线 oracle。旧表缺失、同名项目、两项目漏判先确认 RED 后修正；对合法持续风险的应用方式仅在三个案例允许 applied/existing，不放宽真实卡片/证据/成员核对。主 Agent 四定向文件 **191 passed / 14.56s**；独立最终复核三个文件 **40 passed / 2.87s**、Ruff/diff check 通过。新案例/原始输入/CI Skill 哈希见 `../../task-project-centered-validation.md`。这些仅完成上方前五项和局部验证；固定 native 旧/新对照、真实 W39 及发布仍未执行，不勾选完整 Task 8 或 Task 9。
 
 ## Task 9：统一旧逻辑、发布与真实页面读回
 

@@ -37,9 +37,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-project-centered-task8-runner | Isolated task-attention-multisource worktree: scripts/replay_task_attention.py, scripts/inspect_task_attention.py; tests/test_replay_task_attention_project.py and tests/test_inspect_task_attention.py; docs/task-project-centered-validation.md and approved implementation plan | Primary author approved Task 8 existing-runner source sequence, independent source/Project-context seeds for unit cases, persisted-domain oracle and context metrics. Same original inputs for baseline/candidate; no new runner/model, historical oracle rewrite, native production session, live repair or deployment. | 2026-10-04 |
-
-| codex-project-centered-task8-fixture-oracle | Isolated task-attention-multisource worktree: tests/fixtures/task_project_centered_v1.json and tests/test_task_project_centered_eval.py ONLY | Existing project_context_spec_review agent delegated approved Task 8 versioned original-source cases and persisted-domain oracle counterexamples. No runtime, scripts, existing historical fixtures, docs, commits, native runs or live writes; primary owns runner integration. | 2026-10-04 |
 
 
 
