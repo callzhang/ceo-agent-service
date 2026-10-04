@@ -144,6 +144,7 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
                         session_id and find_codex_session_path(session_id) is not None
                     ),
                     "status": normalize_display_value(getattr(item, "status", "")),
+                    "run_status": normalize_display_value(run.status),
                     "failure_code": normalize_display_value(getattr(item, "failure_code", "")),
                     "failover_permitted": bool(getattr(item, "failover_permitted", False)),
                     "transcript_start": int(getattr(item, "transcript_start", 0) or 0),

@@ -11,6 +11,7 @@ from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import (
     _consumer_result_payload as build_consumer_result_payload,
     _linked_consumer_run,
+    _runtime_payload,
     build_attempt_detail,
 )
 
@@ -34,6 +35,44 @@ AUDIT_EVENTS = [
         "output": '{"outcome": "skipped_no_reliable_entry"}',
     }
 ]
+
+
+@pytest.mark.parametrize("run_status", ["completed", "failed", "running"])
+def test_runtime_payload_preserves_business_status_separately(
+    tmp_path: Path, run_status: str
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="audit-result-status",
+        owner="audit-status-test",
+    ).run
+    runtime = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "test-model"
+    )
+    store.complete_agent_runtime_attempt(runtime.id, "", "", 0, 0)
+    if run_status == "failed":
+        run = store.fail_agent_run(
+            run.id, {"code": "provider_risk_rejected"}, owner="audit-status-test"
+        )
+    elif run_status == "completed":
+        run = store.complete_agent_run(
+            run.id, {"outcome": "returned"}, owner="audit-status-test"
+        )
+    before = store.list_agent_runtime_attempts(run.id)
+
+    payload = _runtime_payload([run], store)
+
+    assert payload[0]["status"] == "completed"
+    assert payload[0]["run_status"] == run_status
+    assert store.get_agent_run(run.id) == run
+    assert store.list_agent_runtime_attempts(run.id) == before
 
 
 def test_linked_consumer_run_falls_back_to_latest_consumer_sibling():

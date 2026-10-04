@@ -67,6 +67,7 @@ export interface AttemptRuntimeEntry {
   model: string;
   session_available: boolean;
   status: string;
+  run_status: string;
   failure_code: string;
   failover_permitted: boolean;
   transcript_start: number;

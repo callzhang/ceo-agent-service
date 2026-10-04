@@ -406,7 +406,7 @@ function RuntimeEntry({ entry }: { entry: AttemptRuntimeEntry }) {
     runtime_unclassified: "运行环境没有返回可验证结果，系统进行了恢复或重试。",
   };
   const failureText = entry.failure_code ? (failureDescriptions[entry.failure_code] || entry.failure_code) : "";
-  return <article className="attempt-runtime-entry"><div className="attempt-runtime-heading"><div><strong>{phase} · 第 {entry.proposal_revision + 1} 轮{retry}</strong><p>{description}</p></div><StatusBadge value={entry.status} /></div>{(failureText || entry.effect_started_at) && <dl className="attempt-runtime-grid">{failureText && <div><dt>结果说明</dt><dd>{failureText}</dd></div>}{entry.effect_started_at && <div><dt>开始外部动作</dt><dd>{entry.effect_started_at}</dd></div>}</dl>}{entry.session_url && <Link className="agent-log-button" to={entry.session_url}>查看这一步的 Agent 记录</Link>}</article>;
+  return <article className="attempt-runtime-entry"><div className="attempt-runtime-heading"><div><strong>{phase} · 第 {entry.proposal_revision + 1} 轮{retry}</strong><p>{description}</p></div><span aria-label="业务运行状态">业务运行 <StatusBadge value={entry.run_status} /></span></div><dl className="attempt-runtime-grid"><div><dt>运行时调用</dt><dd aria-label="运行时调用状态"><StatusBadge value={entry.status} /></dd></div>{failureText && <div><dt>结果说明</dt><dd>{failureText}</dd></div>}{entry.effect_started_at && <div><dt>开始外部动作</dt><dd>{entry.effect_started_at}</dd></div>}</dl>{entry.session_url && <Link className="agent-log-button" to={entry.session_url}>查看这一步的 Agent 记录</Link>}</article>;
 }
 
 function ExecutionDetail({ detail, role, snapshot }: { detail: AttemptDetail; role: "consumer" | "audit"; snapshot: string }) {
