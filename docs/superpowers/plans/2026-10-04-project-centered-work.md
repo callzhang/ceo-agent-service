@@ -114,7 +114,7 @@ Task 1 读回（2026-10-04，`8f8a4a62`）：主 Agent 新跑六个相关测试�
 
 ## Task 2：Project 独立上下文、唯一总负责与人员分工
 
-Task 2 首版为 `76bd759d`，主 Agent 新跑五个相关文件 **603 passed / 23.63s**；独立需求审查发现结构化来源引用缺项：JSON 转义后的原文不应让真实换行摘录失效。`76ab1ca2` 提取并复用既有引用检查，补结构化摘录和事务内捕获失败的回归；主 Agent 对修复前的真实服务代码运行新增引用用例，确认 RED，再独立重跑六个相关文件 **757 passed / 39.41s**，Ruff/diff check 通过。需求复审通过，质量审查中；质量通过前不进入下一任务。
+Task 2 首版为 `76bd759d`，主 Agent 新跑五个相关文件 **603 passed / 23.63s**；独立需求审查发现结构化来源引用缺项：JSON 转义后的原文不应让真实换行摘录失效。`76ab1ca2` 提取并复用既有引用检查，补结构化摘录和事务内捕获失败的回归；主 Agent 对修复前的真实服务代码运行新增引用用例，确认 RED，再独立重跑六个相关文件 **757 passed / 39.41s**，Ruff/diff check 通过。需求复审及质量审查均通过，可进入 Task 3，但不可部署。质量审查提示每个项目的历史/证据 list 会随积累增长；Task 4 按计划对 Agent 检索作有界选择，Task 7 页面读取也不能无界装载。
 
 **Files:** 修改 `app/task_semantic_models.py:308`、`app/store.py:3863`、`app/task_business_resolution.py:150`；新建 `app/project_context_service.py`、`tests/test_project_context_service.py`；修改 `tests/test_task_semantic_store.py`、`docs/architecture.md` 和 `docs/runtime-mechanism.md` 的项目部分。
 
@@ -190,7 +190,7 @@ def context_changed(previous_json: str | None, current_json: str) -> bool:
 
 - [x] Store 提供 `get_business_project_context(project_id)`、`list_business_project_context_revisions(project_id)`、`list_business_project_evidence(project_id)`；事务内对应方法沿用 `_db` 风格。`BusinessProject` 读取提供当前 context；无记录是未知，不从任意 Task owner 补全。
 - [x] 在真实 SQLite 测试登记一个零 Task 项目，存一版分工，再更新负责人；断言当前只有新负责人、两版历史均可读、证据关系均保留；相同输入再应用，版本/关系行数不变。再测试缺失来源导致事务不写入、context=null 保留原分工、明确空分工快照与“不更新”不同。
-- [ ] 运行 `python -m pytest -q tests/test_project_context_service.py tests/test_task_business_resolution.py tests/test_task_semantic_store.py`，预期 GREEN。同步行为文档并提交 `feat(projects): persist source-backed project context and responsibilities`。
+- [x] 运行 `python -m pytest -q tests/test_project_context_service.py tests/test_task_business_resolution.py tests/test_task_semantic_store.py`，预期 GREEN。同步行为文档并提交 `feat(projects): persist source-backed project context and responsibilities`。
 
 ## Task 3：在同一个 Task 体系记录“Agent 建议”
 
